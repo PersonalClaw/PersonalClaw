@@ -49,6 +49,24 @@ export function fullStamp(ts?: number | string | null): string {
   return new Date(secs * 1000).toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'short' })
 }
 
+/** The DAY only — `7 Sep 2026` — for a stamp whose time-of-day carries no meaning.
+ *
+ *  A registry listing's `last_validated` is the case this exists for (ET-5): it says which day an
+ *  index last checked a listing, and rendering `12:19` beside it would imply a precision the fact
+ *  does not have while costing width on a card that has none to give. The full instant still
+ *  belongs in the `title` — that is `fullStamp`.
+ *
+ *  Same failure contract as its siblings: unreadable ⇒ `''`, never `Invalid Date`. */
+export function dayStamp(ts?: number | string | null): string {
+  const secs = epochSeconds(ts)
+  if (secs === undefined) return ''
+  return new Date(secs * 1000).toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  })
+}
+
 /** The machine-readable form for a `<time dateTime=…>` attribute. Empty when unreadable, so the
  *  caller can omit the attribute rather than emit `dateTime=""`, which would be a lie in markup. */
 export function isoStamp(ts?: number | string | null): string {
