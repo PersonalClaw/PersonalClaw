@@ -30,7 +30,8 @@ per-channel special builds.
 | **Bootstrap one-liner** | `curl -fsSL https://personalclaw.dev/install \| sh` | fastest start; installs `uv` if absent, then the above |
 | pipx | `pipx install personalclaw` | Python users who like isolated tools |
 | pip | `pip install personalclaw` | inside an existing Python 3.12+ venv |
-| **Docker Compose** | see [§ Docker](#docker-compose) | self-hosters; Windows |
+| **Docker** | see [§ Docker](#docker) | one container, no checkout, no `.env` |
+| **Docker Compose** | see [§ Docker Compose](#docker-compose) | self-hosters; Windows |
 | Git checkout | see [CONTRIBUTING](../../CONTRIBUTING.md#development-setup) | contributors / development |
 
 After a uv/pipx/pip install the `personalclaw` command is on your PATH:
@@ -162,10 +163,34 @@ Tool calls the agent wants to make appear as approval prompts (default
 [configuration reference](../reference/configuration.md) to tune approval,
 sandboxing, and security policy).
 
+## Docker
+
+One container, nothing to check out and no `.env` — the gateway image bundles the
+dashboard. From an empty directory on a machine with only Docker:
+
+```bash
+docker run -d --name personalclaw -p 127.0.0.1:10000:10000 -e PERSONALCLAW_BIND_HOST=0.0.0.0 -v personalclaw_home:/data ghcr.io/personalclaw/personalclaw-gateway:latest
+```
+
+Then print the dashboard URL (it carries a one-time token — the default auth mode):
+
+```bash
+docker exec personalclaw personalclaw token
+```
+
+State lives in the named volume `personalclaw_home`, so it survives
+`docker rm`/`docker run`. `-p 127.0.0.1:…` keeps the port on the host's loopback;
+`PERSONALCLAW_BIND_HOST=0.0.0.0` is what lets that published port reach the gateway
+*inside* the container (its own default is loopback, which a container cannot publish).
+Swap `:latest` for a release tag to pin one. This is the same command the
+[README](../../README.md#docker) and the [container guide](containers.md) print; a test
+keeps all four copies identical.
+
 ## Docker Compose
 
-Run a published release without installing anything but Docker. From a checkout
-(or after downloading `deploy/compose/compose.yaml`):
+Compose adds a TLS web proxy in front of that gateway, and needs one file the
+single-container path above does not. From a checkout (or after downloading
+`deploy/compose/compose.yaml`):
 
 ```bash
 cp .env.example .env         # set provider keys / options
