@@ -24,6 +24,7 @@ whatever ``:latest`` resolves to while reporting on the commit under review.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,12 @@ _REPO = Path(__file__).resolve().parents[1]
 _README = _REPO / "README.md"
 _DOCKERFILE = _REPO / "deploy" / "docker" / "Dockerfile.backend"
 _WORKFLOW = _REPO / ".github" / "workflows" / "docker-single-container.yml"
+
+#: A stand-in for the session token the gateway banner prints. Three dot-separated segments
+#: so it exercises the same shape a JWT has, but a fixed literal that is not and never was a
+#: credential — a fixture copied from a real run would put the very value these tests exist
+#: to keep out of a public log INTO the repository.
+_SYNTHETIC_TOKEN = "synthetic.placeholder.not-a-real-token"
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +266,136 @@ def test_spa_stage_reaches_outside_web_before_the_commands_that_need_it() -> Non
 # ---------------------------------------------------------------------------
 # The workflow
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# The log dump must not print the session token into a public CI log
+# ---------------------------------------------------------------------------
+#
+# The container's own stdout carries a live session token: `gateway.py` mints one at startup
+# and `dashboard/origin.py`'s `format_dashboard_urls` prints the authenticated dashboard URL
+# (`   http://localhost:10000?token=…`). `_dump_container_logs` then echoes 40 lines of that
+# stdout into a GitHub Actions log — on a PUBLIC repo, on every push to `main` touching
+# `README.md` / `web/**` / the Dockerfile, and on a job whose greenness means nobody reads it.
+#
+# These rails drive the print path with `_docker` faked, so they need no Docker daemon and no
+# real credential. They deliberately assert on what reaches stdout rather than grepping the
+# source for a call: the bug being fixed was NOT a missing pattern (`_TOKEN_RE` has been in
+# this file all along, to extract the token) — it was a print site that did not use one, and
+# only driving the print site can tell those two apart.
+
+
+def _fake_docker_logs(
+    monkeypatch: pytest.MonkeyPatch, *, stdout: str = "", stderr: str = ""
+) -> None:
+    """Make `_docker("logs", …)` return a canned tail, so no daemon is needed."""
+
+    def _fake(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        assert args[0] == "logs", f"unexpected docker call {args!r}"
+        return subprocess.CompletedProcess(
+            args=list(args), returncode=0, stdout=stdout, stderr=stderr
+        )
+
+    monkeypatch.setattr(smoke, "_docker", _fake)
+
+
+def test_log_dump_redacts_the_startup_banners_session_token(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The banner line is the measured leak: its token must not reach the public log."""
+    banner = (
+        "PersonalClaw gateway starting…\n"
+        "Dashboard:\n"
+        f"   http://localhost:10000?token={_SYNTHETIC_TOKEN}\n"
+    )
+    _fake_docker_logs(monkeypatch, stdout=banner)
+
+    smoke._dump_container_logs("pc-smoke")
+    out = capsys.readouterr().out
+
+    assert _SYNTHETIC_TOKEN not in out, (
+        "the container's session token reached stdout, which in CI is a world-readable log "
+        "on a public repo"
+    )
+    assert "?token=<redacted>" in out, (
+        "the token span must be replaced by a marker, not deleted — the dump exists so a "
+        "reader can see what the container said, including THAT a token was printed"
+    )
+    # The rest of the tail, and the fold that makes it readable, must survive intact.
+    assert "PersonalClaw gateway starting…" in out
+    assert "http://localhost:10000" in out
+    assert "::group::" in out and "::endgroup::" in out
+
+
+def test_log_dump_leaves_a_tail_with_no_token_byte_identical(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Negative control: a redactor that mangles ordinary log lines is a different bug."""
+    tail = (
+        "PersonalClaw gateway starting…\n"
+        "12:00:00 WARNING personalclaw.gateway: Background session starting\n"
+        "GET /api/healthz 200\n"
+    )
+    _fake_docker_logs(monkeypatch, stdout=tail, stderr="tini: reaped 1 child\n")
+
+    smoke._dump_container_logs("pc-smoke")
+    out = capsys.readouterr().out
+
+    assert out == (
+        "::group::container logs (last 40 lines, session tokens redacted)\n"
+        f"{tail}tini: reaped 1 child\n"
+        "\n"
+        "::endgroup::\n"
+    ), "text carrying no token must pass through unchanged, byte for byte"
+    assert "<redacted>" not in out
+
+
+def test_redaction_covers_both_query_separators_and_every_occurrence() -> None:
+    """`?token=` and `&token=` are the two shapes `_TOKEN_RE` claims; one pass must do both.
+
+    Two occurrences, not one: `re.sub` scrubs every match, and a banner plus an echoed
+    request line can easily put the same token on the tail twice.
+    """
+    text = (
+        f"   http://localhost:10000?token={_SYNTHETIC_TOKEN}\n"
+        f"   http://localhost:10000/?foo=1&token={_SYNTHETIC_TOKEN}&bar=2\n"
+    )
+    scrubbed = smoke.redact_secrets(text)
+
+    assert _SYNTHETIC_TOKEN not in scrubbed
+    assert scrubbed == (
+        "   http://localhost:10000?token=<redacted>\n"
+        "   http://localhost:10000/?foo=1&token=<redacted>&bar=2\n"
+    ), "the separator and the neighbouring query params must survive; only the value goes"
+
+
+def test_mint_token_failure_scrubs_the_stderr_it_echoes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The other site that echoes captured container output into the same public log.
+
+    `_mint_token` only reaches its failure message when `_TOKEN_RE` found nothing in
+    **stdout** — so stdout is provably clean there — but it echoes **stderr** too, and stderr
+    is never searched. Same log, same exposure, so the same scrub.
+    """
+
+    def _fake(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=list(args),
+            returncode=1,
+            stdout="no url here\n",
+            stderr=f"traceback printed the url http://localhost:10000?token={_SYNTHETIC_TOKEN}\n",
+        )
+
+    monkeypatch.setattr(smoke, "_docker", _fake)
+
+    with pytest.raises(SystemExit) as excinfo:
+        smoke._mint_token("pc-smoke")
+    assert excinfo.value.code == 1
+
+    captured = capsys.readouterr()
+    assert _SYNTHETIC_TOKEN not in captured.err + captured.out
+    assert "token=<redacted>" in captured.err
 
 
 def test_workflow_runs_the_smoke_tool_against_the_image_it_built() -> None:

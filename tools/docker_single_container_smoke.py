@@ -75,6 +75,9 @@ _SHELL_MARKER = '<div id="root"'
 _SCRIPT_RE = re.compile(r"""<script[^>]*\bsrc=["']([^"']+)["']""", re.IGNORECASE)
 _TOKEN_RE = re.compile(r"[?&]token=([^\s&]+)")
 _JS_CONTENT_TYPES = ("javascript", "ecmascript")
+#: What replaces a token span in captured output. A marker, never a deletion: the dump
+#: exists to be read, so a reader must still see THAT a token was printed and where.
+_REDACTED = "<redacted>"
 
 
 class Unmeasurable(Exception):
@@ -89,6 +92,32 @@ def _fail(msg: str) -> NoReturn:
     """Exit 1: the clause does not hold. `NoReturn` so callers may treat it as terminal."""
     print(f"FAIL: {msg}", file=sys.stderr, flush=True)
     sys.exit(1)
+
+
+def redact_secrets(text: str) -> str:
+    """Scrub query-string session tokens out of text this tool is about to print.
+
+    **Why this exists.** The gateway's startup banner prints the *authenticated* dashboard
+    URL — ``gateway.py:4519-4531`` mints a session token, ``dashboard/origin.py:375``
+    builds ``{base}?token={token}`` and ``format_dashboard_urls`` emits it as the line
+    ``   http://localhost:10000?token=…`` — so the container's own stdout carries a live
+    session token, and :func:`_dump_container_logs` then prints 40 lines of that stdout into
+    a GitHub Actions log on a **public** repo, on every push to `main` touching `README.md`
+    or `web/**`. Low impact (loopback-bound container, destroyed seconds later), but a
+    standing scheduled producer of credential-shaped strings in a world-readable log.
+
+    **Why in Python and not ``::add-mask::``.** A mask directive does not retroactively
+    scrub text already written, and the dump sits inside a ``::group::`` fold — so a mask
+    emitted around the fold cannot help. The scrub has to happen on the string, before
+    ``print``.
+
+    Reuses :data:`_TOKEN_RE` — the pattern this file already needs in order to EXTRACT the
+    token in :func:`_mint_token` — so there is one spelling of "a token in a URL", not two
+    that can drift. Only the matched span is rewritten: text carrying no token comes back
+    byte-identical, because a redactor that mangles ordinary log lines has destroyed the
+    diagnostic the dump exists for.
+    """
+    return _TOKEN_RE.sub(lambda m: f"{m.group(0)[0]}token={_REDACTED}", text)
 
 
 # ---------------------------------------------------------------------------
@@ -316,10 +345,14 @@ def _mint_token(name: str) -> str:
     proc = _docker("exec", name, "personalclaw", "token", check=False)
     match = _TOKEN_RE.search(proc.stdout)
     if not match:
+        # stdout provably carries no token URL (the search above just failed on it), but
+        # stderr was never searched and is echoed verbatim into the same public log, so it
+        # goes through the same scrub.
         _fail(
             "`docker exec … personalclaw token` printed no token URL, so the documented way "
             f"into the dashboard does not work: rc={proc.returncode} "
-            f"stdout={proc.stdout.strip()!r} stderr={proc.stderr.strip()!r}"
+            f"stdout={proc.stdout.strip()!r} "
+            f"stderr={redact_secrets(proc.stderr).strip()!r}"
         )
     return match.group(1)
 
@@ -368,6 +401,21 @@ def _assert_asset(base: str, src: str) -> None:
             "the assertion above cannot tell a real bundle from a catch-all"
         )
     _log(f"OK (control): {bogus} → {status} {ctype!r} — not served as JavaScript")
+
+
+def _dump_container_logs(name: str) -> None:
+    """Print the container's tail for diagnosis, with session tokens redacted.
+
+    A function rather than four inline lines in ``main``'s ``finally`` so the redaction is
+    reachable in a test without a Docker daemon: the rail in
+    ``tests/test_docker_single_container.py`` drives THIS, with ``_docker`` faked, and
+    asserts on what actually reaches stdout. Grepping the source for a call would pass on a
+    helper that was defined and never wired in, which is the exact gap this change closes.
+    """
+    logs = _docker("logs", "--tail", "40", name, check=False)
+    print("::group::container logs (last 40 lines, session tokens redacted)", flush=True)
+    print(redact_secrets(logs.stdout + logs.stderr), flush=True)
+    print("::endgroup::", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -426,10 +474,7 @@ def main() -> int:
         return 2
     finally:
         if started:
-            logs = _docker("logs", "--tail", "40", name, check=False)
-            print("::group::container logs (last 40 lines)", flush=True)
-            print(logs.stdout + logs.stderr, flush=True)
-            print("::endgroup::", flush=True)
+            _dump_container_logs(name)
             _docker("rm", "-f", "-v", name, check=False)
             _docker("volume", "rm", "-f", volume, check=False)
 
