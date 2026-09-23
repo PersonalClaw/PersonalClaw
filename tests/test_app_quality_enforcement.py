@@ -35,6 +35,7 @@ import personalclaw
 from personalclaw.apps.manifest import AppManifest
 from personalclaw.apps.quality import (
     AXE_REPORT_RELPATH,
+    EOF_UNREADABLE,
     QualityViolation,
     bundle_test_files,
     frontend_sources,
@@ -338,19 +339,54 @@ class TestCommentState:
         f.write_text("/* why */ const c = '#abc'\n", encoding="utf-8")
         assert token_lint_file(f) == ["1: hex — /* why */ const c = '#abc'"]
 
-    def test_an_unterminated_block_comment_is_reported_through_end_state(self, tmp_path):
+    def test_an_unterminated_block_comment_is_refused_by_name_not_reported_clean(self, tmp_path):
         """A stuck-open tracker reads as "the rest of the file is clean" and silently
         stops catching raw hexes — the ONE way this change could weaken the gate rather
-        than fix it. An unterminated ``/*`` genuinely comments out the rest of the file,
-        so the clean verdict is correct; what must not be silent is the STATE."""
+        than fix it. ``end_state`` made that observable and NOTHING read it (#3347): the
+        badge is decided by :func:`token_lint_bundle`, whose empty dict awarded
+        ``designSystem: "v2"`` to a bundle with a raw hex two lines under the opener.
+
+        So the per-line silence is still correct — an unterminated ``/*`` really does
+        comment the rest of the file out — and it is no longer the whole verdict: the
+        bundle names the file instead of omitting it.
+        """
         text = "/* opened and never closed\nconst c = '#abc'\n"
         assert strip_comments(text).end_state == "block"
-        f = tmp_path / "x.tsx"
+        d = make_bundle(tmp_path, quality={"designSystem": "v2"})
+        (d / "ui" / "src").mkdir(parents=True)
+        f = d / "ui" / "src" / "index.tsx"
         f.write_text(text, encoding="utf-8")
+        # Per-line: correctly empty. It saw no line of CODE violate.
         assert token_lint_file(f) == []
-        # The floor: close the comment and the very same line is caught again.
+        # The badge's input: NOT empty. The file is named, with the reason.
+        assert token_lint_bundle(d) == {"ui/src/index.tsx": [EOF_UNREADABLE]}
+        # …and that reaches the declaration, so "v2" is refused rather than earned.
+        v = verify_app(d, run_tests=never_runs)
+        assert [x.axis for x in v] == ["designSystem"]
+        assert "ui/src/index.tsx" in v[0].reason
+        # The floor: close the comment and the very same line is caught the normal way,
+        # with no EOF entry — the refusal is not a blanket red on every bundle.
         f.write_text("/* opened and closed */\nconst c = '#abc'\n", encoding="utf-8")
         assert token_lint_file(f) == ["2: hex — const c = '#abc'"]
+        assert token_lint_bundle(d) == {"ui/src/index.tsx": ["2: hex — const c = '#abc'"]}
+        # And a clean file stays omitted entirely.
+        f.write_text("/* opened and closed */\nconst c = 'var(--c)'\n", encoding="utf-8")
+        assert token_lint_bundle(d) == {}
+
+    def test_a_line_violation_leads_the_report_when_the_file_is_also_unreadable(self, tmp_path):
+        """Ordering matters to the human reading the refusal: ``verify_app`` renders
+        ``e.g. <file> <first hit>``, so a real line violation must come first and the EOF
+        entry last. Reversed, every such bundle would report the generic EOF sentence and
+        bury the actionable line."""
+        d = make_bundle(tmp_path, quality={"designSystem": "v2"})
+        (d / "ui" / "src").mkdir(parents=True)
+        (d / "ui" / "src" / "index.tsx").write_text(
+            "const c = '#abc'\n/* and then the tracker never closes\n", encoding="utf-8"
+        )
+        assert token_lint_bundle(d) == {
+            "ui/src/index.tsx": ["1: hex — const c = '#abc'", EOF_UNREADABLE]
+        }
+        assert "e.g. ui/src/index.tsx 1: hex" in verify_app(d, run_tests=never_runs)[0].reason
 
 
 # --------------------------------------------------------------------------- #
