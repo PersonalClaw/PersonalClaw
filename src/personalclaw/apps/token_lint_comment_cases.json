@@ -167,13 +167,12 @@
     },
     {
       "name": "red_hex_after_a_url_in_jsx_text",
-      "why": "#3347's first unmodelled shape. A URL in JSX TEXT is not inside a quote, so `//` read as a line comment and truncated the line — the hex after it went unreported with end_state still 'code', invisible to every EOF control. `://` is a scheme separator: only the IMMEDIATELY preceding character counts, so `case 'x': // note` is still prose.",
+      "why": "#3347's first unmodelled shape, pinned on the `://` line itself: a URL in JSX TEXT is not inside a quote, so `//` read as a line comment and truncated the line — a hex sharing that SAME line went unreported with end_state still 'code', invisible to every EOF control. `://` is a scheme separator: only the IMMEDIATELY preceding character counts, so `case 'x': // note` is still prose.",
       "lines": [
-        "    <p>full docs at https://personalclaw.dev/apps</p>",
-        "    <div style={{ color: '#1a2b3c' }} />",
+        "    <p>full docs at https://personalclaw.dev/apps — color #1a2b3c</p>",
         "    <a href=\"/x\">{/* see #1783 */}</a>"
       ],
-      "expected": [[], ["hex"], []],
+      "expected": [["hex"], []],
       "end_state": "code"
     },
     {
