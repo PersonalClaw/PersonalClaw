@@ -879,10 +879,16 @@ def pytest_sessionfinish(session, exitstatus):
     root = real_home_guard.REAL_HOME
     changes = real_home_guard.scan_changes(root, _real_home_since_ns)
     report = real_home_guard.format_report(root, changes)
+    # Persist before printing: the exitstatus below fails the run WITHOUT failing any
+    # test, so the JUnit XML cannot carry the offending paths and STDOUT is the one
+    # place they would otherwise live (#3386).
+    written = real_home_guard.write_report(session.config.rootpath, report)
     reporter = session.config.pluginmanager.get_plugin("terminalreporter")
     if reporter is not None:
         reporter.write_sep("=", "real-home rail", red=bool(changes))
         reporter.write_line(report)
+        if written is not None:
+            reporter.write_line(f"real-home rail report written to {written}")
     else:  # pragma: no cover - only when the terminal plugin is disabled
         print(report)
     if changes:
