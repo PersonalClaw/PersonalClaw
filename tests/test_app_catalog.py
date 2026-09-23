@@ -784,6 +784,92 @@ def test_local_source_registry_surfaces_remote_apps_without_dirscan(tmp_path):
     assert e["pointer"] == "https://github.com/acme/cool.git#apps/cool"
 
 
+# ── ET-5: a listing's provenance reaches the card ────────────────────────────
+#
+# The index has published ``maintainer`` / ``last_validated`` / ``last_scan_verdict`` since ET-3,
+# and the catalog dropped all three on the floor — so the Store could show a community listing
+# with nothing on it naming who listed it or whether anyone had looked. Measured against the
+# live registry (``PersonalClaw/registry`` @ c0b35b6c8) before this landed: 4/4 listings publish
+# all three fields, 0/4 arrived on a card.
+#
+# The FIXTURE BELOW IS THAT PAYLOAD'S SHAPE, key for key, so the test breaks if the published
+# spelling and the parser drift apart rather than agreeing only in this file.
+
+
+def test_a_listing_carries_its_provenance_through_to_the_card(tmp_path):
+    """The three index fields reach the wire, renamed to the card's camelCase once.
+
+    snake_case in the index, camelCase on the wire — two vocabularies with one translation
+    point (``_pointer_to_entry``). A test that asserted only the parser would pass while the
+    card still rendered nothing, which is exactly the state this atom found."""
+    src = tmp_path / "reg-src"
+    src.mkdir()
+    _write_registry(
+        src,
+        [
+            {
+                "name": "channel-null",
+                "repo": "https://github.com/PersonalClaw/channel-null",
+                "types": ["channel"],
+                "permissions_declared": [],
+                "license": "MIT",
+                "maintainer": "keyurgolani",
+                "added": "2026-09-02",
+                "last_validated": "2026-09-07T12:19:15Z",
+                "last_scan_verdict": "clean",
+            }
+        ],
+    )
+    catalog.add_local_source(str(src))
+    e = next(a for a in catalog.available_catalog()["remoteApps"] if a["name"] == "channel-null")
+    assert e["maintainer"] == "keyurgolani"
+    assert e["lastValidated"] == "2026-09-07T12:19:15Z"
+    assert e["lastScanVerdict"] == "clean"
+    # ``maintainer`` is NOT folded into ``author``. "who wrote this" and "who listed it here"
+    # are different claims, and collapsing them would let a listing assert authorship it never
+    # made — this listing declares no author at all.
+    assert e["author"] == ""
+
+
+def test_a_listing_that_declares_no_provenance_carries_none(tmp_path):
+    """Absent stays absent — empty strings, never a placeholder.
+
+    The frontend renders NOTHING for an all-empty triple (``provenance.registryListing`` →
+    ``null``). A backend that helpfully substituted ``"unknown"`` would turn that silence into
+    a line on the card that reads like a finding about the app."""
+    src = tmp_path / "reg-src"
+    src.mkdir()
+    _write_registry(src, [{"name": "bare-app", "displayName": "Bare"}])
+    catalog.add_local_source(str(src))
+    e = next(a for a in catalog.available_catalog()["remoteApps"] if a["name"] == "bare-app")
+    assert (e["maintainer"], e["lastValidated"], e["lastScanVerdict"]) == ("", "", "")
+
+
+def test_a_dirscanned_card_carries_no_registry_provenance(tmp_path):
+    """**A done-when clause: local/first-party cards are unchanged.**
+
+    A dir-scanned bundle has no index listing behind it, so there is nothing for it to claim —
+    and ``_pointer_to_entry`` is the only site that fills these fields, which is what makes
+    that a property of the code rather than a promise. This test is what would fail if a scan
+    path started populating them (and with it, the ONE reason the frontend needs no
+    is-this-a-registry-card branch).
+
+    Asserted over the WHOLE catalog, not one card: a partition is the claim, so a single
+    hand-picked entry could pass while a sibling list regressed."""
+    src = tmp_path / "myapps"
+    src.mkdir()
+    _local_app(src, "tavily-search")
+    catalog.add_local_source(str(src))
+    cat = catalog.available_catalog()
+    scanned = [*cat["localApps"], *cat["bundled"], *cat["gitApps"]]
+    # Vacuity floor: an empty list would make the loop below trivially true.
+    assert scanned, "the fixture must produce at least one dir-scanned card"
+    for e in scanned:
+        claimed = (e["maintainer"], e["lastValidated"], e["lastScanVerdict"])
+        why = f"{e['name']} ({e['sourceKind']}) grew registry provenance it has no listing for"
+        assert claimed == ("", "", ""), why
+
+
 def test_registry_index_is_cached_by_ttl(tmp_path):
     src = tmp_path / "reg-src"
     src.mkdir()
