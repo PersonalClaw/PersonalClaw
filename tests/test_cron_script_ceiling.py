@@ -25,6 +25,7 @@ same shape (see the last test) rather than left unexercised.
 from __future__ import annotations
 
 import json
+import os
 import resource
 import textwrap
 from pathlib import Path
@@ -261,7 +262,10 @@ def test_the_ceiling_shim_wraps_the_sandbox_and_not_the_reverse(
     ), f"the shim appears inside the sandbox wrap, not outside it: {argv}"
     # Immediately inside the shim sits whatever wrap_argv produced: the seatbelt/namespace
     # wrapper on a host that has one, and the bare launcher on a host that has none.
-    assert inner[0] in ("env", "unshare", "sandbox-exec", "python3"), (
+    # Compared on the BASENAME: the macOS wrap resolves its own enforcement binaries to
+    # absolute paths (`/usr/bin/env`, `/usr/bin/sandbox-exec`) rather than leaving bare names
+    # for the child's `execvp` — matching on the bare string here pinned the defect.
+    assert os.path.basename(inner[0]) in ("env", "unshare", "sandbox-exec", "python3"), (
         f"expected the OS-sandbox wrapper (or the bare launcher) inside the shim, "
         f"got {inner[0]!r}"
     )
@@ -277,8 +281,9 @@ def test_the_ceiling_survives_an_intervening_os_sandbox_wrapper(
     child consumes. It cannot be driven through the real backend on every host because the
     binary may be absent or its runtime capability probe may fail, leaving both orderings
     with the same argv. So stand in a wrapper with the same shape the real macOS wrap has —
-    ``env -u NAME <argv>``, the literal prefix ``sandbox_exec_argv`` builds — and check the
-    ceiling still lands on the far side of it.
+    ``/usr/bin/env -u NAME <argv>``, the prefix ``sandbox_exec_argv`` builds, absolute
+    because the wrapper resolves its own binaries rather than leaving them for the child's
+    ``$PATH`` — and check the ceiling still lands on the far side of it.
     """
     _set_sandbox_config(monkeypatch, tmp_path, nofile=_CEILING, max_pids=0, max_rss_mb=0)
     monkeypatch.setattr(
