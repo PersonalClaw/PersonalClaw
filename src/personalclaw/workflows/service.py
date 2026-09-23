@@ -57,6 +57,7 @@ from personalclaw.workflows.models import (
     RunStatus,
     WorkflowDef,
     WorkflowRun,
+    spec_path,
     valid_name,
     walk,
 )
@@ -902,15 +903,15 @@ def output(run_id: str, node_id: str) -> dict[str, Any]:
         root = Node.from_dict(spec.get("root") or {})
     except ValueError as exc:
         return _service_failure("WF_RUN_BAD_SPEC", f"unreadable spec: {exc}")
-    paths = [p for p, node in walk(root) if node.id == node_id]
+    paths = {p for p, node in walk(root) if node.id == node_id}
     if not paths:
         return _service_failure("WF_NODE_NOT_FOUND", f"no node {node_id!r} in this run's spec")
     instances = store.read_state(run_id)
-    matched = [
-        p
-        for p in instances
-        if any(p == b or p.startswith(f"{b}#") or p.startswith(f"{b}@") for b in paths)
-    ]
+    # Instance → spec, then EQUALITY. A prefix test (`p.startswith(b + "@")`) both under- and
+    # over-matched: it missed `root.body@0.children[0]` for the spec path of the child, and
+    # claimed it for the spec path of the BODY — so a container answered with a descendant's
+    # output (#3371).
+    matched = [p for p in instances if spec_path(p) in paths]
     if not matched:
         return _service_failure(
             "WF_NODE_NOT_RUN", f"node {node_id!r} has not produced an output yet"
@@ -968,16 +969,13 @@ def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
         return _service_failure("WF_RUN_BAD_SPEC", f"unreadable spec: {exc}")
 
     node_by_path = dict(walk(root))
-    id_paths = [p for p, node in node_by_path.items() if node.id == node_id]
+    id_paths = {p for p, node in node_by_path.items() if node.id == node_id}
     if not id_paths:
         return _service_failure("WF_NODE_NOT_FOUND", f"no node {node_id!r} in this run's spec")
 
     instances = store.read_state(run_id)
-    matched = [
-        p
-        for p in instances
-        if any(p == b or p.startswith(f"{b}#") or p.startswith(f"{b}@") for b in id_paths)
-    ]
+    # Same instance→spec equality as `output()`, for the same reason (#3371).
+    matched = [p for p in instances if spec_path(p) in id_paths]
     if not matched:
         return _service_failure(
             "WF_NODE_NOT_RUN", f"node {node_id!r} has not produced an output yet"
@@ -992,8 +990,7 @@ def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
             f"node {node_id!r} is {inst.state.value}, not terminal — nothing to reconstruct yet",
         )
 
-    base = target.split("#")[0].split("@")[0]
-    node = node_by_path.get(base)
+    node = node_by_path.get(spec_path(target))
 
     # The ledger slice for THIS instance. `journal.ledger` reads events.jsonl (the LEDGER_KINDS
     # subset the flywheel reads); filtering to the exact instance_path keeps a sibling foreach
@@ -2499,20 +2496,26 @@ def _nodes_of(run_id: str) -> list[dict[str, Any]]:
                     ids[path] = node.id
         except ValueError:
             pass
-    # How many instances share each base path — the `12` in "[3/12]". Counted here rather than
+    # How many instances share each SPEC path — the `12` in "[3/12]". Counted here rather than
     # stored, so a rewind that re-expands a fan-out cannot leave a stale total behind.
+    #
+    # Keyed by `spec_path`, not by truncation at the first marker: a fan-out inside a loop BODY
+    # was otherwise counted against the body, so a three-item foreach beside one sibling rendered
+    # `[N/4]` (#3371).
     totals: dict[str, int] = {}
     for path in instances:
-        totals[path.split("#")[0].split("@")[0]] = (
-            totals.get(path.split("#")[0].split("@")[0], 0) + 1
-        )
+        totals[spec_path(path)] = totals.get(spec_path(path), 0) + 1
 
     out: list[dict[str, Any]] = []
     for path in sorted(instances):
         inst = instances[path]
-        base = path.split("#")[0].split("@")[0]
+        base = spec_path(path)
         row: dict[str, Any] = {
             "instance_path": path,
+            # The run view's LABEL, not just an api field: `web/src/pages/workflows/runDag.ts:136`
+            # renders each DAG row from `row.node.node_id` and the chat workflow card deep-links
+            # `?node=<node_id>`. Resolve it off the wrong spec path and every sibling in a loop
+            # body reads as the body, so the failing node cannot be named or opened (#3371).
             "node_id": ids.get(base, ""),
             "state": inst.state.value,
             "attempt": inst.attempt,
