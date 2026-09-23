@@ -628,19 +628,25 @@ function setupWindowContents(win, { attachBridge = true } = {}) {
 
   // Create a WebContentsView positioned below the tab bar.
   //
-  // The sandbox flag travels WITH the preload and only with it. `preload.js` does
-  // `require("./capabilities")`; a sandboxed preload gets a polyfilled `require` that
-  // resolves `electron` and three builtins and nothing else, so at Electron's default the
-  // preload throws on its second line and `window.pclawDesktop` is never defined — the
-  // bridge is absent rather than broken, which is why nothing ever logged. The no-bridge
-  // branch keeps the sandbox: it exists for a gateway on the network, the one origin here
-  // we do not trust, so it must not be the one that loses it. `connectDialog.js` pairs the
-  // two the same way.
+  // NO `sandbox: false` here, deliberately — Electron's renderer sandbox stays ON, at its
+  // default. It was off for exactly one line: `preload.js` used to
+  // `require("./capabilities")`, and a sandboxed preload's polyfilled `require` resolves
+  // `electron` plus three builtins and nothing else, so the preload threw on its second
+  // line and `window.pclawDesktop` was never defined — absent rather than broken, which is
+  // why nothing ever logged. #3348 inlined those two constants instead, so the bridge loads
+  // with the sandbox intact.
+  //
+  // This is the view that loads the dashboard, i.e. the one that renders agent- and
+  // app-authored HTML and script, so it is the LAST one that should give up an OS boundary:
+  // the iframe `sandbox` attribute the widget frames use is a web-platform boundary, and
+  // Chromium does not promise a null-origin blob frame its own renderer process.
+  // `connectDialog.js` still pairs its preload with `sandbox: false` because
+  // `connectPreload.js` does need a relative require; `capabilities.test.js` asserts that
+  // pairing as a property (a preload needing Node ⇒ the flag) rather than as a spelling, so
+  // neither half can drift silently.
   const view = new WebContentsView({
     webPreferences: {
-      ...(attachBridge
-        ? { preload: path.join(__dirname, "preload.js"), sandbox: false }
-        : {}),
+      ...(attachBridge ? { preload: path.join(__dirname, "preload.js") } : {}),
       contextIsolation: true,
       nodeIntegration: false,
     },

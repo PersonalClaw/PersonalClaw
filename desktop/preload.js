@@ -1,5 +1,53 @@
 const { contextBridge, ipcRenderer } = require("electron");
-const { CAPABILITIES, IPC_CHANNELS } = require("./capabilities");
+
+/**
+ * The vocabulary, INLINED rather than `require("./capabilities")`d — and that is the
+ * whole reason this window keeps the Chromium process sandbox (#3348).
+ *
+ * A sandboxed preload gets a polyfilled `require` that resolves `electron` plus three
+ * builtins (`events`, `timers`, `url`) and nothing else, so a relative path throws and
+ * the entire preload is skipped SILENTLY: `window.pclawDesktop` is simply absent, which
+ * is how a dead bridge shipped green (#3346). The fix that shipped there bought the
+ * bridge back by turning the renderer sandbox off. It did not have to. Nothing else in
+ * this file needs Node — `contextBridge` and `ipcRenderer` are both available to a
+ * sandboxed preload — so the two constants come inline and `main.js` keeps the sandbox.
+ *
+ * That matters because THIS is the view that loads the dashboard, and the dashboard
+ * renders agent- and app-authored HTML and script (widget frames, artifact and file
+ * previews). The iframe `sandbox` attribute those use is a web-platform boundary; the
+ * Chromium process sandbox is an OS one, and Chromium gives no guarantee that a
+ * null-origin blob or `srcdoc` frame lands in its own renderer process.
+ *
+ * Two copies of a vocabulary is two things to drift, so it is a rail rather than a
+ * comment: `test/bridgeLoads.test.js` executes this file under a require shim shaped
+ * like the sandboxed one and asserts both constants deep-equal `capabilities.js`.
+ * Editing one side alone reds the suite.
+ */
+const IPC_PREFIX = "pclaw-desktop:";
+
+const CAPABILITIES = [
+  "audio_capture",
+  "global_hotkey",
+  "native_notifications",
+  "tray",
+  "screen_capture",
+  "login_item",
+  "system_audio",
+];
+
+const IPC_CHANNELS = {
+  probe: `${IPC_PREFIX}probe`,
+  request: `${IPC_PREFIX}request`,
+  snapshot: `${IPC_PREFIX}snapshot`,
+  state: `${IPC_PREFIX}state`,
+  hotkeyBind: `${IPC_PREFIX}hotkey-bind`,
+  capturing: `${IPC_PREFIX}capturing`,
+  pushToTalk: `${IPC_PREFIX}push-to-talk`,
+  loginItemGet: `${IPC_PREFIX}login-item-get`,
+  loginItemSet: `${IPC_PREFIX}login-item-set`,
+  notify: `${IPC_PREFIX}notify`,
+  notificationActivate: `${IPC_PREFIX}notification-activate`,
+};
 
 /**
  * The ONE bridge the renderer gets (DC-2 C1).
