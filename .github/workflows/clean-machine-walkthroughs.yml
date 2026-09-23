@@ -32,6 +32,18 @@
 name: Clean-machine walkthroughs (DIST-11)
 
 on:
+  # SCHEDULED, because this file's own opening argument is that a runner is clean BY
+  # CONSTRUCTION "not by someone remembering to reset it" — and while the only trigger was
+  # `workflow_dispatch`, the whole thing depended on someone remembering to DISPATCH it.
+  # That is #3353 §3 and it was the last hole in the argument above.
+  #
+  # Weekly rather than nightly, on purpose. The subject here is the fresh-machine install
+  # paths, which move on release boundaries rather than per commit, and `full.yml` already
+  # runs the per-commit surface nightly. Sunday 06:23 UTC is off the hour and clear of the
+  # three slots this repo has already taken — `ghcr-anonymous-pull` 05:41 daily, `full`
+  # 07:00 daily, `headless-run-smoke` 07:00 Mondays.
+  schedule:
+    - cron: "23 6 * * 0"
   workflow_dispatch:
     inputs:
       which:
@@ -39,6 +51,15 @@ on:
         type: choice
         default: all
         options: [all, v1-wheel, v3-container, v4-selfupdate]
+
+# THE `which` INPUT HAS NO VALUE ON A SCHEDULED RUN, AND THAT IS THE TRAP THE SCHEDULE WALKS
+# INTO. The `inputs` context is populated only for `workflow_dispatch` / `workflow_call`; on a
+# `schedule` event `inputs.which` is null, so the original `inputs.which == 'all'` guards would
+# have matched NOTHING and every scheduled run would have skipped all three walkthroughs while
+# reporting green — precisely the confusion the header forbids ("a skipped step and a passing
+# step look identical on the board"). Each job guard below therefore reads
+# `inputs.which || 'all'`: the dispatch input when there is one, `all` when there is not. A
+# job-level `if:` cannot read `env`, so the fallback is repeated per job rather than named once.
 
 # Read-only by default. No job here needs to write to the repo, and a walkthrough that
 # could push is not a walkthrough.
@@ -58,8 +79,12 @@ jobs:
   # bare `python:3.12-slim` has no Node at all, and the job asserts that before it begins —
   # otherwise the Node-absent claim is an assumption rather than a precondition.
   v1-wheel:
-    if: ${{ inputs.which == 'all' || inputs.which == 'v1-wheel' }}
+    if: ${{ (inputs.which || 'all') == 'all' || inputs.which == 'v1-wheel' }}
     runs-on: ubuntu-latest
+    # Bounded like every other workflow here (#3318/#3320), and sized ABOVE measured
+    # runtime rather than near it (#3326 was the cost of the other mistake). Measured 30s
+    # in run 35814995463.
+    timeout-minutes: 20
     container: python:3.12-slim
     steps:
       - uses: actions/checkout@v7
@@ -154,10 +179,39 @@ jobs:
             exit 1
           fi
           echo "gateway on $PORT"
-          # Status captured separately so a failure never prints the URL (which carries the
-          # token). Only the code is echoed.
-          CODE=$(curl -s -o /tmp/onb.json -w '%{http_code}' \
-                   "http://127.0.0.1:$PORT/api/onboarding?token=$TOKEN")
+          # NO CURL IN THIS IMAGE, AND THAT IS WHY THIS STEP EXITED 127. `python:3.12-slim` ships
+          # neither curl nor wget. The step shelled out to curl and died the moment V1 got far
+          # enough to reach it — which it never had while the job was still failing three steps
+          # earlier on a wheel it could not build. Measured on `main` at 607f8481d, run
+          # 35815814382: `curl: not found`, exit code 127, with the gateway already up ("gateway
+          # on 36243"). So the released-wheel fix was correct and simply uncovered the next red.
+          #
+          # Installing curl would mean provisioning the clean machine in order to run the
+          # clean-machine walkthrough, so the probe uses the one HTTP client this container is
+          # guaranteed to have — its own Python, which is also what the wheel just installed into.
+          #
+          # Status still captured separately so no failure path prints the URL (which carries the
+          # token), and the token is now further from the log than before: the URL is assembled
+          # INSIDE the process from the environment rather than passed as an argument, so it never
+          # reaches a command line that `ps` could read.
+          CODE=$(PORT="$PORT" TOKEN="$TOKEN" python3 - <<'PY'
+          import os, urllib.error, urllib.parse, urllib.request
+          # Percent-encoded even though a real token is `token_urlsafe` and needs none:
+          # http.client REFUSES a URL containing a space outright (InvalidURL), so an unquoted
+          # value would surface a token-shape surprise as a traceback that looks nothing like
+          # the auth failure it actually would be.
+          url = (f"http://127.0.0.1:{os.environ['PORT']}/api/onboarding"
+                 f"?token={urllib.parse.quote(os.environ['TOKEN'], safe='')}")
+          try:
+              with urllib.request.urlopen(url, timeout=30) as resp:
+                  body, code = resp.read(), resp.status
+          except urllib.error.HTTPError as exc:  # a 403 is a RESULT here, not a crash
+              body, code = exc.read(), exc.code
+          with open("/tmp/onb.json", "wb") as fh:
+              fh.write(body)
+          print(code)
+          PY
+          )
           if [ "$CODE" != "200" ]; then
             echo "::error::GET /api/onboarding returned $CODE (expected 200)"
             exit 1
@@ -197,8 +251,12 @@ jobs:
   # The documented two-command container bring-up, and the part everyone forgets: state must
   # survive `compose down` / `up`. That is the assertion, not the bring-up.
   v3-container:
-    if: ${{ inputs.which == 'all' || inputs.which == 'v3-container' }}
+    if: ${{ (inputs.which || 'all') == 'all' || inputs.which == 'v3-container' }}
     runs-on: ubuntu-latest
+    # Measured 1m14s pulling published images (run 35810180530) and 3m22s when the images
+    # were built from source (run 35814995463), so this bound clears the slower of the two
+    # shapes by an order of magnitude.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
@@ -329,7 +387,9 @@ jobs:
   # The desktop arm runs on macOS because that is where a desktop install lives; running it
   # on Linux would assert the wrong platform's path.
   v4-selfupdate:
-    if: ${{ inputs.which == 'all' || inputs.which == 'v4-selfupdate' }}
+    if: ${{ (inputs.which || 'all') == 'all' || inputs.which == 'v4-selfupdate' }}
+    # Measured 26-30s per arm in run 35814995463.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -404,6 +464,8 @@ jobs:
     needs: [v1-wheel, v3-container, v4-selfupdate]
     if: always()
     runs-on: ubuntu-latest
+    # Measured 3s; it writes a step summary and nothing else.
+    timeout-minutes: 10
     steps:
       - name: Summarise for the Execution log
         run: |
