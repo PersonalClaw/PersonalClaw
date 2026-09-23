@@ -260,25 +260,52 @@ bug in the rule.
 The shell ships for **macOS (Apple silicon)** and **Linux x86-64**. There is no Windows
 build — see below for exactly why and what would change that.
 
-### macOS — .dmg, unsigned, and one approval on first launch
+### macOS — .dmg, not notarized, and one approval on first launch
 
 Every release attaches `PersonalClaw-<version>.dmg`, built by CI on a macOS runner from
 the same tree as the release tag. Open it and drag **PersonalClaw** to Applications.
 
-**It is not code-signed or notarized, and unlike Linux that costs you one step.**
-Gatekeeper *does* consume a signature on macOS, so the first launch will not work by
-double-click — macOS will say the app "cannot be opened because the developer cannot be
-verified". To approve it once:
+**Do not use the one-click Install button — it cannot work on this build.** Recent macOS
+versions offer an **Install** affordance when you open a `.dmg`. Clicking it here fails
+with:
+
+> Could not install. Nothing was changed. You can still drag the app to Applications.
+
+**That dialog is expected, and it is telling you the truth.** Your download is not
+corrupt and nothing needs retrying — macOS reserves the one-click install path for apps
+signed with a **Developer ID** *and* notarized by Apple, and this one is deliberately
+neither (what it *is* signed with: below). Clicking **Install** again will produce exactly
+the same dialog, because the artifact has not changed. The supported path is the one the
+dialog itself names:
+
+1. **Drag PersonalClaw to Applications** (the dmg window shows both the app and an
+   Applications shortcut for exactly this).
+2. **Approve it once** under System Settings → Privacy & Security — the next section.
+
+**It is not notarized, and unlike Linux that costs you one step.** Gatekeeper *does*
+consume a signature on macOS, so the first launch will not work by double-click — macOS
+will say the app "cannot be opened because the developer cannot be verified". To approve
+it once:
 
 1. Try to open the app (double-click). Let macOS refuse.
 2. Open **System Settings → Privacy & Security**, scroll to the message about
    PersonalClaw, and click **Open Anyway**.
 3. Confirm. macOS remembers the decision — you will not be asked again for this build.
 
-That is the whole cost of an unsigned build, and it recurs once per installed version.
-Signing it away would require a paid Apple Developer account for notarization; the
-project has deliberately not taken that on, so *where you downloaded it* is the integrity
-story — get the dmg from the GitHub Release page only.
+That is the whole cost, and it recurs once per installed version. Removing it would
+require a paid Apple Developer account for notarization; the project has deliberately not
+taken that on, so *where you downloaded it* is the integrity story — get the dmg from the
+GitHub Release page only.
+
+**What "not notarized" means precisely**, because "unsigned" is the word people reach for
+and it is not accurate. The app *is* code-signed, with an **ad-hoc** signature: one that
+carries no identity, no certificate and no Apple account, and that every arm64 app needs
+simply to be allowed to execute. What it does not carry is a **Developer ID** signature and
+Apple's notarization, which is what Gatekeeper and the dmg's one-click Install actually ask
+for. So the signature you can verify locally is a genuine integrity check over the bundle's
+contents — `codesign --verify --deep --strict /Applications/PersonalClaw.app` should exit
+cleanly, and it will fail if a single file in the app was altered after it was built — but it
+proves nothing about *who* built it. That is why the download source is the integrity story.
 
 **Apple silicon only.** The dmg carries a PyInstaller-bundled backend, and a frozen
 Python binary cannot be cross-compiled, so the artifact matches the CI runner's

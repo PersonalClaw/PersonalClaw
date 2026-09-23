@@ -19,9 +19,11 @@
   "build": {
     "appId": "io.personalclaw.app",
     "productName": "PersonalClaw",
+    "afterPack": "./afterPack.js",
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "icon.png",
+      "identity": null,
       "target": [
         "dmg"
       ]

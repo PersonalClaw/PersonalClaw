@@ -219,14 +219,55 @@ desktop: pyinstaller
 	cp -R $(PYI_BUNDLE_DIR) $(DESKTOP_DIR)/backend-dist/
 	npm ci  # workspace root install (see web-build note); covers the desktop member
 
-## desktop-dist: build the UNSIGNED macOS .dmg in desktop/dist/.
+## desktop-dist: build the macOS .dmg in desktop/dist/, and VERIFY its signature state.
 ## Run on macOS — release.yml's `desktop-mac` job is the canonical caller.
-## No signing step by design (owner ruling 2026-09-22: producing the installer does
-## not require signing, and signing needs a paid Apple Developer account). Unlike
-## Linux, Gatekeeper DOES consume a signature, so a user must approve the app once
-## under System Settings -> Privacy & Security — see docs/guides/desktop.md.
+##
+## The app is shipped AD-HOC SIGNED AND NOT NOTARIZED, by owner ruling 2026-09-22
+## (producing the installer does not require a real signature, and one needs a paid Apple
+## Developer account the project has deliberately not bought). Getting to that state took
+## two defects, because each obvious step does something other than what it reads like:
+##
+##   1. "WE ADDED NO SIGNING STEP" IS NOT "THE OUTPUT IS UNSIGNED". electron-builder
+##      AUTO-DISCOVERS an identity from the build machine's login keychain, so a local
+##      build shipped PersonalClaw.app signed `Authority=MeetNote Developer` — an
+##      unrelated third party's identity on a would-be public release artifact — while
+##      this comment claimed the build was unsigned. `CSC_IDENTITY_AUTO_DISCOVERY=false`
+##      below and `"identity": null` in desktop/package.json both stop that. Keep BOTH:
+##      the env var is lost when the build is invoked another way (npm directly, CI, a
+##      future script), the manifest key is lost if someone regenerates it from a
+##      template. DO NOT remove either one to "fix" a signing problem.
+##   2. DISABLING SIGNING DOES NOT LEAVE THE BUNDLE UNSIGNED — it leaves ELECTRON'S STOCK
+##      LINKER SEAL, which declares that sealed resources must be present while sealing
+##      none of Frameworks, the helper apps, app.asar or the PyInstaller backend
+##      (`Identifier=Electron`, `flags=0x20002(adhoc,linker-signed)`, `Sealed
+##      Resources=none`, `Info.plist=not bound`). macOS refuses a DAMAGED signature more
+##      firmly than an absent one, so that build failed to install HARDER than the
+##      foreign-signed one and presented with no name. `desktop/afterPack.js` therefore
+##      ad-hoc re-signs the packed bundle — after electron-builder packs, BEFORE the dmg
+##      is assembled, because a post-dmg step would sign an app the dmg already contains.
+##      Ad-hoc (`--sign -`) needs no identity, keychain or Apple account, so it is not a
+##      reversal of (1). Stripping the signature instead is NOT an option: on Apple
+##      silicon an arm64 bundle with no signature installs and then refuses to launch.
+##
+## The verification below is what makes the signature state OBSERVED rather than assumed.
+## It is not optional and it is not cheap to write correctly: `codesign -dv` is too quiet
+## to ever print `Authority=`, an unsigned app makes codesign EXIT NON-ZERO, and an
+## authority-absence check passes the damaged bundle from (2). See the script's header.
+##
+## Unlike Linux, Gatekeeper DOES consume a signature, and an ad-hoc signature is not a
+## notarized one — so `spctl` still rejects this app and a user must approve it once under
+## System Settings -> Privacy & Security after dragging it to Applications. That is
+## expected, is NOT gated here, and is documented in docs/guides/desktop.md.
 desktop-dist: desktop
-	cd $(DESKTOP_DIR) && npm run dist
+	cd $(DESKTOP_DIR) && CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist
+	@set -eu; \
+	  n=$$(ls -1d $(DESKTOP_DIR)/dist/*/PersonalClaw.app 2>/dev/null | wc -l | tr -d ' '); \
+	  if [ "$$n" -ne 1 ]; then \
+	    echo "desktop-dist: expected exactly ONE built .app under $(DESKTOP_DIR)/dist/*/, found $$n." >&2; \
+	    echo "desktop-dist: refusing to report the signature gate as passed without an artifact to check." >&2; \
+	    exit 1; \
+	  fi; \
+	  scripts/verify_macos_app_signature.sh "$$(ls -1d $(DESKTOP_DIR)/dist/*/PersonalClaw.app)"
 
 ## desktop-dist-linux: build the UNSIGNED Linux AppImage + .deb in desktop/dist/ (DC-6).
 ## Run on a Linux host — release.yml's `desktop-linux` job is the canonical caller.

@@ -247,7 +247,11 @@ jobs:
           done
 
   desktop-mac:
-    # macOS desktop shell — UNSIGNED .dmg (owner ruling 2026-09-22: "We want to generate
+    # macOS desktop shell — AD-HOC SIGNED, NOT NOTARIZED .dmg. "Unsigned" was the word used
+    # here originally and it is not accurate: an arm64 bundle must carry at least an ad-hoc
+    # signature to execute, and the signature is ad-hoc precisely so it needs no Apple
+    # account. What we do not have is a Developer ID and notarization, which is what
+    # Gatekeeper actually asks for. (owner ruling 2026-09-22: "We want to generate
     # an installable app release. We don't need to be able to sign it in order to produce
     # the installable app. Signing needs apple developer account with an ongoing payment
     # which we are not ready for right now.")
@@ -286,10 +290,15 @@ jobs:
           uv python install 3.12
           uv venv .venv --python 3.12
           uv pip install --python .venv/bin/python '.[anthropic,openai,slack]' pyinstaller
-      - name: Build unsigned dmg
+      - name: Build the dmg (ad-hoc signed, not notarized)
         # make desktop-dist = web-build (SPA) -> pyinstaller (the bundled
         # personalclaw-backend the shell spawns) -> stage into desktop/backend-dist
-        # -> electron-builder --mac (dmg per desktop/package.json).
+        # -> electron-builder --mac (dmg per desktop/package.json, whose afterPack hook
+        # ad-hoc re-signs the packed bundle before the dmg is assembled). The target sets
+        # CSC_IDENTITY_AUTO_DISCOVERY=false and then verifies the built .app is ad-hoc
+        # signed with a VALID seal and no third-party authority — so a runner that ever
+        # acquired a keychain identity, or an Electron bump that reintroduces the stock
+        # linker seal, fails here instead of shipping an uninstallable dmg.
         run: make desktop-dist
       - name: Smoke the artifact (release-blocking)
         # The Electron shell is NOT launched (no display, same call as desktop-linux).
@@ -307,6 +316,7 @@ jobs:
         # because `desktop-linux` needs the identical assertion and two copies drift.
         run: |
           set -euo pipefail
+          ROOT="$PWD"
           cd desktop/dist
           ls -la
           DMG=$(ls -1 *.dmg | head -1)
@@ -318,6 +328,20 @@ jobs:
           test -n "$APP"
           echo "mounted: $DMG -> $APP"
           test -f "$APP/Contents/Resources/app.asar"
+          # Verify the signature state of the app AS SHIPPED INSIDE THE DMG: ad-hoc signed,
+          # seal valid over the bundle, no third-party authority.
+          #
+          # THIS RUNNER NEVER REPRODUCED THE FOREIGN-IDENTITY BUG — it has no keychain
+          # identity, so auto-discovery finds nothing. It WOULD have reproduced the
+          # damaged-seal bug, because that seal comes from Electron itself rather than the
+          # keychain, and it would have shipped an uninstallable dmg. So local and CI are
+          # now held to one standard instead of differing silently.
+          #
+          # Not a duplicate of the desktop-dist check: that one inspects
+          # desktop/dist/*/PersonalClaw.app (the build output), this one inspects the copy
+          # a user actually mounts and drags to Applications — the artifact whose failed
+          # Install started all of this.
+          "$ROOT/scripts/verify_macos_app_signature.sh" "$APP"
           BACKEND="$APP/Contents/Resources/backend-dist/personalclaw-backend/personalclaw-backend"
           test -x "$BACKEND"
           "$GITHUB_WORKSPACE/scripts/smoke_backend_bundle.sh" "$BACKEND"
