@@ -166,8 +166,12 @@ async def list_items(request: web.Request) -> web.Response:
         # Searching WITHIN the Archived view must find archived items (the no-query
         # Archived list shows them; a search there should too). Default hides them.
         include_archived = request.query.get("include_archived") in ("1", "true", "yes")
-        all_results = retriever.search(
-            q, limit=limit * 3, include_archived=include_archived
+        # OFF the loop thread: `search()` is synchronous and its rerank stage (KBVS-2) can
+        # spend a whole model round-trip inside, which on the loop would stall every other
+        # request the gateway is serving — not just this one (#3097). Both native agent
+        # knowledge tools already hop it the same way.
+        all_results = await asyncio.to_thread(
+            retriever.search, q, limit=limit * 3, include_archived=include_archived
         )  # over-fetch to allow filtering
         # Batch fetch all candidate items (avoid N+1)
         result_ids = [r["id"] for r in all_results]
@@ -1777,7 +1781,8 @@ async def search_for_context(request: web.Request) -> web.Response:
     embedder = _get_embedder(request)
     embed_fn = embedder.embed if embedder and embedder.is_available() else None
     retriever = HybridRetriever(store, embedder=embed_fn)
-    results = retriever.search(q, limit=limit)
+    # Off the loop thread for the same reason as `list_items` above (#3097).
+    results = await asyncio.to_thread(retriever.search, q, limit=limit)
 
     cards = []
     total_tokens = 0
