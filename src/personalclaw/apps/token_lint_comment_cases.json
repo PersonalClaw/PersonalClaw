@@ -36,6 +36,19 @@
     "Two of them are a genuinely broken file; the third is the one shape `strip_comments`",
     "still documents as deliberately unhandled — a `/*` in JSX text whose preceding",
     "character is a SPACE — where failing STRICT is the decision and not an accident.",
+    "An `end_state_*` id names the CONDITION it holds under, because that verdict is",
+    "conditional and reads as a guarantee otherwise: the very same file plus an ordinary",
+    "block comment lower down ends in 'code', and nothing refuses it.",
+    "",
+    "A fourth prefix, `gap_*`, records what the tracker ACTUALLY DOES where that is a",
+    "known HOLE — never a desired contract, and never a negative control. Measured, not",
+    "predicted, and written here so the next reader finds the hole in the corpus rather",
+    "than in a badged bundle. Two consequences follow, and both are asserted rather than",
+    "trusted: a `gap_*` case is EXCLUDED from the clean/red control counts (a hole must",
+    "not pad the vacuity floor it is invisible to), and it is the ONE prefix here that",
+    "SHOULD be rewritten to the fixed answer when the limitation is closed — which is",
+    "exactly what separates a gap from the `red_*` contract that must never be deleted",
+    "to go green.",
     "",
     "`end_state` is a NARROW control, and #3347 is the proof: it reports the state the",
     "scan ENDED in, which is not the claim 'the tracker read every line correctly'. A",
@@ -276,8 +289,8 @@
       "end_state": "code"
     },
     {
-      "name": "end_state_block_when_jsx_text_contains_a_wildcard",
-      "why": "The shape that is STILL deliberately unhandled (#3347), and the measurement that bounds decision 4's claim: the look-behind admits only an ASCII-alphanumeric or `[` before the `/*`, and here the preceding character is a SPACE, so the block still opens and the file still fails STRICT. So 'a `/*` in JSX text' is not fixed as a category — `<p>3/*off</p>` is (see red_hex_in_a_span_…), `<p>use /* as a wildcard</p>` is not. Pinned separately from the character-class case for exactly the reason #3378 gave: the two are independently breakable, and the divergence now runs the other way — one is handled and one is not, which is the boundary a future widening must move deliberately rather than by accident. Same STRICT verdict, same reason: a caller must hear that the scan stopped.",
+      "name": "end_state_block_when_jsx_text_contains_a_wildcard_and_NOTHING_closes_it",
+      "why": "The shape that is STILL deliberately unhandled (#3347), and the measurement that bounds decision 4's claim: the look-behind admits only an ASCII-alphanumeric or `[` before the `/*`, and here the preceding character is a SPACE, so the block still opens and the file fails STRICT. So 'a `/*` in JSX text' is not fixed as a category — `<p>3/*off</p>` is (see red_hex_in_a_span_…), `<p>use /* as a wildcard</p>` is not. Pinned separately from the character-class case for exactly the reason #3378 gave: the two are independently breakable, and the divergence now runs the other way — one is handled and one is not, which is the boundary a future widening must move deliberately rather than by accident. The id carries its CONDITION because the STRICT verdict has one: it holds only while nothing lower down closes the span. Read `gap_jsx_space_preceded_wildcard_closed_by_a_LATER_comment_drops_the_hex` for what the same file does when an ordinary comment closes it, and do not take this case as a general guarantee — that reading is the mistake the rename exists to prevent.",
       "lines": [
         "export function Doc() {",
         "  return <p>Paths use /* as a wildcard in a route glob</p>",
@@ -286,6 +299,20 @@
       ],
       "expected": [[], [], [], []],
       "end_state": "block"
+    },
+    {
+      "name": "gap_jsx_space_preceded_wildcard_closed_by_a_LATER_comment_drops_the_hex",
+      "why": "RECORDED HOLE, not a contract — the only case here whose declared answer is one nobody wants. The case above plus an ordinary block comment lower down, which is the difference between the two halves of decision 4's residue. MEASURED at main de717158b through the real bundle gate, not inferred from the scanner: `token_lint_bundle` returns the never-closed file as {'web/src/Doc.tsx': [EOF_UNREADABLE]} and returns THIS file as {} — a clean verdict, so the bundle keeps `designSystem: \"v2\"` while the raw hex on line 4 is dropped inside the blanked span. That is why the case above had to name its condition: 'still fails STRICT' was a conditional stated as a guarantee, and the condition is the half nothing refuses. Same mechanism as red_hex_in_a_span_… and red_hex_after_a_block_opener_inside_a_regex_character_class, which decision 4's look-behind closed for an alnum- or `[`-preceded `/*`; a SPACE-preceded one also precedes every legitimate `… /* comment */`, so one character cannot separate them and closing this needs real parser context. Recorded rather than chased so the hole lives in the corpus instead of in a badged bundle. When a parser lands, REWRITE this case to the fixed answer (line 4 caught as `hex`) — it is a gap, not a contract.",
+      "lines": [
+        "export function Doc() {",
+        "  return <p>Paths use /* as a wildcard in a route glob</p>",
+        "}",
+        "const c = '#1a2b3c'",
+        "/* an ordinary block comment lower down the file */",
+        "export const NAME = 'doc'"
+      ],
+      "expected": [[], [], [], [], [], []],
+      "end_state": "code"
     }
   ]
 }
