@@ -57,6 +57,7 @@ from personalclaw.workflows.models import (
     RunStatus,
     WorkflowDef,
     WorkflowRun,
+    sibling_group,
     spec_path,
     valid_name,
     walk,
@@ -2496,15 +2497,18 @@ def _nodes_of(run_id: str) -> list[dict[str, Any]]:
                     ids[path] = node.id
         except ValueError:
             pass
-    # How many instances share each SPEC path — the `12` in "[3/12]". Counted here rather than
-    # stored, so a rewind that re-expands a fan-out cannot leave a stale total behind.
+    # How many instances share each expansion GROUP — the `2` in "[1/2]" for a LOOP's iterations,
+    # whose total is unknowable until the loop ends and so can only be counted.
     #
-    # Keyed by `spec_path`, not by truncation at the first marker: a fan-out inside a loop BODY
-    # was otherwise counted against the body, so a three-item foreach beside one sibling rendered
-    # `[N/4]` (#3371).
-    totals: dict[str, int] = {}
+    # Keyed by `sibling_group` (the instance's own trailing marker removed), not by `spec_path`
+    # (every marker removed): `spec_path` made two iterations of a loop containing a fan-out share
+    # one key, so the group held six rows and every one of them claimed to be item 1–3 of 6
+    # (#3403). Not the pre-#3371 truncation either, which counted a fan-out against its enclosing
+    # body and rendered `[N/4]` for a three-item foreach beside one sibling.
+    groups: dict[str, int] = {}
     for path in instances:
-        totals[spec_path(path)] = totals.get(spec_path(path), 0) + 1
+        key = sibling_group(path)
+        groups[key] = groups.get(key, 0) + 1
 
     out: list[dict[str, Any]] = []
     for path in sorted(instances):
@@ -2535,10 +2539,17 @@ def _nodes_of(run_id: str) -> list[dict[str, Any]]:
             row["cached"] = True
         # Per-item foreach context (WF2-R5), included only for an actually-iterated instance:
         # an `item_index` on a lone node would render "[1/1]", which is noise.
+        #
+        # A FAN-OUT item carries its own denominator — the resolved item count, stamped at dispatch
+        # — which is the single number the live `workflow_node_started` event also publishes, so the
+        # two surfaces cannot disagree. A LOOP ITERATION has no such count (nothing knows how many
+        # iterations an `until_dry` loop will run until it stops), so its coordinate falls back to
+        # the size of its expansion group, which for a finished loop is the iteration count.
         suffix = re.search(r"[#@](\d+)$", path)
-        if suffix and totals.get(base, 0) > 1:
+        total = inst.item_total or groups.get(sibling_group(path), 0)
+        if suffix and total > 1:
             row["item_index"] = int(suffix.group(1))
-            row["item_total"] = totals[base]
+            row["item_total"] = total
             if inst.item_label:
                 row["item_label"] = inst.item_label
         out.append(row)

@@ -703,14 +703,24 @@ def test_first_iteration_last_refs_carry_a_default(name: str) -> None:
     used the guarded idiom for the same field — so this was drift, not a design choice.
 
     It fails at BINDING, before the stage's subagent is even spawned, which is why it was
-    mistaken for a downstream effect of a subagent-cwd refusal. Nothing at runtime can catch
-    it: the spec is simply wrong, and the engine's own remediation text ("add a `| default(...)`
-    pipe if the value is genuinely optional") names the fix.
+    mistaken for a downstream effect of a subagent-cwd refusal.
+
+    **This rail passed for a year while the defect it names was still live, and that is the
+    lesson it now carries.** It reads the template's JSON SOURCE TEXT, so it can only ever
+    confirm the guard is PRESENT — never that the guard works. It did not: `_walk_path` raised on
+    the missing root before any pipe ran, so all six guarded templates still died on their first
+    node, and the engine's remediation text (*"add a `| default(...)` pipe if the value is
+    genuinely optional"*) named the very pipe the author had already written. Both halves are
+    fixed in `bindings` — the first-cycle escape now covers `last`, and the remediation is
+    derived at the raise site — and the EXECUTING counterpart lives in
+    `test_pp16_general_kind_as_run.py::test_the_loop_bodys_first_iteration_binds`. Keep this rail
+    for what it is genuinely good at (a new template copying a neighbour's prompt), and do not
+    read a green here as evidence that a template runs.
     """
     refs = _unguarded_last_refs(_spec(name).get("root"))
     assert not refs, (
         f"{name} references {sorted(set(refs))} with no `| default(...)`. A loop body's FIRST "
-        "iteration has no `last`, so this template fails at binding before it runs anything. "
-        "Add a default, or move the reference into the loop's `config.condition` (evaluated "
-        "only after an iteration)."
+        "iteration has no `last`, so the reference resolves to nothing: without a default the "
+        "prompt silently loses its input instead of saying so. Add a default, or move the "
+        "reference into the loop's `config.condition` (evaluated only after an iteration)."
     )
