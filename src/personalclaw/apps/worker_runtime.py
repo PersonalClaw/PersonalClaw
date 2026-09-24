@@ -245,11 +245,25 @@ def _budget_pause_reason() -> str:
     ``ModelCallGuard`` already refuses the worker's individual calls when the ceiling is
     breached; this layer stops the process from spinning against a wall and, more to the
     point, tells the user why its worker went quiet.
+
+    An UNREADABLE ceiling pauses too (#3458). It is the same sentence to the user and the
+    same mechanism, and it follows ``proactive/autoexec.py``'s call rather than this seam's
+    old blanket fail-open: a worker is unattended spend, and the guard that would otherwise
+    catch it reads the same config this one just failed to read. Any other probe failure
+    still fails open — a spend-counter hiccup is not a lost decision.
     """
     try:
-        from personalclaw.guardrails.budgets import BudgetVerdict, budget_from_config, get_meter
+        from personalclaw.guardrails.budgets import (
+            BudgetConfigUnreadable,
+            BudgetVerdict,
+            budget_from_config,
+            get_meter,
+        )
 
-        budget = budget_from_config()
+        try:
+            budget = budget_from_config()
+        except BudgetConfigUnreadable as exc:
+            return f"{exc}, so this worker is paused"
         if budget.is_unlimited:
             return ""
         verdict, reason = get_meter().check_day(budget)

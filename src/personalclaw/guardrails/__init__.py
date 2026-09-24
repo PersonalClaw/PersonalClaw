@@ -52,6 +52,7 @@ from personalclaw.guardrails.breaker import (
 )
 from personalclaw.guardrails.budgets import (
     Budget,
+    BudgetConfigUnreadable,
     BudgetVerdict,
     SpendMeter,
     budget_from_config,
@@ -144,6 +145,7 @@ __all__ = [
     "WirePrompt",
     "action_type",
     "approval_policy_for_session",
+    "BudgetConfigUnreadable",
     "budget_from_config",
     "capture_wire_prompt",
     "ceiling_permits_approval",
