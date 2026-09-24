@@ -33,6 +33,7 @@ const saveOnboardingState = vi.fn()
 const detectLocalModel = vi.fn()
 const scanLocalModels = vi.fn()
 const bindLocalModel = vi.fn()
+const onboardingModelCheck = vi.fn()
 
 vi.mock('../../lib/api', () => ({
   api: {
@@ -48,6 +49,7 @@ vi.mock('../../lib/api', () => ({
     detectLocalModel: () => detectLocalModel(),
     scanLocalModels: () => scanLocalModels(),
     bindLocalModel: (...a: unknown[]) => bindLocalModel(...a),
+    onboardingModelCheck: () => onboardingModelCheck(),
   },
 }))
 vi.mock('../../app/appSdk', () => ({ launchChat: vi.fn(), notify: vi.fn() }))
@@ -127,6 +129,9 @@ beforeEach(() => {
   setActiveModel.mockResolvedValue({ ok: true })
   saveOnboardingState.mockResolvedValue({ ok: true, state: {} })
   installApp.mockResolvedValue({ ok: true, name: 'openai-models', error: '', needs_consent: false, scan: null })
+  // The lane's PROOF: by default the build check passes, so every test above walks the flow
+  // exactly as it did before verification existed. The tests that falsify it override this.
+  onboardingModelCheck.mockResolvedValue({ ok: true, source: 'binding', bound: ['openai:gpt-5'] })
 })
 
 // ── the lane classifier ──────────────────────────────────────────────────────
@@ -485,5 +490,290 @@ describe('OU-13 — local + LAN Ollama zero-key on-ramp', () => {
     // A failed bind does NOT mark the lane resolved.
     const cont = screen.getByRole('button', { name: /Continue/ })
     expect(cont.hasAttribute('disabled') || cont.getAttribute('aria-disabled') === 'true').toBe(true)
+  })
+})
+
+// ── the lane is READY only when a build proved it ─────────────────────────────
+//
+// The defect these rails close, measured on `origin/main`: a home whose `config.json` carries
+// `{"name": "my-openai", "type": "openai"}` with no app registering that type, plus a `chat`
+// binding to it, answers `can_resolve_use_case("chat") == True` — so `needs_model: false`, so
+// this step opened on a green "A chat model is configured — you're ready" — while chat's real
+// `resolve_provider_for_use_case("chat")` raises `ERR_MODEL_UNRESOLVED`. `needs_model` is
+// derived from a documented NO-INSTANTIATE probe whose first branch returns true as soon as
+// `active_models.json` holds a ref, and writing that ref is the LAST thing this step does. So
+// the step was reading its own write back as proof.
+//
+// Three properties, each with a known-true and a known-false case:
+//  1. NOTHING READS READY UNVERIFIED — neither the `needs_model:false` entry path nor a
+//     successful bind may reach `done` before the build check answers `ok`.
+//  2. EVERY CAUSE ARRIVES INTACT — the failing render is the backend's own `why`/`fix`,
+//     verbatim, so the number of causes a user can distinguish equals the number the bridge
+//     can. A house sentence here would re-create the defect at the presentation layer.
+//  3. "WE DON'T KNOW" IS NOT "IT'S BROKEN" — a check that could not run says so instead of
+//     inventing a cause.
+
+describe('the model lane reads ready only after a build check', () => {
+  const READY = { needs_model: false, has_model_provider: true, has_chat_binding: true }
+
+  function refusal(over: { why: string; fix: string }) {
+    return { ok: false, code: 'ERR_MODEL_UNRESOLVED', what: 'the model pinned for use case \'chat\' cannot be built', ...over }
+  }
+
+  it('verifies a home the coarse probe already calls ready, instead of trusting it', async () => {
+    renderStep({ readiness: READY })
+    await waitFor(() => expect(onboardingModelCheck).toHaveBeenCalled())
+    expect(await screen.findByText(/A chat model is configured/)).toBeTruthy()
+  })
+
+  it('known-false: a claimed-ready home whose provider cannot build is NOT reported ready', async () => {
+    onboardingModelCheck.mockResolvedValue(refusal({
+      why: "provider 'my-openai' declares type 'openai', and no installed app registers that type",
+      fix: "install an app that provides 'openai' in the App Store, or change 'my-openai''s type in Settings → Providers",
+    }))
+    const { onDone } = renderStep({ readiness: READY })
+    // The green claim is gone…
+    expect(await screen.findByText(/chat can.t use it yet/i)).toBeTruthy()
+    expect(screen.queryByText(/A chat model is configured/)).toBeNull()
+    // …Continue is refused, and its reason is the one about verification, not about setup…
+    const cont = screen.getByRole('button', { name: /Continue/ })
+    fireEvent.click(cont)
+    expect(onDone).not.toHaveBeenCalled()
+    // …and the step still offers the door out, so a broken home is never trapped here.
+    expect(screen.getByRole('button', { name: /Set up later/ })).toBeTruthy()
+  })
+
+  it('known-false: a successful bind does not read ready until the check passes', async () => {
+    let release: (v: unknown) => void = () => {}
+    onboardingModelCheck.mockReturnValue(new Promise((r) => { release = r }))
+    const { onDone } = renderStep()
+    await openCard('openai')
+    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
+    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'sk-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /gpt-5/ }))
+
+    // The binding WAS written — and that is precisely not enough.
+    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', ['openai:gpt-5']))
+    await waitFor(() => expect(onboardingModelCheck).toHaveBeenCalled())
+    const cont = screen.getByRole('button', { name: /Continue/ })
+    expect(cont.getAttribute('aria-disabled')).toBe('true')
+    expect(cont.getAttribute('title') || '').toMatch(/still checking/i)
+    fireEvent.click(cont)
+    expect(onDone).not.toHaveBeenCalled()
+
+    await act(async () => { release({ ok: true, source: 'binding', bound: ['openai:gpt-5'] }) })
+    await waitFor(() => expect(screen.getByRole('button', { name: /Continue/ }).getAttribute('aria-disabled')).not.toBe('true'))
+    fireEvent.click(screen.getByRole('button', { name: /Continue/ }))
+    expect(onDone).toHaveBeenCalledWith('gpt-5')
+  })
+
+  it('known-false: a bind the check then refuses leaves the lane unresolved', async () => {
+    onboardingModelCheck.mockResolvedValue(refusal({
+      why: "provider 'openai' needs credential 'openai', which has no secret in the credential store",
+      fix: "set 'openai' in Settings → Providers, or rebind 'chat' to an available model in Settings → Models",
+    }))
+    const { onDone } = renderStep()
+    await openCard('openai')
+    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
+    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'sk-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /gpt-5/ }))
+    expect(await screen.findByText(/has no secret in the credential store/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Continue/ }).getAttribute('aria-disabled')).toBe('true')
+    expect(onDone).not.toHaveBeenCalled()
+    // A local bind is the one path back that does not need a key, so the form is offered too.
+    expect(screen.getByRole('button', { name: /Change its settings/ })).toBeTruthy()
+  })
+
+  // ── every cause the backend distinguishes reaches the screen as itself ──────
+  //
+  // These nine `why`/`fix` pairs are the causes `provider_bridge` derives. The assertion is
+  // deliberately VERBATIM rather than a keyword match: a component that summarised them would
+  // pass a loose assertion while showing one sentence for nine states.
+  const CAUSES: { name: string; why: string; fix: string }[] = [
+    { name: 'the use case maps to no capability',
+      why: "use case 'chat' maps to no provider capability, so no configured provider can satisfy it",
+      fix: "rebind 'chat' to an available model in Settings → Models — and report use case 'chat' as unmappable" },
+    { name: 'config.json is unreadable',
+      why: "config.json could not be read, so whether 'my-openai' is still configured is unknown",
+      fix: "repair config.json (see the gateway log), or rebind 'chat' to an available model in Settings → Models" },
+    { name: 'no entry by that name',
+      why: "no provider named 'my-openai' is in config.json — the entry was renamed or removed, or its app was uninstalled",
+      fix: "re-add 'my-openai' in Settings → Providers, or rebind 'chat' to an available model in Settings → Models" },
+    { name: 'in config.json but not registered',
+      why: "provider 'my-openai' IS in config.json but is not registered in the running gateway, so nothing can build it",
+      fix: "re-save 'my-openai' in Settings → Providers to register it now, or restart the gateway to replay config.json" },
+    { name: 'no installed app registers the type',
+      why: "provider 'my-openai' declares type 'openai', and no installed app registers that type",
+      fix: "install an app that provides 'openai' in the App Store, or change 'my-openai''s type in Settings → Providers" },
+    { name: 'the type\'s app is installed but DISABLED',
+      why: "provider 'my-openai' declares type 'openai', whose app 'openai-models' is installed but DISABLED, so the type is not registered",
+      fix: "enable 'openai-models' on the Apps page" },
+    { name: 'the type\'s app failed to load',
+      why: "provider 'my-openai' declares type 'openai' and its app 'openai-models' is installed and enabled, but the type never registered — the app failed to load",
+      fix: "check the gateway log for 'openai-models''s import error, or rebind 'chat' to an available model in Settings → Models" },
+    { name: 'capability mismatch',
+      why: "provider 'my-openai' (type 'openai') does not declare the 'chat' capability that use case 'chat' needs",
+      fix: "rebind 'chat' to an available model in Settings → Models, or bind 'chat' to a provider that declares 'chat'" },
+    { name: 'the credential has no secret',
+      why: "provider 'my-openai' needs credential 'openai', which has no secret in the credential store",
+      fix: "set 'openai' in Settings → Providers, or rebind 'chat' to an available model in Settings → Models" },
+  ]
+
+  it.each(CAUSES)('shows the backend\'s own words for: $name', async ({ why, fix }) => {
+    onboardingModelCheck.mockResolvedValue(refusal({ why, fix }))
+    renderStep({ readiness: READY })
+    // Both halves, verbatim. WHY is what is wrong; FIX is the act that resolves it, and a
+    // surface that showed only one of them would leave a diagnosis with no next step.
+    expect(await screen.findByText(why)).toBeTruthy()
+    expect(screen.getByText(fix)).toBeTruthy()
+  })
+
+  it('renders a DISTINCT sentence for every one of those causes', async () => {
+    // The count assertion the verbatim checks above imply but do not state: nine causes must
+    // produce nine different screens. A component that paraphrased would collapse them.
+    const rendered = new Set<string>()
+    for (const c of CAUSES) {
+      onboardingModelCheck.mockResolvedValue(refusal(c))
+      const { container, unmount } = render(
+        <EssentialsStep readiness={READY} onDone={vi.fn()} onSkip={vi.fn()} onProgress={vi.fn()} />)
+      await screen.findByText(c.why)
+      rendered.add(container.textContent || '')
+      unmount()
+      for (const k of ['onboarding:essentials-catalog', 'onboarding:provider-types', 'onboarding:chat-models', 'onboarding:local-model']) invalidateKeys(k)
+    }
+    expect(rendered.size).toBe(CAUSES.length)
+  })
+
+  it('a check that could not RUN says so, instead of inventing a cause', async () => {
+    onboardingModelCheck.mockRejectedValue(new Error(JSON.stringify({ error: 'gateway unreachable' })))
+    renderStep({ readiness: READY })
+    expect(await screen.findByText(/Couldn.t check whether a chat model resolves: gateway unreachable/)).toBeTruthy()
+    // Not a verdict: it must not claim the model is broken, and must not claim it is ready.
+    expect(screen.queryByText(/chat can.t use it yet/i)).toBeNull()
+    expect(screen.queryByText(/A chat model is configured/)).toBeNull()
+    expect(screen.getByRole('button', { name: /Check again/ })).toBeTruthy()
+  })
+
+  it('re-runs the check on demand, and a second verdict supersedes the first', async () => {
+    onboardingModelCheck.mockResolvedValueOnce(refusal({
+      why: "provider 'my-openai' IS in config.json but is not registered in the running gateway, so nothing can build it",
+      fix: 'restart the gateway to replay config.json',
+    }))
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'binding', bound: ['my-openai:gpt-4o'] })
+    renderStep({ readiness: READY })
+    fireEvent.click(await screen.findByRole('button', { name: /Check again/ }))
+    expect(await screen.findByText(/A chat model is configured/)).toBeTruthy()
+    expect(onboardingModelCheck).toHaveBeenCalledTimes(2)
+  })
+
+  it('names the mechanism, not a choice, when nothing is explicitly bound', async () => {
+    // `source: 'fallback'` means resolution came from the implicit "first capable configured
+    // provider" rule. "Ready to chat" there would imply the user picked something.
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'fallback', bound: [] })
+    const { onDone } = renderStep({ readiness: READY })
+    await waitFor(() => expect(screen.getByRole('button', { name: /Continue/ }).getAttribute('aria-disabled')).not.toBe('true'))
+    fireEvent.click(screen.getByRole('button', { name: /Continue/ }))
+    expect(onDone).toHaveBeenCalledWith('Ready — using a configured provider')
+  })
+})
+
+// ── an empty model list is not a fact about the provider ──────────────────────
+//
+// `GET /api/models/chat` gathers each provider's catalog with `return_exceptions=True` and
+// drops a raising provider silently, and the entry this flow creates carries no pinned `model`
+// to fall back to — so a wrong key, an unreachable endpoint and a provider that genuinely has
+// no chat model all arrive as the same empty array. The step used to report that array as
+// "No chat-capable models were discovered for this provider", which is a claim it cannot make.
+
+describe('an empty discovery result is disambiguated, not asserted', () => {
+  /** Walk to the bind step with discovery empty, and make the SECOND `testModelProvider`
+   *  call — the one the empty list fires to disambiguate — answer `probe`. The first call is
+   *  the form's own pre-bind test, which must pass or the flow never reaches the list; both
+   *  are queued up front because the probe runs from a mount effect, so a mock swapped after
+   *  the render has already lost the race. */
+  async function reachBindWithNoModels(probe: unknown) {
+    chatModels.mockResolvedValue([])
+    testModelProvider.mockResolvedValueOnce({ ok: true, status: 'connected', message: 'Reachable' })
+    testModelProvider.mockResolvedValue(probe as never)
+    const h = renderStep()
+    await openCard('openai')
+    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
+    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'sk-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
+    await waitFor(() => expect(chatModels).toHaveBeenCalled())
+    return h
+  }
+
+  it('never asserts the old claim about the provider', async () => {
+    await reachBindWithNoModels({ ok: true, status: 'connected', message: 'Connected — 0 model(s) available' })
+    await screen.findByText(/offered no chat-capable model/)
+    expect(screen.queryByText(/No chat-capable models were discovered for this provider/)).toBeNull()
+  })
+
+  it('says the provider could not be REACHED when that is what the probe found', async () => {
+    await reachBindWithNoModels({ ok: false, status: 'error', message: 'invalid_api_key' })
+    const said = await screen.findByText(/could not be reached: invalid_api_key/)
+    expect(said.textContent).toMatch(/connection problem, not a provider without models/)
+  })
+
+  it('says an empty list proves nothing for a provider with no connectivity test', async () => {
+    await reachBindWithNoModels({ ok: true, status: 'no_probe', message: 'No connectivity probe available for this provider type' })
+    expect(await screen.findByText(/cannot be told apart from a provider that is not answering/)).toBeTruthy()
+  })
+
+  it('states both possibilities when it does not know which provider is configured', async () => {
+    // The lane arrived at `bind` from readiness, so no provider name was learned here and
+    // there is nothing to probe by name. Guessing one of the two answers would be a lie.
+    chatModels.mockResolvedValue([])
+    renderStep({ readiness: { needs_model: true, has_model_provider: true, has_chat_binding: false } })
+    expect(await screen.findByText(/offers no chat-capable model, or it could not be reached/)).toBeTruthy()
+    expect(testModelProvider, 'there is no provider name to test').not.toHaveBeenCalled()
+  })
+})
+
+// ── "ok" from the provider test is not "connected" ────────────────────────────
+
+describe('an untested connection is not reported as a passed test', () => {
+  it('does not promise a real connection test the button cannot always run', async () => {
+    renderStep()
+    await openCard('openai')
+    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
+    await screen.findByLabelText('OpenAI API Key')
+    // The earlier copy promised "test the connection for real before moving on" — untrue for a
+    // provider type whose test answers `no_probe` (nothing ran).
+    expect(screen.queryByText(/test the connection for real/)).toBeNull()
+    expect(screen.getByText(/checks that chat can really use it/)).toBeTruthy()
+  })
+
+  it('tells the user the model list is the first evidence when nothing could be tested', async () => {
+    testModelProvider.mockResolvedValue({ ok: true, status: 'no_probe', message: 'No connectivity probe available for this provider type' })
+    renderStep()
+    await openCard('openai')
+    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
+    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'sk-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
+    // A function matcher, because the provider name is its own text node: `{provider} has no…`
+    // renders two children and a string matcher spans neither.
+    expect(await screen.findByText((_t, el) =>
+      el?.tagName === 'P' && /^openai has no connectivity test, so these models are the first evidence it answers\.$/.test(el.textContent || ''),
+    )).toBeTruthy()
+  })
+
+  it('creates the provider under its TYPE, never the app name', async () => {
+    // `ollama-models` is the app; `ollama` is the provider key a `provider:model` ref, the
+    // test route and every diagnosis speak. An app name here binds something that never
+    // resolves — and the failure surfaces far from this screen.
+    renderStep()
+    await openCard('openai')
+    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
+    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'sk-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
+    await waitFor(() => expect(createModelProvider).toHaveBeenCalled())
+    const [body] = createModelProvider.mock.calls[0]
+    expect(body.name).toBe('openai')
+    expect(body.name).not.toBe('openai-models')
+    expect(testModelProvider).toHaveBeenCalledWith('openai')
   })
 })

@@ -4540,6 +4540,20 @@ export interface OnboardingStatePatch {
   essentials?: Partial<OnboardingEssentials>
   first_success?: Partial<{ knowledge: boolean; trigger: boolean; loop: boolean }>
 }
+/** `GET /api/onboarding/model-check` — the VERIFIED answer to "can I chat yet".
+ *
+ *  Distinct from `OnboardingState.needs_model`, and the difference is the whole point:
+ *  `needs_model` is derived from a documented **no-instantiate** probe that returns
+ *  "resolvable" as soon as `active_models.json` holds a ref, without checking the ref
+ *  still builds. This route builds it. So a step that reads `needs_model` reads its own
+ *  write back as proof; a step that reads this one reads the same answer chat will get.
+ *
+ *  On failure the three lines are the BRIDGE's own `AgentError` envelope, relayed field
+ *  for field — every cause the backend can distinguish arrives here without the frontend
+ *  paraphrasing any of them into one generic sentence. */
+export type OnboardingModelCheck =
+  | { ok: true; source: 'binding' | 'fallback'; bound: string[] }
+  | { ok: false; code: string; what: string; why: string; fix: string }
 /** OU-13 — a reachable local Ollama endpoint and the chat model it will bind to.
  *  Surfaced ONLY after a live `/api/tags` response, so a card is never shown on a guess. */
 export interface LocalModelEndpoint { endpoint: string; model: string }
@@ -6308,6 +6322,10 @@ export const api = {
    *  travel, never items, so a caller can never name a directory to copy in. */
   runOnboardingImport: (body: { sources: string[]; categories: string[] }) =>
     post<OnboardingImportReport>('/api/onboarding/import', body),
+  /** The model step's VERIFICATION — build what chat would build, and report the verdict.
+   *  Always 200: a refusal is a body, not a throw, because the three envelope lines are
+   *  the product here and an exception would flatten them into one string. */
+  onboardingModelCheck: () => get<OnboardingModelCheck>('/api/onboarding/model-check'),
   /** OU-13 — is a local Ollama reachable on localhost? A loopback round-trip, safe to
    *  call automatically; `detected:false` when nothing bindable answers. */
   detectLocalModel: () => get<LocalModelDetection>('/api/onboarding/local-model'),
