@@ -441,6 +441,30 @@ _RUM6_RELEASES = [
     {"tag": "v0.2.0", "prerelease": False},
 ]
 
+#: The running version the RUM-6 rows execute against, FIXED here instead of inherited
+#: from the project's own ``__version__``.
+#:
+#: ``_update_pip`` only installs a resolved target that DIFFERS from what is running (it
+#: short-circuits on "Already on the pinned/latest release"), so "the running version is
+#: not one of these tags" is a precondition of every row below. Inheriting it from the
+#: project turned each row into a landmine that fires on one specific future release —
+#: the pin row on v0.2.0 (equality), the stable row on v0.2.1 and the beta row on v0.3.0
+#: (``_is_current``) — i.e. a fixture that self-destructs exactly when the project ships
+#: the version it hard-codes. Bumping the literals would only move those landmines one
+#: release along; pinning the running version removes the project's version from the
+#: fixture altogether, so these rows are version-INDEPENDENT rather than
+#: correct-until-the-next-bump. ``0.0.1`` is below every published release, and versions
+#: only go up, so it is a value this project can never take again.
+_RUM6_RUNNING_VERSION = "0.0.1"
+
+#: ``(channel, pin, expected wheel spec)`` over ``_RUM6_RELEASES``, extracted so the
+#: fixture's own non-vacuity floor can assert over the same rows the parametrisation drives.
+_RUM6_ROWS = [
+    ("stable", "", "personalclaw==0.2.1"),  # newest non-prerelease
+    ("beta", "", "personalclaw==0.3.0-rc.1"),  # newest INCLUDING prereleases
+    ("stable", "0.2.0", "personalclaw==0.2.0"),  # pin overrides the channel exactly
+]
+
 
 def _fake_release_list(monkeypatch: pytest.MonkeyPatch) -> None:
     """Feed the REAL resolver a fixed releases list (no network, no resolve_target stub)."""
@@ -451,14 +475,21 @@ def _fake_release_list(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(su, "fetch_releases", _list)
 
 
-@pytest.mark.parametrize(
-    "channel, pin, expected",
-    [
-        ("stable", "", "personalclaw==0.2.1"),  # newest non-prerelease
-        ("beta", "", "personalclaw==0.3.0-rc.1"),  # newest INCLUDING prereleases
-        ("stable", "0.2.0", "personalclaw==0.2.0"),  # pin overrides the channel exactly
-    ],
-)
+def test_the_rum6_rows_resolve_to_distinct_versions() -> None:
+    """The fixture's own floor: the three rows must name THREE DIFFERENT versions.
+
+    This is the non-vacuity the parametrised test's docstring claims, asserted instead of
+    assumed: a `releases/latest` implementation can only fail the beta and pin rows while
+    they differ from stable's latest, so a future edit that collapses two rows onto one
+    version would quietly make this a single-row test that any blind-latest build passes.
+    """
+    versions = [spec.split("==", 1)[1] for _, _, spec in _RUM6_ROWS]
+    assert len(set(versions)) == len(versions), f"rows collapsed onto one version: {versions}"
+    tags = {su.normalize_version(str(r["tag"])) for r in _RUM6_RELEASES}
+    assert set(versions) <= tags, f"a row names a version no release publishes: {versions}"
+
+
+@pytest.mark.parametrize("channel, pin, expected", _RUM6_ROWS)
 def test_pip_installs_the_channel_pin_resolved_spec(
     monkeypatch: pytest.MonkeyPatch, spawns, channel: str, pin: str, expected: str
 ) -> None:
@@ -466,13 +497,28 @@ def test_pip_installs_the_channel_pin_resolved_spec(
 
     Non-vacuous by construction — beta (0.3.0-rc.1) and the pin (0.2.0) resolve to
     versions DIFFERENT from stable's latest (0.2.1) over the same releases list, so a
-    `releases/latest` implementation would fail the beta and pin rows. Drives the REAL
+    `releases/latest` implementation would fail the beta and pin rows (asserted by
+    `test_the_rum6_rows_resolve_to_distinct_versions`). Drives the REAL
     `resolve_wheel_target`/`select_target` over `_RUM6_RELEASES` (only `fetch_releases`
     is stubbed), so the resolver policy itself is exercised, not mocked away.
+
+    The running version is pinned to `_RUM6_RUNNING_VERSION` so the resolved target is
+    always something to move TO; see that constant for why inheriting the project's
+    version made this row fail on exactly one release.
     """
+    monkeypatch.setattr(cli_server, "__version__", _RUM6_RUNNING_VERSION)
     _channel(monkeypatch, channel, pin)
     _fake_release_list(monkeypatch)
     _fake_installer(monkeypatch)
+
+    # The precondition for this row's assertion being REACHABLE, proven not assumed. Both
+    # comparisons are load-bearing: the pin branch short-circuits on normalized-string
+    # equality, and the channel branch on `_is_current`'s tuple ordering — which drops the
+    # prerelease suffix, so `0.3.0-rc.1` and `0.3.0` are equal tuples but distinct strings.
+    want = expected.split("==", 1)[1]
+    running = cli_server.__version__
+    assert su.normalize_version(want) != su.normalize_version(running)
+    assert su.version_tuple(want) > su.version_tuple(running)
 
     cli_server._update()
 
