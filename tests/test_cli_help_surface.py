@@ -204,6 +204,122 @@ def test_every_hidden_command_is_still_dispatchable(tree):
         assert args.command == name, f"`personalclaw {name}` no longer dispatches"
 
 
+# ── A key the help advertises must be a key the command accepts ──────────────────
+
+#: A dotted config key as it appears in help prose: `dashboard.url`, `agent.log_level`,
+#: `dashboard.terminal.persist`. Anchored on a leading word boundary so `personalclaw config`
+#: and a sentence's trailing `config.json` do not read as keys.
+_DOTTED_KEY = re.compile(r"\b([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)\b")
+
+#: Dotted lowercase tokens in help prose that are NOT config keys. Filenames and module paths
+#: share the shape, so the extractor has to be told about them rather than guessing.
+_NOT_CONFIG_KEYS = frozenset(
+    {
+        "config.json",
+        "package.json",
+        "app.json",
+        "requirements.txt",
+        "personalclaw.dev",
+        "skills.sh",
+        "e.g",
+        "i.e",
+    }
+)
+
+
+def _advertised_config_keys(tree) -> dict[str, set[str]]:
+    """Every dotted config key the `config` subtree's help prints, by where it printed.
+
+    Scoped to the `config` command on purpose. It is the only subtree whose help quotes config
+    keys as *things to pass to this command*, so a key named anywhere else (a doc cross-reference,
+    an env var's config equivalent) is not a promise this rail can hold anyone to.
+    """
+    found: dict[str, set[str]] = {}
+    for path, parser in tree:
+        if "config" not in path:
+            continue
+        for key in _DOTTED_KEY.findall(_rendered(parser)):
+            if key in _NOT_CONFIG_KEYS or key.split(".")[0] in {"personalclaw", "www"}:
+                continue
+            found.setdefault(key, set()).add(" ".join(path))
+    return found
+
+
+def test_every_config_key_the_help_advertises_is_one_the_command_accepts(tree):
+    """#3395, generalized. The specific defect was `dashboard.port`: advertised as the worked
+    example on THREE screens (`config --help`, `config get --help`, `config set --help`) while
+    both of its own examples exited 1 with `❌ Unknown key: dashboard.port`, because no `port`
+    field has ever existed on `DashboardConfig`. The persisted gateway port is the port inside
+    `dashboard.url` (`parse_dashboard_url`), so the example was never merely renamed.
+
+    🔑 THE RAIL IS THE AGREEMENT, NOT THE KEY. A test asserting `dashboard.port` is gone would
+    pass forever while the next example drifted onto the next key that does not exist — which is
+    precisely how this one survived a commit that edited the very lines around it (#3135 added
+    the `--reveal` row between the two broken ones). So this resolves EVERY key the subtree
+    advertises against the same model `config get`/`config set` resolve against.
+    """
+    from personalclaw.config import AppConfig
+
+    model = AppConfig().to_dict()
+    advertised = _advertised_config_keys(tree)
+
+    dead = {}
+    for key, where in advertised.items():
+        cur = model
+        for part in key.split("."):
+            if not isinstance(cur, dict) or part not in cur:
+                dead[key] = where
+                break
+            cur = cur[part]
+
+    assert not dead, (
+        "`personalclaw config --help` advertises config key(s) that the command answers "
+        "`❌ Unknown key` for: "
+        + "; ".join(
+            f"{key!r} (on {', '.join(sorted(where))})" for key, where in sorted(dead.items())
+        )
+        + ". Advertise a key that resolves in AppConfig.to_dict(), or add the field through the "
+        "full config round-trip contract — help and behaviour have to agree."
+    )
+
+    # Anti-vacuity: an extractor that found nothing, or a `config` subtree the walk never
+    # reached, would make the loop above pass unconditionally.
+    assert advertised, "no config keys were extracted from the help — the rail is inert"
+    assert "dashboard.url" in advertised, (
+        "the extractor no longer sees the worked example in the `config` epilog, so a dead key "
+        "there would go unnoticed"
+    )
+
+
+def test_the_dead_key_detector_fires_on_the_defect_it_was_written_for(tree):
+    """Floor 2 — DISCRIMINATION, calibrated on #3395's actual text.
+
+    Without this, a typo in `_DOTTED_KEY` or an over-broad `_NOT_CONFIG_KEYS` would make the
+    guard above green forever. Asserted both ways: the key that shipped broken must be
+    detectable, and the key that replaced it must resolve.
+    """
+    from personalclaw.config import AppConfig
+
+    model = AppConfig().to_dict()
+
+    # The extractor must SEE a key written the way the epilog wrote it.
+    epilog = "  personalclaw config get dashboard.port    # Get specific value"
+    assert "dashboard.port" in _DOTTED_KEY.findall(epilog), "the extractor misses the #3395 text"
+
+    # …and the model must judge it dead, while the replacement resolves.
+    assert "port" not in model["dashboard"], (
+        "`dashboard.port` exists now — if it was added deliberately, wire it through the config "
+        "round-trip contract and re-derive this calibration"
+    )
+    assert isinstance(model["dashboard"]["url"], str), "dashboard.url is the live replacement"
+
+    # The filename guard must not be swallowing real keys.
+    assert not _NOT_CONFIG_KEYS & set(_advertised_config_keys(tree)), (
+        "a name in _NOT_CONFIG_KEYS is also being reported as advertised — the filter is "
+        "applied after extraction, so this would hide a dead key"
+    )
+
+
 # ── The registration door ────────────────────────────────────────────────────────
 
 
