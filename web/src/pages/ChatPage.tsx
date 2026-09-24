@@ -38,6 +38,7 @@ import { PromptPalette } from './chat/PromptPalette'
 import { SessionSkillsReview } from './chat/SessionSkillsReview'
 import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { deliverableToOpenSession } from './chat/sessionDelivery'
+import { streamingAtMount } from './chat/liveRun'
 import { OrganizeChip } from './chat/OrganizeChip'
 import { ContextLedger } from './chat/ContextLedger'
 import { chatFindPath, searchSourceLabel } from './chat/searchDeepLink'
@@ -557,6 +558,15 @@ export function ChatPage({ sub, navigate, navEpoch = 0, query, setQuery }: { sub
   // The payload names its session; `deliverableToOpenSession` is the ONE place that
   // decides whether it may be shown.
   const [routing, setRouting] = useState<RoutingSuggestion | null>(null)
+  // The session a run was just DISPATCHED for — owned here for exactly the reason above.
+  // The remount that destroys the sending instance also resets its `streaming` to a fresh
+  // `false` while the run is live, so the composer's action button read "Send message" for
+  // one async round trip: an idle state it was not in. `send()` branches on the same flag,
+  // so a click in that window started a FRESH turn — painting a bubble for a turn the
+  // server never dispatched (it queued the message and answered `{queued:true}`, which
+  // that path does not read) (#3444). `streamingAtMount` is the ONE place that decides
+  // whether a handoff belongs to this mount.
+  const [liveRun, setLiveRun] = useState('')
   // A ?project=<id> on the bare/new route opens a fresh chat PRE-BOUND to that project
   // (the project page's "Chat" launch). It takes precedence over the history landing.
   const projectId = query?.project || ''
@@ -569,7 +579,7 @@ export function ChatPage({ sub, navigate, navEpoch = 0, query, setQuery }: { sub
   // so they're Back-closable + refresh-stable. Threaded down to ChatSession.
   const q = query ?? {}
   const setQ: RouteProps['setQuery'] = setQuery ?? (() => {})
-  if (projectId && (!seg || seg === 'new')) return <ChatSession key={`new-proj-${projectId}-${navEpoch}`} sessionId={null} navigate={navigate} query={q} setQuery={setQ} projectId={projectId} seed={seed} agent={agentParam} routing={routing} setRouting={setRouting} />
+  if (projectId && (!seg || seg === 'new')) return <ChatSession key={`new-proj-${projectId}-${navEpoch}`} sessionId={null} navigate={navigate} query={q} setQuery={setQ} projectId={projectId} seed={seed} agent={agentParam} routing={routing} setRouting={setRouting} liveRun={liveRun} setLiveRun={setLiveRun} />
   // #/chat/history → the history list. (Chat history is also reachable as a
   // right-docked rail from the new-chat page, so bare #/chat lands on new chat.)
   if (seg === 'history') return <ChatHistoryPage navigate={navigate} query={q} setQuery={setQ} />
@@ -590,12 +600,12 @@ export function ChatPage({ sub, navigate, navEpoch = 0, query, setQuery }: { sub
   // nav target opens straight into a new conversation). The key folds in navEpoch
   // so clicking "New chat" always remounts a fresh session even when the URL was
   // silently rewritten by the composer's replaceState (the "New Chat stuck" fix).
-  if (!seg || seg === 'new') return <ChatSession key={`new-${navEpoch}`} sessionId={null} navigate={navigate} query={q} setQuery={setQ} seed={seed} agent={agentParam} routing={routing} setRouting={setRouting} />
+  if (!seg || seg === 'new') return <ChatSession key={`new-${navEpoch}`} sessionId={null} navigate={navigate} query={q} setQuery={setQ} seed={seed} agent={agentParam} routing={routing} setRouting={setRouting} liveRun={liveRun} setLiveRun={setLiveRun} />
   // else it's a session key to resume (deep-linked; keyed off `sub` only so
   // unrelated navigations don't remount/reload it). `seed` rides along for
   // sessions STAGED before their first turn (plan 60's investigate opening
   // prompt) — the composer pre-fill is editable, never auto-sent.
-  return <ChatSession key={sub} sessionId={sub} navigate={navigate} query={q} setQuery={setQ} seed={seed} routing={routing} setRouting={setRouting} />
+  return <ChatSession key={sub} sessionId={sub} navigate={navigate} query={q} setQuery={setQ} seed={seed} routing={routing} setRouting={setRouting} liveRun={liveRun} setLiveRun={setLiveRun} />
 }
 
 /** `#/chat/room` with no id is not a room — send the reader to the list.
@@ -607,7 +617,7 @@ function RoomsRedirect({ navigate }: { navigate: (p: string, opts?: { replace?: 
   return null
 }
 
-function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialProjectId = '', seed = '', agent: initialAgent = '', routing: pendingRouting, setRouting: setRoutingSuggestion }: { sessionId: string | null; navigate: (p: string, opts?: { replace?: boolean }) => void; query: Record<string, string>; setQuery: RouteProps['setQuery']; projectId?: string; seed?: string; agent?: string; routing: RoutingSuggestion | null; setRouting: (s: RoutingSuggestion | null) => void }) {
+function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialProjectId = '', seed = '', agent: initialAgent = '', routing: pendingRouting, setRouting: setRoutingSuggestion, liveRun, setLiveRun }: { sessionId: string | null; navigate: (p: string, opts?: { replace?: boolean }) => void; query: Record<string, string>; setQuery: RouteProps['setQuery']; projectId?: string; seed?: string; agent?: string; routing: RoutingSuggestion | null; setRouting: (s: RoutingSuggestion | null) => void; liveRun: string; setLiveRun: (s: string) => void }) {
   const data = useComposerData()
   const { name } = useIdentity()
   // SSM-14: the Session Map's persisted mark-density preference, read off the appearance
@@ -650,13 +660,20 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     () => (seededDetail ? hydrateTurns(seededDetail.messages || [], false) : []),
   )
   const [input, setInput] = useState(seed)
-  const [streaming, setStreaming] = useState(false)
+  // Seeded from ChatPage's live-run handoff, NOT from a bare `false`: this instance is
+  // often the REPLACEMENT for the one that issued a send (creating a session re-keys
+  // ChatSession), and a fresh `false` there advertised an idle composer over a live run
+  // (#3444). `streamingAtMount` is the only thing that reads the handoff.
+  const [streaming, setStreaming] = useState(() => streamingAtMount(liveRun, sessionId))
   // Synchronous mirror of `streaming` for send()'s queue-vs-fresh-turn decision.
   // Two sends fired in one tick both close over the stale `streaming=false` state
   // (React hasn't re-rendered), so the 2nd would wrongly start a fresh turn instead
   // of queuing. This ref flips the instant a turn is committed, so the 2nd send
   // sees it and queues. Kept in sync with the state setter everywhere it changes.
-  const streamingRef = useRef(false)
+  // Seeded from `streaming` so a handed-off run reaches the send path too — the ref is
+  // what send() actually branches on, so a `false` here would reopen the window a layer
+  // below the button's label.
+  const streamingRef = useRef(streaming)
   // Bumped when a turn settles (streaming → false) so the session-skills review
   // (skill-ephemeral-promotion) re-checks for drafts the agent just captured.
   const [sessionSkillsEpoch, setSessionSkillsEpoch] = useState(0)
@@ -670,6 +687,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // inside playCue, so this call site carries no policy of its own.
       playCue('turn_complete')
     }
+    // Release the handoff the moment the run settles. Left set, a later mount of this
+    // same session (a revisit) would claim a finished run was live and offer Steer over
+    // an idle backend — the mirror image of #3444, and just as dishonest.
+    if (!v && liveRun) setLiveRun('')
     streamingRef.current = v
     setStreaming(v)
   }
@@ -1061,7 +1082,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // REDUCE the painted transcript below what we already show — if the hydrated
       // snapshot has FEWER turns than what's painted (seed + live stream), it's stale;
       // keep ours and let a later revalidation settle the canonical view. (streamingRef
-      // can't gate this — it's a fresh `false` on the remounted instance.)
+      // used to be unable to gate this — it was a fresh `false` on the remounted
+      // instance. It now seeds from ChatPage's live-run handoff, #3444, but the length
+      // floor stays: it is about the SNAPSHOT being behind, not about the flag.)
       //
       // The opposite race is just as real: this refresh can ADD the finalized
       // assistant message before the terminal WS text reaches the remounted tab.
@@ -1767,6 +1790,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       if (seedMessages?.length) {
         writeCachedDetail(created.key, { key: created.key, title: '', messages: seedMessages, running: false } as unknown as ChatDetail)
       }
+      // Hand the live run ACROSS the remount, before causing it. This instance is about
+      // to be destroyed and its `streaming` state with it; the replacement reads the
+      // handoff at mount so the composer never advertises idle over a run the user just
+      // started (#3444). Recorded here rather than after the send's round trip, because
+      // the replacement mounts before that resolves — which is the whole window.
+      setLiveRun(created.key)
       // Replace (not push) so the freshly-created session id backfills the URL
       // without adding a history entry — and via the router, not a raw
       // history.replaceState bypass.
