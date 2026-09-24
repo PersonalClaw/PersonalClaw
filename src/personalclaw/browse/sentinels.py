@@ -48,6 +48,32 @@ class ClickAction:
 
 
 @dataclass(frozen=True)
+class ClickVisionAction:
+    """``CLICK_VISION <description>`` — click what you DESCRIBE, located on the screenshot.
+
+    The one action in this vocabulary that is not addressed by a ref, because it exists for the
+    page shape that HAS no ref: a ``<canvas>``, an image-map or a WebGL surface, where
+    ``extract_page`` yields nothing addressable. The description is grounded to a coordinate by a
+    vision model (:mod:`personalclaw.browse.vision`) and actuated as a located CDP input event.
+
+    Deliberately a SEPARATE verb rather than a mode of :class:`ClickAction`. Mirroring the desktop
+    driver's ``click_method`` discipline (``computer_use/service.py:_click_method``): "there is no
+    fallback from ``auto`` to a coordinate click when an element press is unavailable, because that
+    fallback is how a cursor moves by accident". A coordinate path reachable by a failed ref lookup
+    would be auto-selected in exactly the case the model is most confused about the page.
+
+    It carries a DESCRIPTION, never coordinates: the model driving the loop reads text and cannot
+    see the screenshot, so a coordinate it emitted would be invented. Grounding is the vision
+    model's job, and keeping the two apart is what makes the located path auditable.
+    """
+
+    description: str
+
+    def render(self) -> str:
+        return f"CLICK_VISION {self.description}"
+
+
+@dataclass(frozen=True)
 class TypeAction:
     """``TYPE <ref>(value)`` — fill the field named by a stable ElementRef."""
 
@@ -115,6 +141,7 @@ class NotesAction:
 Action = (
     NavigateAction
     | ClickAction
+    | ClickVisionAction
     | TypeAction
     | SubmitAction
     | ScrollAction
@@ -128,6 +155,9 @@ Action = (
 # side so a typed value may contain anything including ')' — the LAST ')' closes the group.
 _TYPE_RE = re.compile(r"^TYPE\s+([0-9a-f]{4,40})\s*\((.*)\)\s*$", re.IGNORECASE)
 _CLICK_RE = re.compile(r"^CLICK\s+([0-9a-f]{4,40})\s*$", re.IGNORECASE)
+#: Free text, not a ref — the description a vision model grounds. It cannot collide with
+#: ``_CLICK_RE``, which requires whitespace straight after ``CLICK`` and hex after that.
+_CLICK_VISION_RE = re.compile(r"^CLICK_VISION\s+(.*\S)\s*$", re.IGNORECASE | re.DOTALL)
 _NAVIGATE_RE = re.compile(r"^NAVIGATE\s+(\S+)\s*$", re.IGNORECASE)
 _SCROLL_RE = re.compile(r"^SCROLL\s+(down|up)\s*$", re.IGNORECASE)
 _WAIT_RE = re.compile(r"^WAIT\s+(\d+)\s*$", re.IGNORECASE)
@@ -157,6 +187,10 @@ def parse_sentinel(line: str) -> Action | None:
     m = _TYPE_RE.match(s)
     if m:
         return TypeAction(ref=m.group(1).lower(), value=m.group(2))
+    m = _CLICK_VISION_RE.match(s)
+    if m:
+        # BEFORE _CLICK_RE for readability only — the two cannot both match (see _CLICK_VISION_RE).
+        return ClickVisionAction(description=m.group(1).strip())
     m = _CLICK_RE.match(s)
     if m:
         return ClickAction(ref=m.group(1).lower())

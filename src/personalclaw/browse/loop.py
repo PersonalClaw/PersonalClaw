@@ -34,10 +34,24 @@ every SUBMIT the loop waits for a URL change or a content delta, re-extracts, an
 model to judge FORM_OK / FORM_FAILED — a second model call, deliberately, because "the page
 changed" and "the submission worked" are different questions.
 
+**A COORDINATE is never reached by accident** (BA-10). ``vision_grounding`` adds one action,
+``CLICK_VISION``, for the page shape the DOM cannot describe — a ``<canvas>`` or image-map, where
+``extract_page`` yields zero refs and every ref-addressed action the model can emit names nothing.
+It defaults OFF and is never inferred: a page with no refs does not enable it, and a failed
+``CLICK <ref>`` does not fall back to it. That is the desktop driver's rule for its own coordinate
+methods held verbatim (``computer_use/service.py:_click_method`` — "there is no fallback from
+``auto`` to a coordinate click … because that fallback is how a cursor moves by accident"), and it
+is enforced twice: the prompt withholds the verb, and :func:`_click_vision` refuses it anyway. The
+located path is CLICK-only — there is deliberately no coordinate ``TYPE``, because a field the
+extraction never classified is a field whose credential status nobody checked — and it refuses the
+challenges only a human may answer before a screenshot reaches any model.
+
 **Nothing here knows about a provider, a workflow or a gateway.** The loop takes a
 ``decide`` callable and a :class:`PageDriver`; the ActionProvider that supplies the real ones
 lives in ``action_providers.browse_provider``. That is what makes the loop testable without a
-browser and without a model.
+browser and without a model. BA-10's grounding call is the one model call the loop does not make
+through ``decide`` — it goes through ``browse.vision``, which resolves the existing
+``image_modality`` use case, so the loop still names no provider.
 """
 
 from __future__ import annotations
@@ -56,6 +70,7 @@ from personalclaw.browse.handoff import PARK_LOGIN_REQUIRED
 from personalclaw.browse.sentinels import (
     Action,
     ClickAction,
+    ClickVisionAction,
     DoneAction,
     GoBackAction,
     NavigateAction,
@@ -99,9 +114,24 @@ PARK_TAB_CLOSED = "tab_closed"
 #: card that answers it; a second literal in this module would be the fifth park reason and the
 #: first one with two spellings.
 
+#: BA-10's vision grounding could not reach a model. The park reason is the atom's honest refusal:
+#: a canvas-only page with no ``image_modality`` model bound must SAY so, because the alternative is
+#: a run that looped until ``max_steps`` over a control it could see and never explain.
+PARK_VISION_UNAVAILABLE = "vision_unavailable"
+#: BA-10's soul guardrail reaching the run: the page asks a human to prove they are one. Parked
+#: rather than warned, because a CAPTCHA does not become answerable on the next step, and a warned
+#: agent spends the remaining budget re-trying the one thing it must never do.
+PARK_HUMAN_CHALLENGE = "human_challenge"
+
 #: The SEL rows this module writes (BA-2's `browse_egress` covers the navigation denials).
 SEL_EVENT_SOURCE = "browse"
 SEL_OPERATION_PARK = "browse.park"
+#: BA-10, audited as its OWN operation — the same discipline as the desktop driver's
+#: ``computer_click:located``/``:global`` (``computer_use/service.py:_operation``): "a real-cursor
+#: warp is one filter away from every other click". A coordinate click that shared the park row's
+#: operation would be indistinguishable from an ordinary one in the audit, which is the only place
+#: anyone can later ask "did this run ever click something the DOM never described".
+SEL_OPERATION_VISION_CLICK = "browse.click:vision"
 
 #: What the model is told it may emit. Mirrors ``sentinels.parse_sentinel`` exactly — a
 #: vocabulary the prompt advertises but the parser rejects is a step the model spends and the
@@ -117,6 +147,28 @@ Reply with EXACTLY ONE action line and nothing else:
   GO_BACK               go back one page
   NOTES <text>          record a finding and continue
   DONE                  the goal is achieved; stop"""
+
+#: Appended to :data:`ACTION_VOCABULARY` ONLY when the caller enabled vision grounding. Withholding
+#: the line is half of "never auto-selected": an action the prompt never advertises is one the model
+#: does not reach for, so the disabled run is not merely refused at the executor — it is never
+#: tempted. The other half is the executor's own refusal, which does not trust this.
+VISION_ACTION_LINE = """\
+  CLICK_VISION <what>   click what you describe, located on this step's screenshot. ONLY for a
+                        control the page exposes no ref for (a canvas, an image-map): if a CLICK
+                        <ref> exists for it, use that instead."""
+
+
+def action_vocabulary(*, vision_grounding: bool = False) -> str:
+    """The action menu for this run. ``vision_grounding`` adds the located-click line.
+
+    A function rather than two constants because the vocabulary must stay a single description of
+    what ``parse_sentinel`` accepts; two hand-maintained strings would drift the moment one gained a
+    verb, and the prompt is the only place the model learns what exists.
+    """
+    if not vision_grounding:
+        return ACTION_VOCABULARY
+    return f"{ACTION_VOCABULARY}\n{VISION_ACTION_LINE}"
+
 
 _VERIFY_INSTRUCTION = (
     "You submitted the form. Judge ONLY whether the submission succeeded. "
@@ -149,6 +201,20 @@ class PageDriver(Protocol):
         ...
 
     async def click(self, ref: ElementRef) -> None: ...
+
+    async def click_at(self, x: float, y: float) -> None:
+        """Click a viewport COORDINATE in CSS pixels with a located input event (BA-10).
+
+        Reached only through the explicitly-enabled vision path. There is deliberately no
+        coordinate ``fill`` beside it: a coordinate the agent could TYPE into would be a way to put
+        a credential in a field the extraction never classified, and the whole credential invariant
+        rests on that classification.
+        """
+        ...
+
+    async def viewport(self) -> tuple[float, float]:
+        """The CSS viewport ``(width, height)``; ``(0.0, 0.0)`` when unreadable (BA-10)."""
+        ...
 
     async def fill(self, ref: ElementRef, value: str) -> None: ...
 
@@ -300,6 +366,7 @@ def compose_prompt(
     warnings: Sequence[str],
     step: int,
     max_steps: int,
+    vision_grounding: bool = False,
 ) -> str:
     """The one string that reaches the model. ``fenced_page`` MUST already be fenced.
 
@@ -319,7 +386,7 @@ def compose_prompt(
     if warnings:
         parts.append("WARNINGS:\n" + "\n".join(f"- {w}" for w in warnings))
     parts.append("CURRENT PAGE:\n" + fenced_page)
-    parts.append(ACTION_VOCABULARY)
+    parts.append(action_vocabulary(vision_grounding=vision_grounding))
     return "\n\n".join(parts)
 
 
@@ -442,6 +509,7 @@ async def run_browse_loop(
     on_step: StepSink | None = None,
     kill_check: KillCheck | None = None,
     close_check: CloseCheck | None = None,
+    vision_grounding: bool = False,
 ) -> BrowseLoopResult:
     """Drive ``page`` toward ``goal``, navigating only through ``session``'s gate.
 
@@ -458,6 +526,16 @@ async def run_browse_loop(
     ``on_step`` (BA-5) is called once per completed step with the step record and its screenshot
     path — the provider turns each into a ``browse_step`` broadcast so a human can watch the run
     live. It is a relay only: it never changes control flow, and a sink that raises is swallowed.
+
+    ``vision_grounding`` (BA-10) opts this run into the located-click path for pages whose only
+    control is a canvas or image-map. It defaults to **False** and is NEVER inferred: a run that
+    finds zero addressable refs does not switch it on, and a failed ``CLICK <ref>`` does not fall
+    back to it. That is the desktop driver's rule for its coordinate methods
+    (``computer_use/service.py:_click_method``) held here for the same reason — the automatic
+    widening is precisely the case where the model is most wrong about the page, so a fallback would
+    fire exactly when it is least safe. With it enabled the run still needs a model bound to
+    ``image_modality``; with none bound the first ``CLICK_VISION`` parks
+    :data:`PARK_VISION_UNAVAILABLE` rather than doing nothing quietly.
     """
     st = _LoopState()
 
@@ -564,6 +642,7 @@ async def run_browse_loop(
             warnings=st.warnings,
             step=step,
             max_steps=max_steps,
+            vision_grounding=vision_grounding,
         )
         st.warnings.clear()
 
@@ -683,6 +762,26 @@ async def run_browse_loop(
                     pass
                 if url not in st.visited:
                     st.visited.append(url)
+        elif isinstance(action, ClickVisionAction):
+            # BA-10. Handled HERE rather than in `_actuate` because it needs three things that
+            # statement does not have — the step's screenshot, the page's own text, and this run's
+            # opt-in — and because two of its outcomes PARK, which `_actuate` cannot do.
+            outcome_note, vision_park = await _click_vision(
+                action,
+                page=page,
+                extraction=extraction,
+                screenshot=screenshot,
+                state=st,
+                enabled=vision_grounding,
+            )
+            if vision_park:
+                _emit(
+                    BrowseStep(
+                        index=step, url=url, action=rendered, fenced=True, note=outcome_note
+                    ),
+                    screenshot,
+                )
+                return _park(st, goal=goal, url=url, reason=vision_park, detail=outcome_note)
         else:
             outcome_note = await _actuate(action, page=page, index=index, state=st)
 
@@ -718,6 +817,152 @@ async def run_browse_loop(
     return _park(
         st, goal=goal, url=url, reason=PARK_STEP_EXHAUSTED, detail=f"max_steps={max_steps}"
     )
+
+
+async def _click_vision(
+    action: ClickVisionAction,
+    *,
+    page: PageDriver,
+    extraction: PageExtraction,
+    screenshot: str,
+    state: _LoopState,
+    enabled: bool,
+) -> tuple[str, str]:
+    """Ground ``action.description`` on the step screenshot and click it. ``(note, park_reason)``.
+
+    ``park_reason`` is ``""`` for every outcome the agent can usefully retry (not enabled, not
+    found, a ref existed all along) and a park constant for the two it cannot: no vision model, and
+    a challenge only a human may answer.
+
+    The guard order is the contract:
+
+    1. **The run must have opted in.** A refusal the executor makes ITSELF, not merely a line the
+       prompt withheld: the prompt is a request, and this is the single call site of ``click_at``.
+       BA-4's credential refusal is placed by the same reasoning, one statement away in
+       :func:`_actuate`.
+    2. **A ref must NOT already exist.** The located path is for a page with nothing addressable; on
+       a page with refs it is a worse way to do a thing that already works, and letting it run there
+       is how a coordinate click becomes the model's default. This is the "never auto-selected" rule
+       pointing the other way — the vision path cannot quietly REPLACE the ref path either.
+    3. **The soul guardrail** (:func:`vision.human_challenge`), which also screens the page text, so
+       a CAPTCHA is refused before an image is sent anywhere.
+    4. Then grounding, then the viewport, then the event.
+
+    Every outcome is SEL-audited under :data:`SEL_OPERATION_VISION_CLICK`, including the refusals —
+    a located click that happened and a located click that was refused are both things an auditor
+    needs, and only recording the successes would make the guardrail invisible.
+    """
+    from personalclaw.browse import vision
+
+    description = (action.description or "").strip()
+    if not enabled:
+        state.warnings.append(
+            "CLICK_VISION is not enabled for this run; address controls by ref with CLICK <ref>"
+        )
+        # ``refused_`` prefix deliberately: the executor DENIED a requested action, and
+        # ``sel.AUDIT_OUTCOME_FAMILIES`` matches on ``_`` token boundaries, so the prefix lands this
+        # in the ``denied`` family (danger tone) for free — the mechanism that table's docstring
+        # advertises for "the five ``refused_*``". A bare ``not_enabled`` is UNCLASSIFIED and
+        # renders neutral, understating a refusal.
+        #
+        # And it is ``not_opted_in``, not ``not_enabled``/``disabled``, because BOTH of those carry
+        # a SUCCESS-family token (``enabled``/``disabled``) alongside ``refused`` — measured, the
+        # composite is then claimed by ``denied`` AND ``ok`` at once, which
+        # ``test_no_family_captures_another_familys_word`` refuses. A word that two pills both claim
+        # makes them lie about each other, so the spelling avoids every other family's vocabulary.
+        _audit_vision_click(outcome="refused_not_opted_in", detail=description)
+        return "refused: vision grounding is not enabled for this run", ""
+
+    addressable = len(extraction.links) + sum(len(f.fields) for f in extraction.forms)
+    if addressable:
+        state.warnings.append(
+            f"this page exposes {addressable} addressable element(s); use CLICK <ref> or "
+            "TYPE <ref>(value) instead of CLICK_VISION"
+        )
+        _audit_vision_click(outcome="refused_has_refs", detail=str(addressable))
+        return f"refused: {addressable} addressable element(s) on this page", ""
+
+    result = await vision.ground(
+        screenshot_path=screenshot,
+        description=description,
+        page_text=extraction.text,
+    )
+    if result.outcome == vision.OUTCOME_REFUSED_CHALLENGE:
+        _audit_vision_click(outcome=result.outcome, detail=result.reason)
+        return result.reason, PARK_HUMAN_CHALLENGE
+    if result.outcome == vision.OUTCOME_NO_MODEL:
+        _audit_vision_click(outcome=result.outcome, detail=vision.REASON_NO_VISION_MODEL)
+        # The typed honest refusal. The detail names the models a user could pull, because a park
+        # that says only "no vision model available" is one nobody can act on.
+        return (
+            f"{vision.REASON_NO_VISION_MODEL}: bind one to the image_modality use case in "
+            f"Settings → Models (e.g. `{vision.RECOMMENDED_MODELS[0].obtain}`, "
+            f"{vision.RECOMMENDED_MODELS[0].licence})",
+            PARK_VISION_UNAVAILABLE,
+        )
+    if not result.ok or result.point is None:
+        state.warnings.append(result.reason or "the described control could not be located")
+        _audit_vision_click(outcome=result.outcome, detail=result.reason)
+        return result.reason or "not located", ""
+
+    try:
+        width, height = await page.viewport()
+    except Exception as exc:  # noqa: BLE001 — a failed read is a step note, not a dead run
+        state.warnings.append(f"the viewport could not be measured: {exc}")
+        _audit_vision_click(outcome=vision.OUTCOME_FAILED, detail=f"viewport: {exc}")
+        return f"failed: the viewport could not be measured ({exc})", ""
+    if width <= 0 or height <= 0:
+        # Never actuate on a zero viewport: every fraction would scale to (0, 0), the top-left of
+        # the page, and the click would land on whatever sits there while reporting success.
+        state.warnings.append(
+            "the page reported no viewport size, so a coordinate cannot be scaled"
+        )
+        _audit_vision_click(outcome=vision.OUTCOME_FAILED, detail="viewport is zero")
+        return "failed: the page reported no viewport size", ""
+
+    x, y = result.point.to_viewport(width, height)
+    try:
+        await page.click_at(x, y)
+    except Exception as exc:  # noqa: BLE001 — same contract as `_actuate`: warn, never raise
+        state.warnings.append(f"the located click failed: {exc}")
+        _audit_vision_click(outcome=vision.OUTCOME_FAILED, detail=str(exc))
+        return f"failed: the located click failed ({exc})", ""
+
+    _audit_vision_click(
+        outcome=vision.OUTCOME_GROUNDED,
+        detail=description,
+        point=(round(x, 1), round(y, 1)),
+    )
+    return f"clicked ({x:.0f}, {y:.0f}) by vision grounding", ""
+
+
+def _audit_vision_click(
+    *, outcome: str, detail: str, point: tuple[float, float] | None = None
+) -> None:
+    """Best-effort SEL row for ONE located-click attempt, allowed or refused (BA-10).
+
+    Its own ``operation`` (:data:`SEL_OPERATION_VISION_CLICK`) so a coordinate click is one filter
+    away from every ref-addressed one. ``detail`` is truncated and never carries page content beyond
+    the agent's own description — the description reached the prompt already, and the screenshot
+    never belongs in an audit row.
+
+    Swallows, like :func:`_audit_park`: losing the row must not lose the run.
+    """
+    try:
+        from personalclaw.sel import sel
+
+        payload: dict[str, Any] = {"detail": detail[:200]}
+        if point is not None:
+            payload["x"], payload["y"] = point
+        sel().log_api_access(
+            caller="action:browse",
+            operation=SEL_OPERATION_VISION_CLICK,
+            outcome=outcome,
+            source=SEL_EVENT_SOURCE,
+            resources=json.dumps(payload),
+        )
+    except Exception:
+        logger.debug("browse: vision-click audit failed", exc_info=True)
 
 
 async def _actuate(

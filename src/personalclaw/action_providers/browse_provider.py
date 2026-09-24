@@ -13,7 +13,18 @@ avoids is a bespoke "browse runner" beside the dispatch path, governed by nothin
      "max_steps": 20,              # optional; plan §7.2 default
      "target": "gateway",          # optional; "gateway" (default) | "user_browser"
      "cdp_url": "ws://127.0.0.1:9222/devtools/page/…",   # the page target to drive
-     "screenshot_dir": "/path"}    # optional; capture-to-PATH, never base64
+     "screenshot_dir": "/path",    # optional; capture-to-PATH, never base64
+     "vision_grounding": false}    # optional, BA-10; default false — see below
+
+**The located vision path is per-invocation and OFF by default** (BA-10). ``vision_grounding``
+opts one run into ``CLICK_VISION`` for pages whose only control is a canvas or image-map. It is a
+task-level flag rather than a config field on purpose: the desktop driver's coordinate methods are
+a per-call ``click_method`` the caller NAMES for exactly this reason (``computer_use/tools.py``:
+"the coordinate methods must be named explicitly and are audited separately; 'auto' never resolves
+onto them"), and a global switch would make the located path the standing default for every task
+the moment one task needed it. It also needs ``screenshot_dir`` — grounding reads the step capture —
+and a model bound to ``image_modality`` in Settings → Models, without which the first
+``CLICK_VISION`` parks with a typed "no vision model available" reason.
 
 **Two execution targets, one selector** (BA-7, plan §(a)/§(d)). ``target`` picks WHICH browser:
 ``gateway`` (the default, and the only behaviour before BA-7) drives the ``cdp_url`` on this
@@ -71,9 +82,13 @@ from personalclaw.browse.handoff import PARK_LOGIN_REQUIRED
 from personalclaw.browse.loop import (
     MAX_STEPS_DEFAULT,
     PARK_BUDGET_EXHAUSTED,
+    PARK_HUMAN_CHALLENGE,
     PARK_KILLED,
+    PARK_NAVIGATION_BLOCKED,
     PARK_STEP_EXHAUSTED,
+    PARK_STUCK,
     PARK_TAB_CLOSED,
+    PARK_VISION_UNAVAILABLE,
     BrowseLoopResult,
     BrowseStep,
     run_browse_loop,
@@ -414,6 +429,9 @@ class BrowseActionProvider(ActionProvider):
                     on_step=self._mirror_sink(ctx),
                     kill_check=_kill_check,
                     close_check=close_check,
+                    # BA-10: truthy-only, so an absent key, `false`, `0` and `""` all mean OFF.
+                    # The located path is never enabled by the ABSENCE of a decision.
+                    vision_grounding=bool(action_config.get("vision_grounding")),
                 )
             finally:
                 if closer is not None:
@@ -614,7 +632,15 @@ class BrowseActionProvider(ActionProvider):
 
     @staticmethod
     def _park_sentence(result: BrowseLoopResult) -> str:
-        """What the user reads on the parked run. A sentence, because this IS a UI surface."""
+        """What the user reads on the parked run. A sentence, because this IS a UI surface.
+
+        Exhaustive over the park vocabulary, and now actually so: BA-10's rail
+        (``test_every_park_reason_renders_as_a_sentence_not_a_reason_code``) walks the module's own
+        ``PARK_*`` constants, and it found that ``stuck`` and ``navigation_blocked`` had NEVER had a
+        sentence — a parked run has been showing users "Browse stopped early (stuck)" since BA-3.
+        That is the leak this method's own comment warns about, two reasons older than BA-10, so the
+        sentences are added here rather than left for the rail to keep reporting.
+        """
         if result.park_reason == PARK_STEP_EXHAUSTED:
             head = f"Browse stopped after {result.step_count} steps without finishing"
         elif result.park_reason == PARK_BUDGET_EXHAUSTED:
@@ -623,6 +649,23 @@ class BrowseActionProvider(ActionProvider):
             head = "Browse was stopped by the kill switch"
         elif result.park_reason == PARK_TAB_CLOSED:
             head = "Browse stopped because you closed the task's browser tab"
+        elif result.park_reason == PARK_STUCK:
+            head = "Browse stopped because it kept repeating the same action without progress"
+        elif result.park_reason == PARK_NAVIGATION_BLOCKED:
+            # The one park that is NOT `ok` (see `loop._park`): the first navigation never left, so
+            # the run produced nothing. Worth saying plainly — the cause is a policy decision about
+            # the URL, which is actionable, unlike a model that gave up.
+            head = "Browse could not start because the egress policy refused the starting URL"
+        elif result.park_reason == PARK_VISION_UNAVAILABLE:
+            # BA-10's honest refusal, as a sentence. `park_detail` carries the actionable half (the
+            # model to pull and its licence) and is surfaced beside this; the head says WHY the run
+            # could not proceed without making the user decode `vision_unavailable`.
+            head = (
+                "Browse needs a vision model to click this page's drawn controls (a canvas or "
+                "image map), and none is bound to the image_modality use case"
+            )
+        elif result.park_reason == PARK_HUMAN_CHALLENGE:
+            head = "Browse stopped because this page asks you to prove you are human"
         elif result.park_reason == PARK_LOGIN_REQUIRED:
             # Unreachable via this method today — a login park is answered by `_login_park`, whose
             # sentence names the site and the handoff. Kept because `_park_sentence` is the
