@@ -38,6 +38,33 @@ from personalclaw.atomic_write import atomic_write
 
 logger = logging.getLogger(__name__)
 
+#: The one clause every seam uses for "the operator's configured ceiling could not be
+#: READ". Shared so four independent refusals cannot drift into four sentences for one
+#: fact; each seam appends its own consequence ("so nothing ran", "this worker is paused").
+UNVERIFIED_CEILING = "the spend ceiling could not be verified"
+
+
+class BudgetConfigUnreadable(RuntimeError):
+    """The configured spend ceiling could not be read, so it is UNKNOWN (#3458).
+
+    Distinct from an unlimited ceiling, which is a legitimate answer: an operator who
+    configured nothing has no ceiling. ``budget_from_config`` used to answer ``Budget()``
+    for both, which meant a config the operator *had* set a ceiling in silently lost it on
+    the one path an unattended loop spends real money through — an unknown resolved into a
+    permission, the same shape as #3456 and #3457.
+
+    There is no restrictive number to substitute (``0`` means unlimited, so a "safe
+    default" would be a ceiling nobody chose — the case ``CONFIG_ON_DISCARDED_READ``
+    deliberately excludes). So the builder refuses to answer and each consumer decides
+    what the unknown means at its own seam. Four refuse; browse keeps its documented
+    fail-open because the model-call chokepoint meters that call anyway.
+    """
+
+    def __init__(self, cause: BaseException) -> None:
+        super().__init__(f"{UNVERIFIED_CEILING} ({type(cause).__name__})")
+        self.cause = cause
+
+
 _SPEND_FILENAME = "spend.json"
 _PRUNE_DAYS = 30
 
@@ -356,27 +383,37 @@ def safety_budget_for_inbound() -> Budget:
 def budget_from_config() -> Budget:
     """Build the day-scope :class:`Budget` from the loaded GuardrailsConfig.
 
-    Fail-open to unlimited on any config read failure — a broken config must not
-    wedge every unattended run (the ceiling is a guardrail, not a gate; the scan +
-    breaker remain the hard controls).
+    Raises :class:`BudgetConfigUnreadable` when the config cannot be read, rather than
+    answering unlimited: the ceiling is then UNKNOWN, and "unknown" is not "none". A
+    ceiling the operator never set is still legitimately unlimited — an absent config file
+    is not a failure and returns ``Budget()`` exactly as before (#3458).
+
+    What each caller does with the refusal is that caller's decision, not this builder's:
+    the unattended seams follow ``proactive/autoexec.py`` and refuse, and browse keeps its
+    documented fail-open. A builder cannot make that choice for six different seams, which
+    is why it reports the fact instead of picking a number.
     """
     try:
         from personalclaw.config.loader import AppConfig
 
         b = AppConfig.load().guardrails.budgets
-        return Budget(max_tokens=b.max_tokens_per_day, max_dollars=b.max_dollars_per_day)
-    except Exception:
-        logger.debug("budget_from_config: falling back to unlimited", exc_info=True)
-        return Budget()
+    except Exception as exc:
+        logger.warning("budget_from_config: %s", UNVERIFIED_CEILING, exc_info=True)
+        raise BudgetConfigUnreadable(exc) from exc
+    return Budget(max_tokens=b.max_tokens_per_day, max_dollars=b.max_dollars_per_day)
 
 
 def run_budget_from_config() -> Budget:
-    """Build the run-scope :class:`Budget` (tokens only) from GuardrailsConfig."""
+    """Build the run-scope :class:`Budget` (tokens only) from GuardrailsConfig.
+
+    Same contract as :func:`budget_from_config`: an unreadable config raises rather than
+    reading as unlimited.
+    """
     try:
         from personalclaw.config.loader import AppConfig
 
         b = AppConfig.load().guardrails.budgets
-        return Budget(max_tokens=b.max_tokens_per_run)
-    except Exception:
-        logger.debug("run_budget_from_config: falling back to unlimited", exc_info=True)
-        return Budget()
+    except Exception as exc:
+        logger.warning("run_budget_from_config: %s", UNVERIFIED_CEILING, exc_info=True)
+        raise BudgetConfigUnreadable(exc) from exc
+    return Budget(max_tokens=b.max_tokens_per_run)

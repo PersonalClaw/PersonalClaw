@@ -231,6 +231,13 @@ def default_budget_check(run_key: str = "") -> BudgetCheckFn:
     `triggers/screen.py`'s deliberate fail-open. A probe that raises returns
     ``(True, "…could not be verified…")``, so the proposals queue pending with a reason the
     user can read rather than executing on an unverified ceiling.
+
+    🔑 THAT REFUSAL WAS UNREACHABLE FOR THE COMMONEST CAUSE UNTIL #3458. It is written here
+    and it is right, but ``budget_from_config`` used to swallow a failed config read and
+    hand back an unlimited budget, which reads as *under* the ceiling — so a lost ceiling
+    took the happy path and nothing raised. The builder now raises
+    :class:`~personalclaw.guardrails.budgets.BudgetConfigUnreadable`, which is what makes
+    this handler fire. The code here did not change; its precondition did.
     """
 
     def check() -> tuple[bool, str]:

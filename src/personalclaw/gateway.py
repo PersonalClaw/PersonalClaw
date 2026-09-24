@@ -907,17 +907,38 @@ class GatewayOrchestrator:
         while emitting a WARNING and having no caller at all — the docstring asserted the
         clause the code did not satisfy.)
 
-        Fail-open (returns False) on any error — a broken budget read must never
-        wedge unattended work; the meter + breaker remain the hard controls.
+        Two different unknowns, two answers (#3458).
+
+        An unreadable CEILING pauses (returns True) and notifies: the ceiling is the thing
+        that makes leaving automation running safe, so discarding the operator's own
+        decision and dispatching anyway is the dangerous direction, and a pause that says
+        why is not the wedge the old fail-open was written to avoid.
+
+        Any other error still fails OPEN (returns False) — a spend-counter hiccup is a
+        bookkeeping fault, not a lost decision, and the meter + breaker remain the hard
+        controls.
         """
         try:
             from personalclaw.guardrails.budgets import (
+                BudgetConfigUnreadable,
                 BudgetVerdict,
                 budget_from_config,
                 get_meter,
             )
-
+        except Exception:
+            logger.debug("day-budget check import failed (fail-open)", exc_info=True)
+            return False
+        try:
             budget = budget_from_config()
+        except BudgetConfigUnreadable as exc:
+            self._notify_budget_once(
+                "Automation paused — the spend ceiling is unreadable",
+                f"{context} was skipped — {exc}. Unattended runs resume once "
+                f"`guardrails.budgets` in config.json parses again.",
+            )
+            logger.warning("%s skipped: %s", context, exc)
+            return True
+        try:
             if budget.is_unlimited:
                 return False
             verdict, reason = get_meter().check_day(budget)
@@ -927,24 +948,34 @@ class GatewayOrchestrator:
                 # exceeded window notifies again.
                 self._budget_notified = False
                 return False
-            # One-shot notification per exceeded window (de-duped by the flag).
-            if not getattr(self, "_budget_notified", False):
-                self._budget_notified = True
-                if self.dashboard_state is not None:
-                    try:
-                        self.dashboard_state.notify(
-                            notification_kinds.WARNING,
-                            "Daily automation budget reached",
-                            f"{context} was skipped — {reason}. Unattended runs resume "
-                            f"tomorrow, or raise the budget in Settings → Guardrails.",
-                        )
-                    except Exception:
-                        logger.debug("budget notify failed", exc_info=True)
+            self._notify_budget_once(
+                "Daily automation budget reached",
+                f"{context} was skipped — {reason}. Unattended runs resume "
+                f"tomorrow, or raise the budget in Settings → Guardrails.",
+            )
             logger.info("%s skipped: %s", context, reason)
             return True
         except Exception:
             logger.debug("day-budget check failed (fail-open)", exc_info=True)
             return False
+
+    def _notify_budget_once(self, title: str, body: str) -> None:
+        """One toast per pause window, never per fire.
+
+        Both pause reasons — a ceiling that is SPENT and a ceiling that could not be READ
+        (#3458) — go through here, so a user who has both cannot be told twice and the two
+        cannot drift into two de-dup schemes. Re-armed by the under-ceiling branch above,
+        which is what makes the next window notify again.
+        """
+        if getattr(self, "_budget_notified", False):
+            return
+        self._budget_notified = True
+        if self.dashboard_state is None:
+            return
+        try:
+            self.dashboard_state.notify(notification_kinds.WARNING, title, body)
+        except Exception:
+            logger.debug("budget notify failed", exc_info=True)
 
     async def _clock_loop(self) -> None:
         """Drive the unified clock: tick → dispatch → execute (§3 — S100).

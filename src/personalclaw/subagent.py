@@ -1127,12 +1127,38 @@ class SubagentManager:
 
         # --- Budget guard: refuse to spawn if the day-scope spend ceiling is hit ---
         # A subagent is unattended work; if the day's guardrail budget is already
-        # exhausted, don't start another one (§1.1 pause-into-refuse). Fail-open on
-        # any error — the budget is a guardrail, not a hard gate.
+        # exhausted, don't start another one (§1.1 pause-into-refuse). An UNREADABLE
+        # ceiling refuses too (#3458) — it follows `proactive/autoexec.py`'s "an unverified
+        # ceiling authorises nothing" rather than this seam's old blanket fail-open,
+        # because a spawn is exactly the unattended spend the ceiling exists to bound.
+        # Any other error still fails open: the budget is a guardrail, not a hard gate.
         try:
-            from personalclaw.guardrails.budgets import BudgetVerdict, budget_from_config, get_meter
+            from personalclaw.guardrails.budgets import (
+                BudgetConfigUnreadable,
+                BudgetVerdict,
+                budget_from_config,
+                get_meter,
+            )
 
-            _day_budget = budget_from_config()
+            try:
+                _day_budget = budget_from_config()
+            except BudgetConfigUnreadable as _exc:
+                logger.warning("Subagent spawn refused: %s", _exc)
+                sel().log_tool_invocation(
+                    session_key=parent_session_key or "",
+                    source="subagent",
+                    tool_name="subagent_run",
+                    outcome="refused_budget_unverified",
+                    metadata={"reason": str(_exc), "task": _redacted_task[:120]},
+                )
+                return SubagentInfo(
+                    id=uuid.uuid4().hex[:8],
+                    task=_redacted_task,
+                    agent=agent,
+                    done=True,
+                    error=f"spawn refused: {_exc}, so nothing ran (fix "
+                    f"`guardrails.budgets` in config.json)",
+                )
             if not _day_budget.is_unlimited:
                 _verdict, _reason = get_meter().check_day(_day_budget)
                 if _verdict is BudgetVerdict.EXCEEDED:
@@ -1439,17 +1465,26 @@ class SubagentManager:
         day-scope check at spawn is a point-in-time snapshot; N children each spend
         under it, so the run scope is what actually bounds a fan-out. On EXCEEDED the
         fan-out is stopped with a TYPED reason (refusing queued/new spawns) and its
-        in-flight children are cancelled. Fail-open: a budget is a guardrail.
+        in-flight children are cancelled. Fail-open: a budget is a guardrail — except for
+        an UNREADABLE ceiling, which stops the fan-out (#3458), because the run scope is
+        the only thing that bounds N children each spending under one day snapshot.
         """
         fkey = _fanout_key(info)
         try:
             from personalclaw.guardrails.budgets import (
+                BudgetConfigUnreadable,
                 BudgetVerdict,
                 get_meter,
                 run_budget_from_config,
             )
 
-            budget = run_budget_from_config()
+            try:
+                budget = run_budget_from_config()
+            except BudgetConfigUnreadable as exc:
+                if fkey not in self._fanout_stops:
+                    self._fanout_stops[fkey] = f"{exc}, so the fan-out stopped"
+                    logger.warning("Subagent fan-out %s stopped: %s", fkey or "-", exc)
+                return
             if budget.is_unlimited:
                 return
             meter = get_meter()
