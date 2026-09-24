@@ -1,20 +1,29 @@
 """Version single-sourcing consistency (plan 34 T1.2, contract C3).
 
-pyproject.toml is the single source of truth for the package version. This test
-asserts the three surfaces a release exposes agree:
+pyproject.toml ``[project].version`` is the single source of truth for the package
+version. This test asserts every surface a release exposes agrees with it:
 
-  1. pyproject.toml  ``[project].version``
-  2. ``personalclaw.__version__``  (importlib.metadata when installed, literal
+  1. ``personalclaw.__version__``  (importlib.metadata when installed, literal
      fallback on a source tree)
+  2. ``personalclaw._FALLBACK_VERSION``  (what a bare, uninstalled checkout reports)
   3. the latest release heading in ``CHANGELOG.md``  (``## [X.Y.Z] — DATE``,
      skipping the ``[Unreleased]`` section)
+  4. ``packages/personalclaw-client-py/pyproject.toml`` ``[project].version``
+     (the client releases in lockstep with core)
+  5. ``src/personalclaw/acp/client.py`` ``CLIENT_VERSION`` (sent in the ACP
+     initialize handshake)
+  6. the ``README.md`` pre-1.0 banner's ``PersonalClaw is at **vX.Y.Z**`` sentence
+  7. ``desktop/package.json`` ``version`` (electron-builder derives the released
+     dmg/AppImage/deb filenames from it)
 
-If any of the three drift, this test goes red — that is the guardrail that keeps
-`pip show`, `personalclaw --version`, and the in-app "what's new" panel honest.
+If any of them drift, this test goes red — that is the guardrail that keeps
+`pip show`, `personalclaw --version`, the in-app "what's new" panel, and the names
+of the desktop artifacts a release publishes honest.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import tomllib
 from pathlib import Path
@@ -148,4 +157,31 @@ def test_readme_banner_version_tracks_core() -> None:
     assert _readme_declared_version() == _pyproject_version(), (
         f"README pre-1.0 banner says v{_readme_declared_version()} but core is "
         f"v{_pyproject_version()} — update the banner in the release-prep commit"
+    )
+
+
+def _desktop_shell_version() -> str:
+    text = (_REPO_ROOT / "desktop" / "package.json").read_text(encoding="utf-8")
+    return str(json.loads(text)["version"])
+
+
+def test_desktop_shell_version_tracks_core() -> None:
+    """``desktop/package.json`` names the desktop artifacts a release publishes.
+
+    ``desktop/package.json`` declares no ``build.artifactName``, so electron-builder
+    falls back to ``${productName}-${version}-${arch}.${ext}`` and this field — not
+    pyproject, not the tag — decides the filename. ``.github/workflows/release.yml``
+    then uploads ``desktop/dist/*.dmg`` verbatim, so a stale value here does not fail
+    the build: it publishes a correctly built dmg whose name states the wrong release,
+    and only at tag time, when it is most expensive to fix.
+
+    It drifted three patch versions unenforced (``0.1.0`` while core was ``0.1.3``)
+    because no check in the gate read this file for a version at all.
+    """
+    assert _desktop_shell_version() == _pyproject_version(), (
+        f"desktop/package.json version={_desktop_shell_version()!r} disagrees with core "
+        f"version={_pyproject_version()!r} — electron-builder derives the released "
+        f"artifact filenames from this field (PersonalClaw-{_desktop_shell_version()}"
+        f"-<arch>.dmg), so leaving it stale ships a dmg misnamed for the release; bump "
+        "it in the release-prep commit"
     )
