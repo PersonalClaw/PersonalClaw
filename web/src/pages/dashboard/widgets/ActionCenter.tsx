@@ -19,8 +19,8 @@ interface Entry { key: string; kind: Kind; title: string; sub: string; id: strin
  *  items awaiting a reply, and skill proposals. Approvals + proposals resolve
  *  inline (approve/reject · accept/reject); an inbox reply opens the item where
  *  its draft editor lives (a blind dashboard send would bypass draft review).
- *  Acted rows optimistically leave the list; the live feed reconciles. Calm "all
- *  clear" state when the queue is empty. */
+ *  Acted rows optimistically leave the list; the live feed reconciles. When the
+ *  queue is empty it says so about THESE THREE LANES and nothing wider (#3471). */
 export function ActionCenter({ navigate }: RouteProps) {
   /** A proposal decided from the DASHBOARD still changes the Skills page's badge and list, which
    *  read the same collection under `skill-proposals-count` and `skill-proposals`. Prefix mode
@@ -91,7 +91,20 @@ export function ActionCenter({ navigate }: RouteProps) {
     // The rail's own answer for that is "the unnamed ones stay bare rather than guessing", so this
     // says "Loading…" rather than inventing a collective noun.
     if (!read.approvals || !read.inbox || !read.proposals) return <ListSkeleton rows={3} />
-    return <SlotEmptyState icon={CheckCheck}>All clear — nothing waiting on you.</SlotEmptyState>
+    // 🔴 AND THE VERDICT WAS ALSO TOO BROAD FOR THE SET IT IS EARNED FROM (#3471). "Nothing
+    // waiting on you" is a claim about everything that could be waiting; this card reads three
+    // lanes. Measured: one `blocked` task rendered as NEEDS INPUT · 1 on its project's Work
+    // board at the same moment this said "All clear — nothing waiting on you", because a
+    // blocked task projects onto `BoardState.NEEDS_INPUT` (`tasks/hierarchy_handlers`
+    // `_TASK_STATE`) and is in none of these three lanes. Neither surface was lying — the
+    // sentence was, by asserting the absence of a set the reader cannot know is wider than the
+    // words. So the negative is now scoped to the lanes it actually read, and the section is
+    // named for them ("To triage") rather than for the wider state.
+    return (
+      <SlotEmptyState icon={CheckCheck}>
+        Nothing to triage — no approvals, messages or skill proposals are waiting.
+      </SlotEmptyState>
+    )
   }
 
   // Cap the visible queue so one flooded source (e.g. many skill proposals) can't
