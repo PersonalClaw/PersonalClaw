@@ -707,6 +707,26 @@ DUPLICATE_FAMILIES: tuple[DuplicateFamily, ...] = (
             "counted — three exist and they are the shape we want, not a re-derivation."
         ),
     ),
+    DuplicateFamily(
+        name="content-disposition-header",
+        canonical="src/personalclaw/http_download.py",
+        rationale=(
+            "FIVE download routes each composed their own ``Content-Disposition`` value in THREE "
+            "incompatible conventions, and the difference between them was a security bug rather "
+            "than a style one: ``session_export`` redacted the user's text and folded it to "
+            "ASCII, ``handlers/files.py`` used RFC 6266's ``filename*=UTF-8''`` and redacted "
+            "nothing, and ``project_archive``'s name went into the plain quoted form with "
+            "NEITHER — so a credential typed into a project name reached proxy logs and browser "
+            "download history verbatim while the twin thirty lines away was clean. A per-site fix "
+            "would have left two conventions and let the sixth route pick whichever neighbour it "
+            "read first. ``http_download.py`` is the ONE emitter: it redacts, it emits both "
+            "parameter forms, and it closes header injection by rebuilding the ASCII fallback "
+            "from an allowlist. Measured at 0 sites outside it, so unlike the three families "
+            "above this one is a floor rather than a backlog — a new hand-rolled site raises a "
+            "file from absent to 1 and reds the ratchet. The fix for a sixth download is to CALL "
+            "``attachment_disposition``, never to format the header again."
+        ),
+    ),
 )
 
 _ENUM_BASES = frozenset({"Enum", "StrEnum", "IntEnum", "Flag", "IntFlag"})
@@ -772,6 +792,56 @@ def _verdict_type_sites(tree: ast.Module) -> list[str]:
     ]
 
 
+def _content_disposition_sites(tree: ast.Module) -> list[str]:
+    """Functions that compose a ``Content-Disposition`` header VALUE inline.
+
+    Keyed on the value POSITION, not on the text ``filename=`` appearing somewhere in the file.
+    The looser form was tried first and produced three false positives that show why: two SEL log
+    fields (``resources=f"filename={filename}"``) and one docstring that merely DESCRIBES the
+    header. A ratchet whose first red is a docstring gets deleted, so the match is narrow:
+
+    * ``{"Content-Disposition": <literal or f-string>}`` — the dict form all five original sites
+      used; and
+    * ``headers["Content-Disposition"] = <literal or f-string>`` — the same defect via subscript.
+
+    A site that names the header and DELEGATES the value
+    (``{"Content-Disposition": attachment_disposition(name)}``) is the shape we want, so a
+    ``Call`` value does not match. That is the whole discrimination this counter makes.
+    """
+    header = "Content-Disposition"
+
+    def _is_inline_value(value: ast.AST) -> bool:
+        return isinstance(value, ast.JoinedStr) or (
+            isinstance(value, ast.Constant) and isinstance(value.value, str)
+        )
+
+    def _composes_inline(node: ast.AST) -> bool:
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Dict):
+                for key, value in zip(sub.keys, sub.values):
+                    if (
+                        isinstance(key, ast.Constant)
+                        and key.value == header
+                        and _is_inline_value(value)
+                    ):
+                        return True
+            if isinstance(sub, ast.Assign) and _is_inline_value(sub.value):
+                for target in sub.targets:
+                    if (
+                        isinstance(target, ast.Subscript)
+                        and isinstance(target.slice, ast.Constant)
+                        and target.slice.value == header
+                    ):
+                        return True
+        return False
+
+    sites: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _composes_inline(node):
+            sites.append(node.name)
+    return sites
+
+
 def _durable_write_sites(tree: ast.Module) -> list[str]:
     """Functions that BOTH create a temp file and commit it with ``os.replace``/``os.rename``.
 
@@ -815,6 +885,7 @@ def scan_duplicates() -> Scan:
             ("http-error-envelope-helper", _envelope_helper_sites),
             ("verdict-type", _verdict_type_sites),
             ("durable-write", _durable_write_sites),
+            ("content-disposition-header", _content_disposition_sites),
         ):
             if canonical.get(family) == rel:
                 continue  # the canonical implementation is not a duplicate of itself

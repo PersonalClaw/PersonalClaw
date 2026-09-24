@@ -303,6 +303,17 @@ here. The dashboard Security panel reads it.
   `redact_credentials` / `redact_exfiltration_urls`).
 - Portability export (`portability.py`) always excludes credentials: `.env`,
   `sel_hmac.key`, `session_map.json` are on the exclusion list.
+- **Download filenames are redacted, in one place** (`http_download.py`). A
+  `Content-Disposition` filename is a copy of user text that leaves the machine by a
+  second path — proxy logs and browser download history — and outlives deleting the
+  file it named, so it is redacted even where the body deliberately is not. The project
+  export is exactly that case: the archive carries secrets on purpose (it declares
+  `X-PersonalClaw-Secrets-Expected`) while its *header* must not, and for a while it did
+  because the name was interpolated raw. `attachment_disposition` is the only emitter —
+  it redacts, emits RFC 6266's `filename*=UTF-8''` beside an ASCII `filename=` fallback,
+  and closes header injection by rebuilding that fallback from an allowlist. A new
+  download route calls it; the `content-disposition-header` duplication ratchet
+  (`structural-baseline.json`, floor 0) reds if one formats the header itself instead.
 
 ## Memory privacy
 

@@ -245,9 +245,13 @@ def test_render_dispatches_content_type():
 @pytest.mark.parametrize(
     "title,expected",
     [
-        ("My Chat: Q3/Review!", "my-chat-q3-review.md"),
-        ("   ", "chat.md"),
-        ("///", "chat.md"),
+        # Case is PRESERVED now: the stem builder is shared with the project archive, which
+        # always kept it, and lower-casing a user's own title loses information for no benefit.
+        ("My Chat: Q3/Review!", "My-Chat-Q3-Review.md"),
+        # A title with nothing usable falls through to the session KEY before the literal, so
+        # two untitled exports no longer both land as `chat.md` in a downloads folder.
+        ("   ", "fallback.md"),
+        ("///", "fallback.md"),
         ("a" * 200, "a" * 60 + ".md"),
     ],
 )
@@ -268,11 +272,18 @@ def test_export_filename_redacts_credentials_before_sanitizing(title, key):
     assert name.endswith(".md")
 
 
-def test_export_filename_is_ascii_so_plain_content_disposition_is_valid():
-    """The route uses `filename="…"` (not RFC 5987), so the name must be ASCII."""
-    name = se.export_filename("日本語のチャット", "fallback-key", "json")
-    name.encode("ascii")  # raises if not
-    assert name == "chat.json"
+def test_export_filename_keeps_non_ascii_because_the_route_can_now_carry_it():
+    """RETARGETED. This test used to assert the opposite — that the name is folded to ASCII —
+    because the route emitted the plain ``filename="…"`` form, which cannot carry anything else.
+    The premise was real but the conclusion cost every non-Latin user their filename: a chat
+    titled ``日本語のチャット`` downloaded as ``chat.json``.
+
+    The route now emits ``personalclaw.http_download.attachment_disposition``, i.e. RFC 6266's
+    ``filename*=UTF-8''`` beside an ASCII ``filename=`` fallback, so the fold is unnecessary and
+    the header is still legal. The ASCII half of the old claim is asserted where it is now
+    true — on the HEADER (``tests/test_download_filename_header.py``) — rather than on the name.
+    """
+    assert se.export_filename("日本語のチャット", "fallback-key", "json") == "日本語のチャット.json"
 
 
 def test_json_export_carries_provenance():

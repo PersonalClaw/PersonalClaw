@@ -23,6 +23,7 @@ from aiohttp.multipart import BodyPartReader
 from personalclaw.cancellation import kill_timed_out
 from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.http_download import attachment_disposition
 from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import require_string
@@ -310,7 +311,6 @@ async def api_outbox_notify(request: web.Request) -> web.Response:
 async def api_outbox_download(request: web.Request) -> web.StreamResponse:
     """GET /api/outbox/{filename} — download a file from the outbox."""
     import mimetypes  # noqa: PLC0415
-    import urllib.parse  # noqa: F811
 
     from personalclaw.config.loader import outbox_dir  # noqa: F811
     from personalclaw.hooks import FileTooLargeError, safe_read_file_bytes  # noqa: F811
@@ -394,7 +394,6 @@ async def api_outbox_download(request: web.Request) -> web.StreamResponse:
         return web.json_response(
             {"error": "file content was redacted; download aborted"}, status=400
         )
-    safe_name = urllib.parse.quote(path.name, safe="")
     _sel().log_tool_invocation(
         session_key="api",
         source="api",
@@ -405,7 +404,7 @@ async def api_outbox_download(request: web.Request) -> web.StreamResponse:
     )
     return web.Response(
         body=redacted.encode("utf-8"),
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{safe_name}"},
+        headers={"Content-Disposition": attachment_disposition(path.name)},
     )
 
 

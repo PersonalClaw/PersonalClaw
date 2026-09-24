@@ -537,6 +537,55 @@ def test_the_verdict_detector_counts_the_named_family(tmp_path):
     assert sorted(gen._verdict_type_sites(tree)) == ["TrustVerdict", "Verdict"]
 
 
+def test_the_content_disposition_detector_counts_only_an_INLINE_header_value(tmp_path):
+    """This family's floor is 0, so it is the one detector whose vacuity matters most: a rule that
+    matched nothing would read exactly like a clean tree.
+
+    Two discriminations are load-bearing. A site that DELEGATES the value to
+    ``attachment_disposition`` is the shape the family wants and must not count — otherwise the
+    ratchet reds the fix. And a docstring or an SEL log field that merely contains the text
+    ``filename=`` must not count either: the first draft of this detector keyed on that text and
+    produced three false positives (``api_outbox_notify``, ``api_outbox_download`` and
+    ``export_filename``), none of which emits a header. A ratchet whose first red is a docstring
+    gets deleted.
+    """
+    tree = _module(
+        tmp_path,
+        "d.py",
+        '''
+        def dict_form():
+            return web.Response(headers={"Content-Disposition": f\'attachment; filename="{n}"\'})
+
+        def rfc_form():
+            return {"Content-Disposition": "attachment; filename*=UTF-8\'\'x"}
+
+        def subscript_form():
+            resp.headers["Content-Disposition"] = f\'attachment; filename="{n}"\'
+
+        def delegates():
+            return {"Content-Disposition": attachment_disposition(n)}
+
+        def only_mentions_it():
+            """Emits attachment; filename="x" as the header."""
+            _sel().log(resources=f"filename={n}")
+        ''',
+    )
+    assert gen._content_disposition_sites(tree) == ["dict_form", "rfc_form", "subscript_form"]
+
+
+def test_the_content_disposition_family_is_at_its_floor_of_zero():
+    """The family ships at 0 rather than at a measured population, which is the OPPOSITE of the
+    other three — and legitimate only because the unification that emptied it landed in the same
+    commit. Five inline sites existed on ``96691faf8``; all five now delegate to
+    ``http_download.attachment_disposition``. Recorded here so a future reader can tell "at the
+    floor" from "the detector broke", which the module docstring warns look identical.
+    """
+    committed = _committed()[gen.RATCHET_DUPLICATION]
+    assert committed["totals"]["by_family"]["content-disposition-header"] == 0
+    family = next(f for f in committed["families"] if f["name"] == "content-disposition-header")
+    assert family["canonical"] == "src/personalclaw/http_download.py"
+
+
 def test_the_import_direction_rule_resolves_relative_imports(tmp_path, monkeypatch):
     """``from ..dashboard import x`` never contains the string ``personalclaw.dashboard``, so a
     grep-shaped rule would miss the most idiomatic way to write the violation. Resolving
