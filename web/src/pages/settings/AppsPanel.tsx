@@ -18,7 +18,12 @@ import { fvs } from '../../design/fontWeight'
  *  a plain (non-provider) installed app exposes via `setup.configSchema` is
  *  aggregated here so a user reaches every app's settings in one place. */
 export function AppsPanel({ navigate }: { navigate?: (p: string) => void }) {
-  const { data: apps } = useQuery<AppSummary[]>(
+  // `error` and `refresh` are bound, not just `data`. Keeping the fetcher honest is only half the
+  // contract: with the rejection reaching the hook and nobody asking for it, `apps` stayed
+  // `undefined` and the render's `!apps` arm painted `<AppCardsSkeleton />` — three shimmering
+  // cards and an `aria-busy` region — permanently (#3394's (B) subclass). The list is this
+  // section's whole content, so its failure is an alert, not a quieter note.
+  const { data: apps, error: appsError, refresh: refreshApps } = useQuery<AppSummary[]>(
     // Shares the `'apps'` cache key with `#/apps` and the settings widget. A `.catch(() => [])` here
     // resolves with an empty list, which `useQuery` persists — so every OTHER consumer reads `[]`
     // as a success and can never reach its own error branch. Measured: with all `/api/apps*` calls at
@@ -50,7 +55,11 @@ export function AppsPanel({ navigate }: { navigate?: (p: string) => void }) {
           the wrong group. The heading holds in the empty state too, because "nothing here" is an
           answer about THIS group and only reads as one if the group is named. */}
       <Section title="Installed app settings" hint="Settings contributed by non-provider apps you have installed. An app with nothing to configure does not appear.">
-        {!apps ? <AppCardsSkeleton /> : configurable.length === 0 ? (
+        {/* The error arm comes FIRST: `!apps` is true for the loading, error AND empty branches, so
+            an error branch after the skeleton is unreachable by construction. */}
+        {!apps && appsError ? (
+          <LoadError what="installed app settings" error={appsError} onRetry={refreshApps} />
+        ) : !apps ? <AppCardsSkeleton /> : configurable.length === 0 ? (
           <div data-type="body-s" className="rounded-lg bg-surface-container px-l py-xl text-center text-on-surface-low">
             No installed apps expose configurable settings. Browse the <TextLink onClick={() => navigate?.('apps')}>Store</TextLink> to add some.
           </div>

@@ -5,7 +5,7 @@ import { Button } from '../../ui/Button'
 import { FormFooter } from '../../ui/FormFooter'
 import { Toggle } from '../../ui/Toggle'
 import { Markdown } from '../../ui/Markdown'
-import { Skeleton } from '../../ui/ListScaffold'
+import { LoadError, Skeleton } from '../../ui/ListScaffold'
 import { confirmDelete } from '../../ui/dialog'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type PromptItem, type PromptVariable } from '../../lib/api'
@@ -52,7 +52,13 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
 
   // The list payload may omit `content`; hydrate the full template on open. When
   // the prop already carries content we skip the fetch (the prop IS the full).
-  const { data: fetched, refresh: refetch } = useQuery<PromptItem | undefined>(`prompt:${prompt.name}`, () => (prompt.content == null ? api.prompt(prompt.name) : Promise.resolve(undefined)), { persist: true })
+  //
+  // `error` is bound because `full === undefined` is the ONLY gate below it: with the rejection
+  // reaching the hook and nobody reading it, a failed `GET /api/prompts/{name}` left the
+  // inspector on four shimmering `<Skeleton>` bars forever — the user had clicked a prompt that
+  // demonstrably exists (it came from the list) and the panel never said a word (#3394's (B)
+  // subclass). `refetch` is already here for the post-save re-read, so the retry is free.
+  const { data: fetched, error: hydrateErr, refresh: refetch } = useQuery<PromptItem | undefined>(`prompt:${prompt.name}`, () => (prompt.content == null ? api.prompt(prompt.name) : Promise.resolve(undefined)), { persist: true })
   const full = prompt.content != null ? prompt : fetched
 
   useEffect(() => { if (full) setDraft(toDraft(full)) }, [full])
@@ -97,6 +103,13 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
     )
   }
 
+  // Error before skeleton: both branches test `full === undefined`, so the order IS the
+  // reachability. `what` names the thing rather than the endpoint, and carries NO LEADING ARTICLE:
+  // `LoadError` composes "Couldn't load your ${what}", so "this prompt" renders "your this prompt".
+  // `ui/loadErrorSentence.test.ts` pins that tree-wide and is what caught it here.
+  if (full === undefined && hydrateErr) {
+    return <LoadError what="prompt" error={hydrateErr} onRetry={refetch} />
+  }
   if (full === undefined) {
     return (
       <div className="flex flex-col gap-3">

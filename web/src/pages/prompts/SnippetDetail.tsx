@@ -4,6 +4,7 @@ import { Pencil, Trash2, Check, X, Play, Loader2, Lock } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { FormFooter } from '../../ui/FormFooter'
 import { Markdown } from '../../ui/Markdown'
+import { LoadError } from '../../ui/ListScaffold'
 import { Field, FieldError } from '../../ui/forms'
 import { confirmDelete } from '../../ui/dialog'
 import { useQuery, invalidateKeys } from '../../lib/data'
@@ -29,7 +30,10 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
-  const { data: fetched, refresh: refetch } = useQuery<PromptSnippet | undefined>(`snippet:${snippet.name}`, () => (snippet.content == null ? api.snippet(snippet.name) : Promise.resolve(undefined)), { persist: true })
+  // Same contract as `PromptDetail`, and the same failure: `full === undefined` gates a bare
+  // spinner, so a failed `GET /api/snippets/{name}` spun forever over a snippet the user had just
+  // picked out of the list. `error` bound, error branch first (#3394's (B) subclass).
+  const { data: fetched, error: hydrateErr, refresh: refetch } = useQuery<PromptSnippet | undefined>(`snippet:${snippet.name}`, () => (snippet.content == null ? api.snippet(snippet.name) : Promise.resolve(undefined)), { persist: true })
   const full = snippet.content != null ? snippet : fetched
 
   useEffect(() => { if (full) setDraft(toSnippetDraft(full)) }, [full])
@@ -68,6 +72,9 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
     )
   }
 
+  if (full === undefined && hydrateErr) {
+    return <LoadError what="snippet" error={hydrateErr} onRetry={refetch} />
+  }
   if (full === undefined) {
     return <div className="flex h-40 items-center justify-center"><Loader2 size={20} className="animate-spin text-on-surface-low" /></div>
   }

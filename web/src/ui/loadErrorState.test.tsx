@@ -346,6 +346,45 @@ function destructuredAs(src: string, at: number): string | null {
  *  trailing boundary is what keeps `errorCount` from reading as `error`. */
 const binds = (pattern: string, name: string) =>
   new RegExp(String.raw`(^|[,{\s])${name}\s*(?::\s*\w+)?\s*(,|$|\})`).test(pattern)
+
+/** The local name a `useQuery(` call is bound to WHOLE — `const q = useQuery(…)` → `'q'` — or
+ *  `null` when the call is not a plain single-name binding.
+ *
+ *  🔴 THE THIRD FORM, AND IT WAS A MEASURED HOLE IN BOTH HALVES OF §D. `destructuredAs` returns
+ *  `null` for a whole-result binding, and the census then dropped the call entirely — so a
+ *  `useQuery` bound whole was scored by NEITHER detector however completely it ignored its own
+ *  failure. The old justification for that is still written in `destructuredAs`'s own doc: "`const q
+ *  = useQuery(…)` binds the WHOLE result, so `error` stays reachable as `q.error`". Reachable is
+ *  not read, and the tree measured **7** whole-result bindings of which **6** never mentioned
+ *  `.error` or `.status` — 86% of the form, invisible. One of the six was a live defect
+ *  (`settings/DurabilityPanel`'s `status`: a failed roots read emptied the "What to look through"
+ *  picker AND suppressed the git warning that explains an empty history, while its sibling
+ *  `timeline` read announced its own failure two branches down — so the page half-explained
+ *  itself). Same defect as (B), one syntax over. */
+function wholeResultAs(src: string, at: number): string | null {
+  const before = src.slice(Math.max(0, at - 200), at)
+  return before.match(/(?:const|let)\s+(\w+)\s*(?::[^=;]*)?=\s*$/)?.[1] ?? null
+}
+/** Does the file ever ASK a whole-result binding about its failure, or hand the whole object to
+ *  something that will?
+ *
+ *  🪤 THE DELEGATION ARM IS NOT A CONVENIENCE, IT IS THE MAJORITY OF THE FORM. Four of the six
+ *  unread whole-result bindings are `pages/companion/CompanionSections.tsx`'s sections, and they are
+ *  CORRECT: each passes the result intact as `query={query}` to a local `Section` that destructures
+ *  it and renders `<LoadError what={what} error={error} onRetry={refresh} />`. The contract travels
+ *  with the object, so demanding a `q.error` in the calling file would have demanded the removal of
+ *  the cleanest adoption of the primitive in the tree. A JSX prop receiving the WHOLE result is
+ *  therefore an exemption — and because that exemption is only as true as the receiver, the receiver
+ *  is pinned below ("a delegated query is still read by its receiver"). Without that pin, `query={q}`
+ *  would be a free pass anyone could spell.
+ *
+ *  ⚠️ A call that is neither destructured nor bound (`return useQuery(…)` inside a custom hook) is
+ *  out of scope by construction: it forwards the entire result to its caller, where the contract is
+ *  the caller's to keep and this same census scores it there. */
+function readsFailure(src: string, name: string): boolean {
+  return new RegExp(String.raw`\b${name}\.(?:error|status)\b`).test(src)
+    || new RegExp(String.raw`\w+=\{${name}\}`).test(src)
+}
 // `.tsx?` — `app/usePlatform.ts` is a `.ts` module that calls `useQuery` and swallows, and a
 // `.tsx`-only walker could never see it.
 const walk = (d: string): string[] =>
@@ -819,7 +858,9 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // provider with five configured MCP servers, with "0 instances" in the header chip beside it. A
   // count and a sentence are claims; an unrendered form is not. Same file, opposite verdicts.
   'pages/settings/MultiInstanceCard.tsx': 1,
-  'pages/settings/NotificationsPanel.tsx': 1,
+  // `NotificationsPanel` is GONE from this map, not zeroed — its one `.catch(() => null)` was the
+  // per-kind rules read, and it was also §D's only (A)+(B) pairing on a single call. See §D's two
+  // entries for the reason the "it only decorates" justification did not survive being checked.
   // 2 → 1. The installed-ledger read is fixed — and fixing it here required moving its TWIN in
   // `settingsWidgets` in the same commit, because the two share `settings:packs:installed`. The one
   // left is the bundled catalog, whose own `LoadError` the store section already renders beside it.
@@ -1188,6 +1229,25 @@ describe('§B no fetcher swallows its own rejection, tree-wide and by COUNT', ()
 // this section scores one invocation twice instead of being two sections — the contract is defeated
 // one layer BELOW the hook and one layer ABOVE it, and no check aimed at the hook itself sees either.
 //
+// 🔴 AND THERE IS A THIRD FORM, WHICH BOTH DETECTORS MISSED FOR THE SAME REASON (#3394, 2026-09-24).
+// (B) is written as a property of a DESTRUCTURING PATTERN, so `destructuredAs` returned `null` for a
+// whole-result binding — `const q = useQuery(…)` — and the census then dropped the call from BOTH
+// columns. It was not that the form scored zero; it was never scored. The exemption had a written
+// reason, and the reason is still in `destructuredAs`'s own doc: "binds the WHOLE result, so `error`
+// stays reachable as `q.error`". **Reachable is not read.** Measured when the form was finally
+// counted: 7 whole-result bindings in the tree, **6 of which never mention `.error` or `.status`** —
+// and one of the six was a live defect, `settings/DurabilityPanel`'s `status`, where a failed roots
+// read emptied the "What to look through" picker AND suppressed the git warning that explains an
+// empty history, while its own sibling `timeline` read announced its failure two branches down. A
+// page that half-explains itself reads as "your history is empty".
+//
+// The generalisable part is not the syntax, it is the shape of the mistake: **an exemption written as
+// a claim about what is POSSIBLE ("error stays reachable") exempts a population nobody then checked
+// ACTUALLY does it.** The four correct members are correct for a reason the old rule never stated
+// either — `pages/companion/CompanionSections.tsx` hands the whole result on as `query={query}` to a
+// `Section` that renders `<LoadError>` off it — so `readsFailure` admits delegation explicitly and
+// pins the receiver, rather than admitting the whole form on a plausible-sounding sentence.
+//
 // 🪤 AND THE BIGGER POPULATION IS THE ONE THIS SECTION CANNOT SEE AT ALL. §D is scoped to
 // `useQuery(` invocations, so a surface that hand-rolls its own loading flag around a DIRECT `api.*`
 // call is invisible to it — the same defect wearing a shape no `useQuery` audit can reach. Measured
@@ -1204,11 +1264,17 @@ describe('§B no fetcher swallows its own rejection, tree-wide and by COUNT', ()
 // 🔑 THIS SHIPS AT A RECORDED POPULATION, NOT AT ZERO, AND HAS NO REGENERATE MODE. Both were
 // deliberate. Shipping at zero is right for a rail whose decay is removed in the same commit; it is
 // wrong here, because most of (A) and (B) is a per-surface PRODUCT decision — what a retry re-runs,
-// whether a cached copy should still paint — and sweeping 116 of those in one commit would be the
+// whether a cached copy should still paint — and sweeping 107 of those in one commit would be the
 // "convert them all" move this file's §A header already declines for the same reason. So the numbers
 // below are debt, and the only supported edit is DOWNWARD. There is no generator: a regenerate mode on
 // a budget like this is not a convenience, it is a loophole — it would let the next lane bless a new
 // swallow by re-running a script instead of writing down why the site is correct.
+//
+// 🪤 A NUMBER OF `0` IS NOT THE SAME STATEMENT AS NO ENTRY, AND BOTH APPEAR BELOW ON PURPOSE. An
+// explicit `0` says "this file was measured at zero and must stay there"; deleting the row says "this
+// file is no longer interesting to the census". The over-budget check reads an absent key as 0 either
+// way, so the two are behaviourally identical and differ only in what they tell a reader — which is
+// why every removal in this commit is annotated rather than silently dropped.
 const FETCHER_SWALLOW_BUDGET: Record<string, number> = {
   'app/usePlatform.ts': 1,
   'pages/agents/AgentDetail.tsx': 1,
@@ -1224,7 +1290,12 @@ const FETCHER_SWALLOW_BUDGET: Record<string, number> = {
   'pages/settings/ModelBackends.tsx': 1,
   'pages/settings/ModelsPanel.tsx': 2,
   'pages/settings/MultiInstanceCard.tsx': 1,
-  'pages/settings/NotificationsPanel.tsx': 1,
+  // `NotificationsPanel` is GONE from this map, not zeroed — and the entry it used to hold is the
+  // clearest example of how a written justification rots. It read that the rules matrix "DECORATES
+  // this panel, so losing it degrades one section rather than fabricating the switches above". What
+  // `rules` actually gates is `<NotificationRulesMatrix>` — described four lines up in the same file
+  // as "the authoritative view of policy" — and `<DigestSchedule>`, a CONTROL. A failed read deleted
+  // the per-kind half of a settings page silently. The reason was written down, checked, and wrong.
   'pages/settings/PacksPanel.tsx': 1,
   'pages/settings/PromptsPanel.tsx': 0,
   'pages/settings/ProvidersPanel.tsx': 3,
@@ -1232,6 +1303,16 @@ const FETCHER_SWALLOW_BUDGET: Record<string, number> = {
   'pages/settings/SearchPanel.tsx': 1,
   'pages/settings/SecurityPanel.tsx': 2,
   'pages/settings/UpdatesPanel.tsx': 1,
+  // 🔑 FIVE KEEPS, AND THE ONE ENTRY IN THIS MAP WHOSE REASON IS LOAD-BEARING ENOUGH TO RESTATE.
+  // #3394 singles this file out because it is the case where a deliberate empty fallback is right.
+  // All five are `null`-substituting reads whose surfaces are gated on the value's PRESENCE —
+  // `{t && …}`, `{sys && hasActivity && …}`, `dayCap > 0`, `fold ?? null` — so an unread one costs a
+  // section rather than composing a sentence. That is the whole distinction this map runs on: a COUNT
+  // or a SENTENCE built from a substitute is a false claim about server state, and an unrendered
+  // section is not a claim at all. The two rollups that DID compose sentences ("No model usage
+  // recorded this period." on a page whose own tiles could be showing $11.35 at the same moment) were
+  // fixed earlier and are why this reads 5 rather than 7. Converting the remaining five would put an
+  // error banner where the design puts nothing, which is the inverse defect.
   'pages/settings/UsagePanel.tsx': 5,
   'pages/settings/VoicePanel.tsx': 1,
   'pages/settings/settingsWidgets.tsx': 2,
@@ -1258,17 +1339,29 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   'pages/knowledge/KnowledgeCreatePage.tsx': 1,
   'pages/knowledge/KnowledgeListPage.tsx': 3,
   'pages/projects/ProjectsSection.tsx': 4,
-  'pages/prompts/PromptDetail.tsx': 1,
-  'pages/prompts/SnippetDetail.tsx': 1,
+  // `PromptDetail`, `SnippetDetail` and `AppsPanel` are GONE from this map, not zeroed. All three
+  // were the pure eternal-spinner shape with nothing else wrong: the fetcher propagated correctly,
+  // `full === undefined` / `!apps` was the ONLY gate below it, and nobody asked. So a failed
+  // `GET /api/prompts/{name}` left the inspector on four shimmering bars — for a prompt the user
+  // had just clicked out of a list, i.e. one that demonstrably exists — and Settings › Apps painted
+  // three skeleton cards and an `aria-busy` region forever. Each fix is one bound `error` plus an
+  // arm placed BEFORE the skeleton, which is where the reachability lives.
   'pages/prompts/SyntaxReference.tsx': 1,
-  'pages/settings/AppsPanel.tsx': 1,
   'pages/settings/ChatPanel.tsx': 0,
   'pages/settings/CompanionPanel.tsx': 3,
   'pages/settings/MemoryPanel.tsx': 8,
   'pages/settings/ModelBackends.tsx': 1,
   'pages/settings/ModelsPanel.tsx': 2,
   'pages/settings/MultiInstanceCard.tsx': 1,
-  'pages/settings/NotificationsPanel.tsx': 1,
+  // `NotificationsPanel` leaves this map too, in the same commit and for the same read — it was
+  // (A) AND (B) on one call, the worst pairing in the class: the fetcher resolved the rejection to
+  // `null` so `error` was structurally unreachable, and the call bound nothing so nobody could have
+  // read it either way. Two independent defeats of one contract on one line.
+  // `ProjectionRulesPanel`'s entry is a KEEP, not debt. `SavingsCard`'s `{ data }` backs a card that
+  // ends `if (!data || data.saved_chars <= 0) return null` — a designed absence under a prior ruling
+  // with its own rail (`dashboard/healthUnknown.test.ts`), because a fresh install has no savings and
+  // "0 saved" would be noise. An error banner there would invent a problem out of a card that is
+  // supposed to be invisible most of the time.
   'pages/settings/ProjectionRulesPanel.tsx': 1,
   'pages/settings/PromptsPanel.tsx': 0,
   'pages/settings/ProvidersPanel.tsx': 3,
@@ -1280,6 +1373,13 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   'pages/skills/SkillsPage.tsx': 2,
   'pages/tasks/TaskCreatePage.tsx': 1,
   'pages/triggers/TriggersListPage.tsx': 1,
+  // 🔑 THE THIRD FORM'S ONLY BUDGETED MEMBER, AND IT IS A KEEP. `surfacingQ` is bound whole and reads
+  // only `.data`, which the new detector scores — correctly, as a measurement. But the site is right
+  // and the file already argues why at the call: the surfacing read is a FRESHNESS COLUMN on rows
+  // whose identity came from a different read, and "a plain startable list is a better answer than an
+  // error for it". §B's `SWALLOW_BUDGET` carries the same site for the same reason, so the two maps
+  // agree about it rather than one blessing what the other flags.
+  'pages/workflows/WorkflowsListPage.tsx': 1,
   'ui/Composer.tsx': 1,
 }
 
@@ -1294,7 +1394,15 @@ describe('§D the error contract, per invocation — the fetcher AND the destruc
       for (const c of cachedCalls(src)) {
         if (swallowSites(c.args).length > 0) a++
         const pattern = destructuredAs(src, c.at)
-        if (pattern !== null && !binds(pattern, 'error') && !binds(pattern, 'status')) b++
+        if (pattern !== null) {
+          if (!binds(pattern, 'error') && !binds(pattern, 'status')) b++
+        } else {
+          // The third form. Counted into (B) rather than given a budget of its own, because it is
+          // the same property — "this call cannot report its own failure" — and a third map would
+          // let one file's debt hide in whichever column nobody was reading.
+          const whole = wholeResultAs(src, c.at)
+          if (whole !== null && !readsFailure(src, whole)) b++
+        }
       }
       if (a > 0 || b > 0) out.set(rel(abs), [a, b])
     }
@@ -1326,6 +1434,41 @@ describe('§D the error contract, per invocation — the fetcher AND the destruc
     expect(destructuredAs(`${jsx}useQuery(`, jsx.length), 'a non-destructuring RHS is not a site').toBeNull()
     const real = '  const { data, error } = '
     expect(destructuredAs(`${real}useQuery(`, real.length), 'a real destructuring IS a site').toBe(' data, error ')
+
+    // ── THE THIRD FORM, as shapes ────────────────────────────────────────────────────────────────
+    // Its detector is two functions and both can fail silently, so both get controls. The negated
+    // arm is the dangerous one: `readsFailure` returning `true` for everything would exempt the whole
+    // form and read exactly like a tree that has no whole-result bindings.
+    const whole = '  const q = '
+    expect(wholeResultAs(`${whole}useQuery(`, whole.length), 'a whole-result binding IS a site').toBe('q')
+    const typed = '  const q: QueryResult<Row[]> = '
+    expect(wholeResultAs(`${typed}useQuery(`, typed.length), 'a type annotation does not hide it').toBe('q')
+    expect(wholeResultAs(`${real}useQuery(`, real.length), 'a destructuring is NOT a whole binding').toBeNull()
+    expect(readsFailure('const q = useQuery(k, f)\nif (q.error) return <LoadError />', 'q'), 'reading .error').toBe(true)
+    expect(readsFailure('const q = useQuery(k, f)\nif (q.status === "error") return null', 'q'), 'reading .status').toBe(true)
+    expect(readsFailure('const q = useQuery(k, f)\nreturn <Section query={q} />', 'q'), 'handing it on WHOLE').toBe(true)
+    expect(readsFailure('const q = useQuery(k, f)\nconst rows = q.data ?? []', 'q'), 'reading only .data is NOT').toBe(false)
+    // 🪤 The boundary that keeps the delegation arm from becoming the whole rule: passing a FIELD is
+    // not passing the query. `useCompanionAction(query.data)` and `rows={q.data}` hand over a value
+    // the contract has already been stripped from, and the four correct companion sites do BOTH —
+    // they pass `query.data` to their action hook and `query` to their Section. If `\w+=\{q\.data\}`
+    // counted, every one of them would pass for the wrong reason.
+    expect(readsFailure('const q = useQuery(k, f)\nreturn <List rows={q.data} />', 'q'), 'a FIELD is not the query').toBe(false)
+  })
+
+  it('a delegated query is still read by its receiver', () => {
+    // 🔴 THE EXEMPTION IS ONLY AS TRUE AS THIS. `readsFailure` treats `query={q}` as satisfying the
+    // contract, which is correct for the four `CompanionSections` sites and would be a free pass for
+    // anyone else who spells it. So the receiver is pinned: `Section` must destructure the query it is
+    // handed and render the primitive off its `error`. Deleting that branch — the one edit that would
+    // turn four exemptions into four silent defects — turns this red instead.
+    const src = codeOf(join(SRC, 'pages/companion/CompanionSections.tsx'))
+    expect(src, 'the receiver must take the WHOLE query').toMatch(/function Section<[^>]*>\(\{[^}]*\bquery\b/)
+    expect(src, 'and ask it about its failure').toMatch(/\{\s*data,\s*loading,\s*error,\s*refresh\s*\}\s*=\s*query/)
+    expect(src, 'and render the primitive for it').toMatch(/<LoadError\s+what=\{what\}\s+error=\{error\}/)
+    // And the delegating call sites still exist, so the pin is guarding something.
+    const delegated = [...src.matchAll(/\bquery=\{query\}/g)].length
+    expect(delegated, 'the companion sections must still delegate their whole query').toBeGreaterThanOrEqual(4)
   })
 
   it('no fetcher inside a useQuery call swallows beyond its budget — (A)', () => {
