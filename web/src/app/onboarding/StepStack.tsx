@@ -1,17 +1,28 @@
 import { forwardRef, useEffect, useRef } from 'react'
 import { withWeight } from '../../design/fontWeight'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Check } from 'lucide-react'
+import { Check, Minus } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { spring } from '../../design/motion'
 
-export type StepState = 'upcoming' | 'active' | 'done'
+/** What a row says about its step.
+ *
+ *  `skipped` is a distinct state, not a flavour of `done`. The flow previously rendered a
+ *  walked-past step as `done` with the summary "Skipped" — a green check beside the word Skipped,
+ *  a contradiction the eye resolves in favour of the check. A skip is a real and legitimate
+ *  outcome, so it gets its own quiet mark; `upcoming` stays reserved for a step with NO recorded
+ *  outcome at all, which is the state the flow must never dress up as complete. */
+export type StepState = 'upcoming' | 'active' | 'done' | 'skipped'
 
-/** A vertically-stacked onboarding step row. Active rows expand to reveal their
- *  body; done rows collapse to a compact green summary; upcoming rows are quiet.
+/** A vertically-stacked onboarding step row. Active rows expand to reveal their body; settled rows
+ *  collapse to a compact summary — green for done, quiet for skipped; upcoming rows say nothing.
  *  The row that's `active` forwards its ref so the DotGlow can track it. */
 export const StepRow = forwardRef<HTMLLIElement, {
   index: number
+  /** How many steps there are, so the ACTIVE row can answer "how much is left" in words rather
+   *  than only in the screen-reader announcement. Optional: the row primitive is also rendered
+   *  directly by its own tests, where the set size is not the subject. */
+  total?: number
   icon: LucideIcon
   title: string
   subtitle?: string
@@ -19,13 +30,22 @@ export const StepRow = forwardRef<HTMLLIElement, {
   doneSummary?: string
   onActivate?: () => void
   children?: React.ReactNode
-}>(function StepRow({ index, icon: Icon, title, subtitle, state, doneSummary, onActivate, children }, ref) {
+}>(function StepRow({ index, total, icon: Icon, title, subtitle, state, doneSummary, onActivate, children }, ref) {
   const done = state === 'done'
+  const skipped = state === 'skipped'
+  const settled = done || skipped
   const active = state === 'active'
   const green = 'var(--color-success)'
   // Whether this row is a "go back to this step" target — which decides the ELEMENT its header
-  // renders as, below. Previously this predicate only chose an `onClick`.
-  const revisitable = !active && done && !!onActivate
+  // renders as, below, and its cursor. ONE predicate for both, so they cannot drift apart again.
+  //
+  // 🔑 IT NO LONGER ASKS WHETHER THE STEP IS DONE. That was the mechanism behind "going back
+  // destroys going forward": a run that had reached step 5 and returned to step 1 re-derived steps
+  // 2-5 as upcoming, so every header stopped being a button and the only route forward was to walk
+  // all four again — measured on a fresh home, the page left with just Continue and Skip. Whether a
+  // step is REACHABLE is the caller's judgement, because only it knows the high-water mark, and it
+  // states that judgement by passing or withholding `onActivate`. This row honours it.
+  const revisitable = !active && !!onActivate
   const Header = revisitable ? motion.button : motion.div
 
   // 🔴 ADVANCING A STEP USED TO DROP FOCUS ON THE FLOOR, on the first screen of the product. The
@@ -62,6 +82,14 @@ export const StepRow = forwardRef<HTMLLIElement, {
       // The stack is a real `<ol>` now and this is a real `<li>`, which is also what the visible
       // design always was: five numbered steps.
       aria-current={active ? 'step' : undefined}
+      // 🪤 THE ROW IS NOT A FOCUS TARGET, and it briefly carried `tabIndex={active ? -1 : undefined}`
+      // so that the flow could focus it on a step change. Two independent fixes for the same
+      // dropped-focus defect then existed at once — this row's heading below, and `Onboarding`'s
+      // arrival effect focusing the row — and the parent's won by effect order alone, because React
+      // runs a child's effects first. The heading is the right destination: this `<li>` has no role
+      // and no accessible name, so focusing it makes a screen reader read the row's entire text
+      // content, expanded step body included, instead of "heading level 2, <the step>". The `<li>`
+      // therefore has no focusable state and needs no inset focus ring of its own.
       transition={spring.spatialDefault}
       className="list-none overflow-hidden"
       style={{
@@ -123,7 +151,10 @@ export const StepRow = forwardRef<HTMLLIElement, {
           <AnimatePresence mode="wait" initial={false}>
             {done
               ? <motion.span key="check" initial={{ scale: 0, rotate: -30 }} animate={{ scale: 1, rotate: 0 }} transition={spring.spatialFast}><Check size={18} /></motion.span>
-              : <motion.span key="icon" initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}><Icon size={17} /></motion.span>}
+              : skipped
+                // A dash, on the quiet ground: settled, and visibly NOT the same thing as done.
+                ? <motion.span key="skip" initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={spring.spatialFast}><Minus size={18} /></motion.span>
+                : <motion.span key="icon" initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}><Icon size={17} /></motion.span>}
           </AnimatePresence>
         </span>
 
@@ -161,13 +192,21 @@ export const StepRow = forwardRef<HTMLLIElement, {
                 already has this screen announce `Step N of M: <title>` to assistive tech through a
                 live region, so a screen-reader user was told the position while the eye was not.
                 Showing it makes the visible label agree with what is already spoken. */}
-            <span className="text-on-surface-low text-[0.75rem]">Step {index + 1}</span>
+            {/* 🔑 THE ACTIVE ROW CARRIES THE TOTAL. The visible label used to read a bare "Step 3"
+                while the screen-reader announcement said "Step 3 of 5" — so "how much is left" was
+                answered for one channel and not the other, on the screen where a stranger most
+                wants to know. The collapsed rows stay bare: repeating "of 5" five times down the
+                stack is noise, and the question is about where you are STANDING. */}
+            <span className="text-on-surface-low text-[0.75rem]">
+              Step {index + 1}{active && total ? ` of ${total}` : ''}
+            </span>
           </div>
           <AnimatePresence initial={false} mode="wait">
             {active && subtitle
               ? <motion.p key="sub" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mt-0.5 text-on-surface-low text-[0.8125rem]">{subtitle}</motion.p>
-              : done && doneSummary
-                ? <motion.p key="done" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-0.5 text-[0.8125rem]" style={{ color: green }}>{doneSummary}</motion.p>
+              : settled && doneSummary
+                ? <motion.p key="settled" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-0.5 text-[0.8125rem]"
+                    style={{ color: done ? green : 'var(--color-on-surface-low)' }}>{doneSummary}</motion.p>
                 : null}
           </AnimatePresence>
         </div>

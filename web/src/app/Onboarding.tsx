@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { unavailableWhen } from '../ui/unavailable'
 import { withWeight } from '../design/fontWeight'
 import { motion } from 'framer-motion'
-import { ArrowRight, User, Boxes, Rocket, Sparkles, Loader2, Check, Compass, Inbox, Waves, PanelLeft, FolderInput, RefreshCw } from 'lucide-react'
+import { ArrowLeft, ArrowRight, User, Boxes, Rocket, Sparkles, Loader2, Check, Compass, Inbox, Waves, PanelLeft, FolderInput, RefreshCw } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { ClawMark } from '../ui/ClawMark'
 import { DotGlow } from '../ui/DotGlow'
@@ -12,48 +12,83 @@ import { TextLink } from '../ui/TextLink'
 import { Toggle } from '../ui/Toggle'
 import { ScalarControl } from '../ui/TokenControls'
 import { TOKENS, type ScalarToken } from '../design/tokenRegistry'
-import { spring, stagger, listItemEnter } from '../design/motion'
+import { spring, stagger, listItemEnter, prefersReducedMotion } from '../design/motion'
 import { useIdentity, firstNameOf, suggestHandle, DEFAULT_USER_NAME } from './identity'
 import { setNavMode } from './navDisclosure'
 import { APP_NAME } from './config'
 import { notify } from './appSdk'
-import { api, type OnboardingState, type OnboardingStatePatch } from '../lib/api'
+import { api, type OnboardingStatePatch } from '../lib/api'
 import { StepRow, type StepState } from './onboarding/StepStack'
 import { EssentialsStep } from './onboarding/EssentialsStep'
 import { ImportStep } from './onboarding/ImportStep'
 import { TryOneStep } from './onboarding/TryOneStep'
 import { setOnboardingExit } from './onboarding/exitTo'
 import { requestProductTour } from './onboarding/tourLaunch'
+import {
+  ORDER as STEP_ORDER, TITLES as STEP_TITLES, SLUGS, STORED, type StepId,
+  furthestOf, isUnlocked, nextOf, pathOf, previousOf, resolveStep, stepFromSlug, stepFromStored,
+} from './onboarding/steps'
 
-type StepId = 'name' | 'import' | 'essentials' | 'try' | 'ready'
-const ORDER: StepId[] = ['name', 'import', 'essentials', 'try', 'ready']
-// One source for each step's title — used by both the StepRow headings and the live region that
-// announces progress, so the spoken step name can never drift from the visible one.
-const TITLES: Record<StepId, string> = {
-  name: 'Your name', import: 'Bring your setup over', essentials: 'Essential apps',
-  try: 'Try one', ready: 'All set',
+// Re-stated as local bindings because the live region and every row heading read them by these
+// names; `onboarding/steps.ts` is the single definition. `stepProgressAnnounced.test.ts` rails the
+// pair together so a title can never be hardcoded onto a row.
+const ORDER = STEP_ORDER
+const TITLES = STEP_TITLES
+
+/** What a step actually produced for this user. Deliberately NOT derivable from position: the
+ *  previous flow read `ORDER.indexOf(step)` and rendered every earlier row as complete, so a
+ *  resumed run put a green check on "Bring your setup over" for someone who had never seen that
+ *  screen. An outcome exists only where the user, or the server's own record, supplies one. */
+type Outcome = 'done' | 'skipped'
+interface StepRecord { outcome: Outcome; summary: string }
+
+/** The name and handle the user has typed but not yet committed.
+ *
+ *  **Why it is persisted.** Identity is committed once, at the end, by `finish()` — that write is
+ *  what flips `onboarded` and releases the route guard. So mid-flow the typed name lives only in
+ *  React state, and a reload lost it: measured on a fresh home with the server reporting
+ *  `step: "essentials"`, a refresh put the user back on "Step 1 of 5: Your name" with both fields
+ *  empty. Resuming to the right step but silently forgetting the name would be worse, not better —
+ *  `finish()` would then commit the fallback name for someone who never declined to give one.
+ *
+ *  **Why `sessionStorage`.** It is the exact scope of the problem: a refresh keeps it, a new tab
+ *  does not. Persisting it any wider would resurrect one person's half-typed name into someone
+ *  else's fresh first run, which is the failure `exitTo.ts` warns about for its own module state.
+ *  It is NOT a second source of truth for identity — nothing reads it but this flow, and only
+ *  `setName` writes identity. */
+const DRAFT_KEY = 'onboarding-draft'
+
+interface Draft {
+  name: string
+  handle: string
+  /** Whether the operator has edited the handle field — INCLUDING clearing it. See `NameStep`. */
+  handleTouched: boolean
+  /** Whether the name step has been passed at least once. This is the flow's one hard gate. */
+  passed: boolean
 }
 
-/** Where a re-entered flow picks up, from the persisted resume point (`STEPS` in
- *  `onboarding.py`, written by every transition below).
+/** Read the draft, falling back to what this install already stores.
  *
- *  Two of the four stored values are NOT resume targets:
- *   • `name` is where the stack starts anyway;
- *   • `done` means a previous run finished. Re-entering after that is a fresh run
- *     ("Restart onboarding" in Settings → Account, or a finish whose identity write never
- *     landed), and dropping such a user on the recap would skip the very steps they asked
- *     to redo.
- *
- *  The name step itself always runs, because the name is deliberately NOT part of this
- *  state (OU-1: identity lives on the server and `onboarded` is derived from it, so storing
- *  a second copy here would create a second source of truth) and it is committed only at
- *  the end. Re-typing one field is the honest cost of that; fabricating a name for someone
- *  who typed one before the reload is not. Everything the earlier visit actually did —
- *  installed apps, bound model, completed cards — is what resume restores. */
-function resumeTarget(state: OnboardingState): StepId | null {
-  if (state.step === 'essentials') return 'essentials'
-  if (state.step === 'first_success') return 'try'
-  return null
+ *  `passed` is honoured only alongside a non-empty name, so a truncated or hand-edited draft can
+ *  never unlock the rest of the flow for a run that has no name to commit. */
+function loadDraft(storedName: string, storedHandle: string): Draft {
+  const fresh: Draft = {
+    name: storedName, handle: storedHandle, handleTouched: storedHandle.length > 0, passed: false,
+  }
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY)
+    if (!raw) return fresh
+    const d = JSON.parse(raw) as Partial<Draft>
+    const name = typeof d.name === 'string' ? d.name : fresh.name
+    return {
+      name,
+      handle: typeof d.handle === 'string' ? d.handle : fresh.handle,
+      handleTouched: typeof d.handleTouched === 'boolean' ? d.handleTouched : fresh.handleTouched,
+      passed: d.passed === true && name.trim().length > 0,
+    }
+  } catch {
+    return fresh
+  }
 }
 
 /** The Motion group's Bounciness dial, straight out of the token registry — the done screen
@@ -73,44 +108,78 @@ const BOUNCINESS = TOKENS.find((t) => t.varName === '--bounciness') as ScalarTok
  *  (`step`), and the essentials step persists which lanes it filled (`essentials`).
  *  Those writes are what OU-4's resume reads; the progress POST is fire-and-forget on
  *  purpose — a failed write must never block a user's first run. */
-export function Onboarding() {
-  const { setName, username: storedHandle } = useIdentity()
-  const [step, setStep] = useState<StepId>('name')
-  const [name, setNameDraft] = useState('')
-  const [savedName, setSavedName] = useState('')
-  /** The attribution handle (`dashboard.username`), asked for HERE rather than only in
-   *  Settings → Account — a handle that first run never mentions is one almost nobody
-   *  ever sets, and records written before it exists cannot be attributed afterwards
-   *  (TEAM-SHARED-ENTITIES §1: a rename affects future writes only).
+export function Onboarding({ sub, navigate, deferred, onFinished }: {
+  /** The hash sub-path — the step's slug. `''` on `#/onboarding`, which resolves to wherever
+   *  this run belongs. */
+  sub: string
+  /** The shell's router. Steps are real history entries, which is what makes the browser's Back
+   *  and Forward buttons walk the flow instead of fighting the route guard. */
+  navigate: (path: string, opts?: { replace?: boolean }) => void
+  /** The route the guard deferred to get the user here, or `''`. A fresh home pulls EVERY route to
+   *  `#/onboarding`, and a silent yank reads as the app swallowing the click — so the flow says the
+   *  redirect is a deferral, and `finish()` keeps the promise by landing them there.
    *
-   *  Untouched, the field SHOWS a suggestion derived from the display name as it is
-   *  typed. `handleTouched` is what makes it the operator's once they edit it —
-   *  INCLUDING when they clear it. An empty handle is a legitimate end state ("leave it
-   *  empty to keep records unattributed"), so a suggestion that grew back over a
-   *  deliberate clear would fabricate the one value this field must never invent. */
-  /** Seeded from the STORED handle, not empty: a re-run of the flow ("Restart onboarding"
-   *  in Settings → Account) must offer back the handle this install already has rather
-   *  than a fresh suggestion, or finishing would silently replace a deliberate handle
-   *  with one derived from the name. Seeding as `touched` is the same rule — the
-   *  suggestion may not overwrite a choice already made.
+   *  A PROP, not a read of `exitTo`'s slot. Reading it here was the obvious shape and it never
+   *  rendered: `App` returns this component during its FIRST render, and the guard that records the
+   *  destination is an effect, which runs after. The guard owns the slot; it passes down what it
+   *  put there. */
+  deferred: string
+  /** Called once the flow is over, whichever door was used. On a deliberate re-run this is what
+   *  withdraws the request so the guard can put the user back; on a first run the `onboarded`
+   *  flip does that and this is a no-op. `App` owns the move either way — one navigator. */
+  onFinished: () => void
+}) {
+  const { name: storedName, setName, username: storedHandle } = useIdentity()
+  /** Seeded from what this install already stores, then from a live draft.
    *
-   *  Reading the context value as INITIAL state is safe because `App` renders a spinner
-   *  until `loaded` (App.tsx:448), so the identity fetch has already resolved by the
-   *  time this component first mounts. */
-  const [handle, setHandleDraft] = useState(storedHandle)
-  const [handleTouched, setHandleTouched] = useState(storedHandle.length > 0)
-  const [savedHandle, setSavedHandle] = useState(storedHandle)
-  const [readiness, setReadiness] = useState<OnboardingState | null>(null)
-  const [modelDone, setModelDone] = useState<string>('')  // '' = not resolved, else summary
-  const [triedSummary, setTriedSummary] = useState<string>('')
-  /** What the import step brought over, for its collapsed row. '' until it is left. */
-  const [importSummary, setImportSummary] = useState<string>('')
-  /** The step a re-entered flow jumps to once the name is in, or null for a first visit. */
-  const [resume, setResume] = useState<StepId | null>(null)
-  /** How many "try one" cards this home has ALREADY completed, per the persisted flags. */
-  const [triedFloor, setTriedFloor] = useState(0)
+   *  The STORED name matters for a deliberate re-run: "Run setup again" no longer clears identity,
+   *  so the field offers back the name this install has rather than an empty box that would commit
+   *  a rename. The stored HANDLE is seeded as already-touched for the same reason — the suggestion
+   *  may not overwrite a choice already made.
+   *
+   *  Reading the context values as INITIAL state is safe because `App` renders a spinner until
+   *  `loaded`, so the identity fetch has resolved before this component first mounts. */
+  const [draft, setDraft] = useState<Draft>(() => loadDraft(storedName, storedHandle))
+  /** The furthest step this run has stood on. Raised by every forward move and by the persisted
+   *  high-water mark; never lowered, so going back cannot cost the user the steps they reached.
+   *
+   *  **Seeded from the address bar**, and that is load-bearing rather than an optimisation. The
+   *  server's mark arrives asynchronously, so a reload of `#/onboarding/essentials` that started
+   *  from `'name'` would resolve to the name step and the URL-correction effect below would
+   *  REWRITE the very address that was asking to resume — measured: the announcement stayed on
+   *  "Step 1 of 5" even after the mark landed, because `sub` had already been overwritten.
+   *
+   *  Seeding is also the more trustworthy record of the two. The flow only ever pushes a step it
+   *  had already unlocked, so a sub-path naming one is this session's own evidence that the run
+   *  stood there — whereas the server write is deliberately fire-and-forget, so a failed POST would
+   *  otherwise cost the user their position. Gated on the draft having passed the name step, so an
+   *  address alone can never open the flow for a run with no name to commit. */
+  const [reached, setReached] = useState<StepId>(() => {
+    const fromUrl = stepFromSlug(sub)
+    return fromUrl && loadDraft(storedName, storedHandle).passed ? fromUrl : 'name'
+  })
+  const [readiness, setReadiness] = useState<import('../lib/api').OnboardingState | null>(null)
+  /** What each step produced, for its collapsed row and the recap. A step absent from this map has
+   *  NO recorded outcome and must render as not-yet-done — never as complete. */
+  const [records, setRecords] = useState<Partial<Record<StepId, StepRecord>>>({})
   /** The done screen's rail choice, written once by `finish()` — see there. */
   const [showEverything, setShowEverything] = useState(false)
+
+  const namePassed = draft.passed && draft.name.trim().length > 0
+  /** Which step is on screen: what the URL asks for, reconciled with what this run has reached.
+   *  The URL is the position — that is what makes refresh, Back, Forward and a deep link all land
+   *  in the same place — and `resolveStep` is total, so there is no input that renders nothing. */
+  const step = resolveStep(stepFromSlug(sub), reached, namePassed)
+
+  /** The committed halves of identity, DERIVED from the draft rather than captured into their own
+   *  state. An untouched handle field shows a suggestion tracking the name as it is typed, so what
+   *  lands is what the operator saw and accepted; and because the field is only reachable ON the
+   *  name step, returning to it and editing re-commits — which is exactly what going back should
+   *  mean. Two fewer state variables that could disagree with the fields. */
+  const savedName = namePassed ? draft.name.trim() : ''
+  const savedHandle = namePassed
+    ? (draft.handleTouched ? draft.handle.trim() : suggestHandle(draft.name.trim()))
+    : ''
 
   // the active step's row drives the 3D glow focus (like the composer in chat)
   // `HTMLLIElement` since the rows became real list items — tsc caught the mismatch, which is the
@@ -123,9 +192,12 @@ export function Onboarding() {
   const activeRef = rowRefs[step]
 
   const stateOf = (id: StepId): StepState => {
-    const si = ORDER.indexOf(step), ii = ORDER.indexOf(id)
     if (id === step) return 'active'
-    return ii < si ? 'done' : 'upcoming'
+    // The name step's outcome IS the gate: it has no summary of its own beyond the identity it
+    // captured, so `namePassed` is the whole record.
+    if (id === 'name') return namePassed ? 'done' : 'upcoming'
+    const rec = records[id]
+    return rec ? rec.outcome : 'upcoming'
   }
 
   /** Record first-run progress. Deliberately fire-and-forget: the flow's job is to get
@@ -134,74 +206,170 @@ export function Onboarding() {
     api.saveOnboardingState(patch).catch(() => { /* resume is a convenience, not a gate */ })
   }, [])
 
+  // Persist the draft on every change, so a refresh mid-flow keeps what was typed.
+  useEffect(() => {
+    try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft)) } catch { /* storage may be denied */ }
+  }, [draft])
+
+  // Keep the address bar agreeing with what is rendered. `replace` because a corrected URL is not
+  // a place the user navigated to — pushing it would make Back return them to the step the clamp
+  // just refused, and each Back press would bounce them forward again (#306's lesson, same shape).
+  useEffect(() => {
+    if (sub !== SLUGS[step]) navigate(pathOf(step), { replace: true })
+  }, [sub, step, navigate])
+
+  /** 🔴 ARRIVING AT A STEP MOVES THE VIEW TO IT. The FOCUS is `StepStack`'s to move, not this
+   *  effect's — see the trap below, which is why.
+   *
+   *  The view did not move: the scroll offset simply CARRIED OVER (`377 → 377` across step 3 → 4),
+   *  so the new step opened at whatever offset the old one had been scrolled to. Clicking "Set up
+   *  later" could look like nothing happened at all, which is the largest single contributor to the
+   *  flow reading as unnavigable — the live region announced the change to assistive tech while the
+   *  screen showed no evidence of it.
+   *
+   *  🪤 THIS EFFECT ALSO CALLED `row.focus()`, AND IT SILENTLY BEAT THE BETTER FIX. `StepRow` already
+   *  moves focus to the newly-active step's `<h2>`, and React runs a CHILD's effects before its
+   *  parent's — so on every advance both fired, in that order, and the row's focus landed second and
+   *  won. Measured in the browser rail (`web/e2e/onboardingGeometry.spec.ts`) as two `focusin` events
+   *  per advance — `h2 :: "Bring your setup over"` then `li :: "Bring your setup overStep 2 of
+   *  5Already use another local agent tool?…"` — leaving `document.activeElement` on the `<li>`.
+   *  Neither fix was wrong on its own; together, effect ORDER decided it rather than intent.
+   *
+   *  The row is also the worse destination on the merits. It is a `<li>` with no role and no
+   *  accessible name, so what a screen reader reads on arrival is its whole text content — title,
+   *  position, subtitle AND the entire expanded step body — where the heading announces exactly
+   *  "heading level 2, Bring your setup over". So there is ONE focus mover, it lives beside the
+   *  heading it targets, and this effect moves the view only.
+   *
+   *  Skipped on the FIRST render, deliberately: step 1 is active from the first paint, so there is no
+   *  arrival to show, and scrolling during the commit that applies the name field's `autoFocus` would
+   *  move the page out from under the caret. Only a CHANGE of step moves anything. */
+  const arrivedRef = useRef<StepId | null>(null)
+  useEffect(() => {
+    const previous = arrivedRef.current
+    arrivedRef.current = step
+    if (previous === null || previous === step) return
+    const row = rowRefs[step].current
+    if (!row) return
+    // Guarded the way `ui/SpotlightTour` guards it — jsdom has no implementation — and honouring the
+    // reduced-motion preference for the same reason that surface does.
+    if (typeof row.scrollIntoView === 'function') {
+      row.scrollIntoView({ block: 'start', behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+    }
+  }, [step])  // eslint-disable-line react-hooks/exhaustive-deps -- rowRefs is a stable ref bag
+
   // ONE fetch, on mount. The same payload carries live model readiness (what the essentials
-  // step needs) AND the persisted resume point (what a reloaded flow needs) — asking for it
+  // step needs) AND the persisted high-water mark (what a reloaded flow needs) — asking for it
   // when the essentials step opens would already be too late to know where to resume TO.
   useEffect(() => {
     let alive = true
     api.onboarding().then((s) => {
       if (!alive) return
       setReadiness(s)
-      setResume(resumeTarget(s))
-      // Past the essentials step, its collapsed row states what is already set up. The claim
-      // is checked against `needs_model` — the LIVE resolution probe — so a run whose provider
-      // was uninstalled since does not keep promising a model it no longer has.
-      if (s.step === 'first_success') {
-        setModelDone(s.needs_model ? 'Set up later' : s.essentials?.model || 'Ready to chat')
+      setReached((r) => furthestOf(r, stepFromStored(s.step) ?? 'name'))
+      // Seed ONLY outcomes the stored state PROVES. A step this home reached but recorded nothing
+      // about stays absent, so it renders as not-yet-done and stays reachable — rather than
+      // wearing a green check for a screen the user may never have seen.
+      const seeded: Partial<Record<StepId, StepRecord>> = {}
+      // The essentials claim is checked against `needs_model` — the LIVE resolution probe — so a
+      // run whose provider was uninstalled since does not keep promising a model it lost.
+      if (!s.needs_model) {
+        seeded.essentials = { outcome: 'done', summary: s.essentials?.model || 'Ready to chat' }
       }
-      setTriedFloor(Object.values(s.first_success ?? {}).filter(Boolean).length)
+      const tried = Object.values(s.first_success ?? {}).filter(Boolean).length
+      if (tried > 0) seeded.try = { outcome: 'done', summary: `${tried} of 3 tried` }
+      // Anything this session already recorded wins: the user may have just done the step.
+      setRecords((r) => ({ ...seeded, ...r }))
     }).catch(() => {
       if (alive) setReadiness({ needs_model: true, has_model_provider: false, has_chat_binding: false })
     })
     return () => { alive = false }
   }, [])
 
+  /** Move to *id*, pushing a history entry so Back returns to the step before it.
+   *
+   *  A FORWARD move raises the high-water mark and records it before navigating — both halves
+   *  matter. Raising it first is what lets `resolveStep` admit the new step on the very next
+   *  render (React commits the state update before the browser's `hashchange` task runs), and
+   *  recording it is what a later reload resumes from. Going BACK writes nothing, so the mark
+   *  keeps naming where the run actually got to. */
+  const goTo = useCallback((id: StepId) => {
+    const mark = furthestOf(reached, id)
+    if (mark !== reached) {
+      setReached(mark)
+      progress({ step: STORED[mark] })
+    }
+    navigate(pathOf(id))
+  }, [reached, navigate, progress])
+
+  /** Leave a step, recording what it produced, and open the next one.
+   *
+   *  A skip never erases work already done: the essentials and try steps carry server-side
+   *  evidence, so a user who succeeded, reloaded, then walked past the step keeps the outcome
+   *  their own home recorded instead of being told "nothing tried yet". */
+  const leave = useCallback((id: StepId, outcome: Outcome, summary: string) => {
+    setRecords((r) => (outcome === 'skipped' && r[id]?.outcome === 'done' ? r : { ...r, [id]: { outcome, summary } }))
+    const next = nextOf(id)
+    if (next) goTo(next)
+  }, [goTo])
+
+  /** A row's "take me to this step" handler, or `undefined` when the flow has not unlocked it.
+   *
+   *  Withholding the handler is what makes `StepRow` render a quiet row instead of a button, so the
+   *  affordance and the permission are one decision. The previous rule was "a row is clickable iff
+   *  it is DONE", which is why going back broke going forward: rows ahead of the current step were
+   *  never clickable even when the run had already stood on them, so the only route forward was to
+   *  redo every step. Unlocked means "at or behind the high-water mark", which covers both a step
+   *  already finished and one a resume jumped over. */
+  const activate = (id: StepId) => (isUnlocked(id, reached, namePassed) ? () => goTo(id) : undefined)
+
   function commitName() {
-    const n = name.trim()
+    const n = draft.name.trim()
     if (!n) return
-    // Resume is honoured HERE and nowhere else: a fetch that lands after the user has already
-    // moved on must never yank them forward mid-step. It also never walks the stored point
-    // BACKWARDS — recording `essentials` for a run already at `first_success` would lose a
-    // step of progress on the next reload.
-    const target = resume ?? 'import'
-    setSavedName(n)
-    // Capture the handle at the same moment as the name: this is the last render on
-    // which the field is on screen, and `finish()` — several steps later — is what
-    // writes it. An untouched field commits the suggestion it was VISIBLY showing, so
-    // what lands is what the operator saw and accepted, never a value computed behind
-    // them from a name they might still have edited.
-    setSavedHandle(handleTouched ? handle.trim() : suggestHandle(n))
-    setStep(target)
-    // The import step is deliberately NOT a stored resume point (`STEPS` has no id for it,
-    // exactly as it has none between `first_success` and `done`). It does not need one: item
-    // identity is a fingerprint and the importer keeps a ledger of what it wrote, so a run
-    // that reloads there redoes an idempotent step and sees its own earlier work marked
-    // `already imported`. Inventing a fifth stored value to save re-reading one screen would
-    // buy nothing and add a value every older client would have to tolerate. So only a
-    // RESUMED run — one whose earlier visit got past import — records a point here.
-    if (target === 'essentials') progress({ step: 'essentials' })
-    else if (target === 'try') progress({ step: 'first_success' })
+    setDraft({ ...draft, passed: true })
+    // Forward to the next step, or straight to where an earlier visit got to — whichever is
+    // further. The steps that get jumped over are left with NO recorded outcome, so they show as
+    // unfinished and stay one click away rather than being stamped complete.
+    goTo(furthestOf(nextOf('name') as StepId, reached))
   }
-  /** Leave the import step. Recording `essentials` here is what makes a later reload resume
-   *  PAST import rather than re-offering it: the point moves forward only once the user has
-   *  actually finished with it (imported, or skipped it on purpose). */
-  function leaveImport(summary: string) {
-    setImportSummary(summary); setStep('essentials'); progress({ step: 'essentials' })
-  }
-  function leaveEssentials(summary: string) {
-    setModelDone(summary); setStep('try'); progress({ step: 'first_success' })
-  }
-  /** The try-one step is the LAST persisted resume point (`STEPS` has no id between
-   *  `first_success` and `done`), so moving to the recap writes nothing new — a user
-   *  who reloads on the recap still resumes at the step they have not finished. */
-  function leaveTryOne(summary: string) {
-    // A resumed visit starts with idle cards: only the FLAGS survive a reload, not the
-    // outcomes the cards rendered. So a user who succeeded, reloaded, then walked past the
-    // step would be told "nothing tried yet" about a first success their own home recorded.
-    setTriedSummary(summary === 'Skipped' && triedFloor > 0 ? `${triedFloor} of 3 tried` : summary)
-    setStep('ready')
-  }
-  function finish() {
+  /** End the flow — completing it, skipping it, or leaving for a destination.
+   *
+   *  🔴 **IDENTITY IS COMMITTED FIRST, AND A REFUSAL KEEPS THE USER HERE.** This used to fire the
+   *  progress write, the rail marker and the draft deletion, then call `setName` without awaiting
+   *  it — and `setName` swallowed its own failure. Measured on a fresh home with the gateway
+   *  killed: clicking the flow's one advertised exit returned the user to step 1 with the typed
+   *  name erased and `alerts: []` — no toast, no error, nothing that advanced. The single worst
+   *  dead end on the screen, reachable from any failure of that PUT.
+   *
+   *  So the commit is the gate: nothing that CLAIMS the flow is over is written until the write
+   *  that ends it has landed. On a refusal the user stays on the step they were on, with their
+   *  draft, and is told — through the app toast, the mechanism `DoneScreen.toggleAutoUpdate` below
+   *  already uses for exactly this. */
+  async function finish() {
+    try {
+      // The handle rides along in the SAME write — one act commits identity, so the name and the
+      // handle can never disagree about whether first run happened. It is passed explicitly
+      // (rather than derived server-side from `user_name`) because only a surface that ASKED may
+      // send one: see `setName` in app/identity.
+      //
+      // `savedHandle` is deliberately NOT defaulted the way the name is. Skipping setup from the
+      // first step falls back to DEFAULT_USER_NAME for the name because the route guard needs a
+      // non-empty one, but there is no equivalent need for a handle and `slugify_username` never
+      // invents a fallback — so a skipped run commits '' and the records it writes stay
+      // unattributed, which is the shipped promise.
+      await setName(savedName || DEFAULT_USER_NAME, savedHandle)
+    } catch (e: unknown) {
+      let msg = e instanceof Error ? e.message : 'the request failed'
+      try { msg = JSON.parse(msg).error || msg } catch { /* raw text */ }
+      // 🪤 A `fetch` that never completes rejects with a TypeError whose message is the browser's
+      // own "Failed to fetch" — measured verbatim on a killed gateway. `lib/errText` cannot help:
+      // it turns a failed RESPONSE into a sentence, and here there is no response. A first-run user
+      // reading "Failed to fetch" learns nothing they can act on; the local gateway being down is
+      // both the likeliest cause and the one they can actually fix.
+      if (e instanceof TypeError) msg = `${APP_NAME} didn't respond — check it is still running`
+      notify(`Couldn't save your name: ${msg}. Setup is still open — nothing was lost.`, 'error')
+      return
+    }
     progress({ step: 'done' })
     // The fresh-install marker for the rail (ONBOARDING-UX C4). This is the ONE act that can
     // only happen on a fresh install — it is what commits identity and flips `onboarded` — so
@@ -214,19 +382,14 @@ export function Onboarding() {
     // setting the mode itself: one act decides the rail, so the marker and the user's choice
     // can never disagree, and abandoning the flow leaves no record behind.
     setNavMode(showEverything ? 'expert' : 'starter')
-    // commit identity LAST so the gate (`onboarded`) flips only on completion
-    //
-    // The handle rides along in the SAME write — one act commits identity, so the name
-    // and the handle can never disagree about whether first run happened. It is passed
-    // explicitly (rather than derived server-side from `user_name`) because only a
-    // surface that ASKED may send one: see `setName` in app/identity.
-    //
-    // `savedHandle` is deliberately NOT defaulted the way the name is. Skipping setup
-    // from the first step falls back to DEFAULT_USER_NAME for the name because the route
-    // guard needs a non-empty one, but there is no equivalent need for a handle and
-    // `slugify_username` never invents a fallback — so a skipped run commits '' and the
-    // records it writes stay unattributed, which is the shipped promise.
-    setName(savedName || DEFAULT_USER_NAME, savedHandle)
+    // The draft is dropped only now that identity is committed — the one act that makes it
+    // redundant. Dropping it before the write could fail was half of the erased-input defect
+    // above; leaving it behind afterwards would re-offer a stale name to the NEXT run.
+    try { sessionStorage.removeItem(DRAFT_KEY) } catch { /* storage may be denied */ }
+    // Withdraw a deliberate re-run request, so the guard — the single owner of where this flow
+    // sends a user — moves them out. On a first run the `onboarded` flip does that instead and
+    // this changes nothing.
+    onFinished()
   }
   /** Leave setup unfinished, from any step. The flow is guidance, never a gate, and the two
    *  in-step escapes ("Set up later", "Skip this") only move to the NEXT step — a user who
@@ -297,6 +460,15 @@ export function Onboarding() {
               <ClawMark size={52} animated blob />
               <h1 data-type="headline-m" className="mt-l text-on-surface text-center">Welcome to {APP_NAME}</h1>
               <p className="mt-2 text-center text-on-surface-low text-[0.9375rem]" style={{ maxWidth: 360 }}>Your self-hosted personal agent. A few moments to get set up.</p>
+              {/* The deferred destination, said out loud. Without it the guard's redirect is
+                  indistinguishable from the app losing the click — the user asked for a page and got
+                  a different screen with no explanation. Naming the deferral makes it a promise, and
+                  `finish()` keeps it by landing them there instead of on the dashboard. */}
+              {deferred && (
+                <p data-type="body-s" className="mt-s text-center text-on-surface-var" style={{ maxWidth: 360 }}>
+                  Setup comes first. Finish or skip it and you&rsquo;ll go straight to the page you asked for.
+                </p>
+              )}
             </div>
 
             {/* vertical collapsing stepper — the centered focal element */}
@@ -322,7 +494,7 @@ export function Onboarding() {
                 child, and a `<p>` in there is invalid content an AT tree may drop — which would have
                 silently removed the announcement this screen already relies on. */}
             <ol className="flex w-full list-none flex-col gap-2 p-0">
-              <StepRow ref={rowRefs.name} index={ORDER.indexOf('name')} icon={User} title={TITLES.name}
+              <StepRow ref={rowRefs.name} index={ORDER.indexOf('name')} total={ORDER.length} icon={User} title={TITLES.name}
                 /* NOT "Saved on the server, so it follows you across devices" — that is
                    `AccountPanel`'s sentence, where it is true because the panel writes on
                    change. HERE the write is deliberately the last thing the flow does
@@ -335,73 +507,97 @@ export function Onboarding() {
                    kept instead of implying it already was. */
                 subtitle="How the system addresses you, plus the handle your records carry. Saved when you finish setup, so it then follows you across devices."
                 state={stateOf('name')} doneSummary={savedName ? (savedHandle ? `${savedName} · @${savedHandle}` : savedName) : undefined}
-                onActivate={() => setStep('name')}>
+                onActivate={activate('name')}>
                 {/* An untouched handle field DISPLAYS the suggestion rather than storing it,
                     so it tracks the name as it is typed; the first edit (clearing included)
                     makes it the operator's and stops the tracking. */}
-                <NameStep value={name} onChange={setNameDraft} onSubmit={commitName}
-                  handle={handleTouched ? handle : suggestHandle(name)}
-                  onHandleChange={(v) => { setHandleTouched(true); setHandleDraft(v) }} />
+                <NameStep value={draft.name} onChange={(v) => setDraft({ ...draft, name: v })} onSubmit={commitName}
+                  handle={draft.handleTouched ? draft.handle : suggestHandle(draft.name)}
+                  onHandleChange={(v) => setDraft({ ...draft, handle: v, handleTouched: true })} />
               </StepRow>
 
               {/* PEP-5 — adopt another local agent tool's setup. It sits BEFORE essentials
                   because the work a user already did elsewhere is theirs before anything is
                   installed here, and because none of what it writes (memories, MCP entries,
                   skills) needs a model provider to land. */}
-              <StepRow ref={rowRefs.import} index={ORDER.indexOf('import')} icon={FolderInput} title={TITLES.import}
+              <StepRow ref={rowRefs.import} index={ORDER.indexOf('import')} total={ORDER.length} icon={FolderInput} title={TITLES.import}
                 subtitle="Already use another local agent tool? Bring its instructions, MCP servers and skills across."
-                state={stateOf('import')} doneSummary={importSummary || undefined}
-                onActivate={() => setStep('import')}>
-                <ImportStep onDone={leaveImport} onSkip={() => leaveImport('Skipped')} />
+                state={stateOf('import')} doneSummary={records.import?.summary}
+                onActivate={activate('import')}>
+                <ImportStep onDone={(s) => leave('import', 'done', s)} onSkip={() => leave('import', 'skipped', 'Skipped')} />
               </StepRow>
 
-              <StepRow ref={rowRefs.essentials} index={ORDER.indexOf('essentials')} icon={Boxes} title={TITLES.essentials}
+              <StepRow ref={rowRefs.essentials} index={ORDER.indexOf('essentials')} total={ORDER.length} icon={Boxes} title={TITLES.essentials}
                 subtitle="Install what the agent needs to work. A model provider is required; the rest are optional."
-                state={stateOf('essentials')} doneSummary={modelDone || undefined}
-                onActivate={() => setStep('essentials')}>
+                state={stateOf('essentials')} doneSummary={records.essentials?.summary}
+                onActivate={activate('essentials')}>
                 {readiness
                   ? <EssentialsStep readiness={readiness} onProgress={progress}
-                      onDone={leaveEssentials}
-                      onSkip={() => leaveEssentials('Set up later')} />
+                      onDone={(s) => leave('essentials', 'done', s)}
+                      onSkip={() => leave('essentials', 'skipped', 'Set up later')} />
                   : <div role="status" aria-busy="true" className="flex items-center py-2">
                       <LoadingStatus what="what's already set up" />
                       <Loader2 size={18} className="animate-spin text-on-surface-low" aria-hidden="true" />
                     </div>}
               </StepRow>
 
-              <StepRow ref={rowRefs.try} index={ORDER.indexOf('try')} icon={Rocket} title={TITLES.try}
+              <StepRow ref={rowRefs.try} index={ORDER.indexOf('try')} total={ORDER.length} icon={Rocket} title={TITLES.try}
                 subtitle="Watch it actually do something. Each one runs for real — and none of them is required."
-                state={stateOf('try')} doneSummary={triedSummary || undefined}
-                onActivate={() => setStep('try')}>
-                <TryOneStep onProgress={progress} onDone={leaveTryOne}
-                  onSkip={() => leaveTryOne('Skipped')} onExitTo={exitTo} />
+                state={stateOf('try')} doneSummary={records.try?.summary}
+                onActivate={activate('try')}>
+                <TryOneStep onProgress={progress} onDone={(s) => leave('try', 'done', s)}
+                  onSkip={() => leave('try', 'skipped', 'Skipped')} onExitTo={exitTo} />
               </StepRow>
 
-              <StepRow ref={rowRefs.ready} index={ORDER.indexOf('ready')} icon={Sparkles} title={TITLES.ready}
+              {/* 🔑 THE RECAP IS A REACHABLE ROW TOO. It used to be the one row with no `onActivate`,
+                  on the reasoning that a final step can never be "done" — but that made it the row a
+                  user could not get back to. A run that reached the recap and stepped back to review
+                  something had no forward affordance at all and had to walk the remaining steps
+                  again, which is the trap this whole change is about. */}
+              <StepRow ref={rowRefs.ready} index={ORDER.indexOf('ready')} total={ORDER.length} icon={Sparkles} title={TITLES.ready}
                 subtitle={`You're ready, ${firstNameOf(savedName)}.`}
-                state={stateOf('ready')}>
-                <DoneScreen name={savedName} modelSummary={modelDone} triedSummary={triedSummary}
+                state={stateOf('ready')} onActivate={activate('ready')}>
+                <DoneScreen name={savedName} model={records.essentials} tried={records.try}
                   showEverything={showEverything} onShowEverything={setShowEverything}
                   onFinish={finish} onTakeTour={takeTour} onExitTo={exitTo} />
               </StepRow>
             </ol>
 
-            {/* The one door out, on every step but the last — where "Start using" IS the door.
-                Guidance never gates: this is what makes "skip at any step" land somewhere real.
+            {/* The two doors, on every step but the last — where "Start using" and the tour are the
+                doors. Guidance never gates, and BOTH directions have to be visible: the flow's only
+                way back used to be clicking a completed row's header, an affordance with no words on
+                it, and the only way out was a link that said nothing about what it cost.
 
-                `ink="emphasis"` because this link sits OUTSIDE the step card, on `--color-canvas`
+                Back is non-destructive by construction — it navigates, and nothing in `goTo` clears a
+                draft, a record or the high-water mark.
+
+                `ink="emphasis"` because these sit OUTSIDE the step card, on `--color-canvas`
                 (measured off the node: rgb(240,244,248)). There, the base accent is **4.37:1** against a
                 4.5 floor at 13px/400 — axe and ux-audit agreeing, the same number the canvas ground has
                 carried since the accent-on-canvas family was named. The emphasis shade measures 6.0 in
                 coral and passes in all 12 schemes. Its three siblings inside the card keep the base ink
                 and pass at 4.83, because they are painted on `--color-surface`: the ground decides. */}
             {step !== 'ready' && (
-              <div className="mt-l flex justify-center">
-                <TextLink size="sm" ink="emphasis" onClick={skipSetup}>
+              <div className="mt-l flex flex-col items-center gap-s">
+                <div className="flex flex-wrap items-center justify-center gap-l">
+                  {previousOf(step) && (
+                    <TextLink size="sm" ink="emphasis" onClick={() => goTo(previousOf(step) as StepId)}>
+                      <ArrowLeft size={14} aria-hidden="true" /> Back to {TITLES[previousOf(step) as StepId].toLowerCase()}
+                    </TextLink>
+                  )}
+                  <TextLink size="sm" ink="emphasis" onClick={skipSetup}>
+                    {step === 'name' ? 'Skip setup for now' : 'Skip the rest of setup'}
+                  </TextLink>
+                </div>
+                {/* What skipping costs, and how to come back — said here because this is the moment a
+                    user decides, and because the alternative was finding out later that the only
+                    re-entry door wiped their name. */}
+                <p data-type="caption" className="text-center text-on-surface-low" style={{ maxWidth: 380 }}>
                   {step === 'name'
-                    ? `Skip setup — start as ${DEFAULT_USER_NAME}, rename yourself in Settings`
-                    : 'Skip setup and go to the dashboard'}
-                </TextLink>
+                    ? `Nothing is set up, and you'll be called "${DEFAULT_USER_NAME}" until you pick a name.`
+                    : 'Whatever you have finished so far is kept.'}
+                  {' '}Pick setup back up any time: Settings &rarr; Account &rarr; Run setup again.
+                </p>
               </div>
             )}
           </motion.div>
@@ -516,16 +712,23 @@ function PillField({ value, onChange, onEnter, ariaLabel, placeholder, described
  *  rather than replacing it: the recap above already hands over three controls, and a
  *  first-run screen whose only exit is a guided walk is a gate wearing an offer. Both
  *  buttons finish the flow; one of them then walks the app. */
-function DoneScreen({ name, modelSummary, triedSummary, showEverything, onShowEverything, onFinish, onTakeTour, onExitTo }: {
-  name: string; modelSummary: string; triedSummary: string
+function DoneScreen({ name, model, tried: triedRec, showEverything, onShowEverything, onFinish, onTakeTour, onExitTo }: {
+  name: string
+  /** What the essentials / try steps RECORDED, or `undefined` when they recorded nothing.
+   *
+   *  The recap used to ask `modelSummary !== 'Set up later'` — a sentinel comparison against the
+   *  step's own copy, so renaming that string would have silently turned "not set up" into a
+   *  claimed success. The outcome is now the thing being read, and the summary is only text. */
+  model?: StepRecord
+  tried?: StepRecord
   showEverything: boolean
   onShowEverything: (v: boolean) => void
   onFinish: () => void
   onTakeTour: () => void
   onExitTo: (path: string) => void
 }) {
-  const chatReady = modelSummary && modelSummary !== 'Set up later'
-  const tried = triedSummary && triedSummary !== 'Skipped'
+  const chatReady = model?.outcome === 'done'
+  const tried = triedRec?.outcome === 'done'
 
   /** The autonomy pointer's facts, read when the ready step opens (this component mounts
    *  only then — StepRow renders children on the active step). `null` = still loading
@@ -564,8 +767,8 @@ function DoneScreen({ name, modelSummary, triedSummary, showEverything, onShowEv
       <motion.div className="flex flex-col gap-1.5"
         initial="initial" animate="animate" variants={{ animate: { transition: stagger(0.06) } }}>
         <motion.div variants={listItemEnter}><Recap ok label={`Hello, ${firstNameOf(name)}`} /></motion.div>
-        <motion.div variants={listItemEnter}><Recap ok={!!chatReady} label={chatReady ? `Chat model: ${modelSummary}` : 'Chat model — set up later in Settings'} /></motion.div>
-        <motion.div variants={listItemEnter}><Recap ok={!!tried} label={tried ? `First success: ${triedSummary}` : 'Nothing tried yet — the cards are in Discover'} /></motion.div>
+        <motion.div variants={listItemEnter}><Recap ok={chatReady} label={chatReady ? `Chat model: ${model?.summary}` : 'Chat model — set up later in Settings'} /></motion.div>
+        <motion.div variants={listItemEnter}><Recap ok={tried} label={tried ? `First success: ${triedRec?.summary}` : 'Nothing tried yet — the cards are in Discover'} /></motion.div>
       </motion.div>
 
       <div className="flex flex-col gap-s">

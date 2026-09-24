@@ -1,7 +1,8 @@
 """First-run onboarding progress state (ONBOARDING-UX C1).
 
-**What this holds.** The resume point of the guided first-run flow, which essential
-apps the user set up, and which "try one" first-success cards they completed:
+**What this holds.** The furthest step of the guided first-run flow this home has reached,
+which essential apps the user set up, and which "try one" first-success cards they
+completed:
 
 .. code-block:: json
 
@@ -50,7 +51,19 @@ logger = logging.getLogger(__name__)
 _ENTITY = "onboarding"
 
 #: The resume points of the guided first-run flow, in order.
-STEPS: tuple[str, ...] = ("name", "essentials", "first_success", "done")
+#:
+#: **Every step is a resume point.** The first version named only three of the five, on the
+#: reasoning that a point should mean "the next step you have not finished" — so the import
+#: step and the recap got none. Driven on a fresh home that cost the user real progress: with
+#: the flow stopped on the import step the file still said ``name``, so a reload restarted at
+#: the beginning; stopped on the recap it said ``first_success``, so a reload walked the user
+#: BACK a step. The field is now the high-water mark — the furthest step this run has stood on
+#: — written on entry and never lowered, which is the only reading a reload can resume from.
+#:
+#: Extending the domain is compatible in both directions: every value an older client can have
+#: written is still a member, and the frontend's ``stepFromStored`` resolves a value it does not
+#: recognise to "start at the beginning" rather than guessing.
+STEPS: tuple[str, ...] = ("name", "import", "essentials", "first_success", "ready", "done")
 
 #: The essential-apps a run can set up. ``model`` and ``channel`` hold the chosen app's
 #: name (or ``None``); ``search``/``speech`` are "did the user set one up" flags.

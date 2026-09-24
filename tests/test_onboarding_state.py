@@ -209,6 +209,30 @@ def test_every_declared_step_is_writable(_isolate_home):
         assert ob.merge_onboarding_state({"step": step})["step"] == step
 
 
+def test_every_step_of_the_flow_has_a_resume_point():
+    """The stored vocabulary covers all five UI steps, plus the terminal ``done``.
+
+    The first version named only three of them, on the reading that a point means "the next step
+    you have not finished" — which left the import step and the recap with no id. Driven on a fresh
+    home that cost real progress: stopped on the import step the file still said ``name``, so a
+    reload restarted at the beginning and threw away the typed name; stopped on the recap it said
+    ``first_success``, so a reload walked the user BACK a step. The field is the high-water mark
+    now, so every step the user can stand on needs somewhere to be recorded.
+
+    ``first_success`` is the ``try`` step's stored spelling — the frontend owns that one mapping in
+    ``web/src/app/onboarding/steps.ts``, whose ``stepMachine.test.ts`` round-trips it against this
+    tuple from the other side.
+    """
+    assert ob.STEPS == ("name", "import", "essentials", "first_success", "ready", "done")
+
+
+def test_the_three_older_values_still_load(_isolate_home):
+    """Extending the domain is compatible: nothing an older client wrote became unreadable."""
+    for step in ("name", "essentials", "first_success", "done"):
+        _write_raw(_isolate_home, {"step": step})
+        assert ob.load_onboarding_state()["step"] == step
+
+
 # ── 5. the HTTP surface ──────────────────────────────────────────────────────
 
 

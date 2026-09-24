@@ -141,10 +141,15 @@ describe('no surface flips local state on a write it discarded', () => {
       // Reconciles instead of asserting: the delete is followed by `reloadAnnotations()`, so a
       // failed one brings the row back. The canonical "optimistic + reconcile" form.
       'pages/knowledge/KnowledgeDetailPage.tsx:deleteKnowledgeAnnotation',
-      // The owner-taste-call file: a failed name save leaves the UI showing the new name. Recorded
-      // in the session handoff with the onboarding-swallow question it belongs to, not fixed here.
-      'app/identity.tsx:saveDashboardConfig',
-      'app/identity.tsx:saveDashboardConfig',
+      // 🔑 `app/identity.tsx` USED TO HAVE TWO ENTRIES HERE, described as "the owner-taste-call
+      // file" and deferred "with the onboarding-swallow question it belongs to". That question got
+      // an answer, and it was not a taste call. Driven on a fresh home with the gateway killed, the
+      // swallow made first-run setup's ONE advertised exit return the user to step 1 with the name
+      // they had typed erased and `alerts: []` — no message of any kind — because the optimistic
+      // name flip released the route guard, the remount's config read then failed, and the empty
+      // name sent them straight back in. `setName` now awaits its write before adopting the value
+      // and rejects on failure; `Onboarding.finish()` reports it and keeps the user where they are.
+      // One `clearName` came off with it: re-entering setup no longer works by clearing the name.
     ].sort())
   })
 })

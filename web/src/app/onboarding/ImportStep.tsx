@@ -166,8 +166,22 @@ export function ImportStep({ onDone, onSkip }: {
           ? 'No other agent tools were found on this machine.'
           : `Found ${detected.map((s) => s.display_name).join(' and ')}.`
 
+  // 🔴 A FAILED SCAN MUST NOT REMOVE THE WAY PAST AN OPTIONAL STEP. This early return replaced the
+  // whole step body, including the `onSkip` link that lives in the normal return below — so with the
+  // scan route failing, the only buttons left on the screen were "Go back to step 1", "Retry" and
+  // "Skip setup" (measured). On a step whose own heading asks "Already use another local agent
+  // tool?", a transient fetch failure made the answer "no" unreachable and turned the flow's third
+  // step into a wall: backwards, retry a server that is down, or abandon setup entirely.
+  //
+  // `EssentialsStep`'s catalog-error branch always did this correctly and is the reference — the
+  // defect was inconsistency between two sibling steps, not a missing idea.
   if (scan === null && scanError) {
-    return <LoadError what="detected tools" error={scanError} onRetry={load} />
+    return (
+      <div className="flex flex-col gap-m">
+        <LoadError what="detected tools" error={scanError} onRetry={load} />
+        <TextLink onClick={onSkip}>Skip this</TextLink>
+      </div>
+    )
   }
   if (scan === null) {
     return (

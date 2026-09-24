@@ -33,15 +33,21 @@ vi.mock('../lib/api', () => ({
 
 import { IdentityProvider, useIdentity, suggestHandle, USERNAME_MAX_LEN } from './identity'
 
-/** Buttons for the three write shapes a caller can produce. */
+/** Buttons for the three write shapes a caller can produce.
+ *
+ *  There is no `clearName` button, because there is no `clearName`. Re-entering first-run setup
+ *  used to clear `user_name` to force the route guard's hand; it is now a request the guard honours
+ *  (`app/onboarding/rerun.ts`), so identity is never wiped to reach a setup screen and the context
+ *  exposes only the write that has a caller. The property the deleted case asserted — that a write
+ *  must not disturb a handle it was not asked about — is exactly what the `rename-only` case above
+ *  pins, on the path that still exists. */
 function Harness() {
-  const { setName, clearName, name, username } = useIdentity()
+  const { setName, name, username } = useIdentity()
   return (
     <div>
       <button type="button" onClick={() => setName('Ada King')}>rename-only</button>
       <button type="button" onClick={() => setName('Ada King', 'ada-king')}>rename-with-handle</button>
       <button type="button" onClick={() => setName('Ada King', '')}>rename-clearing-handle</button>
-      <button type="button" onClick={() => clearName()}>restart-onboarding</button>
       <output>{`${name}|${username}`}</output>
     </div>
   )
@@ -88,15 +94,6 @@ describe('setName sends the handle only when its caller passes one', () => {
     // The distinction the whole contract rests on: '' is PRESENT (clear it), undefined is
     // ABSENT (leave it alone). Collapsing the two in either direction breaks one caller.
     expect(lastBody()).toEqual({ user_name: 'Ada King', username: '' })
-  })
-
-  it('leaves the handle alone when onboarding is restarted', async () => {
-    await renderHarness({ user_name: 'Ada Lovelace', username: 'lovelace' })
-    fireEvent.click(screen.getByRole('button', { name: 'restart-onboarding' }))
-    await waitFor(() => expect(saveDashboardConfig).toHaveBeenCalled())
-    // Restarting re-asks for the name; the handle already stamped onto existing records
-    // survives to be OFFERED BACK on the first step rather than silently dropped.
-    expect(lastBody()).toEqual({ user_name: '' })
   })
 
   it('reports the stored handle so a surface can offer it back', async () => {
