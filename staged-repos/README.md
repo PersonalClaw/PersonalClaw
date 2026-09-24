@@ -1,9 +1,15 @@
-# `scratch/` — content prepared in-tree for the owner to publish
+# `staged-repos/` — sibling repositories' content, staged here until it is published
 
 Nothing here is imported, installed or served by PersonalClaw. It is content that belongs in
 **other** repositories, staged in this one so it can be reviewed, tested and version-controlled
-before it is pushed. `scratch/` is outside `testpaths` and outside `make lint`'s targets, so it
+before it is pushed. `staged-repos/` is outside `testpaths` and outside `make lint`'s targets, so it
 does not participate in the core build.
+
+This directory was called `scratch/` until the publication-hygiene pass. The name was wrong in
+both directions: nothing in it is scratch work — the template is pinned byte-for-byte to the
+generator by `tests/test_app_from_template.py` and the registry is validated by a `full.yml` job —
+and a directory literally named `scratch` in a public repository reads as residue a reader should
+ignore. The content is load-bearing; only the name was a defect.
 
 ET-2 (the ECOSYSTEM-TOOLING plan (internal), Session 1 T1.4) stages one thing: the template
 repo below. Its second item — the apps-guide quickstart — is no longer staged here, because it
@@ -33,7 +39,7 @@ The four generated files are pinned byte-for-byte to a fresh
 only thing keeping the published template from contradicting the generator. To regenerate:
 
 ```bash
-personalclaw app new app-template --type tool --dir scratch --force \
+personalclaw app new app-template --type tool --dir staged-repos --force \
   --display-name "App Template" \
   --description "The PersonalClaw app template: clone it, rename it, ship it." \
   --author "PersonalClaw contributors"

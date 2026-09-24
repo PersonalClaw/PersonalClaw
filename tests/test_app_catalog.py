@@ -1110,7 +1110,7 @@ def _registry_fixture_repo(root: Path, *, app_name: str = "fixture-registry-app"
     """A real local git repo publishing an ``app-registry.json`` index — the POSITIVE
     CONTROL for "the seeded source is actually consulted".
 
-    The shipped registry (`scratch/registry/app-registry.json`) is EMPTY until ET-6, so a
+    The shipped registry (`staged-repos/registry/app-registry.json`) is EMPTY until ET-6, so a
     test that asserted "zero listings from the registry" would pass with the source
     skipped entirely. This fixture publishes one listing, so the assertion below can
     only pass if the seeded source was fetched and parsed."""
@@ -1451,7 +1451,7 @@ def test_the_install_scanner_gate_has_exactly_three_call_sites():
 # accepts exactly one filename — so a parser that quietly widens the accepted name, or
 # stops reading an ET-3-shaped row, reds here instead of in a user's empty Store.
 
-_STAGED_REGISTRY = Path(__file__).resolve().parent.parent / "scratch" / "registry"
+_STAGED_REGISTRY = Path(__file__).resolve().parent.parent / "staged-repos" / "registry"
 
 
 def _et3_shaped_row(name: str) -> dict:

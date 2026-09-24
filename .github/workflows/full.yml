@@ -525,15 +525,15 @@ jobs:
 
   registry-verdicts:
     # ── The pre-install trust surface, actually EXERCISED ──────────────────────────────────
-    # `scratch/registry/app-registry.json` is the community registry's data tier, and its
+    # `staged-repos/registry/app-registry.json` is the community registry's data tier, and its
     # `last_validated` / `last_scan_verdict` fields are CI-OWNED by construction: a listing PR
     # leaves them out, and whatever it does supply is overwritten from the run that actually
     # happened (validate_registry.py's CI_OWNED_FIELDS).
     #
     # MEASURED 2026-09-07 on 7d45e6c04 — the defect in full: FOUR listings, and not one carrying
-    # either field. The stamper (`scratch/registry/validate_registry.py --write`) exists and works;
+    # either field. The stamper (`staged-repos/registry/validate_registry.py --write`) exists and works;
     # nothing called it. The three workflows that would
-    # are staged at scratch/registry/.github/workflows/, and GitHub runs workflows only
+    # are staged at staged-repos/registry/.github/workflows/, and GitHub runs workflows only
     # from .github/workflows/ at the repo ROOT, so inside this repo they are files and not jobs
     # (`git grep validate_registry -- .github Makefile` returned nothing). The consequence is not
     # cosmetic: personalclaw.dev/registry rendered four "No scan on record" cards from all-empty
@@ -548,7 +548,7 @@ jobs:
     # its verdict, at lint speed. Network here, forcing function there — the same split, and for
     # the same reason, as install-smoke above.
     #
-    # WHY THIS REPO'S CORE AND NOT scratch/registry/requirements.txt's PIN. The pin exists so the
+    # WHY THIS REPO'S CORE AND NOT staged-repos/registry/requirements.txt's PIN. The pin exists so the
     # published registry's own CI cannot have its rule set change under it. Here the question is
     # the opposite one — does the shipped data still say what core's scanner says TODAY — so the
     # answer must come from this checkout.
@@ -582,8 +582,8 @@ jobs:
       - name: measure — validate every shipped listing and stamp a copy
         run: |
           set -eu
-          cp scratch/registry/app-registry.json "$RUNNER_TEMP/measured.json"
-          uv run python scratch/registry/validate_registry.py \
+          cp staged-repos/registry/app-registry.json "$RUNNER_TEMP/measured.json"
+          uv run python staged-repos/registry/validate_registry.py \
             "$RUNNER_TEMP/measured.json" --write \
             --markdown "$GITHUB_STEP_SUMMARY" \
             --report "$RUNNER_TEMP/report.json"
@@ -595,7 +595,7 @@ jobs:
           import json, os, sys
           from pathlib import Path
 
-          committed = json.loads(Path("scratch/registry/app-registry.json").read_text("utf-8"))
+          committed = json.loads(Path("staged-repos/registry/app-registry.json").read_text("utf-8"))
           measured = json.loads(Path(os.environ["MEASURED"]).read_text("utf-8"))
           rows = {r["name"]: r for r in committed["apps"]}
           fresh = {r["name"]: r for r in measured["apps"]}
@@ -630,8 +630,8 @@ jobs:
               for problem in problems:
                   print(f"::error title=registry verdict::{problem}")
               print(
-                  "Re-stamp with: python scratch/registry/validate_registry.py "
-                  "scratch/registry/app-registry.json --write   (then commit the result)",
+                  "Re-stamp with: python staged-repos/registry/validate_registry.py "
+                  "staged-repos/registry/app-registry.json --write   (then commit the result)",
                   file=sys.stderr,
               )
               raise SystemExit(1)

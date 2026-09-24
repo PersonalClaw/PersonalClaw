@@ -2,9 +2,13 @@
 
 You are contributing to **PersonalClaw core**: a self-hosted, local-first,
 provider-agnostic personal AI gateway (Python 3.12+ aiohttp backend + React/Vite
-SPA). This file is the compressed contract — including the session discipline
-every roadmap task runs under (see *Roadmap session discipline* below). The long
+SPA). This file is the compressed contract — the mechanical gotchas, the doctrine,
+the git rules, and the session discipline every roadmap task runs under. The long
 form is [CONTRIBUTING.md](CONTRIBUTING.md).
+
+**This is the only agent brief in the repo.** `CLAUDE.md` is a pointer to it, and
+there is deliberately no `AGENT.md` — a second file one character away from this one
+is a trap, not a second document.
 
 ## Build / test / lint (run from the repo root)
 
@@ -51,6 +55,62 @@ worktree's `HEAD` — pushing `some-branch` from a checkout sitting on `main` us
 to gate `main`'s tree and go green, and batching refs into one `git push origin
 br1 br2 br3` to pay the ~20-minute chain once did it three times over. One push
 per worktree.
+
+## Mechanical gotchas (things that look fine and silently misbehave)
+
+The short list of surfaces where the obvious action produces no error and the wrong
+result. Each entry names its versioned rule spec under `harness/specs/`, so the "why"
+is greppable rather than living in a maintainer's memory. **If you fix a bug in one of
+these classes, update the matching spec in the same commit** — that is how this list
+stays true.
+
+- **Backend `.py` change ⇒ restart the gateway.** Backend Python NEVER hot-reloads.
+  Ctrl-C `make serve`, then `make serve` again. A change that "has no effect" is almost
+  always a stale process — `harness/specs/scenarios/backend-change-needs-restart.md`.
+- **Frontend rebuild ⇒ served live** through the `static/dist` symlink; no restart
+  (except the first-ever build after a clean clone, which needs one so `/assets`
+  routes register).
+- **`src/personalclaw/static/dist` is a SYMLINK to `web/dist`, not a copy.** A `cp -R`
+  leaves a frozen directory that shadows the symlink and serves a **stale** SPA
+  forever. Use `make web-build` —
+  `harness/specs/scenarios/frontend-serves-stale-bundle.md`.
+- **`personalclaw stop`/`restart` are SERVICE-FIRST.** If a launchd/systemd service is
+  installed they act on *that*, not your foreground `make serve`. For dev, Ctrl-C the
+  foreground server and tail `.dev-home/gateway.log`.
+- **Never `~/.personalclaw` for dev.** `make serve` defaults
+  `PERSONALCLAW_HOME=./.dev-home`. The ready line prints a tokenized URL — treat it as
+  sensitive. Tests that touch on-disk state MUST isolate it via `tmp_path`/`monkeypatch`
+  of `config_dir()`; an unisolated destructive test once deleted a developer's real
+  bound model — `harness/specs/rules/destructive-test-isolation.md`.
+- **The gateway runs INSTALLED app copies** from `$PERSONALCLAW_HOME/apps/<name>/`, not
+  your workspace tree. Push repo edits with
+  `POST /api/apps/{name}/update {source, confirm:true}`; editing the workspace source
+  does nothing to the running app —
+  `harness/specs/scenarios/installed-app-edit-not-live.md`.
+- **First-party apps live in the sibling `PersonalClawApps` clone**, not `apps/`. Point
+  the gateway at them with `PERSONALCLAW_FIRST_PARTY_APPS_DIR=$PWD/../PersonalClawApps`
+  (or an `apps` symlink) or they never appear in the Store. The SDK-only import rule is
+  in Doctrine — `harness/specs/rules/app-sdk-boundary.md`.
+- **A missed config round-trip point fails silently and differently.** Miss `load()` and
+  the field reverts to default on reload; miss `to_dict()` and it is dropped on save.
+  The four points are in Doctrine —
+  `harness/specs/rules/config-four-points.md`.
+- **SSE event types must be registered on BOTH ends.** A backend event string absent
+  from the frontend's `RUN_LIFECYCLE` union is silently dropped by `EventSource` — no
+  error, just a missing UI update — `harness/specs/rules/sse-event-registered.md`.
+- **Keep chat/run stream state in the pure folds** (`coalesceReducers.ts`,
+  `runFold.ts`) — no React/fetch/mutation — so recorded traces replay through them:
+  `harness/specs/rules/pure-stream-folds.md`.
+- **Fence untrusted text at ingestion** (`fence_untrusted`) before it enters a prompt;
+  its wording is a security control — `harness/specs/rules/fence-at-ingestion.md`.
+- **Never truncate a transcript between a tool call and its result** — route truncation
+  through the orphan-dropping walk-back helper:
+  `harness/specs/rules/no-naive-transcript-cut.md`.
+- **Controlled inputs use `onChange`, not native DOM value-setting.** `TextInput` is a
+  controlled React component (`value` + `onChange`); a test that assigns `.value`
+  without firing the React event never updates component state.
+- **The venv lives at `.venv/` inside the repo and is not relocatable.** Run tools as
+  `.venv/bin/python -m …` so you never hit a system interpreter missing the dev extras.
 
 ## Doctrine (non-negotiable)
 
@@ -197,8 +257,12 @@ re-invents a shape another touches:
   (`apps/`, `providers/`, `sdk/`), security (`security.py`, `sandbox.py`,
   `sel.py`, `net/`, `trust_mode.py`).
 - `web/` — Vite + React SPA (the only new-UI frontend).
-- `docs/` — `reference/` (as-built), `guides/` (user), `architecture/`,
-  `roadmap/` (maintainer-owned plans).
+- `docs/` — `reference/` (as-built), `guides/` (user), `architecture/`. The
+  maintainer's roadmap plans are **not in this repo** (see *What gets your PR
+  rejected*).
+- `staged-repos/` — sibling repositories' content staged here until the maintainer
+  publishes it (the app template, the community registry). Not imported by core, but
+  pinned by tests and a `full.yml` job — see `staged-repos/README.md`.
 - `tests/` — pytest suite (isolate destructive tests via `config_dir`/`tmp_path`).
 
 ## What gets your PR rejected

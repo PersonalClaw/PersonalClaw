@@ -1,8 +1,8 @@
-"""ET-2 — the template repo content staged under ``scratch/`` and ``app new --from-template``.
+"""ET-2 — the template repo content staged under ``staged-repos/`` and ``app new --from-template``.
 
 Two things are asserted here, and they fail for opposite reasons:
 
-1. **The staged template does not rot.** ``scratch/app-template/`` is the content the owner
+1. **The staged template does not rot.** ``staged-repos/app-template/`` is the content the owner
    pushes to ``github.com/PersonalClaw/app-template``. Its four generated files are compared
    BYTE-FOR-BYTE against a fresh ``app new app-template --type tool`` run, so a scaffold
    change that the template didn't follow reds here instead of shipping a template that
@@ -53,7 +53,7 @@ from personalclaw.cli_app_new import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-STAGED = REPO_ROOT / "scratch" / "app-template"
+STAGED = REPO_ROOT / "staged-repos" / "app-template"
 
 #: The files the template MUST match byte-for-byte against a fresh scaffold run.
 GENERATED_VERBATIM = ("app.json", "provider.py", "app_cli.py", "test_provider.py")
@@ -95,7 +95,7 @@ def _dir_member(name: str) -> tarfile.TarInfo:
 def _no_build_junk(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
     """Keep the fixture hermetic: a stray ``__pycache__``/``.coverage`` must not ride along.
 
-    A previous local ``pytest`` run inside ``scratch/app-template`` leaves both behind, and a
+    A previous local ``pytest`` run inside ``staged-repos/app-template`` leaves both behind, and a
     fixture that packs them silently changes what every extraction test below asserts.
     """
     parts = Path(info.name).parts
@@ -146,7 +146,7 @@ def local_archive_server(monkeypatch: pytest.MonkeyPatch):
 
 
 # ---------------------------------------------------------------------------
-# The staged template content (scratch/app-template — owner pushes this)
+# The staged template content (staged-repos/app-template — owner pushes this)
 # ---------------------------------------------------------------------------
 
 
@@ -173,7 +173,7 @@ def test_the_staged_template_is_byte_identical_to_a_fresh_scaffold(
     expected = (fresh.path / rel).read_text(encoding="utf-8")
     actual = (STAGED / rel).read_text(encoding="utf-8")
     assert actual == expected, (
-        f"scratch/app-template/{rel} no longer matches `app new app-template --type tool`. "
+        f"staged-repos/app-template/{rel} no longer matches `app new app-template --type tool`. "
         "Regenerate the staged template in the same commit as the scaffold change."
     )
 

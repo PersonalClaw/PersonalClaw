@@ -169,10 +169,10 @@ artifact — an artifact edited into shape would make beat 6 a lie about beat 3.
 
 The capture is **not committed to this repo.** At 84s the H.264 file is 1.2 MB and the webm
 7.5 MB; this repo has no Git LFS and no committed media convention above a few hundred
-kilobytes (the largest tracked binaries are the ~250–540 KB screenshots under
-`docs/screenshots/` and `temp-screenshots/`). A megabyte-plus binary that is regenerated
-every release would be a permanent, unshrinkable addition to every clone, and unlike the
-screenshots nothing in this repo renders it.
+kilobytes (the largest tracked binaries are the ≤352 KB images under `docs/brand/` and
+`docs/screenshots/`). A megabyte-plus binary that is regenerated every release would be a
+permanent, unshrinkable addition to every clone, and unlike the screenshots nothing in this
+repo renders it.
 
 So: the script is committed, the path is committed, the artefact is regenerated. The video
 belongs in the surface that shows it — see the handoff below.

@@ -789,7 +789,7 @@ def _render_test_provider_py(
     contract: TypeContract, *, app_name: str, display_name: str, class_name: str
 ) -> str:
     # Double quotes, not ``repr()``: generated code should already be black-clean, so an
-    # apps repo (or this repo's own pre-commit hook, over scratch/app-template) reformatting
+    # apps repo (or this repo's own pre-commit hook, over staged-repos/app-template) reformatting
     # it cannot make the file differ from what the generator emits. Method names are Python
     # identifiers, so there is nothing to escape.
     method_list = ", ".join(f'"{m}"' for m in contract.methods)

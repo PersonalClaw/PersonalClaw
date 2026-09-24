@@ -10,7 +10,7 @@
  * — the tree that loops and code sessions read, write and run `bash` in. The browse location
  * defaults to the user's HOME, so the most likely accidental outcome measured in the report was
  * binding a project's workspace to the whole of `/Users/<user>`. Three different typed paths were
- * tried; all three bound `/Users/golani`.
+ * tried; all three bound `/Users/me`.
  *
  * So a typed path must be BOUND or REFUSED OUT LOUD, never substituted. `browse-dirs` is what makes
  * that possible without new backend surface: it 404s a path that does not exist and returns the
@@ -28,7 +28,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ApiError } from '../../lib/api'
 
-const HOME = '/Users/golani'
+const HOME = '/Users/me'
 
 /** A minimal stand-in for the browse-dirs route: realpath-resolving, 404 on a missing dir. */
 const TREE: Record<string, { parent: string; dirs: string[]; in_repo?: boolean }> = {

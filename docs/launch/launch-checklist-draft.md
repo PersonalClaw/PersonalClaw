@@ -330,7 +330,7 @@ Kept here on purpose so the next editor does not "helpfully" add them back:
 
 ## Status
 
-`DL-8` stays `todo` in DL.md / `dag.json`: this file and
+`DL-8` stays `todo` in the maintainer's roadmap (not in this repo): this file and
 [`listing-submissions-draft.md`](listing-submissions-draft.md) are the *drafts* the `done_when`
 requires, but the atom also requires the gate to be all-green and the owner to actually submit and
 post — none of which an implementation session can complete. Flip the atom only when the submissions
