@@ -26,6 +26,9 @@ const H = vi.hoisted(() => ({
   postRoomMessage: vi.fn(),
   archiveRoom: vi.fn(),
   room: { fn: null as null | (() => Promise<unknown>) },
+  // Indirected like `room` so a test can make the AGENT read reject. It used to be a fixed
+  // `{ agents: [] }`, which meant no test could reach the failed-read branch of the member picker.
+  agents: { fn: null as null | (() => Promise<unknown>) },
 }))
 
 vi.mock('../../lib/api', async () => {
@@ -35,7 +38,7 @@ vi.mock('../../lib/api', async () => {
     api: {
       ...real.api,
       room: () => H.room.fn!(),
-      agents: async () => ({ agents: [], default_agent: '' }),
+      agents: () => H.agents.fn!(),
       postRoomMessage: H.postRoomMessage,
       archiveRoom: H.archiveRoom,
       addRoomMember: vi.fn(),
@@ -103,6 +106,7 @@ beforeEach(() => {
   H.postRoomMessage.mockReset()
   H.archiveRoom.mockReset()
   H.room.fn = async () => detail()
+  H.agents.fn = async () => ({ agents: [], default_agent: '' })
 })
 afterEach(cleanup)
 
@@ -244,5 +248,39 @@ describe('the states that are not failures', () => {
     mount()
     expect(await screen.findByRole('alert')).toBeTruthy()
     expect(screen.getByRole('button', { name: /Retry|Try again/i })).toBeTruthy()
+  })
+})
+
+/** The member picker's own read is a SECOND load, and it used to drop its rejection.
+ *
+ *  `agents` is `undefined` both while `/api/agents` is in flight and after it rejected, so the
+ *  picker keyed its placeholder off `agents === undefined` and said `Loading…` — forever, for a
+ *  request that had already failed. That is the (B) half of the `useQuery` error class:
+ *  `ui/loadErrorState.test.tsx`'s `UNBOUND_ERROR_BUDGET` counts exactly this shape, and
+ *  `RoomView.tsx` carries no budget entry, so the census's zero default is the rail. */
+describe('the member picker when the agent list cannot be read', () => {
+  async function openAddForm() {
+    mount()
+    await userEvent.click(await screen.findByRole('button', { name: /Open members/ }))
+    await userEvent.click(await screen.findByRole('button', { name: /Add a member/ }))
+  }
+
+  it('says the read FAILED and offers a retry, rather than `Loading…` forever', async () => {
+    H.room.fn = async () => detail({ room: room({ members: [] }) })
+    H.agents.fn = async () => { throw apiErr('internal_error', 500) }
+    await openAddForm()
+    expect(await screen.findByText(/Couldn't load your agents/)).toBeTruthy()
+    // The whole defect in one assertion: a failed read must not wear the loading state.
+    expect(screen.queryByText('Loading…')).toBeNull()
+    expect(screen.getByRole('button', { name: /^Retry$/ })).toBeTruthy()
+  })
+
+  it('still says `No agents configured` when the read SUCCEEDS and is empty', async () => {
+    H.room.fn = async () => detail({ room: room({ members: [] }) })
+    await openAddForm()
+    // The control for the test above: an empty list is not a failure, and must not claim one.
+    expect(await screen.findByText('No agents configured')).toBeTruthy()
+    expect(screen.queryByText(/Couldn't load your agents/)).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Retry$/ })).toBeNull()
   })
 })

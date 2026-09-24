@@ -5,7 +5,7 @@ import { IconButton } from '../../ui/IconButton'
 import { Eyebrow } from '../../ui/Eyebrow'
 import { StatusPill } from '../../ui/StatusPill'
 import { EmptyState } from '../../ui/ListScaffold'
-import { Field, Select, TextInput } from '../../ui/forms'
+import { Field, FieldError, Select, TextInput } from '../../ui/forms'
 import { fvs } from '../../design/fontWeight'
 import {
   LISTEN_POLICIES,
@@ -49,12 +49,19 @@ import type { RoomDetail, RoomListenPolicy, SavedAgent } from '../../lib/api'
  *  without anything saying so. A dot that is usually right about who is talking is the
  *  fabricated-value defect with a friendly face, so the row says "owed a turn", which is what
  *  the data supports. */
-export function RoomMembersPanel({ detail, owed, agents, busy, removing, onAdd, onRemove }: {
+export function RoomMembersPanel({ detail, owed, agents, agentsError, onRetryAgents, busy, removing, onAdd, onRemove }: {
   detail: RoomDetail
   /** The queue the room owes, in order — parked by a pause or in flight from the last message. */
   owed: readonly string[]
   /** Every configured agent binding, for the picker. `undefined` while it is still loading. */
   agents: SavedAgent[] | undefined
+  /** The `agents:list` rejection, when that read FAILED.
+   *
+   *  Required to tell "loading" from "could not load": `agents` is `undefined` in both cases, so
+   *  without this the picker says `Loading…` forever on a failed read. */
+  agentsError?: unknown
+  /** Re-runs the agent read, for the retry the failed picker offers. */
+  onRetryAgents?: () => void
   /** A roster write is in flight. Drives the ADD button's spinner only. */
   busy: boolean
   /** The member whose removal is in flight, or `''`.
@@ -107,6 +114,8 @@ export function RoomMembersPanel({ detail, owed, agents, busy, removing, onAdd, 
       {adding && (
         <AddMemberForm
           agents={agents}
+          agentsError={agentsError}
+          onRetryAgents={onRetryAgents}
           taken={detail.room.members.map((m) => m.name)}
           busy={busy}
           onCancel={() => setAdding(false)}
@@ -204,6 +213,16 @@ function MemberFact({ label, value, title, icon }: {
   )
 }
 
+/** What the agent picker says when it has no options to offer — and the whole point is that
+ *  there are THREE reasons, not two. `agents` is `undefined` both while the read is in flight and
+ *  after it rejected, so keying the placeholder off `agents` alone reports a permanent `Loading…`
+ *  for a failure. The rejection is the only thing that separates them. */
+function pickerPlaceholder(agents: SavedAgent[] | undefined, agentsError: unknown): string {
+  if (agentsError) return "Couldn't load your agents"
+  if (agents === undefined) return 'Loading…'
+  return 'No agents configured'
+}
+
 /** Add a member: which binding, what role, and how it listens.
  *
  *  The binding is a PICKER over the configured agents rather than a free-text field, because
@@ -221,8 +240,13 @@ function MemberFact({ label, value, title, icon }: {
  *  (`egress_tier`, `denylist_extra`, `path_allowlist`): their narrowing is discarded at the
  *  enforcement point, so a control for one would be a false ceiling — the inert-surface defect
  *  wearing a safety label. */
-function AddMemberForm({ agents, taken, busy, onAdd, onCancel }: {
+function AddMemberForm({ agents, agentsError, onRetryAgents, taken, busy, onAdd, onCancel }: {
   agents: SavedAgent[] | undefined
+  /** The `agents:list` rejection. See `RoomMembersPanel`'s copy of this prop: `agents` alone
+   *  cannot distinguish a read still in flight from one that failed, and the picker's placeholder
+   *  has to say which. */
+  agentsError?: unknown
+  onRetryAgents?: () => void
   taken: string[]
   busy: boolean
   onAdd: (body: { name: string; role_blurb: string; listen_policy: RoomListenPolicy }) => void
@@ -242,7 +266,11 @@ function AddMemberForm({ agents, taken, busy, onAdd, onCancel }: {
   const [blurb, setBlurb] = useState('')
   const [policy, setPolicy] = useState<RoomListenPolicy>('all')
   const chosen = name || firstFree
-  const noneFree = agents !== undefined && options.every((o) => o.disabled)
+  // 🪤 `options.length > 0` is load-bearing: `[].every(…)` is VACUOUSLY TRUE, so a user with no
+  // agents at all was told "Every agent you have configured is already in this room" — a sentence
+  // about a set that is empty — and the `No agents configured` placeholder below was unreachable.
+  // "All of them are taken" and "there are none" are different facts and need different sentences.
+  const noneFree = agents !== undefined && options.length > 0 && options.every((o) => o.disabled)
   return (
     <div className="rounded-lg bg-surface-container px-m py-m">
       <Eyebrow as="h3">Add a member</Eyebrow>
@@ -253,13 +281,23 @@ function AddMemberForm({ agents, taken, busy, onAdd, onCancel }: {
         </p>
       ) : (
         <div className="mt-s flex flex-col gap-m">
-          <Field label="Agent" hint="One of your configured agents. It keeps its own provider session.">
+          <Field
+            label="Agent"
+            hint="One of your configured agents. It keeps its own provider session."
+            right={agentsError && onRetryAgents ? (
+              <Button size="xs" variant="ghost" onClick={onRetryAgents}>Retry</Button>
+            ) : undefined}>
             <Select
               value={chosen}
               onChange={setName}
-              options={options.length ? options : [{ value: '', label: agents === undefined ? 'Loading…' : 'No agents configured', disabled: true }]}
+              options={options.length ? options : [{ value: '', label: pickerPlaceholder(agents, agentsError), disabled: true }]}
               size="sm"
               surface="high" />
+            {agentsError ? (
+              <FieldError className="mt-xs">
+                {agentsError instanceof Error ? agentsError.message : 'The agent list could not be read.'}
+              </FieldError>
+            ) : null}
           </Field>
           <Field label="Role" hint="One line. It rides along with every line this member writes, so the others can read its position next to the role it argues from.">
             <TextInput

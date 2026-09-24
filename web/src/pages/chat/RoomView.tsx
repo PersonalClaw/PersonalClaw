@@ -86,7 +86,13 @@ export function RoomView({ roomId, navigate, setQuery }: {
   )
   // Every configured binding, for the member picker. A separate read because it is CONFIG and
   // the room is LIVE — folding it into the room poll would re-fetch the agent list every 2.5s.
-  const { data: agentData } = useQuery('agents:list', () => api.agents())
+  //
+  // 🪤 `error` is BOUND, not dropped. `agents` is only ever `undefined` or a list, and the picker
+  // reads `undefined` as "still loading" — so a rejected read left it saying `Loading…` forever,
+  // a failure wearing a loading state. Binding the rejection is what lets the picker tell the two
+  // apart. `ui/loadErrorState.test.tsx`'s `UNBOUND_ERROR_BUDGET` is the rail over this class.
+  const { data: agentData, error: agentsError, refresh: refreshAgents } =
+    useQuery('agents:list', () => api.agents())
 
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -270,6 +276,8 @@ export function RoomView({ roomId, navigate, setQuery }: {
               detail={data}
               owed={owed}
               agents={agentData?.agents}
+              agentsError={agentsError}
+              onRetryAgents={refreshAgents}
               busy={busy}
               onAdd={(body: { name: string; role_blurb: string; listen_policy: RoomListenPolicy }) =>
                 void act(() => api.addRoomMember(room.id, body), 'add the member')}
