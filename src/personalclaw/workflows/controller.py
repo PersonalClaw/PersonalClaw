@@ -2498,6 +2498,14 @@ class RunController:
             # — and a retry must show the item it originally got, not whatever now sits at that
             # index.
             inst.item_label = _item_label(item.item)
+        if item.item_total:
+            # The fan-out's denominator, from the frontier's own `len(items)`. Stamped on EVERY
+            # dispatch rather than once, unlike the label: the label must keep the item it
+            # originally got, whereas the denominator must describe the list the engine is
+            # iterating NOW — so a rewind over a shorter list re-stamps what it re-runs instead of
+            # leaving a wider total behind. Persisting it is what lets `service._nodes_of` report
+            # the same number as the `workflow_node_started` event below (#3403).
+            inst.item_total = int(item.item_total)
         if node_commits_effects(item.node):
             # ATTEMPTED goes down BEFORE dispatch: a crash between here and the outcome
             # must leave evidence the effect MAY have fired (WF2-R1).
@@ -4666,13 +4674,15 @@ class RunController:
         out: dict[str, Any] = {}
         if item.iter_index is not None:
             out["item_index"] = item.iter_index
-            # DERIVED from the instance map rather than cached at expansion: the expander
-            # already created one instance per item, so counting siblings is the same number
-            # with no second copy of it to go stale after a rewind re-expands the fan-out.
-            base = spec_path(item.path)
-            total = sum(1 for p in self.instances if spec_path(p) == base)
-            if total > 1:
-                out["item_total"] = total
+            # The RESOLVED item count, carried from the frontier — not a scan of the instance
+            # map. The map is read at DISPATCH, when it holds only the items dispatched so far,
+            # so counting it made the denominator track the numerator: a twelve-item fan-out
+            # streamed no marker, `[2/2]`, `[3/3]` … `[12/12]`, which is precisely the failure
+            # the field exists to prevent (#3403). The count was chosen to avoid a total going
+            # stale after a rewind re-expands the fan-out; re-stamping on every dispatch
+            # (`_launch`) buys that without paying the incompleteness.
+            if item.item_total and item.item_total > 1:
+                out["item_total"] = int(item.item_total)
         label = _item_label(item.item)
         if label:
             out["item_label"] = label

@@ -300,6 +300,27 @@ def spec_path(path: str) -> str:
     return INSTANCE_MARKER_RE.sub("", path)
 
 
+#: The instance's OWN marker — the one on its last segment, so `root.body@0.children[1].body#2`
+#: matches `#2` and not `@0`.
+TRAILING_MARKER_RE = re.compile(r"[@#]\d+$")
+
+
+def sibling_group(path: str) -> str:
+    """An instance path → the group of instances it was expanded ALONGSIDE.
+
+    The right key for *counting* instances, where `spec_path` is wrong: `spec_path` removes EVERY
+    marker, so two iterations of a loop containing a three-item fan-out collapse into ONE group of
+    six and the fan-out's `[i/total]` denominator becomes the item count times the iteration count
+    (#3403 — `main` reported 6 where the answer was 3, for six rows all claiming to be items 1–3).
+    Dropping only the trailing marker keeps each expansion distinct: iteration 0's
+    `…children[1].body#0` groups with its `…#1`/`…#2` siblings, never with iteration 1's.
+
+    Still `spec_path`, not this, for every SPEC lookup (a node's id, config, declared deps) — those
+    need the shared definition path, which is exactly what removing all the markers produces.
+    """
+    return TRAILING_MARKER_RE.sub("", path)
+
+
 # ── outcomes (WF2-R5) ────────────────────────────────────────────────────────
 
 
@@ -1158,6 +1179,22 @@ class NodeInstance:
     #: output changed (or a reload) the label would otherwise be unrecoverable. Empty for a
     #: non-iterated node.
     item_label: str = ""
+    #: How many items the `foreach` that produced this instance resolved — the `12` in "[3/12]".
+    #: 0 for a node that is not a fan-out item.
+    #:
+    #: THE denominator, computed once where the items are resolved (`tick._visit_foreach`) and
+    #: carried here so the REST node list and the live `workflow_node_started` event report the
+    #: same number. Both used to derive it independently and both were wrong (#3403): the REST
+    #: list counted instances sharing a `spec_path` (6 for a three-item fan-out in a two-iteration
+    #: loop) and the event stream counted the instance map AT DISPATCH, when it holds only the
+    #: items dispatched so far — so a twelve-item fan-out streamed `[2/2] [3/3] … [12/12]`, a
+    #: denominator carrying no information at all. A count cannot be right at dispatch; the
+    #: resolved item count can, so it is what travels.
+    #:
+    #: PERSISTED, like `item_label`, and stamped on every dispatch rather than only the first: a
+    #: rewind that re-expands the fan-out over a different list re-stamps the items it re-runs,
+    #: which is what keeps this from going stale.
+    item_total: int = 0
     #: The subagent this instance dispatched, for a `stage` node. `dispatch_stage` spawns and
     #: returns RUNNING immediately, so the node's real completion arrives out of band and
     #: `RunController._reconcile_dispatched_stages` needs a way back to the spawn.
@@ -1196,6 +1233,7 @@ class NodeInstance:
             "tokens": self.tokens,
             "wake_at": self.wake_at,
             "item_label": self.item_label,
+            "item_total": self.item_total,
             "subagent_id": self.subagent_id,
             "cached": self.cached,
         }
@@ -1222,6 +1260,7 @@ class NodeInstance:
             tokens=int(d.get("tokens", 0) or 0),
             wake_at=float(d.get("wake_at", 0.0) or 0.0),
             item_label=str(d.get("item_label", "") or ""),
+            item_total=int(d.get("item_total", 0) or 0),
             subagent_id=str(d.get("subagent_id", "") or ""),
             cached=bool(d.get("cached", False)),
         )

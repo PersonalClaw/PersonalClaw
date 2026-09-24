@@ -47,10 +47,19 @@ class BindingError(Exception):
 
     Carries the expression so the journal entry names what broke rather than just
     where. The engine turns this into a typed node failure — never an empty string.
+
+    `remediation` is the ACTIONABLE half, carried from the raise site because only that site
+    knows which failure mode this is. The dispatcher's generic fallback ("…or add a
+    `| default(...)` pipe if the value is genuinely optional") is wrong for an unresolved
+    path — `_walk_path` raises before any pipe runs — and when the expression already carries
+    that pipe it names an act the author has already performed, which is worse than silence.
+    Measured: six bundled templates shipped the guarded idiom and the engine answered every
+    one of them by asking for the guard they had written.
     """
 
-    def __init__(self, message: str, expr: str = "") -> None:
+    def __init__(self, message: str, expr: str = "", remediation: str = "") -> None:
         self.expr = expr
+        self.remediation = remediation
         super().__init__(f"{message} (in {{{{{expr}}}}})" if expr else message)
 
 
@@ -550,12 +559,55 @@ def _split_args(raw: str) -> list[str]:
 
 _MISSING = object()
 
+#: Every root beyond `inputs`/`nodes`, and what it holds. Named in a remediation because a
+#: missing ROOT is a CONTEXT error, not a spelling error: the value does not exist where the
+#: reference is being read, and no amount of checking the path will surface that.
+_ROOT_HOLDS = {
+    "brief": "the project Session Brief",
+    "item": "the current `foreach` item",
+    "iter": "the current iteration index",
+    "last": "the previous iteration of the loop this node is in",
+    "output": "this node's own output, and only inside `success_when`",
+    "previous": "the previous cycle of the enclosing `until_cancelled` body",
+    "siblings": "the accumulated outputs of this node's `parallel` siblings",
+}
+
+
+def _unresolved_remediation(seg: str, *, is_root: bool) -> str:
+    """The actionable half of an `unresolved reference` failure.
+
+    Never "add a `| default(...)` pipe". `_walk_path` raises on the FIRST missing segment,
+    before any pipe runs — `validator._validate_output_contract` states the same ("a
+    `| default(…)` pipe does NOT rescue it") — so a default cannot save a missing path. It
+    saves a path that RESOLVES TO NULL, which is a different thing, and saying so is the
+    difference between a next step and a dead end.
+
+    A missing ROOT and a missing leaf are different fixes, so they get different text: the
+    root case means the reference is being read somewhere the value does not exist at all.
+    """
+    if is_root:
+        holds = _ROOT_HOLDS.get(seg)
+        if holds:
+            return (
+                f"{seg!r} is not available to this node — it holds {holds}. A "
+                "`| default(...)` pipe cannot rescue it: pipes run only after the reference "
+                "resolves, and this failed before that."
+            )
+        return (
+            f"there is no {seg!r} root here — check the spelling against `inputs`, `nodes` "
+            f"and {', '.join(sorted(_ROOT_HOLDS))}."
+        )
+    return (
+        f"check that the value really carries {seg!r}. A `| default(...)` pipe does not "
+        "rescue a missing path, only one that resolves to null."
+    )
+
 
 def _walk_path(root: Any, path: str, expr: str) -> Any:
     """Follow a dotted path. Missing segments raise — see the module docstring on why
     this is not a silent empty string."""
     cur: Any = root
-    for seg in [s for s in path.split(".") if s]:
+    for index, seg in enumerate([s for s in path.split(".") if s]):
         if isinstance(cur, dict):
             nxt = cur.get(seg, _MISSING)
         elif isinstance(cur, list) and seg.isdigit():
@@ -564,7 +616,11 @@ def _walk_path(root: Any, path: str, expr: str) -> Any:
         else:
             raise BindingError(f"cannot read {seg!r} from a {type(cur).__name__}", expr)
         if nxt is _MISSING:
-            raise BindingError(f"unresolved reference at {seg!r}", expr)
+            raise BindingError(
+                f"unresolved reference at {seg!r}",
+                expr,
+                _unresolved_remediation(seg, is_root=index == 0),
+            )
         cur = nxt
     return cur
 
@@ -575,12 +631,11 @@ def resolve_expr(expr: str, ctx: BindingContext) -> Any:
     head = parts[0]
     pipe_names = {m.group(1) for m in (_PIPE_RE.match(p) for p in parts[1:]) if m}
 
-    # `previous` absent is the FIRST cycle/run, which is normal — not an unresolvable
-    # reference. Every diff-aware template in the plan is written as
-    # `{{previous.output.summary | default('None yet')}}`, and raising here would make each one
-    # fail on its own first cycle unless it grew a branch node for the case. Distinct from
-    # `nodes.typo.output`, which really is an authoring error.
-    if _is_previous_ref(head) and not ctx.has_previous:
+    # A root the FIRST cycle legitimately lacks short-circuits to None so the expression's
+    # `| default(...)` pipe runs. Nothing else can rescue it: `_walk_path` raises on the first
+    # missing segment, before any pipe. Distinct from `nodes.typo.output`, which really is an
+    # authoring error and must still fail.
+    if _first_cycle_miss(head, ctx):
         return _run_pipes(None, parts[1:], expr, ctx)
 
     if head.startswith("secret:"):
@@ -636,9 +691,42 @@ def _is_sibling_ref(head: str) -> bool:
     return len(segs) >= 1 and segs[0] == "siblings"
 
 
-def _is_previous_ref(head: str) -> bool:
+def _first_cycle_miss(head: str, ctx: BindingContext) -> bool:
+    """Is this a prior-cycle root that the FIRST cycle legitimately does not have yet?
+
+    Two roots carry a prior cycle's value — `previous` (the prior cycle of the enclosing
+    `until_cancelled` body) and `last` (the prior iteration of the loop this node is in) — and
+    on a first cycle neither exists. Raising there would make every diff-aware template fail
+    on its own first pass unless it grew a branch node for the case, and it is the documented
+    idiom (`{{last.output.summary | default("(this is the first pass)")}}`) that six bundled
+    templates already ship. So the miss resolves to None and the pipe chain runs.
+
+    **Keyed on a POSITIVE first-cycle signal, never on absence alone**, because
+    `absent-is-not-zero`: if "the root is missing" were sufficient, a `last` the engine failed
+    to supply on cycle 50 would render "(this is the first pass)" forever — a prompt quietly
+    missing its input while the run reports success, which is the exact failure this module's
+    docstring exists to prevent.
+
+    * `previous` — `has_previous` is the context's own per-node declaration.
+    * `last` — `has_last` says the value is present; `iter_index == 0` is what says the
+      *reason* it is absent is the first iteration. `has_item` excludes a `foreach`, which
+      rebinds `iter_index` to an ITEM index: item 0 of a fan-out is not iteration 0 of a loop,
+      and `last` means nothing there.
+
+    Everything else — `iter_index` 1+ with no `last`, a `last` read outside any loop, a typo'd
+    `lastt` — is a real gap or an authoring error and still raises. Deliberately so: the
+    engine does not yet hand a loop BODY its previous iteration at all (`_context_for` sets no
+    `has_last`; pinned by `test_a_loop_body_still_gets_no_real_previous_iteration`), and a rescue
+    keyed on absence would convert that open gap into a silent lie on every later iteration.
+    """
     segs = [s for s in head.split(".") if s]
-    return len(segs) >= 1 and segs[0] == "previous"
+    if not segs:
+        return False
+    if segs[0] == "previous":
+        return not ctx.has_previous
+    if segs[0] == "last":
+        return not ctx.has_last and ctx.iter_index == 0 and not ctx.has_item
+    return False
 
 
 def _flatten_sibling(value: Any) -> Any:

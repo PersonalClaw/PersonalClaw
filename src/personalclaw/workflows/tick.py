@@ -114,6 +114,12 @@ class ReadyNode:
     item: Any = None
     has_item: bool = False
     iter_index: int | None = None
+    #: How many items the enclosing `foreach` resolved — the `12` in "[3/12]". None outside a
+    #: fan-out. THE denominator, and it travels from `_visit_foreach` (the one place that resolves
+    #: the items) rather than being recounted downstream: the two surfaces that render it each
+    #: counted for themselves and each got a different wrong answer (#3403). See
+    #: `NodeInstance.item_total`.
+    item_total: int | None = None
 
     @property
     def node_id(self) -> str:
@@ -463,6 +469,7 @@ def _visit(
     item: Any = None,
     has_item: bool = False,
     iter_index: int | None = None,
+    item_total: int | None = None,
     policies: tuple[AdmissionPolicy, ...] = (),
 ) -> None:
     """Walk the tree collecting ready leaves. `enabled` is how a container gates its
@@ -526,6 +533,7 @@ def _visit(
                 item=item,
                 has_item=has_item,
                 iter_index=iter_index,
+                item_total=item_total,
                 policies=policies,
             )
             # A sequence admits exactly one unfinished child at a time. Stop at the
@@ -551,6 +559,7 @@ def _visit(
             item=item,
             has_item=has_item,
             iter_index=iter_index,
+            item_total=item_total,
             policies=policies,
         )
         return
@@ -602,6 +611,7 @@ def _visit(
             item=item,
             has_item=has_item,
             iter_index=iter_index,
+            item_total=item_total,
             policies=policies,
         )
         return
@@ -615,6 +625,7 @@ def _visit(
             item=item,
             has_item=has_item,
             iter_index=iter_index,
+            item_total=item_total,
         )
     )
 
@@ -634,6 +645,7 @@ def _visit_parallel(
     item: Any,
     has_item: bool,
     iter_index: int | None,
+    item_total: int | None,
     policies: tuple[AdmissionPolicy, ...] = (),
 ) -> None:
     """Fan-out. Every leg is visited; `_ordering_satisfied` decides which may run.
@@ -665,6 +677,7 @@ def _visit_parallel(
             item=item,
             has_item=has_item,
             iter_index=iter_index,
+            item_total=item_total,
             policies=policies,
         )
 
@@ -878,6 +891,11 @@ def _visit_foreach(
             item=value,
             has_item=True,
             iter_index=idx,
+            # THE denominator, computed here because this is the one place the items are
+            # resolved. Everything downstream carries it rather than recounting: a count taken
+            # at dispatch sees an instance map that is still filling, which is why the live
+            # event stream used to publish `[2/2] [3/3] … [12/12]` (#3403).
+            item_total=len(items),
             policies=policies,
         )
 
@@ -941,6 +959,7 @@ def _visit_branch(
     item: Any,
     has_item: bool,
     iter_index: int | None,
+    item_total: int | None,
     policies: tuple[AdmissionPolicy, ...] = (),
 ) -> None:
     """Route: dispatch the branch itself, then visit only the taken case.
@@ -964,6 +983,7 @@ def _visit_branch(
                 item=item,
                 has_item=has_item,
                 iter_index=iter_index,
+                item_total=item_total,
             )
         )
         return
@@ -1005,6 +1025,7 @@ def _visit_branch(
         item=item,
         has_item=has_item,
         iter_index=iter_index,
+        item_total=item_total,
         policies=policies,
     )
 
