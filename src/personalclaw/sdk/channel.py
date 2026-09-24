@@ -183,9 +183,14 @@ from personalclaw.session import (
     SessionMap,
 )
 from personalclaw.skills import SkillsLoader
+from personalclaw.skills.loader import (
+    AutoSkillProvenance,
+    ResourceRead,
+    SkillResource,
+)
 from personalclaw.stats import Stats
-from personalclaw.subagent import SubagentManager
-from personalclaw.task import Task
+from personalclaw.subagent import SubagentInfo, SubagentManager
+from personalclaw.task import Task, TaskState
 
 # ── Conformance kit (CE-6) — the one executable channel contract ──
 # Lives in the INSTALLED package, not core's `tests/`: `tests/` ships in neither the
@@ -194,6 +199,7 @@ from personalclaw.task import Task
 # `tests/` would be unimportable exactly where the four apps have to call it. Re-exported
 # here because this facade is the only import path an app is allowed to use.
 from personalclaw.testing.channel_conformance import (
+    CapturedSession,
     CapturingState,
     ChannelContractError,
     assert_channel_contract,
@@ -225,11 +231,13 @@ __all__ = [
     "AcpProcessDied",
     "AcpTimeoutError",
     "AppConfig",
+    "AutoSkillProvenance",
     "BACKGROUND_KEY",
     "CANNED_PAIRING_REPLY",
     "CRED_OWNER_ID",
     "CRED_SLACK_APP_TOKEN",
     "CRED_SLACK_BOT_TOKEN",
+    "CapturedSession",
     "CapturingState",
     "ChannelCapabilities",
     "ChannelContractError",
@@ -254,6 +262,7 @@ __all__ = [
     "ModelProvider",
     "OutboundMessage",
     "ProviderSettings",
+    "ResourceRead",
     "STOP_REASON_CANCELLED",
     "STOP_REASON_END_TURN",
     "CANCELLED_STOP_REASONS",
@@ -261,12 +270,15 @@ __all__ = [
     "is_cancelled_stop",
     "SessionManager",
     "SessionMap",
+    "SkillResource",
     "SkillsLoader",
     "Stats",
+    "SubagentInfo",
     "SubagentManager",
     "TOOL_AUTO_APPROVE",
     "TOOL_DENY",
     "Task",
+    "TaskState",
     "Trigger",
     "TriggerStore",
     "TrustVerdict",
