@@ -454,6 +454,23 @@ def _doctor_maintenance() -> None:
         print(f"  health:      ⚠️  could not measure ({str(exc)[:120]})")
 
 
+def _ffmpeg_install_hint(platform: str | None = None) -> str:
+    """The ffmpeg install line for THIS platform.
+
+    Doctor's whole job on a fault line is to hand back a command that works where it is
+    read, and `brew` works on exactly one of the three platforms this ships to. Measured
+    inside the published Linux container: `Fix: brew install ffmpeg`, on a machine with no
+    brew and no way to get one. Pure + parameterised so every branch is testable without
+    faking `sys.platform` globally.
+    """
+    plat = sys.platform if platform is None else platform
+    if plat == "darwin":
+        return "brew install ffmpeg"
+    if plat.startswith("win"):
+        return "winget install ffmpeg"
+    return "apt install ffmpeg (or your distribution's package manager)"
+
+
 def _doctor() -> None:
     """Verify PersonalClaw setup — check dependencies, config, credentials, connectivity."""
 
@@ -825,10 +842,21 @@ def _doctor() -> None:
     ffmpeg_bin = shutil.which("ffmpeg")
     if ffmpeg_bin:
         print(f"  ffmpeg:      ✅ {ffmpeg_bin}")
-    elif stt_active:
+    elif stt_active and stt_resolved is not None:
+        # Gated on a RESOLVED model, the same predicate the faster-whisper probe below
+        # uses — and the one the `stt_resolved is None` branch above already reasoned out
+        # loud: "a fresh core is expected to boot without media backends". Gated on
+        # `stt_active` alone it was not, because that flag DEFAULTS TO TRUE, so every
+        # install with no ffmpeg and no STT model — a slim container, the published image,
+        # any machine where nobody ran a package manager — exited `❌ Fix these issues:
+        # ffmpeg`, demanding a transcoder for a feature that has nothing to transcode with.
+        # Two branches of one check must not disagree about whether unconfigured STT is a
+        # fault.
         print("  ffmpeg:      ❌ not found")
-        print("               Fix: brew install ffmpeg")
+        print(f"               Fix: {_ffmpeg_install_hint()}")
         issues.append("ffmpeg")
+    elif stt_active:
+        print("  ffmpeg:      ⏭  not installed (not needed until an STT model is bound)")
     else:
         print("  ffmpeg:      ⏭  not installed (not needed)")
 
