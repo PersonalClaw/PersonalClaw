@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **849 registrations** over **690 distinct paths** — 842 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **850 registrations** over **690 distinct paths** — 843 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -52,10 +52,10 @@ The 127 families the surface divides into, largest first.
 | `/api/evals` | 9 | 9 |
 | `/api/learning` | 9 | 7 |
 | `/api/lexicon` | 9 | 6 |
+| `/api/rooms` | 9 | 7 |
 | `/api/agent-marketplace` | 8 | 5 |
 | `/api/channels` | 8 | 8 |
 | `/api/onboarding` | 8 | 7 |
-| `/api/rooms` | 8 | 7 |
 | `/api/security` | 8 | 8 |
 | `/api/auth` | 7 | 7 |
 | `/api/browse` | 7 | 5 |
@@ -154,7 +154,7 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 842 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 843 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -802,6 +802,7 @@ The 842 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/rooms` | every room, newest first. ``?archived=1`` includes archived ones. |
 | `POST` | `/api/rooms` | {title} — create a room. |
 | `GET` | `/api/rooms/{room_id}` | one room, its members, its posture, and its transcript. |
+| `PATCH` | `/api/rooms/{room_id}` | {round_budget} — the room's own budget override. |
 | `POST` | `/api/rooms/{room_id}/archive` | archive a room. Idempotent. |
 | `GET` | `/api/rooms/{room_id}/export` | the transcript, redacted. |
 | `POST` | `/api/rooms/{room_id}/members` | {name, role_blurb?, listen_policy?, profile_narrowing?}. |

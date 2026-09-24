@@ -61,6 +61,8 @@ import { onToolResultFull } from './chat/toolResultBridge'
 import { SdlcProgressCard, sdlcRefFromTool } from './chat/SdlcProgressCard'
 import { WorkflowProgressCard, workflowRefFromTool } from './chat/WorkflowProgressCard'
 import { ApprovalCard } from './chat/ApprovalCard'
+import { RoomView } from './chat/RoomView'
+import { RoomsScope } from './chat/RoomsScope'
 import { ChatFilePanel } from './chat/ChatFilePanel'
 import { sameSessionTarget, type CommentTarget } from '../ui/content/commentTarget'
 import { ChatActivityPanel } from './chat/ChatActivityPanel'
@@ -570,6 +572,19 @@ export function ChatPage({ sub, navigate, navEpoch = 0, query, setQuery }: { sub
   // #/chat/history → the history list. (Chat history is also reachable as a
   // right-docked rail from the new-chat page, so bare #/chat lands on new chat.)
   if (seg === 'history') return <ChatHistoryPage navigate={navigate} query={q} setQuery={setQ} />
+  // #/chat/room/<id> → one Agent Room. A room is a MODE of this page rather than a nav peer
+  // (AGENT-ROOMS C9): there is no sidebar to be a peer of, the session list is this page, and
+  // its origin Segmented is the navigation that does exist — so the Rooms scope lists rooms and
+  // this branch opens one. It sits ABOVE the bare/new branch and above the session-key
+  // fallthrough, because that fallthrough treats any unrecognised segment as a session key and
+  // would try to resume a session called "room".
+  if (seg === 'room') {
+    const roomId = (sub || '').split('/').slice(1).join('/')
+    // No room id → the list, not a blank room. `replace` so Back does not bounce through a URL
+    // that never rendered anything.
+    if (!roomId) return <RoomsRedirect navigate={navigate} />
+    return <RoomView key={roomId} roomId={decodeURIComponent(roomId)} navigate={navigate} setQuery={setQ} />
+  }
   // bare #/chat AND #/chat/new → a fresh NEW chat (the default landing — the Chat
   // nav target opens straight into a new conversation). The key folds in navEpoch
   // so clicking "New chat" always remounts a fresh session even when the URL was
@@ -580,6 +595,15 @@ export function ChatPage({ sub, navigate, navEpoch = 0, query, setQuery }: { sub
   // sessions STAGED before their first turn (plan 60's investigate opening
   // prompt) — the composer pre-fill is editable, never auto-sent.
   return <ChatSession key={sub} sessionId={sub} navigate={navigate} query={q} setQuery={setQ} seed={seed} routing={routing} setRouting={setRouting} />
+}
+
+/** `#/chat/room` with no id is not a room — send the reader to the list.
+ *
+ *  A component rather than a bare `navigate()` call in the routing branch, because navigating
+ *  during render is the classic React warning; an effect is the shape that is allowed to. */
+function RoomsRedirect({ navigate }: { navigate: (p: string, opts?: { replace?: boolean }) => void }) {
+  useEffect(() => { navigate('chat/history?origin=room', { replace: true }) }, [navigate])
+  return null
 }
 
 function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialProjectId = '', seed = '', agent: initialAgent = '', routing: pendingRouting, setRouting: setRoutingSuggestion }: { sessionId: string | null; navigate: (p: string, opts?: { replace?: boolean }) => void; query: Record<string, string>; setQuery: RouteProps['setQuery']; projectId?: string; seed?: string; agent?: string; routing: RoutingSuggestion | null; setRouting: (s: RoutingSuggestion | null) => void }) {
@@ -4279,6 +4303,18 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   // an instruction, not just a blank. A swallowed rejection cached that claim.
   const { data: foldersData, error: foldersError, refresh: refreshFolders } = useQuery<ChatFolder[]>('chat:folders', () => api.chatFolders(), { persist: true })
   const { data: tagsData, error: tagsError, refresh: refreshTags } = useQuery<ChatTag[]>('chat:tags', () => api.chatTags(), { persist: true })
+  // Agent Rooms — its own read, because a room is not a session (AGENT-ROOMS C9). Its namespace
+  // is LIVE: a room's contents change behind the app's back by design, since a human message
+  // starts a background round whose replies land seconds later with nothing in this tab writing
+  // them. `persist: false` for the same reason.
+  //
+  // Not swallowed, and the distinction matters more here than elsewhere: rooms ship DISABLED, so
+  // the common failure is a deliberate 403 `rooms_disabled` rather than a broken read, and
+  // `RoomsScope` renders those as two different things. A `.catch(() => [])` would have told a
+  // user with the feature switched off that they have no rooms.
+  const { data: roomsData, error: roomsError, refresh: refreshRooms } = useQuery(
+    'rooms:list', () => api.rooms().then((d) => d.rooms), { persist: false },
+  )
   const folders = foldersData ?? []
   const tags = tagsData ?? []
   // Local optimistic overlay so pin/folder/tag mutations paint instantly; it
@@ -4306,10 +4342,18 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   // Origin scope — by default the history shows only the user's OWN chats; goal-loop
   // and code-project worker sessions are hidden behind this filter so they don't
   // bury manual conversations, but stay reachable when the user wants to dive in.
+  //
+  // 🔑 `room` IS A FIFTH SCOPE, AND IT IS NOT A SESSION ORIGIN. This union has always been a
+  // VIEW union rather than a mirror of `ChatSessionSummary.origin` — it adds the synthetic `all`
+  // and drops `campaign`. Agent Rooms extends it on the same axis (AGENT-ROOMS C9): a room is
+  // not a chat session, it is read from `/api/rooms`, and each member's own provider session is
+  // filtered out of `/api/chat/sessions` by the backend — so this scope SWAPS THE LIST BODY for
+  // the rooms list instead of narrowing `sessions`. That is why `matches` below never sees it.
   const [originRaw, setOriginRaw] = useQueryParam(query, setQuery, 'origin', 'manual', { replace: true })
-  const origin: 'manual' | 'loop' | 'code' | 'channel' | 'all' =
-    originRaw === 'loop' || originRaw === 'code' || originRaw === 'channel' || originRaw === 'all' ? originRaw : 'manual'
-  const setOrigin = (o: 'manual' | 'loop' | 'code' | 'channel' | 'all') => setOriginRaw(o)
+  const origin: 'manual' | 'loop' | 'code' | 'channel' | 'room' | 'all' =
+    originRaw === 'loop' || originRaw === 'code' || originRaw === 'channel' || originRaw === 'room' || originRaw === 'all' ? originRaw : 'manual'
+  const setOrigin = (o: 'manual' | 'loop' | 'code' | 'channel' | 'room' | 'all') => setOriginRaw(o)
+  const roomsScope = origin === 'room'
   // Archived view (SESSION-MANAGEMENT S2). Rides the URL like every other filter, so
   // the archive is deep-linkable. The ACTIVE/ARCHIVED split is enforced server-side —
   // the client asks for one or the other rather than fetching everything and hiding
@@ -4479,6 +4523,12 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
     }
     return c
   }, [sessions])
+  // Rooms are counted from their OWN read, and deliberately NOT folded into `all`: `all` means
+  // "every chat", and a room is not a chat. A room's count of 0 with the feature ON is still a
+  // reason to show the tab — otherwise the only way to reach the "New room" action would be to
+  // already have a room, which is the discoverability dead end this scope exists to avoid.
+  const roomCount = roomsData?.length ?? 0
+  const roomsAvailable = roomsData !== undefined
 
   async function del(s: ChatSessionSummary) {
     if (!(await confirm({
@@ -4719,8 +4769,12 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
     <div className="flex h-full flex-col">
       <TopBar
         keepCornerPadding
-        left={<span data-type="title-l" className="text-on-surface">Chat history</span>}
-        right={<HeaderActions className="max-w-[60vw]">
+        left={<span data-type="title-l" className="text-on-surface">{roomsScope ? 'Agent Rooms' : 'Chat history'}</span>}
+        // Every header action here acts on the SESSION list — a view switcher for chat cards, a
+        // re-tag job over chats, a chat folder, a new chat. In the Rooms scope they would be
+        // controls for the list that is not on screen, so the scope carries its own action
+        // (`RoomsScope`'s "New room") and the header keeps only the title.
+        right={roomsScope ? undefined : <HeaderActions className="max-w-[60vw]">
           <HeaderSegmented ariaLabel="View" value={view}
             options={[{ key: 'list', label: 'List view', icon: ListIcon }, { key: 'board', label: 'Board view (by tag)', icon: Columns3 }]}
             onChange={(v) => setView(v as 'list' | 'board')} />
@@ -4751,11 +4805,18 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
           {/* Render the search/filter chrome whenever the list is loading OR
               non-empty — so the page paints fully (real controls + skeleton rows
               below) during load, and only the genuine empty-state hides it. */}
-          {(sessions === null || sessions.length > 0) && (<>
+          {/* `|| roomsAvailable` is load-bearing: a fresh install with Agent Rooms turned on has
+              ZERO chats, and without this the whole control strip — including the Rooms tab — was
+              hidden by the chats empty state, so the only route to a room would have been to type
+              the URL. */}
+          {(sessions === null || sessions.length > 0 || roomsAvailable) && (<>
             {/* Origin scope — only shown once worker chats exist (otherwise the
                 history is all-manual and the tabs would be noise). Defaults to the
-                user's own chats; loop/code workers live behind their tabs. */}
-            {(originCounts.loop > 0 || originCounts.code > 0 || originCounts.channel > 0) && (
+                user's own chats; loop/code workers live behind their tabs.
+                Rooms join it the moment `/api/rooms` answers at all, which is the
+                moment the feature is switched on — including at zero rooms, because
+                the tab is how the first one gets made. */}
+            {(originCounts.loop > 0 || originCounts.code > 0 || originCounts.channel > 0 || roomsAvailable) && (
               <div className="mb-m">
                 <Segmented ariaLabel="Chat origin" value={origin} onChange={(v) => setOrigin(v as typeof origin)}
                   options={[
@@ -4763,10 +4824,16 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
                     ...(originCounts.loop > 0 ? [{ key: 'loop', label: `Loops ${originCounts.loop}` }] : []),
                     ...(originCounts.code > 0 ? [{ key: 'code', label: `Code ${originCounts.code}` }] : []),
                     ...(originCounts.channel > 0 ? [{ key: 'channel', label: `Channels ${originCounts.channel}` }] : []),
+                    ...(roomsAvailable ? [{ key: 'room', label: `Rooms${roomCount ? ` ${roomCount}` : ''}` }] : []),
                     { key: 'all', label: 'All' },
                   ]} />
               </div>
             )}
+            {/* Every control below narrows the SESSION list, so none of them applies to the Rooms
+                scope — leaving them mounted there would offer a search that filters nothing and a
+                tag row for a noun that has no tags. The scope swaps the body, so it swaps its
+                controls with it. */}
+            {!roomsScope && (<>
             <div className="mb-m">
               <SearchField value={q} onChange={setQ} placeholder="Search chats — title or anything said"
                 ariaLabel="Search chats" autoFocus />
@@ -4848,10 +4915,22 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
                 {tagFilter.size > 0 && <Button variant="ghost" size="xs" onClick={() => setTagFilter(new Set())} className="h-6 px-1 text-[0.75rem] text-on-surface-low">Clear</Button>}
               </div>
             )}
+            </>)}
           </>)}
         </div>
 
-        {sessions === null && sessionsError ? <div className="flex-1 min-h-0"><LoadError what="chats" error={sessionsError} onRetry={refreshSessions} /></div>
+        {/* The Rooms scope swaps the BODY, ahead of every session load state: the session read's
+            outcome says nothing about rooms, so a failed `/api/chat/sessions` must not replace the
+            rooms list with a chat LoadError. */}
+        {roomsScope ? (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <div className="mx-auto w-full px-l pb-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+              <RoomsScope rooms={roomsData} error={roomsError} loading={false}
+                onRefresh={refreshRooms} navigate={navigate} />
+            </div>
+          </div>
+        )
+          : sessions === null && sessionsError ? <div className="flex-1 min-h-0"><LoadError what="chats" error={sessionsError} onRetry={refreshSessions} /></div>
           : sessions === null ? <div className="flex-1 min-h-0"><ListSkeleton rows={6} what="chats" /></div>
           : sessions.length === 0 ? <div className="flex-1 min-h-0"><EmptyState icon={MessageSquare} title="No chats yet" hint="Start a conversation — your sessions will appear here to search and revisit." action={{ label: 'New chat', onClick: () => navigate('chat/new'), icon: Edit3 }} /></div>
           : filtered.length === 0 ? <div className="flex-1 min-h-0">{

@@ -980,6 +980,111 @@ export interface ChatSessionSummary {
   last_activity_at?: number
   never_archive?: boolean
 }
+// ── Agent Rooms (AGENT-ROOMS) ───────────────────────────────────────────────────────────
+// A room is a persistent shared transcript plus a member list, where the human and N bound
+// agents deliberate. It is NOT a chat session: rooms live under `/api/rooms`, each member
+// holds its own provider session behind the scenes, and those member sessions are
+// deliberately absent from `chatSessions()` — a room is one room, not N chats.
+
+/** A member's listen policy — the closed set `rooms.store.LISTEN_POLICIES`. */
+export type RoomListenPolicy = 'all' | 'mention' | 'silent'
+
+/** One member: an agent-binding KEY, a role blurb, a listen policy, and its declared
+ *  safety narrowing. `profile_narrowing` is the DECLARATION; the resolved answer is
+ *  `RoomMemberPosture`. */
+export interface RoomMemberRecord {
+  name: string
+  role_blurb: string
+  listen_policy: RoomListenPolicy
+  profile_narrowing: Record<string, unknown>
+}
+
+/** A room record.
+ *
+ *  `round_budget` is this room's OWN override and `0` means "inherit the configured
+ *  `rooms.round_budget`" — which is why `effective_round_budget` travels beside it: a client
+ *  reading 0 must not have to know the convention, or go read the config, to learn the real
+ *  ceiling. `max_round_budget` is the writer's accepted ceiling, published so a stepper's
+ *  bounds come from the save path instead of restating them.
+ *
+ *  `pending_queue` is the speaker queue's remainder at the moment the room paused — the
+ *  members still OWED a turn, in the order they will take it. It is the field that makes a
+ *  pause a suspension rather than a cancellation, and it is what the pause card lists. */
+export interface RoomRecord {
+  id: string
+  title: string
+  created_at: string
+  archived: boolean
+  paused: boolean
+  rounds_used: number
+  round_budget: number
+  pending_queue: string[]
+  members: RoomMemberRecord[]
+  effective_round_budget: number
+  max_round_budget: number
+  transcript_path: string
+}
+
+/** One member's RESOLVED safety posture — the tier, allowlist and budget it actually runs
+ *  under once the restrictive default and the operator ceiling are folded in.
+ *
+ *  🔑 `refused` is a REAL state, not an error in the read. A declaration that widens the
+ *  room's posture is refused at turn time, and the operator's ceiling can tighten AFTER the
+ *  member was added — so this row reports the refusal instead of a resolution, and the four
+ *  resolved fields are absent. Render it as refused; do not fall back to a default, which
+ *  would show a member as read-only when it is actually unable to speak at all. */
+export interface RoomMemberPosture {
+  name: string
+  declared: Record<string, unknown>
+  refused?: string
+  detail?: string
+  approval?: string
+  tool_grants?: string
+  tool_allowlist?: string[]
+  budget?: { max_tokens: number; max_dollars: number }
+}
+
+/** Which agent binding a member IS.
+ *
+ *  🔑 `configured: false` means the binding was DELETED from `config.json` after the member
+ *  was added, and in that case `model`/`provider` are EMPTY rather than the default agent's.
+ *  Empty here means unknown and must render as unknown — the backend deliberately does not
+ *  resolve through the ordinary binding path, which falls back to `default_agent` and would
+ *  report another agent's model as this member's. */
+export interface RoomMemberBinding {
+  name: string
+  configured: boolean
+  model: string
+  provider: string
+  description?: string
+}
+
+/** One transcript line. `speaker` is the member name, `''` for the human. A line whose
+ *  `role` is `system` was written by the ROOM (today: a tool refusal) and carries the
+ *  member's name as its speaker for attribution — so it must not render as that member
+ *  having said it. */
+export interface RoomMessage {
+  role: string
+  content: string
+  ts?: string
+  speaker?: string
+}
+
+export interface RoomDetail {
+  room: RoomRecord
+  member_posture: RoomMemberPosture[]
+  member_bindings: RoomMemberBinding[]
+  messages: RoomMessage[]
+}
+
+/** The answer to a human message: the transcript including that message, plus the FIFO
+ *  speaker queue this message produced. `speaking: []` is meaningful — nobody was listening
+ *  — and is what lets the UI distinguish that from "the answers have not landed yet". */
+export interface RoomMessagePosted {
+  messages: RoomMessage[]
+  speaking: string[]
+}
+
 /** One recorded disagreement between two stored claims (KNOWLEDGE-SYNTHESIS §3.2).
  *
  *  Every conflict is a deterministic finding — two claims that provably cannot both hold — so
@@ -6350,6 +6455,31 @@ export const api = {
   chatSessions: (archived = false) =>
     get<ChatSessionSummary[]>(`/api/chat/sessions${archived ? '?archived=1' : ''}`),
   pinChatSession: (session: string, pinned: boolean) => patch(`/api/chat/sessions/${encodeURIComponent(session)}/pin`, { pinned }),
+
+  // ── Agent Rooms ──
+  // Every route refuses with `rooms_disabled` (403) while `rooms.enabled` is off, INCLUDING
+  // the reads — so a caller learns the feature is off from the same envelope it would learn
+  // anything else, and `hasApiCode(err, 'rooms_disabled')` is how the UI tells "off" from
+  // "broken". A room id is a strict slug, so it needs no escaping; a MEMBER name is an
+  // agent-binding key and is encoded.
+  rooms: (archived = false) =>
+    get<{ rooms: RoomRecord[] }>(`/api/rooms${archived ? '?archived=1' : ''}`),
+  room: (id: string) => get<RoomDetail>(`/api/rooms/${encodeURIComponent(id)}`),
+  createRoom: (title: string) => post<{ room: RoomRecord }>('/api/rooms', { title }),
+  archiveRoom: (id: string) => post<{ room: RoomRecord }>(`/api/rooms/${encodeURIComponent(id)}/archive`),
+  addRoomMember: (id: string, body: { name: string; role_blurb?: string; listen_policy?: RoomListenPolicy; profile_narrowing?: Record<string, unknown> }) =>
+    post<{ room: RoomRecord }>(`/api/rooms/${encodeURIComponent(id)}/members`, body),
+  removeRoomMember: (id: string, name: string) =>
+    del(`/api/rooms/${encodeURIComponent(id)}/members/${encodeURIComponent(name)}`),
+  // The human speaks. Only the human may POST here — a member's line is written by the turn
+  // loop after its provider answers, never by a caller naming a speaker.
+  postRoomMessage: (id: string, content: string) =>
+    post<RoomMessagePosted>(`/api/rooms/${encodeURIComponent(id)}/messages`, { content }),
+  // This room's OWN budget; 0 goes back to inheriting `rooms.round_budget`.
+  setRoomRoundBudget: (id: string, roundBudget: number) =>
+    patch<{ room: RoomRecord }>(`/api/rooms/${encodeURIComponent(id)}`, { round_budget: roundBudget }),
+  roomExportUrl: (id: string, format: 'md' | 'json') =>
+    `/api/rooms/${encodeURIComponent(id)}/export?format=${format}`,
   // ── chat organization: folders, tags, kanban tag-columns (backend already
   //    persists folder_id/tags/color_index per session; legacy web exposes these) ──
   chatFolders: () => get<ChatFolder[]>('/api/chat/folders'),

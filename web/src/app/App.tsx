@@ -191,8 +191,11 @@ function AppInner() {
   const { route, sub, navEpoch, navigate, query, setQuery } = useHashRoute('dashboard')
   // Out-of-context approval nudges: toast when a tool-approval (e.g. a subagent's)
   // is raised for a chat the user isn't currently viewing. The active chat key is
-  // `sub` on the chat route (excluding the new/history list routes).
-  const activeChatSession = route === 'chat' && sub && sub !== 'new' && sub !== 'history' ? sub : ''
+  // `sub` on the chat route (excluding the new/history list routes AND the room
+  // sub-route — `chat/room/<id>` addresses an Agent Room, not a session key, so
+  // treating it as one would suppress every approval toast while a room is open by
+  // claiming a session named "room/<id>" is on screen).
+  const activeChatSession = route === 'chat' && sub && sub !== 'new' && sub !== 'history' && !sub.startsWith('room/') && sub !== 'room' ? sub : ''
   useApprovalToasts(activeChatSession)
   // Plan-42's `native` notification target (DC-5). Mounted in the shell because it must
   // hold for every route, not just the notifications page: the gateway decides which notes

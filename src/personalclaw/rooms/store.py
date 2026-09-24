@@ -92,6 +92,12 @@ _ROOM_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _MAX_TITLE_CHARS = 200
 _MAX_ROLE_BLURB_CHARS = 500
 
+#: The ceiling a room's OWN ``round_budget`` may declare, matching the ``rooms.round_budget``
+#: row in ``_EDITABLE_CONFIG`` exactly (``min 1, max 100``). Kept identical on purpose: a
+#: per-room override that accepted a value the config key refuses would make the two controls
+#: disagree about what a legal budget is, and the UI renders both from this one number.
+MAX_ROOM_ROUND_BUDGET = 100
+
 
 class RoomError(Exception):
     """A refused room operation, carrying the stable wire code its route answers with.
@@ -633,6 +639,43 @@ def pause_room(room_id: str, pending: Sequence[str] = ()) -> Room:
             room.rounds_used,
             len(carried),
         )
+    return room
+
+
+def set_round_budget(room_id: str, budget: int) -> Room:
+    """Set this room's OWN round budget, or 0 to go back to inheriting the configured one.
+
+    The write path for ``Room.round_budget``. It exists because the field was readable long
+    before it was settable: :func:`effective_round_budget` consumed it and the HTTP surface
+    published it, so a client could see a value it had no way to change — which reads as
+    "this is per-room configurable" while being false. Either the field gets a writer or it
+    comes off the wire; a per-room budget is genuinely useful (a standing research room and a
+    quick two-agent debate want different ceilings), so it gets a writer.
+
+    Range refused rather than clamped, and deliberately the SAME range the config key takes
+    (``rooms.round_budget`` is ``min 1, max 100`` in ``_EDITABLE_CONFIG``), plus 0 for
+    inherit. A control whose bounds disagree with the save path's is an offer the save path
+    refuses, and clamping silently would store a ceiling its author did not choose.
+    """
+    if isinstance(budget, bool) or not isinstance(budget, int):
+        raise RoomError(
+            "room_round_budget_invalid",
+            "round_budget must be a whole number of exchanges.",
+        )
+    if budget < 0 or budget > MAX_ROOM_ROUND_BUDGET:
+        raise RoomError(
+            "room_round_budget_invalid",
+            f"round_budget must be 0 (inherit the configured default) or 1-"
+            f"{MAX_ROOM_ROUND_BUDGET}.",
+        )
+    rooms = _read_index_strict()
+    room = _require_indexed_room(rooms, room_id)
+    if room.archived:
+        raise RoomError("room_archived", f"Room {room_id!r} is archived.")
+    if room.round_budget != budget:
+        room.round_budget = budget
+        _write_index(rooms)
+        logger.info("rooms: room %s round budget set to %d (0 = inherit)", room_id, budget)
     return room
 
 

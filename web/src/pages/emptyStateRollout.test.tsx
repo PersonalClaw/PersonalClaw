@@ -280,6 +280,13 @@ const PEP2_CENSUS: {
   { surface: 'Tools', file: 'pages/tools/ToolsPage.tsx', verdict: 'degenerate',
     why: 'Built-in action tools always exist, so a successful index read cannot be empty — and the failed read already branches to LoadError (the swallow was removed earlier). When importable MCP servers exist, ImportSuggestions is the on-ramp.' },
   { surface: 'Knowledge › Add source', file: 'pages/knowledge/SourceCreatePage.tsx', verdict: 'degenerate', why: '"No source kinds are available" means the backend registered no providers.' },
+  // ── AGENT-ROOMS AR-8 ──
+  { surface: 'Chat › Rooms', file: 'pages/chat/RoomsScope.tsx', verdict: 'on-ramp',
+    why: 'Two empty branches, and they are different facts. Zero rooms → "New room", which opens the inline title form on this page and navigates into the room it just made; that is the on-ramp. The OTHER branch is the feature being switched off (`rooms_disabled`, a deliberate 403 the backend returns for the reads too), and its action goes to Settings › Chat — the only place that can turn it on. Rendering that one as a LoadError would have told a user their rooms are broken when they are merely off.' },
+  { surface: 'Chat › Room', file: 'pages/chat/RoomView.tsx', verdict: 'on-ramp',
+    why: 'A room with no MEMBERS cannot answer anything, so its empty transcript offers "Open members" — the panel that adds one — rather than inviting a message nobody will hear. A room WITH members and no messages has nothing to create and no action: the composer is already on screen and the hint says to use it, which is the Secrets-panel shape (the create surface IS the page). The two sibling states are the same `rooms_disabled` / `room_not_found` split as the list.' },
+  { surface: 'Chat › Room members', file: 'pages/chat/RoomMembersPanel.tsx', verdict: 'on-ramp',
+    why: '"Add a member" opens the picker in place — an inline form on the same panel, so the on-ramp is a disclosure rather than a navigation, exactly as Settings › Secrets is a focus rather than a navigation. Suppressed on an ARCHIVED room, where the backend refuses the add: an on-ramp into a refusal is worse than none.' },
   // ── EI-10 ──
   { surface: 'Settings › Secrets', file: 'pages/settings/SecretsPanel.tsx', verdict: 'on-ramp',
     why: '"Add your first secret" focuses the add form\'s name field. This collection\'s create surface IS that form, already on the page, so the on-ramp is a focus rather than a navigation — there is nowhere to navigate to. The hint sentence is the SERVER\'s (`empty_hint`), so the CLI and the dashboard cannot drift on what an empty vault means.' },

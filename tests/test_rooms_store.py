@@ -519,6 +519,93 @@ def test_every_budget_writer_fails_closed_on_a_corrupt_index(enabled, writer):
     assert raw == "{ not json at all"
 
 
+# ── the human's OWN budget writer (AR-8) ───────────────────────────────────
+#
+# `Room.round_budget` was read by `effective_round_budget` and published on the wire with no
+# writer anywhere in the tree, so a client could see a per-room budget it had no way to set.
+# These are the claims that make it settable rather than merely readable.
+
+
+def test_setting_a_rooms_own_budget_is_persisted_and_beats_the_configured_default(enabled):
+    room = store.create_room("Own budget")
+    assert store.effective_round_budget(room) == enabled.rooms.round_budget, "inherits at 0"
+
+    store.set_round_budget(room.id, 12)
+
+    reread = store.require_room(room.id)
+    assert reread.round_budget == 12
+    assert store.effective_round_budget(reread) == 12
+    # Asserted on the raw JSON too, for the same reason `charge_round`'s test does: "the number is
+    # in the object I just mutated" is also what an unpersisted write looks like.
+    raw = json.loads((store.rooms_dir() / store.INDEX_FILENAME).read_text(encoding="utf-8"))
+    assert raw["rooms"][0]["round_budget"] == 12
+
+
+def test_zero_is_the_way_back_to_the_configured_default(enabled):
+    """0 means "inherit", so it is a real value and must be accepted, not read as unset."""
+    room = store.create_room("Own budget")
+    store.set_round_budget(room.id, 12)
+
+    store.set_round_budget(room.id, 0)
+
+    assert store.require_room(room.id).round_budget == 0
+    assert store.effective_round_budget(store.require_room(room.id)) == enabled.rooms.round_budget
+
+
+def test_an_out_of_range_budget_is_refused_and_writes_nothing(enabled):
+    """Refused rather than clamped: clamping would store a ceiling its author did not choose.
+
+    The accepted range is deliberately the SAME one `rooms.round_budget` takes in
+    `_EDITABLE_CONFIG` (1-100) plus 0, so the per-room override and the install-wide default
+    cannot disagree about what a legal budget is.
+    """
+    room = store.create_room("Own budget")
+
+    for bad in (-1, store.MAX_ROOM_ROUND_BUDGET + 1, "six", 1.5, True, None):
+        with pytest.raises(store.RoomError) as exc:
+            store.set_round_budget(room.id, bad)  # type: ignore[arg-type]
+        assert exc.value.code == "room_round_budget_invalid", bad
+    assert store.require_room(room.id).round_budget == 0, "every refusal wrote nothing"
+    # The boundary itself is legal, so the message's range is not off by one.
+    store.set_round_budget(room.id, store.MAX_ROOM_ROUND_BUDGET)
+    assert store.require_room(room.id).round_budget == store.MAX_ROOM_ROUND_BUDGET
+
+
+def test_an_archived_room_refuses_a_budget_change(enabled):
+    """An archived room accepts no messages, so a ceiling on turns it cannot take is meaningless."""
+    room = store.create_room("Own budget")
+    store.archive_room(room.id)
+
+    with pytest.raises(store.RoomError) as exc:
+        store.set_round_budget(room.id, 9)
+    assert exc.value.code == "room_archived"
+
+
+def test_setting_a_budget_never_touches_the_counter_or_the_parked_queue(enabled):
+    """The budget's SIZE and how much of it is spent are different facts.
+
+    Resetting the counter here would make raising a ceiling silently un-pause a room, and
+    clearing the park would make it cancel the turns the room still owed.
+    """
+    room = store.create_room("Own budget")
+    store.charge_round(room.id)
+    store.charge_round(room.id)
+    store.pause_room(room.id, ["analyst"])
+
+    store.set_round_budget(room.id, 20)
+
+    reread = store.require_room(room.id)
+    assert reread.rounds_used == 2
+    assert reread.paused is True
+    assert reread.pending_queue == ["analyst"]
+
+
+def test_a_missing_room_refuses_rather_than_creating_one(enabled):
+    with pytest.raises(store.RoomError) as exc:
+        store.set_round_budget("no-such-room", 5)
+    assert exc.value.code == "room_not_found"
+
+
 # ── config ─────────────────────────────────────────────────────────────────
 
 

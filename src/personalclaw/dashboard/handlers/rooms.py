@@ -37,6 +37,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw.config import loader as config_loader
 from personalclaw.dashboard import session_export
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import (
@@ -125,6 +126,11 @@ _REFUSALS: dict[str, Callable[[str], web.Response]] = {
     "room_approver_not_human": lambda msg: json_error(
         "room_approver_not_human", message=msg, status=403
     ),
+    # 400 — the per-room round-budget override is out of range. Refused rather than clamped:
+    # see ``store.set_round_budget``.
+    "room_round_budget_invalid": lambda msg: json_error(
+        "room_round_budget_invalid", message=msg, status=400
+    ),
 }
 
 
@@ -152,12 +158,57 @@ def _room_payload(room: store.Room) -> dict:
 
     ``effective_round_budget`` is included because a caller reading ``round_budget: 0``
     would otherwise have to know that 0 means "inherit" and go read the config itself to
-    learn the real number.
+    learn the real number. ``max_round_budget`` travels with it so the UI's stepper takes
+    its bounds from the save path rather than restating them — a control whose range
+    disagrees with the writer's is an offer the writer refuses.
     """
     payload = room.to_dict()
     payload["effective_round_budget"] = store.effective_round_budget(room)
+    payload["max_round_budget"] = store.MAX_ROOM_ROUND_BUDGET
     payload["transcript_path"] = str(store.transcript_path(room.id))
     return payload
+
+
+def _member_bindings(room: store.Room) -> list[dict]:
+    """What each member's agent binding IS — its model and runtime — or that it is gone.
+
+    A member is a binding KEY, and :func:`~personalclaw.rooms.store.add_member` refuses an
+    unconfigured one. But a binding can be DELETED from ``config.json`` after the member was
+    added, and at that point the ordinary resolution path is actively misleading:
+    ``config.loader.resolve_agent_bindings`` falls back to ``default_agent`` for an unknown
+    name (its own docstring says so), so asking it would report the DEFAULT agent's model as
+    this member's. That is the fabricated-value shape — a member whose binding vanished would
+    render as healthy, bound to a model it is not.
+
+    So this reads ``config.agents`` directly, the same predicate
+    ``store._validate_member_name`` uses, and answers ``configured: false`` with EMPTY model
+    and provider when the binding is absent. Empty means unknown here and the UI renders it as
+    unknown; it never means "the default".
+
+    Lives in the handler rather than in ``rooms/``: it is a presentation join of two existing
+    domain reads, the same reasoning that keeps ``session_export.render`` on this side of the
+    line.
+    """
+    agents = config_loader.AppConfig.load().agents
+    out: list[dict] = []
+    for member in room.members:
+        profile = agents.get(member.name)
+        if profile is None:
+            out.append({"name": member.name, "configured": False, "model": "", "provider": ""})
+            continue
+        out.append(
+            {
+                "name": member.name,
+                "configured": True,
+                # The binding's own model, verbatim. Empty is a REAL state — a binding that
+                # names no model runs on the configured default for its use case — so it is
+                # passed through rather than substituted, and the UI says "default model".
+                "model": profile.model,
+                "provider": profile.provider,
+                "description": profile.description,
+            }
+        )
+    return out
 
 
 async def api_rooms_list(request: web.Request) -> web.Response:
@@ -193,6 +244,14 @@ async def api_room_get(request: web.Request) -> web.Response:
     in. The declaration is already on the wire inside each member record; the resolution is
     the part a reader cannot compute, and without it "this member is read-only" would be a
     claim the UI had to re-derive. It is the contract `AR-8`'s member chips render from.
+
+    ``member_bindings`` is the other half a member chip needs and cannot compute: which agent
+    binding each member IS, and whether that binding still exists. See
+    :func:`_member_bindings` for why it is not resolved through the ordinary binding path.
+
+    One request rather than three, because the room surface reads all of this together on every
+    poll: splitting posture and bindings onto their own routes would triple the polling traffic
+    for state that is only ever read as one picture.
     """
     room_id = request.match_info["room_id"]
     try:
@@ -200,11 +259,49 @@ async def api_room_get(request: web.Request) -> web.Response:
         room = store.require_room(room_id)
         messages = store.read_messages(room_id)
         member_posture = posture.describe_members(room)
+        member_bindings = _member_bindings(room)
     except store.RoomError as exc:
         return _refusal(exc)
     return web.json_response(
-        {"room": _room_payload(room), "member_posture": member_posture, "messages": messages}
+        {
+            "room": _room_payload(room),
+            "member_posture": member_posture,
+            "member_bindings": member_bindings,
+            "messages": messages,
+        }
     )
+
+
+async def api_room_update(request: web.Request) -> web.Response:
+    """PATCH /api/rooms/{room_id} {round_budget} — the room's own budget override.
+
+    The write path ``Room.round_budget`` shipped without. ``effective_round_budget`` read the
+    field and :func:`_room_payload` published it, so a client could see a per-room budget it had
+    no way to set — which is worse than an absent field, because publishing it implies it is
+    settable. One PATCH rather than widening the config PATCH allowlist: ``rooms.round_budget``
+    in ``_EDITABLE_CONFIG`` is the INSTALL-wide default, and this is one room's override of it.
+
+    ``round_budget`` is the only accepted key, and it is REQUIRED. A PATCH that silently
+    ignored an unknown key would let a caller believe it had changed something; naming the one
+    key this route owns is how a typo comes back as an error instead of as a no-op.
+    """
+    room_id = request.match_info["room_id"]
+    try:
+        _require_enabled()
+        body = await json_object_body(request, empty_ok=False)
+        unknown = sorted(k for k in body if k != "round_budget")
+        if unknown or "round_budget" not in body:
+            raise store.RoomError(
+                "room_round_budget_invalid",
+                f"This route sets round_budget and nothing else; it was given "
+                f"{', '.join(sorted(body)) or 'nothing'}.",
+            )
+        room = store.set_round_budget(room_id, body["round_budget"])
+    except RequestValidationError as exc:
+        return exc.response
+    except store.RoomError as exc:
+        return _refusal(exc)
+    return web.json_response({"room": _room_payload(room)})
 
 
 async def api_room_archive(request: web.Request) -> web.Response:

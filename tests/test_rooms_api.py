@@ -123,6 +123,14 @@ def test_every_route_refuses_while_rooms_is_disabled(monkeypatch):
                 make_mocked_request("GET", "/api/rooms/x/export", match_info={"room_id": "x"})
             )
         ),
+        # AR-8's budget PATCH. In this loop rather than in its own section, because "the kill
+        # switch covers every route" is a claim about the SET of routes — a new one exempted by
+        # omission is exactly how that claim stops being true.
+        asyncio.run(
+            h.api_room_update(
+                _json_request("PATCH", "/api/rooms/x", {"round_budget": 3}, room_id="x")
+            )
+        ),
     ):
         assert response.status == 403
         assert _body(response)["error"]["code"] == "rooms_disabled"
@@ -512,6 +520,10 @@ def test_the_room_id_route_is_registered_after_its_siblings():
     catch_all = source.index('"/api/rooms/{room_id}", api_room_get')
     for sibling in ("/archive", "/members", "/messages", "/export"):
         assert source.index(f'"/api/rooms/{{room_id}}{sibling}"') < catch_all, sibling
+    # AR-8's PATCH shares the catch-all's PATH and differs only in method, so ordering does not
+    # apply to it — but it must still be registered, or the write path this atom added is a
+    # handler nothing can reach.
+    assert 'add_patch("/api/rooms/{room_id}", api_room_update)' in source
 
 
 # ── the turn the message route now starts (AR-3) ───────────────────────────
@@ -605,3 +617,171 @@ def test_the_humans_message_is_durable_even_when_no_session_manager_exists(
     assert response.status == 201
     assert store.read_messages(room_id)[0]["content"] == "still recorded"
     assert "takes no turn" in caplog.text
+
+
+# ── AR-8: the per-room budget write path, and the member facts its UI renders ────
+
+
+def _patch_room(room_id, payload):
+    return asyncio.run(
+        h.api_room_update(_json_request("PATCH", f"/api/rooms/{room_id}", payload, room_id=room_id))
+    )
+
+
+def test_the_per_room_budget_is_settable_and_not_merely_readable(cfg):
+    """`Room.round_budget` was published on the wire with NO writer anywhere.
+
+    That is worse than an absent field: a client could read a per-room budget it had no way to
+    set, which reads as "this is configurable" while being false. `AR-8` is the atom that had to
+    either give it a write path or take it off the wire; this is the write path.
+    """
+    room_id = _body(_create("Budget room"))["room"]["id"]
+    assert _body(_get(room_id))["room"]["round_budget"] == 0, "inherits by default"
+
+    response = _patch_room(room_id, {"round_budget": 12})
+
+    assert response.status == 200
+    payload = _body(response)["room"]
+    assert payload["round_budget"] == 12
+    assert payload["effective_round_budget"] == 12, "the override wins over the configured default"
+    # And it is PERSISTED — a value that only lived in the response would be a write that did not
+    # happen.
+    assert store.require_room(room_id).round_budget == 12
+
+
+def test_zero_puts_a_room_back_on_the_configured_default(cfg):
+    """0 is a real value and the way BACK, so it must be accepted rather than treated as unset."""
+    room_id = _body(_create("Budget room"))["room"]["id"]
+    _patch_room(room_id, {"round_budget": 12})
+
+    payload = _body(_patch_room(room_id, {"round_budget": 0}))["room"]
+
+    assert payload["round_budget"] == 0
+    assert payload["effective_round_budget"] == cfg.rooms.round_budget
+
+
+def test_an_out_of_range_budget_is_refused_rather_than_clamped(cfg):
+    """Refused, because clamping would store a ceiling its author did not choose.
+
+    The accepted range is the SAME one `rooms.round_budget` takes in `_EDITABLE_CONFIG` (1-100),
+    plus 0 for inherit: a per-room override that accepted a value the config key refuses would
+    make the two controls disagree about what a legal budget is.
+    """
+    room_id = _body(_create("Budget room"))["room"]["id"]
+
+    for bad in (-1, 101, "six", 1.5, True):
+        response = _patch_room(room_id, {"round_budget": bad})
+        assert response.status == 400, bad
+        assert _body(response)["error"]["code"] == "room_round_budget_invalid", bad
+    assert store.require_room(room_id).round_budget == 0, "a refusal writes nothing"
+
+
+def test_the_budget_route_owns_one_key_and_says_so(cfg):
+    """A PATCH that ignored an unknown key would let a caller believe it changed something."""
+    room_id = _body(_create("Budget room"))["room"]["id"]
+
+    for payload in ({"title": "renamed"}, {"round_budget": 3, "paused": True}, {}):
+        response = _patch_room(room_id, payload)
+        assert response.status == 400, payload
+        assert _body(response)["error"]["code"] in (
+            "room_round_budget_invalid",
+            "bad_request",
+        ), payload
+    assert store.require_room(room_id).title == "Budget room"
+
+
+def test_an_archived_room_refuses_a_budget_change(cfg):
+    room_id = _body(_create("Budget room"))["room"]["id"]
+    asyncio.run(
+        h.api_room_archive(
+            _json_request("POST", f"/api/rooms/{room_id}/archive", None, room_id=room_id)
+        )
+    )
+
+    response = _patch_room(room_id, {"round_budget": 9})
+
+    assert response.status == 409
+    assert _body(response)["error"]["code"] == "room_archived"
+
+
+def test_the_wire_publishes_the_budget_ceiling_the_writer_accepts(cfg):
+    """So a UI stepper takes its bounds from the save path instead of restating them.
+
+    A control whose range disagrees with the writer's is an offer the writer refuses.
+    """
+    room_id = _body(_create("Budget room"))["room"]["id"]
+    assert _body(_get(room_id))["room"]["max_round_budget"] == store.MAX_ROOM_ROUND_BUDGET
+    # The claim is that the number is USABLE as a bound, so the boundary itself is exercised.
+    assert _patch_room(room_id, {"round_budget": store.MAX_ROOM_ROUND_BUDGET}).status == 200
+    assert _patch_room(room_id, {"round_budget": store.MAX_ROOM_ROUND_BUDGET + 1}).status == 400
+
+
+def test_member_bindings_report_the_model_and_runtime_each_member_actually_holds(cfg):
+    """`AR-8`'s member chips need the binding, and it is not derivable from the room record."""
+    from personalclaw.config.loader import AgentProfile
+
+    cfg.agents["analyst"] = AgentProfile(
+        model="gemma4:12b", provider="native", description="numbers"
+    )
+    cfg.agents["skeptic"] = AgentProfile(model="", provider="acp:claude-code")
+    room_id = _body(_create("Bindings"))["room"]["id"]
+    _add_member(room_id, {"name": "analyst"})
+    _add_member(room_id, {"name": "skeptic"})
+
+    rows = {r["name"]: r for r in _body(_get(room_id))["member_bindings"]}
+
+    assert rows["analyst"] == {
+        "name": "analyst",
+        "configured": True,
+        "model": "gemma4:12b",
+        "provider": "native",
+        "description": "numbers",
+    }
+    # An empty model is a REAL state (the binding runs on the configured default for its use
+    # case), so it is passed through rather than substituted.
+    assert rows["skeptic"]["model"] == ""
+    assert rows["skeptic"]["provider"] == "acp:claude-code"
+
+
+def test_a_member_whose_binding_was_deleted_reports_unknown_not_the_default_agents_model(cfg):
+    """🔴 THE FABRICATED-VALUE RAIL, and the reason this join does not use the ordinary path.
+
+    `config.loader.resolve_agent_bindings` falls back to ``default_agent`` for an unknown name —
+    its own docstring says so — so asking it would report the DEFAULT agent's model as this
+    member's. A member whose binding vanished would then render as healthy, bound to a model it is
+    not. ``configured: false`` with EMPTY fields is the honest answer.
+    """
+    from personalclaw.config.loader import AgentProfile
+
+    cfg.agents["analyst"] = AgentProfile(model="gemma4:12b")
+    cfg.default_agent = "analyst"
+    room_id = _body(_create("Ghost"))["room"]["id"]
+    _add_member(room_id, {"name": "skeptic"})
+    # The binding is removed AFTER the member was added — `add_member` fails closed on an unknown
+    # name, so this is the only way to reach the state, and it is reachable.
+    del cfg.agents["skeptic"]
+
+    row = _body(_get(room_id))["member_bindings"][0]
+
+    assert row == {"name": "skeptic", "configured": False, "model": "", "provider": ""}
+    assert "gemma4:12b" not in json.dumps(row), "the default agent's model must not leak in"
+
+
+def test_the_room_payload_carries_everything_one_poll_needs(cfg):
+    """The surface reads the room, its posture, its bindings and its transcript as ONE picture.
+
+    Splitting them across routes would triple the polling traffic for state that is only ever read
+    together — so the shape is asserted rather than left to a caller to discover.
+    """
+    room_id = _body(_create("One poll"))["room"]["id"]
+    _add_member(room_id, {"name": "analyst", "role_blurb": "argues from the numbers"})
+
+    payload = _body(_get(room_id))
+
+    assert set(payload) == {"room", "member_posture", "member_bindings", "messages"}
+    assert [r["name"] for r in payload["member_posture"]] == ["analyst"]
+    assert [r["name"] for r in payload["member_bindings"]] == ["analyst"]
+    room = payload["room"]
+    # The three the pause card renders, plus the queue it lists.
+    for field in ("paused", "rounds_used", "effective_round_budget", "pending_queue"):
+        assert field in room, field
