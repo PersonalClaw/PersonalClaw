@@ -102,7 +102,8 @@ import {
 } from './chat/sessionMap'
 import { useAppearance } from '../app/appearance'
 import { TOKENS } from '../design/tokenRegistry'
-import { applyCoalescedFlush, insertActivity } from './chat/coalesceReducers'
+import { applyCoalescedFlush, insertActivity, TextRunOwnership } from './chat/coalesceReducers'
+import { StreamFinalizationFence } from './chat/streamFinalizationFence'
 import { useQuery, invalidateKeys, peekQuery, writeQuery } from '../lib/data'
 import { sessionRecencyMs, sessionActivitySeconds, epochSeconds } from '../lib/epoch'
 import { sessionTitle } from '../lib/sessionTitle'
@@ -933,11 +934,17 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const [regenningTitle, setRegenningTitle] = useState(false)
   // P15 rAF stream coalescer: chat_chunk pushes into this; it flushes ONE growing
   // reveal per animation frame (instead of a setTurns per chunk) via onFlush, which
-  // replaces the ACTIVE text run's text with the revealed-so-far prefix. `coalescing`
-  // marks whether the trailing segment is the coalescer's active text run (so onFlush
-  // replaces vs. appends). Every boundary goes through `endTextRun`/`dropTextRun` below,
-  // which both CLEAR the buffer — see the note there.
-  const coalescing = useRef(false)
+  // replaces the ACTIVE text run's text with the revealed-so-far prefix. Ownership
+  // is claimed synchronously when a flush is emitted: React may apply its state
+  // updater only after chat_done releases the run, so reading a mutable flag inside
+  // that deferred updater would append the terminal full-text flush as a duplicate.
+  const textRun = useRef(new TextRunOwnership()).current
+  // The first-send remount has two delivery paths for one answer: session detail
+  // can hydrate the finalized assistant message before the terminal WS text reaches
+  // this tab. Once that happens, history owns the text until chat_done; otherwise
+  // the coalescer appends the same answer beside it. Kept as a state machine so a
+  // fresh turn always clears the fence even if the prior terminal frame was lost.
+  const finalizationFence = useRef(new StreamFinalizationFence()).current
   // Streaming reveal cadence (CHAT-CRAFT S3): 'immediate' short-circuits the rAF
   // coalescer so each chunk paints the instant it arrives; 'smooth' (default) keeps
   // the word-boundary-snapped animated reveal. Read from the server dashboard config
@@ -964,10 +971,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const showThinkingRef = useRef(false)
   useEffect(() => { showThinkingRef.current = !!showThinkingCfg }, [showThinkingCfg])
   const coalescer = useStreamCoalescer((revealed) => {
+    const replacesOwnedTail = textRun.claimFlush()
     patchLastAssistant((segs) => {
-      const r = applyCoalescedFlush(segs, revealed, coalescing.current)
-      coalescing.current = r.coalescing
-      return r.segs
+      return applyCoalescedFlush(segs, revealed, replacesOwnedTail).segs
     })
   }, { immediate: streamRevealCfg === 'immediate' })
   // 🔴 K44 / issue #548 — ONE mechanism for ending a coalesced text run, in two flavours, and
@@ -988,8 +994,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   //  * `dropTextRun` — a boundary the CLIENT makes (a fresh send, regenerate, edit-resend, a
   //    queued turn being dequeued, a session switch). Those all move the transcript tail FIRST,
   //    so landing the tail would write the old answer into the new turn — discard is correct.
-  const endTextRun = () => { coalescer.seal(); coalescing.current = false }
-  const dropTextRun = () => { coalescer.reset(); coalescing.current = false }
+  const endTextRun = () => { coalescer.seal(); textRun.release() }
+  const dropTextRun = () => {
+    coalescer.reset()
+    textRun.release()
+    finalizationFence.startTurn()
+  }
   const started = turns.length > 0
   // show the thinking indicator while streaming and the active assistant turn
   // has produced nothing renderable yet (no text/tool/approval segment)
@@ -1052,6 +1062,20 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // snapshot has FEWER turns than what's painted (seed + live stream), it's stale;
       // keep ours and let a later revalidation settle the canonical view. (streamingRef
       // can't gate this — it's a fresh `false` on the remounted instance.)
+      //
+      // The opposite race is just as real: this refresh can ADD the finalized
+      // assistant message before the terminal WS text reaches the remounted tab.
+      // Discard any buffered copy and fence later chat_chunk replay until chat_done.
+      // The refreshed history remains authoritative; non-text WS frames still refine
+      // its tool/activity segments.
+      const refreshedFinalAnswer = finalizationFence.armFromRefresh(
+        seededDetail?.messages ?? null,
+        d.messages || [],
+      )
+      if (refreshedFinalAnswer) {
+        coalescer.reset()
+        textRun.release()
+      }
       setTurns((prev) => (hydrated.length >= prev.length ? hydrated : prev))
       // rehydrate any still-pending queued messages (mid-stream FIFO) so a reload
       // mid-queue shows them again above the composer.
@@ -1121,7 +1145,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       }
       // resuming a still-running turn: show the live indicators and make the first
       // incoming chunk start a fresh text run (don't concat onto hydrated text).
-      if (d.running) { markStreaming(true); dropTextRun() }
+      if (d.running) {
+        markStreaming(true)
+        // A persisted assistant message can become visible while the backend still
+        // reports the turn as running, before its terminal WS status reaches this
+        // tab. Keep the refresh fence armed in that state; it already reset the
+        // coalescer above. A plain mid-stream resume still needs the normal reset.
+        if (!refreshedFinalAnswer) dropTextRun()
+      }
       setLoadingHistory(false)
     }).catch(() => { if (alive) setLoadingHistory(false) })
     return () => { alive = false }
@@ -1164,6 +1195,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     switch (m.type) {
       case 'chat_chunk': {
         setStatusText('')
+        if (!finalizationFence.allows('chat_chunk')) break
         const chunk = String(d.content ?? '')
         // No break-flag check here any more: whichever boundary preceded this chunk already
         // CLEARED the coalescer (endTextRun / dropTextRun), so a push always opens a fresh run
@@ -1218,7 +1250,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // `stampActivityOrigin` carries `origin` onto the segment insertActivity just created
         // without widening that helper's signature (and re-baselining its K42/K44/K45 suite).
         // Pure and tested there, rather than an inline reference-diff nothing could prove.
-        patchLastAssistant((segs) => stampActivityOrigin(segs, insertActivity(segs, text, kind, coalescing.current), origin))
+        patchLastAssistant((segs) => stampActivityOrigin(segs, insertActivity(segs, text, kind, textRun.ownsTail()), origin))
         break
       }
       case 'tool_call': {
@@ -1312,6 +1344,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       }
       case 'chat_done': {
         endTextRun()  // fully reveal any buffered tail before the turn closes
+        finalizationFence.finishTurn()
         markStreaming(false); setStatusText(''); setLatestActivity(null)
         setSteered([])  // steers belong to the turn they were injected into
         // Cancel-and-replace (PLATFORM-RESILIENCE §6.3): this turn was superseded by a

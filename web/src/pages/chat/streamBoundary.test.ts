@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import { useStreamCoalescer } from './useStreamCoalescer'
-import { applyCoalescedFlush } from './coalesceReducers'
+import { applyCoalescedFlush, TextRunOwnership } from './coalesceReducers'
 import type { Segment } from './chatTypes'
 
 /** K44 / issue #548 — a finished text run must not be re-emitted into the next turn.
@@ -22,15 +22,14 @@ import type { Segment } from './chatTypes'
 
 const TURN_1 = 'Turn ONE full answer.'
 
-/** The ChatPage stream wiring, minus React: a list of assistant turns, the `coalescing` ref that
- *  decides replace-vs-push, and the two boundary primitives verbatim. */
+/** The ChatPage stream wiring, minus React: a list of assistant turns, synchronous text-run
+ *  ownership, and the two boundary primitives verbatim. */
 function harness(opts: { immediate?: boolean } = { immediate: true }) {
   const turns: Segment[][] = [[]]
-  const coalescing = { current: false }
+  const textRun = new TextRunOwnership()
   const { result } = renderHook(() =>
     useStreamCoalescer((revealed) => {
-      const r = applyCoalescedFlush(turns[turns.length - 1], revealed, coalescing.current)
-      coalescing.current = r.coalescing
+      const r = applyCoalescedFlush(turns[turns.length - 1], revealed, textRun.claimFlush())
       turns[turns.length - 1] = r.segs
     }, opts),
   )
@@ -39,8 +38,8 @@ function harness(opts: { immediate?: boolean } = { immediate: true }) {
     last: () => turns[turns.length - 1],
     texts: (i: number) => turns[i].filter((s) => s.kind === 'text').map((s) => (s as { text: string }).text),
     push: (chunk: string) => act(() => { result.current.push(chunk) }),
-    endTextRun: () => act(() => { result.current.seal(); coalescing.current = false }),
-    dropTextRun: () => act(() => { result.current.reset(); coalescing.current = false }),
+    endTextRun: () => act(() => { result.current.seal(); textRun.release() }),
+    dropTextRun: () => act(() => { result.current.reset(); textRun.release() }),
     /** A new assistant turn arrives (the transcript tail moves). */
     newTurn: () => { turns.push([]) },
   }
@@ -115,5 +114,65 @@ describe('a boundary clears the coalesced run', () => {
     h.push('a'.repeat(5000))
     h.endTextRun()
     expect(h.texts(0)).toEqual(['a'.repeat(5000)])
+  })
+
+  it('captures replacement ownership before chat_done releases a deferred terminal flush', () => {
+    // The interleaving is the whole defect, so it is spelled out rather than approximated:
+    // `endTextRun` calls `coalescer.seal()`, which emits the terminal flush and QUEUES a
+    // React state updater, and only then clears ownership — synchronously, before React
+    // applies that updater. A flush whose updaters all run *after* the release does not
+    // reproduce it (the first apply re-sets the flag for the second), which is why the
+    // release below lands BETWEEN the two applies.
+    //
+    // 🔴 In-test vacuity floor: both wirings are driven through the same sequence in the
+    // same test. The old one must read TWO text segments — the answer painted twice — or
+    // this test is measuring nothing and the assertion below is free.
+    const drive = (onFlush: (revealed: string) => void, apply: () => void, release: () => void) => {
+      onFlush('partial')          // a mid-stream rAF flush, applied normally
+      apply()
+      onFlush('complete answer')  // coalescer.seal() emits the tail and queues its updater
+      release()                   // ...then endTextRun clears ownership, synchronously
+      apply()                     // React finally applies the queued updater
+    }
+
+    const oldWiring = () => {
+      const coalescing = { current: false }
+      let segments: Segment[] = []
+      let pending: (() => void) | null = null
+      drive(
+        (revealed) => {
+          pending = () => {
+            // The defect: ownership is read HERE, inside the deferred updater.
+            const r = applyCoalescedFlush(segments, revealed, coalescing.current)
+            coalescing.current = r.coalescing
+            segments = r.segs
+          }
+        },
+        () => { pending?.(); pending = null },
+        () => { coalescing.current = false },
+      )
+      return segments
+    }
+
+    const newWiring = () => {
+      const textRun = new TextRunOwnership()
+      let segments: Segment[] = []
+      let pending: (() => void) | null = null
+      drive(
+        (revealed) => {
+          const replace = textRun.claimFlush()
+          pending = () => { segments = applyCoalescedFlush(segments, revealed, replace).segs }
+        },
+        () => { pending?.(); pending = null },
+        () => { textRun.release() },
+      )
+      return segments
+    }
+
+    expect(oldWiring()).toEqual([
+      { kind: 'text', text: 'partial' },
+      { kind: 'text', text: 'complete answer' },
+    ])
+    expect(newWiring()).toEqual([{ kind: 'text', text: 'complete answer' }])
   })
 })

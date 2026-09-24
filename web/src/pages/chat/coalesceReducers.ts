@@ -1,5 +1,35 @@
 import type { Segment } from './chatTypes'
 
+/**
+ * Synchronous ownership for the coalescer's live text segment.
+ *
+ * React state updaters may run after the WebSocket callback that queued them. The
+ * replace-vs-push decision therefore has to be captured when a flush is emitted,
+ * before a following boundary releases the run. Reading a mutable ref inside the
+ * deferred updater lets `chat_done` clear that ref first, turning the terminal
+ * full-text flush into a second segment beside the streamed one.
+ */
+export class TextRunOwnership {
+  private active = false
+
+  /** Claim this flush and report whether it replaces an existing live text tail. */
+  claimFlush(): boolean {
+    const replace = this.active
+    this.active = true
+    return replace
+  }
+
+  /** A tool/activity insertion needs to know whether the trailing text is live. */
+  ownsTail(): boolean {
+    return this.active
+  }
+
+  /** Release ownership at any server or client text-run boundary. */
+  release(): void {
+    this.active = false
+  }
+}
+
 /** Pure segment-attribution reducers for the chat stream coalescer.
  *
  *  These encode the hard-won invariants behind K42/K44/K45 — the bugs where a
