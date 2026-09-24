@@ -352,6 +352,15 @@ personalclaw = [
     # behind keeping it rather than treating it as a duplicate of the root LICENSE.
     "apps/native/*/LICENSE",
     "apps/native/*/README.md",
+    # A bundled app's own prompt assets, the ones its `app.json` NAMES. MEASURED 2026-09-23
+    # while deriving the frozen bundle's payload from this block: `native-knowledge/app.json`
+    # declares four `prompts/*.yaml` files and not one of them was declared here, so
+    # `pip install personalclaw` shipped that app with its manifest pointing at prompts the
+    # wheel does not contain. The frozen bundle had them only because its spec copied the
+    # whole `apps/native` directory — the accident that hid this, and the accident the
+    # derivation removes. Same load-bearing reasoning as the LICENSE/README lines above:
+    # non-`.py` files beside `app.json` are DROPPED unless a glob names them.
+    "apps/native/*/prompts/*.yaml",
     # The ONE token-lint rule (APE-4), shared by web/src/design/tokenLintRule.ts and
     # apps/quality.py. The apps-repo CI verifies a `quality.designSystem: "v2"` claim
     # from an installed wheel with no core checkout on disk, so a wheel without this

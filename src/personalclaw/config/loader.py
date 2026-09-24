@@ -77,7 +77,7 @@ from personalclaw.config.safety import (
     SandboxConfig,
     SecurityConfig,
 )
-from personalclaw.config.validation import _validate_config_data
+from personalclaw.config.validation import config_fingerprint, validate_config_data_cached
 from personalclaw.voice.duplex import (
     DEFAULT_CONFIRMATION_PHRASES,
     DEFAULT_EXIT_PHRASES,
@@ -2960,14 +2960,20 @@ class UpdatesConfig:
     kill-switch, the retirement of pull-from-main and the per-kind apply are later RUM
     atoms that CONSUME these fields.
 
-    Legacy backfill (applied in ``AppConfig.load()``, idempotent — a clean break under the
-    pre-1.0 banner, NOT a migration file): a home written before this block existed carries
-    the old ``auto_update`` bool and ``dashboard.update_dev_mode`` bool. On load, when the
-    ``updates`` block does not itself declare a field, ``auto_update=true`` maps to
+    Legacy backfill (``config.validation._fold_legacy_update_flags``, idempotent — a clean
+    break under the pre-1.0 banner, NOT a migration file): a home written before this block
+    existed carries the old ``auto_update`` bool and ``dashboard.update_dev_mode`` bool. When
+    the ``updates`` block does not itself declare a field, ``auto_update=true`` maps to
     ``auto="staged"`` with ``channel="stable"`` (an existing auto-updating git user stops
     riding raw ``main`` and starts riding stable release tags), ``auto_update=false`` maps to
     ``auto="off"``, and ``dashboard.update_dev_mode=true`` maps to ``channel="nightly"``. An
     explicit ``updates`` field always wins over the legacy source.
+
+    It runs in the VALIDATOR, not here, and CONSUMES the old keys rather than reading past
+    them: reading them in ``load()`` while the validator's retired-key vocabulary did not
+    know them made every load of such a home both migrate correctly and warn
+    ``unrecognized top-level keys: auto_update`` — 1144 times in one 2026-09-23 browsing
+    session.
     """
 
     channel: Literal["stable", "beta", "nightly"] = field(
@@ -3357,7 +3363,8 @@ class AppConfig:
             return cls(memory_stores={"default": MemoryStoreConfig()}), False
 
         try:
-            data = json.loads(path.read_text())
+            raw = path.read_text()
+            data = json.loads(raw)
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to load config from %s: %s", path, e)
             return cls(memory_stores={"default": MemoryStoreConfig()}), False
@@ -3367,8 +3374,12 @@ class AppConfig:
             logger.warning("Config is not a JSON object, using defaults")
             return cls(memory_stores={"default": MemoryStoreConfig()}), False
 
-        # Validate against JSON Schema (advisory — never fatal)
-        _validate_config_data(data)
+        # Validate against JSON Schema (advisory — never fatal). CACHED on the file's
+        # content: `load()` is a pure read called from ~300 sites, so validating per call
+        # re-ran jsonschema over the whole schema on the hot path AND re-logged every
+        # finding — 1144 identical warnings in one browsing session. A write changes the
+        # content, so the next load re-validates and re-reports.
+        validate_config_data_cached(data, config_fingerprint(raw))
 
         agent_data = data.get("agent", {})
         if not isinstance(agent_data, dict):
@@ -3445,38 +3456,23 @@ class AppConfig:
         updates_data = data.get("updates", {})
         if not isinstance(updates_data, dict):
             updates_data = {}
-        # RUM-1 legacy backfill (idempotent, load-time — a clean break under the pre-1.0
-        # banner, NOT a migration file). An explicit `updates` field always wins; only
-        # when the block does not declare a field do the old flags map in. A home that
-        # never wrote `auto_update` (or the new default install) lands on the safe "off"
-        # default — matching the dataclass default — so an install that never explicitly
-        # opted into unattended updates is notify-only, per C7's "least accident risk".
-        updates_channel: Literal["stable", "beta", "nightly"]
-        if "channel" in updates_data:
-            updates_channel = cast(
-                Literal["stable", "beta", "nightly"],
-                _safe_choice(updates_data["channel"], ("stable", "beta", "nightly"), "stable"),
-            )
-        elif bool(dashboard_data.get("update_dev_mode")):
-            # `dashboard.update_dev_mode=true` was the git "track main" opt-in.
-            updates_channel = "nightly"
-        else:
-            updates_channel = "stable"
-        updates_auto: Literal["off", "staged"]
-        if "auto" in updates_data:
-            updates_auto = cast(
-                Literal["off", "staged"],
-                _safe_choice(updates_data["auto"], ("off", "staged"), "off"),
-            )
-        elif "auto_update" in data and data.get("auto_update"):
-            # A legacy unattended-update user (`auto_update=true`) stops riding raw main
-            # and rides the resolved stable release tag — hence "staged", channel "stable".
-            # The top-level `auto_update` dataclass field is RETIRED (RUM-5) — this reads the
-            # raw JSON key an old home still carries, so the backfill keeps migrating it even
-            # though nothing writes it any more.
-            updates_auto = "staged"
-        else:
-            updates_auto = "off"
+        # The RUM-1 legacy backfill is NOT here. `config.validation._fold_legacy_update_flags`
+        # folds the retired `auto_update` / `dashboard.update_dev_mode` flags into this block
+        # and removes them, one call earlier in this method — so by the time `updates_data`
+        # is read the old flags are already expressed as `auto` / `channel`. Reading them
+        # here as well was the defect: the validator had never heard of `auto_update`, so
+        # every load both migrated it correctly AND reported it as an unrecognized
+        # top-level key.
+        updates_channel: Literal["stable", "beta", "nightly"] = cast(
+            Literal["stable", "beta", "nightly"],
+            _safe_choice(
+                updates_data.get("channel", "stable"), ("stable", "beta", "nightly"), "stable"
+            ),
+        )
+        updates_auto: Literal["off", "staged"] = cast(
+            Literal["off", "staged"],
+            _safe_choice(updates_data.get("auto", "off"), ("off", "staged"), "off"),
+        )
         if not isinstance(feedback_data, dict):
             feedback_data = {}
         agents_routing_data = data.get("agents_routing", {})

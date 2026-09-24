@@ -19,8 +19,20 @@ both call.
 
     env PERSONALCLAW_INSTALL_KIND in {"container","desktop"}  -> that
         (baked into the Dockerfiles; set by the Electron shell, plan 45)
+    a FROZEN process (PyInstaller bundle)                       -> "desktop"
     a resolvable project dir that contains a .git directory     -> "git"
     else                                                        -> "pip"
+
+The frozen clause is not redundant with the env. The env is what the Electron shell
+declares, and it is the *right* signal when the shell spawned the gateway — but the frozen
+`personalclaw-backend` binary is also reachable without the shell (run straight out of
+`…/Contents/Resources/backend-dist/`, or out of an extracted `dist/`), and with the env
+unset the taxonomy fell through to ``"pip"``. That is the one kind that must never claim a
+frozen bundle: ``_apply_pip_update`` runs ``<installer> install -U personalclaw==<tag>``
+against ``sys.executable``, which inside a bundle is the PyInstaller launcher — there is no
+interpreter there to upgrade. Answering ``"desktop"`` from the artefact itself means the
+correct refusal ("download the new version") no longer depends on an environment variable
+being present.
 
 ``"pip"`` is one member covering every wheel install — ``pip``, ``pipx``,
 ``uv tool`` — because the apply is identical for all three: upgrade the wheel in
@@ -133,11 +145,31 @@ def git_root(proj: str) -> str:
     return ""
 
 
+def is_frozen() -> bool:
+    """True when this process is a PyInstaller bundle rather than an interpreter.
+
+    THE one test for "am I the packaged artefact?", and the only place that question is
+    answered — before 2026-09-23 nothing in ``src/personalclaw`` asked it at all, which is
+    why every packaged-only defect in that finding set was invisible to a suite that only
+    ever runs from a checkout. ``sys.frozen`` is the attribute PyInstaller's bootloader sets
+    on the module object; ``sys._MEIPASS`` is the unpacked-resources root it also sets, taken
+    as a second independent signal so a future bootloader that drops one still reads
+    correctly.
+    """
+    import sys
+
+    return bool(getattr(sys, "frozen", False)) or hasattr(sys, "_MEIPASS")
+
+
 def detect_install_kind() -> InstallKind:
     """Classify the running install as git / pip / container / desktop (C1)."""
     env_kind = (os.environ.get("PERSONALCLAW_INSTALL_KIND") or "").strip().lower()
     if env_kind in _ENV_KINDS:
         return env_kind  # type: ignore[return-value]
+    if is_frozen():
+        # The frozen bundle is only ever produced for the desktop app, and "desktop" is
+        # the kind whose apply path is the honest one for it (download + reinstall).
+        return "desktop"
     if git_root(project_dir()):
         return "git"
     return "pip"

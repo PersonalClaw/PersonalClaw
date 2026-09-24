@@ -283,10 +283,19 @@ async def test_do_update_check_kill_switch_runs_no_subprocess(monkeypatch, tmp_p
 async def test_do_update_check_runs_git_fetch_when_enabled(monkeypatch, tmp_path) -> None:
     # Positive control: with the check ON and a valid project dir, `_do_update_check`
     # runs `git fetch`. Pairs with the kill-switch test to make it a gate.
+    #
+    # The `.git` directory makes "a valid project dir" literally true rather than assumed.
+    # It used to be assumed, and a project dir with no repository in it is EXACTLY the
+    # state a packaged `.app` is in (`…/Resources`), where the check ran `git fetch`
+    # anyway and logged `fatal: not a git repository` twelve times in one session. The
+    # check now asks `detect_install_kind()` first, so this control has to establish the
+    # git kind to be a control at all. `tests/test_frozen_bundle_runtime.py` drives the
+    # non-git arms.
     from personalclaw.dashboard.handlers import updates as dash_updates
 
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     _write_updates_config(tmp_path, check_enabled=True)
+    (tmp_path / ".git").mkdir(exist_ok=True)
     monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
 
     calls: list[tuple] = []
