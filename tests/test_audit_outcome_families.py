@@ -32,7 +32,9 @@ SUBSTRING ``ok`` captures ``hook_blocked`` and ``hook_error``, and ``approved`` 
 for it — derived from the tree, not hand-listed.
 """
 
+import ast
 import re
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -47,7 +49,22 @@ from personalclaw.sel import (
 )
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
-_LITERAL = re.compile(r'outcome="([a-z_]+)"')
+
+#: The scanner this file USED to be, kept as the falsification control for
+#: :func:`test_the_scanner_sees_a_constant_valued_outcome`. It matches only an inline
+#: ``outcome="LITERAL"``, which is why a subsystem that named its outcome words as module
+#: constants was invisible to the ceiling below (#3443).
+_INLINE_ONLY = re.compile(r'outcome="([a-z_]+)"')
+
+#: An outcome word: lower snake_case. Used to reject a resolved value that is plainly not
+#: one (a path, a sentence, an f-string fragment) rather than letting it into the census.
+_OUTCOME_WORD = re.compile(r"^[a-z][a-z0-9_]*$")
+
+#: A module-level constant whose NAME declares it is an outcome word. The convention already
+#: exists in the tree (``browse_provider.OUTCOME_SKIP``, ``outbox.OUTCOME_DELIVERED``), and it
+#: is what makes a word reachable through a runtime hop the scanner cannot follow — the
+#: ``outcome=result.outcome`` in #3443 carries one of ``browse/vision.py``'s ``OUTCOME_*``.
+_DECLARED_OUTCOME_CONST = re.compile(r"^(OUTCOME_.+|.+_OUTCOME)$")
 
 
 def _family(key: str) -> dict:
@@ -64,23 +81,324 @@ def _claims(family: dict, word: str) -> bool:
     return any(_outcome_token_match(v, word) for v in _values(family))
 
 
+def _string_constants(body: list[ast.stmt]) -> dict[str, str]:
+    """``NAME = "literal"`` (and the annotated form) in one statement list."""
+    out: dict[str, str] = {}
+    for node in body:
+        if isinstance(node, ast.Assign):
+            names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            value = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names, value = [node.target.id], node.value
+        else:
+            continue
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            for name in names:
+                out[name] = value.value
+    return out
+
+
+class _Vocabulary:
+    """The outcome words reachable from an ``outcome=`` keyword anywhere in the tree.
+
+    🔑 WHY THIS IS AN AST PASS AND NOT A REGEX (#3443). The old scanner matched only an
+    inline ``outcome="LITERAL"``, so the ceiling below was never a count of the outcome
+    vocabulary — it was a count of *the portion written inline*. Two consequences, both
+    measured:
+
+    * Six of ``browse/vision.py``'s eight outcome words were invisible, because they are
+      module constants handed over as ``outcome=result.outcome``.
+    * A ternary was HALF read: ``outcome="executed" if executed else "declined"`` showed the
+      scanner ``executed`` (classified ``ok``) and hid ``declined`` — so the audit surface
+      rendered one branch of one decision as a success and the other as nothing at all.
+
+    And the incentive ran backwards, which is the real defect: the cheapest way to satisfy
+    the ceiling was to move a literal into a constant, i.e. to make the word MORE silent.
+    Naming outcomes as constants is the better practice; the rail penalised it.
+
+    🪤 IT DOES NOT CLAIM COMPLETENESS, AND THAT IS ASSERTED. Some sites resolve only at
+    runtime (``outcome=result.outcome``, ``outcome=str(verdict)``); :attr:`unresolved` counts
+    them and :func:`test_the_scan_reports_what_it_cannot_see` holds that residue down, so
+    "the scanner saw nothing here" can never pass as "there is nothing here". The constant
+    convention is what covers most of that gap: a word only has to be *declared* as an
+    outcome somewhere to be in the census, even when the hop to the call site is dynamic.
+
+    🪤 IT IS ALSO DELIBERATELY TREE-WIDE, not SEL-only. A few ``outcome=`` fields belong to
+    internal ledgers and enums rather than the audit log, so the census is over-inclusive —
+    which is the safe direction, because it demands a decision about a word that may not
+    need one. Narrowing the scan to SEL writers would SHRINK the census, and shrinking the
+    census is the same "go green by making a word invisible" move this rail exists to stop.
+    """
+
+    def __init__(self) -> None:
+        self.counts: dict[str, int] = {}
+        self.sites: dict[str, list[str]] = {}
+        self.unresolved: list[str] = []
+        self._consts_by_module: dict[str, dict[str, str]] = {}
+        self._enums: dict[str, dict[str, str]] = {}
+        self._consts: dict[str, str] = {}
+        trees: dict[Path, ast.Module] = {}
+        for path in sorted(_SRC.rglob("*.py")):
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - the tree is lint-clean
+                continue
+            trees[path] = tree
+            module = _string_constants(tree.body)
+            self._consts_by_module[path.stem] = module
+            self._consts.update(module)
+            for node in tree.body:
+                if isinstance(node, ast.ClassDef):
+                    members = _string_constants(node.body)
+                    if members:
+                        self._enums.setdefault(node.name, {}).update(members)
+        for path, tree in trees.items():
+            where = path.relative_to(_SRC).as_posix()
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                for keyword in node.keywords:
+                    if keyword.arg != "outcome":
+                        continue
+                    for word in self._resolve(keyword.value, path.stem):
+                        self._record(word, f"{where}:{keyword.value.lineno}")
+        # Every DECLARED outcome constant, whatever reaches the call site. This is the half
+        # that survives a runtime hop: `outcome=result.outcome` names no word, but the word
+        # it will carry is written down as `OUTCOME_*` in the module that owns it.
+        for stem, module in self._consts_by_module.items():
+            for name, value in module.items():
+                if _DECLARED_OUTCOME_CONST.match(name):
+                    self._record(value, f"{stem}.py:{name}")
+
+    def _record(self, word: str, site: str) -> None:
+        if not _OUTCOME_WORD.match(word):
+            return
+        self.counts[word] = self.counts.get(word, 0) + 1
+        self.sites.setdefault(word, []).append(site)
+
+    def _resolve(self, node: ast.expr, stem: str) -> set[str]:
+        """Every string an ``outcome=`` expression can statically evaluate to."""
+        if isinstance(node, ast.Constant):
+            return {node.value} if isinstance(node.value, str) else set()
+        if isinstance(node, ast.Name):
+            value = self._consts_by_module.get(stem, {}).get(node.id, self._consts.get(node.id))
+            if value is not None:
+                return {value}
+        elif isinstance(node, ast.IfExp):
+            # BOTH branches. Reading one was the second blind spot (#3443).
+            return self._resolve(node.body, stem) | self._resolve(node.orelse, stem)
+        elif isinstance(node, ast.BoolOp):
+            return set().union(*(self._resolve(v, stem) for v in node.values))
+        elif isinstance(node, ast.Attribute):
+            if node.attr == "value":  # Enum.MEMBER.value
+                return self._resolve(node.value, stem)
+            if isinstance(node.value, ast.Name):
+                owner = node.value.id
+                enum = self._enums.get(owner, {})
+                if node.attr in enum:
+                    return {enum[node.attr]}
+                module = self._consts_by_module.get(owner, {})
+                if node.attr in module:
+                    return {module[node.attr]}
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id == "str" and node.args:
+                return self._resolve(node.args[0], stem)
+            # `d.get("outcome", DEFAULT)` / `d.pop(..., DEFAULT)` — the default is a word.
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr in ("get", "pop")
+                and len(node.args) == 2
+            ):
+                return self._resolve(node.args[1], stem)
+        self.unresolved.append(ast.unparse(node))
+        return set()
+
+
+@lru_cache(maxsize=1)
+def _vocabulary() -> _Vocabulary:
+    """One AST pass over ``src/personalclaw`` for the whole module (it is walked ~10 times)."""
+    return _Vocabulary()
+
+
 def _emitted_outcomes() -> dict[str, int]:
-    """Every ``outcome="…"`` literal in the tree, with how many writers use it."""
-    counts: dict[str, int] = {}
-    for path in _SRC.rglob("*.py"):
-        for value in _LITERAL.findall(path.read_text(encoding="utf-8")):
-            counts[value] = counts.get(value, 0) + 1
-    return counts
+    """Every outcome word reachable from an ``outcome=`` keyword, with how many sites use it."""
+    return _vocabulary().counts
+
+
+#: THE LEDGER THAT REPLACED THE CEILING (#3443). Every emitted word that belongs in no
+#: filter family, and WHY — keyed by the reason, because the reasons are shared and 62
+#: near-identical sentences would be filler rather than a decision.
+#:
+#: 🔴 IT IS A NAMED SET, NOT A NUMBER, AND THAT IS THE WHOLE POINT. The old rail asserted
+#: ``len(unclassified) <= 34``, which had two escapes a number always has: a new word could
+#: be absorbed by editing one digit, and — because the scanner only saw inline literals —
+#: could be made to disappear entirely by moving it into a constant. There is no digit to
+#: edit here. A new word fails BY NAME, and the only ways to make it pass are to put it in a
+#: family or to write down why it belongs in none. Both are decisions; neither is a bump.
+#:
+#: Asserted in both directions: a word here must NOT be claimed by a family (the two records
+#: cannot disagree), and it must still be emitted (the ledger cannot rot into a list of words
+#: nobody writes any more — the same silent-zero defect as an unoffered value, from the other
+#: side).
+_NO_FAMILY: dict[str, tuple[str, ...]] = {
+    "a LIFECYCLE step rather than a verdict: the record says what happened next, not whether "
+    "anything was allowed, refused or broke — so every pill would be wrong about it": (
+        "accepted",
+        "continue",
+        "created",
+        "delivered",
+        "flush_produced",
+        "grounded",
+        "installed",
+        "invoked",
+        "launched",
+        "outcome_resolved",
+        "passed",
+        "pending_outcome",
+        "queued",
+        "ran",
+        "reused",
+        "scanned",
+        "spawned",
+        "started",
+        "suggested",
+        "surfaced",
+        "tie",
+    ),
+    "the work did not need doing, so nothing ran: a no-op is not a success, not a refusal of "
+    "a caller, and not a fault": (
+        "expired",
+        "flush_skipped",
+        "no_change",
+        "noop",
+        "not_triggered",
+        "off_duty",
+        "quiet",
+        "skip",
+        "skipped",
+    ),
+    "a PRECONDITION was absent, so nothing was asked for and denied and nothing broke — "
+    "putting it in a family would report a refusal or a fault that never happened": (
+        "no_model",
+        "no_screenshot",
+        "no_signal",
+        "no_target",
+        "verifier_absent",
+    ),
+    "the MODE a control resolved to, or the SHAPE of a result, rather than its verdict — a "
+    "family here would make a pill accuse a working control every time it fires": (
+        "bounded",
+        "default",
+        "downgraded",
+        "halted_on_budget",
+        "hard",
+        "interrupted",
+        "narrowed",
+        "open",
+        "partial",
+        "permanent",
+        "preview",
+        "session_scope_only",
+        "transient",
+        "trusted",
+    ),
+    "ARGUABLE, and deliberately left narrow: classifying it is a judgement per word rather "
+    "than a sweep, and getting it wrong on a security surface is worse than leaving a pill "
+    "narrow — a Denied pill that returns a reaped subagent is a lie about a refusal": (
+        "bypass",
+        "fail_open",
+        "fanout_breaker_tripped",
+        "fanout_budget_exceeded",
+        "killed",
+        "reaped",
+        "sigkill",
+        "tampered",
+        "too_large",
+        "ungated",
+        "ungated_declared",
+    ),
+    "a NEGATION, which must never read as its own affirmative: under the old substring match "
+    "`approved` claimed it, so the Succeeded pill would have returned a refused auto-approval": (
+        "not_auto_approved",
+    ),
+    "not an audit record at all — an internal ledger row whose field is also called "
+    "`outcome`, which the deliberately tree-wide scan also sees. Recorded rather than "
+    "excluded, because narrowing the scan is the same make-a-word-invisible move #3443 is "
+    "about": ("scope_violation",),
+}
+
+
+def _no_family_words() -> dict[str, str]:
+    """word → the reason it is in no family. Flattened once, so a word listed twice is a
+    collected error rather than a silent overwrite."""
+    out: dict[str, str] = {}
+    duplicated = []
+    for reason, words in _NO_FAMILY.items():
+        for word in words:
+            if word in out:
+                duplicated.append(word)
+            out[word] = reason
+    assert not duplicated, f"listed under two reasons — one word, one decision: {duplicated}"
+    return out
 
 
 def test_the_vocabulary_scan_resolves() -> None:
     """Vacuity floor. Every assertion below is 'for each emitted outcome …', so a scan that
     finds nothing passes everything — the failure mode this whole file exists to prevent."""
     emitted = _emitted_outcomes()
-    assert len(emitted) >= 50, f"only {len(emitted)} outcome literals found; the scan broke"
-    # The four that motivated the fix must be in it, or the regex has drifted.
+    assert len(emitted) >= 95, f"only {len(emitted)} outcome words found; the scan broke"
+    # The four that motivated the fix must be in it, or the scanner has drifted.
     for value in ("denied", "rejected", "failure", "error"):
         assert emitted.get(value, 0) > 0, value
+
+
+def test_the_scanner_sees_a_constant_valued_outcome() -> None:
+    """THE control for #3443, and it falsifies in the right direction.
+
+    The old scanner is kept as ``_INLINE_ONLY`` and asserted BLIND to each of these, so the
+    widening is demonstrated rather than claimed. Remove the AST pass and this test reds; keep
+    the AST pass and remove the old regex and there is nothing left to compare against.
+
+    * ``grounded`` / ``no_model`` / ``refused_challenge`` — ``browse/vision.py`` module
+      constants, handed to the audit writer as ``outcome=result.outcome``. Six of that file's
+      eight words were invisible.
+    * ``declined`` / ``needs_human`` — the losing branch of a ternary whose WINNING branch the
+      old regex did see (``outcome="executed" if executed else "declined"``,
+      ``outcome="blocked" if … else "needs_human"``). One decision, one word classified and
+      its sibling not even counted.
+    """
+    inline = {
+        word
+        for path in _SRC.rglob("*.py")
+        for word in _INLINE_ONLY.findall(path.read_text(encoding="utf-8"))
+    }
+    emitted = _emitted_outcomes()
+    for word in ("grounded", "no_model", "refused_challenge", "declined", "needs_human"):
+        assert word in emitted, f"the widened scan must see {word!r}"
+        assert word not in inline, f"{word!r} is inline after all — pick a real control"
+    # And the widening is strictly a widening: the old scanner found nothing this one misses.
+    assert not (
+        inline - set(emitted)
+    ), f"the AST pass LOST words the regex saw: {inline - set(emitted)}"
+
+
+def test_the_scan_reports_what_it_cannot_see() -> None:
+    """A scanner that silently resolves nothing is the defect one level up.
+
+    Some ``outcome=`` values exist only at runtime (``outcome=result.outcome``,
+    ``outcome=str(verdict)``), and the honest thing is to COUNT them rather than let "the scan
+    found nothing here" pass as "there is nothing here". The residue is held down so a change
+    that starts hiding words behind a dynamic hop reds instead of quietly shrinking the census.
+    """
+    unresolved = _vocabulary().unresolved
+    assert len(set(unresolved)) <= 20, (
+        "more outcome sites became statically unreadable — the census is shrinking, which is "
+        f"the direction this rail exists to refuse:\n{sorted(set(unresolved))}"
+    )
+    # Non-vacuous: the residue is real, and `result.outcome` — the shape #3443 named — is in it.
+    assert unresolved, "the residue counter found nothing; the walk is not reaching call sites"
+    assert "result.outcome" in set(unresolved)
 
 
 @pytest.mark.parametrize("family", AUDIT_OUTCOME_FAMILIES, ids=lambda f: str(f["key"]))
@@ -175,6 +493,32 @@ def test_the_tone_of_a_word_is_the_tone_of_the_family_that_claims_it() -> None:
     assert audit_outcome_tone("") == "neutral", "a blank outcome is not a verdict"
 
 
+def test_the_ledger_and_the_families_do_not_disagree() -> None:
+    """A word cannot be both filtered and deliberately unfiltered. Without this the ledger
+    would drift into a second, contradictory classification of the same vocabulary — which is
+    the hand-maintained-view defect this whole file exists to end, reintroduced by the fix."""
+    both = sorted(
+        word for word in _no_family_words() if any(_claims(f, word) for f in AUDIT_OUTCOME_FAMILIES)
+    )
+    assert not both, (
+        "recorded as belonging in no family AND claimed by one — remove the _NO_FAMILY entry, "
+        f"the family now owns it: {both}"
+    )
+
+
+def test_the_ledger_cannot_rot() -> None:
+    """Every recorded word must still be emitted.
+
+    The mirror of :func:`test_no_family_offers_a_term_nobody_writes`, and it matters for the
+    same reason: a ledger entry for a word no writer emits is a decision about nothing, and a
+    ledger padded with dead words would let the next real word in unnoticed. It is also the
+    thing that stops "delete the emitter, keep the entry" from being a way to go quiet.
+    """
+    emitted = _emitted_outcomes()
+    dead = sorted(word for word in _no_family_words() if word not in emitted)
+    assert not dead, f"recorded in _NO_FAMILY but no longer emitted anywhere — drop them: {dead}"
+
+
 def test_the_families_are_disjoint() -> None:
     """A value in two families makes the pills lie about each other."""
     seen: dict[str, str] = {}
@@ -184,47 +528,35 @@ def test_the_families_are_disjoint() -> None:
             seen[value] = str(family["key"])
 
 
-def test_the_unclassified_remainder_is_visible_not_silent() -> None:
-    """A CEILING on the backlog, not a claim it is empty.
+def test_every_emitted_word_is_accounted_for() -> None:
+    """A NAMED LEDGER, not a ceiling — the replacement #3443 asked for.
 
-    Most of the 62 words are informational (``launched``, ``queued``, ``noop``, ``narrowed``)
-    and belong in no filter. A handful are arguable — ``tampered``, ``too_large``, ``sigkill``,
-    ``fanout_breaker_tripped`` — and classifying them is a judgement per word, not a sweep;
-    getting it wrong on a security surface is worse than leaving a pill narrow. This records
-    the size of that backlog so a NEW unclassified word is a decision someone makes, rather
-    than a silent addition to a set nobody reads.
+    Most words are informational (``launched``, ``queued``, ``noop``, ``narrowed``) and belong
+    in no filter; a handful are arguable (``tampered``, ``too_large``, ``sigkill``,
+    ``fanout_breaker_tripped``) and classifying them is a judgement per word, not a sweep,
+    because getting it wrong on a security surface is worse than leaving a pill narrow. All of
+    that is unchanged. What changed is the INSTRUMENT.
+
+    🔴 THE OLD FORM WAS ``len(unclassified) <= 34`` AND IT COULD BE SATISFIED TWO DISHONEST
+    WAYS. A new word could be absorbed by editing one digit — a re-baselined ratchet reads
+    green while guarding nothing — and, because the scanner saw only inline literals, a word
+    could be made to vanish entirely by moving it into a module constant. That second escape
+    is the perverse incentive: naming outcomes as constants is the BETTER practice (one
+    spelling, refactor-safe, greppable by symbol) and it was the cheapest way to defeat the
+    rail. There is no digit here. A new word fails by name with its emitting site, and the only
+    two ways to make it pass — a family, or a written reason — are both decisions.
     """
     emitted = _emitted_outcomes()
+    sites = _vocabulary().sites
+    recorded = _no_family_words()
     unclassified = sorted(
         word for word in emitted if not any(_claims(f, word) for f in AUDIT_OUTCOME_FAMILIES)
     )
-    # 34 — and every move into and out of this set is the point.
-    #
-    #   left:    `needs_confirm`, `needs_input`  -> classified into the new `needs_confirm` family
-    #   arrived: `invoked`, `not_auto_approved`  -> they were never really classified
-    #   arrived: `interrupted`                   -> WF2AUT-16 emitted it after this was written
-    #
-    # The first two arrivals are the substring bug, counted. Under the old `value in word` match,
-    # `ok` claimed `invoked` and `approved` claimed `not_auto_approved` — so this ceiling read them
-    # as accounted for while the pills would have called a negation a success. Token matching stops
-    # claiming them, and they land here where an unclassified word belongs. A rail that counts a
-    # false classification as coverage is measuring the wrong thing.
-    #
-    # `interrupted` (WF2AUT-16) is emitted by the boot sweep (`boot_orphan_terminalize`) and
-    # describes the fate of the ORPHANED RUN, not the outcome of the sweep: the sweep did exactly
-    # its job, nothing was denied to a caller, and no mechanism broke. Classifying it `failed`
-    # would make the Failed pill accuse a working control every time the gateway restarts mid-run.
-    # The subject run's own failure IS surfaced one layer over — the reaper's `ScheduleRun` carries
-    # `status="timeout"`, which `SCHEDULE_STATUS_TO_OUTCOME` maps to `failed`.
-    #
-    # Everything here is unclassified on purpose. `halted_on_budget` (ES-6) is a gate that stopped
-    # on its declared ceiling — the control WORKING: nothing was denied to a caller (so not
-    # `denied`), nothing broke (so not `failed`), and the sweep is incomplete (so not a success).
-    # It stays out for the same reason `expired` does: putting it in a family would make the audit
-    # log assert a refusal or a fault that never happened.
-    assert len(unclassified) <= 34, (
-        "a new outcome word appeared — classify it into an AUDIT_OUTCOME_FAMILIES family, or "
-        f"move this ceiling deliberately:\n{unclassified}"
+    unaccounted = [w for w in unclassified if w not in recorded]
+    assert not unaccounted, (
+        "a new outcome word appeared. Classify it into an AUDIT_OUTCOME_FAMILIES family, or "
+        "record in _NO_FAMILY why it belongs in none — there is no number to raise:\n"
+        + "\n".join(f"  {w!r} at {sites[w][0]}" for w in unaccounted)
     )
 
 

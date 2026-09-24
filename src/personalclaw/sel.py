@@ -126,10 +126,17 @@ class AuditOutcomeFamily(TypedDict):
 #: below, and the panel maps tone -> design token and holds no outcome vocabulary at all.
 AUDIT_OUTCOME_FAMILIES: tuple[AuditOutcomeFamily, ...] = (
     {
+        # `declined` joins its siblings here (#3443). It is the losing arm of
+        # `outcome="executed" if executed else "declined"` (handlers/proactive.py) — the SAME
+        # statement whose winning arm `executed` is classified below, with a written note
+        # about its other sibling `expired`. So the decision had been reasoned about and this
+        # arm still rendered as nothing, for one reason: the ceiling's scanner read only
+        # `outcome="LITERAL"`, so it never showed anyone the word. `rejected` is already here
+        # and is the same act (an approval a human refused), which is what settles the tone.
         "key": "denied",
         "label": "Denied",
         "tone": "danger",
-        "values": ("denied", "rejected", "blocked", "refused"),
+        "values": ("denied", "rejected", "blocked", "refused", "declined"),
     },
     {
         # ``not_found`` is included deliberately: the operation did not do what was asked, and
@@ -144,10 +151,17 @@ AUDIT_OUTCOME_FAMILIES: tuple[AuditOutcomeFamily, ...] = (
         # The control stopped and asked. Not a refusal (nothing was denied) and not a fault
         # (nothing broke), so it gets its own pill rather than being forced into one of the two
         # above — and it is the one tone the panel's old local map carried that no family did.
+        #
+        # `needs_human` joins them (#3443) and it is the plainest case in the table: the
+        # sentence above IS its definition. `guardrails/denylist.py` writes
+        # `outcome="blocked" if decision.verdict == "block" else "needs_human"` — one decision,
+        # two arms, and only the arm spelled as a bare literal was ever visible to the rail, so
+        # a denylist verdict that stopped to ask a human rendered neutral beside a `blocked`
+        # that rendered danger.
         "key": "needs_confirm",
         "label": "Needs confirmation",
         "tone": "warning",
-        "values": ("needs_confirm", "needs_input"),
+        "values": ("needs_confirm", "needs_input", "needs_human"),
     },
     {
         # 🔴 THE PILLS COVERED 0.6% OF THE LOG (issue #535). Measured on a live 1,040-entry log:
