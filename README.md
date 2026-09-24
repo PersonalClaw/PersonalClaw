@@ -188,9 +188,31 @@ personalclaw gateway
 | **Bootstrap** | `curl -fsSL https://personalclaw.dev/install \| sh` | the fastest start |
 | pipx | `pipx install personalclaw` | isolated Python tools |
 | pip | `pip install personalclaw` | inside an existing Python 3.12+ venv |
+| Homebrew | `brew install personalclaw/tap/personalclaw` | macOS · `brew upgrade` tracks releases |
+| Nix | `nix profile install github:PersonalClaw/PersonalClaw#personalclaw` | a fully pinned, reproducible closure |
 | **Docker** | see below | one container, no checkout, no `.env` |
 | **Docker Compose** | see below | self-hosters · Windows · TLS proxy |
 | Git checkout | [CONTRIBUTING](CONTRIBUTING.md#development-setup) | contributors / development |
+
+Two caveats worth reading before you pick one of the bottom two, because both trade
+something away and the row above cannot say what:
+
+- **Homebrew** lives in a separate tap, [`PersonalClaw/homebrew-tap`](https://github.com/PersonalClaw/homebrew-tap).
+  Its formula resolves the Python dependency closure from PyPI during `brew install`, so that
+  install needs network and is **not** reproducible — the same guarantee `pip install` gives.
+  Vendoring checksummed `resource` stanzas instead is not merely expensive here, it does not
+  work: the closure requires `pypdfium2`, whose source build is a prebuilt PDFium with no
+  Homebrew formula to link against. The tap's README states the whole trade-off, and its CI
+  runs the real `brew install` on a clean GitHub-hosted macOS runner every push.
+- **Nix** is the opposite trade: `flake.nix` pins every dependency through `flake.lock`, so it
+  is the most reproducible path here — but it packages the **published wheel**, not your
+  checkout. `nix run .#personalclaw` from a clone runs the release named in
+  `nix/personalclaw.nix`, not your working tree; for that, use the development install in
+  [CONTRIBUTING](CONTRIBUTING.md#development-setup).
+
+Every install path is exercised on a genuinely clean machine rather than a dev box, in a
+throwaway container — `scripts/fresh_install_validate.sh`, and the per-release checklist in
+the [release runbook](docs/maintainers/release-runbook.md#convenience-channel-smoke-homebrew--nix).
 
 ### Docker
 
