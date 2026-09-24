@@ -222,8 +222,17 @@ def _write_by_index(snapshot: dict[str, Any], marker: str, clause: str) -> dict[
     The read-back is a second ``computer_snapshot`` rather than a direct FFI walk, so the value
     this script compares is the one that came through step 7's redaction — the same string a
     model would have been handed.
+
+    The op window is **drained immediately before the acting dispatch**, exactly as
+    :func:`_expect_stale` does. Without that drain the comparison below is not against this
+    dispatch's ops but against every op since the last drain — which always includes at least the
+    launch-wait poll and the caller's own snapshot — so ``["snapshot", "set_value"]`` was
+    unreachable at every call site and the count varied with how long TextEdit took to launch.
+    Measured: the first run ever to get past preflight reported
+    ``['snapshot', 'snapshot', 'snapshot', 'set_value']``.
     """
     index = _element_index(snapshot, "AXTextArea", clause)
+    _driver_ops_since()
     outcome, payload = _dispatch(
         "computer_set_value",
         {"snapshot_id": str(snapshot.get("snapshot_id")), "element_index": index, "value": marker},
@@ -293,13 +302,51 @@ def _expect_stale(
     }
 
 
-def _front_window_walks() -> bool:
-    """Can the dispatch walk a front window for ``APP`` yet? Used only to wait out a launch."""
-    outcome, _payload = _dispatch("computer_snapshot", {"app": APP})
-    return outcome == "ok"
+def _await_front_window(document: Path, clause: str) -> None:
+    """Wait until ``APP``'s front window is *document*'s, not merely until some window walks.
+
+    This replaces a poll that asked only "is anything walkable", which is True the instant a
+    previously-opened document is on screen — so a leg that polled it could start measuring
+    before the document it just opened was ever in front.
+    """
+    for _ in range(40):
+        outcome, payload = _dispatch("computer_snapshot", {"app": APP})
+        if outcome == "ok" and _window_title(payload) == document.name:
+            return
+        time.sleep(0.5)
+    raise Failure(clause, f"{APP} never brought {document.name} to the front")
 
 
-def phase_stale(home: Path) -> dict[str, Any]:  # noqa: C901 - one linear transcript, read top down
+def _restart_with_only(document: Path, launched: set[str], clause: str) -> None:
+    """Quit ``APP`` and reopen it with *document* as its only window.
+
+    Refused outright when this run did not launch the app: quitting it would discard whatever
+    the operator had open, and no clause is worth that. An honest refusal naming the reason is
+    also the truthful answer, because with the operator's own documents on screen "nothing
+    changed but the clock" is not establishable in the first place.
+    """
+    if not launched:
+        raise Failure(
+            clause,
+            f"the operator already had {APP} open, so this leg cannot isolate a single window: "
+            "quitting the app would discard their unsaved work, and leaving their documents open "
+            "means a refocus can change the walked tree during the sleep and the leg could not "
+            f"tell that from staleness. Close {APP} and run this again.",
+        )
+    subprocess.run(["pkill", "-x", APP], check=False)
+    # ``pgrep`` rather than the FFI app census: the census is the pre-launch read teardown owns,
+    # and "has this process gone" is a question about processes, not about the GUI.
+    for _ in range(40):
+        if subprocess.run(["pgrep", "-x", APP], capture_output=True, check=False).returncode != 0:
+            break
+        time.sleep(0.25)
+    else:
+        raise Failure(clause, f"{APP} did not quit, so its edited document is still on screen")
+    subprocess.run(["open", "-F", "-a", APP, str(document)], check=True)
+    _await_front_window(document, clause)
+
+
+def phase_stale(home: Path) -> dict[str, Any]:
     """Both stale-index triggers, separately, plus the fresh-path positive control."""
     from personalclaw.computer_use import macos_ffi, service
 
@@ -316,21 +363,45 @@ def phase_stale(home: Path) -> dict[str, Any]:  # noqa: C901 - one linear transc
     already = set(macos_ffi.list_gui_apps())
     launched = {APP} - already
 
-    # ``-F`` (fresh) matters: without it macOS restores the app's previously open windows and
-    # the front window is some earlier document, so "which window was walked" stops being
-    # observable. #2552 lost a run to exactly this.
-    subprocess.run(["open", "-F", "-a", APP, str(doc_a)], check=True)
-    for _ in range(30):
-        if _front_window_walks():
-            break
-        time.sleep(0.5)
-    else:
-        raise Failure("live-target", f"{APP} never exposed a walkable front window for document A")
-
     report: dict[str, Any] = {
         "launched_by_this_run": sorted(launched),
         "ttl_secs": service.SNAPSHOT_TTL_SECS,
     }
+    # Everything that can leave something on the operator's desktop is inside the try, so the
+    # teardown below runs on the failure path too. It did not: the quit lived at the end of the
+    # happy path, so the first run ever to get past preflight failed mid-phase and left TextEdit
+    # running with an unsaved scratch document on the operator's screen. A validator that
+    # litters when it fails is a validator nobody runs twice.
+    try:
+        _phase_stale_body(home, report, doc_a, doc_b, launched)
+    finally:
+        report["cleanup"] = _teardown(launched)
+    return report
+
+
+def _teardown(launched: set[str]) -> dict[str, Any]:
+    """Quit only what this run launched. Runs on the failure path as well as the happy one."""
+    cleanup: dict[str, Any] = {"scratch_documents": "left unsaved; discarded when the app quits"}
+    for app in sorted(launched):
+        subprocess.run(["pkill", "-x", app], check=False)
+        cleanup[app] = "quit (this run launched it)"
+    if not launched:
+        cleanup[APP] = "left running (the operator already had it open); its windows are untouched"
+    return cleanup
+
+
+def _phase_stale_body(  # noqa: C901 - one linear transcript, read top down
+    home: Path, report: dict[str, Any], doc_a: Path, doc_b: Path, launched: set[str]
+) -> None:
+    """The transcript itself. Separated from :func:`phase_stale` only so teardown can be a
+    ``finally`` — every assertion, every clause and every ordering below is unchanged."""
+    from personalclaw.computer_use import service
+
+    # ``-F`` (fresh) matters: without it macOS restores the app's previously open windows and
+    # the front window is some earlier document, so "which window was walked" stops being
+    # observable. #2552 lost a run to exactly this.
+    subprocess.run(["open", "-F", "-a", APP, str(doc_a)], check=True)
+    _await_front_window(doc_a, "live-target")
 
     # --- POSITIVE CONTROL: a fresh, unchanged snapshot still acts ----------------------------
     # First, and load-bearing. It rules out every vacuous reason the later refusals could fire:
@@ -348,13 +419,23 @@ def phase_stale(home: Path) -> dict[str, Any]:  # noqa: C901 - one linear transc
     # document A, and an edited TextEdit document can change its own window title ("— Edited")
     # while the run sleeps — which would make "nothing changed but the clock" false for a reason
     # that has nothing to do with the TTL.
-    subprocess.run(["open", "-F", "-a", APP, str(doc_b)], check=True)
-    for _ in range(30):
-        if _front_window_walks():
-            break
-        time.sleep(0.5)
-    else:
-        raise Failure("past-ttl", f"{APP} never exposed a walkable front window for document B")
+    #
+    # That mitigation was NOT sufficient, and the first run ever to reach this leg proved it.
+    # Opening B alongside A is not enough, because the edited document does not merely retitle
+    # itself: TextEdit AUTOSAVES it about twelve seconds later and that brings A back to the
+    # front. Measured — the front window held `B` for ~9s, then flipped to `A` for the rest of
+    # the 31.5s sleep, so the leg woke up walking a different document and its own
+    # "age was the only difference" guard fired on a refocus the leg had no part in:
+    #
+    #     poll 0: front=diag-B.txt fp=9895035678a2
+    #     t+ 9s:  front=diag-B.txt fp=9895035678a2
+    #     t+12s:  front=diag-A.txt fp=80ad1681dd13   <-- autosave stole the front window
+    #
+    # So A is taken out of the picture entirely before the clock starts: the app is quit (which
+    # is what discards A's unsaved marker — the same mechanism teardown relies on) and relaunched
+    # with B as its only document. A lone, clean window cannot be refocused away from, which
+    # makes "the only thing that changed was age" true by construction rather than by luck.
+    _restart_with_only(doc_b, launched, "past-ttl")
 
     ttl_snap = _snapshot("past-ttl")
     ttl_fingerprint = str(ttl_snap.get("fingerprint", ""))
@@ -496,16 +577,6 @@ def phase_stale(home: Path) -> dict[str, Any]:  # noqa: C901 - one linear transc
         ],
         "stale_refusals_observed": list(_STALE_OBSERVED),
     }
-
-    # --- leave the machine as we found it ----------------------------------------------------
-    cleanup: dict[str, Any] = {"scratch_documents": "left unsaved; discarded when the app quits"}
-    for app in sorted(launched):
-        subprocess.run(["pkill", "-x", app], check=False)
-        cleanup[app] = "quit (this run launched it)"
-    if not launched:
-        cleanup[APP] = "left running (the operator already had it open); its windows are untouched"
-    report["cleanup"] = cleanup
-    return report
 
 
 def _preflight() -> dict[str, Any]:
