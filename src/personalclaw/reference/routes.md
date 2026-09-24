@@ -650,6 +650,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/rooms` — every room, newest first. ``?archived=1`` includes archived ones.
 - `POST /api/rooms` — {title} — create a room.
 - `GET /api/rooms/{room_id}` — one room, its members, its posture, and its transcript.
+- `PATCH /api/rooms/{room_id}` — {round_budget} — the room's own budget override.
 - `POST /api/rooms/{room_id}/archive` — archive a room. Idempotent.
 - `GET /api/rooms/{room_id}/export` — the transcript, redacted.
 - `POST /api/rooms/{room_id}/members` — {name, role_blurb?, listen_policy?, profile_narrowing?}.

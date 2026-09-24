@@ -3,9 +3,10 @@
 A **room** is a persistent shared transcript plus a member list, where the human and N
 bound agents deliberate over days. A **member** is an ordinary agent binding with a role
 blurb, a listen policy and its own declared safety posture. This module owns those records
-and the transcript's storage; who speaks next (the arbiter) and the per-member transcript
-cursors are later atoms and deliberately absent here, and the posture VOCABULARY lives in
-:mod:`personalclaw.rooms.posture` — this module stores the declaration and never judges it.
+and the transcript's storage, plus the persistence of the round budget the arbiter enforces;
+deciding who speaks next is :mod:`personalclaw.rooms.arbiter`, the posture VOCABULARY lives in
+:mod:`personalclaw.rooms.posture` — this module stores the declaration and never judges it —
+and the per-member transcript cursors are a later atom, deliberately absent here.
 
 **Nothing here is a new storage engine.** The transcript is a
 :class:`~personalclaw.history.ConversationLog` pointed at the room's own directory, so
@@ -49,6 +50,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -68,7 +70,7 @@ INDEX_FILENAME = "index.json"
 TRANSCRIPT_KEY = "transcript"
 
 #: A member's listen policy: sees every message / activated only when @-named / observer
-#: that speaks only when the human asks. Closed set — the arbiter (`AR-5`) branches on it.
+#: that speaks only when the human asks. Closed set — ``rooms.arbiter`` branches on it.
 LISTEN_POLICIES: tuple[str, ...] = ("all", "mention", "silent")
 DEFAULT_LISTEN_POLICY = "all"
 
@@ -89,6 +91,12 @@ _ROOM_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
 _MAX_TITLE_CHARS = 200
 _MAX_ROLE_BLURB_CHARS = 500
+
+#: The ceiling a room's OWN ``round_budget`` may declare, matching the ``rooms.round_budget``
+#: row in ``_EDITABLE_CONFIG`` exactly (``min 1, max 100``). Kept identical on purpose: a
+#: per-room override that accepted a value the config key refuses would make the two controls
+#: disagree about what a legal budget is, and the UI renders both from this one number.
+MAX_ROOM_ROUND_BUDGET = 100
 
 
 class RoomError(Exception):
@@ -144,9 +152,19 @@ class Room:
     """A room record. Persisted whole into ``rooms/index.json``.
 
     ``rounds_used``/``paused``/``round_budget`` are written here rather than held in
-    memory so a gateway restart cannot launder the budget state the arbiter (`AR-5`)
-    enforces. ``round_budget`` of 0 means "inherit ``rooms.round_budget``" — resolved by
-    :func:`effective_round_budget`, never by reading the field directly.
+    memory so a gateway restart cannot launder the budget state the arbiter enforces —
+    written by :func:`charge_round`, :func:`pause_room` and :func:`reset_round_budget`, which
+    are the only three places any of them changes. ``round_budget`` of 0 means "inherit
+    ``rooms.round_budget``" — resolved by :func:`effective_round_budget`, never by reading
+    the field directly.
+
+    ``pending_queue`` is the speaker queue's remainder at the moment the room paused: the
+    members that were owed a turn and did not get one. It is persisted for the same reason
+    the counter is — a pause is a suspension rather than a cancellation, so resuming has to
+    continue the queue rather than mint a fresh one, and a queue held in the paused round's
+    call frame would be lost with it. Written by :func:`pause_room` and emptied by
+    :func:`take_pending`; deliberately NOT cleared by :func:`reset_round_budget`, because the
+    human message that refills the budget is precisely the event that lets the remainder run.
     """
 
     id: str
@@ -156,6 +174,7 @@ class Room:
     paused: bool = False
     rounds_used: int = 0
     round_budget: int = 0
+    pending_queue: list[str] = field(default_factory=list)
     members: list[RoomMember] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -211,6 +230,7 @@ class Room:
             paused=bool(data.get("paused", False)),
             rounds_used=max(0, int(data.get("rounds_used", 0) or 0)),
             round_budget=max(0, int(data.get("round_budget", 0) or 0)),
+            pending_queue=[str(n) for n in (data.get("pending_queue") or []) if str(n)],
             members=members,
         )
 
@@ -521,6 +541,161 @@ def members_for_turn(room_id: str) -> list[RoomMember]:
     listing surface does.
     """
     return require_room(room_id).members
+
+
+# ── the round budget ───────────────────────────────────────────────────────
+
+
+def _require_indexed_room(rooms: list[Room], room_id: str) -> Room:
+    """The room *room_id* inside an already-read index, or ``room_not_found``.
+
+    The three budget writers below all need the room AND the list it came from — mutating a
+    record read through :func:`require_room` would change an object no longer connected to
+    anything writable, and the write would silently do nothing.
+    """
+    room = next((r for r in rooms if r.id == room_id), None)
+    if room is None:
+        raise RoomError("room_not_found", f"No room with id {room_id!r}.")
+    return room
+
+
+def reset_round_budget(room_id: str) -> Room:
+    """Zero ``rounds_used`` and clear ``paused``. **Any** human message calls this.
+
+    The human's attention is what the budget is measuring the absence of, so their arriving
+    message is the thing that refills it — there is no separate resume action to forget to
+    press, and a paused room therefore cannot become permanently stuck.
+
+    **``pending_queue`` is deliberately left alone.** It is the queue's remainder, not budget
+    state: clearing it here would make every human message silently cancel the turns their
+    room still owed, which is the "resume restarts the conversation" bug this field exists to
+    prevent. :func:`take_pending` is the only reader, and it is the one that empties it.
+
+    Idempotent, and it avoids the write when there is nothing to reset: the common case is a
+    human talking to a room that never came near its ceiling, and rewriting every room record
+    on every message would make the index churn proportional to conversation length rather
+    than to state change.
+    """
+    rooms = _read_index_strict()
+    room = _require_indexed_room(rooms, room_id)
+    if room.rounds_used or room.paused:
+        room.rounds_used = 0
+        room.paused = False
+        _write_index(rooms)
+        logger.info("rooms: a human message reset room %s's budget and cleared its pause", room_id)
+    return room
+
+
+def charge_round(room_id: str) -> Room:
+    """Charge one agent turn against the room's budget and persist it. Returns the room.
+
+    **Persisted, not counted in memory** — an in-memory counter would make restarting the
+    gateway the cheapest way to run a room forever, which is precisely the bound this field
+    exists to hold.
+
+    The caller charges BEFORE running the turn, deliberately. A member whose provider dies
+    still spent its round: charging afterwards would let a member that fails every time drain
+    the queue indefinitely without the counter ever reaching the ceiling, so the failure mode
+    that most needs a bound would be the one without one.
+    """
+    rooms = _read_index_strict()
+    room = _require_indexed_room(rooms, room_id)
+    room.rounds_used += 1
+    _write_index(rooms)
+    return room
+
+
+def pause_room(room_id: str, pending: Sequence[str] = ()) -> Room:
+    """Set ``paused`` and park *pending* — the queue's remainder. Idempotent.
+
+    Distinct from :func:`archive_room`: an archived room is finished and refuses messages,
+    while a paused one is mid-deliberation and is waiting for its human. The room still
+    accepts a message — accepting one is how it resumes.
+
+    *pending* is the speaker queue as it stood when the ceiling was reached, stored so the
+    members still owed a turn take it after the human replies. Parking it is what makes the
+    pause a **suspension**: without it the remainder dies with the round's call frame and the
+    resume would silently be a fresh conversation that happens to reuse the same room.
+
+    The remainder is written even when the room is already paused, because a second round that
+    also reaches the ceiling is carrying its own un-spoken members, and dropping them on the
+    grounds that the flag was already set would lose exactly the queue this argument exists to
+    keep. Names are appended rather than replaced, and de-duplicated, so two rounds pausing
+    over one room owe each member one turn rather than two.
+    """
+    rooms = _read_index_strict()
+    room = _require_indexed_room(rooms, room_id)
+    carried = list(room.pending_queue)
+    for name in pending:
+        if name not in carried:
+            carried.append(name)
+    if not room.paused or carried != room.pending_queue:
+        room.paused = True
+        room.pending_queue = carried
+        _write_index(rooms)
+        logger.info(
+            "rooms: paused room %s at %d agent rounds, %d member(s) still queued",
+            room_id,
+            room.rounds_used,
+            len(carried),
+        )
+    return room
+
+
+def set_round_budget(room_id: str, budget: int) -> Room:
+    """Set this room's OWN round budget, or 0 to go back to inheriting the configured one.
+
+    The write path for ``Room.round_budget``. It exists because the field was readable long
+    before it was settable: :func:`effective_round_budget` consumed it and the HTTP surface
+    published it, so a client could see a value it had no way to change — which reads as
+    "this is per-room configurable" while being false. Either the field gets a writer or it
+    comes off the wire; a per-room budget is genuinely useful (a standing research room and a
+    quick two-agent debate want different ceilings), so it gets a writer.
+
+    Range refused rather than clamped, and deliberately the SAME range the config key takes
+    (``rooms.round_budget`` is ``min 1, max 100`` in ``_EDITABLE_CONFIG``), plus 0 for
+    inherit. A control whose bounds disagree with the save path's is an offer the save path
+    refuses, and clamping silently would store a ceiling its author did not choose.
+    """
+    if isinstance(budget, bool) or not isinstance(budget, int):
+        raise RoomError(
+            "room_round_budget_invalid",
+            "round_budget must be a whole number of exchanges.",
+        )
+    if budget < 0 or budget > MAX_ROOM_ROUND_BUDGET:
+        raise RoomError(
+            "room_round_budget_invalid",
+            f"round_budget must be 0 (inherit the configured default) or 1-"
+            f"{MAX_ROOM_ROUND_BUDGET}.",
+        )
+    rooms = _read_index_strict()
+    room = _require_indexed_room(rooms, room_id)
+    if room.archived:
+        raise RoomError("room_archived", f"Room {room_id!r} is archived.")
+    if room.round_budget != budget:
+        room.round_budget = budget
+        _write_index(rooms)
+        logger.info("rooms: room %s round budget set to %d (0 = inherit)", room_id, budget)
+    return room
+
+
+def take_pending(room_id: str) -> list[str]:
+    """Read AND clear the parked speaker queue. The only reader of ``pending_queue``.
+
+    Read-and-clear in one indexed write, because the alternative — read here, clear later —
+    lets two concurrent rounds over one room both inherit the same remainder and give every
+    parked member two turns. Draining it makes the carry-over a once-only debt: whoever starts
+    the next round owes those turns, and a round that then pauses parks its own remainder
+    again through :func:`pause_room`.
+    """
+    rooms = _read_index_strict()
+    room = _require_indexed_room(rooms, room_id)
+    parked = list(room.pending_queue)
+    if parked:
+        room.pending_queue = []
+        _write_index(rooms)
+        logger.info("rooms: room %s resumes owing %d queued turn(s)", room_id, len(parked))
+    return parked
 
 
 # ── the shared transcript ──────────────────────────────────────────────────

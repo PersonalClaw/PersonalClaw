@@ -48,6 +48,10 @@ from personalclaw.dashboard.state import (
 from personalclaw.http_errors import json_error
 from personalclaw.loop import files as loop_files
 from personalclaw.request_validation import json_object_body
+
+# The `room:` session-key prefix, imported rather than spelled out: the filter below and the
+# key the room turn path mints must be the same string, and a literal here could drift from it.
+from personalclaw.rooms.turn import SESSION_KEY_PREFIX as ROOM_SESSION_PREFIX
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.validation import _AGENT_NAME_RE
@@ -637,6 +641,21 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
     seen: set[str] = set()
     # In-memory first — these are live and authoritative.
     for s in state._sessions.values():
+        # A ROOM MEMBER'S OWN PROVIDER SESSION IS NOT A CHAT. Each member of an Agent Room
+        # holds a real session keyed `room:<room>:<member>` (AGENT-ROOMS C2), and that prefix
+        # is deliberately absent from every worker-origin tuple — which means `_origin_of`
+        # classifies it `manual` and it would surface here as though the USER had opened it,
+        # titled by its key, one row per member. That is the room's attribution property
+        # inverted: a member's conversation reading as the human's. The disk branch below
+        # already skips worker namespaces on the same reasoning; this is the in-memory half,
+        # which had no filter at all.
+        #
+        # Filtered rather than tagged `origin="room"`: a room is not N chats, it is ONE room,
+        # and it has its own surface (`#/chat/room/<id>`) reading `/api/rooms`. Publishing the
+        # members as rows would be a second, wrong answer to "what rooms do I have".
+        if s.key.startswith(ROOM_SESSION_PREFIX):
+            seen.add(s.key)
+            continue
         # Restricted (incognito/temporary) sessions never surface in the list —
         # the disk-merge branch below filters them; live ones must match.
         if getattr(s, "memory_mode", "persistent") in ("incognito", "temporary"):

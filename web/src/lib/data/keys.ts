@@ -91,6 +91,12 @@ export const CACHE_NAMESPACES: Record<string, NamespacePolicy> = {
   'prompt-snippets': COLLECTION,
   prompts: COLLECTION,
   projects: COLLECTION,
+  /** Agent Rooms — the room list and one room's transcript + member state. LIVE, and not
+   *  COLLECTION, because a room's contents change behind the app's back by design: a human
+   *  message starts a background round and each member's reply lands on the transcript
+   *  seconds later with nothing in this tab having written it. A 30-second-fresh room would
+   *  present a deliberation that has already moved on as current. */
+  rooms: LIVE,
   settings: CONFIG,
   skill: COLLECTION,
   'skill-proposals': COLLECTION,

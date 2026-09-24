@@ -4,7 +4,13 @@ import { notify } from '../../app/appSdk'
 import { useAgentCatalog, ensureBindableAgentName } from '../../lib/agents'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { reportingWrite } from '../../app/reportingWrite'
-import { PanelHeader, Section, RowGroup, Row, Field, Toggle, SegPills, SavedToast } from './settingsUI'
+import { PanelHeader, Section, RowGroup, Row, Field, Toggle, SegPills, SavedToast, ToggleRow,
+  // Aliased: this file already declares a LOCAL `NumberRow` on the other settings-row
+  // contract (`{value, onCommit}`, flash owned by the panel). settingsUI's is the
+  // `cfg`/`field`/`patch` one, which is what a plain config key wants. Both shapes are
+  // shipped and the choice between them is an open question the family records; this
+  // section takes the by-key one because that is all a `rooms.*` knob needs.
+  NumberRow as ConfigNumberRow } from './settingsUI'
 import { Combobox } from '../../ui/Combobox'
 import { NumberField } from '../../ui/forms'
 import { Button } from '../../ui/Button'
@@ -30,6 +36,7 @@ export function ChatPanel() {
   const [resilience, setResilience] = useState<Record<string, unknown> | null>(null)
   const [checkpoints, setCheckpoints] = useState<Record<string, unknown> | null>(null)
   const [tools, setTools] = useState<Record<string, unknown> | null>(null)
+  const [rooms, setRooms] = useState<Record<string, unknown> | null>(null)
   const { options: agentOptions, discovered } = useAgentCatalog()
 
   // Stale-while-revalidate + persist: paint instantly on revisit/reload from a
@@ -54,6 +61,7 @@ export function ChatPanel() {
       resilience: (plaw.resilience ?? {}) as Record<string, unknown>,
       checkpoints: (plaw.checkpoints ?? {}) as Record<string, unknown>,
       tools: (plaw.tools ?? {}) as Record<string, unknown>,
+      rooms: (plaw.rooms ?? {}) as Record<string, unknown>,
     }
   }, { persist: true })
 
@@ -61,13 +69,14 @@ export function ChatPanel() {
     if (data) {
       setCfg(data.cfg); setSession(data.session); setRouting(data.routing)
       setResilience(data.resilience); setCheckpoints(data.checkpoints); setTools(data.tools)
+      setRooms(data.rooms)
     }
   }, [data])
 
   // Error BEFORE the skeleton, or it is unreachable: `data` is undefined for the loading, failed AND
   // empty cases. Same one-line shape `AgentDefaultsPanel` ships for the same endpoint.
   if (!data && loadErr) return <LoadError what="settings" error={loadErr} onRetry={refresh} />
-  if (!data || !cfg || !session || !routing || !resilience || !checkpoints || !tools) return <FormSkeleton sections={3} what="settings" />
+  if (!data || !cfg || !session || !routing || !resilience || !checkpoints || !tools || !rooms) return <FormSkeleton sections={3} what="settings" />
 
   return (
     <div>
@@ -80,6 +89,7 @@ export function ChatPanel() {
       <LifecycleSection session={session} setSession={setSession} agentOptions={agentOptions} discovered={discovered} />
       <BackgroundCompressionSection tools={tools} setTools={setTools} />
       <CheckpointsSection checkpoints={checkpoints} setCheckpoints={setCheckpoints} />
+      <RoomsSection rooms={rooms} setRooms={setRooms} />
       <StartersSection />
     </div>
   )
@@ -173,6 +183,56 @@ function MidTurnSection({ resilience, setResilience }: {
             agents (ACP) don't expose a mid-turn seam yet, so a message there queues
             instead — either way it appears above the composer, never dropped.
           </p>
+        )}
+      </RowGroup>
+    </Section>
+  )
+}
+
+// ── Agent Rooms (personalclaw config: rooms.*) ───────────────────────────────
+/** The three `rooms.*` knobs, and the switch that makes the feature exist at all.
+ *
+ *  🔑 THIS SECTION CLOSES AN INERT SURFACE. All three keys completed their config round-trip
+ *  when the room store shipped — dataclass, `_meta`, `load()`, `to_dict()` and the
+ *  `_EDITABLE_CONFIG` PATCH allowlist — and had NO control anywhere in `web/src`. So the
+ *  feature was off by default and there was no way to turn it on short of hand-editing
+ *  `config.json`, which is the shape of a shipped-but-unreachable setting.
+ *
+ *  It lives in Chat settings rather than its own panel because a room IS a chat surface: it is
+ *  reached from the chat page's Rooms scope, and a separate settings route would put the switch
+ *  somewhere a user looking for "how do I get my agents to talk to each other" would not look.
+ *
+ *  `round_budget` here is the INSTALL-wide default. A room may override it for itself, and that
+ *  control lives on the room (its Members panel) — two controls because they are two different
+ *  facts, and the room's own copy says which one it is using.
+ */
+function RoomsSection({ rooms, setRooms }: {
+  rooms: Record<string, unknown>; setRooms: (r: Record<string, unknown>) => void
+}) {
+  const on = Boolean(rooms.enabled)
+  const patch = (key: string, value: unknown, done?: () => void, label?: string) => {
+    const prev = rooms[key]
+    setRooms({ ...rooms, [key]: value })
+    api.patchConfig(`rooms.${key}`, value).then(() => done?.()).catch((e) => {
+      setRooms({ ...rooms, [key]: prev })
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+  return (
+    <Section title="Agent Rooms" hint="A standing conversation where several of your agents deliberate with you refereeing — each with its own role, its own provider session and its own tool reach.">
+      <RowGroup>
+        <ToggleRow label="Agent Rooms" cfg={rooms} field="enabled" patch={patch}
+          hint="Off by default. While off, every room route refuses — including reading a room you already made, which stays on disk untouched." />
+        {/* The two numbers only mean anything once the feature is on, so they appear with it
+            rather than sitting greyed out. A disabled stepper for a feature you have not enabled
+            is a control that owes an explanation nobody reads. */}
+        {on && (
+          <>
+            <ConfigNumberRow label="Round budget" cfg={rooms} field="round_budget" min={1} max={100} patch={patch}
+              hint="How many turns the members may take among themselves before a room pauses and asks you. Your reply resets it and lets any parked turns run. A room can override this for itself." />
+            <ConfigNumberRow label="Members per room" cfg={rooms} field="max_members" min={1} max={32} patch={patch}
+              hint="The ceiling on how many agents one room may hold. Each member holds its own provider session, so this is also a ceiling on how much one message can cost." />
+          </>
         )}
       </RowGroup>
     </Section>
