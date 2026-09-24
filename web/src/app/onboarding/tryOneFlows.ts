@@ -100,6 +100,53 @@ export function failureText(e: unknown): string {
   return s || 'The call failed without a message.'
 }
 
+/** One requirement the BACKEND already diagnosed, read off the error envelope.
+ *
+ *  Mirrors `Finding` in `workflows/preflight.py`. `remediation` is separate from `message`
+ *  there for the reason this file must respect: the message says what is wrong, the
+ *  remediation says what to do, and the client's job is to render both — not to re-derive
+ *  the second from the first. */
+export interface BackendFinding {
+  code: string
+  message: string
+  remediation: string
+  kind: string
+  severity: string
+}
+
+/** The findings a failed run-start already came with, or `[]`.
+ *
+ *  `ApiError` carries `.code` and `.detail` precisely so a route that answers with more than
+ *  a sentence is not flattened one line before its only reader (`lib/api.ts`). A run-start
+ *  refusal answers **422** `{"error": {"code": "preflight_failed", "detail": {"preflight":
+ *  {"findings": [...]}}}}` — measured on a no-provider gateway:
+ *
+ *      {"code": "WF_PRE_MODEL_UNRESOLVED",
+ *       "message": "no model resolves for the 'orchestration' use case",
+ *       "remediation": "select a model for orchestration in Settings → Models, or change the
+ *                       node's model_tier",
+ *       "severity": "error", "kind": "models"}
+ *
+ *  Every field of that was being discarded, and the client then re-diagnosed the same failure
+ *  from the prose — which is how an install with NO provider was told its provider's key or
+ *  plan was at fault. */
+export function backendFindings(e: unknown): BackendFinding[] {
+  const detail = (e as { detail?: unknown } | null)?.detail
+  const raw = (detail as { preflight?: { findings?: unknown } } | null)?.preflight?.findings
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((f) => {
+    const o = f as Partial<BackendFinding> | null
+    if (!o || typeof o.code !== 'string') return []
+    return [{
+      code: o.code,
+      message: String(o.message ?? ''),
+      remediation: String(o.remediation ?? ''),
+      kind: String(o.kind ?? ''),
+      severity: String(o.severity ?? 'error'),
+    }]
+  })
+}
+
 /** Does this failure look like the provider refusing a real call?
  *
  *  This is the state the atom names: the essentials step's Test passed, so the
@@ -111,17 +158,42 @@ export function failureText(e: unknown): string {
  *  Matching is on the SERVER's words plus the HTTP status. It is deliberately
  *  generous: pointing at provider settings when the truth was something else costs
  *  a wasted click, while missing the provider case leaves someone stuck on a first
- *  run with a working-looking key. */
+ *  run with a working-looking key.
+ *
+ *  🔴 IT MUST NOT MATCH THE ABSENCE OF A PROVIDER, and it used to. Three markers here —
+ *  `\bno provider\b`, `\bno (chat )?model\b` and `\bcould not resolve\b` — describe a home
+ *  with nothing configured, not a configured provider that said no, and they matched the
+ *  backend's own *"no model resolves for the 'orchestration' use case"*. So on a FRESH
+ *  INSTALL with no provider at all, the card said *"The provider passed its test and then
+ *  refused this call — its key or plan is what to check"*: there was no test, there is no
+ *  key, and the user was sent to debug a billing plan for an account they never made. They
+ *  now live in `UNCONFIGURED_MARKERS` below, which is a different answer, not a softer one. */
 const PROVIDER_MARKERS = [
   /\bunauthor/i, /\bforbidden\b/i, /\bauthenticat/i, /\bcredential/i,
   /\bapi[ _-]?key\b/i, /\btoken\b.*\b(invalid|expired|revoked)\b/i,
-  /\bno provider\b/i, /\bprovider\b.*\b(not|fail|refus|unavailable|error)/i,
+  /\bprovider\b.*\b(not|fail|refus|unavailable|error)/i,
   /\bquota\b/i, /\brate limit/i, /\bbilling\b/i, /\binsufficient\b/i,
   // "does not exist or you do not have access to it" is the single most common real one, and it
   // is the reason this list is written from forwarded provider sentences rather than invented.
   /\bmodel\b.*\b(not found|not available|does not exist|unknown|unsupported|no access|access to)\b/i,
-  /\bcould not resolve\b/i, /\bno (chat )?model\b/i,
 ]
+
+/** Does this failure say there is NOTHING to refuse yet?
+ *
+ *  A distinct class, not a weaker provider failure: no credential is involved, so every
+ *  sentence about keys, quotas and plans is false here, and the act that fixes it is setting
+ *  a model up rather than checking one. Only reached when the backend sent no structured
+ *  finding (`backendFindings`) — this is the prose fallback for the surfaces that raise
+ *  `ERR_MODEL_UNRESOLVED` as rendered text rather than as an envelope. */
+const UNCONFIGURED_MARKERS = [
+  /\bno provider\b/i, /\bno (chat )?model\b/i, /\bcould not resolve\b/i,
+  /\bERR_MODEL_UNRESOLVED\b/, /\bno model resolves\b/i,
+]
+
+export function isUnconfigured(message: string): boolean {
+  const flat = message.replace(/[_]+/g, ' ')
+  return UNCONFIGURED_MARKERS.some((re) => re.test(message) || re.test(flat))
+}
 
 export function isProviderFailure(message: string, status?: number): boolean {
   if (status === 401 || status === 402 || status === 403) return true
@@ -145,19 +217,63 @@ export interface SettingsTarget {
   because: string
 }
 
-export function settingsTargetFor(message: string, status?: number): SettingsTarget {
-  if (isProviderFailure(message, status)) {
+/** Where a failed card sends the user, decided from the THROWN error rather than from its
+ *  sentence alone.
+ *
+ *  **The backend's own diagnosis wins.** When the refusal carried a structured finding, its
+ *  `remediation` is the reason shown, verbatim — `lib/api.ts` states the rule this follows
+ *  ("Match on the code, NEVER on `.message`: the message is human copy that gets reworded,
+ *  the code is the registry key"), and a run-start refusal carries exactly such a code. The
+ *  prose classifiers below are the fallback for a failure that came with nothing but a
+ *  sentence: a provider's own forwarded 401 text has no envelope to read.
+ *
+ *  Three destinations, all real `SUBPAGES` ids in `pages/settings/SettingsPage.tsx`, because
+ *  an unknown sub-segment renders the bento home — a link that looks like it works and
+ *  answers nothing. */
+export function settingsTargetFor(e: unknown): SettingsTarget {
+  const message = failureText(e)
+  const status = (e as { status?: number } | null)?.status
+
+  // 1. The backend already said what is missing and what to do about it.
+  const models = backendFindings(e).find((f) => f.kind === 'models' || f.code.includes('MODEL'))
+  if (models) {
     return {
-      path: 'settings/providers',
-      label: 'Open model provider settings',
-      because: 'The provider passed its test and then refused this call — its key or plan is what to check.',
+      path: 'settings/models',
+      label: 'Open Settings → Models',
+      // The server's remediation, not a paraphrase of it — and never a sentence about a key,
+      // because a missing model is not a refused credential.
+      because: models.remediation || 'No model is set up yet, so nothing can run this.',
     }
   }
+  const other = backendFindings(e).find((f) => f.severity === 'error' && f.remediation)
+  if (other) {
+    return { path: 'settings/doctor', label: 'Open Settings → Doctor', because: other.remediation }
+  }
+
+  // 2. A machine-readable refusal status means a provider exists and said no.
+  if (status === 401 || status === 402 || status === 403) return PROVIDER_TARGET
+
+  // 3. Prose. Absence is asked FIRST: a provider that is not there cannot have refused, and
+  //    getting that order wrong is the defect (see `PROVIDER_MARKERS`).
+  if (isUnconfigured(message)) {
+    return {
+      path: 'settings/models',
+      label: 'Open Settings → Models',
+      because: 'No model is set up yet — this needs one before it can run.',
+    }
+  }
+  if (isProviderFailure(message, status)) return PROVIDER_TARGET
   return {
     path: 'settings/doctor',
     label: 'Open Settings → Doctor',
     because: 'Doctor checks the parts of your install this call depends on.',
   }
+}
+
+const PROVIDER_TARGET: SettingsTarget = {
+  path: 'settings/providers',
+  label: 'Open model provider settings',
+  because: 'The provider passed its test and then refused this call — its key or plan is what to check.',
 }
 
 /** `next_run_ts` is unix SECONDS (`triggers/schedule_view.py`), not millis. */

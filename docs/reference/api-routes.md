@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **848 registrations** over **689 distinct paths** — 841 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **849 registrations** over **690 distinct paths** — 842 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -54,11 +54,11 @@ The 127 families the surface divides into, largest first.
 | `/api/lexicon` | 9 | 6 |
 | `/api/agent-marketplace` | 8 | 5 |
 | `/api/channels` | 8 | 8 |
+| `/api/onboarding` | 8 | 7 |
 | `/api/rooms` | 8 | 7 |
 | `/api/security` | 8 | 8 |
 | `/api/auth` | 7 | 7 |
 | `/api/browse` | 7 | 5 |
-| `/api/onboarding` | 7 | 6 |
 | `/api/config` | 6 | 3 |
 | `/api/doc-comments` | 6 | 3 |
 | `/api/legibility` | 6 | 4 |
@@ -154,7 +154,7 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 841 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 842 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -728,6 +728,7 @@ The 841 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/onboarding/local-model` | is a local Ollama reachable on localhost? |
 | `POST` | `/api/onboarding/local-model/bind` | credential-free bind of an endpoint. |
 | `POST` | `/api/onboarding/local-model/scan` | opt-in LAN sweep for an Ollama. |
+| `GET` | `/api/onboarding/model-check` | did a chat provider actually build? |
 | `POST` | `/api/onboarding/state` | Record first-run progress — a partial merge into the onboarding entity state. |
 | `POST` | `/api/optimizer/optimize` | rewrite a prompt using session context. |
 | `GET` | `/api/outbox` | list files in the outbox. |

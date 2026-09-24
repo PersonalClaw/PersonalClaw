@@ -98,9 +98,10 @@ export function TryOneStep({ onProgress, onDone, onSkip, onExitTo }: {
       // card never has to read back and echo its siblings to avoid clobbering them.
       onProgress({ first_success: { [id]: true } })
     } catch (e) {
-      const message = failureText(e)
-      const status = (e as { status?: number } | null)?.status
-      setStates((m) => ({ ...m, [id]: { phase: 'failed', message, target: settingsTargetFor(message, status) } }))
+      // The whole error goes to the classifier, not just its sentence: a run-start refusal
+      // carries the backend's own structured remediation in `ApiError.detail`, and reducing it
+      // to prose here is what made a no-provider install read as a credential problem.
+      setStates((m) => ({ ...m, [id]: { phase: 'failed', message: failureText(e), target: settingsTargetFor(e) } }))
     }
   }, [onProgress])
 
