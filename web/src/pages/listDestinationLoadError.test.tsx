@@ -85,14 +85,19 @@ describe('#/inbox distinguishes a failed read from an empty queue', () => {
     const alert = await waitFor(() => screen.getByRole('alert'))
     expect(alert.textContent, 'names what failed').toMatch(/inbox/i)
     expect(screen.getByRole('button', { name: /Retry/ })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Inbox zero' }), 'not the caught-up claim').toBeNull()
+    expect(screen.queryByRole('heading', { name: /Inbox zero|Nothing has arrived yet/ }),
+      'neither blank-slate claim — a failed read knows nothing about the queue').toBeNull()
   })
 
-  it('still shows "Inbox zero" when the queue really is empty', async () => {
+  it('still shows its blank slate when the queue really is empty', async () => {
+    // The heading is 'Nothing has arrived yet' rather than 'Inbox zero' because this fixture is a
+    // never-used inbox (`inbox: () => []`): "Inbox zero" is reserved for a queue the user CLEARED,
+    // which `inboxBlankSlateTruth.test.tsx` owns. The property here is the one this file is about —
+    // an empty queue renders a blank slate and NOT an error — so it reads the heading it gets.
     mockApi({})
     const { InboxPage } = await import('./inbox/InboxPage')
     render(<InboxPage query={q} setQuery={setQuery} navigate={nav} />)
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Inbox zero' })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Nothing has arrived yet' })).toBeInTheDocument())
     expect(screen.queryByRole('alert'), 'an empty queue is not an error').toBeNull()
   })
 })

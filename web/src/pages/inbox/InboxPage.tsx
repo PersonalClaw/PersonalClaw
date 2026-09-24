@@ -220,7 +220,29 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
   }, [status, items])
 
   const health = status?.health
-  const disabled = status ? !status.enabled : false
+  /** Nothing has ever landed here. Read off `items` — the list this branch already has — NOT off
+   *  `status.enabled`, which is a different fact entirely.
+   *
+   *  🔴 `!status.enabled` DOES NOT MEAN "the inbox is not connected". `handlers_inbox.py` publishes
+   *  `enabled` for the POLL providers only and says so at the site ("the native source is ALWAYS
+   *  active (push-based agent→inbox sink); the poll-based providers run only when
+   *  cfg.inbox.enabled"), which is why the same payload carries `native_source_active: true`
+   *  unconditionally and why the banner sixty lines below renders "Native source active — agents
+   *  post here directly" off it. Measured on a fresh container (`/api/inbox/status` → `{"enabled":
+   *  false, "native_source_active": true}`): the blank slate read `enabled` and headlined **"Inbox
+   *  is not connected yet — Enable a source to begin"** one inch under that banner, and the header's
+   *  own "Capture a note" then delivered an item into the inbox it had just called unconnected. The
+   *  page received the truth and rendered its opposite; nothing 4xx'd.
+   *
+   *  So the axis was wrong, not the flag. What a never-used inbox and a cleared one actually differ
+   *  on is whether anything ever arrived, and `items` answers that from a read: we are inside
+   *  `filtered.length === 0`, a failed items read renders `LoadError` before this branch, and a user
+   *  who handled everything keeps `items.length > 0` and is genuinely at inbox zero. Unlike
+   *  `status`, it has no unknown state here — the gap the sibling rail recorded and left open. */
+  const neverReceived = (items?.length ?? 0) === 0
+  /** Whether an external POLL source is collecting. Only the CTA reads it, and only as an offer:
+   *  "connect a source" is useful on an inbox nothing has reached, and wrong once one is connected. */
+  const pollConnected = !!status?.enabled
   // This surface's own definition of "the user has narrowed": a query, a status filter off its
   // default (`open` — NOT `all`, which is the trap the results-announcement rail records), or a kind
   // chip. Shared by the empty state's title AND hint so the two can never disagree about which state
@@ -531,25 +553,32 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
           // different …"; this is the twelfth.
           // 🔑 AND THE TITLE HAD THE SAME BUG THE HINT WAS FIXED FOR, ON THE OTHER AXIS. The comment
           // above records making the hint branch on `narrowed` before `disabled`. But the title only
-          // ever branched on `narrowed` — so a brand-new user, on a fresh install with no source
-          // enabled, was congratulated with **"Inbox zero"** above a hint reading "Enable a source to
-          // begin." The headline said "you are done"; the body said "you have not started".
+          // ever branched on `narrowed` — so a brand-new user, on a fresh install, was congratulated
+          // with **"Inbox zero"** above a hint reading "Enable a source to begin." The headline said
+          // "you are done"; the body said "you have not started". Both halves now read one flag, in
+          // one order, which is the invariant this file states for the hint.
           //
-          // That is not a status line a user shrugs at. "Inbox zero" is a claim about their own
-          // triage state, and on the very first visit to a nav-rail surface it is simply false —
-          // there is no zero to be at, because nothing has ever been connected.
+          // 🔴 THAT FIX THEN NAMED THE WRONG FLAG, AND THE REPLACEMENT SENTENCE WAS FALSE. It read
+          // `disabled = !status.enabled` as "no source is connected" and headlined "Inbox is not
+          // connected yet — Enable a source to begin". `enabled` is the POLL half only; the native
+          // agent→inbox sink is always live, the payload says so in `native_source_active`, and the
+          // banner sixty lines above renders that very sentence. Measured on a fresh container: the
+          // blank slate called the inbox unconnected directly beneath "Native source active — agents
+          // post here directly", and the header's own "Capture a note" then landed an item in it. See
+          // `neverReceived` for the full measurement.
           //
-          // The invariant this file already states for the hint is exactly the one the title was
-          // missing: the two must never disagree about which state the list is in. Both now branch on
-          // the same two flags, in the same order.
+          // So the flag is `neverReceived`, off `items`: nothing ever arrived vs. you cleared what
+          // did. Both are TRUE sentences, and neither contradicts the banner.
           // 🪤 "Enable a source to begin" was prose with nothing to click, so the ONE actionable state
           // was the only one with no action — the user had to already know Settings › Inbox exists.
           // `navigate` is in scope (this component's props) and `settings/inbox` is a real section id
           // (`settings/SettingsPage.tsx`), so this was a wiring omission, not anything structural.
           //
-          // The action is on the `disabled && !narrowed` branch ONLY. "Inbox zero" and a no-match
-          // filter are both states with nothing for the user to do, and a CTA there would invent a
-          // task out of good news — which is exactly what `emptyStateRollout`'s taxonomy forbids.
+          // The action is an OFFER on one branch — nothing has arrived AND no poll source is
+          // collecting. "Inbox zero" and a no-match filter are both states with nothing for the user
+          // to do, and a CTA there would invent a task out of good news, which is what
+          // `emptyStateRollout`'s taxonomy forbids. `pollConnected` is what keeps it off an inbox
+          // that already has a source and simply has not heard anything.
           //
           // 🪤 The icon is `SettingsIcon` (already imported) and NOT `Plug`, even though Plug reads
           // more like "connect": this product already assigns `Plug` to the **Providers** settings
@@ -563,14 +592,14 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
           // Widening the rail was the wrong instrument: the window is a fair proxy for "this tag must
           // not sprawl", so the prose belongs here and the tag stays readable.
           <EmptyState icon={InboxIcon}
-            title={narrowed ? 'Nothing here' : disabled ? 'Inbox is not connected yet' : 'Inbox zero'}
+            title={narrowed ? 'Nothing here' : neverReceived ? 'Nothing has arrived yet' : 'Inbox zero'}
             hint={narrowed
               ? (kind ? `No ${kindMeta(kind).label.toLowerCase()} matches the current search or filter.` : 'Try a different search or filter.')
-              : disabled
-                ? 'Inbox collects messages, questions, and notifications from your agents and connected sources (filesystem and Slack; email coming). Enable a source to begin.'
+              : neverReceived
+                ? 'Messages, questions and notifications from your agents land here for triage — they post directly, so nothing needs connecting first. Add a filesystem or Slack source to collect from outside too.'
                 : 'Messages your agents and connected sources surface for triage land here. You’re all caught up.'}
-            action={disabled && !narrowed
-              ? { label: 'Connect a source', onClick: () => navigate('settings/inbox'), icon: SettingsIcon }
+            action={neverReceived && !narrowed && !pollConnected
+              ? { label: 'Add a message source', onClick: () => navigate('settings/inbox'), icon: SettingsIcon }
               : undefined} />
         ) : (
           // DSC-13: uncapped client-side — `filtered` is a pure filter over everything
