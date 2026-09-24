@@ -29,6 +29,7 @@ siblings by string. Adding a new section? Put it in the matching sibling (or a n
 in ``load()`` here; ``tests/test_config_section_modules.py`` checks that seam.
 """
 
+import copy
 import json
 import logging
 import os
@@ -3123,6 +3124,104 @@ def merge_unmodeled_top_keys(doc: dict[str, Any], existing: dict[str, Any]) -> d
     return merged
 
 
+#: What a DISCARDED ``config.json`` resolves to, overriding the dataclass defaults — the
+#: fail-CLOSED half of :meth:`AppConfig.load_with_migration_state`'s contract, as dotted paths.
+#:
+#: The dataclass defaults answer "what does a user who has never chosen want?", and every one of
+#: them is right for a first run. They are the WRONG answer to "the user HAS chosen and we cannot
+#: read the choice", because three of them are *less safe than the narrowest value the field can
+#: hold* — so a truncated file re-widened a posture the operator had deliberately narrowed
+#: (#3424). A read that failed is not consent.
+#:
+#: MEMBERSHIP RULE, so this does not grow by vibe: an entry belongs here when the field is a
+#: security control (it governs whether an action is permitted) AND its restrictive value is
+#: *expressible*. The second half is what keeps the table short and honest:
+#:
+#: * ``guardrails.budgets.max_tokens_per_*`` and ``sandbox.max_pids`` / ``max_rss_mb`` default to
+#:   ``0``, which means *unlimited* — so a discard does drop an operator's ceiling. There is no
+#:   restrictive number to substitute, and inventing one would put a bound the user never chose
+#:   in front of them as if it were stored (the same reason ``INBOX_ON_DISCARDED_READ`` declines
+#:   to invent a ``retention_days``).
+#: * ``security.denied_commands`` and ``security.autonomy_denylist`` are DENYlists, so their
+#:   restrictive value is "everything", which a list cannot say. ``approval_mode`` below is what
+#:   covers them: with a human asked before every call, a lost denylist entry is visible rather
+#:   than silently waived.
+#:
+#: Fields whose default is ALREADY the restrictive value (``agent.yolo``, every
+#: ``external_access.*`` flag, ``security.egress.allow_private``, ``dashboard.trusted_proxies``)
+#: are deliberately absent: an entry that changes nothing is dead code.
+CONFIG_ON_DISCARDED_READ: dict[str, Any] = {
+    # Auto-approves EVERY tool call for a subagent's lifetime. `interactive` asks.
+    "agent.approval_mode": "interactive",
+    # An empty list is not an absence of configuration — it is how cwd overrides are DISABLED.
+    # `subagent.py`'s cwd guard says so in a comment, in an `except` arm that never ran.
+    "agent.subagent_cwd_allowed_roots": [],
+    # Read plainly (defaulting OFF) on the normal path so an upgrade does not start blocking
+    # existing unattended runs; that rationale is about a config we CAN read. An operator who
+    # turned it on asked for nothing unproven to run while nobody is watching, and a file we
+    # cannot parse must not answer that request with "never mind".
+    "agent.unattended_requires_verified_adapter": True,
+}
+
+
+@dataclass(frozen=True)
+class ConfigDiscard:
+    """A ``config.json`` that exists, could not be used, and was replaced in memory.
+
+    Exists so the substitution is not silent. Silence is how #3424 stayed invisible for as long
+    as it did: the loader logged at WARNING from a path that runs on every one of ~300 reads, and
+    nothing a user looks at said their settings were not in effect.
+    """
+
+    path: Path
+    reason: str
+
+
+#: The most recent discard, or ``None`` when the last read parsed. Process-local and deliberately
+#: mutable: `load()` is a pure read called constantly, so this is the only place the outcome of
+#: the *previous* read can be seen from. Reset on every successful parse, so a repaired file stops
+#: being reported.
+_LAST_CONFIG_DISCARD: "ConfigDiscard | None" = None
+
+
+def config_discard() -> "ConfigDiscard | None":
+    """The last discarded ``config.json`` read in this process, or ``None`` if it parsed.
+
+    ``personalclaw doctor`` renders this; see :data:`CONFIG_ON_DISCARDED_READ` for what the
+    discard resolved to. ``None`` also covers an ABSENT file — nothing was discarded there.
+    """
+    return _LAST_CONFIG_DISCARD
+
+
+def _record_config_discard(path: Path, reason: str) -> None:
+    """Remember and report a discard, reporting only when the state CHANGES.
+
+    Once per distinct outcome rather than once per read, for the reason
+    :func:`personalclaw.config.validation.validate_config_data_cached` already documents about the
+    line beside it in ``load_with_migration_state``: this sits on a path taken ~300 times per
+    session, and re-reporting there produced 1144 identical warnings in one browsing session.
+    """
+    global _LAST_CONFIG_DISCARD
+    state = ConfigDiscard(path=path, reason=reason)
+    if _LAST_CONFIG_DISCARD == state:
+        return
+    _LAST_CONFIG_DISCARD = state
+    logger.error(
+        "Failed to load config from %s: %s. The file is DISCARDED, not read as 'no "
+        "configuration': your stored settings are NOT in effect and these fields are held at "
+        "their most restrictive value until it is repaired or removed — %s. Nothing has been "
+        "written over the file; the original bytes are still there.",
+        path,
+        reason,
+        ", ".join(f"{key}={value!r}" for key, value in CONFIG_ON_DISCARDED_READ.items()),
+    )
+
+
+def _clear_config_discard() -> None:
+    global _LAST_CONFIG_DISCARD
+    _LAST_CONFIG_DISCARD = None
+
+
 @dataclass
 class AppConfig:
     agent: AgentConfig = field(
@@ -3350,6 +3449,33 @@ class AppConfig:
         return cls.load_with_migration_state()[0]
 
     @classmethod
+    def _defaults(cls) -> "AppConfig":
+        """The first-run config: every dataclass default, plus the one memory store."""
+        return cls(memory_stores={"default": MemoryStoreConfig()})
+
+    @classmethod
+    def _on_discarded_read(cls, path: Path, reason: str) -> "AppConfig":
+        """The defaults with :data:`CONFIG_ON_DISCARDED_READ` applied over them.
+
+        The fail-CLOSED resolution of a ``config.json`` that exists and cannot be used. Applied
+        by walking the declared table rather than by writing the three values into a branch, so
+        the doctrine and the behaviour cannot drift and `doctor` can render exactly what was
+        substituted.
+        """
+        cfg = cls._defaults()
+        _record_config_discard(path, reason)
+        for dotted, value in CONFIG_ON_DISCARDED_READ.items():
+            *sections, leaf = dotted.split(".")
+            target: Any = cfg
+            for section in sections:
+                target = getattr(target, section)
+            # Deep-copied, because the table is module-level: handing out its list would let any
+            # caller that mutates `subagent_cwd_allowed_roots` rewrite the fail-closed default
+            # for the rest of the process.
+            setattr(target, leaf, copy.deepcopy(value))
+        return cfg
+
+    @classmethod
     def load_with_migration_state(cls) -> tuple["AppConfig", bool]:
         """``load()``, plus whether the parsed config actually needed migrating.
 
@@ -3357,23 +3483,76 @@ class AppConfig:
         from an upgraded one. It cannot be re-derived by diffing the dump against the
         file: ``to_dict()`` emits every default, so a config that is perfectly current
         still differs from its own on-disk form.
+
+        THREE outcomes on the file itself, deliberately distinguishable — the same contract
+        ``providers/entity_routes._load_entity_settings`` acquired in #3411, applied here to
+        ``config.json``:
+
+        * **absent** (no file, or zero bytes) — first run. The dataclass defaults ARE the user's
+          intent, and this returns them unchanged.
+        * **parsed** — the stored document, migrated in memory.
+        * **discarded** (truncated, non-UTF-8, unreadable, or a payload that is not an object) —
+          nothing is known about what the user stored, so the defaults are *not* their intent.
+          Returns :meth:`_on_discarded_read`, which holds every field in
+          :data:`CONFIG_ON_DISCARDED_READ` at its most restrictive value.
+
+        It used to be two, with a discard collapsed into "absent", and that is what silently
+        WIDENED the security posture: a truncated file turned a stored ``interactive`` into
+        ``auto`` (auto-approving every tool call) and re-populated a
+        ``subagent_cwd_allowed_roots`` the operator had emptied to disable cwd overrides
+        (#3424). Worse, the guard written to prevent exactly that re-widening — ``subagent.py``'s
+        ``except`` arm — could never run, because this loader does not raise: it returns. A
+        protection that reads as present and is unreachable.
+
+        Unlike ``_load_entity_settings`` this DOES pick the fallback, rather than handing a
+        discard to ~300 call sites to resolve individually. The asymmetry is deliberate: there,
+        the safe answer is a property of what each caller does with it, and there are a handful
+        of callers; here the fields at stake are host-wide gates with one meaning, and a contract
+        every caller had to remember is a contract most of them would get wrong.
+
+        ``migrated`` is ``False`` on both non-parsing outcomes, which is what keeps the
+        substitute away from the writing boot path (``load_and_persist_migrations`` returns early
+        on ``False``). ``save()`` would refuse anyway — ``read_config_for_merge`` raises rather
+        than writing over a document whose unmodeled blocks it cannot preserve — so the
+        operator's bytes survive a discard twice over, and the file stays recoverable.
         """
         path = config_path()
         if not path.exists():
-            return cls(memory_stores={"default": MemoryStoreConfig()}), False
+            _clear_config_discard()
+            return cls._defaults(), False
 
         try:
-            raw = path.read_text()
+            raw = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            # `UnicodeDecodeError` is named because it was the third behaviour: `read_text()`
+            # carried no `encoding` and this `except` did not list it, so non-UTF-8 bytes
+            # ESCAPED the loader and raised out of `load()` — while `entity_routes` had already
+            # widened its own `except` to include it. The two loader families disagreed about
+            # the same input.
+            return cls._on_discarded_read(path, str(e)), False
+
+        if not raw.strip():
+            # Zero bytes (or only whitespace) is ABSENT, not unreadable — the same ruling
+            # `read_config_for_merge` already made for this file on the write side: a bare
+            # `touch` or a create that never got its bytes holds no stored choice to protect,
+            # and it is reachable on a FIRST RUN. Resolving it restrictively would make a new
+            # install ask permission for every read before the user had expressed a preference.
+            _clear_config_discard()
+            return cls._defaults(), False
+
+        try:
             data = json.loads(raw)
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning("Failed to load config from %s: %s", path, e)
-            return cls(memory_stores={"default": MemoryStoreConfig()}), False
+        except json.JSONDecodeError as e:
+            return cls._on_discarded_read(path, str(e)), False
 
         # Must be a dict to proceed
         if not isinstance(data, dict):
-            logger.warning("Config is not a JSON object, using defaults")
-            return cls(memory_stores={"default": MemoryStoreConfig()}), False
+            return (
+                cls._on_discarded_read(path, f"holds {type(data).__name__}, not a JSON object"),
+                False,
+            )
 
+        _clear_config_discard()
         # Validate against JSON Schema (advisory — never fatal). CACHED on the file's
         # content: `load()` is a pure read called from ~300 sites, so validating per call
         # re-ran jsonschema over the whole schema on the hot path AND re-logged every

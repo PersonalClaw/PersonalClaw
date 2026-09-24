@@ -1191,6 +1191,15 @@ class SubagentManager:
                 # disabled. Defaulting to the permissive default here would
                 # silently re-enable the feature for admins who set
                 # subagent_cwd_allowed_roots=[] to disable it.
+                #
+                # 🔴 This arm was UNREACHABLE for the case it was written for, and that was the
+                # defect (#3424): `AppConfig.load()` does not raise on a corrupt config.json —
+                # it returned the permissive default, so the re-widening this comment forbids
+                # happened through the NORMAL return, past a guard that read as present. The
+                # loader now owns it: a discarded read resolves
+                # `agent.subagent_cwd_allowed_roots` to `[]` itself
+                # (`CONFIG_ON_DISCARDED_READ`), which is why the narrow posture survives. What
+                # remains here is genuine defence in depth for an unexpected raise.
                 allowed_roots = []
             resolved_cwd, cwd_err = validate_cwd(cwd, allowed_roots)
             if cwd_err:
