@@ -585,6 +585,23 @@ def export_payload(room_id: str) -> tuple[Room, dict, list[dict]]:
     imports a handler module can no longer be exercised without standing up the web app).
     Formatting a transcript for download is presentation, so it belongs on that side of
     the line anyway.
+
+    ``created_at`` comes off the :class:`Room`, not off the transcript's metadata line.
+    The transcript log is created LAZILY on the first message write, so its own
+    ``created_at`` is *the first message's* timestamp on a room that has spoken — 17.6s of
+    drift on a room measured live, and a week for a room that sat idle before anyone
+    spoke — and absent entirely on a room nobody has spoken in, which exported
+    ``created_at: ""`` and dropped the ``Created:`` header row altogether. The merge
+    belongs here rather than in the handler because this function's whole contract is
+    "everything a renderer needs": a payload that omits the room's own creation time makes
+    every caller re-derive the merge, and the second one to do so will derive it
+    differently.
+
+    The metadata dict is COPIED before the merge. ``ConversationLog.get_metadata`` returns
+    its mtime-keyed cache entry itself, so writing into the returned dict would publish the
+    room's creation time into the transcript log's cached metadata for every later reader.
     """
     room = require_room(room_id)
-    return room, room_log(room_id).get_metadata(TRANSCRIPT_KEY), read_messages(room_id)
+    meta = dict(room_log(room_id).get_metadata(TRANSCRIPT_KEY))
+    meta["created_at"] = room.created_at
+    return room, meta, read_messages(room_id)
