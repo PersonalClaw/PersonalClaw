@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.sw.json",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.sw.json && tsc -p tsconfig.e2e.json",
     "test": "vitest run",
     "audit:consistency": "PC_WRITE_AUDIT=1 vitest run src/design/consistencyAudit.generate.test.ts",
     "test:watch": "vitest",

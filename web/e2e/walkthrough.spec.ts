@@ -303,7 +303,7 @@ for (const theme of THEMES) {
         // A recipe whose target is absent must NOT report a clean surface — indistinguishable from
         // "no defects", and exactly how the axe gate hid violations for months. The recipe supplies
         // its own reason so the report says which it was.
-        test.skip(opened !== true, opened === true ? '' : `${opener.label}: ${opener.skip}`)
+        test.skip(opened !== true, opened === true ? '' : `${opener.label}: ${opened.skip}`)
         await page.waitForTimeout(700)
         await assertMounted(page, before, opener.label)
         await installProbes(page)
