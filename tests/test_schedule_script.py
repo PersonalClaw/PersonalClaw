@@ -8,7 +8,11 @@ test_native_hook_providers.py.)
 
 from __future__ import annotations
 
+import json
 import textwrap
+import threading
+from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
@@ -203,6 +207,129 @@ def test_run_script_receives_message(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     r = ss.run_script_sandboxed(spec, "j", "hello-args", timeout=_SCRIPT_TIMEOUT)
     assert r["status"] == "ok"
     assert r["message"] == "msg=hello-args"
+
+
+# ── ctx.call_tool reads a refusal instead of dying on it (#3407) ──────
+
+
+class _StubGatewayHandler(BaseHTTPRequestHandler):
+    """Answers /api/tools/invoke the way the real route does, both arms.
+
+    403 + the ``{"error": {...}}`` envelope without ``confirm_risk``; 200 + the flat
+    success dict with it. Same request shape both ways, so the only difference the
+    launcher sees is the status code.
+    """
+
+    protocol_version = "HTTP/1.0"
+
+    def log_message(self, fmt: str, *args: object) -> None:  # keep pytest output clean
+        return
+
+    def do_POST(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler's spelling
+        raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        body = json.loads(raw.decode("utf-8")) if raw else {}
+        if body.get("confirm_risk") == "destructive":
+            payload = {"ok": True, "output": "control: happy path", "error": ""}
+            status = 200
+        else:
+            payload = {
+                "error": {
+                    "code": "risk_confirmation_required",
+                    "message": "'bash' resolves as a DESTRUCTIVE call. Re-send with "
+                    '"confirm_risk": "destructive" to run it.',
+                    "risk": "destructive",
+                    "confirm_field": "confirm_risk",
+                }
+            }
+            status = 403
+        encoded = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+
+@pytest.fixture
+def stub_gateway(monkeypatch: pytest.MonkeyPatch) -> Iterator[HTTPServer]:
+    """A real socket the launcher's ``_post`` can address, on an ephemeral port."""
+    server = HTTPServer(("127.0.0.1", 0), _StubGatewayHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setenv(gateway_base.PORT_ENV, str(server.server_address[1]))
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_call_tool_returns_a_refusal_instead_of_raising(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stub_gateway: HTTPServer
+) -> None:
+    """A 403 refusal must reach the author as a dict, carrying the reason (#3407).
+
+    ``urlopen`` raises ``HTTPError`` on every 4xx and discards the body, so every
+    refusal the invoke route can issue used to be unreadable — including the one
+    ``call_tool``'s own docstring teaches authors to guard against. The script below
+    is that guard, verbatim from the docstring.
+    """
+    crons = _fake_crons(monkeypatch, tmp_path)
+    spec = _write_script(
+        crons,
+        "refused.py",
+        """
+        def run(ctx):
+            r = ctx.call_tool("bash", {"command": "rm -rf /tmp/cache"})
+            if not r["ok"]:
+                return "guard ran: %s | code=%s | status=%s" % (
+                    r["error"], r.get("code"), r.get("status"))
+            return "guard did NOT run"
+    """,
+    )
+    r = ss.run_script_sandboxed(spec, "j", "", timeout=_SCRIPT_TIMEOUT)
+    assert r["status"] == "ok", r
+    assert r["message"].startswith("guard ran: ")
+    assert "DESTRUCTIVE call" in r["message"]
+    assert "code=risk_confirmation_required" in r["message"]
+    assert "status=403" in r["message"]
+
+
+def test_call_tool_happy_path_still_returns_the_documented_dict(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stub_gateway: HTTPServer
+) -> None:
+    """Control for the test above: the 200 arm is unchanged by the 4xx handling.
+
+    Same stub, same request, one field added. If this red the refusal test would be
+    measuring a broken instrument rather than the ``except`` clause.
+    """
+    crons = _fake_crons(monkeypatch, tmp_path)
+    spec = _write_script(
+        crons,
+        "confirmed.py",
+        """
+        def run(ctx):
+            r = ctx.call_tool("bash", {"command": "rm -rf /tmp/cache"},
+                              confirm_risk="destructive")
+            return "ok=%s out=%s" % (r["ok"], r["output"])
+    """,
+    )
+    r = ss.run_script_sandboxed(spec, "j", "", timeout=_SCRIPT_TIMEOUT)
+    assert r["status"] == "ok", r
+    assert r["message"] == "ok=True out=control: happy path"
+
+
+def test_launcher_handles_every_4xx_the_invoke_route_can_send() -> None:
+    """The launcher source must name ``HTTPError``, not just happen to pass one case.
+
+    Cited by attribute rather than by line: ``_LAUNCHER_SRC`` is a string literal, so
+    line numbers inside it drift with unrelated edits above.
+    """
+    assert "urllib.error.HTTPError" in ss._LAUNCHER_SRC
+    assert "import urllib.error" in ss._LAUNCHER_SRC
+    # Exactly one exit from _post's success path, so no second unhandled urlopen.
+    assert ss._LAUNCHER_SRC.count("urlopen(") == 1
 
 
 def test_secret_not_in_script_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

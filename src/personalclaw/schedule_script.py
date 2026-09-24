@@ -123,6 +123,7 @@ import importlib.util
 import json
 import os
 import sys
+import urllib.error
 import urllib.request
 
 _SENTINEL = "__PC_SCRIPT_RESULT__"
@@ -164,8 +165,35 @@ def _post(path, payload):
                  "X-Internal-Secret": _SECRET,
                  "X-Session-Key": _SESSION_KEY},
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        # A refusal the route COMPOSED is a result, not a crash. urlopen raises on
+        # every 4xx/5xx and discards the body, so the reason the route put there --
+        # risk_confirmation_required, tool_disabled, an unknown tool -- never reached
+        # the author, and the `if not r["ok"]` guard call_tool documents never ran.
+        # A connection that got no answer at all still raises: "the gateway refused"
+        # and "there was no gateway" are different facts and stay different.
+        try:
+            body = json.loads(exc.read().decode("utf-8", "replace"))
+        except Exception:
+            body = None
+        if not isinstance(body, dict):
+            body = {}
+        envelope = body.get("error")
+        if isinstance(envelope, dict):
+            # The {"error": {"code", "message", ...}} wire envelope: lift it to the top
+            # level so `code` is branchable and `error` is readable, like the flat shape.
+            result = dict(envelope)
+            result["error"] = envelope.get("message") or envelope.get("code") or ""
+        else:
+            result = dict(body)
+        if not result.get("error"):
+            result["error"] = "HTTP %d %s" % (exc.code, exc.reason)
+        result["ok"] = False
+        result["status"] = exc.code
+        return result
 
 
 class ScriptContext:
@@ -174,7 +202,10 @@ class ScriptContext:
         self.message = message
 
     def notify(self, text, **kwargs):
-        """Deliver a message to the cron's channel/dashboard."""
+        """Deliver a message to the cron's channel/dashboard. Returns the result dict.
+
+        Like call_tool, a refusal comes back as {"ok": False, ...} rather than raising.
+        """
         body = {"text": text}
         body.update(kwargs)
         return _post("/api/send-message", body)
@@ -182,12 +213,20 @@ class ScriptContext:
     def call_tool(self, tool, arguments=None, provider="", confirm_risk=""):
         """Invoke a tool through PersonalClaw's Tool entity. Returns the result dict.
 
+        On success: {"ok": True, "output": str, "error": str}. A REFUSAL is also a
+        returned dict, never a raised exception: {"ok": False, "error": <sentence>,
+        "status": <HTTP status>} plus "code" when the gateway sent one, so a script
+        branches on the reason instead of dying on it. Only a call that got no answer
+        at all (no gateway listening) still raises.
+
         A call whose EFFECTIVE risk resolves as destructive is refused with 403
         risk_confirmation_required unless it names the tier (#506). Pass
         confirm_risk="destructive" to run one deliberately:
 
-            ctx.call_tool("bash", {"command": "rm -rf /tmp/cache"},
-                          confirm_risk="destructive")
+            r = ctx.call_tool("bash", {"command": "rm -rf /tmp/cache"},
+                              confirm_risk="destructive")
+            if not r["ok"]:
+                raise Report("cache purge refused: " + r["error"])
 
         Reads are unaffected — a read-only shell command resolves SAFE, so
         ctx.call_tool("bash", {"command": "ls"}) needs nothing. The keyword is the
