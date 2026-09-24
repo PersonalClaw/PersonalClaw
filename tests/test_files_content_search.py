@@ -223,6 +223,69 @@ def test_handler_python_timeout_returns_structured_error(search_root, monkeypatc
     assert elapsed < 0.25
 
 
+def test_handler_in_thread_deadline_win_still_returns_the_504_and_sel_row(search_root, monkeypatch):
+    # The other half of the timeout race: the in-thread deadline check trips and
+    # ``_ContentSearchTimedOut`` propagates out of the worker thread BEFORE the outer
+    # ``wait_for`` fires. The sentinel is deliberately not a ``TimeoutError``, so an
+    # ``except TimeoutError``-only handler let it escape — losing the 504, the SEL
+    # ``outcome="error"`` row and the "Narrow the directory" message all three.
+    def instant_in_thread_timeout(
+        root,
+        query,
+        include,
+        allowed_roots=None,
+        *,
+        deadline=None,
+        stop_event=None,
+    ):
+        raise F._ContentSearchTimedOut
+
+    monkeypatch.setattr(F, "_content_search_python", instant_in_thread_timeout)
+    sel = MagicMock()
+    monkeypatch.setattr(F, "_sel", lambda: sel)
+
+    status, body = _call(str(search_root), "needle", monkeypatch=monkeypatch)
+
+    assert status == 504
+    assert body == {
+        "error": {
+            "code": "file_content_search_timeout",
+            "message": (
+                "File content search exceeded its time limit. "
+                "Narrow the directory or include glob and try again."
+            ),
+        }
+    }
+    outcomes = [c.kwargs.get("outcome") for c in sel.log_tool_invocation.call_args_list]
+    assert outcomes == ["error"]
+
+
+def test_the_in_thread_rail_is_the_only_thing_that_test_measures(search_root, monkeypatch):
+    # Control for the test above: with the sentinel demoted to a plain Exception the
+    # handler's ``except`` no longer names it, and the same drive escapes the handler
+    # instead of returning the 504. Proves that test's assertions can fail, i.e. that
+    # it measures the ``except`` clause rather than the outer ``wait_for`` arm.
+    class _Demoted(Exception):
+        pass
+
+    def instant_in_thread_timeout(
+        root,
+        query,
+        include,
+        allowed_roots=None,
+        *,
+        deadline=None,
+        stop_event=None,
+    ):
+        raise _Demoted
+
+    monkeypatch.setattr(F, "_content_search_python", instant_in_thread_timeout)
+    monkeypatch.setattr(F, "_sel", lambda: MagicMock())
+
+    with pytest.raises(_Demoted):
+        _call(str(search_root), "needle", monkeypatch=monkeypatch)
+
+
 def test_handler_invalid_dir_400(monkeypatch):
     monkeypatch.setattr(F, "_validate_dashboard_path", lambda raw, allowed_roots=None: None)
     status, _ = _call("/etc", "x", monkeypatch=monkeypatch)

@@ -2380,7 +2380,13 @@ async def api_file_content_search(request: web.Request) -> web.Response:
             results, truncated = await asyncio.wait_for(
                 asyncio.shield(search_task), timeout=_CONTENT_SEARCH_TIMEOUT
             )
-        except TimeoutError:
+        except (TimeoutError, _ContentSearchTimedOut):
+            # Both rails end here. ``TimeoutError`` is the outer ``wait_for`` winning;
+            # ``_ContentSearchTimedOut`` is the in-thread deadline check winning the race
+            # and propagating out of the thread. The sentinel is deliberately not a
+            # ``TimeoutError`` (see its docstring), so it has to be named: without it an
+            # in-thread win escaped the handler, skipping the 504, the SEL error row and
+            # the "Narrow the directory" message.
             stop_event.set()
             with contextlib.suppress(TimeoutError, asyncio.CancelledError, _ContentSearchTimedOut):
                 await asyncio.wait_for(
