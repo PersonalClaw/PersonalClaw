@@ -48,6 +48,63 @@ from personalclaw.model_windows import declared_context_window as _declared_wind
 from personalclaw.model_windows import model_context_window as _model_window  # noqa: E402
 
 
+def _read_cache_usage(usage: object) -> tuple[int, int]:
+    """``(cache_creation_tokens, cache_read_tokens)`` from an OpenAI ``usage`` object.
+
+    The OpenAI-dialect producer for ``LLMEvent.cache_creation_tokens`` /
+    ``.cache_read_tokens`` — the twin of ``llm/anthropic.py``'s reader of the same name.
+    OpenAI-family caching is AUTOMATIC: the request carries no marker (see
+    :attr:`OpenAIProvider.prompt_cache`), but the vendor still REPORTS the hit — nested one
+    level down on ``usage.prompt_tokens_details``, as ``cached_tokens`` for a read and
+    ``cache_write_tokens`` for a write. This adapter read only ``prompt_tokens`` /
+    ``completion_tokens``, so every automatic hit was dropped before it could reach the
+    terminal event and the turn told the user ``0`` on a prompt the vendor had already
+    discounted.
+
+    Defensive exactly like the Anthropic reader: a ``usage`` without the nested object (an
+    endpoint that does not cache, or an older SDK), a non-``int`` value, or ``None`` all
+    yield ``0`` and NEVER raise — a cache-usage read must not break a completed turn's
+    terminal event.
+    """
+    details = getattr(usage, "prompt_tokens_details", None)
+    if details is None:
+        return 0, 0
+
+    def _int(name: str) -> int:
+        v = getattr(details, name, None)
+        return v if isinstance(v, int) else 0
+
+    return _int("cache_write_tokens"), _int("cached_tokens")
+
+
+def _uncached_prompt_tokens(
+    prompt_tokens: int, cache_creation_tokens: int, cache_read_tokens: int
+) -> int:
+    """OpenAI's ``prompt_tokens`` MINUS its cached span — the uncached remainder.
+
+    THE DIALECT ASYMMETRY, and the reason reading the cache fields is not a straight field
+    copy. ``LLMEvent``'s three prompt buckets are contractually DISJOINT: ``input_tokens``
+    EXCLUDES the cached tokens. That is why ``stats.cache_hit_pct`` ADDS all three to recover
+    the whole prompt (``stats.py:160-162``, which states the invariant and cites its
+    evidence) and why ``pricing.estimate_cost`` bills them additively (``pricing.py:106-113``).
+    Anthropic's wire satisfies the contract natively — ``usage.input_tokens`` and the
+    ``usage.cache_*_input_tokens`` fields are separate populations. **OpenAI's does not:**
+    ``prompt_tokens_details`` is a BREAKDOWN of ``prompt_tokens``, not a sibling of it, so the
+    cached tokens are counted inside ``prompt_tokens`` as well.
+
+    Copying the field straight across would therefore bill the cached span twice, inflate
+    ``cache_hit_pct``'s denominator, and — worst — inflate ``pricing.cache_savings_usd``,
+    whose counterfactual re-bills ``input + cache_read + cache_creation`` at the full input
+    rate (``pricing.py:166-171``). An overstated saving is worse than the honest zero it
+    replaces, so the vendor's overlap is resolved HERE, in the adapter that owns the dialect,
+    and core keeps the single contract it documents.
+
+    Clamped at ``0``: an endpoint that ever reports a cached span wider than the prompt yields
+    an honest ``0`` remainder rather than a negative token count.
+    """
+    return max(0, prompt_tokens - cache_creation_tokens - cache_read_tokens)
+
+
 class OpenAIProvider(ModelProvider):
     """ModelProvider backed by the OpenAI Chat Completions + Embeddings APIs.
 
@@ -275,6 +332,8 @@ class OpenAIProvider(ModelProvider):
 
         input_tokens = 0
         output_tokens = 0
+        cache_creation_tokens = 0
+        cache_read_tokens = 0
 
         async for chunk in response:
             choices = getattr(chunk, "choices", None) or []
@@ -343,8 +402,16 @@ class OpenAIProvider(ModelProvider):
 
             usage = getattr(chunk, "usage", None)
             if usage is not None:
-                input_tokens = getattr(usage, "prompt_tokens", input_tokens) or input_tokens
+                prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
                 output_tokens = getattr(usage, "completion_tokens", output_tokens) or output_tokens
+                if prompt_tokens:
+                    # Prompt-cache usage (PCS-9). The vendor reports the automatic hit under
+                    # `prompt_tokens_details`, and `prompt_tokens` INCLUDES it — so the cached
+                    # span is subtracted back out to keep the event's three buckets disjoint.
+                    cache_creation_tokens, cache_read_tokens = _read_cache_usage(usage)
+                    input_tokens = _uncached_prompt_tokens(
+                        prompt_tokens, cache_creation_tokens, cache_read_tokens
+                    )
 
         # Flush the splitter's held tail (an unterminated tag → visible text).
         for seg in splitter.flush():
@@ -370,7 +437,12 @@ class OpenAIProvider(ModelProvider):
                 tool_meta=meta,
             )
 
-        if input_tokens > 0:
+        # The gauge measures the WHOLE served prompt, so it reconstructs it from the three
+        # disjoint buckets the same way `stats.cache_hit_pct` does (`stats.py:160-162`). A
+        # cached turn must not read as a smaller context: the model still saw every token.
+        # With no cache activity both buckets are 0 and this is the value it always was.
+        prompt_tokens = input_tokens + cache_creation_tokens + cache_read_tokens
+        if prompt_tokens > 0:
             # ``override=`` and deliberately NOT ``local=``: this is a MEASURED
             # percentage, and the local short-circuit is a conservative FLOOR for the
             # char estimate (LOCAL_SERVED_CONTEXT_WINDOW), not a served-window claim.
@@ -380,7 +452,7 @@ class OpenAIProvider(ModelProvider):
             # both paths, so only it reaches the gauge; with no declaration this stays
             # byte-identical to the table lookup it has always done.
             ctx = _model_window(self._model, _DEFAULT_CONTEXT_WINDOW, override=self.context_window)
-            self._last_context_pct = (input_tokens / ctx) * 100
+            self._last_context_pct = (prompt_tokens / ctx) * 100
 
         if assistant_text:
             self._history.append({"role": "assistant", "content": assistant_text})
@@ -389,6 +461,8 @@ class OpenAIProvider(ModelProvider):
             kind=EVENT_COMPLETE,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            cache_read_tokens=cache_read_tokens,
             context_usage_pct=self._last_context_pct,
         )
 
@@ -469,6 +543,8 @@ class OpenAIProvider(ModelProvider):
 
         input_tokens = 0
         output_tokens = 0
+        cache_creation_tokens = 0
+        cache_read_tokens = 0
 
         async for chunk in response:
             choices = getattr(chunk, "choices", None) or []
@@ -540,8 +616,14 @@ class OpenAIProvider(ModelProvider):
 
             usage = getattr(chunk, "usage", None)
             if usage is not None:
-                input_tokens = getattr(usage, "prompt_tokens", input_tokens) or input_tokens
+                prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
                 output_tokens = getattr(usage, "completion_tokens", output_tokens) or output_tokens
+                if prompt_tokens:
+                    # Prompt-cache usage (PCS-9) — see the note at the streaming twin.
+                    cache_creation_tokens, cache_read_tokens = _read_cache_usage(usage)
+                    input_tokens = _uncached_prompt_tokens(
+                        prompt_tokens, cache_creation_tokens, cache_read_tokens
+                    )
 
         # Flush the splitter's held tail.
         for seg in splitter.flush():
@@ -567,17 +649,22 @@ class OpenAIProvider(ModelProvider):
             )
 
         context_pct: float | None = None
-        if input_tokens > 0:
+        # The whole served prompt, reconstructed from the three disjoint buckets — see the
+        # note at the streaming gauge above.
+        prompt_tokens = input_tokens + cache_creation_tokens + cache_read_tokens
+        if prompt_tokens > 0:
             # ``override=`` only — see the note at the streaming gauge above.
             ctx = _model_window(
                 model or self._model, _DEFAULT_CONTEXT_WINDOW, override=self.context_window
             )
-            context_pct = (input_tokens / ctx) * 100
+            context_pct = (prompt_tokens / ctx) * 100
 
         yield LLMEvent(
             kind=EVENT_COMPLETE,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            cache_read_tokens=cache_read_tokens,
             context_usage_pct=context_pct,
             cost_usd=0.0,
         )
