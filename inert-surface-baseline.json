@@ -8,16 +8,9 @@
       ]
     },
     "src/personalclaw/config/loader.py": {
-      "inert": 12,
+      "inert": 5,
       "surfaces": [
-        "config_reader:agent.self_qa.fix_branch_enabled",
-        "config_reader:ambient.genui_enabled",
-        "config_reader:ambient.surfaces_max_layer",
-        "config_reader:ambient.tiles_enabled",
-        "config_reader:ambient.tray_enabled",
-        "config_reader:packs.connector_catalog_url",
         "config_reader:routing.energy_sampling",
-        "config_reader:sources.daily_request_budget",
         "config_reader:voice.confirmation_phrases",
         "config_reader:voice.duplex_mute_enabled",
         "config_reader:voice.exit_phrases",
@@ -375,12 +368,12 @@
   "totals": {
     "by_kind": {
       "config": 0,
-      "config_reader": 13,
+      "config_reader": 6,
       "editable_config": 0,
       "enum": 8,
       "sdk_export": 159,
       "trigger_kind": 0
     },
-    "inert": 180
+    "inert": 173
   }
 }

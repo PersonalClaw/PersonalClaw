@@ -20,8 +20,10 @@ On import, each declaration must be RESOLVED against this machine, three ways:
   completion idiom (a skipped dep is not a crash).
 
 The connector catalog itself is ``<home>/connector_catalog.json`` (§9), seeded with a small
-bundled starter set on first read, user-extendable, optionally refreshed from
-``packs.connector_catalog_url`` (a later atom drives the refresh; AP-3 only reads the URL).
+bundled starter set on first read and user-extendable. There is no remote refresh: the
+``packs.connector_catalog_url`` config leaf this docstring once deferred to "a later atom"
+was read by nothing — not even here — while shipping an allowlisted PATCH path and a Settings
+control, so it was deleted rather than left promising (issue #3490).
 
 Fail closed: an unknown resolution mode, a configure with no credential value, or a
 substitute to a different-category entry all refuse rather than write a half-configured

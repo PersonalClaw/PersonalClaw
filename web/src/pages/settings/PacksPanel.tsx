@@ -2,23 +2,21 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, type BundledPackRec, type InstalledPackRec, type PackProposalRec, type PackRosterDeployRec, type PackTriggersDeployRec, type PackUpdateRec } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { invalidateKeys, useQuery } from '../../lib/data'
-import { PanelHeader, Section, RowGroup, Row, Field, SavedToast, ToggleRow } from './settingsUI'
-import { TextInput } from '../../ui/forms'
+import { PanelHeader, Section, RowGroup, Row, ToggleRow } from './settingsUI'
 import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
 import { FormSkeleton, InlineLoadError, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { BUSY_REASON } from '../../ui/unavailable'
 
 // The editable packs.* fields mirror the backend _EDITABLE_CONFIG allowlist
-// (config/loader.py PacksConfig). A fingerprint toggle + a catalog-refresh URL, each
-// PATCHed as a single allowlisted path via /api/config/personalclaw. Skill-catalog LIST
-// editing is AP-6's Skills-store surface; this panel wires the two scalars + the installed-
-// pack ledger with its re-runnable "Finish setup" chip (AP-3 §3.4).
+// (config/loader.py PacksConfig). One fingerprint toggle, PATCHed as a single allowlisted
+// path via /api/config/personalclaw. Skill-catalog LIST editing is AP-6's Skills-store
+// surface; this panel wires that one scalar + the installed-pack ledger with its re-runnable
+// "Finish setup" chip (AP-3 §3.4).
 type PacksCfg = Record<string, unknown>
 
 /** Packs — importable capability bundles. Fingerprinting lets the scanner PROPOSE matching
- *  packs for a project (it never auto-installs); the connector-catalog URL is an optional
- *  published catalog the local set refreshes from. Below, each installed pack shows its
+ *  packs for a project (it never auto-installs). Below, each installed pack shows its
  *  skipped-connector markers and a re-runnable "Finish setup" chip when it ships a setup
  *  interview. Each control PATCHes one allowlisted path. */
 export function PacksPanel() {
@@ -81,14 +79,12 @@ export function PacksPanel() {
         </RowGroup>
       </Section>
 
-      <Section title="Connector catalog" hint="An optional published catalog the local connector set refreshes from. Fetched under the CONNECTOR egress profile; empty keeps the seeded bundled set only.">
-        <RowGroup>
-          <TextRow label="Connector catalog URL" cfg={cfg} field="connector_catalog_url" patch={patch}
-            placeholder="https://example.com/connector_catalog.json"
-            hint="Leave empty to use only the bundled starter catalog." />
-        </RowGroup>
-      </Section>
-
+      {/* 🔴 THE "CONNECTOR CATALOG" SECTION IS GONE, and `packs.connector_catalog_url` with it
+          (issue #3490). It offered a URL the local connector set "refreshes from" and no refresh
+          exists: `packs/connectors.py` said so in its own docstring ("a later atom drives the
+          refresh; AP-3 only reads the URL") and did not read it either. The connector catalog is
+          the seeded, user-extendable `connector_catalog.json`; a field promising a fetch that
+          nothing performs is worse than no field, because it reads as configured. */}
       <ProposalsSection onInstalled={onInstalled} />
 
       {/* `installed` travels UNDEFAULTED to both surfaces, with its rejection beside it. `?? []` here
@@ -643,32 +639,7 @@ export function RosterDeployResult({ result }: { result: PackRosterDeployRec }) 
   )
 }
 
-// ── field renderers ─────────────────────────────────────────────────────────
-
-function TextRow({ label, hint, cfg, field, patch, placeholder }: {
-  label: string; hint?: string; cfg: PacksCfg; field: string; placeholder?: string
-  patch: (k: string, v: unknown, cb?: () => void) => void
-}) {
-  const [saved, setSaved] = useState(false)
-  const [draft, setDraft] = useState(str(cfg[field]))
-  useEffect(() => { setDraft(str(cfg[field])) }, [cfg, field])
-  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
-  const commit = () => { if (draft !== str(cfg[field])) patch(field, draft, flash) }
-  return (
-    <Field label={label} hint={hint}>
-      <div className="flex items-center gap-2">
-        {/* `surface="high"`: every caller of this row sits inside a `bg-surface-container` block, which
-            is also TextInput's DEFAULT surface, so a default field painted exactly its own backdrop and
-            — with no at-rest border or shadow — had no visible edge (measured 1.00:1, both themes). */}
-        <TextInput value={draft} onChange={setDraft} placeholder={placeholder} ariaLabel={label} mono surface="high"
-          onKeyDown={(e) => { if (e.key === 'Enter') commit() }} />
-        <Button variant="ghost" size="sm" onClick={commit}>Save</Button>
-        <SavedToast show={saved} />
-      </div>
-    </Field>
-  )
-}
-
-function str(v: unknown): string {
-  return typeof v === 'string' ? v : ''
-}
+// The panel's only `TextRow` renderer went with the connector-catalog URL (issue #3490), and
+// so did the `str()` coercion it was the sole caller of. Kept-but-unused renderers are how a
+// deleted control grows back: the next author finds a ready-made row and no record of why the
+// last one was wrong.
