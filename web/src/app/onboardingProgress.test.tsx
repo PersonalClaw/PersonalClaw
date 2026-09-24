@@ -201,6 +201,48 @@ describe('every step transition persists its resume point', () => {
   })
 })
 
+// ── the name step's promise must match when the write actually happens ────────
+//
+// The step's subtitle is the FIRST sentence the product ever says about persistence, and it
+// read *"Saved on the server, so it follows you across devices"* while the step was still
+// being filled in. That is `AccountPanel`'s sentence, where it is true because the panel
+// writes on change; here the write is deliberately the last thing the flow does, so the
+// past tense was a claim about a write that had not happened.
+//
+// Measured on a fresh container from the published wheel: typing a name and advancing issued
+// ZERO writes, `GET /api/onboarding` still answered `step: "name"`, and a reload returned an
+// empty field — after the collapsed row had already shown `Ada Lovelace · @ada-lovelace`
+// back as a completed step. The second test is the CONTROL: it is what makes the first one
+// mean something, because if the write ever moves earlier the copy should move back with it.
+
+describe("the name step does not promise a save it has not made", () => {
+  it('does not claim the name is already saved while the step is being filled in', async () => {
+    renderFlow()
+    await waitFor(() => expect(onboarding).toHaveBeenCalled())
+    const subtitle = screen.getByText(/How the system addresses you/)
+    expect(subtitle.textContent).not.toMatch(/Saved on the server/)
+    // ...and it still says WHEN the promise is kept, rather than dropping the fact entirely.
+    expect(subtitle.textContent).toMatch(/Saved when you finish setup/)
+    expect(subtitle.textContent).toMatch(/follows you across devices/)
+  })
+
+  it('because advancing off the name step really does write nothing', async () => {
+    await enterName()
+    // The collapsed row now shows the name back, which is exactly why the copy mattered.
+    expect(await screen.findByText('Ada Lovelace · @ada-lovelace')).toBeTruthy()
+    // No identity write yet — the flow is showing a value the server has never seen.
+    expect(setName).not.toHaveBeenCalled()
+  })
+
+  it('and the promise IS kept, at the end', async () => {
+    await enterNameAndImport()
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-continue' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-tried' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Start using/ }))
+    await waitFor(() => expect(setName).toHaveBeenCalledWith('Ada Lovelace', 'ada-lovelace'))
+  })
+})
+
 describe('finishing marks the install as onboarded under THIS version (OU-5 / C4)', () => {
   // Progressive disclosure needs to tell a fresh install from an upgrade, and the marker is the
   // absence of a `nav-disclosure` record — so the write has to happen at the one act only a
