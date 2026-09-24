@@ -1,0 +1,2536 @@
+"""Unified Trigger API — /api/triggers/*.
+
+A **Trigger** is "when something happens, run an action". Two kinds share one
+surface:
+
+- ``schedule`` — a clock tick fires (every / cron / at). Backed by
+  :class:`personalclaw.schedule.ScheduleService` (``state.crons``).
+- ``lifecycle`` — an agent-loop event fires (PreToolUse, Stop, …). Backed by
+  :class:`personalclaw.hooks.ScriptHookStore`.
+
+This handler is a **facade**: there is no ``triggers.json`` and no migration. It
+presents both stores through one ``Trigger`` shape and routes each mutation to the
+owning store by a namespaced id (``schedule:<rawId>`` / ``lifecycle:<rawId>``).
+
+Every trigger carries ``action: {provider, config}`` chosen from the action
+provider catalog (``/api/action-providers``). For lifecycle triggers the action
+is the hook's ``provider`` + ``provider_config``; for schedule triggers it is
+``ScheduleJob.action`` — the sole source of what the job runs. The schedule
+executor dispatches every provider straight from that action (``invoke-agent``
+runs an LLM turn, every other provider runs through the action registry).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any
+
+from aiohttp import web
+
+from personalclaw.config import loader as config_loader
+from personalclaw.dashboard.state import DashboardState
+from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body
+from personalclaw.security import redact_credentials, redact_exfiltration_urls
+
+
+def config_dir():
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
+
+logger = logging.getLogger(__name__)
+
+_SCHEDULE = "schedule"
+_LIFECYCLE = "lifecycle"
+_EVENT = "event"  # data-event triggers (#38): memory/content patterns
+_STORE = "store"  # unified TriggerStore kinds with no legacy backend (file/web_watch/idle/…)
+
+#: The `TriggerStore` kinds the three legacy backends do NOT already surface. `clock` is the
+#: schedule backend's, `event` is the event-trigger store's, `manual` has no autonomous surface;
+#: everything else (file/web_watch/idle/run_completed/view/webhook) can ONLY be created through the
+#: `automation_*` chat tools (S92) and, until now, was invisible on the Automations page — created,
+#: fired (S93 for `file`), and unlistable. This is the additive read-plus-safe-mutation slice, not
+#: the §6 class-B re-point of the schedule/event backends onto the store.
+_STORE_ONLY_KINDS: frozenset[str] = frozenset(
+    {"file", "web_watch", "idle", "run_completed", "view", "webhook"}
+)
+
+
+def _event_store():
+    from personalclaw.config.loader import config_dir
+    from personalclaw.event_triggers import EventTriggerStore
+
+    return EventTriggerStore(config_dir() / "event_triggers.json")
+
+
+def _serialize_event(t) -> dict[str, Any]:
+    return {
+        "kind": _EVENT,
+        "id": f"{_EVENT}:{t.id}",
+        "name": t.id,
+        "enabled": t.enabled,
+        "source": t.source,
+        "pattern": t.pattern,
+        "key_glob": t.key_glob,
+        "content_re": t.content_re,
+        "sender_glob": t.sender_glob,
+        "address_glob": t.address_glob,
+        "event_glob": t.event_glob,
+        "max_fires": t.max_fires,
+        "fire_count": t.fire_count,
+        "action": {"provider": t.action_provider, "config": t.action_config},
+        # The LIFECYCLE state, distinct from `enabled` (AUTO-A4). An app-source trigger parks when
+        # its app is disabled, and a row that shows only `enabled: true` while never firing is the
+        # "backend truth, frontend silence" shape — the panel needs the state AND the reason to say
+        # anything true. `health` rides along so the shared `triggerHealthMeta` mapper works here
+        # exactly as it does for store triggers, rather than a third vocabulary on a third surface.
+        "state": t.state,
+        "health": _event_health(t),
+        # Redacted like its siblings (`_serialize_store`, `_schedule_row_for`). It was raw because
+        # nothing read it: issue 496 measured that `eventToTrigger` dropped `state`/`health`/
+        # `last_error` on the floor, so this projection's whole point was inert. Giving it a reader
+        # makes it a disclosure surface, and `_redact`'s own rule is to defend AT the projection
+        # boundary rather than trust the caller — a park reason is free text a credential can reach.
+        "last_error": _redact(t.park_reason or ""),
+    }
+
+
+def _event_health(t) -> str:
+    """The `TriggerHealth` rollup for an event trigger.
+
+    Derived, not stored: this store keeps no run history to roll up, so the only honest answer comes
+    from the lifecycle state. Mapped through `TriggerHealth` rather than invented so the FE's one
+    `triggerHealthMeta` mapper renders a parked event trigger the same way it renders a parked store
+    trigger — S164's finding was that a second local copy of this vocabulary rendered three distinct
+    states as one grey dot.
+    """
+    from personalclaw.triggers.models import TriggerHealth, TriggerState
+
+    if t.state == TriggerState.PARKED.value:
+        return TriggerHealth.PARKED.value
+    return TriggerHealth.OK.value
+
+
+def _sel():
+    import personalclaw.dashboard.handlers as _pkg  # noqa: F811
+
+    return _pkg.sel()
+
+
+def _redact(s: str) -> str:
+    return redact_credentials(redact_exfiltration_urls(s or "")[0])[0]
+
+
+def _split_id(trigger_id: str) -> tuple[str, str]:
+    """``schedule:abc`` → (``schedule``, ``abc``); bare id defaults to schedule.
+
+    A `store` id keeps its own `<kind>:<slug>` form (e.g. `file:my-notes`) as the RAW id, because
+    that IS the id in `TriggerStore` — splitting it would break the lookup. So `store:` is stripped
+    once and the remainder handed to the store verbatim.
+    """
+    kind, _, raw = trigger_id.partition(":")
+    if raw and kind == _STORE:
+        return _STORE, raw
+    if raw and kind in (_SCHEDULE, _LIFECYCLE, _EVENT):
+        return kind, raw
+    return _SCHEDULE, trigger_id
+
+
+def _trigger_store():
+    """The unified store, rooted at the active home.
+
+    Resolved through this module's `config_dir` so there is exactly ONE place to redirect the
+    handler's store — which is what `tests/conftest.py::_isolate_trigger_store` patches. Importing
+    it inside the function instead would defeat that fixture, and S98 already paid for that
+    lesson: the boot migration took `config_dir()` from its caller and wrote to the real home.
+    """
+    from personalclaw.triggers.store import TriggerStore
+
+    return TriggerStore(base_dir=config_dir())
+
+
+def _job_shim_for(state: DashboardState, raw: str) -> Any:
+    """The minimal job-shaped object `inject_schedule_result_to_session` needs (S104).
+
+    Measured: the injection reads exactly `job.id`, `job.name` and `job.agent_id` — nothing else. So
+    a store row is projected onto that tiny surface rather than the whole legacy entity, and the
+    handler stops needing `ScheduleService` at all. Returns None when neither store nor legacy
+    service knows the id, so the caller can still fall back to a history-only session.
+    """
+    from personalclaw.schedule import ScheduleJob
+
+    row = _trigger_store().get(raw)
+    if row is not None:
+        config = {}
+        workflow = row.trigger.workflow or {}
+        inline = workflow.get("inline") if isinstance(workflow.get("inline"), dict) else None
+        raw_config = (inline or workflow).get("config")
+        if isinstance(raw_config, dict):
+            config = raw_config
+        return ScheduleJob(
+            id=row.trigger.id,
+            name=row.trigger.name,
+            action={"provider": (inline or workflow).get("provider", ""), "config": config},
+        )
+    return None
+
+
+def _trigger_names(state: DashboardState) -> dict[str, str]:
+    """`{trigger_id: name}` for labelling run rows, from the store.
+
+    Includes EVERY kind, not just clock: the unified history feed carries file/web_watch/event runs
+    too, and a name map that only knew about schedules would blank exactly the rows the new kinds
+    contribute.
+
+    Store-only since S110: the boot migration imports every legacy job, INCLUDING the ones it
+    refuses (which it now writes disabled rather than dropping), so there is no id the legacy
+    service could name that the store cannot.
+    """
+    names: dict[str, str] = {}
+    for row in _trigger_store().load():
+        names[row.trigger.id] = row.trigger.name
+    return names
+
+
+async def _last_result_for(state: DashboardState, raw: str) -> str:
+    """The newest run's output for a trigger, or "".
+
+    Reads `ScheduleRunStore` rather than a `last_result` field: `LEGACY_FIELD_MAP` maps that field
+    to None deliberately — the RUN RECORD owns a run's output, and a copy on the trigger was a
+    second truth that could disagree with it. The run store is keyed by a plain id, so it serves a
+    store-backed trigger and a legacy job identically.
+    """
+    try:
+        runs, _total = await _runs_store().list_for_job(raw, 0, 1)
+    except Exception:
+        logger.debug("could not read the last run for %s", raw, exc_info=True)
+        return ""
+    if not runs:
+        return ""
+    newest = runs[0] if isinstance(runs[0], dict) else {}
+    return str(newest.get("summary") or newest.get("error") or "")
+
+
+def _runs_store() -> Any:
+    """The run-record store, held DIRECTLY rather than through `ScheduleService` (S105).
+
+    🔴 Named `_runs_store`, not `_run_store`: this module ALREADY has an
+    `async def _run_store(raw, request)` handler (S94's manual-fire path), and defining a second
+    function with that name silently SHADOWED it — driven, the history endpoint raised
+    "_run_store() missing 2 required positional arguments". A same-name redefinition is a real
+    hazard in a 1400-line handler module, and Python reports it only at the call site.
+
+    🔴 Measured: all four run-record methods on `ScheduleService` are one-line passthroughs to
+    `ScheduleRunStore` (`list_runs` → `list_for_job`, `list_all_runs` → `list_all`, `get_run`,
+    `delete_runs` → `delete_for_job`), and the store constructs and answers standalone from a bare
+    `base_dir`. So the facade's dependency on the legacy service for run HISTORY was pure
+    indirection, and this removes it without changing a single stored byte.
+
+    Keyed by a plain id string, which is why this store survives the whole cutover unchanged: a
+    store-created trigger's runs and a legacy job's runs live in the same place, addressed the same
+    way. Rooted through this module's `config_dir` so the test fixture redirects it with everything
+    else.
+    """
+    from personalclaw.schedule_history import ScheduleRunStore
+
+    return ScheduleRunStore(config_dir())
+
+
+def _last_run_status_for(trigger_id: str) -> str:
+    """The newest run's PERSISTENT status, or "" — sync, for the list serializer.
+
+    Same contract `ScheduleService.last_run_status` documented and for the same reason (T7): the
+    honest status survives restarts and distinguishes `launched` from `ok`, where a trigger's own
+    field would report a fire-and-forget run as a success. Reads the store's own sync path, so the
+    list serializer stays cheap.
+    """
+    try:
+        rows, _total = _runs_store()._list_for_job_sync(trigger_id, 0, 1)
+    except Exception:
+        logger.debug("last-run status unavailable for %s", trigger_id, exc_info=True)
+        return ""
+    return str(rows[0].get("status", "")) if rows else ""
+
+
+def _week_triggers(state: DashboardState) -> list[Any]:
+    """Enabled clock triggers to plot, from the store (S103).
+
+    Only ENABLED ones: a disabled trigger has no fires, and drawing them would make the grid a wish
+    list rather than a forecast. Broken rows are excluded too — a row the entity refuses has no
+    knowable schedule, and plotting a guess is worse than an absence.
+
+    Store-only since S110: the legacy translation retired with `ScheduleService`'s CRUD, because the
+    boot migration imports every legacy job — including the ones it refuses, which it now writes
+    disabled rather than dropping.
+    """
+    store = _trigger_store()
+    rows = [
+        row.trigger
+        for row in store.load()
+        if row.trigger.kind == "clock" and row.trigger.enabled and row.ok
+    ]
+    return rows
+
+
+def _project_one(
+    trigger: Any, *, start: Any, days: int, until: Any = None
+) -> tuple[list[Any], bool]:
+    """Project ONE clock trigger's fires across the window.
+
+    🔴 A CRON NOW PLOTS. The old caller skipped every non-interval trigger with its own admission
+    ("a cron trigger is omitted rather than mis-plotted"), which made the week view a forecast of
+    only half a user's automations — silently. S96's `arm.next_fire` can step a cron, so it is
+    passed to `project_occurrences` as `next_after`. An interval keeps the arithmetic path, because
+    a constant step is cheaper and exactly right for it.
+
+    `skip_dates` and `tz_name` are read off the trigger for the reason AUTO-A3 requires: the
+    SCHEDULER compares skip dates against the date in the trigger's OWN zone, so a grid on server
+    time would strike the wrong column for any job that declares one.
+    """
+    from personalclaw.triggers.arm import cadence_next_fire as raw_next_fire
+    from personalclaw.triggers.calendar import project_occurrences
+    from personalclaw.triggers.service import to_epoch
+
+    spec = trigger.spec if isinstance(getattr(trigger, "spec", None), dict) else {}
+    kind = str(spec.get("kind") or "")
+    interval = float(spec.get("interval_secs") or 0)
+    common = {
+        "trigger_id": f"{_SCHEDULE}:{trigger.id}",
+        "trigger_name": trigger.name,
+        "start": start,
+        "days": days,
+        "until": until,
+        "gates": getattr(trigger, "gates", None) or {},
+        "skip_dates": [str(d) for d in (spec.get("skip_dates") or [])],
+        "tz_name": str(spec.get("timezone") or ""),
+    }
+    if kind in ("interval", "sequence") and interval > 0:
+        # 🔴 An UNARMED row must still plot. Measured on the owner's real store: `j-every` is enabled
+        # with an empty `next_fire_at` (a re-enable does not arm until the next boot sweep), so
+        # reading only `next_fire_at` gave `first_fire_at=0` and `project_occurrences` returned
+        # NOTHING — a live 5-minute automation invisible on the week grid. Falling back to
+        # `arm.next_fire` computes the same instant the tick will use, so the forecast is honest
+        # whether or not the row happens to be armed yet.
+        # 🔴 The RAW cadence, not the skip-aware `next_fire` (S112). `project_occurrences` strikes
+        # a skipped column ITSELF (AUTO-A3's "struck columns"), so a stepper that already advanced
+        # past skipped days would hide exactly the slots the grid exists to show — the user would
+        # see a quiet week with no explanation instead of their holiday struck through.
+        first = to_epoch(getattr(trigger, "next_fire_at", "")) or raw_next_fire(trigger)
+        if first <= 0:
+            return [], False
+        return project_occurrences(interval_secs=interval, first_fire_at=first, **common)
+    # `adaptive` (PR2-8) rides the cron branch, not the interval one: it has no `interval_secs`,
+    # so the arithmetic path above would read 0 and drop it — and the week view is the OTHER half
+    # of the Triggers page, where a live maintenance automation plotting nothing is the same
+    # invisible-but-firing defect the interval comment above records. It steps cleanly, because
+    # `cadence_next_fire` for an adaptive clock is `after + <the live cadence>`.
+    #
+    # 🔴 `at` RIDES IT TOO (issue 561). This branch used to end at a guard reading "`at` is a single
+    # fire, and an elapsed one is not a forecast. Nothing to plot." — but the `return` was
+    # unconditional, so a one-shot armed for THURSDAY plotted nothing either, and the user saw an
+    # empty Thursday with no sign their trigger existed. Measured: cron 7 occurrences, interval 167,
+    # every `at` 0, including one two days inside the window.
+    #
+    # It needs no machinery of its own, because `cadence_next_fire` already IS the one-shot stepper:
+    # for kind `at` it answers `at if at > now else 0.0`. Fed to `project_occurrences` that produces
+    # exactly the right three behaviours with no special case — the entry call returns 0 for an
+    # elapsed one-shot (nothing plotted, which is what the old comment was right about), the window
+    # bound drops one beyond the week, and the step after the single fire returns 0 so the loop ends
+    # after one occurrence.
+    if (kind == "cron" and spec.get("expr")) or kind in ("adaptive", "at"):
+        return project_occurrences(
+            interval_secs=0,
+            first_fire_at=0,
+            next_after=lambda after: raw_next_fire(trigger, now=after),
+            **common,
+        )
+    return [], False
+
+
+def _arm_if_needed(store: Any, trigger_id: str) -> None:
+    """Arm a clock trigger that has no next fire (S101).
+
+    Called after any write that can make a row newly firable — a create, or a re-enable. Without it
+    the row sits `enabled=True` with an empty `next_fire_at`, and `service.due_ids` only surfaces
+    rows that HAVE one: enabled and inert until the next boot sweep. `arm.needs_arming` selects
+    exactly that population, so a row already carrying a next fire is left alone (re-arming a live
+    schedule mid-flight is how a fire gets skipped or doubled).
+    """
+    from personalclaw.triggers.arm import arm, needs_arming
+
+    row = store.get(trigger_id)
+    if row is None or not needs_arming(row.trigger):
+        return
+    when = arm(row.trigger)
+    if not when:
+        return  # unarmable (invalid cron, elapsed one-shot) — refuse rather than guess a cadence
+    row.trigger.next_fire_at = when
+    store.upsert(row.trigger)
+
+
+def _attribution(trigger: Any, *, owner: str) -> dict[str, Any]:
+    """The two attribution keys every store-backed projection carries (TSE-4).
+
+    `read_only` is the FRONTEND's whole instruction for a foreign row (§2.2: "rendered read-only —
+    author chip, no enable/edit/delete"). Computed server-side from the same
+    `ownership.is_owner_authored` predicate the arm path uses, so the page can never offer a control
+    for a row the service would refuse to arm — a UI that derived it from a string comparison of its
+    own would be a second opinion about who owns a trigger, and the two would drift.
+    """
+    from personalclaw.triggers.ownership import is_owner_authored
+
+    return {
+        "author": str(getattr(trigger, "author", "") or ""),
+        "read_only": not is_owner_authored(trigger, owner=owner),
+    }
+
+
+def _issue_messages(row: Any) -> tuple[list[str], list[str]]:
+    """A loaded row's ``(errors, warnings)`` as plain messages, for the wire.
+
+    🔴 ONE OWNER FOR BOTH SEVERITIES (issue 531). `LoadedTrigger` has carried `errors` AND `warnings`
+    since S87 — `validate_spec` raises the `MIN_CLOCK_INTERVAL_SECS` warning for any interval under
+    900s, and its own comment promises "it fires, and it is visibly flagged". It was not flagged:
+    every projection below passed `row.errors` only, so the wire had a `broken` key and no
+    `warnings` key at all. Measured on a live gateway, on the trigger the create page produces for
+    Interval / 1 / minutes::
+
+        row.warnings           ['60s is below the 900s floor for an LLM-invoking trigger; …']
+        wire 'broken'          []
+        'warnings' on the wire False
+
+    A computed-then-discarded signal is a producer with no consumer, and a floor warning nobody can
+    see is the same as no floor at all. Derived here from the row rather than passed in per call
+    site, because four call sites each remembering to forward a second list is how one of them
+    doesn't — three of them already forwarded NO errors (the create, update and toggle responses all
+    answered `broken: []` for a row the list showed as broken).
+    """
+    return ([i.message for i in row.errors], [i.message for i in row.warnings])
+
+
+def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
+    """A `TriggerStore` row in the shared list shape. Id is `store:<kind>:<slug>` so the
+    mutation routes back to the store; `raw_id` is the store's own id.
+
+    Takes the `LoadedTrigger`, not its `.trigger`: the issues belong to the READ (see
+    `LoadedTrigger`'s own docstring), so a projection handed a bare entity cannot report them and
+    has to be told — which is how the write responses ended up reporting every row as clean.
+    """
+    trigger = row.trigger
+    errors, warnings = _issue_messages(row)
+    return {
+        "kind": _STORE,
+        "store_kind": trigger.kind,
+        "id": f"{_STORE}:{trigger.id}",
+        "raw_id": trigger.id,
+        "name": trigger.name,
+        "enabled": trigger.enabled,
+        "created_by": trigger.created_by,
+        "spec": dict(trigger.spec or {}),
+        "action": dict(trigger.workflow or {}),
+        "health": trigger.health_status,
+        # 🔴 THE LIFECYCLE STATE, which this projection omitted (S164). `Trigger.state` carries
+        # `active | paused | autopaused | parked | quarantined | retired` and reached NO surface:
+        # the list rendered an autopaused automation like a running one, so the states S139
+        # (autopause), S159 (park/unpark) and the injection quarantine all decide were invisible
+        # on the one page a user manages automations from. `health` cannot substitute — a PARKED
+        # trigger is `health: parked` but an AUTOPAUSED one is `health: failing`, and "failing" does
+        # not tell the user the automation has STOPPED.
+        "state": trigger.state,
+        "run_count": trigger.run_count,
+        "last_error": _redact(trigger.last_error_summary or ""),
+        "broken": errors,
+        "warnings": warnings,
+        **_attribution(trigger, owner=owner),
+    }
+
+
+# ── serializers ──
+
+
+def _last_run_status(state: DashboardState, job_id: str) -> str | None:
+    """The newest run record's status for the honest UI badge (T7), or None.
+
+    Reads the RUN STORE directly (S105). `ScheduleService.last_run_status` was itself a two-line
+    read of the same store's sync path, so going through the service was pure indirection — and it
+    meant a dashboard whose legacy service was a test double or absent showed no badge at all.
+    Still defensive (None on any failure) so the serializer stays robust + JSON-safe.
+    """
+    status = _last_run_status_for(job_id)
+    return status or None
+
+
+def _schedule_rows(state: DashboardState) -> list[dict[str, Any]]:
+    """Every schedule trigger, read from the unified store (§6 re-point — S99).
+
+    The store is the source of truth once the boot migration has run (S98). The legacy service is
+    consulted ONLY when the store holds no clock rows, which happens on a home whose migration has
+    not run yet — reading the old file for one more boot is strictly better than showing a user zero
+    schedules. That fallback is what retires when `ScheduleService` does.
+
+    Names/results are redacted on the way out exactly as `_serialize_schedule` did: the projection
+    is a data mapping and knows nothing about credential scrubbing.
+    """
+    from personalclaw.triggers.ownership import owner_username
+    from personalclaw.triggers.provider import all_rows
+
+    store = _trigger_store()
+    # `all_rows`, not `store.load()`: a registered `trigger` provider's rows belong on this page too
+    # (TSE-4). Resolved ONCE for the whole list rather than per row — the owner is one config read
+    # and a per-row read would make a 40-automation page do 40 of them.
+    owner = owner_username()
+    clock_rows = [row for row in all_rows(store) if row.trigger.kind == "clock"]
+    if clock_rows:
+        return [_schedule_row_for(state, row, owner=owner) for row in clock_rows]
+    return []
+
+
+def _schedule_row_for(state: DashboardState, row: Any, *, owner: str = "") -> dict[str, Any]:
+    """ONE schedule row, projected and redacted (S101).
+
+    Factored out of `_schedule_rows` so the list and the single-row write responses (create,
+    update) answer in exactly the same shape. Two projections would drift, and a create that
+    returned a different shape than the list is how a UI ends up with two ideas of one trigger.
+
+    Takes the `LoadedTrigger` for the reason `_issue_messages` explains: `issues` used to be a
+    caller-supplied list, and the two write responses that did not supply it answered `broken: []`
+    for a row the list showed as broken — so "the same shape" held for the KEYS and not for their
+    contents. Deriving both severities from the row makes that impossible to get wrong again.
+    """
+    import time as _time
+
+    from personalclaw.triggers.schedule_view import to_schedule_row
+
+    trigger = row.trigger
+    errors, warnings = _issue_messages(row)
+    store = _trigger_store()
+    projected = to_schedule_row(
+        trigger,
+        now=_time.time(),
+        base_dir=store.base_dir,
+        last_run_status=_last_run_status(state, trigger.id) or "",
+    )
+    projected["name"] = _redact(projected.get("name") or "")
+    for key in ("message", "last_error", "schedule"):
+        if projected.get(key):
+            projected[key] = _redact(str(projected[key]))
+    projected["broken"] = errors
+    projected["warnings"] = warnings
+    projected.update(_attribution(trigger, owner=owner))
+    return projected
+
+
+def _serialize_lifecycle(hook, used_by: list[str]) -> dict[str, Any]:
+    from personalclaw.hooks import BLOCKING_EVENTS, hook_enforcement
+
+    return {
+        "kind": _LIFECYCLE,
+        "id": f"{_LIFECYCLE}:{hook.id}",
+        "raw_id": hook.id,
+        "name": hook.name,
+        "enabled": hook.enabled,
+        "action": {"provider": hook.provider, "config": hook.provider_config},
+        # lifecycle mechanism
+        "event": hook.event,
+        "matcher": hook.matcher,
+        "timeout": hook.timeout,
+        "last_run": hook.last_run,
+        "last_status": hook.last_status,
+        "run_count": hook.run_count,
+        "used_by": sorted(used_by),
+        # G40: whether THIS hook can block, not just whether its event could. `used_by` alone made
+        # the user derive it, and `run_count` actively argued against them — an unbound PreToolUse
+        # hook still fires on the informational path, so a policy hook that enforced nothing showed
+        # "Ran 3×". `blocking` is the event's capability; `enforcement` is this row's live state.
+        # See `hooks.hook_enforcement` for the measurement.
+        "blocking": hook.event in BLOCKING_EVENTS,
+        "enforcement": hook_enforcement(
+            hook.event, enabled=bool(hook.enabled), bound=bool(used_by)
+        ),
+    }
+
+
+def _hook_store(state: DashboardState):
+    from personalclaw.dashboard.handlers.hooks import _get_hook_store
+
+    return _get_hook_store(state)
+
+
+def _used_by_index() -> dict[str, list[str]]:
+    """hook_id → [agent names that reference it] (agents are lifecycle-scoped)."""
+    from personalclaw.config.loader import AppConfig
+
+    idx: dict[str, list[str]] = {}
+    try:
+        cfg = AppConfig.load()
+        for agent_name, prof in (cfg.agents or {}).items():
+            for tid in getattr(prof, "triggers", []) or []:
+                idx.setdefault(str(tid), []).append(agent_name)
+    except Exception:
+        logger.debug("triggers used_by index failed", exc_info=True)
+    return idx
+
+
+# ── variable catalog ──
+
+
+async def api_trigger_variables(request: web.Request) -> web.Response:
+    """GET /api/triggers/variables — the ``$variables`` each trigger kind exposes.
+
+    The single server-sourced catalog both UIs read instead of mirroring it:
+    ``{schedule: [...], lifecycle: [{event, label, desc, vars, blocking?}, ...],
+    app_sources: [{app, label, events: [{event, source_event}]}]}``.
+    Lifecycle entries come from :data:`personalclaw.hooks.LIFECYCLE_EVENT_CATALOG`
+    (co-located with the payload assembly that produces those vars); schedule vars
+    from :data:`personalclaw.schedule.SCHEDULE_VARS`.
+
+    ``app_sources`` (AUTO-A4) is the LIVE app-contributed event vocabulary, read from the
+    ``trigger_sources`` registry rather than from manifests: a declared source whose app is
+    disabled is not registered, and offering its events would let a user author a trigger that
+    cannot fire until they realise the app is off. Served here rather than on a new route for the
+    same reason the lifecycle dormancy badge rides here — one catalog fetch, one source of truth.
+    """
+    from personalclaw.hooks import LIFECYCLE_EVENT_CATALOG
+    from personalclaw.schedule import SCHEDULE_VARS
+    from personalclaw.triggers.events import AGENT_SCOPED_EVENTS, DORMANCY_NOTES, DORMANT_EVENTS
+
+    lifecycle = [
+        {
+            "event": e["event"],
+            "label": e["label"],
+            "desc": e["desc"],
+            "vars": list(e["vars"]),
+            "blocking": bool(e.get("blocking")),
+            # S67: 7 of the 15 declared events have no fire site — they are configurable and never
+            # run. The catalog is the only server-sourced list both UIs read, so the badge has to
+            # ride here or a user cannot tell a working event from a dead one until they wait for a
+            # hook that never fires.
+            "dormant": e["event"] in DORMANT_EVENTS,
+            "dormant_reason": DORMANCY_NOTES.get(e["event"], ""),
+            # Issue 610: which fire path reaches this event. Agent-scoped events run through
+            # `fire_for_ids` against an agent's own `triggers` list — a hook on one fires for
+            # no one until an agent references it. Global events fire for every enabled hook.
+            # The badge and the create form both hang off this, so it rides the same catalog
+            # the dormancy flag does — one server-sourced list, no second vocabulary.
+            "agent_scoped": e["event"] in AGENT_SCOPED_EVENTS,
+        }
+        for e in LIFECYCLE_EVENT_CATALOG
+    ]
+    return web.json_response(
+        {
+            "schedule": list(SCHEDULE_VARS),
+            "lifecycle": lifecycle,
+            "app_sources": _app_source_catalog(),
+        }
+    )
+
+
+def _app_source_catalog() -> list[dict[str, Any]]:
+    """The live app-contributed event vocabulary (AUTO-A4), sorted by app then by event.
+
+    Each event carries BOTH its bare name and its full namespaced form, because those answer
+    different questions: the bare name is what the app's own docs call it, and `source_event` is the
+    literal string a trigger's `event_glob` matches. Handing the UI only the bare name would make it
+    re-derive the prefix — a second place for the namespace rule to drift from
+    `trigger_sources.namespace`.
+
+    Sorted here rather than in the UI so there is ONE ordering rule: a list the server describes and
+    a list the user scans that disagree is a small thing that costs a real minute to reconcile.
+    """
+    from personalclaw.trigger_sources import declared_events, get_source, namespace
+
+    declared = declared_events()
+    out: list[dict[str, Any]] = []
+    for app in sorted(declared):
+        provider = get_source(app)
+        out.append(
+            {
+                "app": app,
+                "label": str(getattr(provider, "display_name", "") or app),
+                "events": [
+                    {"event": event, "source_event": namespace(app, event)}
+                    for event in sorted(declared[app])
+                ],
+            }
+        )
+    return out
+
+
+# ── list ──
+
+
+def unified_trigger_count(state: DashboardState) -> int:
+    """The number of triggers ``GET /api/triggers`` lists — the tally the dashboard
+    SystemHealth rail renders under "triggers" so it AGREES with the Triggers page (#773).
+
+    Counts the SAME four sources :func:`api_triggers` gathers — clock schedules and the
+    store-only kinds from the unified store, lifecycle hooks, and data-event triggers —
+    but never serializes or redacts a row: a status poll only needs the tally. This is
+    deliberately WIDER than ``DashboardState.trigger_counts()`` / the ``cron`` status
+    block, which count the schedule store alone and stay as they are; the rail exists to
+    over-claim otherwise — it labels a schedule-store count "triggers" while the Triggers
+    page adds the (7 globally-fired) lifecycle hooks the store never held.
+
+    Never raises: ``GET /api/status`` is what a user opens when something is already
+    wrong, so a source that cannot be read contributes 0 rather than 500ing the surface —
+    exactly the contract ``trigger_counts()`` keeps for the schedule half.
+    """
+    total = 0
+    try:
+        from personalclaw.triggers.provider import all_rows
+
+        for row in all_rows(_trigger_store()):
+            if row.trigger.kind == "clock" or row.trigger.kind in _STORE_ONLY_KINDS:
+                total += 1
+    except Exception:  # noqa: BLE001 - a status read must never fail on the store half
+        logger.debug("schedule/store trigger count unavailable", exc_info=True)
+    try:
+        total += len(_hook_store(state).list_all())
+    except Exception:  # noqa: BLE001 - nor on the lifecycle-hook half
+        logger.debug("lifecycle hook count unavailable", exc_info=True)
+    try:
+        total += len(_event_store().load())
+    except Exception:  # noqa: BLE001 - nor on the data-event half
+        logger.debug("event trigger count unavailable", exc_info=True)
+    return total
+
+
+async def api_triggers(request: web.Request) -> web.Response:
+    """GET /api/triggers?type=schedule|lifecycle — every trigger, both kinds.
+
+    ``?type=`` filters to one kind. The response also carries ``server_tz`` for
+    the schedule cadence rendering the list does client-side.
+    """
+    state: DashboardState = request.app["state"]
+    want = request.query.get("type", "").strip().lower()
+
+    triggers: list[dict[str, Any]] = []
+    if want in ("", _SCHEDULE):
+        # 🔴 §6's re-point: the schedule list is read from the UNIFIED STORE, not `state.crons`.
+        # Verified before switching — after the boot migration (S98) the store lists exactly the
+        # same job ids the legacy service does, so nothing vanishes from the page. Falls back to
+        # the legacy service only when the store holds no clock rows (a home whose migration has
+        # not run yet): showing a user zero schedules would be worse than reading the old file
+        # for one more boot.
+        triggers.extend(_schedule_rows(state))
+    if want in ("", _LIFECYCLE):
+        used_by = _used_by_index()
+        for hook in _hook_store(state).list_all():
+            triggers.append(_serialize_lifecycle(hook, used_by.get(hook.id, [])))
+    if want in ("", _EVENT):
+        for t in _event_store().load():
+            triggers.append(_serialize_event(t))
+    if want in ("", _STORE):
+        # Store-only kinds (file/web_watch/idle/…) have no legacy backend. Without this they are
+        # created and fired but never listed — the present-and-inert gap S92/S93 opened. Broken
+        # rows (S87 lenient parse) are shown, not hidden: a broken automation invisible on its own
+        # page is undebuggable.
+        from personalclaw.triggers.ownership import owner_username
+        from personalclaw.triggers.provider import all_rows
+
+        owner = owner_username()
+        for row in all_rows(_trigger_store()):
+            if row.trigger.kind in _STORE_ONLY_KINDS:
+                triggers.append(_serialize_store(row, owner=owner))
+
+    from personalclaw.schedule import get_local_tz
+    from personalclaw.triggers.ownership import owner_username
+
+    tz_name, _ = get_local_tz()
+    # `owner` mirrors the tasks seam's list response (§2.1): the page labels a foreign row with its
+    # author, and needs to know whose name is not worth showing.
+    return web.json_response(
+        {"triggers": triggers, "server_tz": tz_name, "owner": owner_username()}
+    )
+
+
+# ── create ──
+
+
+async def api_trigger_create(request: web.Request) -> web.Response:
+    """POST /api/triggers — create a schedule or lifecycle trigger.
+
+    Body: ``{trigger_type, name, action: {provider, config}, ...}``. Schedule
+    triggers also take the schedule mechanism (``cron``/``every``/``at`` +
+    delivery); lifecycle triggers take ``event`` + ``matcher``.
+    """
+    state: DashboardState = request.app["state"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+
+    trigger_type = str(body.get("trigger_type") or "").strip().lower()
+    if trigger_type == _LIFECYCLE:
+        return await _create_lifecycle(state, body, request)
+    if trigger_type == _SCHEDULE:
+        return await _create_schedule(state, body, request)
+    if trigger_type == _EVENT:
+        return _create_event(body)
+    return web.json_response(
+        {"error": "trigger_type must be 'schedule', 'lifecycle', or 'event'"}, status=400
+    )
+
+
+def _create_event(body: dict) -> web.Response:
+    """Create a data-event trigger (#38)."""
+    import uuid
+
+    from personalclaw.event_triggers import (
+        EVENT_PATTERNS,
+        INBOX_SENDER,
+        PATTERN_SOURCE,
+        EventTrigger,
+    )
+
+    pattern = str(body.get("pattern") or "").strip()
+    if pattern not in EVENT_PATTERNS:
+        return web.json_response(
+            {"error": f"pattern must be one of {list(EVENT_PATTERNS)}"}, status=400
+        )
+    sender_glob = str(body.get("sender_glob") or "")
+    # A pattern that has nothing to match on is a trigger that would fire on EVERY message from its
+    # source — never what the author who chose `InboxSender` meant. Reject it with a typed code so
+    # the UI can point at the empty field, rather than silently persisting a footgun.
+    if pattern == INBOX_SENDER and not sender_glob:
+        return web.json_response(
+            {"error": "InboxSender requires a sender_glob", "code": "sender_glob_required"},
+            status=400,
+        )
+    action = body.get("action") or {}
+    # The source is DERIVED from the pattern, never taken from the wire — a client-supplied source
+    # could contradict the pattern and defeat the isolation the source gate exists to enforce.
+    t = EventTrigger(
+        id=str(body.get("name") or uuid.uuid4().hex[:8]).strip(),
+        pattern=pattern,
+        source=PATTERN_SOURCE[pattern],
+        action_provider=str(action.get("provider") or "notify"),
+        action_config=dict(action.get("config") or {}),
+        key_glob=str(body.get("key_glob") or ""),
+        content_re=str(body.get("content_re") or ""),
+        sender_glob=sender_glob,
+        address_glob=str(body.get("address_glob") or ""),
+        event_glob=str(body.get("event_glob") or ""),
+        max_fires=int(body.get("max_fires", 0) or 0),
+    )
+    _event_store().upsert(t)
+    # A catastrophic `content_re` warns rather than refuses (§7/R4 rule d — S128). It runs on the
+    # MEMORY WRITE path, where `(a+)+` costs ~40s on a 30-char value; refusing would break triggers
+    # people already have, so the row is created and the risk is named where the author will see it.
+    payload = _serialize_event(t)
+    hint = _regex_hint(t.content_re)
+    if hint:
+        payload["warning"] = hint
+    return web.json_response(payload, status=201)
+
+
+def _regex_hint(pattern: str) -> str:
+    """The catastrophic-backtracking warning for a `content_re`, or "".
+
+    Thin wrapper so both the create and update handlers ask the same question of the same function —
+    a per-handler copy is how one of them ends up not warning.
+    """
+    from personalclaw.event_triggers import catastrophic_regex_hint
+
+    return catastrophic_regex_hint(pattern or "")
+
+
+async def _create_lifecycle(
+    state: DashboardState, body: dict, request: web.Request
+) -> web.Response:
+    from personalclaw.validation import HOOK_CREATE_SCHEMA, ValidationError, validate_tool_args
+
+    action = body.get("action") or {}
+    payload = {
+        "name": body.get("name", ""),
+        "event": body.get("event", ""),
+        "matcher": body.get("matcher", ""),
+        "provider": action.get("provider", ""),
+        "provider_config": action.get("config") or {},
+    }
+    if "timeout" in body:
+        payload["timeout"] = body["timeout"]
+    try:
+        validated = validate_tool_args(payload, HOOK_CREATE_SCHEMA)
+    except ValidationError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    hook = _hook_store(state).create(validated)
+    _sel().log_api_access(
+        caller=request.get("user", "dashboard"),
+        operation="trigger.create",
+        outcome="success",
+        source="dashboard",
+        resources=f"trigger:lifecycle:{hook.id}:{hook.name}:{hook.event}",
+    )
+    return web.json_response({"ok": True, "trigger": _serialize_lifecycle(hook, [])})
+
+
+async def _create_schedule(state: DashboardState, body: dict, request: web.Request) -> web.Response:
+    from zoneinfo import available_timezones
+
+    from personalclaw.schedule import normalize_action
+    from personalclaw.triggers import delivery as _delivery
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.validation import CHANNEL_ID_RE, CHANNEL_MAX_LEN
+
+    name = str(body.get("name", "")).strip()
+    if not name:
+        return web.json_response({"error": "name required"}, status=400)
+    try:
+        action = normalize_action(body.get("action"))
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+    every = body.get("every")
+    cron_expr = body.get("cron")
+    at_ts = body.get("at")
+    channel = str(body.get("channel", "")).strip() or None
+    if channel and (len(channel) > CHANNEL_MAX_LEN or not CHANNEL_ID_RE.match(channel)):
+        return web.json_response({"error": "invalid channel ID format"}, status=400)
+    timezone_val = str(body.get("timezone") or "").strip()
+    if timezone_val and timezone_val not in available_timezones():
+        return web.json_response(
+            {"error": f"invalid timezone: {_redact(timezone_val)!r}"}, status=400
+        )
+
+    # 🔴 FAILURE ROUTING at CREATE too (WF2AUT-15). Read on both paths deliberately: issue 272 was a
+    # field the create path read and the update path did not, so it could be set once and never
+    # changed, and `test_trigger_wire_field_census` now fails on either half being missing.
+    # Validated character-for-character the same way in both, because two endpoints that accept one
+    # field must accept it identically.
+    failure_delivery = body.get("failure_delivery", Trigger.failure_delivery)
+    if not _delivery.is_valid_route(failure_delivery):
+        return json_error(
+            "invalid_request",
+            message=(
+                "'failure_delivery' must be 'inbox', 'none', 'channel:<id>', or '' to follow the "
+                "result route"
+            ),
+            status=400,
+        )
+    failure_dedupe = body.get("failure_dedupe", False)
+    if not isinstance(failure_dedupe, bool):
+        return json_error(
+            "invalid_request", message="'failure_dedupe' must be a boolean", status=400
+        )
+
+    # 🔴 §6's write re-point (S101): the clock spec is built for the STORE, not for `add_job`. The
+    # store's spellings are `expr`/`interval_secs`/`at` (the legacy `cron_expr`/`every_secs`/`at_ts`
+    # live on the wire only), and every validation above is unchanged — the re-point moves where the
+    # row is PERSISTED, never what the API accepts.
+    spec: dict[str, Any] = {}
+    if every:
+        try:
+            spec = {"kind": "interval", "interval_secs": int(every)}
+        except (ValueError, TypeError):
+            return web.json_response({"error": "'every' must be an integer"}, status=400)
+    elif cron_expr:
+        spec = {"kind": "cron", "expr": str(cron_expr).strip()}
+    elif at_ts:
+        try:
+            spec = {"kind": "at", "at": float(at_ts), "delete_after_run": True}
+        except (ValueError, TypeError):
+            return web.json_response(
+                {"error": "'at' must be a Unix timestamp in seconds"}, status=400
+            )
+    else:
+        return web.json_response({"error": "every, cron, or at required"}, status=400)
+
+    if timezone_val:
+        spec["timezone"] = timezone_val
+    if body.get("strict_schedule"):
+        spec["strict"] = True
+    if isinstance(body.get("skip_dates"), list):
+        spec["skip_dates"] = [str(d) for d in body["skip_dates"]]
+
+    from personalclaw.triggers import tools as _tools
+
+    # `enabled` is OPTIONAL and defaults to on — but when it is sent it is honored. It used to be
+    # read by nobody on this path, so a caller asking for a trigger created switched off got a live,
+    # armed one and no indication otherwise (#587).
+    #
+    # A non-bool is a 400, not a coercion, and deliberately the same rule
+    # `POST /api/triggers/{id}/toggle` already applies: the JSON string "false" is truthy under
+    # `bool()`, so coercing here would silently ARM a trigger a caller asked to be created off —
+    # inverting the request. Two endpoints that take the same field answer about it the same way.
+    #
+    # Structured envelope (`json_error`), unlike its flat siblings a few lines up. `AGENTS.md`
+    # §"Shared conventions" declares the structured shape as THE wire error, and
+    # `test_wire_error_envelope_census` ratchets the flat population down — so a NEW refusal joins
+    # the shape the project is converging on rather than the one it is retiring. Converting this
+    # function's existing flat errors is a separate change; growing their number is not allowed.
+    enabled_raw = body.get("enabled", True)
+    if not isinstance(enabled_raw, bool):
+        return json_error("invalid_request", message="'enabled' must be a boolean", status=400)
+
+    store = _trigger_store()
+    result = _tools.create(
+        store,
+        name=name,
+        kind="clock",
+        spec=spec,
+        enabled=enabled_raw,
+        # `workflow.inline` is the migrated shape, which `schedule_view` and the gateway's shared
+        # dispatch both read — so an API-created row and a migrated one are indistinguishable
+        # downstream.
+        workflow={"inline": action},
+        # `channel`/`silent` are DELIVERY on the entity, not action config (LEGACY_FIELD_MAP:
+        # `channel → delivery`, `silent → delivery == none`).
+        created_by="user",
+    )
+    if not result.ok:
+        return web.json_response({"error": result.text}, status=400)
+
+    raw_id = str((result.data.get("trigger") or {}).get("id") or "")
+    row = store.get(raw_id)
+    if row is not None:
+        trigger = row.trigger
+        # 🔴 THE FALSY BRANCH NAMES THE ROUTE (#450). It used to mint `""`, which is not a member of
+        # the `delivery` vocabulary, and every reader coerced that blank back to `"none"` — the
+        # SILENT value — so "Silent OFF, no channel" created a trigger the user could not un-mute.
+        # `"inbox"` is the vocabulary's "deliver normally", and it is what the same field's failure
+        # peer already defaults to (`Trigger.failure_delivery`). Written identically in
+        # `_update_schedule`: two endpoints that accept one field must encode it the same way.
+        trigger.delivery = (
+            "none" if body.get("silent") else (f"channel:{channel}" if channel else "inbox")
+        )
+        # Set here rather than through `tools.create`, for the same reason `delivery` is: the
+        # constructor takes the schedule mechanism and the action, and delivery is what the entity
+        # calls this pair. `failure_policy` is BUILT, not merged, because the row was created one
+        # statement ago and has no other policy key to preserve.
+        trigger.failure_delivery = str(failure_delivery or "").strip()
+        trigger.failure_policy = {
+            **dict(trigger.failure_policy or {}),
+            "dedupe_hash": failure_dedupe,
+        }
+        store.upsert(trigger)
+        _arm_if_needed(store, raw_id)
+        row = store.get(raw_id)
+
+    state.push_refresh("crons")
+    _sel().log_api_access(
+        caller=request.get("user", "dashboard"),
+        operation="trigger.create",
+        outcome="success",
+        source="dashboard",
+        resources=f"trigger:schedule:{raw_id}:{name}",
+    )
+    projected = _schedule_row_for(state, row) if row is not None else {}
+    return web.json_response({"ok": True, "trigger": projected})
+
+
+# ── update / delete ──
+
+
+async def api_trigger_detail(request: web.Request) -> web.Response:
+    """PUT / DELETE /api/triggers/{id}."""
+    state: DashboardState = request.app["state"]
+    kind, raw = _split_id(request.match_info["id"])
+
+    if request.method == "DELETE":
+        if kind == _STORE:
+            store = _trigger_store()
+            if store.get(raw) is None:
+                return web.json_response({"error": "not found"}, status=404)
+            store.delete(raw)
+            _sel().log_api_access(
+                caller=request.get("user", "dashboard"),
+                operation="trigger.delete",
+                outcome="success",
+                source="dashboard",
+                resources=f"trigger:store:{raw}",
+            )
+            return web.json_response({"ok": True})
+        if kind == _EVENT:
+            if not _event_store().delete(raw):
+                return web.json_response({"error": "not found"}, status=404)
+            _sel().log_api_access(
+                caller=request.get("user", "dashboard"),
+                operation="trigger.delete",
+                outcome="success",
+                source="dashboard",
+                resources=f"trigger:event:{raw}",
+            )
+            return web.json_response({"ok": True})
+        if kind == _LIFECYCLE:
+            store = _hook_store(state)
+            hook = store.get(raw)
+            if not store.delete(raw):
+                return web.json_response({"error": "not found"}, status=404)
+            _sel().log_api_access(
+                caller=request.get("user", "dashboard"),
+                operation="trigger.delete",
+                outcome="success",
+                source="dashboard",
+                resources=f"trigger:lifecycle:{raw}:{hook.name if hook else 'unknown'}",
+            )
+            return web.json_response({"ok": True})
+        # schedule — the store owns the row (§6 write re-point, S101). Run HISTORY still lives in
+        # `ScheduleRunStore` (keyed by a plain id, so it survives the cutover unchanged), so the
+        # delete has two halves: drop the trigger, then drop its runs.
+        store = _trigger_store()
+        if store.get(raw) is None:
+            return web.json_response({"error": "not found"}, status=404)
+        store.delete(raw)
+        try:
+            await _runs_store().delete_for_job(raw)
+        except Exception:
+            logger.debug("Failed to delete run history for %s", raw, exc_info=True)
+        state.push_refresh("crons")
+        _sel().log_api_access(
+            caller=request.get("user", "dashboard"),
+            operation="trigger.delete",
+            outcome="success",
+            source="dashboard",
+            resources=f"trigger:schedule:{raw}",
+        )
+        return web.json_response({"ok": True})
+
+    # PUT
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+
+    if kind == _EVENT:
+        return _update_event(raw, body)
+    if kind == _LIFECYCLE:
+        return await _update_lifecycle(state, raw, body)
+    return await _update_schedule(state, raw, body)
+
+
+def _update_event(raw: str, body: dict) -> web.Response:
+    """PUT an ``event`` trigger (S67 parity).
+
+    Measured before writing: every field a caller could send returned 400 "no fields to update" or
+    404 "not found" and wrote NOTHING — `enabled`, `pattern`, `max_fires` and `action` all silently
+    failed because the PUT fell through to `_update_schedule`, which looked for a cron job with this
+    id and did not find one. A user toggling an event trigger off was told it does not exist while
+    it kept firing.
+
+    `pattern` is validated against `EVENT_PATTERNS` rather than accepted: an unrecognized pattern
+    matches nothing, so a typo would silently retire a working trigger — the exact failure the
+    create path already guards.
+    """
+    from personalclaw.event_triggers import (
+        EVENT_PATTERNS,
+        INBOX_SENDER,
+        PATTERN_SOURCE,
+    )
+
+    store = _event_store()
+    trigger = next((t for t in store.load() if t.id == raw), None)
+    if trigger is None:
+        return web.json_response({"error": "not found"}, status=404)
+
+    if "pattern" in body:
+        pattern = str(body.get("pattern") or "").strip()
+        if pattern not in EVENT_PATTERNS:
+            return web.json_response(
+                {"error": f"pattern must be one of {list(EVENT_PATTERNS)}"}, status=400
+            )
+        trigger.pattern = pattern
+        # Source follows the pattern (EIAT-1) — never taken from the wire, so an edit can't
+        # leave a trigger listening to a source its pattern can never match.
+        trigger.source = PATTERN_SOURCE[pattern]
+    if "sender_glob" in body:
+        trigger.sender_glob = str(body.get("sender_glob") or "")
+    if "address_glob" in body:
+        trigger.address_glob = str(body.get("address_glob") or "")
+    if "event_glob" in body:
+        trigger.event_glob = str(body.get("event_glob") or "")
+    # Re-check against the FINAL state: whether the pattern or the glob was the field edited, an
+    # InboxSender trigger must never end up with an empty sender_glob (matches every message).
+    if trigger.pattern == INBOX_SENDER and not trigger.sender_glob:
+        return web.json_response(
+            {"error": "InboxSender requires a sender_glob", "code": "sender_glob_required"},
+            status=400,
+        )
+    if "enabled" in body:
+        trigger.enabled = bool(body["enabled"])
+    if "key_glob" in body:
+        trigger.key_glob = str(body.get("key_glob") or "")
+    if "content_re" in body:
+        trigger.content_re = str(body.get("content_re") or "")
+    if "max_fires" in body:
+        try:
+            trigger.max_fires = max(0, int(body.get("max_fires") or 0))
+        except (TypeError, ValueError):
+            return web.json_response({"error": "max_fires must be an integer"}, status=400)
+    if "debounce_secs" in body:
+        try:
+            trigger.debounce_secs = max(0.0, float(body.get("debounce_secs") or 0.0))
+        except (TypeError, ValueError):
+            return web.json_response({"error": "debounce_secs must be a number"}, status=400)
+    if isinstance(body.get("action"), dict):
+        action = body["action"]
+        if action.get("provider"):
+            trigger.action_provider = str(action["provider"])
+        if "config" in action:
+            trigger.action_config = dict(action["config"] or {})
+
+    store.upsert(trigger)
+    # Same warn-not-refuse treatment as the create path: an edit that INTRODUCES a catastrophic
+    # pattern must say so, or the author only learns about it when their memory writes get slow.
+    result: dict[str, Any] = {"ok": True, "trigger": _serialize_event(trigger)}
+    hint = _regex_hint(trigger.content_re)
+    if hint:
+        result["warning"] = hint
+    return web.json_response(result)
+
+
+async def _update_lifecycle(state: DashboardState, raw: str, body: dict) -> web.Response:
+    from personalclaw.validation import HOOK_UPDATE_SCHEMA, ValidationError, validate_tool_args
+
+    patch: dict[str, Any] = {}
+    for k in ("name", "event", "matcher", "timeout", "enabled"):
+        if k in body:
+            patch[k] = body[k]
+    if "action" in body and isinstance(body["action"], dict):
+        if body["action"].get("provider"):
+            patch["provider"] = body["action"]["provider"]
+        if "config" in body["action"]:
+            patch["provider_config"] = body["action"]["config"] or {}
+    try:
+        validated = validate_tool_args(patch, HOOK_UPDATE_SCHEMA)
+    except ValidationError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    try:
+        hook = _hook_store(state).update(raw, validated)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    if not hook:
+        return web.json_response({"error": "not found"}, status=404)
+    return web.json_response(
+        {"ok": True, "trigger": _serialize_lifecycle(hook, _used_by_index().get(raw, []))}
+    )
+
+
+async def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Response:
+    from zoneinfo import available_timezones
+
+    from personalclaw.triggers import delivery as _delivery
+    from personalclaw.validation import CHANNEL_ID_RE, CHANNEL_MAX_LEN
+
+    kwargs: dict[str, Any] = {}
+    # 🔴 `failure_delivery`/`failure_dedupe` join this allowlist (WF2AUT-15). The delivery contract
+    # was fully wired on the fire path — `delivery.route_for` picks the route per outcome,
+    # `gateway._dedupe_repeat_failure` gates on `failure_policy.dedupe_hash` — and NEITHER field was
+    # readable or writable from any surface. `test_trigger_wire_field_census` is what keeps them
+    # readable by BOTH this path and `_create_schedule`, which is the omission issue 272 was.
+    for key in (
+        "name",
+        "channel",
+        "silent",
+        "strict_schedule",
+        "failure_delivery",
+        "failure_dedupe",
+    ):
+        if key in body:
+            kwargs[key] = body[key]
+    if "failure_delivery" in kwargs and not _delivery.is_valid_route(kwargs["failure_delivery"]):
+        return json_error(
+            "invalid_request",
+            message=(
+                "'failure_delivery' must be 'inbox', 'none', 'channel:<id>', or '' to follow the "
+                "result route"
+            ),
+            status=400,
+        )
+    if "failure_dedupe" in kwargs and not isinstance(kwargs["failure_dedupe"], bool):
+        # A 400, not a coercion, and for the reason `enabled` gives on the create path: the JSON
+        # string "false" is truthy under `bool()`, so coercing would silently turn dedup ON for a
+        # caller asking to turn it off — inverting the request.
+        return json_error(
+            "invalid_request", message="'failure_dedupe' must be a boolean", status=400
+        )
+    if "action" in body and isinstance(body["action"], dict):
+        kwargs["action"] = body["action"]  # validated + canonicalized in update_job
+    if "channel" in kwargs:
+        ch = (kwargs["channel"] or "").strip() or None
+        kwargs["channel"] = ch
+        if ch and (len(ch) > CHANNEL_MAX_LEN or not CHANNEL_ID_RE.match(ch)):
+            return web.json_response({"error": "invalid channel ID format"}, status=400)
+    if "cron" in body:
+        kwargs["cron_expr"] = body["cron"]
+    if "every" in body:
+        kwargs["every_secs"] = body["every"]
+    if "timezone" in body:
+        tz_val = (body["timezone"] or "").strip()
+        if tz_val and tz_val not in available_timezones():
+            return web.json_response(
+                {"error": f"invalid timezone: {_redact(tz_val)!r}"}, status=400
+            )
+        kwargs["timezone"] = tz_val
+    # `skip_dates` used to be absent from this whole function while `_create_schedule` read it and
+    # `_carried` went out of its way to preserve it across a cadence change — so the field could be
+    # set at creation and preserved forever, but never CHANGED. Editing a holiday list returned
+    # 200 with the old list intact (issue 272). The coercion is character-for-character the create
+    # path's, because two endpoints that accept the same field must accept it identically: a
+    # non-list is ignored rather than rejected there, so it is ignored here too. (Validating the
+    # date STRINGS is issue 270 and belongs to both paths at once, not to this one.)
+    if isinstance(body.get("skip_dates"), list):
+        kwargs["skip_dates"] = [str(d) for d in body["skip_dates"]]
+    if not kwargs:
+        return web.json_response({"error": "no fields to update"}, status=400)
+
+    # 🔴 §6's write re-point (S101): the store owns the row. Legacy kwargs are translated onto the
+    # entity's own addresses (`LEGACY_FIELD_MAP`) — cadence into `spec`, channel/silent into
+    # `delivery`, the action into `workflow.inline` — and applied through `tools.update`, whose
+    # allowlist protects the health fields §3.7 autopauses on.
+    store = _trigger_store()
+    row = store.get(raw)
+    if row is not None:
+        from personalclaw.triggers import tools as _tools
+        from personalclaw.triggers.schedule_view import channel_of
+
+        before = dict(row.trigger.spec or {})
+        spec = dict(before)
+        if "cron_expr" in kwargs and kwargs["cron_expr"]:
+            spec = {"kind": "cron", "expr": str(kwargs["cron_expr"]).strip(), **_carried(spec)}
+        elif "every_secs" in kwargs and kwargs["every_secs"]:
+            spec = {
+                "kind": "interval",
+                "interval_secs": int(kwargs["every_secs"]),
+                **_carried(spec),
+            }
+        if "timezone" in kwargs:
+            spec["timezone"] = kwargs["timezone"]
+        if "strict_schedule" in kwargs:
+            spec["strict"] = bool(kwargs["strict_schedule"])
+        if "skip_dates" in kwargs:
+            spec["skip_dates"] = kwargs["skip_dates"]
+        # 🔴 DERIVED FROM THE VALUES, not from which keys the body happened to carry (issue 531).
+        # Four separate `cadence_changed = True` lines used to fire on PRESENCE, and the edit form
+        # sends `timezone` on every save — so a name-only edit cleared `next_fire_at` and re-armed.
+        # Measured live: two consecutive renames of one 3600s trigger, changing nothing but the
+        # name, moved its next fire 04:33:08 → 04:34:21, each save re-phasing the interval by the
+        # wall time since the last one. A trigger 59 minutes into an hourly cadence lost the hour.
+        #
+        # Comparing the resulting spec against the one on disk means only a real change re-arms, and
+        # it holds for every field at once instead of four hand-set flags. The EXCLUSION is the
+        # list, not the inclusion: `strict` is the one spec key that does not move the armed instant
+        # (it governs jitter at fire time, matching the old code, which never flagged it), so a NEW
+        # spec key defaults to "re-arm" — the safe direction, since a stale armed fire is a wrong
+        # fire while a redundant re-arm only re-phases a cadence the user just changed anyway.
+        cadence_changed = _cadence_fingerprint(spec) != _cadence_fingerprint(before)
+
+        patch: dict[str, Any] = {"spec": spec}
+        if "name" in kwargs:
+            patch["name"] = str(kwargs["name"])
+        if "action" in kwargs and isinstance(kwargs["action"], dict):
+            patch["workflow"] = {"inline": kwargs["action"]}
+        if "channel" in kwargs or "silent" in kwargs:
+            silent = bool(kwargs.get("silent", row.trigger.delivery == "none"))
+            channel_id = kwargs.get("channel", channel_of(row.trigger))
+            # 🔴 `"inbox"`, not `""` — the same encoding `_create_schedule` writes (#450). This is
+            # where the latch bit hardest: on a `"none"` row, `channel_of` returns `""`
+            # (prefix-only), so `PUT {"silent": false}` derived `silent=False, channel_id=""` and
+            # landed in this else branch, which minted the blank that read back as `"none"`. Silent
+            # OFF therefore never took, and the only escape was to also supply a channel.
+            patch["delivery"] = (
+                "none" if silent else (f"channel:{channel_id}" if channel_id else "inbox")
+            )
+        if "failure_delivery" in kwargs:
+            patch["failure_delivery"] = str(kwargs["failure_delivery"] or "").strip()
+        if "failure_dedupe" in kwargs:
+            # 🔴 MERGED, never replaced. `failure_policy` also holds `autopause_after`, the §3.7
+            # threshold `autopause.evaluate` reads, and the form owns exactly one of its keys.
+            # Sending `{"dedupe_hash": …}` alone would silently reset a user's tuned failure budget
+            # to the default — the quietly-losable class `_carried` exists for one field up.
+            policy = dict(row.trigger.failure_policy or {})
+            policy["dedupe_hash"] = bool(kwargs["failure_dedupe"])
+            patch["failure_policy"] = policy
+
+        result = _tools.update(store, trigger_id=raw, patch=patch)
+        if not result.ok:
+            return web.json_response({"error": result.text}, status=400)
+        if cadence_changed:
+            # A NEW cadence invalidates the armed fire — keeping the old one would fire on the
+            # previous schedule after the user changed it. Clear, then re-arm from the new spec.
+            updated = store.get(raw).trigger
+            updated.next_fire_at = ""
+            store.upsert(updated)
+            _arm_if_needed(store, raw)
+        state.push_refresh("crons")
+        return web.json_response({"ok": True, "trigger": _schedule_row_for(state, store.get(raw))})
+
+    return web.json_response({"error": "not found"}, status=404)
+
+
+#: Spec keys that do NOT move a trigger's armed instant, and so must not force a re-arm. `strict`
+#: governs jitter at FIRE time (`arm.cadence_next_fire` never reads it when it computes
+#: `next_fire_at`), which is why the pre-issue-531 code already left it out of its flags. Everything
+#: else — `kind`, `expr`, `interval_secs`, `at`, `timezone`, `skip_dates` and any key added later —
+#: changes when the next fire lands, so it belongs on the re-arm side by default.
+_NON_CADENCE_SPEC_KEYS: frozenset[str] = frozenset({"strict"})
+
+
+def _cadence_fingerprint(spec: dict[str, Any]) -> dict[str, Any]:
+    """The part of a clock spec that decides WHEN the next fire lands, canonicalized.
+
+    Used to answer "did this edit actually change the cadence?" by comparing before against after,
+    rather than by asking which keys the request body happened to carry (issue 531).
+
+    🔴 AN ABSENT KEY AND ITS EMPTY VALUE ARE THE SAME STATE, and collapsing them is the whole reason
+    this is a function. The edit form posts `timezone: ""` and `skip_dates: []` on every save, so a
+    row stored as `{kind, interval_secs}` comes back as `{kind, interval_secs, timezone: "",
+    skip_dates: []}` — different dicts, identical schedules. A raw `!=` would call that a cadence
+    change and re-arm on every cosmetic edit, which is the defect. Sound because it matches how the
+    ARM path reads them: `arm.cadence_next_fire` resolves the zone through
+    `str(spec.get("timezone", "") or "")` and the skip list through `list(spec.get(...) or [])`, so
+    missing and empty are indistinguishable there too. `0` is deliberately NOT collapsed — an
+    `interval_secs` of 0 is a broken value, not an absent one.
+    """
+    return {
+        key: value
+        for key, value in spec.items()
+        if key not in _NON_CADENCE_SPEC_KEYS and value is not None and value != "" and value != []
+    }
+
+
+def _carried(spec: dict[str, Any]) -> dict[str, Any]:
+    """Spec keys that survive a CADENCE change (S101).
+
+    Replacing `{kind, expr}` wholesale would silently drop `timezone`/`skip_dates`/`strict` — the
+    quietly-losable class §1.3 warns about, and the exact fields S91's `verify-migration` exists to
+    catch going missing. A user changing `0 9 * * *` to `0 10 * * *` must not lose their holidays.
+    """
+    return {k: v for k, v in spec.items() if k in ("timezone", "skip_dates", "strict")}
+
+
+# ── toggle / run / test ──
+
+
+async def api_trigger_toggle(request: web.Request) -> web.Response:
+    """POST /api/triggers/{id}/toggle — enable/disable."""
+    state: DashboardState = request.app["state"]
+    kind, raw = _split_id(request.match_info["id"])
+    if kind == _STORE:
+        # Route through S92's tool functions, which already refuse to enable a broken row (S87) and
+        # report WHY — reusing them keeps the API and the chat tool answering identically.
+        from personalclaw.triggers import tools as T
+
+        store = _trigger_store()
+        row = store.get(raw)
+        if row is None:
+            return web.json_response({"error": "not found"}, status=404)
+        body = await json_object_body(request)
+        want = body.get("enabled") if isinstance(body, dict) else None
+        paused = row.trigger.enabled if want is None else (not bool(want))
+        result = T.set_paused(store, trigger_id=raw, paused=paused)
+        if not result.ok:
+            return web.json_response({"error": result.text}, status=400)
+        return web.json_response({"ok": True, "trigger": _serialize_store(store.get(raw))})
+    if kind == _LIFECYCLE:
+        hook = _hook_store(state).toggle(raw)
+        if not hook:
+            return web.json_response({"error": "not found"}, status=404)
+        return web.json_response(
+            {"ok": True, "trigger": _serialize_lifecycle(hook, _used_by_index().get(raw, []))}
+        )
+    if kind == _EVENT:
+        # Measured (S67): this fell through to the schedule branch, which looked for a cron job
+        # with this id, missed, and answered 404 "not found" — the off switch reporting that the
+        # trigger the user is looking at does not exist, while it kept firing.
+        store = _event_store()
+        trigger = next((t for t in store.load() if t.id == raw), None)
+        if trigger is None:
+            return web.json_response({"error": "not found"}, status=404)
+        body = await json_object_body(request)
+        want = body.get("enabled") if isinstance(body, dict) else None
+        trigger.enabled = (not trigger.enabled) if want is None else bool(want)
+        # An exhausted trigger (`fire_count >= max_fires`) self-retired. Re-enabling it without
+        # clearing the count would flip `enabled` to True and change nothing — `record_fire`
+        # disables it again on the next fire. So a deliberate re-enable resets the budget.
+        if trigger.enabled and trigger.max_fires and trigger.fire_count >= trigger.max_fires:
+            trigger.fire_count = 0
+        store.upsert(trigger)
+        return web.json_response({"ok": True, "trigger": _serialize_event(trigger)})
+    # schedule
+    body = await json_object_body(request)
+    enabled = body.get("enabled")
+    # 🔴 §6's write re-point (S101): the store owns the row. Routed through `tools.set_paused`, which
+    # already refuses to enable a row that failed to parse (S87) and reports WHY — so the API and a
+    # chat command cannot answer differently about the same trigger.
+    store = _trigger_store()
+    row = store.get(raw)
+    if row is not None:
+        from personalclaw.triggers import tools as _tools
+
+        want = (not row.trigger.enabled) if enabled is None else bool(enabled)
+        result = _tools.set_paused(store, trigger_id=raw, paused=not want)
+        if not result.ok:
+            return web.json_response({"error": result.text}, status=400)
+        # Re-ENABLING must ARM, or the trigger sits enabled and inert until the next boot sweep —
+        # `due_ids` only surfaces rows that carry a `next_fire_at`.
+        if want:
+            _arm_if_needed(store, raw)
+        state.push_refresh("crons")
+        return web.json_response({"ok": True})
+    return web.json_response({"error": "not found"}, status=404)
+
+
+async def api_trigger_run(request: web.Request) -> web.Response:
+    """POST /api/triggers/{id}/run — fire now.
+
+    Schedule triggers run via the schedule service (non-blocking). This is also
+    the path the ``schedule_trigger`` MCP tool posts to with the internal secret.
+    Lifecycle triggers have no standalone "run" (they fire on agent events) — use
+    the test endpoint instead.
+
+    ``?dry_run=1`` (or JSON ``{"dry_run": true}``) runs a **dry-run replay** (T9):
+    write-capable tools don't execute, so it previews what the trigger's current
+    action WOULD do with no side effects — tagged ``trigger="replay"`` in history.
+
+    Reads no `state` at all since S110 — the clearest evidence the manual-run path is fully
+    store-backed.
+    """
+    kind, raw = _split_id(request.match_info["id"])
+    if kind == _STORE:
+        return await _run_store(raw, request)
+    # 🔴 A STORE trigger DOES have run records (S166). This branch was `kind != _SCHEDULE`, so
+    # every store trigger — web_watch, file, idle, run_completed, view, webhook — was told
+    # `supported: false` with a reason naming LIFECYCLE triggers, a kind it is not. Measured: three
+    # fires of a `web_watch` trigger persisted three rows under `job_id="web_watch:feed"` via
+    # `_record_fire_outcome` (S139), and the endpoint reported none, so the detail panel showed "no
+    # runs recorded yet" for an automation that had run three times.
+    #
+    # The store key is the FULL trigger id, which is exactly what `_split_id` returns as `raw` for a
+    # store trigger (`store:web_watch:feed` → `web_watch:feed`) — so the same `list_for_job(raw, …)`
+    # call the schedule branch makes already works. Nothing new to plumb; the branch was simply
+    # written before store triggers had a run store.
+    #
+    # No catch-all for an unrecognised kind, deliberately: `_split_id` defaults an unknown prefix to
+    # `_SCHEDULE` (a bare id is a schedule id, for backwards compatibility), so `kind` can only ever
+    # be one of the four constants here — a third branch would be unreachable. Verified by driving
+    # `mystery:x`, which resolves to `("schedule", "mystery:x")` and answers an empty schedule
+    # history rather than a fabricated "unsupported".
+    if kind == _LIFECYCLE:
+        return web.json_response(
+            {"error": "lifecycle triggers fire on events; use /test"}, status=400
+        )
+    if kind == _EVENT:
+        # Measured (S67): this fell through to the schedule branch and answered 404 "not found",
+        # while /test answered 400 "use /run" — a circular dead end with no way to fire an event
+        # trigger by hand at all.
+        return await _run_event(raw, request)
+    # 🔴 §6's manual-run re-point (S102). A store-backed clock trigger fires through the SAME path
+    # `_run_store` uses for every other store kind, so a Run button and an autonomous tick fire
+    # the same action the same way. `is_running` comes from S97's CLAIM store — cross-process, so
+    # an API worker that does not own the scheduler loop can still answer it (the legacy
+    # `is_running` read a process-local dict and was simply wrong here).
+    store = _trigger_store()
+    if store.get(raw) is not None:
+        from personalclaw.triggers import claims as _claims
+
+        if _claims.is_running(raw, base_dir=store.base_dir):
+            return web.json_response({"error": "already running", "running": True}, status=409)
+        return await _run_store(raw, request)
+
+    return web.json_response({"error": "not found"}, status=404)
+
+
+#: Inbound answers may carry the user's own data; never cache them (mirrors `inbound.mcp_http`).
+_NO_STORE = {"Cache-Control": "no-store"}
+
+#: The client-surface identity for the external webhook fire endpoint. Deliberately a string that is
+#: NOT one of the five `EXTERNAL_ACCESS_SURFACES`: `clients.lookup_by_token` gates on
+#: `client.may_use(surface)`, so a bearer scoped to `mcp`/`a2a`/`capture`/… can never fire a webhook
+#: — the surface-binding isolation the client registry exists to provide. It is not a mountable
+#: config surface (this is an always-registered dashboard route), so the surface-mount kill switches
+#: do not apply; the global incident switch and the per-client `disabled` flag do.
+_WEBHOOK_SURFACE = "webhook"
+
+
+async def api_trigger_fire(request: web.Request) -> web.Response:
+    """POST /api/triggers/{id}/fire — fire a `webhook` trigger from an EXTERNAL caller (WF2AUT-12).
+
+    The external twin of `/run`. `/run` is the OWNER's dashboard-authenticated "fire now" button;
+    `/fire` admits an OUTSIDE caller that presents a per-client **scoped** bearer token, fences the
+    inbound body as untrusted data, and dispatches the trigger's action fire-and-forget.
+
+    The gate, in order — the inbound-surface discipline `inbound/mcp_http.py` follows:
+
+    1. **incident kill switch** (`gate.incident_problem` → 503): an active incident suspends all
+       unattended inbound. The surface-mount switches (master/per-surface) do NOT apply: this is an
+       always-registered dashboard route, not one of the five `EXTERNAL_ACCESS_SURFACES`, and the
+       per-integration on/off switch is the scoped client's own `disabled` flag (enforced inside
+       `lookup_by_token`) plus revocation.
+    2. **token → client** (`clients.lookup_by_token` → 401): verifies the bearer against the
+       SHA-256-hash registry, honouring the client's `disabled` flag and its `"webhook"` surface
+       binding. There is deliberately NO surface-token fallback (unlike `/mcp`): the Done-when
+       requires a *scoped* token, which an un-scoped operator token is not.
+    3. **scope pin** (→ 403 + SEL): the client must be pinned to THIS trigger
+       (`scope.trigger == <id>`). `check_bindings` refuses a DISAGREEING pin; the explicit equality
+       below also refuses an ABSENT pin, so a scope-less client cannot fire an arbitrary webhook
+       (fail-closed). A violation is a security event — logged and audited, never a silent
+       substitution.
+    4. **rate cap** (→ 429): per client, so one noisy integration cannot starve another.
+    5. **resolve** (→ 404): only a `webhook`-kind store trigger is fireable here; an unknown id or a
+       non-webhook kind answers 404 rather than confirming a non-webhook trigger's existence. Done
+       AFTER auth+scope, so a misscoped caller learns nothing about which triggers exist.
+    6. **fence + fire**: the raw body is capped and fenced (`framing.fence_payload`) so it reaches
+       the agent as data and never instructions, then the action is dispatched fire-and-forget (202)
+       — a webhook sender must not block on an LLM turn (the `view`-render idiom).
+
+    Network reachability (loopback vs remote) is governed by the dashboard server's own binding and
+    by the deferred owner E4 remote-exposure decision, not by this handler; the scoped bearer is the
+    admission gate wherever the route is reachable.
+    """
+    from personalclaw.inbound import audit as audit_mod
+    from personalclaw.inbound import caps as caps_mod
+    from personalclaw.inbound import clients as clients_mod
+    from personalclaw.inbound import framing
+    from personalclaw.inbound.gate import incident_problem
+
+    trigger_id = request.match_info["id"]
+    route = "POST /api/triggers/{id}/fire"
+
+    # 1) Incident kill switch — the global unattended-inbound suspension.
+    incident = incident_problem()
+    if incident:
+        audit_mod.audit(_WEBHOOK_SURFACE, route=route, status=503, refused=incident)
+        return json_error("service_unavailable", status=503, headers=_NO_STORE)
+
+    # 2) Token → client. Scoped per-client bearer only; no surface-token fallback.
+    presented = ""
+    header = request.headers.get("Authorization", "")
+    if header.startswith("Bearer "):
+        presented = header[len("Bearer ") :].strip()
+    client, reason = clients_mod.lookup_by_token(presented, _WEBHOOK_SURFACE)
+    if client is None:
+        audit_mod.audit(
+            _WEBHOOK_SURFACE,
+            route=route,
+            status=401,
+            refused=reason or "bad or missing bearer token",
+        )
+        return json_error("unauthorized", status=401, headers=_NO_STORE)
+    client_id = client.client_id
+
+    # 3) Scope pin — the client must be pinned to THIS trigger. `check_bindings` refuses a
+    #    disagreeing pin; the explicit equality refuses an absent one (fail-closed).
+    violation = clients_mod.check_bindings(client, {"scope": {"trigger": trigger_id}})
+    if not violation and str(client.scope.get("trigger", "")) != trigger_id:
+        violation = (
+            f"client {client_id} is not scoped to trigger {trigger_id!r} "
+            f"(scope.trigger={str(client.scope.get('trigger', ''))!r})"
+        )
+    if violation:
+        clients_mod.log_binding_violation(client_id, violation)
+        audit_mod.audit(
+            _WEBHOOK_SURFACE, route=route, status=403, refused=violation, client_id=client_id
+        )
+        return json_error(
+            "forbidden",
+            status=403,
+            headers=_NO_STORE,
+            error_extra={"detail": "request conflicts with a client binding"},
+        )
+
+    # 4) Rate cap, per client.
+    caps = caps_mod.caps_for(client)
+    peer_fallback = request.headers.get("Host", "") + "|" + (request.remote or "")
+    if not caps_mod.check_rate_for_client(_WEBHOOK_SURFACE, client_id, peer_fallback, caps):
+        audit_mod.audit(
+            _WEBHOOK_SURFACE,
+            route=route,
+            status=429,
+            refused="rate limit",
+            client_id=client_id,
+            rate_limited=True,
+        )
+        return json_error(
+            "rate_limited",
+            status=429,
+            headers={
+                **_NO_STORE,
+                "Retry-After": str(
+                    caps_mod.retry_after_for_client(
+                        _WEBHOOK_SURFACE, client_id, peer_fallback, caps
+                    )
+                ),
+            },
+        )
+    clients_mod.touch_last_seen(client_id)
+
+    # 5) Resolve the trigger. Only a `webhook`-kind store trigger is fireable here.
+    kind, raw = _split_id(trigger_id)
+    store = _trigger_store()
+    row = store.get(raw) if kind == _STORE else None
+    if row is None or row.trigger.kind != "webhook":
+        audit_mod.audit(
+            _WEBHOOK_SURFACE,
+            route=route,
+            status=404,
+            refused="unknown or non-webhook trigger",
+            client_id=client_id,
+        )
+        return json_error("not_found", status=404, headers=_NO_STORE)
+
+    # 6) Fence the untrusted body, then fire the trigger's action fire-and-forget.
+    declared = request.content_length or 0
+    if declared > caps.body_bytes:
+        audit_mod.audit(
+            _WEBHOOK_SURFACE,
+            route=route,
+            status=413,
+            refused="body cap (declared)",
+            client_id=client_id,
+        )
+        return json_error("request_too_large", status=413, headers=_NO_STORE)
+    body_bytes = await request.content.read(caps.body_bytes + 1)
+    if len(body_bytes) > caps.body_bytes:
+        audit_mod.audit(
+            _WEBHOOK_SURFACE, route=route, status=413, refused="body cap", client_id=client_id
+        )
+        return json_error("request_too_large", status=413, headers=_NO_STORE)
+
+    fenced = framing.fence_payload(
+        body_bytes.decode("utf-8", errors="replace"),
+        surface=_WEBHOOK_SURFACE,
+        client_id=client_id,
+        detail=raw,
+        caps=caps,
+    )
+    payload = {"trigger_id": raw, "body": fenced, "source": "webhook.fire"}
+
+    # Fire-and-forget: a webhook sender must not block on an LLM turn. Tracked on
+    # `state._background_tasks` so the task is not garbage-collected mid-run — the idiom
+    # `api_trigger_view_render` and the webhook-agent handler already follow.
+    state: DashboardState = request.app["state"]
+    task = asyncio.create_task(_dispatch_store_action(row.trigger, payload, event="webhook.fire"))
+    state._background_tasks.add(task)
+    task.add_done_callback(state._background_tasks.discard)
+
+    audit_mod.audit(
+        _WEBHOOK_SURFACE, route=route, status=202, bytes_in=len(body_bytes), client_id=client_id
+    )
+    return web.json_response(
+        {"ok": True, "accepted": True, "trigger": row.trigger.id}, status=202, headers=_NO_STORE
+    )
+
+
+async def _run_store(raw: str, request: web.Request) -> web.Response:
+    """Fire one store-backed trigger (file/web_watch/idle/…) by hand.
+
+    A `dry_run` reports S92's gate plan (which gates a manual fire enforces vs bypasses) without
+    executing — that reuses `tools.run`, so the API and the chat tool answer identically. A real
+    run dispatches the trigger's declared action through the SAME action-provider registry the
+    live file-watch path (`_fire_file_trigger`) uses, so a Run button and an autonomous fire
+    execute the same action the same way.
+
+    Manual runs bypass quiet-hours + duty limits but never the injection screen, capability
+    allowlist, or budget — the boundary `tools.MANUAL_NEVER_BYPASSES` pins.
+    """
+    from personalclaw.triggers import tools as T
+
+    store = _trigger_store()
+    row = store.get(raw)
+    if row is None:
+        return web.json_response({"error": "not found"}, status=404)
+
+    dry_run = request.query.get("dry_run", "") in ("1", "true", "yes")
+    if not dry_run:
+        body = await json_object_body(request)
+        dry_run = bool(body.get("dry_run", False))
+
+    if dry_run:
+        # Reuse tools.run for the gate plan — the API and the chat tool report identically.
+        result = T.run(store, trigger_id=raw, dry_run=True)
+        return web.json_response({"ok": result.ok, "result": result.data, "text": result.text})
+
+    # A real run: mirror tools.run's guards (broken row refused; a PAUSED trigger still runnable by
+    # hand — pausing means "stop firing on your own", and refusing a hand-driven run would remove
+    # the main way a user tests one before re-enabling), then dispatch async-native. tools.run's
+    # own runner seam is sync, so a coroutine runner would be stringified rather than awaited.
+    if row.errors:
+        return web.json_response(
+            {"error": f"{raw} has a parse error and cannot run ({row.errors[0].message})"},
+            status=400,
+        )
+    # 🔴 The kill switch, on the API's manual path too. This handler dispatches directly rather than
+    # through `tools.run`, so enforcing it only there would leave the Run button in the UI firing
+    # during an incident — the exact surface an operator is most likely to hit. 200, not 4xx: a
+    # guardrail decision is not a malformed request (the rule the event-trigger `/test` follows).
+    refusal = T.manual_refusal()
+    if refusal:
+        return web.json_response({"ok": False, "name": row.trigger.name, "refused": refusal})
+    # 🔴 `ok` REPORTS WHETHER THE ACTION RAN (#395). This answered `ok: True` unconditionally, with
+    # the failure carried as prose in `result` — so "no action provider configured" arrived as an
+    # HTTP 200 success and every caller that checks a status code or an `ok` flag (the two Run
+    # buttons, `schedule_trigger`, the `automation_run` MCP runner) read a no-op as a completed run.
+    # Still 200, not 4xx: the request was understood and answered honestly, and a trigger whose
+    # action cannot be resolved is not a malformed request — the same rule the kill-switch refusal
+    # above and the event-trigger `/test` already follow.
+    ran, note = await _dispatch_store_action(row.trigger, {"trigger_id": raw, "manual": True})
+    paused_note = "" if row.trigger.enabled else " (paused — this run does not re-enable it)"
+    return web.json_response({"ok": ran, "name": row.trigger.name, "result": note + paused_note})
+
+
+async def _dispatch_store_action(
+    trigger: Any, payload: dict[str, Any], *, event: str = "manual.run"
+) -> tuple[bool, str]:
+    """Run a store trigger's declared action through the action-provider registry.
+
+    The same path `gateway._fire_file_trigger` uses — a manual Run and an autonomous fire share one
+    dispatch so their behaviour cannot drift. Returns `(ran, note)`: whether the action actually
+    executed, and a short status string for the run result.
+
+    `event` labels the source to the action provider the way `gateway._fire_store_trigger` does
+    (`file.changed`, `trigger.chained`): a manual Run keeps the default `manual.run`, a pull-on-view
+    refresh passes `view.rendered`. It is a label only — the dispatch is the ONE store-action path,
+    not a per-caller fork.
+
+    🔴 BOTH ACTION SHAPES, because a real store holds both (#395). This read the FLAT
+    `workflow["provider"]` only, and every trigger the API/CLI/app-reconciler/digest writes nests
+    its action under `workflow["inline"]` — so `provider_name` was None for essentially every stored
+    row and the Run button was a silent no-op on all of them. The docstring above claimed this path
+    "cannot drift" from the autonomous fire while `gateway._fire_store_trigger` unwrapped `inline`
+    and this one did not. `schedule_view._inline_action` and `screen.requested_capabilities` both
+    document the same two-shape contract; this now matches the idiom all three use.
+
+    Provider AND config come from the SAME resolved dict. Taking the provider from `inline` and the
+    config from the outer dict would run the right action with an empty config — a worse failure
+    than the no-op, because it looks like it worked.
+
+    `ran` is returned rather than folded into the note because the caller answers HTTP `ok` with it:
+    a run that resolved no provider is not a success, and reporting `ok: true` for it is what let
+    this bug hide behind a 200 for a whole release.
+    """
+    import time
+
+    from personalclaw.action_providers import ActionContext, get_action_provider
+    from personalclaw.action_providers.registry import _ensure_default_providers_registered
+
+    workflow = trigger.workflow or {}
+    inline = workflow.get("inline") if isinstance(workflow.get("inline"), dict) else None
+    action = inline or workflow
+    provider_name = str(action.get("provider") or "")
+    if not provider_name:
+        return False, "no action provider configured"
+    _ensure_default_providers_registered()
+    provider = get_action_provider(provider_name)
+    if provider is None:
+        return False, f"unknown action provider {provider_name!r}"
+    # 🔴 RECORD THE RUN (#308). #702 made this path resolve and dispatch the nested action, but it
+    # recorded NOTHING — no `ScheduleRunStore` row, no `last_run_ts` stamp. So the action ran while
+    # `GET .../history` gained no row and the trigger's last-run stamp never moved, and the UI's
+    # completion watcher (`ScheduleDetail`/`StoreTriggerDetail`) waited on a `last_run_ts` that
+    # would never change — the "Running…" pill stuck forever. The autonomous fire path records via
+    # `gateway._record_fire_outcome`; the docstring above claims the two "share one dispatch so
+    # their behaviour cannot drift", and recording is exactly where it had drifted.
+    # `_record_manual_run` reuses the SAME `ScheduleRunStore` ledger and the SAME
+    # `last_success_at`/`last_failure_at` stamp, tagged `manual` — see its docstring for why
+    # `run_count` (the fire budget) is not spent. A `view.rendered` refresh (WF2AUT-6) flows through
+    # this same recorder, so a pull-on-view fire leaves the same run evidence a manual Run does.
+    ctx = ActionContext(event=event, context="", payload=payload)
+    started = time.time()
+    try:
+        result = await provider.execute(action.get("config") or {}, ctx)
+    except Exception as exc:  # noqa: BLE001 - a failed manual run is RECORDED, not raised (#308)
+        await _record_manual_run(trigger, started=started, exc=exc)
+        return False, f"failed: {type(exc).__name__}: {exc}"
+    await _record_manual_run(trigger, started=started, result=result)
+    if result is not None and not bool(getattr(result, "success", True)):
+        note = str(getattr(result, "error", "") or "") or "the action reported failure"
+        return False, f"failed: {note}"
+    return True, "ran"
+
+
+async def _record_manual_run(
+    trigger: Any, *, started: float, result: Any = None, exc: BaseException | None = None
+) -> None:
+    """Append a MANUAL run record and advance the trigger's last-run stamp (#308).
+
+    Reuses the SAME ledger the autonomous fire path appends to — `ScheduleRunStore`, keyed by the
+    trigger id (via this module's `_runs_store()`) — and the SAME
+    `last_success_at`/`last_failure_at` stamp `gateway._record_fire_outcome` writes, so a Run button
+    and an autonomous tick leave the same evidence that a run happened. This is not a parallel
+    recorder: it writes the identical `ScheduleRun` shape to the identical store, and stamps the
+    identical trigger fields. The read surfaces (`/history`, `_last_run_ts`, the completion watcher)
+    already work — they were simply reading a store nothing wrote to on this path.
+
+    Tagged `trigger="manual"`, not the autonomous exit type, for two behaviours the run store
+    already depends on: `ScheduleRunStore.count_since` excludes `manual` rows from the hourly cap (a
+    person clicking Run is not the machine running away), and `autopause.consecutive_failures_from`
+    treats a `manual` exit as transparent — so testing a broken automation by hand can neither
+    autopause it nor reset a real failure streak.
+
+    🔴 `run_count` is deliberately NOT incremented and the autopause engine is deliberately NOT run
+    — this records the run HISTORY the manual path was missing, never the fire ALLOWANCE it
+    correctly skips. `Trigger.run_count` is the `max_fires` fire-budget meter
+    (`service._budget_remaining` reads it, written only at the autonomous fire-GRANT in
+    `service.tick`), and `tools.MANUAL_NEVER_BYPASSES` pins `budget` among the gates a manual fire
+    never spends — the same reason `_run_event` skips `record_fire` and `count_since` excludes
+    manual rows. Spending the budget from a Run button would let a user lock themselves out of their
+    own automation by testing it. Likewise a manual run must not drive `state`/`health`/`enabled`: a
+    hand-run of a healthy trigger that fails once is not the machine deciding to autopause itself.
+
+    Never raises: a bookkeeping failure must not turn a completed manual run into a crashed request,
+    the same contract `_record_fire_outcome` holds. Losing a run record is recoverable; losing the
+    response is not.
+    """
+    try:
+        import time
+        from datetime import datetime, timezone
+
+        from personalclaw.schedule_history import ScheduleRun
+
+        trigger_id = str(getattr(trigger, "id", "") or "")
+        if not trigger_id:
+            return
+        finished = time.time()
+
+        if exc is not None:
+            status = "failure"
+            error = f"{type(exc).__name__}: {exc}"
+            summary = error
+        elif result is not None and not bool(getattr(result, "success", True)):
+            status = "failure"
+            error = str(getattr(result, "error", "") or "") or "the action reported failure"
+            summary = error
+        elif result is not None and str(getattr(result, "outcome", "") or "") in (
+            "launched",
+            "queued",
+        ):
+            # T7: the action only STARTED background work; its real outcome is its OWN run's, so the
+            # honest status is "launched", not "success" — matching `_record_fire_outcome`.
+            # `queued` is the weaker sibling (WV-14): a durable run record exists but nothing has
+            # begun, and both map to `Outcome.DEFERRED` with distinct reasons.
+            status = str(getattr(result, "outcome", "") or "")
+            error = ""
+            summary = str(getattr(result, "stdout", "") or "")
+        else:
+            status = "success"
+            error = ""
+            summary = str(getattr(result, "stdout", "") or "") if result is not None else ""
+
+        run_id = f"manual-{int(finished * 1000)}"
+        # The same store the autonomous recorder appends to; `append_sync` credential-redacts
+        # summary/trace/error on write, so no redaction is owed here.
+        await _runs_store().append(
+            ScheduleRun(
+                run_id=run_id,
+                job_id=trigger_id,
+                trigger="manual",
+                started_at=started,
+                finished_at=finished,
+                duration_ms=int(max(0.0, finished - started) * 1000),
+                status=status,
+                summary=summary,
+                trace=summary,
+                error=error,
+            )
+        )
+
+        # Advance the SAME last-run stamp the autonomous recorder writes, so `_last_run_ts` moves
+        # and the completion watcher clears the pill. `state`/`health`/`enabled` are left untouched
+        # — a manual run reports that it ran; it does not drive the lifecycle the autonomous path
+        # does.
+        store = _trigger_store()
+        row = store.get(trigger_id)
+        if row is None:
+            return
+        live = row.trigger
+        live.last_run_id = run_id
+        stamp = datetime.now(timezone.utc).isoformat()
+        if status == "failure":
+            live.last_failure_at = stamp
+            # Serializers redact this on the way out (`_serialize_store` / `_schedule_row_for`),
+            # exactly as `_record_fire_outcome` relies on.
+            live.last_error_summary = (error or "manual run failed")[:200]
+        else:
+            live.last_success_at = stamp
+        store.upsert(live)
+    except Exception:  # noqa: BLE001 - see the docstring: recording must never fail the run
+        logger.debug("could not record the manual run for %s", trigger, exc_info=True)
+
+
+async def api_trigger_view_render(request: web.Request) -> web.Response:
+    """POST /api/triggers/view/render — the `view` kind's production render caller (WF2AUT-6).
+
+    🔴 THE WIRING THIS CLOSES. `pull_on_view` ships a complete `view`-kind runtime — TTL decide,
+    freshness sidecar, render fan-out — whose ONLY caller was its own tests, so `surface_binding`
+    was set by authors and read by nothing: a `view` trigger could never actually fire. A real
+    render surface (an artifact opening, a dashboard tile mounting) POSTs `{surface}` here as it
+    renders; every bound `view` trigger past its TTL refreshes, the rest serve cache.
+
+    It is NOT a poll. §3/R10: a `view` trigger must cost nothing when nobody is looking, so the
+    runtime is a function a RENDER calls — a background loop would reintroduce the 1440-run-dirs-a-
+    day cost the kind exists to avoid. The `pull_on_view` import is function-local for exactly that
+    reason: the gateway module must never import it as a loop (the `test_triggers_chain` runtime map
+    and `test_NO_background_loop_polls_this_kind` guard depend on it).
+
+    FIRE-AND-FORGET. A synchronous HTTP render must never block on an LLM turn, so each refresh is
+    scheduled on the event loop and the decision (what refreshed, what served cache) returns
+    immediately — the same background-task idiom the webhook-agent and MCP-probe handlers use.
+
+    A surface with no bound `view` triggers is a 200 with empty lists, not an error: most renders in
+    the product bind no trigger, and a 4xx there would make every artifact-open log a failure.
+    """
+    import time as _time
+
+    from personalclaw.triggers import pull_on_view as _view
+
+    state: DashboardState = request.app["state"]
+    body = await json_object_body(request)
+    surface = str((body or {}).get("surface", "") or "").strip() if isinstance(body, dict) else ""
+    if not surface:
+        return web.json_response({"refreshed": [], "served_cache": []})
+
+    store = _trigger_store()
+    payloads, cached = _view.renders(store, surface=surface, now=_time.time())
+
+    refreshed: list[str] = []
+    for payload in payloads:
+        row = store.get(str(payload.get("trigger_id") or ""))
+        if row is None:
+            continue
+        # Schedule the dispatch and return — never await the LLM turn in the request. Tracked on
+        # `state._background_tasks` so a fire-and-forget refresh is not garbage-collected mid-run,
+        # the idiom every other fire-and-forget handler here follows.
+        task = asyncio.create_task(
+            _dispatch_store_action(row.trigger, payload, event="view.rendered")
+        )
+        state._background_tasks.add(task)
+        task.add_done_callback(state._background_tasks.discard)
+        refreshed.append(row.trigger.id)
+
+    return web.json_response({"refreshed": refreshed, "served_cache": cached})
+
+
+async def _run_event(raw: str, request: web.Request) -> web.Response:
+    """Fire one event trigger by hand, through the SAME executor the live path uses.
+
+    A manual fire does NOT call `record_fire`. The fire budget (`max_fires`) exists to bound
+    UNATTENDED firing — spending it from a Run button would let a user exhaust and self-retire their
+    own trigger by testing it, which is the same asymmetry S65 established for the hourly cap
+    (`within_rate_window(manual=True)`). Debounce is skipped for the same reason: it protects
+    against event storms, and a person clicking Run is not a storm.
+    """
+    from personalclaw.event_triggers import execute_event_action
+    from personalclaw.validation import sanitize_string
+
+    store = _event_store()
+    trigger = next((t for t in store.load() if t.id == raw), None)
+    if trigger is None:
+        return web.json_response({"error": "not found"}, status=404)
+    body = await json_object_body(request)
+    body = body if isinstance(body, dict) else {}
+    key = sanitize_string(str(body.get("key", "") or "manual"))[:500]
+    value = sanitize_string(str(body.get("value", "") or "manual fire"))[:10000]
+    # An inbox trigger's manual fire may carry the same meta a live message would, so the fenced
+    # provenance a Run button produces matches the real path (sender/address are sanitized too).
+    raw_meta = body.get("meta")
+    meta = None
+    if isinstance(raw_meta, dict):
+        meta = {str(k): sanitize_string(str(v))[:500] for k, v in raw_meta.items()}
+
+    outcome = await execute_event_action(
+        trigger,
+        source=trigger.source,
+        event_type=str(body.get("event_type", "") or "MemoryUpdate"),
+        key=key,
+        value=value,
+        meta=meta,
+        test=bool(body.get("test")),
+    )
+    payload = outcome.to_dict()
+    for field_name in ("stdout", "stderr", "error"):
+        if payload.get(field_name):
+            payload[field_name] = _redact(str(payload[field_name]))
+    if payload.get("reason"):
+        payload["reason"] = _redact(str(payload["reason"]))
+    # 200 even for a refusal: the request was understood and answered honestly. A refused fire is
+    # not a client error, and returning 4xx would make a denylist block look like a bad request.
+    return web.json_response({"ok": outcome.ran, "result": payload})
+
+
+async def api_trigger_test(request: web.Request) -> web.Response:
+    """POST /api/triggers/{id}/test — execute a lifecycle or event trigger's action once."""
+    from personalclaw.hooks import run_script_hook
+    from personalclaw.validation import sanitize_string
+
+    state: DashboardState = request.app["state"]
+    kind, raw = _split_id(request.match_info["id"])
+    if kind == _EVENT:
+        # An event trigger's test IS its manual fire (same executor, tagged `test`), so /test and
+        # /run agree rather than one of them refusing and pointing at the other.
+        return await _run_event(raw, request)
+    if kind != _LIFECYCLE:
+        return web.json_response(
+            {"error": "schedule triggers run their action; use /run?dry_run=1 to preview"},
+            status=400,
+        )
+    hook = _hook_store(state).get(raw)
+    if not hook:
+        return web.json_response({"error": "not found"}, status=404)
+    body = await json_object_body(request)
+    context = sanitize_string(body.get("context", "test"))[:10000]
+    # A rehearsal, not a fire (#609): gates all hold and the action really executes,
+    # but the payload is tagged and the hook's real run_count/last_run/last_status
+    # stay untouched — mirroring the event-trigger /test path.
+    result = await run_script_hook(hook, context, test=True)
+    return web.json_response(
+        {
+            "ok": True,
+            "result": {
+                "stdout": _redact(result.stdout),
+                "stderr": _redact(result.stderr),
+                "exit_code": result.exit_code,
+                "error": _redact(result.error),
+                "duration_ms": result.duration_ms,
+            },
+        }
+    )
+
+
+async def api_trigger_to_chat(request: web.Request) -> web.Response:
+    """POST /api/triggers/{id}/to-chat — open a schedule trigger as a chat session."""
+    from personalclaw.dashboard.schedule_inject import inject_schedule_result_to_session
+
+    state: DashboardState = request.app["state"]
+    kind, raw = _split_id(request.match_info["id"])
+    if kind != _SCHEDULE:
+        return web.json_response({"error": "only schedule triggers open as a chat"}, status=400)
+    # 🔴 §6's chat-injection re-point (S104). The injection reads only `id`, `name` and `agent_id`
+    # off the job, plus a last RESULT — and `LEGACY_FIELD_MAP` maps `last_result` to None on purpose
+    # ("the run record owns a run's output; a copy on the trigger was a second truth"). So a store
+    # row plus `ScheduleRunStore` serves this completely, and the run store survives the cutover
+    # unchanged because it is keyed by a plain id string.
+    job = _job_shim_for(state, raw)
+
+    history = None
+    if state.conversation_log is not None:
+        try:
+            history = await asyncio.to_thread(state.conversation_log.read_messages, f"cron:{raw}")
+        except Exception:
+            history = None
+
+    if job is None:
+        if not history:
+            return web.json_response({"error": "not found"}, status=404)
+        from personalclaw.schedule import ScheduleJob
+
+        job = ScheduleJob(id=raw, name=f"cron-{raw}")
+
+    last_result = await _last_result_for(state, raw)
+    session = inject_schedule_result_to_session(state, job, last_result, history=history)
+    return web.json_response({"ok": True, "session": session.key})
+
+
+# ── history (schedule-only) ──
+
+
+def _redact_run(run: dict[str, Any], *, job_name: str | None = None) -> dict[str, Any]:
+    out = dict(run)
+    for key in ("summary", "trace", "error"):
+        if out.get(key):
+            out[key] = _redact(out[key])
+    if job_name is not None:
+        out["job_name"] = _redact(job_name)
+    return out
+
+
+async def api_trigger_history(request: web.Request) -> web.Response:
+    """GET /api/triggers/{id}/history — run records; other kinds answer `supported: false`.
+
+    No longer touches `state` (S105): the run records come straight from `ScheduleRunStore`, so this
+    handler is fully decoupled from `ScheduleService`.
+    """
+    kind, raw = _split_id(request.match_info["id"])
+    if kind == _EVENT:
+        # An event trigger keeps a fire COUNTER, not run records — there is no per-run store behind
+        # it. Returning the counter with `supported: false` is the honest answer: a bare
+        # `{"runs": []}` (what every non-schedule kind used to get) renders as "this ran and kept no
+        # records", so a user reads an unrecorded trigger as an idle one.
+        trigger = next((t for t in _event_store().load() if t.id == raw), None)
+        if trigger is None:
+            return web.json_response({"error": "not found"}, status=404)
+        return web.json_response(
+            {
+                "runs": [],
+                "total": 0,
+                "supported": False,
+                "reason": "event triggers record a fire count, not per-run records",
+                "fire_count": trigger.fire_count,
+                "last_fired_at": trigger.last_fired_at,
+            }
+        )
+    if kind == _LIFECYCLE:
+        # The EVENT branch above resolves its trigger; this one did not, so `supported: false`
+        # was returned for ANY lifecycle id including one that is not a hook at all (#2940).
+        # "This kind keeps no run store" and "there is no such trigger" are different answers.
+        if _hook_store(request.app["state"]).get(raw) is None:
+            return web.json_response({"error": "not found"}, status=404)
+        return web.json_response(
+            {
+                "runs": [],
+                "total": 0,
+                "supported": False,
+                "reason": "lifecycle triggers run inline with the agent loop and keep no run store",
+            }
+        )
+    # Resolve the PARENT trigger before reading its runs (#2940). `ScheduleRunStore` is keyed by a
+    # plain job id and answers `{"runs": [], "total": 0}` for ANY id, so a mistyped or deleted
+    # trigger read as one that exists and has never run — while `DELETE /api/triggers/{id}` on the
+    # same id 404s off exactly this lookup. Covers the remaining two kinds: `schedule`, which a
+    # bare id defaults to, and `store`, which shares the row store and falls through to here.
+    #
+    # Placed BEFORE the limit/offset parse to match the EVENT branch above, which resolves its
+    # trigger without parsing either: the id addresses the resource, so a bogus trigger is a 404
+    # whatever the paging says.
+    if _trigger_store().get(raw) is None:
+        return web.json_response({"error": "not found"}, status=404)
+    try:
+        limit = max(1, min(int(request.query.get("limit", "10")), 100))
+        offset = max(0, int(request.query.get("offset", "0")))
+    except ValueError:
+        return web.json_response({"error": "invalid limit/offset"}, status=400)
+    try:
+        runs, total = await _runs_store().list_for_job(raw, offset, limit)
+    except ValueError:
+        return web.json_response({"error": "invalid trigger id"}, status=400)
+    return web.json_response({"runs": [_redact_run(r) for r in runs], "total": total})
+
+
+async def api_trigger_history_detail(request: web.Request) -> web.Response:
+    """GET /api/triggers/{id}/history/{run_id} — one full run record.
+
+    Reads the run store directly (S105), so this handler no longer touches `state` at all — the
+    clearest possible evidence that the run-record surface is fully decoupled from
+    `ScheduleService`.
+    """
+    kind, raw = _split_id(request.match_info["id"])
+    # 🔴 A STORE trigger's run must open too (S167). This 404'd every non-schedule kind, so the
+    # list route S166 just fixed hands the UI a `run_id` that the detail route then denies — the
+    # expander opens on nothing. Driven: `LIST -> total=1 run_id='fire-…'` followed by
+    # `DETAIL -> 404`. `get_run(raw, run_id)` already works with a store key (verified against a
+    # real `file:notes` row), so the gate was the whole defect.
+    #
+    # A lifecycle/event trigger still 404s, and correctly: it has no run store to open a record
+    # from, and 404 is the honest answer for a record that does not exist.
+    if kind not in (_SCHEDULE, _STORE):
+        return web.json_response({"error": "not found"}, status=404)
+    run_id = request.match_info["run_id"]
+    try:
+        run = await _runs_store().get_run(raw, run_id)
+    except ValueError:
+        return web.json_response({"error": "invalid trigger id"}, status=400)
+    if run is None:
+        return web.json_response({"error": "run not found"}, status=404)
+    return web.json_response({"run": _redact_run(run)})
+
+
+async def api_triggers_week(request: web.Request) -> web.Response:
+    """GET /api/triggers/week — the week-grid projection, from `?start=` (AUTO-A1 — S70).
+
+    Read-only, and NO store changes: every occurrence is computed from the recurrence the trigger
+    already carries. Quiet windows come back as ANNOTATIONS on each slot rather than as filters — a
+    grid that hid suppressed fires would show a schedule the user does not have, and explaining why
+    a trigger is not firing when they expect it to is the whole point of the view.
+
+    The duty gate is deliberately NOT evaluated. It is async, provider-backed, and answers about a
+    moment in time; asking a calendar app about next Thursday 200 times would be both slow and
+    meaningless.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from personalclaw.schedule import get_local_tz
+
+    state: DashboardState = request.app["state"]
+    tz_name, server_zone = get_local_tz()
+
+    def normalized_bound(value: datetime) -> datetime:
+        """Resolve offset-free API values in ``server_tz`` and compare/project in UTC."""
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=server_zone)
+        return value.astimezone(timezone.utc)
+
+    raw_start = (request.query.get("start") or "").strip()
+    try:
+        parsed_start = datetime.fromisoformat(raw_start) if raw_start else datetime.now(server_zone)
+        start = normalized_bound(parsed_start)
+    except ValueError:
+        return web.json_response({"error": "start must be an ISO date"}, status=400)
+    try:
+        days = max(1, min(int(request.query.get("days", "7")), 31))
+    except ValueError:
+        return web.json_response({"error": "days must be an integer"}, status=400)
+    # Optional exact window end (issue 608): the grid's 7 LOCAL days are 167h/169h across a
+    # DST transition while `days` arithmetic is fixed wall-clock fields — the client that
+    # draws the columns is the only party that knows their true end, so it may name it.
+    # Bounded to the same 31-day cap as `days` so the parameter cannot widen the projection.
+    until = None
+    raw_until = (request.query.get("until") or "").strip()
+    if raw_until:
+        try:
+            until = normalized_bound(datetime.fromisoformat(raw_until))
+        except ValueError:
+            return web.json_response({"error": "until must be an ISO date"}, status=400)
+        if until <= start or until > start + timedelta(days=31):
+            return web.json_response(
+                {"error": "until must be after start and within 31 days"}, status=400
+            )
+
+    occurrences: list[dict[str, Any]] = []
+    truncated: list[str] = []
+    for trigger in _week_triggers(state):
+        rows, cut = _project_one(trigger, start=start, days=days, until=until)
+        occurrences.extend(row.to_dict() for row in rows)
+        if cut:
+            truncated.append(f"{_SCHEDULE}:{trigger.id}")
+
+    return web.json_response(
+        {
+            "start": start.isoformat(),
+            "end": (until or (start + timedelta(days=days))).isoformat(),
+            "server_tz": tz_name,
+            "occurrences": occurrences,
+            # Named rather than a bare bool: "some trigger was capped" is not actionable, and a grid
+            # that silently showed a partial week would read as an accurate forecast.
+            "truncated": truncated,
+        }
+    )
+
+
+async def api_triggers_doctor(request: web.Request) -> web.Response:
+    """GET /api/triggers/doctor — structural problems across every trigger (§7 criterion 12).
+
+    Every finding here is invisible at runtime: the trigger looks configured and behaves differently
+    than its author intended. An orphaned workflow ref fires and fails forever; a broad watch glob
+    fires on everything the user owns; an unknown duty gate fails OPEN, so the automation runs
+    unfiltered — the opposite of what its author asked for.
+    """
+    from personalclaw.triggers.calendar import diagnose
+
+    # No `state`: the doctor reads the store only since S110.
+    known_workflows: set[str] | None = None
+    try:
+        from personalclaw.workflows import service as _wf
+
+        # `list_defs` is ASYNC and returns `{"defs": [ {...dict...} ]}` — not objects. Measured:
+        # a `{d.name for d in ...}` comprehension over the coroutine fails into the except below,
+        # which would silently suppress the orphan check rather than report it.
+        listing = await _wf.list_defs()
+        known_workflows = {
+            str(d.get("name")) for d in (listing.get("defs") or []) if isinstance(d, dict)
+        }
+    except Exception:
+        # None means "cannot verify", which suppresses the orphan check rather than reporting every
+        # reference as broken. A doctor that cries wolf when it cannot read the registry is worse
+        # than one that stays quiet about that dimension.
+        logger.debug("doctor: workflow defs unavailable", exc_info=True)
+
+    rows: list[dict[str, Any]] = []
+    # 🔴 §6's doctor re-point (S103): diagnosed from the STORE, where a `Trigger` carries `gates`,
+    # `workflow` and `spec` natively — a `ScheduleJob` had none of them by those names, so the old
+    # rows read `getattr(job, "workflow")` (always absent → always empty) and a `watch_glob` field
+    # that does not exist on a cron at all. The orphan-workflow and broad-glob checks were therefore
+    # scanning blanks for every schedule trigger: present, reviewed, and diagnosing nothing.
+    store = _trigger_store()
+    loaded_rows = store.load()
+    store_rows = [row for row in loaded_rows if row.trigger.kind == "clock"]
+    if store_rows:
+        for row in store_rows:
+            rows.append(
+                {
+                    "id": f"{_SCHEDULE}:{row.trigger.id}",
+                    "gates": row.trigger.gates or {},
+                    "workflow": row.trigger.workflow or {},
+                    "spec": dict(row.trigger.spec or {}),
+                    # 🔴 Required by the `unfenced_write_action` check (S116). Omitting it made the
+                    # doctor read every trigger as ungranted — a finding on every row, or on none,
+                    # depending on which way the check defaulted. The payload has to carry what the
+                    # check reads.
+                    "capabilities": dict(row.trigger.capabilities or {}),
+                }
+            )
+    for trigger in _event_store().load():
+        rows.append(
+            {
+                "id": f"{_EVENT}:{trigger.id}",
+                "gates": {},
+                "workflow": {},
+                "spec": {"glob": trigger.key_glob or ""},
+            }
+        )
+
+    # 🔴 #779: the set that makes `unknown_action_provider` real. Injected rather than read
+    # inside `diagnose`, matching `known_workflows` above, so the function stays pure — and
+    # `None` would suppress the check, so a failed read must not silently become "every
+    # provider is fine". `dispatchable_action_providers` ensures the built-ins are registered
+    # first; skipping that on this read-only surface would report EVERY automation as unknown.
+    from personalclaw.action_providers.registry import dispatchable_action_providers
+
+    report = diagnose(
+        rows,
+        known_workflows=known_workflows,
+        known_action_providers=dispatchable_action_providers(),
+    )
+    # Semantic spec findings (#560/#612): the structural doctor above cannot see an
+    # invalid-but-present cron or an inert skip date — `semantic_spec_issues` lives beside
+    # the fire path and mirrors its exact matching rules, so "the doctor says healthy"
+    # and "it never fires / never skips" can no longer both be true.
+    from personalclaw.triggers.arm import semantic_spec_issues
+    from personalclaw.triggers.calendar import Finding
+
+    for row in store_rows:
+        for issue in semantic_spec_issues(row.trigger.kind, row.trigger.spec):
+            is_error = issue.severity == "error"
+            report.findings.append(
+                Finding(
+                    trigger_id=f"{_SCHEDULE}:{row.trigger.id}",
+                    code="unfireable_spec" if is_error else "inert_spec_entry",
+                    detail=f"{issue.path}: {issue.message}",
+                    fix=(
+                        "correct the expression or date — as authored, this part of the "
+                        "trigger cannot do what it says"
+                        if is_error
+                        else "confirm this is intended, or adjust the schedule/skip date"
+                    ),
+                )
+            )
+    # 🔴 THE LOAD-TIME ISSUES, which this doctor could not see either (issue 531). `diagnose` reads
+    # projected dicts and `semantic_spec_issues` owns the fire-path semantics; NEITHER re-runs
+    # `models.validate_spec`, so the whole structural half — every unknown spec key, every missing
+    # required field, and the `MIN_CLOCK_INTERVAL_SECS` floor warning — stopped at the store. The
+    # doctor answered `healthy: true, findings: []` on a home holding a 60-second LLM-invoking
+    # trigger whose own `row.warnings` named the problem.
+    #
+    # Folded from `row.issues` rather than by re-deriving the checks here: a second copy of the
+    # floor rule is a second owner, and the two would drift the first time the number moved. Every
+    # kind, not just `clock` — the store-only kinds validate through the same function, and a doctor
+    # that covered one kind's parse issues would be a doctor whose silence means nothing.
+    for loaded in loaded_rows:
+        # The same namespace the LIST route gives this row, so a UI can join a finding back onto the
+        # trigger it is about: `_schedule_rows` serves clock rows under `schedule:` and
+        # `_serialize_store` serves the store-only kinds under `store:`.
+        ns = _SCHEDULE if loaded.trigger.kind == "clock" else _STORE
+        for issue in loaded.issues:
+            is_error = issue.severity == "error"
+            report.findings.append(
+                Finding(
+                    trigger_id=f"{ns}:{loaded.trigger.id}",
+                    code="invalid_spec" if is_error else "spec_warning",
+                    detail=f"{issue.path}: {issue.message}",
+                    fix=(
+                        "correct the field named above — the store kept this row but refuses to "
+                        "arm it, so the automation exists and cannot fire"
+                        if is_error
+                        else "confirm this is intended — the row runs as authored, this is an "
+                        "advisory the store recorded and no surface used to show"
+                    ),
+                )
+            )
+    return web.json_response(report.to_dict())
+
+
+async def api_trigger_history_all(request: web.Request) -> web.Response:
+    """GET /api/triggers/history — the run feed across ALL THREE kinds (AUTO crit 4).
+
+    Criterion 4: "a hook, an event trigger, and a cron all show run history in the same
+    feed with the same record shape and typed outcomes". This route existed and was
+    **schedule-only** — its own docstring said "(schedule runs)" — so the feed a user opens
+    to answer "what did my machine do" showed one kind of automation and silently omitted
+    the other two.
+
+    `?shape=legacy` keeps the raw `ScheduleRun` dicts for the cron-history UI, which renders
+    `trace`/`summary` fields the typed row does not carry. The default is the UNIFIED shape:
+    a caller asking for history without naming a shape wants the honest cross-kind answer,
+    and defaulting to legacy would mean the criterion is met only by a flag nobody sets.
+    """
+    from personalclaw.triggers import history as H
+
+    state: DashboardState = request.app["state"]
+    try:
+        limit = max(1, min(int(request.query.get("limit", "20")), 100))
+        offset = max(0, int(request.query.get("offset", "0")))
+    except ValueError:
+        return web.json_response({"error": "invalid limit/offset"}, status=400)
+    raw_filter = request.query.get("trigger_id") or None
+    kind_filter = ""
+    if raw_filter:
+        kind_filter, raw_filter = _split_id(raw_filter)
+    runs, total = await _runs_store().list_all(offset, limit, raw_filter)
+    # 🔴 §6's history re-point (S104): trigger NAMES come from the store. A run row carries only a
+    # `job_id`, so the name is a join — and joining against the legacy service would label a run of
+    # a store-created trigger with a blank, which reads in the UI as a run of a deleted automation.
+    names = _trigger_names(state)
+    enriched = [_redact_run(r, job_name=names.get(r.get("job_id", ""), "")) for r in runs]
+
+    if (request.query.get("shape") or "").lower() == "legacy":
+        return web.json_response({"runs": enriched, "total": total})
+
+    # The other two kinds contribute only when the caller has not filtered to a specific
+    # trigger of a
+    # different kind — a `?trigger_id=schedule:x` request asking for one cron must not gain rows for
+    # every hook on the machine.
+    hooks: list[Any] = []
+    events: list[Any] = []
+    if not raw_filter or kind_filter == _LIFECYCLE:
+        try:
+            store = _hook_store(state)
+            # `list_all()`, not `list_hooks()` — checked against the class. A wrong name here would
+            # have been caught by nothing: the `except` below swallows the AttributeError and the
+            # feed would quietly contain zero hooks — the defect this session exists to fix.
+            hooks = [h for h in store.list_all() if not raw_filter or h.id == raw_filter]
+        except Exception:
+            logger.debug("unified history: hook store unavailable", exc_info=True)
+    if not raw_filter or kind_filter == _EVENT:
+        try:
+            events = [t for t in _event_store().load() if not raw_filter or t.id == raw_filter]
+        except Exception:
+            logger.debug("unified history: event store unavailable", exc_info=True)
+
+    records = H.unified_feed(
+        schedule_runs=enriched if (not raw_filter or kind_filter == _SCHEDULE) else [],
+        hooks=hooks,
+        event_triggers=events,
+        limit=limit,
+    )
+    payload = H.feed_response(records)
+    # `total` stays the SCHEDULE total: it is the only kind with a real paginated store, so a sum
+    # mixing it with two summary rows would make the pager overshoot. The projected rows are counted
+    # separately in the response.
+    payload["schedule_total"] = total
+    payload["outcomes"] = H.outcome_counts(records)
+    return web.json_response(payload)
+
+
+def register_trigger_routes(app: web.Application) -> None:
+    """Register /api/triggers/* — the unified Trigger surface."""
+    app.router.add_get("/api/triggers", api_triggers)
+    app.router.add_post("/api/triggers", api_trigger_create)
+    app.router.add_get("/api/triggers/variables", api_trigger_variables)
+    app.router.add_get("/api/triggers/history", api_trigger_history_all)
+    # Registered BEFORE `/{id}` so aiohttp does not capture the literal segments as trigger ids —
+    # the ordering landmine S67 already paid for with `/surfacing`.
+    app.router.add_get("/api/triggers/week", api_triggers_week)
+    app.router.add_get("/api/triggers/doctor", api_triggers_doctor)
+    # The `view` kind's render caller (WF2AUT-6). Literal path, registered BEFORE `/{id}` for the
+    # same S67 reason as `/week` and `/doctor` — otherwise aiohttp captures `view` as a trigger id.
+    app.router.add_post("/api/triggers/view/render", api_trigger_view_render)
+    app.router.add_put("/api/triggers/{id}", api_trigger_detail)
+    app.router.add_delete("/api/triggers/{id}", api_trigger_detail)
+    app.router.add_post("/api/triggers/{id}/toggle", api_trigger_toggle)
+    app.router.add_post("/api/triggers/{id}/run", api_trigger_run)
+    # The external webhook fire endpoint (WF2AUT-12). Beside `/run`, same `{id}` shape, so it needs
+    # no special ordering relative to the literal `/week`/`/doctor`/`/view/render` segments above.
+    app.router.add_post("/api/triggers/{id}/fire", api_trigger_fire)
+    app.router.add_post("/api/triggers/{id}/test", api_trigger_test)
+    app.router.add_post("/api/triggers/{id}/to-chat", api_trigger_to_chat)
+    app.router.add_get("/api/triggers/{id}/history", api_trigger_history)
+    app.router.add_get("/api/triggers/{id}/history/{run_id}", api_trigger_history_detail)

@@ -1,0 +1,858 @@
+"""Anthropic-compatible PROTOCOL client — Messages API via the ``anthropic`` SDK.
+
+The ``anthropic`` SDK is imported lazily inside
+:meth:`AnthropicProvider.__init__` to satisfy Requirement R6.3 / Property
+11 (Provider SDK Lazy Import). The module file itself is safe to import
+without ``anthropic`` installed: only constructing an
+:class:`AnthropicProvider` instance triggers the SDK import.
+
+This module carries NO registration side effect: the provider TYPE
+registration (capability descriptor + factory) lives in the standalone
+``apps/anthropic-models`` bundle, which imports this class via
+``personalclaw.sdk.model`` (see the tail comment).
+
+Anthropic streams ``tool_use`` blocks as a sequence of ``content_block_*``
+events; ``input_json_delta`` fragments are accumulated per content-block
+index and emitted as a single :data:`EVENT_TOOL_CALL` once the block
+ends. ``tool_result`` is NOT emitted by the provider at the stream
+layer — Anthropic clients submit tool results via subsequent ``messages``
+turns, so tool-result handling lives at the conversation layer (session /
+chat runner) rather than in :meth:`AnthropicProvider.stream`.
+"""
+
+import json
+import logging
+from collections.abc import AsyncIterator
+from typing import Any
+
+from personalclaw._sdk_deps import require_sdk
+from personalclaw.llm.base import (
+    EVENT_COMPLETE,
+    EVENT_TEXT_CHUNK,
+    EVENT_THINKING_CHUNK,
+    EVENT_TOOL_CALL,
+    CancelOutcome,
+    LLMEvent,
+    ModelProvider,
+)
+from personalclaw.llm.credentials import Credential
+from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, PromptCache
+from personalclaw.llm.registry import CredentialMissing
+
+logger = logging.getLogger(__name__)
+
+# Max conversation history entries before trimming oldest. Mirrors
+# ``personalclaw.providers.openai._MAX_HISTORY``.
+_MAX_HISTORY = 50
+
+# Default fallback when the model is not found in ``model_tokens.json``.
+# Anthropic's standard context window across the Claude 3 / 3.5 / 4 family
+# is 200k tokens.
+_DEFAULT_CONTEXT_WINDOW = 200_000
+
+# Reasoning effort → Anthropic extended-thinking token budget. "" / unknown =
+# no thinking (model default). Clamped to < max_tokens at request time. These are
+# the native effort levels; ACP backends declare + map their own values.
+_THINKING_BUDGETS: dict[str, int] = {
+    "low": 4_096,
+    "medium": 10_240,
+    "high": 24_576,
+    "max": 63_999,
+}
+
+# Model → context window: the shared reader (personalclaw.model_windows) is the ONE
+# loader of model_tokens.json; this provider passes its own absent-model default.
+from personalclaw.model_windows import declared_context_window as _declared_window  # noqa: E402
+from personalclaw.model_windows import model_context_window as _model_window  # noqa: E402
+
+# ── OpenAI-shape → Anthropic-shape translation ────────────────────────────
+#
+# The native loop sends one uniform (OpenAI-shaped) message + tool format
+# across all ModelProviders; each provider adapts. Anthropic's Messages API
+# diverges from Chat Completions in three ways the loop's shapes hit:
+#
+#   * the system prompt is a top-level ``system=`` param, not a message;
+#   * assistant tool calls are ``tool_use`` content blocks (not a separate
+#     ``tool_calls`` field);
+#   * tool results are ``tool_result`` content blocks inside a *user* turn
+#     (not a ``role: "tool"`` message).
+#
+# These helpers perform that translation so ``complete()`` can accept the
+# loop's OpenAI-shaped messages unchanged.
+
+
+def _read_cache_usage(usage: object) -> tuple[int, int]:
+    """`(cache_creation_tokens, cache_read_tokens)` from an Anthropic ``usage`` object.
+
+    The producer for `LLMEvent.cache_creation_tokens` / `.cache_read_tokens`, which the event
+    declared but nothing populated (PCS-6). Defensive by design: a `usage` missing the fields
+    (a non-cached response, or an older SDK), a non-int value, or `None` all yield ``0`` and NEVER
+    raise — a cache-usage read must never break a completed turn's terminal event.
+    """
+    if usage is None:
+        return 0, 0
+
+    def _int(name: str) -> int:
+        v = getattr(usage, name, None)
+        return v if isinstance(v, int) else 0
+
+    return _int("cache_creation_input_tokens"), _int("cache_read_input_tokens")
+
+
+def _translate_tools(tools: list[dict]) -> list[dict]:
+    """Map OpenAI ``tools`` entries to Anthropic ``[{name, description, input_schema}]``.
+
+    Each OpenAI entry is ``{"type": "function", "function": {name, description,
+    parameters}}``. Anthropic wants the function fields hoisted, with
+    ``parameters`` renamed to ``input_schema``. Entries already in Anthropic
+    shape (``name`` at the top level) pass through unchanged so a caller that
+    pre-translated is not double-mapped.
+    """
+    out: list[dict] = []
+    for tool in tools:
+        fn = tool.get("function") if isinstance(tool, dict) else None
+        if isinstance(fn, dict):
+            out.append(
+                {
+                    "name": fn.get("name", ""),
+                    "description": fn.get("description", "") or "",
+                    "input_schema": fn.get("parameters") or {"type": "object", "properties": {}},
+                }
+            )
+        elif isinstance(tool, dict) and "name" in tool:
+            # Already Anthropic-shaped — accept as-is.
+            out.append(tool)
+    return out
+
+
+# Neutral message-dict marker (PCS-1 / F1): a ``role: "system"`` message carrying
+# ``{_VOLATILE_MESSAGE_KEY: True}`` holds per-turn VOLATILE content (the native loop's
+# turn_note — tool catalog + group stubs — changes every turn). The writer is the native
+# runtime; this is its sole reader.
+_VOLATILE_MESSAGE_KEY = "_volatile"
+
+# Anthropic's wire form for a cache breakpoint (PCS-4 / §C4). THIS FILE IS THE ONLY
+# PLACE IN CORE THAT MAY NAME IT — `llm/anthropic.py` is one of the two in-core
+# protocol clients enumerated in docs/architecture/provider-boundary.md, and the
+# rails sweep in tests/test_prompt_cache_wire_translation.py fails the build if
+# ``cache_control`` / ``ephemeral`` appear in any other core module. Core emits the
+# NEUTRAL ``_cache_hint`` key (llm/prompt_cache.py); this is where it becomes vendor
+# syntax. ``ephemeral`` is Anthropic's ~5-minute TTL tier.
+_CACHE_CONTROL_EPHEMERAL: dict[str, str] = {"type": "ephemeral"}
+
+
+def _mark_block(block: dict) -> dict:
+    """Return ``block`` with Anthropic's cache breakpoint attached.
+
+    Mutates and returns the block. Every block this touches is one the translation
+    itself just constructed (or shallow-copied), never a caller's dict.
+    """
+    block["cache_control"] = dict(_CACHE_CONTROL_EPHEMERAL)
+    return block
+
+
+def _image_block(data_url: str) -> dict | None:
+    """Translate a ``data:<media-type>;base64,<payload>`` URL into an Anthropic
+    ``image`` content block, or ``None`` if it isn't one.
+
+    Anthropic takes the media type and the raw payload as separate fields rather
+    than a joined URL, so this is a real translation and not a rename.
+    """
+    if not data_url.startswith("data:"):
+        return None
+    head, _, payload = data_url.partition(",")
+    if not payload:
+        return None
+    meta = head[len("data:") :]
+    if not meta.endswith(";base64"):
+        return None
+    media_type = meta[: -len(";base64")].strip().lower()
+    if not media_type:
+        return None
+    return {
+        "type": "image",
+        "source": {"type": "base64", "media_type": media_type, "data": payload},
+    }
+
+
+def _translate_messages(messages: list[dict]) -> tuple[str | list[dict], list[dict]]:
+    """Split OpenAI-shaped ``messages`` into ``(system_prompt, anthropic_messages)``.
+
+    * ``role: "system"`` messages are concatenated into the returned system
+      string (Anthropic carries the system prompt out-of-band, so it leads the
+      served prompt) — UNLESS the message is tagged VOLATILE (see below).
+    * A ``role: "system"`` message tagged ``{_VOLATILE_MESSAGE_KEY: True}`` is NOT
+      hoisted into ``system=``. Anthropic serves ``system=`` ahead of ``messages[0]``,
+      so a per-turn-changing note there would break the cacheable EXACT prefix
+      (F1). Instead the note is relocated to the TAIL of the message list, carried
+      as a trailing ``{"role": "user", "content": <note>}`` (Anthropic has no
+      trailing-system concept). The stable assembled context — ``messages[0]``, a
+      user message — then leads. The note moves position, never existence: it still
+      reaches the model, just late. Multiple volatile notes ship once each, in order.
+    * ``role: "assistant"`` with ``tool_calls`` becomes a content-block list
+      mixing an optional leading ``text`` block and one ``tool_use`` block per
+      call (``arguments`` JSON string parsed into the ``input`` dict).
+    * ``role: "tool"`` becomes a ``tool_result`` block; consecutive tool
+      results are merged into a single user turn (Anthropic groups parallel
+      tool results in one user message).
+    * Plain ``user``/``assistant`` string messages pass through as
+      ``{role, content}``.
+
+    Cache translation (PCS-4 / §C4): a message carrying the NEUTRAL
+    :data:`~personalclaw.llm.prompt_cache.CACHE_HINT_KEY` is the trailing boundary of
+    the cacheable span, and Anthropic marks that boundary with ``cache_control`` on a
+    CONTENT BLOCK — so the hinted message's LAST block gets the marker:
+
+    * a hinted **system** message forces ``system=`` to become BLOCK-SHAPED (a
+      one-element list of ``{"type": "text", ...}``) so the marker has a block to sit
+      on; the text is the same string the unhinted path would have returned, so the
+      model is told byte-for-byte the same thing (soul guardrail 3). Anthropic serves
+      ``system=`` ahead of ``messages[0]``, so a breakpoint there caches the whole
+      stable head.
+    * a hinted plain ``user``/``assistant`` message becomes block-shaped the same way
+      (``content`` string → one marked ``text`` block).
+    * a hinted assistant-with-``tool_calls`` / ``tool`` message keeps its block list
+      and the marker lands on the LAST block.
+    * a hint on an ABSENT or EMPTY span is a NO-OP: there is no block to mark, so
+      nothing is emitted (never a marker on nothing).
+    * a hint on a VOLATILE note is ignored — per-turn content is not cacheable by
+      construction. (The neutral marker layer never places one there; this is the
+      belt-and-braces read.)
+
+    Byte-identical invariant: a ``messages`` list with NO volatile-tagged and NO
+    cache-hinted message produces exactly the ``(system, out)`` this returned before
+    PCS-1 — a ``str`` ``system`` included. ``system=`` is block-shaped ONLY when a
+    hinted system message is present, so an unhinted request serializes today's bytes.
+    """
+    system_parts: list[str] = []
+    out: list[dict] = []
+    # Volatile system notes, relocated to the tail after the loop (empty ⇒ the
+    # return is byte-for-byte the pre-PCS-1 behavior).
+    volatile_tail: list[dict] = []
+    # True once a hoisted (non-volatile, non-empty) system message carried the neutral
+    # cache hint. Only then does ``system=`` become block-shaped.
+    system_hinted = False
+
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content")
+        hinted = CACHE_HINT_KEY in msg
+
+        if role == "system":
+            if msg.get(_VOLATILE_MESSAGE_KEY):
+                # Volatile per-turn note → tail user message, not out-of-band system=.
+                # Never marked: its content changes every turn, so a breakpoint here
+                # would guarantee a miss.
+                if content:
+                    volatile_tail.append({"role": "user", "content": str(content)})
+            elif content:
+                # Stable system content → out-of-band system=, leads the prompt.
+                system_parts.append(str(content))
+                if hinted:
+                    system_hinted = True
+            continue
+
+        if role == "tool":
+            block = {
+                "type": "tool_result",
+                "tool_use_id": str(msg.get("tool_call_id", "") or ""),
+                "content": "" if content is None else str(content),
+            }
+            if hinted:
+                _mark_block(block)
+            # Merge into the previous user turn if it is already carrying
+            # tool_result blocks (parallel tool calls answered together).
+            if (
+                out
+                and out[-1].get("role") == "user"
+                and isinstance(out[-1].get("content"), list)
+                and all(
+                    isinstance(b, dict) and b.get("type") == "tool_result"
+                    for b in out[-1]["content"]
+                )
+            ):
+                out[-1]["content"].append(block)
+            else:
+                out.append({"role": "user", "content": [block]})
+            continue
+
+        if role == "assistant" and msg.get("tool_calls"):
+            blocks: list[dict] = []
+            if content:
+                blocks.append({"type": "text", "text": str(content)})
+            for call in msg["tool_calls"]:
+                fn = call.get("function", {}) if isinstance(call, dict) else {}
+                raw_args = fn.get("arguments", "") or ""
+                try:
+                    parsed = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                except (json.JSONDecodeError, ValueError):
+                    parsed = {}
+                if not isinstance(parsed, dict):
+                    parsed = {}
+                blocks.append(
+                    {
+                        "type": "tool_use",
+                        "id": str(call.get("id", "") or ""),
+                        "name": fn.get("name", ""),
+                        "input": parsed,
+                    }
+                )
+            if hinted and blocks:
+                _mark_block(blocks[-1])
+            out.append({"role": "assistant", "content": blocks})
+            continue
+
+        # Plain user / assistant text message — pass through unchanged UNLESS hinted,
+        # in which case it must become block-shaped to carry the marker.
+        if hinted and content:
+            if isinstance(content, list):
+                # Already block-shaped: copy the list AND the final block so the
+                # caller's dicts are never mutated, then mark the copy.
+                blocks = list(content)
+                if isinstance(blocks[-1], dict):
+                    blocks[-1] = _mark_block(dict(blocks[-1]))
+                out.append({"role": role, "content": blocks})
+            else:
+                out.append(
+                    {
+                        "role": role,
+                        "content": [_mark_block({"type": "text", "text": str(content)})],
+                    }
+                )
+            continue
+        out.append({"role": role, "content": content})
+
+    # Deliver any volatile notes at the TAIL, in order — after the stable context
+    # so the served prompt's prefix stays stable across turns (F1). Empty when no
+    # message was tagged, keeping the untagged path byte-identical.
+    out.extend(volatile_tail)
+
+    system_text = "\n\n".join(system_parts)
+    if system_hinted:
+        # BLOCK-SHAPED system= (§C4): ONE text block carrying the exact string the
+        # unhinted path returns, with the breakpoint on it. One block, not one per
+        # part — the hinted system message is by construction the LAST hoisted one
+        # (the neutral marker picks the last non-tool, non-volatile message), so a
+        # single block puts the breakpoint at the same place while keeping the served
+        # text identical to the string form.
+        return [_mark_block({"type": "text", "text": system_text})], out
+    return system_text, out
+
+
+class AnthropicProvider(ModelProvider):
+    """ModelProvider backed by the Anthropic Messages API.
+
+    The ``anthropic`` SDK is imported inside ``__init__`` so the package
+    ``personalclaw.providers`` can be imported without pulling the SDK into
+    ``sys.modules`` (R6.3 / Property 11).
+    """
+
+    # The Messages API accepts a multi-message history + tool schemas; the
+    # native loop drives tool-enabled turns via complete(), which translates
+    # the OpenAI-shaped messages/tools it receives into Anthropic's wire format.
+    supports_tools: bool = True
+
+    # Graded prompt-cache posture (PCS-4 / §C4). Anthropic needs an EXPLICIT per-request
+    # breakpoint — it does not cache a stable prefix on its own — so the native loop
+    # places a neutral hint (it reads this attr by getattr, exactly as it reads
+    # supports_tools) and `_translate_messages` above turns that hint into
+    # ``cache_control``. A provider that leaves this NONE never sees a marker.
+    prompt_cache: PromptCache = PromptCache.EXPLICIT
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        credential: Credential | None = None,
+        base_url: str | None = None,
+        max_tokens: int = 4096,
+        extra_options: dict[str, object] | None = None,
+    ) -> None:
+        # Lazy import per R6.3 / Property 11. Do NOT lift to module top.
+        # anthropic is an OPTIONAL SDK (plan 34 T1.4) — require_sdk raises a clear
+        # MissingSDKError naming `pip install personalclaw[anthropic]` when absent.
+        anthropic = require_sdk("anthropic", "anthropic", feature="the Anthropic chat provider")
+
+        if credential is None or not credential.secret:
+            raise CredentialMissing(
+                "AnthropicProvider requires a credential with a populated secret"
+            )
+
+        self._anthropic_module = anthropic
+        self._model = model
+        self._base_url = base_url
+        self._max_tokens = max_tokens
+        self._extra_options: dict[str, object] = dict(extra_options or {})
+        # The served context window this binding DECLARES (``entry.options``'
+        # ``context_window``) — the escape hatch for a self-hosted endpoint whose real
+        # window is neither the model's architectural maximum nor the conservative local
+        # default. POPPED like ``max_tokens``: whatever is left in _extra_options is
+        # forwarded into the SDK request kwargs, and ``context_window`` is not a wire
+        # parameter. ``None`` = undeclared.
+        self.context_window: int | None = _declared_window(
+            self._extra_options.pop("context_window", None)
+        )
+        # ``base_url`` lets Anthropic-compatible endpoints (proxies, gateways,
+        # self-hosted relays) be reached through the same provider. When None,
+        # the SDK uses the official api.anthropic.com base.
+        client_kwargs: dict[str, Any] = {"api_key": credential.secret}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        self._client: Any = anthropic.AsyncAnthropic(**client_kwargs)
+        self._history: list[dict[str, Any]] = []
+        # ``None`` until the first usage report: before then this provider has no
+        # measurement, and 0.0 would be a fabricated one (see llm/base contract).
+        self._last_context_pct: float | None = None
+        # One-shot image content part for the next turn (MI-4). Empty on every
+        # ordinary turn, which keeps the untouched wire payload byte-identical.
+        self._pending_image: str = ""
+
+    # ── Image content parts (MI-4) ────────────────────────────────────
+
+    def stage_image_part(self, data_url: str) -> bool:
+        """Stage *data_url* onto the next turn's user message. See the base docstring.
+
+        True unconditionally: the Messages API carries image blocks, so delivery is
+        a transport property. It is delivered in ANTHROPIC's shape — an
+        ``{"type": "image", "source": {"type": "base64", ...}}`` block — which is
+        precisely why this lives in the adapter and not in the caller. The
+        OpenAI-shaped ``image_url`` block the rest of the platform passes around is
+        not a wire format this API accepts; a caller that built one and handed it
+        over would get a 400, not a degraded answer.
+        """
+        if not data_url:
+            return False
+        self._pending_image = data_url
+        return True
+
+    def _with_pending_image(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Return *messages* with any staged image appended to the last user turn.
+
+        Returns the SAME list object when nothing is staged. Consumes the stage
+        (one-shot) and never mutates the caller's dicts. A data URL that doesn't
+        split into ``media_type`` + base64 payload is dropped rather than sent as a
+        malformed block.
+        """
+        data_url = self._pending_image
+        if not data_url:
+            return messages
+        self._pending_image = ""
+        block = _image_block(data_url)
+        if block is None:
+            return messages
+        idx = next(
+            (i for i in range(len(messages) - 1, -1, -1) if messages[i].get("role") == "user"),
+            -1,
+        )
+        if idx < 0:
+            return messages
+        out = list(messages)
+        original = out[idx]
+        content = original.get("content")
+        parts: list[Any]
+        if isinstance(content, list):
+            parts = list(content)
+        else:
+            parts = [{"type": "text", "text": str(content or "")}]
+        parts.append(block)
+        out[idx] = {**original, "content": parts}
+        return out
+
+    # ── Lifecycle ─────────────────────────────────────────────────────
+
+    async def start(self) -> None:
+        """Idempotent — the AsyncAnthropic client is already constructed."""
+        logger.info(
+            "Anthropic provider ready: model=%s base_url=%s",
+            self._model,
+            self._base_url or "<default>",
+        )
+
+    async def shutdown(self) -> None:
+        """Close the underlying HTTP client and clear conversation history."""
+        try:
+            await self._client.close()
+        except Exception:  # pragma: no cover — defensive
+            logger.warning("Anthropic client close raised", exc_info=True)
+        self._history.clear()
+
+    # ── Streaming ─────────────────────────────────────────────────────
+
+    async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
+        """Stream a Messages turn; translate deltas to :class:`LLMEvent`.
+
+        Anthropic emits a sequence of typed events:
+
+        * ``message_start`` carries ``message.usage.input_tokens``.
+        * ``content_block_start`` opens a block (``text`` or ``tool_use``).
+          For ``tool_use`` we record the block's ``id`` and ``name``.
+        * ``content_block_delta`` carries ``text_delta`` /
+          ``input_json_delta`` / ``thinking_delta`` payloads. Text and
+          thinking are emitted immediately; tool-input JSON is
+          accumulated per block index.
+        * ``content_block_stop`` finalizes a block; for ``tool_use`` we
+          emit a single :data:`EVENT_TOOL_CALL` with the accumulated
+          JSON string.
+        * ``message_delta`` carries cumulative ``usage.output_tokens``.
+
+        SDK runtime types live under ``anthropic.types``; we use
+        duck-typed ``getattr`` access here so the module never imports
+        them at load time (Property 11).
+        """
+        self._history.append({"role": "user", "content": message})
+        if len(self._history) > _MAX_HISTORY:
+            self._history = self._history[-_MAX_HISTORY:]
+
+        request_kwargs: dict[str, Any] = {
+            "model": self._model,
+            "messages": self._with_pending_image(self._history),
+            "max_tokens": self._max_tokens,
+        }
+        # Allow ``system``, ``tools``, ``temperature``, etc. to flow
+        # through unchanged; the SDK ignores unknown keys.
+        for key, value in self._extra_options.items():
+            request_kwargs.setdefault(key, value)
+
+        assistant_text = ""
+        # Per content-block-index accumulators for tool_use blocks.
+        tool_blocks: dict[int, dict[str, str]] = {}
+        emitted_tool_calls: set[int] = set()
+        #: The provider's own reason the message ended, once `message_delta` reports it.
+        #: `"max_tokens"` is what makes an unfinalized tool block a TRUNCATION rather than a
+        #: mid-stream crash — the two land in the same defensive flush and are otherwise
+        #: indistinguishable to the runtime.
+        stop_reason = ""
+
+        input_tokens = 0
+        output_tokens = 0
+        cache_creation_tokens = 0
+        cache_read_tokens = 0
+
+        async with self._client.messages.stream(**request_kwargs) as stream:
+            async for event in stream:
+                event_type = getattr(event, "type", None)
+
+                if event_type == "message_start":
+                    msg = getattr(event, "message", None)
+                    usage = getattr(msg, "usage", None) if msg is not None else None
+                    if usage is not None:
+                        it = getattr(usage, "input_tokens", None)
+                        if it is not None:
+                            input_tokens = it
+                        ot = getattr(usage, "output_tokens", None)
+                        if ot is not None:
+                            output_tokens = ot
+                        # Prompt-cache usage (PCS-6): the event fields exist but had no
+                        # producer. `_read_cache_usage` reads them defensively — a response
+                        # without cache use (or an older SDK) leaves these 0 and never raises.
+                        cache_creation_tokens, cache_read_tokens = _read_cache_usage(usage)
+
+                elif event_type == "content_block_start":
+                    index = getattr(event, "index", 0) or 0
+                    block = getattr(event, "content_block", None)
+                    block_type = getattr(block, "type", None) if block is not None else None
+                    if block_type == "tool_use":
+                        tool_blocks[index] = {
+                            "id": str(getattr(block, "id", "") or ""),
+                            "name": str(getattr(block, "name", "") or ""),
+                            "arguments": "",
+                        }
+
+                elif event_type == "content_block_delta":
+                    delta = getattr(event, "delta", None)
+                    delta_type = getattr(delta, "type", None) if delta is not None else None
+                    if delta_type == "text_delta":
+                        text = getattr(delta, "text", "") or ""
+                        if text:
+                            assistant_text += text
+                            yield LLMEvent(kind=EVENT_TEXT_CHUNK, text=text)
+                    elif delta_type == "input_json_delta":
+                        index = getattr(event, "index", 0) or 0
+                        partial = getattr(delta, "partial_json", "") or ""
+                        bucket = tool_blocks.get(index)
+                        if bucket is not None and partial:
+                            bucket["arguments"] += partial
+                    elif delta_type == "thinking_delta":
+                        thinking = getattr(delta, "thinking", "") or ""
+                        if thinking:
+                            yield LLMEvent(kind=EVENT_THINKING_CHUNK, text=thinking)
+
+                elif event_type == "content_block_stop":
+                    index = getattr(event, "index", 0) or 0
+                    bucket = tool_blocks.get(index)
+                    if bucket is not None and index not in emitted_tool_calls:
+                        emitted_tool_calls.add(index)
+                        yield LLMEvent(
+                            kind=EVENT_TOOL_CALL,
+                            tool_call_id=bucket["id"],
+                            title=bucket["name"],
+                            tool_input=bucket["arguments"],
+                        )
+
+                elif event_type == "message_delta":
+                    # `stop_reason` was never read here at all — `llm/events.py` declared the field
+                    # and nothing on this path wrote it (issue 1773). `max_tokens` is the one that
+                    # matters: a completion cut mid-`tool_use` never gets its `content_block_stop`,
+                    # so the block lands in the defensive flush below, and without the reason the
+                    # runtime cannot tell a truncated call from a malformed one.
+                    #
+                    # Read from `delta` first (where the wire puts it) and fall back to the event,
+                    # because the two SDK generations differ and guessing one costs the signal.
+                    delta_obj = getattr(event, "delta", None)
+                    reason = getattr(delta_obj, "stop_reason", None) or getattr(
+                        event, "stop_reason", None
+                    )
+                    if reason:
+                        stop_reason = str(reason)
+                    usage = getattr(event, "usage", None)
+                    if usage is not None:
+                        ot = getattr(usage, "output_tokens", None)
+                        if ot is not None:
+                            output_tokens = ot
+
+                # ``message_stop`` is informational; the ``async with``
+                # context exit handles teardown.
+
+        # Defensive flush — emit any unfinalized tool blocks (the SDK
+        # normally emits ``content_block_stop`` for every started block,
+        # but we don't want a crash mid-stream to swallow a tool call).
+        for index, bucket in tool_blocks.items():
+            if index in emitted_tool_calls:
+                continue
+            emitted_tool_calls.add(index)
+            yield LLMEvent(
+                kind=EVENT_TOOL_CALL,
+                tool_call_id=bucket["id"],
+                title=bucket["name"],
+                tool_input=bucket["arguments"],
+                # A block that never closed, on a `max_tokens` stop, IS the truncation.
+                stop_reason=stop_reason,
+            )
+
+        if input_tokens > 0:
+            # ``override=`` and deliberately NOT ``local=``: the binding's declaration is
+            # truth for a measured percentage, while the conservative local floor is only
+            # a denominator for the char ESTIMATE — dividing a real token count by it
+            # would over-report (see the matching note in llm/openai.py, #2364). With no
+            # declaration this is byte-identical to the plain table lookup.
+            ctx = _model_window(self._model, _DEFAULT_CONTEXT_WINDOW, override=self.context_window)
+            self._last_context_pct = (input_tokens / ctx) * 100
+
+        if assistant_text:
+            self._history.append({"role": "assistant", "content": assistant_text})
+
+        yield LLMEvent(
+            kind=EVENT_COMPLETE,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            cache_read_tokens=cache_read_tokens,
+            context_usage_pct=self._last_context_pct,
+        )
+
+    # ── Stateless completion (native loop) ────────────────────────────
+
+    async def complete(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict] | None = None,
+        model: str | None = None,
+        reasoning_effort: str = "",
+    ) -> AsyncIterator[LLMEvent]:
+        """Stream a stateless Messages turn for the full ``messages`` list.
+
+        Unlike :meth:`stream`, this NEVER touches ``self._history`` — the
+        native loop owns conversation state. The loop sends OpenAI-shaped
+        messages + tools uniformly across providers; this method translates
+        them into Anthropic's wire format (see :func:`_translate_messages` /
+        :func:`_translate_tools`): a system message becomes the top-level
+        ``system=`` param, assistant ``tool_calls`` become ``tool_use``
+        content blocks, and ``role: "tool"`` results become ``tool_result``
+        blocks inside a user turn.
+
+        Streaming + token accumulation mirror :meth:`stream` exactly; a
+        completed ``tool_use`` block emits one :data:`EVENT_TOOL_CALL` with
+        ``tool_call_id`` = the block id, ``title`` = the tool name, and
+        ``tool_input`` = the accumulated JSON argument string.
+        """
+        # Stage the image BEFORE translation so the block rides through as a plain
+        # list-content user message (which `_translate_messages` passes through).
+        system_prompt, anth_messages = _translate_messages(self._with_pending_image(messages))
+
+        request_kwargs: dict[str, Any] = {
+            "model": model or self._model,
+            "messages": anth_messages,
+            "max_tokens": self._max_tokens,
+        }
+        if system_prompt:
+            request_kwargs["system"] = system_prompt
+        if tools:
+            request_kwargs["tools"] = _translate_tools(tools)
+        # Extended thinking: map the session's reasoning effort → a thinking token
+        # budget. Anthropic requires budget_tokens < max_tokens, so clamp. "" =
+        # no thinking (model default). budget must leave room for the answer.
+        budget = _THINKING_BUDGETS.get(reasoning_effort or "")
+        if budget:
+            budget = min(budget, max(1024, self._max_tokens - 1024))
+            request_kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
+            # Extended thinking requires temperature unset (or 1); drop any override.
+            request_kwargs.pop("temperature", None)
+        # Allow ``temperature`` etc. to flow through from extra_options without
+        # clobbering anything set above (system/tools/messages stay authoritative).
+        for key, value in self._extra_options.items():
+            if key == "temperature" and "thinking" in request_kwargs:
+                continue  # thinking mode forbids a custom temperature
+            request_kwargs.setdefault(key, value)
+
+        # Per content-block-index accumulators for tool_use blocks.
+        tool_blocks: dict[int, dict[str, str]] = {}
+        emitted_tool_calls: set[int] = set()
+        #: The provider's own reason the message ended, once `message_delta` reports it.
+        #: `"max_tokens"` is what makes an unfinalized tool block a TRUNCATION rather than a
+        #: mid-stream crash — the two land in the same defensive flush and are otherwise
+        #: indistinguishable to the runtime.
+        stop_reason = ""
+
+        input_tokens = 0
+        output_tokens = 0
+        cache_creation_tokens = 0
+        cache_read_tokens = 0
+
+        async with self._client.messages.stream(**request_kwargs) as stream:
+            async for event in stream:
+                event_type = getattr(event, "type", None)
+
+                if event_type == "message_start":
+                    msg = getattr(event, "message", None)
+                    usage = getattr(msg, "usage", None) if msg is not None else None
+                    if usage is not None:
+                        it = getattr(usage, "input_tokens", None)
+                        if it is not None:
+                            input_tokens = it
+                        ot = getattr(usage, "output_tokens", None)
+                        if ot is not None:
+                            output_tokens = ot
+                        # Prompt-cache usage (PCS-6): the event fields exist but had no
+                        # producer. `_read_cache_usage` reads them defensively — a response
+                        # without cache use (or an older SDK) leaves these 0 and never raises.
+                        cache_creation_tokens, cache_read_tokens = _read_cache_usage(usage)
+
+                elif event_type == "content_block_start":
+                    index = getattr(event, "index", 0) or 0
+                    block = getattr(event, "content_block", None)
+                    block_type = getattr(block, "type", None) if block is not None else None
+                    if block_type == "tool_use":
+                        tool_blocks[index] = {
+                            "id": str(getattr(block, "id", "") or ""),
+                            "name": str(getattr(block, "name", "") or ""),
+                            "arguments": "",
+                        }
+
+                elif event_type == "content_block_delta":
+                    delta = getattr(event, "delta", None)
+                    delta_type = getattr(delta, "type", None) if delta is not None else None
+                    if delta_type == "text_delta":
+                        text = getattr(delta, "text", "") or ""
+                        if text:
+                            yield LLMEvent(kind=EVENT_TEXT_CHUNK, text=text)
+                    elif delta_type == "input_json_delta":
+                        index = getattr(event, "index", 0) or 0
+                        partial = getattr(delta, "partial_json", "") or ""
+                        bucket = tool_blocks.get(index)
+                        if bucket is not None and partial:
+                            bucket["arguments"] += partial
+                    elif delta_type == "thinking_delta":
+                        thinking = getattr(delta, "thinking", "") or ""
+                        if thinking:
+                            yield LLMEvent(kind=EVENT_THINKING_CHUNK, text=thinking)
+
+                elif event_type == "content_block_stop":
+                    index = getattr(event, "index", 0) or 0
+                    bucket = tool_blocks.get(index)
+                    if bucket is not None and index not in emitted_tool_calls:
+                        emitted_tool_calls.add(index)
+                        yield LLMEvent(
+                            kind=EVENT_TOOL_CALL,
+                            tool_call_id=bucket["id"],
+                            title=bucket["name"],
+                            tool_input=bucket["arguments"],
+                        )
+
+                elif event_type == "message_delta":
+                    # `stop_reason` was never read here at all — `llm/events.py` declared the field
+                    # and nothing on this path wrote it (issue 1773). `max_tokens` is the one that
+                    # matters: a completion cut mid-`tool_use` never gets its `content_block_stop`,
+                    # so the block lands in the defensive flush below, and without the reason the
+                    # runtime cannot tell a truncated call from a malformed one.
+                    #
+                    # Read from `delta` first (where the wire puts it) and fall back to the event,
+                    # because the two SDK generations differ and guessing one costs the signal.
+                    delta_obj = getattr(event, "delta", None)
+                    reason = getattr(delta_obj, "stop_reason", None) or getattr(
+                        event, "stop_reason", None
+                    )
+                    if reason:
+                        stop_reason = str(reason)
+                    usage = getattr(event, "usage", None)
+                    if usage is not None:
+                        ot = getattr(usage, "output_tokens", None)
+                        if ot is not None:
+                            output_tokens = ot
+
+        # Defensive flush — emit any unfinalized tool blocks.
+        for index, bucket in tool_blocks.items():
+            if index in emitted_tool_calls:
+                continue
+            emitted_tool_calls.add(index)
+            yield LLMEvent(
+                kind=EVENT_TOOL_CALL,
+                tool_call_id=bucket["id"],
+                title=bucket["name"],
+                tool_input=bucket["arguments"],
+                # A block that never closed, on a `max_tokens` stop, IS the truncation.
+                stop_reason=stop_reason,
+            )
+
+        context_pct: float | None = None
+        if input_tokens > 0:
+            # ``override=`` only — see the note at the streaming gauge above.
+            ctx = _model_window(
+                model or self._model, _DEFAULT_CONTEXT_WINDOW, override=self.context_window
+            )
+            context_pct = (input_tokens / ctx) * 100
+
+        yield LLMEvent(
+            kind=EVENT_COMPLETE,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            cache_read_tokens=cache_read_tokens,
+            context_usage_pct=context_pct,
+            cost_usd=0.0,
+        )
+
+    # ── Tool approval (no-op) ─────────────────────────────────────────
+
+    async def approve_tool(self, request_id: str | int) -> None:
+        """No-op: Anthropic tool calls are not interactive at this layer."""
+        return None
+
+    async def reject_tool(self, request_id: str | int) -> None:
+        """No-op: Anthropic tool calls are not interactive at this layer."""
+        return None
+
+    # ── Status ────────────────────────────────────────────────────────
+
+    def context_usage_pct(self) -> float | None:
+        return self._last_context_pct
+
+    async def cancel(self, *, wait_ack_timeout: float = 0.0) -> CancelOutcome:
+        """Cancel is a no-op for now; later phases can wire abort plumbing."""
+        return "no_turn"
+
+
+# The provider TYPE registration (ANTHROPIC_CAPABILITY + factory + create_provider)
+# lives in the standalone anthropic-models app (apps/anthropic-models/provider.py),
+# which imports this AnthropicProvider class via personalclaw.sdk.model. This module is
+# now just the Anthropic-compatible PROTOCOL client — a core-supported standard.

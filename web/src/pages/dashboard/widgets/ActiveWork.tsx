@@ -1,0 +1,142 @@
+import { useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
+import { Send, MessageCircleQuestion, Coffee } from 'lucide-react'
+import { api, type Loop } from '../../../lib/api'
+import { useDashboardLive } from '../DashboardLive'
+import { loopStatusLabel, loopStatusColor, effectiveLoopStatus, ACTIVE_LOOP_STATUSES } from '../../../lib/loopStatus'
+import { SlotEmptyState, RowAction, StatusDot } from './kit'
+import { ListSkeleton } from '../../../ui/ListScaffold'
+import { ProgressRing } from '../../../ui/ProgressRing'
+import { spring } from '../../../design/motion'
+import type { RouteProps } from '../../../app/useQueryState'
+
+function pendingText(l: Loop): string | null {
+  const q = l.pending_question
+  if (!q) return null
+  return typeof q === 'string' ? q : q.question
+}
+
+/** Active Work — each running/active loop as a live row: status dot + progress
+ *  ring, current-step/cycle text, inline Nudge, and an Answer box when the loop is
+ *  `needs_input`. Long-running autonomous runs are the emphasis (double-height in
+ *  the curated layout). Opening a row jumps to its cockpit. */
+export function ActiveWork({ navigate }: RouteProps) {
+  const { loops, read } = useDashboardLive()
+  const active = loops
+    // Anything in flight or awaiting them — the ONE active-status set (lib/loopStatus).
+    .filter((l) => ACTIVE_LOOP_STATUSES.has(l.status))
+    .sort((a, b) => (b.started_at ?? b.created_at) - (a.started_at ?? a.created_at))
+
+  if (active.length === 0) {
+    // 🔴 BEFORE THE FIRST READ LANDS, `loops` IS `[]` — and this branch reads that as a verdict. So a
+    // user with three running loops was told "No active work" for the whole round trip, on the first
+    // screen the app shows. An empty state is a CLAIM about a lane, and it is only earned once the
+    // lane has been read; until then this is a loading state, not a finding.
+    //
+    // Nested inside this branch because unread IMPLIES it (an unattempted read leaves `[]`), which
+    // also keeps the two arms of one gate adjacent — the shape `ui/loadingNounPairing` sources the
+    // noun from, here the empty sentence's own "active work".
+    if (!read.loops) return <ListSkeleton rows={2} what="active work" />
+    return <SlotEmptyState icon={Coffee}>No active work. Loops you launch appear here as they run.</SlotEmptyState>
+  }
+
+  return (
+    <div className="flex flex-col gap-s pt-xs">
+      <AnimatePresence initial={false}>
+        {active.map((l) => <ActiveRow key={l.id} loop={l} navigate={navigate} />)}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+function ActiveRow({ loop, navigate }: { loop: Loop; navigate: RouteProps['navigate'] }) {
+  // One label for the row: the heading a user reads AND the subject each action names.
+  const loopLabel = loop.name || loop.task?.slice(0, 60) || 'Loop'
+  const dispStatus = effectiveLoopStatus(loop.status, loop.stop_reason)
+  const statusColor = loopStatusColor(dispStatus)
+  const question = pendingText(loop)
+  const [answering, setAnswering] = useState(false)
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const pct = loop.max_cycles > 0 ? Math.min(1, loop.total_cycles / loop.max_cycles) : null
+  const cycleText = loop.max_cycles > 0
+    ? `cycle ${loop.total_cycles}/${loop.max_cycles}`
+    : `cycle ${loop.total_cycles} · ongoing`
+
+  const send = async () => {
+    const t = text.trim()
+    if (!t) return
+    setBusy(true)
+    try { await api.uLoopNudge(loop.id, t); setText(''); setAnswering(false) }
+    catch { /* keep the text so the user can retry */ }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <motion.div
+      layout
+      transition={spring.spatialDefault}
+      className="rounded-lg bg-surface-low p-m"
+    >
+      <div className="flex items-center gap-s">
+        <button type="button" onClick={() => navigate(`loops/${loop.id}`)} className="flex min-w-0 flex-1 items-center gap-s text-left">
+          {pct != null
+            ? <ProgressRing pct={pct} tone={statusColor} label={`Cycle progress for ${loop.name || loop.task || 'this loop'}`} />
+            : <StatusDot color={statusColor} pulse={loop.status === 'running'} />}
+          <div className="min-w-0">
+            <p data-type="title-m" className="truncate text-on-surface">{loopLabel}</p>
+            <p data-type="body-m" className="truncate text-on-surface-low">
+              <span style={{ color: statusColor }}>{loopStatusLabel(dispStatus)}</span> · {cycleText}
+            </p>
+          </div>
+        </button>
+        {loop.status === 'needs_input' && !answering && (
+          <RowAction tone="primary" onClick={() => setAnswering(true)} title="Answer the loop's question"
+            ariaLabel={`Answer: ${loopLabel}`}><MessageCircleQuestion size={14} /> Answer</RowAction>
+        )}
+        {loop.status !== 'needs_input' && !answering && (
+          <RowAction tone="default" onClick={() => setAnswering(true)} title="Nudge this loop"
+            ariaLabel={`Nudge: ${loopLabel}`}><Send size={14} /> Nudge</RowAction>
+        )}
+      </div>
+
+      {question && !answering && (
+        <p data-type="body-m" className="mt-s rounded-md bg-surface px-m py-s text-on-surface-var">
+          <MessageCircleQuestion size={13} className="mr-xs inline text-info" />{question}
+        </p>
+      )}
+
+      <AnimatePresence>
+        {answering && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={spring.spatialFast}
+            className="mt-s overflow-hidden"
+          >
+            {question && <p data-type="body-m" className="mb-xs text-on-surface-var">{question}</p>}
+            <div className="flex items-end gap-s">
+              <textarea
+                autoFocus
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send(); if (e.key === 'Escape') { setAnswering(false); setText('') } }}
+                placeholder={loop.status === 'needs_input' ? 'Answer…' : 'Nudge the loop…'}
+                aria-label={loop.status === 'needs_input' ? 'Answer the loop' : 'Nudge the loop'}
+                rows={2}
+                className="min-h-0 flex-1 resize-none rounded-md bg-surface px-m py-s text-on-surface outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary"
+                data-type="body-m"
+              />
+              <RowAction tone="primary" onClick={send} title="Send (⌘↵)">{busy ? '…' : <><Send size={14} /> Send</>}</RowAction>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  )
+}
+
+// `ProgressRing` moved to ui/ProgressRing. This copy and LoopsListPage's were byte-identical
+// except that this one animated the arc and that one jumped — see the primitive's own comment.

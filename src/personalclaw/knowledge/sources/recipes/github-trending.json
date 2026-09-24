@@ -1,0 +1,15 @@
+{
+  "id": "github-trending",
+  "displayName": "GitHub trending repositories",
+  "description": "GitHub publishes no trending API, so this watches the search API sorted by stars instead — deterministic, and a close enough approximation to be useful daily.",
+  "provider": "watched-feed",
+  "itemType": "bookmark",
+  "matchPatterns": [
+    "^https?://(?:www\\.)?github\\.com/trending/?(?:[?#].*)?$"
+  ],
+  "urlGuidance": "Paste https://github.com/trending — the recipe substitutes the search API, because the trending page itself has no feed.",
+  "spec": {
+    "preset": "github_trending"
+  },
+  "tags": ["code", "discovery"]
+}

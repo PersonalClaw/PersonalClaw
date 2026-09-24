@@ -1,0 +1,1440 @@
+#!/usr/bin/env python3
+"""Committed inert-surface inventory baseline (PLATFORM-HARDENING-FLOORS SH3.2).
+
+A recurring defect class in this codebase: something is *declared* and nothing on the
+other side of the seam consumes or produces it — a config key no ``load()`` mapping
+reads, an enum member no code references, a trigger kind with no dispatch, an editable-
+config entry with no backing field, an SDK export nothing imports. Tests pass anyway
+because they hand-build the state the missing writer should have produced. A round-trip
+or unit test cannot see the gap; only a *census of both ends of each seam* can.
+
+This generator IS that census. For each of six declared-surface kinds it enumerates the
+declared surfaces, applies a cheap deterministic writer/reader heuristic, and emits a
+per-file counter of inert surfaces to a committed ``inert-surface-baseline.json``. A
+companion test (``tests/test_inert_surface_baseline.py``) regenerates in-memory and
+asserts every per-file counter **may only shrink** versus the committed baseline: a NEW
+declared-but-inert surface raises a file's count and reds CI, naming the file and the
+surface; a cleanup that adds the missing writer/reader lowers it and is welcome.
+
+⚠️  FORBIDDEN-TO-RAISE RULE (the whole point — do not weaken it): when this baseline reds
+    CI because a counter ROSE, the fix is to ADD THE MISSING WRITER OR READER for the new
+    surface — never to regenerate the baseline to bless the higher number. Regenerating to
+    make a rising count green re-hides exactly the defect this file exists to surface.
+    Regeneration is legitimate ONLY when a counter LEGITIMATELY SHRANK (a real cleanup
+    landed) — and then it must happen in that same commit.
+
+⚠️  SHIP AT THE MEASURED POPULATION, NOT AT ZERO. A never-run gate given teeth at zero is
+    an outage: it would red every existing declared-but-inert surface at once. So this
+    tool MEASURES the current population and commits the real (non-zero) number as the
+    floor; the ratchet only forbids *growth*. Driving the count down (one file per commit,
+    each proving a writer now exists) is a separate effort (SH3.3), not this atom. In
+    particular ``SafetyProfile`` (guardrails/policy.py) is expected to appear as inert and
+    is left for PHF-8 to wire — do not "fix" any surface this census reports here.
+
+Detection heuristics are calibrated for a LOW false-positive rate (they under-report
+rather than cry wolf, mirroring ``harness/scanner.py``): a "reader" found anywhere in
+production ``src/`` clears a surface, so the census only reports the strongest declared-
+and-untouched cases. Readers in ``tests/`` deliberately do NOT count — a test that
+references a surface is exactly the hand-built state that hides the seam gap.
+
+⚠️  A FALSE RED IS A BUG IN THIS TOOL, AND THE FIX IS TO TEACH IT THE SHAPE. The census
+    governs which cleanups get picked, so a surface it reports must really be unreachable.
+    When a reported surface turns out to be reachable through a consumption shape the
+    detector does not recognise, the fix is to TEACH THE DETECTOR THAT SHAPE — never to
+    delete the line from the baseline by hand, and never to relax the forbidden-to-raise
+    rule. ``PHF-12`` did exactly that for whole-enum iteration: ``Lineage.INFORMED_BY`` and
+    ``Lineage.RELATED`` were reported inert while ``workflows/publish.py:136`` validated
+    author-supplied edges against ``{e.value for e in Lineage}``, so a template author
+    could reach both members and the census called them dead.
+
+    THE CONVERSE ALSO HOLDS, AND ``PHF-13`` RULED ON IT: a shape is only worth teaching when it
+    PROVES reachability. Value-lookup ``E(value)`` does not, so it is deliberately NOT taught —
+    the per-site provenance audit and the arithmetic behind that ruling live in
+    ``_inert_enum_members``. Clearing a member on a construction that never executes, or one fed
+    only from state this codebase itself wrote, would HIDE a real gap instead of naming it, and a
+    false clear is the one error this census must not make quietly.
+
+The render is DETERMINISTIC: files, surface lists, and per-kind totals are all sorted,
+the output is ``json.dumps(..., indent=2, sort_keys=True)`` with a trailing newline, and
+it carries no timestamps or absolute paths. A second run is byte-identical to the first.
+
+Per-surface-kind heuristic (each documented at its detector below):
+  * ``config``          — a leaf config field (from the SH3.1 config walk) whose name is
+                          not set in ``AppConfig.load()``'s mapping (no reader).
+  * ``enum``            — an Enum member whose name is never accessed as an attribute
+                          anywhere in ``src/`` AND whose class is never iterated as a whole
+                          (declared and reachable through neither path).
+  * ``trigger_kind``    — a kind in ``triggers.models.KINDS`` whose literal appears in no
+                          other file under ``triggers/`` (declared, nothing dispatches it).
+  * ``editable_config`` — an ``_EDITABLE_CONFIG`` PATCH-allowlist key with no backing
+                          config field (the entry edits nothing).
+  * ``config_reader``   — an exact allowlisted config leaf with no production AST read
+                          outside declaration/load/serialization plumbing. A field read
+                          inside a config accessor counts only when production code outside
+                          ``config/`` calls that accessor.
+  * ``sdk_export``      — a ``personalclaw.sdk.*`` ``__all__`` symbol imported nowhere
+                          outside the sdk package (no in-repo consumer). The SDK is a
+                          facade for installable app bundles that live in a SEPARATE repo,
+                          so most exports look inert from here — which is precisely why
+                          this counter is large and why it ratchets rather than zeroes.
+
+Regenerate in place (ONLY on a legitimate shrink) with::
+
+    python scripts/generate_inert_surface_baseline.py
+"""
+
+from __future__ import annotations
+
+import ast
+import dataclasses
+import functools
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+# Make the repo root importable so ``scripts.generate_config_baseline`` resolves whether
+# this file is run as a script (``python scripts/...``) or imported under pytest (whose
+# ``pythonpath`` already includes it). The config-leaf census reuses that SH3.1 walk as
+# its single source of truth rather than re-deriving the schema here.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+for _p in (_REPO_ROOT, _REPO_ROOT / "src"):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
+
+# Surface-kind labels, used as the ``kind:`` prefix of every surface id.
+KIND_CONFIG = "config"
+KIND_ENUM = "enum"
+KIND_TRIGGER_KIND = "trigger_kind"
+KIND_EDITABLE_CONFIG = "editable_config"
+KIND_CONFIG_READER = "config_reader"
+KIND_SDK_EXPORT = "sdk_export"
+
+_ENUM_BASES = {"Enum", "IntEnum", "StrEnum", "Flag", "IntFlag"}
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _src_root() -> Path:
+    return _repo_root() / "src" / "personalclaw"
+
+
+def _rel(path: Path) -> str:
+    """POSIX repo-relative path string (stable across platforms)."""
+    return path.resolve().relative_to(_repo_root()).as_posix()
+
+
+@functools.cache
+def _parse(path: Path) -> ast.Module | None:
+    """Parse one source file once per process.
+
+    The baseline's kinds revisit the same production tree, and its tests intentionally
+    render more than once. Source paths are immutable during one generator/test process,
+    so reparsing them adds cost without adding coverage.
+    """
+    try:
+        return ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return None
+
+
+def _src_py_files() -> list[Path]:
+    """All Python files under ``src/personalclaw`` (production code only, sorted)."""
+    return sorted(_src_root().rglob("*.py"))
+
+
+# ── Shared reader index ──────────────────────────────────────────────────────
+
+
+def _attribute_names_in_src(files: list[Path]) -> set[str]:
+    """Every attribute name accessed (``x.NAME``) anywhere in production ``src/``.
+
+    A reader index for the enum census: if a member name is accessed as an attribute
+    ANYWHERE in src, the member has a reader and is not inert. Global (not per-module) on
+    purpose — a common member name (``OK``, ``INFO``) reused by any object clears the
+    member, so the census under-reports rather than cries wolf.
+    """
+    names: set[str] = set()
+    for f in files:
+        tree = _parse(f)
+        if tree is None:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute):
+                names.add(node.attr)
+    return names
+
+
+# ── Kind: config (reuses the SH3.1 config walk) ──────────────────────────────
+
+
+#: The ``AppConfig`` methods that may hold the load mapping. ``load()`` itself is a one-line
+#: delegate — the mapping lives in ``load_with_migration_state()``, which returns the parsed
+#: config plus whether it needed migrating (PHF-15 split the two so ``load()`` could stop
+#: writing). Kept as a set rather than one name so the mapping can move again without
+#: silently emptying this detector. Mirrored in ``harness/scanner.py``.
+_LOAD_MAPPING_METHODS = frozenset({"load", "load_with_migration_state"})
+
+
+def _load_body_kwarg_names(loader_tree: ast.Module) -> set[str]:
+    """Every keyword-argument name used anywhere in ``AppConfig``'s load mapping — the set of
+    field names it assigns (mirrors ``harness/scanner.py`` config-four-points).
+
+    Raises if no anchor method is found. That is deliberate: returning an empty set instead
+    reports EVERY config leaf as inert, which is 295 bogus failures that read like a real
+    regression and bury the one-line cause (a renamed method).
+    """
+    names: set[str] = set()
+    found: set[str] = set()
+    for cls in ast.walk(loader_tree):
+        if isinstance(cls, ast.ClassDef) and cls.name == "AppConfig":
+            for item in cls.body:
+                if (
+                    isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and item.name in _LOAD_MAPPING_METHODS
+                ):
+                    found.add(item.name)
+                    for call in ast.walk(item):
+                        if isinstance(call, ast.Call):
+                            for kw in call.keywords:
+                                if kw.arg:
+                                    names.add(kw.arg)
+    if not found:
+        raise RuntimeError(
+            "config/loader.py has no AppConfig method named any of "
+            f"{sorted(_LOAD_MAPPING_METHODS)} — the config-inertness detector lost its "
+            "anchor. Re-point _LOAD_MAPPING_METHODS (here and in harness/scanner.py) at "
+            "whichever method now holds the load mapping."
+        )
+    return names
+
+
+def _config_leaf_paths() -> list[str]:
+    """Leaf config paths from the SH3.1 baseline generator (single source of truth)."""
+    from scripts.generate_config_baseline import build_baseline as config_baseline
+
+    return [entry["path"] for entry in json.loads(config_baseline())]
+
+
+def _inert_config_surfaces() -> list[tuple[str, str]]:
+    """A config leaf whose field name is NOT set in ``AppConfig.load()`` has no reader: the
+    user's saved value silently reverts to the default on every reload. Attributed to the
+    loader (the one file that owns the declaration + the load mapping)."""
+    loader = _src_root() / "config" / "loader.py"
+    tree = _parse(loader)
+    if tree is None:
+        return []
+    load_kwargs = _load_body_kwarg_names(tree)
+    out: list[tuple[str, str]] = []
+    for path in _config_leaf_paths():
+        leaf = path.split(".")[-1]
+        if leaf not in load_kwargs:
+            out.append((_rel(loader), f"{KIND_CONFIG}:{path}"))
+    return out
+
+
+# ── Kind: enum ────────────────────────────────────────────────────────────────
+
+
+def _enum_members(tree: ast.Module) -> list[tuple[str, str]]:
+    """(class_name, member) for every public member of every Enum subclass in ``tree``."""
+    out: list[tuple[str, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        base_names = {
+            b.id if isinstance(b, ast.Name) else (b.attr if isinstance(b, ast.Attribute) else "")
+            for b in node.bases
+        }
+        if not (base_names & _ENUM_BASES):
+            continue
+        for stmt in node.body:
+            targets: list[str] = []
+            if isinstance(stmt, ast.Assign):
+                targets = [t.id for t in stmt.targets if isinstance(t, ast.Name)]
+            elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                targets = [stmt.target.id]
+            for member in targets:
+                if not member.startswith("_"):
+                    out.append((node.name, member))
+    return out
+
+
+def _module_file(module: str) -> Path | None:
+    """The ``src/`` file implementing a dotted ``personalclaw.*`` module (or ``None``)."""
+    if module != "personalclaw" and not module.startswith("personalclaw."):
+        return None
+    base = _src_root().joinpath(*module.split(".")[1:])
+    for candidate in (base.with_suffix(".py"), base / "__init__.py"):
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def _absolute_import_module(node: ast.ImportFrom, path: Path) -> str | None:
+    """The absolute dotted module an ``ImportFrom`` names, resolving ``.``/``..`` against the
+    importing file's own package (``from .models import X`` inside ``workflows/`` →
+    ``personalclaw.workflows.models``)."""
+    if not node.level:
+        return node.module
+    try:
+        parts = path.resolve().relative_to(_src_root()).parts[:-1]
+    except ValueError:  # a file outside src/ (a fixture tree) has no package to climb
+        return None
+    package = ["personalclaw", *parts]
+    climb = node.level - 1
+    if climb:
+        if climb >= len(package):
+            return None
+        package = package[: len(package) - climb]
+    return ".".join([*package, *([node.module] if node.module else [])])
+
+
+def _enum_name_bindings(
+    tree: ast.Module, path: Path, enum_names: dict[Path, set[str]]
+) -> tuple[dict[str, Path], dict[str, Path]]:
+    """Resolve the enum-ish names a single file can see.
+
+    Returns ``(class_bindings, module_bindings)``: local name → the file that DECLARES that
+    enum class, and local name → the module file it aliases (so ``mutations.OpKind`` can be
+    resolved). Import-aware on purpose: seven distinct ``Verdict`` enums exist in ``src/``,
+    so a name-only index would let one file's iteration clear another file's members.
+    """
+    classes: dict[str, Path] = {}
+    modules: dict[str, Path] = {}
+    here = path.resolve()
+    for name in enum_names.get(here, set()):
+        classes[name] = here
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                target = _module_file(alias.name)
+                if target is not None:
+                    modules[alias.asname or alias.name.split(".")[0]] = target
+        elif isinstance(node, ast.ImportFrom):
+            module = _absolute_import_module(node, path)
+            if not module:
+                continue
+            origin = _module_file(module)
+            for alias in node.names:
+                local = alias.asname or alias.name
+                if origin is not None and alias.name in enum_names.get(origin, set()):
+                    classes[local] = origin
+                    continue
+                submodule = _module_file(f"{module}.{alias.name}")
+                if submodule is not None:
+                    modules[local] = submodule
+    return classes, modules
+
+
+#: Builtins that consume EVERY member of the iterable handed to them. ``E(value)``-style
+#: value lookup and ``x in E`` containment are deliberately absent — see the enum detector.
+_ITERATING_BUILTINS = frozenset(
+    {"list", "tuple", "set", "frozenset", "sorted", "iter", "reversed", "enumerate"}
+)
+
+
+def _iterated_expressions(tree: ast.Module) -> list[ast.expr]:
+    """Every expression this module iterates over as a whole: ``for x in <expr>`` (sync and
+    async), each comprehension's ``for ... in <expr>``, and ``list/tuple/set/frozenset/
+    sorted/iter/reversed/enumerate(<expr>)``."""
+    out: list[ast.expr] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            out.append(node.iter)
+        elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            out.extend(gen.iter for gen in node.generators)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in _ITERATING_BUILTINS
+        ):
+            out.extend(arg for arg in node.args if not isinstance(arg, ast.Starred))
+    return out
+
+
+def _iterated_enum_classes(
+    files: list[Path], enum_names: dict[Path, set[str]]
+) -> set[tuple[Path, str]]:
+    """``(declaring file, enum class)`` for every enum class iterated as a whole anywhere in
+    production ``src/``.
+
+    Names are resolved through the iterating file's own imports; a name that resolves to no
+    declaration falls back to EVERY enum class with that name, keeping the detector on the
+    under-reporting side of the contract when resolution fails.
+    """
+    by_name: dict[str, set[Path]] = {}
+    for path, names in enum_names.items():
+        for name in names:
+            by_name.setdefault(name, set()).add(path)
+    iterated: set[tuple[Path, str]] = set()
+    for f in files:
+        tree = _parse(f)
+        if tree is None:
+            continue
+        classes, modules = _enum_name_bindings(tree, f, enum_names)
+        for expr in _iterated_expressions(tree):
+            if isinstance(expr, ast.Name):
+                owner = classes.get(expr.id)
+                if owner is not None:
+                    iterated.add((owner, expr.id))
+                else:
+                    iterated.update((p, expr.id) for p in by_name.get(expr.id, ()))
+            elif isinstance(expr, ast.Attribute) and isinstance(expr.value, ast.Name):
+                origin = modules.get(expr.value.id)
+                if origin is not None and expr.attr in enum_names.get(origin, set()):
+                    iterated.add((origin, expr.attr))
+                else:
+                    iterated.update((p, expr.attr) for p in by_name.get(expr.attr, ()))
+    return iterated
+
+
+def _inert_enum_members(files: list[Path], attr_names: set[str]) -> list[tuple[Path, str]]:
+    """``(file, "Class.MEMBER")`` for every enum member with neither a reader nor an iterator.
+
+    THE RULE (two independent clears, either one is enough):
+
+    1. the member's name is accessed as an attribute somewhere in production ``src/``
+       (``E.MEMBER``) — a direct reader; or
+    2. the member's ENUM CLASS is iterated as a whole anywhere in production ``src/`` —
+       whole-enum iteration reaches every member by construction, so ONE iteration site
+       clears ALL of that class's members.
+
+    DETECTED ITERATION SHAPES: ``for m in E`` (and ``async for``); all four comprehension
+    forms over ``E`` (``{e.value for e in E}``, ``[e.value for e in E]``, dict and generator);
+    and ``list``/``tuple``/``set``/``frozenset``/``sorted``/``iter``/``reversed``/
+    ``enumerate`` applied to ``E``. Each shape is matched on a bare name (``E``) or a
+    module-qualified one (``mutations.OpKind``), resolved through the iterating file's OWN
+    imports — ``src/`` declares seven distinct ``Verdict`` enums, so a name-only index would
+    let one file's iteration clear another file's members.
+
+    DELIBERATELY NOT DETECTED (each stays on the under-reporting side — a member reachable
+    only this way is still reported, so the tool keeps crying wolf rather than going quiet):
+    ``E.__members__`` / ``_member_map_`` walks, ``getattr(E, name)``, value-lookup
+    construction (``E(value)``), ``value in E`` containment, iteration over a local alias
+    (``alias = E; for m in alias``), and consumers outside this repo.
+
+    ERROR DIRECTION, STATED HONESTLY: clearing a whole class from ONE iteration site trades
+    MORE under-reporting (a class that is iterated somewhere keeps no member reported, even a
+    member that genuinely has no producer) for the elimination of an entire false-red class.
+    That is the deliberate trade — this census exists to name work worth doing, and a
+    reported surface that is actually reachable sends someone to "fix" working code.
+
+    VALUE-LOOKUP ``E(value)`` IS DELIBERATELY NOT TAUGHT — audited and ruled on by ``PHF-13``.
+    ``PHF-12`` left it named as the "known remaining false-red shape" on the strength of
+    ``judge_contract.py:342`` (``Verdict(str(raw.get("verdict", "")).upper())`` on model-emitted
+    text). Auditing all six value-lookup sites behind the surviving enum surfaces found that
+    premise WRONG and the shape unsound as a clearing rule: ``E(value)`` proves reachability only
+    when BOTH hold — the construction actually EXECUTES in production, and its value crosses a
+    trust/authoring boundary. Per site:
+
+      * ``tasks/models.py:74`` ``DependencyType(raw_type)`` — EXTERNALLY REACHABLE. Reached from
+        ``POST /api/tasks``: ``tasks/handlers.py:242`` calls ``create_task(**body)`` on
+        ``await request.json()``, ``tasks/native.py:246`` coerces it, ``TaskDependency.from_dict``
+        looks the member up. A client picks the member. This one IS a false red, and is the only
+        one; it stays reported rather than being cleared by an unsound rule.
+      * ``memory_record.py:216``/``:218`` ``MemoryTier(...)``/``MemoryScope(...)`` — INTERNAL ONLY.
+        Fed by ``from_semantic_row``/``from_episodic_row`` (``vector_memory.py:1124``/``:1161``)
+        off rows this codebase wrote via ``to_row``; the vault mirror is render-only (no parse
+        back). Nothing writes ``"segment"`` or ``"workspace"``, so neither member round-trips in.
+      * ``workflows/confirmation.py:177`` ``Status(...)`` — INTERNAL ONLY. ``from_dict`` reads what
+        ``to_dict`` wrote, and that is only ``pending``/``expired``: ``resolve`` returns a
+        ``Resolution`` and never stamps ``RESOLVED``.
+      * ``workflows/judge_actors.py:84`` ``Actor(...)`` — DEAD CALL SITE. Only
+        ``resolve_transition`` calls it, and nothing in ``src/`` calls that (tests only).
+      * ``workflows/judge_contract.py:342`` ``Verdict(...)`` — DEAD CALL SITE. ``validate_verdict``
+        has no production caller; ``engine.py:1510`` deliberately RESTATES the aggregation rule
+        instead of importing it. Model-emitted text never reaches this constructor.
+      * ``judge_contract.py:224`` ``enum_cls(str(value))`` (``Ratchet``) — DEAD CALL SITE for the
+        same reason (``hints_from_dict`` has no production caller), and invisible to an
+        ``E(value)`` rule regardless: the class is loop-bound, not named at the call.
+
+    So a syntactic ``E(value)`` rule would clear six classes of which exactly ONE is genuinely
+    reachable — a 5-of-6 false-clear rate. A false clear is worse here than the over-report it
+    replaces: it buries a genuine gap inside every internal deserializer. Proving "provably
+    outside" needs interprocedural dataflow (four hops across three modules for the
+    ``DependencyType`` case), which is not a cheap deterministic AST rule, so the rule stays as
+    it is. ``test_value_lookup_alone_does_not_clear_a_member`` pins that decision, and
+    ``test_the_audited_value_lookup_call_sites_have_no_production_caller`` reds if a dead site
+    above is ever wired up — at which point re-verdict the member instead of trusting this list.
+
+    Path-typed (no repo-relative rendering) so the detector can be exercised against a
+    fixture tree; ``_inert_enum_surfaces`` is the thin repo-relative wrapper.
+    """
+    declared: dict[Path, list[tuple[str, str]]] = {}
+    for f in files:
+        tree = _parse(f)
+        if tree is None:
+            continue
+        members = _enum_members(tree)
+        if members:
+            declared[f.resolve()] = members
+    enum_names = {path: {cls for cls, _ in members} for path, members in declared.items()}
+    iterated = _iterated_enum_classes(files, enum_names)
+    out: list[tuple[Path, str]] = []
+    for path, members in declared.items():
+        for class_name, member in members:
+            if (path, class_name) in iterated:
+                continue
+            if member not in attr_names:
+                out.append((path, f"{class_name}.{member}"))
+    return out
+
+
+def _inert_enum_surfaces(files: list[Path], attr_names: set[str]) -> list[tuple[str, str]]:
+    """An enum member is inert when its name is never accessed as an attribute anywhere in
+    ``src/`` AND its class is never iterated as a whole — see ``_inert_enum_members`` and
+    ``_iterated_enum_classes`` for the two halves."""
+    return [
+        (_rel(path), f"{KIND_ENUM}:{surface}")
+        for path, surface in _inert_enum_members(files, attr_names)
+    ]
+
+
+# ── Kind: trigger_kind ────────────────────────────────────────────────────────
+
+
+def _tuple_string_members(tree: ast.Module, name: str) -> list[str]:
+    """String members of a module-level ``NAME = (...)`` tuple/list assignment."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == name for t in node.targets
+        ):
+            return [
+                e.value
+                for e in ast.walk(node.value)
+                if isinstance(e, ast.Constant) and isinstance(e.value, str)
+            ]
+        if (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == name
+            and node.value is not None
+        ):
+            return [
+                e.value
+                for e in ast.walk(node.value)
+                if isinstance(e, ast.Constant) and isinstance(e.value, str)
+            ]
+    return []
+
+
+def _inert_trigger_kind_surfaces() -> list[tuple[str, str]]:
+    """A kind in ``triggers.models.KINDS`` whose literal appears in no OTHER file under
+    ``triggers/`` is declared with nothing to dispatch it — a user could author a trigger
+    that never fires. Attributed to models.py (the declaration site)."""
+    trig_dir = _src_root() / "triggers"
+    models = trig_dir / "models.py"
+    models_tree = _parse(models)
+    if models_tree is None:
+        return []
+    kinds = _tuple_string_members(models_tree, "KINDS")
+    if not kinds:
+        return []
+    referenced: set[str] = set()
+    for f in sorted(trig_dir.rglob("*.py")):
+        if f == models or f.name.startswith("test_"):
+            continue
+        tree = _parse(f)
+        if tree is None:
+            continue
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value in kinds
+            ):
+                referenced.add(node.value)
+    return [
+        (_rel(models), f"{KIND_TRIGGER_KIND}:{kind}") for kind in kinds if kind not in referenced
+    ]
+
+
+# ── Kind: editable_config ─────────────────────────────────────────────────────
+
+
+def _editable_config_keys(tree: ast.Module) -> list[str]:
+    """String keys of the module-level ``_EDITABLE_CONFIG`` dict (Assign or AnnAssign)."""
+    for node in ast.walk(tree):
+        value = None
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "_EDITABLE_CONFIG" for t in node.targets
+        ):
+            value = node.value
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "_EDITABLE_CONFIG"
+        ):
+            value = node.value
+        if isinstance(value, ast.Dict):
+            return [
+                k.value
+                for k in value.keys
+                if isinstance(k, ast.Constant) and isinstance(k.value, str)
+            ]
+    return []
+
+
+def _inert_editable_config_surfaces() -> list[tuple[str, str]]:
+    """An ``_EDITABLE_CONFIG`` PATCH-allowlist key with no backing config leaf edits
+    nothing: the PATCH validates then writes a path ``load()`` never reads. A key backs a
+    leaf when it equals the leaf, is a section prefix of one, or nests under one (raw-dict
+    subpaths like ``dashboard.terminal.persist``). Attributed to the handler that owns the
+    allowlist."""
+    core = _src_root() / "dashboard" / "handlers" / "core.py"
+    tree = _parse(core)
+    if tree is None:
+        return []
+    keys = _editable_config_keys(tree)
+    if not keys:
+        return []
+    leaves = set(_config_leaf_paths())
+
+    def backed(key: str) -> bool:
+        if key in leaves:
+            return True
+        return any(leaf.startswith(key + ".") or key.startswith(leaf + ".") for leaf in leaves)
+
+    return [(_rel(core), f"{KIND_EDITABLE_CONFIG}:{key}") for key in keys if not backed(key)]
+
+
+# ── Kind: config_reader ───────────────────────────────────────────────────────
+
+
+@dataclasses.dataclass(frozen=True)
+class _ConfigFieldDeclaration:
+    """One leaf in the runtime config schema, with its syntactic declaration owner."""
+
+    path: str
+    owner_file: Path
+    owner_class: str
+    field_name: str
+
+
+_CONFIG_PLUMBING_METHODS = frozenset(
+    {
+        "__post_init__",
+        "load",
+        "load_with_migration_state",
+        "save",
+        "to_dict",
+    }
+)
+
+
+def _field_default(field: dataclasses.Field[Any]) -> Any:
+    """Declaration-time default, matching the config-baseline walk."""
+    if field.default is not dataclasses.MISSING:
+        return field.default
+    if field.default_factory is not dataclasses.MISSING:
+        return field.default_factory()
+    return None
+
+
+def _config_field_declarations() -> list[_ConfigFieldDeclaration]:
+    """Every config leaf, attributed to the file/class that declares its dataclass field."""
+    from personalclaw.config.loader import AppConfig
+
+    out: list[_ConfigFieldDeclaration] = []
+
+    def walk(cls: type[Any], prefix: str) -> None:
+        owner = _module_file(cls.__module__)
+        if owner is None:
+            return
+        for field in dataclasses.fields(cls):
+            path = f"{prefix}{field.name}"
+            default = _field_default(field)
+            if dataclasses.is_dataclass(default) and not isinstance(default, type):
+                walk(type(default), f"{path}.")
+                continue
+            out.append(
+                _ConfigFieldDeclaration(
+                    path=path,
+                    owner_file=owner,
+                    owner_class=cls.__name__,
+                    field_name=field.name,
+                )
+            )
+
+    walk(AppConfig, "")
+    return out
+
+
+def _attribute_chain(node: ast.expr) -> tuple[str, ...]:
+    """Dotted attribute suffix (``cfg.security.egress`` or ``call().security.egress``)."""
+    parts: list[str] = []
+    current: ast.expr = node
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+    if isinstance(current, ast.Name):
+        parts.append(current.id)
+    return tuple(reversed(parts))
+
+
+def _terminal_attribute_reads(
+    tree: ast.AST,
+    nodes: tuple[ast.AST, ...] | None = None,
+) -> list[ast.Attribute]:
+    """Load-context attributes that are not merely the qualifier of a longer attribute.
+
+    ``personalclaw.sandbox.wrap_argv`` therefore yields ``wrap_argv``, not the intermediate
+    module component ``sandbox``; ``cfg.agent.sandbox`` yields the terminal config field.
+    """
+    indexed = nodes if nodes is not None else tuple(ast.walk(tree))
+    parents = {id(child): parent for parent in indexed for child in ast.iter_child_nodes(parent)}
+    out: list[ast.Attribute] = []
+    for node in indexed:
+        if not isinstance(node, ast.Attribute) or not isinstance(node.ctx, ast.Load):
+            continue
+        parent = parents.get(id(node))
+        if isinstance(parent, ast.Attribute) and parent.value is node:
+            continue
+        out.append(node)
+    return out
+
+
+def _imported_module_chains(
+    tree: ast.Module,
+    nodes: tuple[ast.AST, ...] | None = None,
+) -> set[tuple[str, ...]]:
+    """Attribute chains that name imported modules rather than config fields."""
+    modules: set[tuple[str, ...]] = set()
+    for node in nodes if nodes is not None else ast.walk(tree):
+        if not isinstance(node, ast.Import):
+            continue
+        for alias in node.names:
+            if alias.asname:
+                modules.add((alias.asname,))
+            else:
+                modules.add(tuple(alias.name.split(".")))
+    return modules
+
+
+def _is_config_source(path: Path, declaration_files: set[Path]) -> bool:
+    """Whether ``path`` owns config declarations/plumbing, including fixture owners.
+
+    Other modules under ``config/`` are production consumers and must not disappear merely
+    because of their directory — ``config/credentials.py`` is the live reader for
+    ``security.credential_keychain``.
+    """
+    return path.resolve() in declaration_files
+
+
+def _external_call_names(files: list[Path], declaration_files: set[Path]) -> set[str]:
+    """Bare or attribute call names used outside config source files."""
+    names: set[str] = set()
+    for path in files:
+        try:
+            in_config_package = path.resolve().relative_to(_src_root()).parts[0] == "config"
+        except ValueError:
+            in_config_package = path.resolve() in declaration_files
+        if in_config_package:
+            continue
+        tree = _parse(path)
+        if tree is None:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Name):
+                names.add(node.func.id)
+            elif isinstance(node.func, ast.Attribute):
+                names.add(node.func.attr)
+    return names
+
+
+def _annotation_name(node: ast.expr | None) -> str:
+    """Final identifier of a type annotation."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value.rsplit(".", 1)[-1]
+    return ""
+
+
+def _expression_config_prefixes(
+    node: ast.expr,
+    *,
+    prefixes: set[str],
+    aliases: dict[str, set[str]],
+    function_returns: dict[str, set[str]],
+) -> set[str]:
+    """Config-section prefixes an expression may evaluate to."""
+    if isinstance(node, ast.Name):
+        return set(aliases.get(node.id, set()))
+    if isinstance(node, ast.Attribute):
+        out: set[str] = set()
+        for base in _expression_config_prefixes(
+            node.value,
+            prefixes=prefixes,
+            aliases=aliases,
+            function_returns=function_returns,
+        ):
+            candidate = f"{base}.{node.attr}" if base else node.attr
+            if candidate in prefixes:
+                out.add(candidate)
+        chain = _attribute_chain(node)
+        for index in range(len(chain)):
+            candidate = ".".join(chain[index:])
+            if candidate in prefixes:
+                out.add(candidate)
+        return out
+    if not isinstance(node, ast.Call):
+        return set()
+    if isinstance(node.func, ast.Name) and node.func.id == "AppConfig":
+        return {""}
+    if (
+        isinstance(node.func, ast.Attribute)
+        and node.func.attr in _LOAD_MAPPING_METHODS
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "AppConfig"
+    ):
+        return {""}
+    called = (
+        node.func.id
+        if isinstance(node.func, ast.Name)
+        else node.func.attr if isinstance(node.func, ast.Attribute) else ""
+    )
+    if called in function_returns:
+        return set(function_returns[called])
+    if isinstance(node.func, ast.Name) and node.func.id == "getattr" and len(node.args) >= 2:
+        bases = _expression_config_prefixes(
+            node.args[0],
+            prefixes=prefixes,
+            aliases=aliases,
+            function_returns=function_returns,
+        )
+        if isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str):
+            field = node.args[1].value
+            return {
+                candidate
+                for base in bases
+                if (candidate := f"{base}.{field}" if base else field) in prefixes
+            }
+        out: set[str] = set()
+        for base in bases:
+            depth = 0 if not base else base.count(".") + 1
+            prefix = f"{base}." if base else ""
+            out.update(
+                candidate
+                for candidate in prefixes
+                if candidate.startswith(prefix) and candidate.count(".") + 1 == depth + 1
+            )
+        return out
+    return set()
+
+
+def _config_alias_index(
+    tree: ast.Module,
+    declarations: list[_ConfigFieldDeclaration],
+    nodes: tuple[ast.AST, ...] | None = None,
+) -> tuple[set[str], dict[str, set[str]], dict[str, set[str]]]:
+    """Conservative local aliases for config sections and helper return values.
+
+    The analysis is intentionally file-local and union-based. Reusing ``cfg`` in two
+    functions may clear both possible sections (an under-report), but it never turns prose
+    or an unrelated identifier into a reader.
+    """
+    prefixes = {""}
+    class_prefixes: dict[str, set[str]] = {}
+    for decl in declarations:
+        parent = decl.path.rsplit(".", 1)[0] if "." in decl.path else ""
+        prefixes.add(parent)
+        while "." in parent:
+            parent = parent.rsplit(".", 1)[0]
+            prefixes.add(parent)
+        class_prefixes.setdefault(decl.owner_class, set()).add(
+            decl.path.rsplit(".", 1)[0] if "." in decl.path else ""
+        )
+
+    indexed = nodes if nodes is not None else tuple(ast.walk(tree))
+    functions = tuple(
+        node for node in indexed if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    )
+    function_nodes = {id(function): tuple(ast.walk(function)) for function in functions}
+    assignments: list[tuple[str, ast.expr]] = []
+    self_assignments: list[tuple[str, tuple[str, ...]]] = []
+    for node in indexed:
+        target: ast.Name | None = None
+        value: ast.expr | None = None
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0] if isinstance(node.targets[0], ast.Name) else None
+            value = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            target = node.target
+            value = node.value
+        if target is not None and value is not None:
+            assignments.append((target.id, value))
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Attribute)
+            and isinstance(node.targets[0].value, ast.Name)
+            and node.targets[0].value.id == "self"
+        ):
+            names = tuple(
+                candidate.id if isinstance(candidate, ast.Name) else candidate.attr
+                for candidate in ast.walk(node.value)
+                if isinstance(candidate, (ast.Name, ast.Attribute))
+            )
+            self_assignments.append((node.targets[0].attr, names))
+    returns = {
+        id(function): tuple(
+            node.value
+            for node in function_nodes[id(function)]
+            if isinstance(node, ast.Return) and node.value is not None
+        )
+        for function in functions
+    }
+
+    aliases: dict[str, set[str]] = {}
+    function_returns: dict[str, set[str]] = {}
+    for function in functions:
+        for arg in [*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs]:
+            owner = _annotation_name(arg.annotation)
+            if owner in class_prefixes:
+                aliases.setdefault(arg.arg, set()).update(class_prefixes[owner])
+
+    changed = True
+    while changed:
+        changed = False
+        for target, value in assignments:
+            found = _expression_config_prefixes(
+                value,
+                prefixes=prefixes,
+                aliases=aliases,
+                function_returns=function_returns,
+            )
+            before = len(aliases.get(target, set()))
+            aliases.setdefault(target, set()).update(found)
+            changed |= len(aliases[target]) != before
+        for function in functions:
+            found: set[str] = set()
+            for value in returns[id(function)]:
+                found.update(
+                    _expression_config_prefixes(
+                        value,
+                        prefixes=prefixes,
+                        aliases=aliases,
+                        function_returns=function_returns,
+                    )
+                )
+            before = len(function_returns.get(function.name, set()))
+            function_returns.setdefault(function.name, set()).update(found)
+            changed |= len(function_returns[function.name]) != before
+        for target, names in self_assignments:
+            inherited: set[str] = set()
+            for name in names:
+                inherited.update(function_returns.get(name, set()))
+            before = len(function_returns.get(target, set()))
+            function_returns.setdefault(target, set()).update(inherited)
+            changed |= len(function_returns[target]) != before
+    return prefixes, aliases, function_returns
+
+
+def _dynamic_config_reader_paths(
+    tree: ast.Module,
+    *,
+    paths: set[str],
+    prefixes: set[str],
+    aliases: dict[str, set[str]],
+    function_returns: dict[str, set[str]],
+    nodes: tuple[ast.AST, ...] | None = None,
+) -> set[str]:
+    """Operational string-to-field reads proven by a surrounding ``getattr`` shape.
+
+    Plain strings never count. These two forms do:
+
+    * ``helper("field")`` when ``helper`` uses that argument as
+      ``getattr(<known-config-section>, field)``;
+    * values of a literal mapping iterated into the field-name argument of such a
+      ``getattr`` call.
+    """
+    indexed = nodes if nodes is not None else tuple(ast.walk(tree))
+    read: set[str] = set()
+    dynamic_helpers: dict[str, list[tuple[int, set[str]]]] = {}
+    for function in indexed:
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        args = [*function.args.posonlyargs, *function.args.args]
+        arg_indexes = {arg.arg: index for index, arg in enumerate(args)}
+        for node in ast.walk(function):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "getattr"
+                and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Name)
+                and node.args[1].id in arg_indexes
+            ):
+                bases = _expression_config_prefixes(
+                    node.args[0],
+                    prefixes=prefixes,
+                    aliases=aliases,
+                    function_returns=function_returns,
+                )
+                if bases:
+                    dynamic_helpers.setdefault(function.name, []).append(
+                        (arg_indexes[node.args[1].id], bases)
+                    )
+
+    for node in indexed:
+        if not isinstance(node, ast.Call):
+            continue
+        called = (
+            node.func.id
+            if isinstance(node.func, ast.Name)
+            else node.func.attr if isinstance(node.func, ast.Attribute) else ""
+        )
+        for index, bases in dynamic_helpers.get(called, []):
+            if index >= len(node.args):
+                continue
+            value = node.args[index]
+            if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
+                continue
+            for base in bases:
+                candidate = f"{base}.{value.value}" if base else value.value
+                if candidate in paths:
+                    read.add(candidate)
+
+    mappings: dict[str, set[str]] = {}
+    for node in indexed:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        if not isinstance(node.targets[0], ast.Name) or not isinstance(node.value, ast.Dict):
+            continue
+        mappings[node.targets[0].id] = {
+            value.value
+            for value in node.value.values
+            if isinstance(value, ast.Constant) and isinstance(value.value, str)
+        }
+    for loop in indexed:
+        if (
+            not isinstance(loop, (ast.For, ast.AsyncFor))
+            or not isinstance(loop.iter, ast.Call)
+            or not isinstance(loop.iter.func, ast.Attribute)
+            or loop.iter.func.attr != "items"
+            or not isinstance(loop.iter.func.value, ast.Name)
+            or loop.iter.func.value.id not in mappings
+        ):
+            continue
+        target_names = {node.id for node in ast.walk(loop.target) if isinstance(node, ast.Name)}
+        for node in ast.walk(loop):
+            if (
+                not isinstance(node, ast.Call)
+                or not isinstance(node.func, ast.Name)
+                or node.func.id != "getattr"
+                or len(node.args) < 2
+                or not isinstance(node.args[1], ast.Name)
+                or node.args[1].id not in target_names
+            ):
+                continue
+            bases = _expression_config_prefixes(
+                node.args[0],
+                prefixes=prefixes,
+                aliases=aliases,
+                function_returns=function_returns,
+            )
+            for value in mappings[loop.iter.func.value.id]:
+                for base in bases:
+                    candidate = f"{base}.{value}" if base else value
+                    if candidate in paths:
+                        read.add(candidate)
+    return read
+
+
+def _direct_config_reader_paths(
+    files: list[Path],
+    declarations: list[_ConfigFieldDeclaration],
+) -> set[str]:
+    """Config paths read outside config modules.
+
+    Exact path suffixes clear first (``cfg.security.egress.allow_hosts``). A bare
+    ``cfg.allow_hosts`` clears only when that leaf name belongs to one declared path, keeping
+    common names such as ``enabled`` from clearing every section. Imported module chains,
+    string literals and comments do not count.
+    """
+    paths = {decl.path for decl in declarations}
+    declaration_files = {decl.owner_file.resolve() for decl in declarations}
+    by_leaf: dict[str, set[str]] = {}
+    for decl in declarations:
+        by_leaf.setdefault(decl.field_name, set()).add(decl.path)
+
+    def match(chain: tuple[str, ...], leaf: str, *, allow_unique_leaf: bool) -> set[str]:
+        exact = {
+            ".".join(chain[index:])
+            for index in range(len(chain))
+            if ".".join(chain[index:]) in paths
+        }
+        if exact:
+            return exact
+        if not allow_unique_leaf:
+            return set()
+        candidates = by_leaf.get(leaf, set())
+        return set(candidates) if len(candidates) == 1 else set()
+
+    read: set[str] = set()
+    for path in files:
+        if _is_config_source(path, declaration_files):
+            continue
+        tree = _parse(path)
+        if tree is None:
+            continue
+        nodes = tuple(ast.walk(tree))
+        prefixes, aliases, function_returns = _config_alias_index(tree, declarations, nodes)
+        modules = _imported_module_chains(tree, nodes)
+        terminal_ids = {id(node) for node in _terminal_attribute_reads(tree, nodes)}
+        for node in nodes:
+            if not isinstance(node, ast.Attribute) or not isinstance(node.ctx, ast.Load):
+                continue
+            chain = _attribute_chain(node)
+            if not chain or chain in modules:
+                continue
+            read.update(
+                match(
+                    chain,
+                    node.attr,
+                    allow_unique_leaf=id(node) in terminal_ids,
+                )
+            )
+            for base in _expression_config_prefixes(
+                node.value,
+                prefixes=prefixes,
+                aliases=aliases,
+                function_returns=function_returns,
+            ):
+                candidate = f"{base}.{node.attr}" if base else node.attr
+                if candidate in paths:
+                    read.add(candidate)
+        for node in nodes:
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "getattr"
+                and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant)
+                and isinstance(node.args[1].value, str)
+            ):
+                field_name = node.args[1].value
+                chain = (*_attribute_chain(node.args[0]), field_name)
+                read.update(match(chain, field_name, allow_unique_leaf=True))
+                for base in _expression_config_prefixes(
+                    node.args[0],
+                    prefixes=prefixes,
+                    aliases=aliases,
+                    function_returns=function_returns,
+                ):
+                    candidate = f"{base}.{field_name}" if base else field_name
+                    if candidate in paths:
+                        read.add(candidate)
+        read.update(
+            _dynamic_config_reader_paths(
+                tree,
+                paths=paths,
+                prefixes=prefixes,
+                aliases=aliases,
+                function_returns=function_returns,
+                nodes=nodes,
+            )
+        )
+    return read
+
+
+def _config_accessor_reader_paths(
+    files: list[Path],
+    declarations: list[_ConfigFieldDeclaration],
+) -> set[str]:
+    """Fields read by config-class methods that production code calls from outside config.
+
+    This is the accessor exception to the plumbing rule: ``WorkflowsConfig.lane_caps()``
+    lives beside declarations/load/serialization, but its ``self.max_concurrent_*`` reads
+    govern the gateway because callers outside ``config/`` consume the method. Validation
+    and serialization methods remain plumbing even though Python invokes/calls them.
+    """
+    declaration_files = {decl.owner_file.resolve() for decl in declarations}
+    external_calls = _external_call_names(files, declaration_files)
+    by_owner: dict[tuple[Path, str], dict[str, str]] = {}
+    for decl in declarations:
+        by_owner.setdefault((decl.owner_file.resolve(), decl.owner_class), {})[
+            decl.field_name
+        ] = decl.path
+
+    read: set[str] = set()
+    for (owner_file, owner_class), fields in by_owner.items():
+        tree = _parse(owner_file)
+        if tree is None:
+            continue
+        cls = next(
+            (
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.ClassDef) and node.name == owner_class
+            ),
+            None,
+        )
+        if cls is None:
+            continue
+        methods = {
+            item.name: item
+            for item in cls.body
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        reachable = {
+            name
+            for name in methods
+            if name in external_calls and name not in _CONFIG_PLUMBING_METHODS
+        }
+        changed = True
+        while changed:
+            changed = False
+            for name in tuple(reachable):
+                for call in ast.walk(methods[name]):
+                    if not isinstance(call, ast.Call):
+                        continue
+                    called = (
+                        call.func.id
+                        if isinstance(call.func, ast.Name)
+                        else call.func.attr if isinstance(call.func, ast.Attribute) else ""
+                    )
+                    if (
+                        called in methods
+                        and called not in _CONFIG_PLUMBING_METHODS
+                        and called not in reachable
+                    ):
+                        reachable.add(called)
+                        changed = True
+        for name in reachable:
+            for node in _terminal_attribute_reads(methods[name]):
+                chain = _attribute_chain(node)
+                if len(chain) == 2 and chain[0] == "self" and node.attr in fields:
+                    read.add(fields[node.attr])
+            for node in ast.walk(methods[name]):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "getattr"
+                    and len(node.args) >= 2
+                    and isinstance(node.args[0], ast.Name)
+                    and node.args[0].id == "self"
+                    and isinstance(node.args[1], ast.Constant)
+                    and isinstance(node.args[1].value, str)
+                    and node.args[1].value in fields
+                ):
+                    read.add(fields[node.args[1].value])
+    return read
+
+
+def _inert_config_reader_paths(
+    files: list[Path],
+    declarations: list[_ConfigFieldDeclaration],
+    editable_paths: set[str] | None = None,
+) -> list[str]:
+    """Allowlisted config leaves with no AST reader outside syntactic plumbing.
+
+    This is deliberately a REFERENCE census, not a whole-program reachability engine. Any
+    production attribute read outside config clears a path even when the function holding
+    that read currently has no caller. That boundary is why the former
+    ``learning.min_session_score`` path required a ruled deletion: ``learning/gate.py`` had
+    a genuine read in an unreachable branch, which only an interprocedural call graph could
+    distinguish from live consumption.
+    """
+    if editable_paths is None:
+        core = _src_root() / "dashboard" / "handlers" / "core.py"
+        core_tree = _parse(core)
+        if core_tree is None:
+            return []
+        editable_paths = set(_editable_config_keys(core_tree))
+    declared = [decl for decl in declarations if decl.path in editable_paths]
+    readers = _direct_config_reader_paths(files, declared)
+    readers.update(_config_accessor_reader_paths(files, declared))
+    return sorted(decl.path for decl in declared if decl.path not in readers)
+
+
+def _inert_config_reader_surfaces() -> list[tuple[str, str]]:
+    """Exact allowlisted config leaves with no production AST reader.
+
+    Declaration targets, ``AppConfig.load()`` keyword/string mappings, ``asdict``-based
+    serialization, `_EDITABLE_CONFIG` string keys, comments and prose strings are plumbing,
+    not evidence. Config-class accessor bodies count only when an outside caller reaches the
+    accessor. Surfaces are attributed to the dataclass module that owns the leaf.
+    """
+    declarations = _config_field_declarations()
+    by_path = {decl.path: decl for decl in declarations}
+    return [
+        (_rel(by_path[path].owner_file), f"{KIND_CONFIG_READER}:{path}")
+        for path in _inert_config_reader_paths(_src_py_files(), declarations)
+    ]
+
+
+# ── Kind: sdk_export ──────────────────────────────────────────────────────────
+
+
+def _module_all(tree: ast.Module) -> list[str]:
+    """String members of a module-level ``__all__`` assignment."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets
+        ):
+            return [
+                e.value
+                for e in ast.walk(node.value)
+                if isinstance(e, ast.Constant) and isinstance(e.value, str)
+            ]
+    return []
+
+
+def _sdk_imported_names() -> set[str]:
+    """Every symbol imported via ``from personalclaw.sdk[...] import <name>`` OUTSIDE the
+    sdk package, scanning production ``src/`` and (as consumers exist there) ``tests/`` and
+    a repo-local ``apps/`` if present. Cross-imports from within ``sdk/`` do NOT count —
+    the boundary question is whether anything outside the facade consumes the export."""
+    names: set[str] = set()
+    root = _repo_root()
+    for base in (root / "src", root / "tests", root / "apps"):
+        if not base.is_dir():
+            continue
+        for f in sorted(base.rglob("*.py")):
+            if "/sdk/" in f.resolve().as_posix():
+                continue
+            try:
+                # An ImportFrom node for this package must contain the package spelling.
+                # Most of the large test tree cannot possibly match; avoid paying to build
+                # and walk an AST for those files.
+                if "personalclaw.sdk" not in f.read_text(encoding="utf-8"):
+                    continue
+            except OSError:
+                continue
+            tree = _parse(f)
+            if tree is None:
+                continue
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.ImportFrom)
+                    and node.module
+                    and node.module.startswith("personalclaw.sdk")
+                ):
+                    for alias in node.names:
+                        names.add(alias.name)
+    return names
+
+
+def _inert_sdk_export_surfaces() -> list[tuple[str, str]]:
+    """A ``personalclaw.sdk.*`` ``__all__`` symbol imported nowhere outside the sdk package
+    has no in-repo consumer. Attributed to the submodule that exports it."""
+    sdk_dir = _src_root() / "sdk"
+    imported = _sdk_imported_names()
+    out: list[tuple[str, str]] = []
+    for f in sorted(sdk_dir.glob("*.py")):
+        tree = _parse(f)
+        if tree is None:
+            continue
+        rel = _rel(f)
+        for name in _module_all(tree):
+            if name not in imported:
+                out.append((rel, f"{KIND_SDK_EXPORT}:{name}"))
+    return out
+
+
+# ── Assembly ──────────────────────────────────────────────────────────────────
+
+
+def _all_inert_surfaces() -> list[tuple[str, str]]:
+    """Every (repo-relative-file, ``kind:name``) inert surface across all six kinds."""
+    files = _src_py_files()
+    attr_names = _attribute_names_in_src(files)
+    surfaces: list[tuple[str, str]] = []
+    surfaces += _inert_config_surfaces()
+    surfaces += _inert_enum_surfaces(files, attr_names)
+    surfaces += _inert_trigger_kind_surfaces()
+    surfaces += _inert_editable_config_surfaces()
+    surfaces += _inert_config_reader_surfaces()
+    surfaces += _inert_sdk_export_surfaces()
+    return surfaces
+
+
+def build_inventory() -> dict[str, Any]:
+    """Render the full inert-surface inventory as a deterministic, JSON-safe dict.
+
+    Shape::
+
+        {
+          "generated_from": "scripts/generate_inert_surface_baseline.py",
+          "per_file": {"<relpath>": {"inert": N, "surfaces": ["kind:name", ...]}},
+          "totals": {"inert": T, "by_kind": {"<kind>": N, ...}}
+        }
+    """
+    per_file: dict[str, dict[str, Any]] = {}
+    by_kind: dict[str, int] = {
+        KIND_CONFIG: 0,
+        KIND_ENUM: 0,
+        KIND_TRIGGER_KIND: 0,
+        KIND_EDITABLE_CONFIG: 0,
+        KIND_CONFIG_READER: 0,
+        KIND_SDK_EXPORT: 0,
+    }
+    for rel, surface in _all_inert_surfaces():
+        bucket = per_file.setdefault(rel, {"inert": 0, "surfaces": []})
+        bucket["surfaces"].append(surface)
+        kind = surface.split(":", 1)[0]
+        by_kind[kind] = by_kind.get(kind, 0) + 1
+    total = 0
+    for bucket in per_file.values():
+        bucket["surfaces"].sort()
+        bucket["inert"] = len(bucket["surfaces"])
+        total += bucket["inert"]
+    return {
+        "generated_from": "scripts/generate_inert_surface_baseline.py",
+        "per_file": per_file,
+        "totals": {"inert": total, "by_kind": by_kind},
+    }
+
+
+def build_baseline() -> str:
+    """Render the inventory as a deterministic JSON string (sorted, trailing newline)."""
+    return json.dumps(build_inventory(), indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+
+
+def regressions(baseline_per_file: dict[str, Any], current_per_file: dict[str, Any]) -> list[str]:
+    """Files whose inert counter ROSE versus the baseline (shrink-only ratchet).
+
+    Returns a sorted list of human-readable regression lines — one per file whose current
+    ``inert`` count exceeds its committed count (a file absent from the baseline counts as
+    0). A DECREASE is never a regression: that is a cleanup and is welcome. This is the
+    exact comparison the ratchet test asserts against; it lives here so the test and the
+    generator share one definition of "backslide".
+    """
+    lines: list[str] = []
+    for rel in sorted(current_per_file):
+        current = int(current_per_file[rel].get("inert", 0))
+        baseline = int(baseline_per_file.get(rel, {}).get("inert", 0))
+        if current > baseline:
+            new_surfaces = sorted(
+                set(current_per_file[rel].get("surfaces", []))
+                - set(baseline_per_file.get(rel, {}).get("surfaces", []))
+            )
+            lines.append(
+                f"{rel}: inert surfaces rose {baseline} -> {current}; "
+                f"new declared-but-inert surface(s): {new_surfaces}"
+            )
+    return lines
+
+
+def baseline_path() -> Path:
+    """Repo-root location of the committed ``inert-surface-baseline.json``."""
+    return _repo_root() / "inert-surface-baseline.json"
+
+
+def main() -> None:
+    path = baseline_path()
+    path.write_text(build_baseline(), encoding="utf-8")
+    print(f"wrote {path}")
+
+
+if __name__ == "__main__":
+    main()

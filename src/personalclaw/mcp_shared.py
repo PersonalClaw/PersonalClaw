@@ -1,0 +1,563 @@
+"""Shared helpers for MCP stdio servers (mcp_core, mcp_schedule)."""
+
+import json
+import logging
+import os
+import platform
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
+from typing import Any, Callable
+
+from personalclaw import gateway_base
+from personalclaw.config import loader as config_loader
+from personalclaw.constants import JSONRPC_METHOD_NOT_FOUND
+from personalclaw.sel import sel
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
+
+logger = logging.getLogger(__name__)
+
+# Module-level flag: set True once we detect Content-Length framing from client.
+_use_content_length = False
+
+# ── Managed tool policy cache ──────────────────────────────────────────────
+# Resolved once per MCP server process lifetime.  The MCP server is spawned
+# per ACP agent session, so the policy is stable for the process.
+_excluded_tools: set[str] | None = None
+# Two separate negative caches with different TTLs so the long-TTL
+# HTTP-error path doesn't keep fail-open active when only a brief
+# startup race triggered the failure.
+_last_failure_time: float = 0.0  # gateway unreachable / non-404 HTTP error
+_last_startup_race_time: float = 0.0  # no session key or 404 — recovers fast
+_failure_count: int = 0
+# Long TTL applies only when the gateway is genuinely unreachable
+# (HTTP errors other than 404, connection refused, timeout).  Kept short
+# (60s, was 30s pre-fix) to keep the MCP-level fail-open window narrow:
+# longer windows widen the period during which non-ACP-agent MCP hosts
+# (Claude Code, custom hosts) — exactly the clients this defense-in-depth
+# layer is supposed to protect — bypass tool exclusions.  60s is enough
+# to debounce the 5s urlopen storm during a transient gateway outage but
+# keeps the fail-open window tight.
+_NEGATIVE_CACHE_TTL: float = 60.0  # seconds
+# Short TTL for the benign startup-race cases (no session key resolvable,
+# or 404 "agent not resolved" because gateway hasn't registered the
+# session yet).  Long enough to debounce the warning storm during a
+# parallel MCP startup, short enough that we recover to deny-enforcing
+# behavior within seconds once the session is registered.  Keeps the security
+# posture tight: don't keep fail-open active for 5 minutes when the underlying
+# race resolves in milliseconds.
+_STARTUP_RACE_CACHE_TTL: float = 5.0  # seconds
+# After this many consecutive failures, suppress the warning log entirely
+# (still emit a structured audit event).  The warnings are noise once the
+# 404 root cause is established for the session.
+_MAX_WARNING_FAILURES: int = 2
+
+
+def _resolve_excluded_tools() -> set[str]:
+    """Query the gateway for the current session's managedToolPolicy.exclude.
+
+    Returns a set of tool names that should be hidden from this session.
+    Caches the result on success only.  On failure:
+
+    - If session key is unavailable (startup race): fail-open, do NOT
+      cache, allow retry on next call.  Cannot fail-closed here because
+      ACP agent calls tools/list once at session start — if we return an
+      empty list, ACP agent permanently believes this MCP server has no
+      tools (unrecoverable without session restart).
+    - If session key is available but policy call fails: fail-open with
+      negative cache (30s) to avoid blocking every tool call with a 5s
+      timeout when gateway is persistently unreachable.
+
+    Fail-open is acceptable because:
+    1. The SDK already applies managedToolPolicy.exclude as disabledTools
+       in the agent config — ACP agent enforces this independently.
+    2. The gateway's approval layer provides the authoritative deny gate.
+    3. This MCP-level filtering is defense-in-depth for non-ACP-agent
+       clients (Claude Code, custom MCP hosts) that skip disabledTools.
+    """
+    global _excluded_tools, _last_failure_time, _last_startup_race_time, _failure_count
+    if _excluded_tools is not None:
+        return _excluded_tools
+
+    now = time.monotonic()
+    # Negative cache: avoid hammering gateway on persistent failures.
+    # Silent during the cache window — only the structured audit event is
+    # emitted to keep gateway.log readable.  Two windows: a long one for
+    # genuine HTTP/network failure, a short one for benign startup races.
+    if (_last_failure_time and (now - _last_failure_time) < _NEGATIVE_CACHE_TTL) or (
+        _last_startup_race_time and (now - _last_startup_race_time) < _STARTUP_RACE_CACHE_TTL
+    ):
+        sel().log_api_access(
+            caller=os.environ.get("PERSONALCLAW_SESSION_KEY", "mcp"),
+            operation="tool_policy.negative_cache_hit",
+            outcome="fail_open",
+            source="mcp_shared",
+        )
+        return set()
+
+    try:
+        # ONE owner for the gateway's address (#2539). This was a second, inline copy of
+        # ``mcp_core._api_base()`` — the same ``parse_dashboard_url(dashboard.url)`` with the
+        # same fixed ``10000`` fallback — so an MCP server of a gateway on another port asked
+        # a DIFFERENT instance for this session's tool policy, and got that instance's answer.
+        # A refusal propagates to the ``except`` below: the documented fail-open of this
+        # defence-in-depth layer then applies with a named cause, rather than a policy read
+        # answered by a stranger.
+        api_base = gateway_base.resolve_api_base()
+
+        # Read internal secret for auth
+        secret = ""
+        try:
+            secret = (config_dir() / ".local_secret").read_text().strip()
+        except Exception:
+            pass
+
+        # Resolve session key (same logic as mcp_core._resolve_session_key)
+        session_key = os.environ.get("PERSONALCLAW_SESSION_KEY", "")
+        if not session_key:
+
+            def _get_ppid(pid: int) -> int:
+                try:
+                    if platform.system() == "Linux":
+                        for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+                            if line.startswith("PPid:"):
+                                return int(line.split()[1])
+                    else:
+                        out = subprocess.check_output(
+                            ["ps", "-o", "ppid=", "-p", str(pid)], text=True, timeout=2
+                        )
+                        return int(out.strip())
+                except Exception:
+                    pass
+                return 0
+
+            cfg_dir = config_dir()
+            pid = os.getppid()
+            seen: set[int] = set()
+            while pid > 1 and pid not in seen:
+                seen.add(pid)
+                pid_file = cfg_dir / f"session_pid_{pid}.txt"
+                if pid_file.exists():
+                    session_key = pid_file.read_text(encoding="utf-8").strip()
+                    break
+                pid = _get_ppid(pid)
+
+        if not session_key:
+            # No session key resolvable (startup race — ACP agent hasn't
+            # written PID file yet, or process is from the warm pool).
+            # Must fail-open: ACP agent calls tools/list once and caches
+            # the result.  Returning empty tools here would permanently
+            # hide all tools for this session (unrecoverable).  Short
+            # negative-cache (5s) debounces the warning storm during
+            # parallel MCP startup but recovers to deny-enforcing
+            # behavior within seconds — the session_pid file typically
+            # appears within a few hundred ms of MCP spawn.
+            _last_startup_race_time = now
+            sel().log_api_access(
+                caller="mcp",
+                operation="tool_policy.no_session_key",
+                outcome="fail_open",
+                source="mcp_shared",
+            )
+            return set()
+
+        headers: dict[str, str] = {"X-Internal-Secret": secret}
+        headers["X-Session-Key"] = session_key
+
+        req = urllib.request.Request(
+            f"{api_base}/api/session-tool-policy",
+            headers=headers,
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                policy = json.loads(resp.read())
+        except urllib.error.HTTPError as http_exc:
+            # 404 = "agent not resolved" (gateway side hasn't registered
+            # this session yet — common during MCP startup before the
+            # session_pid file is fully visible across processes).  This
+            # is a benign race; use the short startup-race cache so the
+            # MCP server recovers to deny-enforcing behavior within
+            # seconds once the session is registered.  Critically, do
+            # NOT log a stack trace for 404 — it floods gateway.log on
+            # every fresh subagent spawn.
+            if http_exc.code == 404:
+                _last_startup_race_time = now
+                sel().log_api_access(
+                    caller=os.environ.get("PERSONALCLAW_SESSION_KEY", "mcp"),
+                    operation="tool_policy.agent_not_resolved",
+                    outcome="fail_open",
+                    source="mcp_shared",
+                    resources=f"session_key={session_key}",
+                )
+                return set()
+            raise
+
+        exclude = policy.get("exclude", [])
+        if isinstance(exclude, list):
+            _excluded_tools = {t for t in exclude if isinstance(t, str)}
+        else:
+            _excluded_tools = set()
+        return _excluded_tools
+    except Exception as exc:
+        # Policy call failed (network error, timeout, non-404 HTTP) —
+        # use the LONG negative cache to avoid repeated 5s urlopen
+        # blocks across many MCP servers when the gateway is genuinely
+        # unreachable.  Known deviation from deny-by-default: fail-open
+        # is acceptable here because ACP agent independently enforces
+        # disabledTools from the agent config.  This MCP-level filtering
+        # is defense-in-depth.
+        _last_failure_time = time.monotonic()
+        _failure_count += 1
+        # Suppress repeated warnings — once we've logged twice the operator
+        # has all the diagnostic info and further entries flood gateway.log
+        # at every MCP server startup (10+ servers × every session start).
+        if _failure_count <= _MAX_WARNING_FAILURES:
+            logger.warning(
+                "Tool policy resolution failed (%s), fail-open for %.0fs (defense-in-depth bypass)",
+                exc.__class__.__name__,
+                _NEGATIVE_CACHE_TTL,
+                exc_info=True,
+            )
+        elif _failure_count == _MAX_WARNING_FAILURES + 1:
+            logger.warning(
+                "Tool policy resolution still failing — further warnings suppressed; "
+                "see audit log for tool_policy.resolution_failed events",
+            )
+        sel().log_api_access(
+            caller=os.environ.get("PERSONALCLAW_SESSION_KEY", "mcp"),
+            operation="tool_policy.resolution_failed",
+            outcome="fail_open",
+            source="mcp_shared",
+        )
+        return set()
+
+
+def respond(req_id: Any, result: Any, error: dict | None = None) -> None:
+    """Write a validated JSON-RPC response to stdout."""
+    if req_id is None:
+        return
+    resp: dict[str, Any] = {"jsonrpc": "2.0", "id": req_id}
+    if error:
+        resp["error"] = error
+    else:
+        resp["result"] = result
+    from personalclaw.validation import ValidationError, validate_jsonrpc_response
+
+    try:
+        resp = validate_jsonrpc_response(resp)
+    except ValidationError:
+        resp = {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "error": {"code": -32603, "message": "Internal error"},
+        }
+    body = json.dumps(resp)
+    if _use_content_length:
+        payload = body.encode("utf-8")
+        header = f"Content-Length: {len(payload)}\r\n\r\n".encode("utf-8")
+        sys.stdout.buffer.write(header + payload)
+        sys.stdout.buffer.flush()
+    else:
+        sys.stdout.write(body + "\n")
+        sys.stdout.flush()
+
+
+#: Env keys carrying the leaf's own lineage. Readable by a leaf (it needs its run/node id to
+#: announce), unlike the credential material `leaf_env` strips.
+_LINEAGE_KEYS = ("__wf_depth", "__wf_run_id", "__wf_project_id", "__wf_node_id")
+
+
+def leaf_env(parent_env: dict[str, str], lineage: dict[str, str]) -> dict[str, str]:
+    """The env a compiled batch leaf runs with: the parent's, minus credentials, plus lineage.
+
+    A leaf processes content the parent fetched — the untrusted direction — so the parent's
+    credential material is exactly what must not travel with it.
+
+    The secret TEST is `workspace.looks_secret` (over `secrets.SECRET_KEY_HINTS`), reused rather
+    than restated: a second list of credential-ish name fragments would drift from the first, and
+    the copy that drifted would be the one letting a token through. Filtered by NAME rather than by
+    an allowlist of known-safe vars because the parent env is open-ended — an allowlist would drop
+    the PATH-shaped vars a subprocess needs and the failure would look like a broken leaf.
+    """
+    from personalclaw.workflows.workspace import looks_secret
+
+    filtered = {k: v for k, v in parent_env.items() if not looks_secret(k)}
+    filtered.update({k: str(v) for k, v in lineage.items()})
+    return filtered
+
+
+def leaf_tool_denial(name: str) -> str:
+    """Why this tool call is refused for a leaf, or "" when it is allowed.
+
+    Two rules, both from elsewhere rather than restated here — a second copy of a policy is a
+    policy that drifts:
+
+    * ORCHESTRATION tools are denied at EVERY depth. A leaf that can spawn fans out without a
+      budget, and the depth counter alone would let it happen once per level.
+    * The leaf's TOOL GRANTS decide the rest, via `guardrails.policy.tool_grant_denial`. The
+      compiled posture (`leaf_tool_posture` → the `__wf_read_only` flag) picks the tier — `read`
+      for a research-class leaf, `read_write` for a mutating one — and
+      `guardrails.policy.tool_grant_posture` intersects it with the operator CEILING, so an
+      operator's `{"scopes": {"tools": {"allow": [...]}}}` narrows this call rather than being a
+      composed value nothing reads. The write/read classification stays
+      `batch_compile.is_write_tool`, the classifier a research LEAF and a research SUBAGENT deny
+      alike; only the tier algebra is shared.
+
+    Depth 0 is the parent: it is not a leaf and is not restricted, so the parent's own
+    `subagent_run` still works.
+    """
+    from personalclaw.guardrails.policy import (
+        TOOL_READ,
+        TOOL_READ_WRITE,
+        tool_grant_denial,
+        tool_grant_posture,
+    )
+    from personalclaw.workflows import batch_compile
+
+    depth = _leaf_depth()
+    if depth <= 0:
+        return ""
+    if name in batch_compile.ORCHESTRATION_TOOLS:
+        return (
+            f"{name!r} is an orchestration tool and is denied to a batch leaf at every depth "
+            "— a leaf that can fan out again spawns without a budget"
+        )
+    read_only = _leaf_is_read_only()
+    try:
+        profile = tool_grant_posture(
+            "leaf_research" if read_only else "leaf_mutating",
+            TOOL_READ if read_only else TOOL_READ_WRITE,
+        )
+    except Exception as exc:  # a ceiling that will not resolve must DENY, not wave through
+        logger.warning("leaf tool grants unresolvable, denying %s: %s", name, exc)
+        return (
+            f"{name!r} is denied: the governance ceiling would not resolve, so this leaf's tool "
+            "grants are unknown — fix the ceiling file and restart"
+        )
+    # The FIX line names whichever layer actually refused: the leaf's own declaration when the
+    # tier is the compiled posture's, the operator ceiling when the ceiling narrowed it. Telling an
+    # author to re-declare a leaf that a ceiling refused would send them to fix the wrong file.
+    ceiling_narrowed = profile.tool_grants != (TOOL_READ if read_only else TOOL_READ_WRITE)
+    return tool_grant_denial(
+        profile,
+        name,
+        write_class=batch_compile.is_write_tool(name),
+        detail=(
+            "widen the governance ceiling's tools scope if this leaf must call it"
+            if ceiling_narrowed
+            else "declare capability=mutating on the leaf if it must write"
+        ),
+    )
+
+
+def _leaf_depth() -> int:
+    from personalclaw.workflows.engine import WF_DEPTH_KEY
+
+    try:
+        return int(os.environ.get(WF_DEPTH_KEY, "0") or "0")
+    except ValueError:
+        return 0
+
+
+#: Env flag a compiled leaf carries when its posture is read-only. Written from the compiled
+#: `postures` block, so the handler enforces the capability the COMPILER assigned rather than a
+#: second guess at it.
+LEAF_READ_ONLY_KEY = "__wf_read_only"
+
+
+def _leaf_is_read_only() -> bool:
+    return os.environ.get(LEAF_READ_ONLY_KEY, "") == "1"
+
+
+def call_tool_with_logging(
+    name: str,
+    raw_args: dict[str, Any],
+    validate_fn: Callable[[str, dict[str, Any]], dict[str, Any]],
+    inner_fn: Callable[[str, dict[str, Any]], str],
+    session_key: str,
+    downstream_service: str,
+) -> str:
+    """Validate args, call inner tool function, and log the invocation.
+
+    The returned string carries its own verdict: a handled failure is a
+    :class:`~personalclaw.tool_providers.base.ToolFailure`, so this function and
+    ``InProcessMcpToolProvider.invoke`` read ONE signal instead of each re-deriving the
+    verdict from the prose (#3487). The outcome below used to be
+    ``result.startswith("Error:")`` — which missed every coded failure, because
+    ``mcp_workflows._fmt`` writes ``Error [CODE]: …``, and missed ``artifact_delete``'s
+    ``Artifact not found: X`` entirely.
+    """
+    from personalclaw.sel import sel
+    from personalclaw.tool_providers.base import ToolFailure, tool_failure
+    from personalclaw.validation import ValidationError
+
+    # The `__wf_depth` tool-handler seam. EVERY in-process MCP tool call funnels through this
+    # function, which is why the capability posture is enforced here and nowhere else: a filtered
+    # tool list computed at compile time would be a control that looks like enforcement while the
+    # handler still answered the call (`leaf_tool_posture`'s own docstring says so). Denial is
+    # checked BEFORE arg validation so a malformed call to a denied tool is refused as denied
+    # rather than as malformed — the more specific and more security-relevant of the two answers.
+    denial = leaf_tool_denial(name)
+    if denial:
+        sel().log_tool_invocation(
+            session_key=session_key,
+            source="mcp",
+            tool_name=name,
+            tool_kind=session_key,
+            outcome="denied",
+            downstream_service=downstream_service,
+            error=denial,
+        )
+        return tool_failure(denial)
+
+    try:
+        args = validate_fn(name, raw_args)
+    except ValidationError as e:
+        sel().log_tool_invocation(
+            session_key=session_key,
+            source="mcp",
+            tool_name=name,
+            tool_kind=session_key,
+            outcome="failed",
+            downstream_service=downstream_service,
+            error=str(e),
+        )
+        return tool_failure(str(e))
+
+    result = inner_fn(name, args)
+    outcome = "failed" if isinstance(result, ToolFailure) else "completed"
+    sel().log_tool_invocation(
+        session_key=session_key,
+        source="mcp",
+        tool_name=name,
+        tool_kind=session_key,
+        outcome=outcome,
+        downstream_service=downstream_service,
+        resources=json.dumps(args)[:500] if args else "",
+        error=result[:500] if outcome == "failed" else "",
+    )
+    return result
+
+
+def _read_message(stdin) -> dict[str, Any] | None:
+    """Read one JSON-RPC message, auto-detecting Content-Length vs bare JSON framing.
+
+    Uses stdin.buffer (binary mode) for all reads so that Content-Length byte
+    counts are honoured correctly for multi-byte UTF-8 content.
+    """
+    global _use_content_length
+    raw = stdin.buffer
+    while True:
+        line = raw.readline()
+        if not line:
+            return None  # EOF
+        line_str = line.decode("utf-8").strip()
+        if not line_str:
+            continue
+        if line_str.lower().startswith("content-length:"):
+            try:
+                length = int(line_str.split(":", 1)[1].strip())
+                _use_content_length = True
+                # Consume the blank line separator
+                while True:
+                    sep = raw.readline()
+                    if sep.strip() == b"":
+                        break
+                body = raw.read(length)
+                return json.loads(body.decode("utf-8"))
+            except (ValueError, json.JSONDecodeError):
+                continue
+        # Bare JSON line (backwards compat)
+        try:
+            return json.loads(line_str)
+        except json.JSONDecodeError:
+            continue
+
+
+def run_mcp_stdio_loop(
+    server_name: str,
+    server_version: str,
+    list_tools_fn: Callable[[], list[dict[str, Any]]],
+    call_tool_fn: Callable[[str, dict[str, Any]], str],
+) -> None:
+    """Generic MCP stdio server loop — reads JSON-RPC from stdin, writes to stdout."""
+    from personalclaw.validation import (
+        ValidationError,
+        build_tool_response,
+        validate_jsonrpc_request,
+    )
+
+    while True:
+        req = _read_message(sys.stdin)
+        if req is None:
+            break
+
+        try:
+            method, req_id, _params = validate_jsonrpc_request(req)
+        except ValidationError:
+            continue
+
+        if method == "initialize":
+            respond(
+                req_id,
+                {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {"listChanged": False}},
+                    "serverInfo": {"name": server_name, "version": server_version},
+                },
+            )
+        elif method == "notifications/initialized":
+            pass
+        elif method == "tools/list":
+            excluded = _resolve_excluded_tools()
+            tools = list_tools_fn()
+            if excluded:
+                tools = [t for t in tools if t.get("name") not in excluded]
+            respond(req_id, {"tools": tools})
+        elif method == "tools/call":
+            params = req.get("params", {})
+            tool_name = params.get("name", "")
+            tool_args = params.get("arguments", {})
+            if not isinstance(tool_args, dict):
+                tool_args = {}
+            # Defense-in-depth: reject calls to excluded tools even if
+            # the LLM somehow attempts to call them (hallucination).
+            excluded = _resolve_excluded_tools()
+            if tool_name in excluded:
+                sel().log_tool_invocation(
+                    session_key=os.environ.get("PERSONALCLAW_SESSION_KEY", "mcp"),
+                    source="mcp",
+                    tool_name=tool_name,
+                    tool_kind=server_name,
+                    outcome="rejected_excluded",
+                    error="managedToolPolicy.exclude",
+                )
+                respond(
+                    req_id,
+                    build_tool_response(
+                        f"Error: tool '{tool_name}' is not available for this agent"
+                    ),
+                )
+            else:
+                result_text = call_tool_fn(tool_name, tool_args)
+                respond(req_id, build_tool_response(result_text))
+        elif req_id is not None:
+            respond(
+                req_id,
+                None,
+                error={
+                    "code": JSONRPC_METHOD_NOT_FOUND,
+                    "message": f"Unknown method: {method}",
+                },
+            )

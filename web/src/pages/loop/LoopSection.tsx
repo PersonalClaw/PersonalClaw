@@ -1,0 +1,70 @@
+import { LoopComposer } from './LoopComposer'
+import { reportingWrite } from '../../app/reportingWrite'
+import { api, isCreatedLoopRun } from '../../lib/api'
+import { invalidateKeys } from '../../lib/data'
+import type { RouteProps } from '../../app/useQueryState'
+import type { LoopCreateResult, LoopKind } from '../../lib/api'
+
+/** The unified Loop front door (Slice 3). Hosts the kind-sliding composer; on create
+ *  it routes into the kind's existing planning/cockpit screens — which already resolve
+ *  the loop by id regardless of kind (goal+code are on the unified client). General +
+ *  Design cockpits land in later slices; until then they route to the goal-style
+ *  cockpit, which renders any kind's spine.
+ *
+ *  Deep links: #/loop = the composer. A created loop deep-links under its kind's
+ *  section (#/loops/<id> for goal/general/design, #/code/<id> for code) so the
+ *  existing cockpits + planning views are reused with no duplication. Slice-3 B2 will
+ *  alias those under one address; this sub-step is the composer itself. */
+export function LoopSection({ navigate, query }: RouteProps) {
+  const routeCreated = async (created: LoopCreateResult, kind: LoopKind, planning: boolean) => {
+    // Invalidate the cached lists so the new loop appears immediately on its list.
+    invalidateKeys('loops')
+    // A PORTED kind (PP-16) did not create a loop — it STARTED A RUN, and the run is already
+    // driving by the time this resolves. Neither write below applies: there is no `ready` row
+    // to flip and no plan session to kick, so both would report a failure against an id the
+    // loop store has never seen, and `loops/<id>` would render an empty cockpit. So the whole
+    // status-kick paragraph below is about the loop path only, and this returns before it.
+    //
+    // `planning` is therefore unused here, and today that costs nothing to ignore rather than
+    // honour: the one ported kind is `general`, whose classifier hardcodes
+    // `intake_rigor: "minimal"` (`loop/kinds/general.py`), so the composer has only ever handed
+    // this `planning === false`. A kind with a real walkthrough needs that walkthrough ported
+    // too — which is the port's work, not a branch to guess at from out here.
+    if (isCreatedLoopRun(created)) {
+      invalidateKeys('workflows:', true)
+      navigate(`workflows/runs/${created.run_id}`)
+      return
+    }
+    const loopId = created.id
+    // MINIMAL rigor (planning=false) is the magic path: there's no Plan Review, so
+    // start the loop now and drop straight into its cockpit. (Suggested skills/
+    // workflows were already persisted into the create body by the composer.)
+    //
+    // NON-minimal rigor routes into the kind's planning walkthrough. The section that
+    // owns the route (LoopsSection / CodeSection) only opens the walkthrough when the
+    // loop's STATUS is `planning`/`review` — a freshly-created loop is `ready`, so we
+    // must kick the plan to flip ready→planning BEFORE navigating, or the by-id resume
+    // shows the cockpit's Start button and silently skips the walkthrough the rigor
+    // earned. plan/start is idempotent over prelaunch statuses; the walkthrough view
+    // re-uses the same session.
+    //
+    // 🪤 THE KICK USED TO BE SWALLOWED, so the outcome the paragraph above says must not happen was
+    // exactly what a failure produced: the user landed on the cockpit, saw a Start button, and the
+    // walkthrough their rigor earned was skipped — SILENTLY. Reporting is what removes the silence.
+    //
+    // Navigation deliberately still happens. The loop itself was created (that is what `onCreated`
+    // means); only the status kick failed, so stranding the user on the composer with a loop they
+    // cannot see would be worse than landing them on it with an explanation. The report names the
+    // kick, so "why is there a Start button" has an answer.
+    if (!planning) await reportingWrite('start this loop', () => api.uLoopAction(loopId, 'start'))
+    else await reportingWrite('start planning for this loop', () => api.uLoopPlanStart(loopId))
+    navigate(kind === 'code' ? `code/${loopId}` : `loops/${loopId}`)
+  }
+  // Optional preselect via query (?project=<id>&kind=<kind>) — e.g. the Code cockpit's
+  // "New target" reuse-workspace flow deep-links here with its source project + code
+  // kind, and the composer inherits that project's bound codebase.
+  const kindParam = query.kind as LoopKind | undefined
+  const validKind = kindParam && ['general', 'goal', 'code', 'design', 'research'].includes(kindParam) ? kindParam : undefined
+  return <LoopComposer onCreated={routeCreated} onHistory={() => navigate('loops/history')}
+    initialProjectId={query.project || ''} initialKind={validKind} initialWorkspace={query.ws || ''} />
+}

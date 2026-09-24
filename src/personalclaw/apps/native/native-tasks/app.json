@@ -1,0 +1,39 @@
+{
+  "name": "native-tasks",
+  "version": "1.0.0",
+  "displayName": "Native Tasks",
+  "description": "Filesystem-backed task management. Create, edit, and organize tasks with labels, priorities, and dependencies.",
+  "icon": "ListTodo",
+  "author": "PersonalClaw",
+  "tags": [
+    "task",
+    "bundled"
+  ],
+  "provider": {
+    "type": "task",
+    "implementation": "personalclaw.tasks.native:create_provider",
+    "capabilities": [
+      "crud",
+      "comments",
+      "labels",
+      "dependencies"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "properties": {
+        "storage_dir": {
+          "type": "string",
+          "default": "",
+          "x-meta": {
+            "label": "Storage Directory",
+            "help": "Directory for task data. Leave empty for default (~/.personalclaw/tasks).",
+            "tags": [
+              "advanced"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "native": true
+}

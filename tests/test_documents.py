@@ -1,0 +1,1240 @@
+"""Document generation — the writer seam, the markup parsers, and round-trip validity.
+
+The central question for generated files is VALIDITY, and a subtly-invalid .docx that our
+own reader accepts but Word rejects is the worst outcome. So the strongest proof available
+in-process is a round trip through `knowledge/readers.py` — the same code that ingests
+user-uploaded documents. That is necessary but NOT sufficient: the plan's V-task requires
+opening the output in a real application before the session may close.
+"""
+
+from __future__ import annotations
+
+import contextlib
+
+import pytest
+
+from personalclaw.documents import available_formats, get_writer
+from personalclaw.documents.from_markup import (
+    deck_from_markdown,
+    document_from_html,
+    document_from_markdown,
+)
+from personalclaw.documents.model import Block, DeckModel, DocumentModel, SheetModel
+from personalclaw.knowledge.readers import FileReader
+
+
+def _write(tmp_path, fmt: str, model, name="out"):
+    data = get_writer(fmt)(model)
+    path = tmp_path / f"{name}.{fmt}"
+    path.write_bytes(data)
+    return path, data
+
+
+# ── the registry ──────────────────────────────────────────────────────────────
+
+
+def test_registry_reports_only_usable_formats():
+    """Registration IS the availability check — a writer whose library is missing never
+    registers, so this can't advertise a format that would fail on use."""
+    assert set(available_formats()) >= {"docx", "xlsx"}
+
+
+def test_an_unknown_format_returns_none_rather_than_raising():
+    """A caller turns this into a typed refusal; raising would force a try/except at
+    every call site."""
+    assert get_writer("dwg") is None
+    assert get_writer("") is None
+
+
+def test_format_lookup_is_case_insensitive():
+    assert get_writer("DOCX") is not None
+
+
+def test_a_writer_rejects_the_wrong_model_type():
+    with pytest.raises(TypeError):
+        get_writer("docx")(SheetModel.from_rows({"a": []}))
+    with pytest.raises(TypeError):
+        get_writer("xlsx")(DocumentModel(title="x"))
+
+
+def test_block_rejects_an_unknown_kind():
+    """A writer must handle every declared kind; letting an unknown one through would
+    mean silently dropping the user's content."""
+    with pytest.raises(ValueError, match="unknown block kind"):
+        Block(kind="carousel")
+
+
+def test_block_clamps_the_heading_level():
+    assert Block(kind="heading", level=99).level == 6
+    assert Block(kind="heading", level=0).level == 1
+
+
+# ── markdown → model ──────────────────────────────────────────────────────────
+
+
+def test_markdown_parses_every_shape_a_generated_document_uses():
+    md = """# Title
+
+Opening paragraph.
+
+## Section
+
+- one
+- two
+
+1. first
+2. second
+
+| A | B |
+|---|---|
+| 1 | 2 |
+
+```python
+x = 1
+```
+
+---
+
+Closing.
+"""
+    model = document_from_markdown(md)
+    kinds = [b.kind for b in model.blocks]
+
+    assert model.title == "Title"  # a leading H1 becomes the title, not a dup heading
+    assert kinds == [
+        "paragraph",
+        "heading",
+        "bullets",
+        "numbered",
+        "table",
+        "code",
+        "pagebreak",
+        "paragraph",
+    ]
+    table = next(b for b in model.blocks if b.kind == "table")
+    assert table.rows == [["A", "B"], ["1", "2"]]  # the |---| separator is not a row
+    code = next(b for b in model.blocks if b.kind == "code")
+    assert code.text == "x = 1"
+
+
+def test_inline_emphasis_is_stripped_but_code_fences_are_verbatim():
+    model = document_from_markdown(
+        "Some **bold** and `mono` and [a link](http://x).\n\n```\nkeep **this**\n```\n"
+    )
+    para = next(b for b in model.blocks if b.kind == "paragraph")
+    assert para.text == "Some bold and mono and a link."
+    code = next(b for b in model.blocks if b.kind == "code")
+    assert code.text == "keep **this**", "a fence must not be reinterpreted"
+
+
+def test_an_explicit_title_keeps_a_leading_h1_as_a_heading():
+    model = document_from_markdown("# Not the title\n\nbody\n", title="Given")
+    assert model.title == "Given"
+    assert model.blocks[0].kind == "heading"
+
+
+def test_unrecognized_lines_become_paragraphs_rather_than_vanishing():
+    model = document_from_markdown("> a quote\n\n:::weird:::\n")
+    assert [b.kind for b in model.blocks] == ["paragraph", "paragraph"]
+
+
+def test_an_unterminated_code_fence_still_keeps_its_content():
+    model = document_from_markdown("```\nlost?\n")
+    assert any(b.kind == "code" and "lost?" in b.text for b in model.blocks)
+
+
+def test_empty_markdown_yields_an_empty_but_valid_model():
+    model = document_from_markdown("")
+    assert model.blocks == [] and model.title == ""
+
+
+def test_html_is_sanitized_and_credentials_redacted():
+    """HTML here is agent- or web-authored, so untrusted. Routed through the platform's
+    EXISTING sanitizer + credential redactor, never a second implementation."""
+    model = document_from_html(
+        "<h1>Doc</h1><script>steal()</script><p>key AKIAIOSFODNN7EXAMPLE here</p>"
+    )
+    body = " ".join(b.text for b in model.blocks) + model.title
+
+    assert "steal()" not in body
+    assert "<script" not in body
+    assert "AKIAIOSFODNN7EXAMPLE" not in body, "a credential must not survive into a file"
+
+
+# ── round trip: our own readers must read what we write ───────────────────────
+
+
+def test_a_generated_docx_re_reads_through_the_real_reader(tmp_path):
+    md = "# Quarterly\n\nRevenue grew.\n\n## Details\n\n- EMEA up\n- APAC flat\n"
+    path, data = _write(tmp_path, "docx", document_from_markdown(md))
+
+    assert len(data) > 1000  # a real OOXML package, not an empty stub
+    text, meta = FileReader().read(str(path))
+
+    assert meta["format"] == "docx"
+    assert "Quarterly" in text
+    assert "## Details" in text, "heading level must survive the round trip"
+    assert "EMEA up" in text and "APAC flat" in text
+
+
+def test_a_generated_docx_table_survives_the_round_trip(tmp_path):
+    """Tables were previously dropped by the docx READER (it walked only
+    `doc.paragraphs`). Fixed in this change — so this asserts the whole path."""
+    md = "# T\n\n| Region | Q1 |\n|---|---|\n| EMEA | 120 |\n"
+    path, _ = _write(tmp_path, "docx", document_from_markdown(md))
+
+    text, meta = FileReader().read(str(path))
+
+    assert meta["table_count"] == 1
+    assert "| Region | Q1 |" in text
+    assert "| EMEA | 120 |" in text
+
+
+def test_a_generated_xlsx_re_reads_with_numbers_still_numeric(tmp_path):
+    """A spreadsheet whose numbers arrived as text can't be summed, which defeats the
+    point of generating one."""
+    from openpyxl import load_workbook
+
+    model = SheetModel.from_rows({"Sales": [["Region", "Q1"], ["EMEA", 120], ["APAC", 99.5]]})
+    path, _ = _write(tmp_path, "xlsx", model)
+
+    text, meta = FileReader().read(str(path))
+    assert meta["format"] == "xlsx"
+    assert "| EMEA | 120 |" in text
+
+    ws = load_workbook(path)["Sales"]
+    assert [type(c.value).__name__ for c in ws[2]] == ["str", "int"]
+    assert type(ws[3][1].value).__name__ == "float"
+
+
+def test_xlsx_preserves_bool_distinctly_from_int(tmp_path):
+    """`bool` IS an `int` in Python, so an unordered isinstance check would write True
+    as 1 and lose the distinction the model preserves deliberately."""
+    from openpyxl import load_workbook
+
+    path, _ = _write(tmp_path, "xlsx", SheetModel.from_rows({"S": [["flag"], [True]]}))
+    assert load_workbook(path)["S"]["A2"].value is True
+
+
+def test_xlsx_sanitizes_illegal_sheet_names_and_dedupes(tmp_path):
+    """Excel refuses some names outright; a rejected name would fail the whole write."""
+    from openpyxl import load_workbook
+
+    model = SheetModel.from_rows({"a/b:c*d?e[f]": [["x"]], "x" * 40: [["y"]]})
+    path, _ = _write(tmp_path, "xlsx", model)
+
+    names = load_workbook(path).sheetnames
+    assert all(not (set(n) & set(r"[]:*?/\\")) for n in names)
+    assert all(len(n) <= 31 for n in names)
+
+
+def test_an_empty_sheet_model_still_produces_a_valid_workbook(tmp_path):
+    from openpyxl import load_workbook
+
+    path, _ = _write(tmp_path, "xlsx", SheetModel.from_rows({}))
+    assert load_workbook(path).sheetnames  # a workbook with zero sheets is invalid
+
+
+def test_csv_rows_round_trip_through_the_stdlib_reader():
+    import csv
+    import io
+
+    rows = [["Region", "Q1"], ["EMEA", "120"], ["APAC", "99.5"]]
+    data = get_writer("csv")(SheetModel.from_rows({"Sales": rows}))
+
+    assert list(csv.reader(io.StringIO(data.decode("utf-8"), newline=""))) == rows
+    assert data.endswith(b"\r\n"), "the stdlib excel dialect uses RFC 4180 row endings"
+
+
+def test_csv_uses_stdlib_quoting_for_commas_quotes_and_newlines():
+    import csv
+    import io
+
+    rows = [["name", "notes"], ['Doe, "Jane"', "first line\nsecond line"]]
+    data = get_writer("csv")(SheetModel.from_rows({"People": rows}))
+
+    assert b'"Doe, ""Jane"""' in data
+    assert b'"first line\nsecond line"' in data
+    assert list(csv.reader(io.StringIO(data.decode("utf-8"), newline=""))) == rows
+
+
+def test_csv_refuses_a_multi_sheet_workbook():
+    model = SheetModel.from_rows({"First": [["a"]], "Second": [["b"]]})
+
+    with pytest.raises(ValueError, match="cannot represent multiple sheets"):
+        get_writer("csv")(model)
+
+
+def test_csv_refuses_a_prose_document_model():
+    with pytest.raises(TypeError, match="prose documents have no rows"):
+        get_writer("csv")(DocumentModel(title="Not tabular"))
+
+
+def test_ragged_table_rows_are_normalized_not_truncated(tmp_path):
+    """python-docx needs a fixed column count; truncating would silently lose cells."""
+    model = DocumentModel(blocks=[Block(kind="table", rows=[["a", "b", "c"], ["1"]])])
+    path, _ = _write(tmp_path, "docx", model)
+
+    text, _ = FileReader().read(str(path))
+    assert "| a | b | c |" in text
+
+
+def test_an_image_block_renders_a_placeholder_rather_than_vanishing(tmp_path):
+    """Resolving an artifact reference to bytes is the caller's job (it owns the store).
+    Dropping the block would lose the fact that an image belonged here."""
+    model = DocumentModel(blocks=[Block(kind="image", artifact_slug="sales-chart")])
+    path, _ = _write(tmp_path, "docx", model)
+
+    text, _ = FileReader().read(str(path))
+    assert "sales-chart" in text
+
+
+# ── deck outline ──────────────────────────────────────────────────────────────
+
+
+def test_deck_from_markdown_splits_slides_and_captures_notes():
+    md = """# The Deck
+
+## First
+
+- point one
+- point two
+
+<!-- notes: say hello -->
+
+## Second
+
+body line
+"""
+    deck = deck_from_markdown(md)
+
+    assert deck.title == "The Deck"
+    assert [s.title for s in deck.slides] == ["First", "Second"]
+    # `bullets`, not `body`: a slide line carries its indent DEPTH since DFE-8, and the
+    # depth of a flat markdown outline is 0 — which is what these assert.
+    assert [(b.text, b.level) for b in deck.slides[0].bullets] == [
+        ("point one", 0),
+        ("point two", 0),
+    ]
+    assert deck.slides[0].notes == "say hello"
+    assert [(b.text, b.level) for b in deck.slides[1].bullets] == [("body line", 0)]
+
+
+def test_deck_body_before_any_heading_gets_an_opening_slide():
+    deck = deck_from_markdown("orphan line\n")
+    assert len(deck.slides) == 1
+    assert [(b.text, b.level) for b in deck.slides[0].bullets] == [("orphan line", 0)]
+
+
+def test_deck_notes_are_kept_out_of_the_visible_body():
+    deck = deck_from_markdown("## S\n\n<!-- notes: hidden -->\n- shown\n")
+    assert [b.text for b in deck.slides[0].bullets] == ["shown"]
+    assert "hidden" not in " ".join(b.text for b in deck.slides[0].bullets)
+
+
+def test_empty_deck_markdown_is_a_valid_empty_deck():
+    assert deck_from_markdown("").slides == []
+    assert isinstance(deck_from_markdown(""), DeckModel)
+
+
+# ── artifact kinds + the coercion hardening ───────────────────────────────────
+
+
+def test_the_new_document_kinds_are_registered_in_both_sets():
+    """A binary kind must be in ALLOWED_KINDS *and* BINARY_KINDS. Being in neither is
+    exactly how generated video ended up stored as an image (issue #94)."""
+    from personalclaw.artifacts.models import ALLOWED_KINDS, BINARY_KINDS
+
+    for kind in ("docx", "xlsx", "pdf", "video"):
+        assert kind in ALLOWED_KINDS, kind
+        assert kind in BINARY_KINDS, kind
+    # csv is a TEXT kind: it round-trips as text and needs no binary body.
+    assert "csv" in ALLOWED_KINDS and "csv" not in BINARY_KINDS
+
+
+def test_every_binary_kind_has_a_mime_extension_mapping():
+    """The raw endpoint derives Content-Type from the stored extension — an unmapped
+    mime serves a download the OS can't open."""
+    from personalclaw.artifacts.models import _MIME_TO_EXT, BINARY_KINDS
+
+    exts = set(_MIME_TO_EXT.values())
+    for kind in BINARY_KINDS:
+        if kind == "image":  # image maps via several mimes, none named "image"
+            continue
+        assert kind in exts or kind in {"video"}, f"no mime→ext mapping produces {kind}"
+
+
+def test_create_binary_raises_on_a_non_binary_kind(tmp_path):
+    """This used to coerce silently to "image" — the #94 bug class. A programming error
+    must fail loudly so a newly-added kind can't be quietly mis-stored."""
+    from personalclaw.artifacts.native import NativeArtifactProvider
+
+    prov = NativeArtifactProvider(root=tmp_path)
+    with pytest.raises(ValueError, match="non-binary kind"):
+        prov.create_binary(name="X", data=b"x", mime="text/plain", kind="markdown")
+
+
+def test_create_binary_accepts_a_registered_document_kind(tmp_path):
+    from personalclaw.artifacts.native import NativeArtifactProvider
+
+    prov = NativeArtifactProvider(root=tmp_path)
+    art = prov.create_binary(
+        name="Doc",
+        data=b"PK\x03\x04stub",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        kind="docx",
+    )
+    assert art.kind == "docx", "the kind must survive, not be coerced"
+    assert art.content.startswith("/api/artifacts/"), "content is a raw ref, never bytes"
+
+
+def test_a_generated_document_is_stored_under_its_real_kind(tmp_path):
+    """End to end through the writer + store: the artifact keeps its format identity."""
+    from personalclaw.artifacts.native import NativeArtifactProvider
+
+    prov = NativeArtifactProvider(root=tmp_path)
+    data = get_writer("docx")(document_from_markdown("# T\n\nbody\n"))
+    art = prov.create_binary(
+        name="T",
+        data=data,
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        kind="docx",
+    )
+    stored, mime = prov.raw_bytes(art.slug)
+    assert stored == data, "the bytes must round-trip unchanged"
+    assert mime.endswith("wordprocessingml.document")
+
+
+# ── S2: pptx ──────────────────────────────────────────────────────────────────
+
+
+def test_pptx_is_available_and_round_trips_titles_bodies_and_notes(tmp_path):
+    """The reader identifies a slide title via `slide.shapes.title`, so a deck built from
+    free-floating text boxes would round-trip with every title lost."""
+    md = """# The Deck
+
+## First slide
+
+- alpha
+- beta
+
+<!-- notes: mention the numbers -->
+
+## Second slide
+
+- gamma
+"""
+    assert "pptx" in available_formats()
+    path, data = _write(tmp_path, "pptx", deck_from_markdown(md))
+
+    assert len(data) > 5000
+    text, meta = FileReader().read(str(path))
+
+    assert meta["format"] == "pptx"
+    assert meta["slide_count"] == 3  # title slide + two content slides
+    assert "First slide" in text and "Second slide" in text
+    assert "alpha" in text and "gamma" in text
+    assert "mention the numbers" in text, "speaker notes must survive"
+
+
+def test_pptx_body_placeholder_is_found_by_index_not_identity(tmp_path):
+    """python-pptx returns a NEW proxy on each `shapes.title` access, so
+    `shape is slide.shapes.title` is False even for the title placeholder. An identity
+    check made the first body line overwrite the title — measured, not assumed."""
+    from personalclaw.documents.model import DeckModel, Slide
+
+    deck = DeckModel(slides=[Slide.outline("Real Title", ["first bullet"])])
+    path, _ = _write(tmp_path, "pptx", deck)
+
+    text, _ = FileReader().read(str(path))
+    assert "Slide 1: Real Title" in text, "the title must not be overwritten by the body"
+    assert "first bullet" in text
+
+
+def test_a_slide_with_no_body_still_renders(tmp_path):
+    from personalclaw.documents.model import DeckModel, Slide
+
+    path, _ = _write(tmp_path, "pptx", DeckModel(slides=[Slide(title="Only a title")]))
+    text, _ = FileReader().read(str(path))
+    assert "Only a title" in text
+
+
+def test_a_deck_image_reference_is_recorded_in_the_notes(tmp_path):
+    """Resolving an artifact to bytes is the caller's job; dropping the block would lose
+    the fact that an image belonged on the slide."""
+    from personalclaw.documents.model import DeckModel, Slide
+
+    deck = DeckModel(slides=[Slide(title="Chart", artifact_slug="sales-chart")])
+    path, _ = _write(tmp_path, "pptx", deck)
+
+    text, _ = FileReader().read(str(path))
+    assert "sales-chart" in text
+
+
+# ── S2: pdf ───────────────────────────────────────────────────────────────────
+
+
+def test_pdf_is_unconditionally_available():
+    """reportlab is a CORE dependency (owner ruling), so pdf is never a
+    sometimes-present format — the agent can offer it on any install."""
+    assert "pdf" in available_formats()
+
+
+def test_a_generated_pdf_re_reads_through_the_existing_pdfplumber_reader(tmp_path):
+    md = """# Q3 Review
+
+Revenue grew across all regions.
+
+## Highlights
+
+- EMEA up
+- APAC flat
+
+1. Hire
+2. Ship
+
+| Region | Q1 |
+|--------|----|
+| EMEA   | 120|
+"""
+    path, data = _write(tmp_path, "pdf", document_from_markdown(md))
+
+    assert data.startswith(b"%PDF"), "must be a real PDF, not a stub"
+    text, meta = FileReader().read(str(path))
+
+    assert meta["format"] == "pdf"
+    assert "Q3 Review" in text and "Highlights" in text
+    assert "EMEA up" in text and "APAC flat" in text
+    assert "Hire" in text and "Ship" in text
+    assert "120" in text, "table content must survive"
+
+
+def test_pdf_bullets_extract_as_text_not_cid_garbage(tmp_path):
+    """reportlab's default bullet is ZapfDingbats char 127, whose CID has no unicode
+    mapping — every bullet extracted as the literal string "(cid:127)", corrupting the
+    text of any generated PDF later ingested or searched."""
+    path, _ = _write(tmp_path, "pdf", document_from_markdown("# T\n\n- alpha\n- beta\n"))
+
+    text, _ = FileReader().read(str(path))
+
+    assert "(cid:" not in text, "bullet glyph leaked an unmapped CID into the text"
+    assert "alpha" in text and "beta" in text
+
+
+def test_pdf_escapes_markup_characters_from_document_content(tmp_path):
+    """Platypus parses mini-HTML inside Paragraph text, so a raw `<` or `&` from content
+    would vanish or raise mid-build."""
+    path, _ = _write(
+        tmp_path, "pdf", document_from_markdown("# T\n\nUse <angle> & ampersand chars.\n")
+    )
+
+    text, _ = FileReader().read(str(path))
+    assert "<angle>" in text and "&" in text
+
+
+def test_an_empty_document_model_still_builds_every_format(tmp_path):
+    """A zero-flowable reportlab build raises; the other writers must not produce a
+    corrupt file either. An empty document is valid input."""
+    for fmt in ("docx", "pdf"):
+        _, data = _write(tmp_path, fmt, DocumentModel(), name=f"empty-{fmt}")
+        assert data, fmt
+
+
+# ── S2: the round trip (T2.4) ─────────────────────────────────────────────────
+
+
+def test_exporting_a_text_artifact_as_a_document(tmp_path, monkeypatch):
+    """The round trip: something already in the library comes back OUT as a real file,
+    through the SAME writer path as a fresh generation — no parallel export pipeline."""
+    from personalclaw.artifacts import registry
+    from personalclaw.artifacts.native import NativeArtifactProvider
+    from personalclaw.mcp_artifacts import _resolve_document_source
+
+    prov = NativeArtifactProvider(root=tmp_path)
+    monkeypatch.setitem(registry._providers, "native", prov)
+    prov.create(
+        name="Research Notes",
+        content="# Research Notes\n\nFindings.\n\n- one\n",
+        kind="markdown",
+    )
+
+    body, title = _resolve_document_source(prov, "research-notes")
+
+    assert body is not None and "Findings." in body
+    assert title == "Research Notes"
+
+
+def test_exporting_a_binary_artifact_is_refused(tmp_path, monkeypatch):
+    """A binary artifact's `content` is a raw URL, not text — exporting one would write
+    the URL into the document body."""
+    from personalclaw.artifacts import registry
+    from personalclaw.artifacts.native import NativeArtifactProvider
+    from personalclaw.mcp_artifacts import _resolve_document_source
+
+    prov = NativeArtifactProvider(root=tmp_path)
+    monkeypatch.setitem(registry._providers, "native", prov)
+    art = prov.create_binary(name="Pic", data=b"\x89PNG", mime="image/png", kind="image")
+
+    body, _ = _resolve_document_source(prov, art.slug)
+
+    assert body is None, "a binary artifact must not be exported as document text"
+
+
+def test_an_unknown_source_resolves_to_none(tmp_path, monkeypatch):
+    from personalclaw.artifacts import registry
+    from personalclaw.artifacts.native import NativeArtifactProvider
+    from personalclaw.mcp_artifacts import _resolve_document_source
+
+    prov = NativeArtifactProvider(root=tmp_path)
+    monkeypatch.setitem(registry._providers, "native", prov)
+
+    assert _resolve_document_source(prov, "nope-nope")[0] is None
+
+
+def test_the_pptx_kind_is_registered_in_both_sets():
+    from personalclaw.artifacts.models import ALLOWED_KINDS, BINARY_KINDS
+
+    assert "pptx" in ALLOWED_KINDS and "pptx" in BINARY_KINDS
+
+
+class TestCsvDocumentTool:
+    def _prov(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        from personalclaw.artifacts.native import NativeArtifactProvider
+
+        return NativeArtifactProvider(root=tmp_path / "artifacts")
+
+    def test_csv_stores_and_updates_as_text_without_using_the_binary_body(
+        self, tmp_path, monkeypatch
+    ):
+        from personalclaw.mcp_artifacts import _DOC_MIME, _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        audited: list[tuple[str, str, str]] = []
+
+        def _audit(outcome, slug="", error=""):
+            audited.append((outcome, slug, error))
+
+        first = _document_create(
+            prov,
+            "sheet_create",
+            {
+                "name": "Regional sales",
+                "format": "csv",
+                "rows": [["Region", "Q1"], ["EMEA", 120]],
+                "description": "Quarterly totals",
+                "tags": ["sales"],
+            },
+            "session-1",
+            _audit,
+        )
+
+        assert "Error" not in first, first
+        [listed] = prov.list()
+        art = prov.get(listed.slug)
+        assert art.kind == "csv"
+        assert art.content == "Region,Q1\nEMEA,120\n"
+        stored_path = tmp_path / "artifacts" / art.slug / "current.html"
+        assert stored_path.read_bytes() == b"Region,Q1\r\nEMEA,120\r\n"
+        assert art.source == "chat"
+        assert art.description == "Quarterly totals"
+        assert art.tags == ["sales"]
+        assert art.events[0].by == "agent" and art.events[0].session_id == "session-1"
+        assert prov.raw_bytes(art.slug) is None, "a text kind must not have a binary body"
+        assert _DOC_MIME["csv"] == "text/csv"
+
+        second = _document_create(
+            prov,
+            "sheet_create",
+            {
+                "name": "Regional sales",
+                "format": "csv",
+                "rows": [["Region", "Q1"], ["APAC", 99.5]],
+                "slug": art.slug,
+            },
+            "session-2",
+            _audit,
+        )
+
+        assert "Error" not in second, second
+        updated = prov.get(art.slug)
+        assert updated.version == 2
+        assert updated.content == "Region,Q1\nAPAC,99.5\n"
+        assert len(prov.list()) == 1, "regeneration must not mint a -2 twin"
+        assert updated.events[-1].type == "iterated"
+        assert updated.events[-1].session_id == "session-2"
+        assert [outcome for outcome, _slug, _error in audited] == ["success", "success"]
+
+    def test_csv_uses_the_text_cap_not_the_binary_cap(self, tmp_path, monkeypatch):
+        from personalclaw.artifacts.models import MAX_CONTENT_BYTES
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        audited: list[tuple[str, str, str]] = []
+
+        def _audit(outcome, slug="", error=""):
+            audited.append((outcome, slug, error))
+
+        reply = _document_create(
+            prov,
+            "sheet_create",
+            {
+                "name": "Too large",
+                "format": "csv",
+                "rows": [["x" * (MAX_CONTENT_BYTES + MAX_CONTENT_BYTES // 2)]],
+            },
+            None,
+            _audit,
+        )
+
+        assert "the generated csv came to 1.5MB (cap 1MB)" in reply
+        assert prov.list() == [], "the tool must refuse before the store truncates text"
+        assert audited[-1][0] == "denied"
+        assert audited[-1][2].startswith("oversized ")
+
+
+# ── Regenerating under an existing slug (the tool path) ──────────────────────
+# This path had NO test, and shipped broken: `_document_create` passed
+# `snapshot=True` to `update_binary`, which accepts no such argument, so every
+# attempt to regenerate a document in place raised TypeError. The writers were
+# all covered; the tool that calls them was not.
+
+
+class TestDocumentRegenerate:
+    def _prov(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        from personalclaw.artifacts.native import NativeArtifactProvider
+
+        return NativeArtifactProvider(root=tmp_path / "artifacts")
+
+    def test_regenerating_under_an_existing_slug_bumps_a_version(self, tmp_path, monkeypatch):
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        audited: list = []
+
+        def _audit(outcome, slug="", error=""):
+            audited.append((outcome, slug, error))
+
+        first = _document_create(
+            prov, "document_create", {"name": "Report", "markdown": "# One"}, "s1", _audit
+        )
+        assert "Error" not in first, first
+        slug = [a.slug for a in prov.list()][0]
+        assert prov.get(slug).version == 1
+
+        # THE regression: same slug again must update in place, not raise.
+        second = _document_create(
+            prov,
+            "document_create",
+            {"name": "Report", "markdown": "# Two", "slug": slug},
+            "s1",
+            _audit,
+        )
+        assert "Error" not in second, second
+        art = prov.get(slug)
+        assert art.version == 2
+        assert len(prov.list_versions(slug)) == 2
+
+    def test_the_regenerated_bytes_are_the_new_content(self, tmp_path, monkeypatch):
+        """A version bump that kept the old bytes would be worse than a crash."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        _document_create(
+            prov,
+            "document_create",
+            {"name": "R", "markdown": "# Alpha"},
+            None,
+            lambda outcome, slug="", error="": None,
+        )
+        slug = [a.slug for a in prov.list()][0]
+        _document_create(
+            prov,
+            "document_create",
+            {"name": "R", "markdown": "# Bravo", "slug": slug},
+            None,
+            lambda outcome, slug="", error="": None,
+        )
+        data, _mime = prov.raw_bytes(slug)
+        import io
+
+        from docx import Document
+
+        text = "\n".join(p.text for p in Document(io.BytesIO(data)).paragraphs)
+        assert "Bravo" in text
+        assert "Alpha" not in text
+
+    def test_the_update_records_an_iterated_event(self, tmp_path, monkeypatch):
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        _document_create(
+            prov,
+            "document_create",
+            {"name": "R", "markdown": "# A"},
+            None,
+            lambda outcome, slug="", error="": None,
+        )
+        slug = [a.slug for a in prov.list()][0]
+        _document_create(
+            prov,
+            "document_create",
+            {"name": "R", "markdown": "# B", "slug": slug},
+            None,
+            lambda outcome, slug="", error="": None,
+        )
+        types = [e.type for e in prov.get(slug).events]
+        assert "iterated" in types
+
+
+# ── DHT-5 clause 2: a repeat NAME dedups too, not only a repeat slug ─────────
+# The explicit-slug arm above was covered and worked; the arm an agent actually
+# takes was not. `_document_create` only consulted `prov.get(slug)`, and `slug` is
+# "" on a normal generated-document call, so two identical `deck_create` calls with
+# the same `name` minted `q3-review` AND `q3-review-2`, each at version 1. Nothing
+# under tests/ asserted the no-twin property for the no-slug path, which is why it
+# shipped and stayed broken. The collision is resolved through the SAME
+# `prov.find_similar` call `artifact_save` makes, so there is one dedup, not two.
+
+
+class TestDocumentNameDedup:
+    def _prov(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        # Pinned, not incidental: with no bound Project `_current_project_id` falls through
+        # to `_session_bound_project_id`, which asks the GATEWAY when it can resolve a
+        # session key. An inherited PERSONALCLAW_SESSION_KEY would make the unscoped arms
+        # below depend on a live gateway; blanking it keeps them a pure function of tmp_path.
+        monkeypatch.setenv("PERSONALCLAW_SESSION_KEY", "")
+        from personalclaw.artifacts.native import NativeArtifactProvider
+
+        return NativeArtifactProvider(root=tmp_path / "artifacts")
+
+    @staticmethod
+    def _quiet(outcome, slug="", error=""):
+        return None
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _project(project_id: str):
+        """Bind a Project for the turn, the way the native runtime's `_invoke` does."""
+        from personalclaw.agents.native import builtin_tools as _bt
+
+        toks = _bt.bind_tool_context(cwd="/tmp", agent="a", project_id=project_id)
+        try:
+            yield
+        finally:
+            _bt.reset_tool_context(toks)
+
+    @staticmethod
+    def _docx_text(prov, slug: str) -> str:
+        """The stored bytes read back as text — the issue proved the corruption by reading
+        the body, so a version number alone is not enough to prove A was left alone."""
+        import io
+
+        from docx import Document
+
+        data, _mime = prov.raw_bytes(slug)
+        return "\n".join(p.text for p in Document(io.BytesIO(data)).paragraphs)
+
+    def test_two_identical_no_slug_calls_update_in_place(self, tmp_path, monkeypatch):
+        """THE regression: same name, no slug, twice ⇒ one artifact at v2, no `-2`."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        args = {"name": "Q3 review", "markdown": "# Q3\n\n- one\n- two\n"}
+
+        first = _document_create(prov, "deck_create", dict(args), "s1", self._quiet)
+        second = _document_create(prov, "deck_create", dict(args), "s2", self._quiet)
+
+        assert "Error" not in first, first
+        assert "Error" not in second, second
+        slugs = [a.slug for a in prov.list()]
+        assert slugs == ["q3-review"], f"a repeat name minted a twin: {slugs}"
+        assert prov.get("q3-review").version == 2
+        assert len(prov.list_versions("q3-review")) == 2
+        assert prov.get("q3-review").events[-1].type == "iterated"
+        # The reply must not call a version bump a creation — an agent told "Created"
+        # goes looking for a second file.
+        assert second.startswith("Updated pptx: q3-review (v2"), second
+        assert first.startswith("Created pptx: q3-review (v1"), first
+
+    def test_the_deduped_update_carries_the_new_bytes(self, tmp_path, monkeypatch):
+        """An in-place update that kept the first render would be worse than a twin."""
+        import io
+
+        from pptx import Presentation
+
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        _document_create(
+            prov,
+            "deck_create",
+            {"name": "Deck", "markdown": "## Alpha\n\n- a\n"},
+            None,
+            self._quiet,
+        )
+        _document_create(
+            prov,
+            "deck_create",
+            {"name": "Deck", "markdown": "## Bravo\n\n- b\n"},
+            None,
+            self._quiet,
+        )
+
+        data, _mime = prov.raw_bytes("deck")
+        text = "\n".join(
+            shape.text_frame.text
+            for slide in Presentation(io.BytesIO(data)).slides
+            for shape in slide.shapes
+            if shape.has_text_frame
+        )
+        assert "Bravo" in text
+        assert "Alpha" not in text
+
+    def test_an_explicit_slug_still_wins_and_still_bumps(self, tmp_path, monkeypatch):
+        """The arm that already worked, pinned: an explicit slug is unchanged."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        _document_create(
+            prov, "document_create", {"name": "Report", "markdown": "# One"}, None, self._quiet
+        )
+        reply = _document_create(
+            prov,
+            "document_create",
+            {"name": "Report", "markdown": "# Two", "slug": "report"},
+            None,
+            self._quiet,
+        )
+
+        assert "Error" not in reply, reply
+        assert [a.slug for a in prov.list()] == ["report"]
+        assert prov.get("report").version == 2
+
+    def test_an_explicit_unused_slug_still_creates_under_it(self, tmp_path, monkeypatch):
+        """A caller who wants a SECOND document of the same name says so with a slug —
+        which is the escape hatch, so no `force` parameter was added."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        _document_create(
+            prov, "document_create", {"name": "Report", "markdown": "# One"}, None, self._quiet
+        )
+        _document_create(
+            prov,
+            "document_create",
+            {"name": "Report", "markdown": "# Two", "slug": "report-fork"},
+            None,
+            self._quiet,
+        )
+
+        assert sorted(a.slug for a in prov.list()) == ["report", "report-fork"]
+        assert prov.get("report").version == 1
+        assert prov.get("report-fork").version == 1
+
+    def test_the_same_name_at_a_different_format_is_a_different_document(
+        self, tmp_path, monkeypatch
+    ):
+        """Dedup is scoped to the kind: a pptx must not eat a same-named docx."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        _document_create(
+            prov, "document_create", {"name": "Plan", "markdown": "# Plan"}, None, self._quiet
+        )
+        _document_create(
+            prov, "deck_create", {"name": "Plan", "markdown": "## Plan\n\n- a\n"}, None, self._quiet
+        )
+
+        kinds = sorted((a.kind, a.version) for a in prov.list())
+        assert kinds == [("docx", 1), ("pptx", 1)], kinds
+        assert len(prov.list()) == 2
+
+    def test_a_different_name_still_creates_a_second_document(self, tmp_path, monkeypatch):
+        """Vacuity floor: the assertions above would hold if dedup swallowed everything."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        _document_create(
+            prov, "document_create", {"name": "Alpha", "markdown": "# A"}, None, self._quiet
+        )
+        _document_create(
+            prov, "document_create", {"name": "Bravo", "markdown": "# B"}, None, self._quiet
+        )
+
+        assert sorted(a.slug for a in prov.list()) == ["alpha", "bravo"]
+
+    def test_an_oversized_regeneration_still_refuses_before_storing(self, tmp_path, monkeypatch):
+        """Name-dedup runs AFTER the size cap, so the refusal cannot bump a version."""
+        from personalclaw.artifacts.models import MAX_CONTENT_BYTES
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        audited: list[tuple[str, str, str]] = []
+
+        def _audit(outcome, slug="", error=""):
+            audited.append((outcome, slug, error))
+
+        first = _document_create(
+            prov, "sheet_create", {"name": "Sales", "format": "csv", "rows": [["a"]]}, None, _audit
+        )
+        assert "Error" not in first, first
+
+        reply = _document_create(
+            prov,
+            "sheet_create",
+            {
+                "name": "Sales",
+                "format": "csv",
+                "rows": [["x" * (MAX_CONTENT_BYTES + MAX_CONTENT_BYTES // 2)]],
+            },
+            None,
+            _audit,
+        )
+
+        assert "the generated csv came to 1.5MB (cap 1MB)" in reply
+        assert [a.slug for a in prov.list()] == ["sales"]
+        assert prov.get("sales").version == 1, "a refusal must not bump the existing version"
+        assert audited[-1][0] == "denied"
+        assert audited[-1][2].startswith("oversized ")
+
+    # ── #3309: the dedup lookup was Project-blind ─────────────────────────────
+    # DHT-5 (above) resolved a repeat NAME through `find_similar`, but that scan ran
+    # `self.list(kind=kind)` with no Project, so it saw EVERY Project's library. Project B
+    # creating "Weekly Note" therefore found Project A's artifact, updated it in place and
+    # left `project_id: project-a` — A silently held B's bytes (recoverable only from
+    # version history) and B's page never showed the document. One code path serves all
+    # five document formats (csv/docx/pdf/pptx/xlsx), so docx here proves all of them.
+
+    def test_a_second_projects_document_does_not_touch_the_firsts(self, tmp_path, monkeypatch):
+        """THE #3309 regression: two Projects, one name ⇒ two artifacts, A untouched."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        with self._project("project-a"):
+            first = _document_create(
+                prov,
+                "document_create",
+                {"name": "Weekly Note", "markdown": "# Alpha week\n"},
+                "s-a",
+                self._quiet,
+            )
+        with self._project("project-b"):
+            second = _document_create(
+                prov,
+                "document_create",
+                {"name": "Weekly Note", "markdown": "# Bravo week\n"},
+                "s-b",
+                self._quiet,
+            )
+
+        assert "Error" not in first, first
+        assert "Error" not in second, second
+        rows = {a.slug: a for a in prov.list()}
+        assert sorted(rows) == [
+            "weekly-note",
+            "weekly-note-2",
+        ], f"B's create reached A's artifact: {sorted(rows)}"
+        assert rows["weekly-note"].project_id == "project-a"
+        assert rows["weekly-note-2"].project_id == "project-b"
+        # B must be told it CREATED — "Updated" would send it looking for a v1 it never made.
+        assert second.startswith("Created docx: weekly-note-2 (v1"), second
+        # A's bytes, not just A's version: the in-place update is what corrupted it.
+        assert rows["weekly-note"].version == 1
+        assert "Alpha week" in self._docx_text(prov, "weekly-note")
+        assert "Bravo week" not in self._docx_text(prov, "weekly-note")
+        assert "Bravo week" in self._docx_text(prov, "weekly-note-2")
+
+    def test_the_same_project_twice_still_dedups(self, tmp_path, monkeypatch):
+        """DHT-5's intended behaviour, pinned: scoping the lookup must not disable it."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        with self._project("project-a"):
+            _document_create(
+                prov,
+                "document_create",
+                {"name": "Weekly Note", "markdown": "# One\n"},
+                "s1",
+                self._quiet,
+            )
+            reply = _document_create(
+                prov,
+                "document_create",
+                {"name": "Weekly Note", "markdown": "# Two\n"},
+                "s2",
+                self._quiet,
+            )
+
+        assert [a.slug for a in prov.list()] == ["weekly-note"]
+        assert reply.startswith("Updated docx: weekly-note (v2"), reply
+        assert prov.get("weekly-note").project_id == "project-a"
+        assert "Two" in self._docx_text(prov, "weekly-note")
+
+    def test_an_unscoped_session_dedups_only_against_unscoped_artifacts(
+        self, tmp_path, monkeypatch
+    ):
+        """`_current_project_id()` returns "" — a str — for an unscoped session, never None.
+        So "" must mean *only unscoped*, which is why the new filter is present-vs-absent:
+        a truthy check would read "" as "no filter" and leave the global dedup in place."""
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        # Two unscoped calls still dedup to one row at v2.
+        _document_create(
+            prov, "document_create", {"name": "Loose", "markdown": "# One\n"}, None, self._quiet
+        )
+        reply = _document_create(
+            prov, "document_create", {"name": "Loose", "markdown": "# Two\n"}, None, self._quiet
+        )
+        assert [a.slug for a in prov.list()] == ["loose"]
+        assert reply.startswith("Updated docx: loose (v2"), reply
+        assert prov.get("loose").project_id == ""
+
+        # But an unscoped call must not reach a Project-scoped row of the same name.
+        with self._project("project-a"):
+            _document_create(
+                prov,
+                "document_create",
+                {"name": "Filed", "markdown": "# In A\n"},
+                None,
+                self._quiet,
+            )
+        unscoped = _document_create(
+            prov, "document_create", {"name": "Filed", "markdown": "# Nowhere\n"}, None, self._quiet
+        )
+
+        assert unscoped.startswith("Created docx: filed-2 (v1"), unscoped
+        rows = {a.slug: a for a in prov.list()}
+        assert rows["filed"].project_id == "project-a"
+        assert rows["filed"].version == 1
+        assert rows["filed-2"].project_id == ""
+        assert "In A" in self._docx_text(prov, "filed")
+
+
+# ── DFE-3's V1 gate, as a rail: generate with the TOOL, parse it back, diff ──
+# `test_docx_roundtrip.py` calls `render_docx` directly, so the seam between the tool
+# the agent actually invokes and the parser is joined by nothing. That is the DFE-2
+# hazard's shape: a round trip that never travels the real call site cannot see a
+# regression introduced there — a tool that quietly picked a different writer, dropped
+# the title, or stored bytes other than the ones it rendered would leave every existing
+# document test green.
+
+
+class TestToolGeneratedDocumentParsesBack:
+    """`document_create` → stored bytes → `parse_docx` → diff against the same model."""
+
+    _MARKDOWN = (
+        "# Quarterly Review\n\n"
+        "A paragraph with **bold**, *italic*, `code()` and a "
+        "[link](https://example.invalid/x).\n\n"
+        "## Findings\n\n"
+        "- first bullet\n- second bullet\n\n"
+        "1. step one\n2. step two\n\n"
+        "| Region | Units |\n| --- | --- |\n| North | 12 |\n| South | 7 |\n\n"
+        "Closing paragraph.\n"
+    )
+
+    def _generate(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        from personalclaw.artifacts.native import NativeArtifactProvider
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = NativeArtifactProvider(root=tmp_path / "artifacts")
+        reply = _document_create(
+            prov,
+            "document_create",
+            {"name": "Quarterly", "markdown": self._MARKDOWN},
+            None,
+            lambda outcome, slug="", error="": None,
+        )
+        assert "Error" not in reply, reply
+        slug = [a.slug for a in prov.list()][0]
+        data, mime = prov.raw_bytes(slug)
+        assert mime.endswith("wordprocessingml.document"), mime
+        return data
+
+    def test_the_stored_bytes_parse_back_to_the_model_the_tool_built(self, tmp_path, monkeypatch):
+        """The diff. Kinds, title and visible text, block for block.
+
+        Compared against `document_from_markdown` of the SAME markdown — which is what
+        `_document_create` builds internally — so a tool that stored a document other
+        than the one it rendered from the caller's input reds here.
+        """
+        from personalclaw.documents.docx_parser import parse_docx
+        from personalclaw.documents.from_markup import document_from_markdown
+
+        data = self._generate(tmp_path, monkeypatch)
+        authored = document_from_markdown(self._MARKDOWN, title="")
+        parsed, _report = parse_docx(data)
+
+        def visible(model):
+            return [
+                (
+                    block.kind,
+                    block.text or "".join(run.text for run in block.runs),
+                    tuple(block.items),
+                    tuple(tuple(row) for row in block.rows),
+                )
+                for block in model.blocks
+            ]
+
+        # Vacuity floor: the fixture must actually carry the whole span of kinds, or the
+        # equality below could hold over one paragraph — or over two empty lists.
+        assert [block.kind for block in authored.blocks] == [
+            "paragraph",
+            "heading",
+            "bullets",
+            "numbered",
+            "table",
+            "paragraph",
+        ]
+        assert authored.title == "Quarterly Review"
+
+        assert parsed.title == authored.title
+        assert visible(parsed) == visible(authored)
+
+    def test_the_tool_generated_document_reports_exactly_its_one_honest_loss(
+        self, tmp_path, monkeypatch
+    ):
+        """A document the tool made is now LOSSLESS, which it was not before per-edge
+        margins existed.
+
+        Exact equality, not `in`: a longer list means the parser is reporting something the
+        model can hold. The one item this used to carry was `page_property` — python-docx's
+        default template is 1.00in top/bottom and 1.25in left/right, which a single
+        `margin_in` could not express, so every document this tool generated warned the
+        user that editing it would lose formatting. Four margin fields hold that geometry,
+        so the warning now fires only when something really is at risk.
+        """
+        from personalclaw.documents.docx_parser import parse_docx
+
+        _model, report = parse_docx(self._generate(tmp_path, monkeypatch))
+
+        assert report.kinds() == []
+        assert report.lossless
+        assert report.items == []
+
+
+class TestUpdateBinaryContract:
+    def test_update_binary_takes_no_snapshot_argument(self):
+        """Pinned so a caller can't reintroduce it: a binary update ALWAYS bumps and
+        snapshots, because binary bodies have no held-back draft state."""
+        import inspect
+
+        from personalclaw.artifacts.native import NativeArtifactProvider
+
+        params = inspect.signature(NativeArtifactProvider.update_binary).parameters
+        assert "snapshot" not in params
+
+    def test_no_caller_passes_snapshot_to_update_binary(self):
+        """A source sweep, because the TypeError only fires at runtime on a path that
+        had no test — exactly how this shipped."""
+        from pathlib import Path
+
+        src = Path("src/personalclaw/mcp_artifacts.py").read_text(encoding="utf-8")
+        for chunk in src.split("update_binary(")[1:]:
+            call = chunk.split(")", 1)[0]
+            assert "snapshot" not in call, f"update_binary call passes snapshot: {call!r}"

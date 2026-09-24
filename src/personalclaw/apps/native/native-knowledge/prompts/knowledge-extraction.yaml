@@ -1,0 +1,42 @@
+_entity: prompt
+use_case: knowledge_extraction
+name: task-knowledge-extraction
+kind: user
+category: internal
+description: Extract entities + relations + category + summary from a knowledge text
+  chunk (JSON out).
+tags:
+- system
+- bundled
+variables:
+- name: chunk
+  type: textarea
+  description: The text chunk to extract from (capped).
+  required: true
+content: |-
+  Extract structured information from this text chunk.
+
+  Return valid JSON with:
+  - title: short descriptive title for this chunk (5-10 words, specific to content)
+  - entities: list of {"name": str, "type": str, "description": str, "aliases": [str]}
+    Types: person|service|api|concept|org|technology
+  - relations: list of {"source": str, "target": str, "type": str, "description": str}
+    Types: owns|uses|works_on|part_of|calls|depends_on
+  - category: one of design_doc|runbook|meeting_notes|code_doc|presentation|report|policy|personal_notes|external_reference
+  - summary: 2-3 sentence summary of key information
+
+  Rules:
+  - Title must be specific to THIS chunk's content, not generic
+  - Use canonical entity names (e.g. "DynamoDB" not "dynamo")
+  - Only extract explicitly mentioned entities
+  - Relations must reference entities in your entities list
+  - aliases: the OTHER spellings this chunk itself uses for the same entity — handles,
+    initialisms, short names, code names (e.g. name "Sparrow" with aliases ["SPRW",
+    "@sparrow"] when the text writes it all three ways). Copy each one verbatim from the
+    text; never invent, translate or expand one, and omit the field entirely when the
+    chunk spells the entity only one way. Surfaces absent from the text are discarded.
+
+  Text chunk:
+  {{chunk}}
+
+  JSON:

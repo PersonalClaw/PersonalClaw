@@ -1,0 +1,26 @@
+# Development overlay — bind-mounts source for live reload.
+#
+# Combine with compose.build.yaml to build from the working tree and mount
+# source on top:
+#   docker compose \
+#     -f deploy/compose/compose.yaml \
+#     -f deploy/compose/compose.build.yaml \
+#     -f deploy/compose/compose.dev.yaml \
+#     up
+#
+# Relative paths resolve from this file's directory, so `../../src` is the
+# repo-root package source.
+services:
+  personalclaw-gateway:
+    volumes:
+      - personalclaw_home:/data
+      - ../../src/personalclaw:/opt/venv/lib/python3.13/site-packages/personalclaw:ro
+    environment:
+      PERSONALCLAW_LOG_LEVEL: DEBUG
+    command: ["personalclaw", "gateway", "--no-browser"]
+
+  personalclaw-web:
+    # In dev, the web dev server runs on the host (npm run dev).
+    # Disable the nginx container and proxy directly from the gateway.
+    profiles:
+      - disabled

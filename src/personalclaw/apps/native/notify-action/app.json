@@ -1,0 +1,58 @@
+{
+  "name": "notify-action",
+  "version": "1.0.0",
+  "displayName": "Notify Hook",
+  "description": "Raise a dashboard notification when an agent's lifecycle event fires. A native action \u2014 no shell-out. Attach to an agent to activate.",
+  "icon": "Bell",
+  "author": "PersonalClaw",
+  "tags": [
+    "action",
+    "bundled",
+    "native"
+  ],
+  "provider": {
+    "type": "action",
+    "entity": "notification",
+    "implementation": "personalclaw.action_providers.notify_provider:create_provider",
+    "capabilities": [
+      "execute"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "required": [
+        "title_template"
+      ],
+      "properties": {
+        "title_template": {
+          "type": "string",
+          "x-meta": {
+            "label": "Title",
+            "help": "Notification title. Supports $EVENT, $CONTEXT, and $<payload-key>."
+          }
+        },
+        "body_template": {
+          "type": "string",
+          "x-meta": {
+            "label": "Body",
+            "help": "Optional notification body. Supports the same placeholders."
+          }
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "info",
+            "success",
+            "warning",
+            "error"
+          ],
+          "default": "info",
+          "x-meta": {
+            "label": "Kind",
+            "help": "Notification severity."
+          }
+        }
+      }
+    }
+  },
+  "native": true
+}

@@ -1,0 +1,64 @@
+{
+  "name": "send-message-action",
+  "version": "1.0.0",
+  "displayName": "Send Message Hook",
+  "description": "Deliver a message to a channel (via the configured channel provider) when an agent's lifecycle event fires. Falls back to a dashboard notification when no channel is configured. Attach to an agent to activate.",
+  "icon": "Send",
+  "author": "PersonalClaw",
+  "tags": [
+    "action",
+    "bundled",
+    "native"
+  ],
+  "provider": {
+    "type": "action",
+    "entity": "comms",
+    "implementation": "personalclaw.action_providers.send_message_provider:create_provider",
+    "capabilities": [
+      "execute"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "required": [
+        "text_template"
+      ],
+      "properties": {
+        "text_template": {
+          "type": "string",
+          "x-meta": {
+            "label": "Message",
+            "help": "Message text. Supports $EVENT, $CONTEXT, and $<payload-key>. Redacted before send."
+          }
+        },
+        "title": {
+          "type": "string",
+          "x-meta": {
+            "label": "Title",
+            "help": "Optional bold heading above the message."
+          }
+        },
+        "channel": {
+          "type": "string",
+          "x-meta": {
+            "label": "Channel ID",
+            "help": "Optional channel to post to. Empty + no user \u2192 DM the owner.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "user": {
+          "type": "string",
+          "x-meta": {
+            "label": "User ID",
+            "help": "Optional user to DM (when no channel set).",
+            "tags": [
+              "advanced"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "native": true
+}

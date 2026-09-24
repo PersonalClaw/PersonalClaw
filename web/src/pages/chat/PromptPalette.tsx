@@ -1,0 +1,244 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ResultAnnouncement } from '../../ui/ListControls'
+import { FieldError } from '../../ui/forms'
+import { LoadError } from '../../ui/ListScaffold'
+import { Loader2, Search, ChevronLeft, FileText, CornerDownLeft } from 'lucide-react'
+import { Modal } from '../../ui/Modal'
+import { SearchField } from '../../ui/SearchField'
+import { Button } from '../../ui/Button'
+import { Toggle } from '../../ui/Toggle'
+import { api, type PromptItem, type PromptVariable } from '../../lib/api'
+import { seedRenderValues } from '../prompts/promptMeta'
+import { BUSY_REASON } from '../../ui/unavailable'
+
+/** Composer prompt palette — pick a USER prompt, fill its variables (the merged
+ *  set, including any from snippets it pulls in), preview the rendered text, then
+ *  Insert it into the composer or Send it straight away. The power-user path
+ *  (`@name key=value`) stays in chat_runner; this is the guided UI.
+ *
+ *  Two steps: (1) search + pick; (2) fill-in (skipped when the prompt has no
+ *  variables — its rendered content inserts immediately). */
+export function PromptPalette({ onInsert, onSend, onClose }: {
+  onInsert: (text: string) => void
+  onSend?: (text: string) => void
+  onClose: () => void
+}) {
+  const [items, setItems] = useState<PromptItem[] | null>(null)
+  const [q, setQ] = useState('')
+  const [picked, setPicked] = useState<PromptItem | null>(null)  // full detail (with merged_variables)
+  const [loadingDetail, setLoadingDetail] = useState(false)
+  const [err, setErr] = useState('')
+  // #532: separate from `err`, which belongs to the DETAIL pick. The list read used to
+  // `.catch(() => setItems([]))`, and the empty branch below then said "No user prompts yet. Create
+  // one on the Prompts page." — a create-your-first pitch shown to a user whose prompts were merely
+  // unreachable. Two different failures need two slots; a shared one would make the list error
+  // clearable by picking a prompt.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+  const [reloadKey, setReloadKey] = useState(0)
+
+  useEffect(() => {
+    api.prompts('user').then(setItems).catch(setLoadErr)
+  }, [reloadKey])
+
+  const filtered = useMemo(() => {
+    if (!items) return null
+    const n = q.trim().toLowerCase()
+    return n ? items.filter((p) => `${p.name} ${p.title ?? ''} ${p.description ?? ''} ${(p.tags ?? []).join(' ')}`.toLowerCase().includes(n)) : items
+  }, [items, q])
+
+  async function pick(p: PromptItem) {
+    setErr(''); setLoadingDetail(true)
+    try {
+      const full = await api.prompt(p.name)
+      const vars = full.merged_variables?.length ? full.merged_variables : (full.variables ?? [])
+      if (vars.length === 0) {
+        // No variables → render + insert straight away (no fill-in step).
+        const r = await api.renderPrompt(p.name, {})
+        onInsert(r.rendered)
+        onClose()
+        return
+      }
+      setPicked(full)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not load that prompt')
+    } finally { setLoadingDetail(false) }
+  }
+
+  return (
+    <Modal title={picked ? (picked.title || picked.name) : 'Insert a prompt'}
+      icon={picked ? <FileText size={18} className="text-primary" /> : <Search size={18} className="text-primary" />}
+      onClose={onClose}>
+      {picked ? (
+        <FillIn prompt={picked} onBack={() => setPicked(null)} onInsert={(t) => { onInsert(t); onClose() }} onSend={onSend ? (t) => { onSend(t); onClose() } : undefined} />
+      ) : (
+        <div className="flex min-h-[320px] flex-col gap-3">
+          <div className="flex items-center gap-2 rounded-md bg-surface-high px-2.5 py-1.5">
+            <SearchField variant="inline" size="md" clearable={false} autoFocus
+              value={q} onChange={setQ} placeholder="Search your prompts…" ariaLabel="Search prompts"
+              onKeyDown={(e) => {
+                // Enter picks the first match — the common search → Enter flow (mirrors
+                // the composer's @-mention menu), so a user need not reach for the mouse.
+                if (e.key === 'Enter' && filtered && filtered.length > 0 && !loadingDetail) { e.preventDefault(); void pick(filtered[0]) }
+                else if (e.key === 'Escape' && q) { e.preventDefault(); setQ('') }
+              }}
+              trailingSlot={loadingDetail ? <Loader2 size={14} className="shrink-0 animate-spin text-on-surface-low" /> : null} />
+          </div>
+          {/* 🪤 This was deferred as an "arrow-key typeahead awaiting listbox semantics" and that was
+              WRONG — read again, its Enter picks the FIRST match and there is no cursor at all, so its
+              rows are ordinary tab-focusable buttons. A `role="option"` on those would promise a
+              composite widget nobody implements; what it actually owed was the same result count every
+              other filtered list announces. `filtered === null` is the load, where a count would
+              describe nothing yet. */}
+          <ResultAnnouncement count={filtered?.length ?? 0} noun="prompts"
+            active={!!q.trim() && filtered !== null} />
+          {/* 🪤 ENTER PICKS THE FIRST MATCH AND NOTHING SAID SO. The handler above has always done it
+              ("the common search → Enter flow"), but the list gave no sign which row that was, so the
+              only way to learn what the key does was to press it and watch something open. The glyph
+              row is `CommandPalette`'s footer idiom, which states its keys the same way — and it names
+              the FIELD's behaviour ("the first match") rather than marking a row, because a highlight
+              on row 0 would promise a cursor these rows do not have (no arrows; Tab reaches them as
+              ordinary buttons, and then Enter picks the focused one instead). */}
+          {!!filtered?.length && (
+            <div data-type="caption" className="flex items-center gap-3 px-1 text-on-surface-low">
+              <span className="inline-flex items-center gap-1"><CornerDownLeft size={11} /> picks the first match</span>
+              {!!q.trim() && <span className="inline-flex items-center gap-1">esc clears the search</span>}
+            </div>
+          )}
+          {err && <FieldError>{err}</FieldError>}
+          <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-outline-variant/40">
+            {loadErr !== null ? (
+              <LoadError what="prompts" error={loadErr} onRetry={() => { setLoadErr(null); setReloadKey((k) => k + 1) }} />
+            ) : filtered === null ? (
+              <div className="flex h-40 items-center justify-center"><Loader2 size={18} className="animate-spin text-on-surface-low" /></div>
+            ) : filtered.length === 0 ? (
+              <div data-type="body-s" className="flex h-40 flex-col items-center justify-center gap-1 px-4 text-center text-on-surface-low">
+                {q ? `No prompts match “${q.trim()}”.` : 'No user prompts yet. Create one on the Prompts page.'}
+              </div>
+            ) : (
+              <div className="flex flex-col">
+                {filtered.map((p) => (
+                  <button key={p.name} type="button" onClick={() => pick(p)}
+                    className="flex items-start gap-2.5 px-3 py-2 text-left transition-colors hover:bg-surface-high">
+                    <FileText size={15} className="mt-0.5 shrink-0 text-on-surface-low" />
+                    <span className="min-w-0 flex-1">
+                      <span data-type="body-s" className="block truncate text-on-surface">{p.title || p.name}</span>
+                      {p.description && <span data-type="caption" className="block truncate text-on-surface-low">{p.description}</span>}
+                    </span>
+                    {(p.variables?.length ?? 0) > 0 && <span data-type="caption" className="shrink-0 rounded-pill bg-surface-highest px-1.5 py-0.5 text-on-surface-low">{p.variables!.length} var{p.variables!.length > 1 ? 's' : ''}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </Modal>
+  )
+}
+
+/** Step 2 — one typed input per (merged) variable + a live preview of the rendered
+ *  prompt, then Insert / Send. */
+function FillIn({ prompt, onBack, onInsert, onSend }: {
+  prompt: PromptItem
+  onBack: () => void
+  onInsert: (text: string) => void
+  onSend?: (text: string) => void
+}) {
+  const vars: PromptVariable[] = prompt.merged_variables?.length ? prompt.merged_variables : (prompt.variables ?? [])
+  const [values, setValues] = useState<Record<string, unknown>>(() => seedRenderValues(vars))
+  const [preview, setPreview] = useState('')
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const debTimer = useRef<number | null>(null)
+
+  // Live preview: debounce-render through the server engine so includes + the full
+  // mini-language resolve exactly as they will at send time (no client re-impl).
+  useEffect(() => {
+    if (debTimer.current) window.clearTimeout(debTimer.current)
+    debTimer.current = window.setTimeout(() => {
+      api.renderPrompt(prompt.name, values)
+        .then((r) => { setPreview(r.rendered); setErr('') })
+        .catch((e) => setErr(e instanceof Error ? e.message : 'render failed'))
+    }, 250)
+    return () => { if (debTimer.current) window.clearTimeout(debTimer.current) }
+  }, [prompt.name, values])
+
+  const missingRequired = vars.some((v) => v.required && !String(values[v.name] ?? '').trim())
+
+  async function finalize(send: boolean) {
+    setBusy(true); setErr('')
+    try {
+      const r = await api.renderPrompt(prompt.name, values)
+      if (send && onSend) onSend(r.rendered)
+      else onInsert(r.rendered)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'render failed'); setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex min-h-[320px] flex-col gap-3"
+      onKeyDown={(e) => {
+        // ⌘/Ctrl+↵ submits the fill-in (Send if available, else Insert) — matches the
+        // app-wide textarea-submit convention so the user needn't reach for the mouse.
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !busy && !missingRequired) {
+          e.preventDefault(); void finalize(!!onSend)
+        }
+      }}>
+      <button type="button" onClick={onBack} data-type="body-s" className="inline-flex items-center gap-1 self-start text-on-surface-low hover:text-on-surface">
+        <ChevronLeft size={14} /> All prompts
+      </button>
+      {prompt.description && <p data-type="body-s" className="text-on-surface-var">{prompt.description}</p>}
+
+      <div className="flex flex-col gap-2">
+        {vars.map((v) => (
+          <label key={v.name} className="flex flex-col gap-1">
+            <span data-type="caption" className="text-on-surface-var">{v.name}{v.required && <span className="text-danger"> *</span>}{v.description && <span className="text-on-surface-low"> — {v.description}</span>}</span>
+            <VarInput v={v} value={values[v.name]} onChange={(val) => setValues((s) => ({ ...s, [v.name]: val }))} />
+          </label>
+        ))}
+      </div>
+
+      <div>
+        <div data-type="caption" className="mb-1 text-on-surface-low uppercase tracking-wide">Preview</div>
+        <pre data-type="body-s" className="max-h-44 overflow-y-auto rounded-md bg-surface-container px-3 py-2 text-on-surface-var whitespace-pre-wrap break-words">{preview || '…'}</pre>
+      </div>
+
+      {err && <FieldError>{err}</FieldError>}
+
+      <div className="flex items-center justify-end gap-2 border-t border-outline-variant/40 pt-3">
+        <Button variant="ghost" size="sm" onClick={onBack}>Cancel</Button>
+        <Button variant="secondary" size="sm" disabled={busy || missingRequired} disabledReason={missingRequired && !busy ? 'Fill in the required variables first' : BUSY_REASON} onClick={() => finalize(false)}>Insert</Button>
+        {onSend && <Button size="sm" disabled={busy || missingRequired} disabledReason={missingRequired && !busy ? 'Fill in the required variables first' : BUSY_REASON} onClick={() => finalize(true)}><CornerDownLeft size={14} /> Send</Button>}
+      </div>
+    </div>
+  )
+}
+
+function VarInput({ v, value, onChange }: { v: PromptVariable; value: unknown; onChange: (v: unknown) => void }) {
+  // No element carries this const, so the type role (body-s) sits on each consumer below.
+  const base = 'w-full rounded-md bg-surface-container px-2.5 py-1.5 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
+  if (v.type === 'boolean') {
+    return <Toggle on={!!value} onChange={(val) => onChange(val)} size="sm" />
+  }
+  if (v.type === 'select') {
+    return (
+      // `—` means "no choice", which the engine only honours as an ABSENT key: `''`
+      // matches no option and 400s. `undefined` is dropped by JSON.stringify, so the
+      // wire carries no key and the engine's default/unset path applies (#377).
+      <select value={String(value ?? '')} onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)} data-type="body-s" className={`${base}`}>
+        <option value="">—</option>
+        {(v.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>
+    )
+  }
+  if (v.type === 'textarea') {
+    return <textarea value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} rows={3} data-type="body-s" className={`${base} resize-y`} />
+  }
+  if (v.type === 'number') {
+    // A CLEARED number is unset, not `''` — same reason as the select above: `int('')`
+    // raises, so `''` would 400 the render the moment the user empties the field.
+    return <input type="number" value={value == null ? '' : Number(value)} onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))} data-type="body-s" className={base} />
+  }
+  return <input value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} data-type="body-s" className={base} />
+}

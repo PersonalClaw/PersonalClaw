@@ -1,0 +1,338 @@
+# Configuration reference
+
+PersonalClaw's core configuration lives in one JSON file: **`~/.personalclaw/config.json`**
+(the directory can be relocated with the `PERSONALCLAW_HOME` environment variable).
+
+Three ways to change it:
+
+1. **Dashboard UI** — most fields have a control in Settings (the "Where to set"
+   column below names the panel).
+2. **CLI** — `personalclaw config get|set <key> [value]` (dot-separated keys, e.g.
+   `personalclaw config set session.timeout_secs 7200`), or `personalclaw config edit`
+   to open the file in `$EDITOR`. `config get` withholds credentials; add `--reveal`
+   when you need them (see the [CLI reference](cli.md#personalclaw-config)).
+3. **API** — `GET /api/config/personalclaw` (full config),
+   `PATCH /api/config/personalclaw {path, value}` (single-field, allowlisted),
+   `GET /api/config/schema` (the machine-readable field registry this document
+   is derived from).
+
+A key like `loops.max_cycles_hard_cap` means `{"loops": {"max_cycles_hard_cap": …}}`
+in the file. Fields marked **backend-only** have no dashboard control — set them via
+CLI/file (most need a gateway restart). Fields with a UI panel are applied live.
+
+Not everything is in `config.json` by design. Stored elsewhere:
+
+- **Model bindings** (which model serves chat/background/embedding/…): Settings →
+  Models → `~/.personalclaw/active_models.json`.
+- **Search bindings**: Settings → Search → `~/.personalclaw/active_search_providers.json`.
+- **Inbox + notification entity settings**: `~/.personalclaw/entity_settings/*.json`
+  (edited via the Inbox / Notifications settings panels).
+- **Per-app config**: each app's `data/config.json` (edited via the app's Configure form).
+- **Provider credentials**: the `.env` credential store (written by `personalclaw setup`).
+
+---
+
+## Agent runtime (`agent.*`)
+
+| Key | Type | Default | Where to set | Description |
+|---|---|---|---|---|
+| `agent.approval_mode` | enum: `auto`, `interactive`, `trust_reads` | `auto` | Settings → Agent defaults | Tool approval mode. `trust_reads` auto-approves read-only tools and asks for everything else. |
+| `agent.provider` | string | `native` | backend-only (restart) | Default agent runtime for agents that don't set their own: `native` (in-process loop, models governed by Settings → Models), `acp`, or `acp:<cli>` to pin a connected CLI runtime. Per-agent `provider` overrides this. File-only by design — switching it mid-flight would strand live sessions. |
+| `agent.yolo` | boolean | `false` | Settings → Agent defaults | Skip every tool-approval confirmation. Only use inside a sandbox or for trusted automation. |
+| `agent.acp_concurrent_sessions` | boolean | `false` | Settings → Agent defaults | Run multiple ACP chat sessions on ONE backend process (multiplexing) instead of one process per session — for backends that support session interleaving. |
+| `agent.bot_name` | string (≤50 chars) | `""` | Settings → Account | Custom name the assistant identifies as. Sanitized at the write boundary (markdown/braces stripped). Empty = default. |
+| `agent.orchestrator_skill` | boolean | `false` | Settings → Agent defaults | Enable agent delegation — generates and loads the orchestrator skill with the agent roster. |
+| `agent.max_subagents` | integer (0–16) | `3` | Settings → Agent defaults | Maximum concurrent subagents. `0` = auto-size from host CPU + memory. |
+| `agent.spawn_min_memory_gb` | number (0–64) | `4.0` | Settings → Agent defaults | Minimum available memory (GB) required to spawn a subagent. `0` disables the check. |
+| `agent.subagent_max_turns` | integer (1–200) | `100` | Settings → Agent defaults | Default tool-call budget per subagent. |
+| `agent.subagent_timeout_secs` | integer (60–7200) | `1800` | Settings → Agent defaults | Wall-clock timeout per subagent execution. |
+| `agent.subagent_cwd_allowed_roots` | list of strings | `["~/workspace", "~/workplace"]` | Settings → Agent defaults | Directory roots under which a subagent's `cwd` override is permitted (`~` expands). Empty list disables cwd overrides. |
+| `agent.log_level` | enum: `DEBUG`, `INFO`, `WARNING`, `ERROR` | `WARNING` | Settings → Agent defaults | Persistent backend log level. Applied at startup; the `--verbose` CLI flag overrides it. |
+| `agent.soft_stop_budget_secs` | number (0.5–60) | `10.0` | Settings → Agent defaults | Seconds to wait for a cooperative cancel before hard-killing a session. |
+| `agent.unattended_requires_verified_adapter` | boolean | `false` | Settings → Agent defaults | Refuse an UNATTENDED spawn onto an external agent runner whose ACP adapter has no verified provenance: an `npx -y` fetch-at-launch, an adapter that changed since it was provisioned, or a runner with no catalog row. "Unattended" is derived from the session key, so it covers cron fires, loop-cycle workers, subagents, the background/heartbeat session, inbox and side sweeps, channel deliveries and trigger dispatches — no caller has to opt in. Interactive chat is never gated. Fails closed: an unverifiable runner is refused. |
+| `agent.runner_health_check_secs` | int (60–86400) | `3600` | Settings → Agent defaults | How long a runner's measured health evidence counts as current. Past this, its row under Settings → Agents → Runners is marked check overdue instead of presenting an old reading as the present state. Nothing is probed automatically — this only decides when a stored measurement stops counting as an answer. |
+| `agent.runner_idle_release_secs` | int (60–86400) | `1800` | Settings → Agent defaults | How long a session may hold an agent runner without using it. Past this the hold is released: the row under Settings → Agents → Runners stops naming that session as the holder and reads as free. Only the RECORD of the hold is released — the session itself is untouched — so a session that went quiet, or a gateway that was killed mid-turn, cannot leave a runner looking permanently taken. |
+| `agent.durable_sessions` | boolean | `false` | Settings → Agent defaults | Run workers inside a tmux session on PersonalClaw's own tmux socket so their shell outlives the gateway process. On restart the recovery sweep recomputes each session's name from the run's identity, and a run whose worker is still alive is marked resumable instead of aborted. Requires the `tmux` binary: without it the setting has no effect and behaviour is exactly as today. |
+
+The chat **model** is not a config field — bind models per use case in Settings →
+Models, or per agent on the Agents page.
+
+## Sessions (`session.*`)
+
+| Key | Type | Default | Where to set | Description |
+|---|---|---|---|---|
+| `session.timeout_secs` | integer (0–86400) | `3600` | Settings → Chat | Idle session timeout in seconds. |
+| `session.autocompact_pct` | number (5–90) | `90.0` | Settings → Chat | Context usage percentage at which auto-compaction triggers. |
+| `session.pool_size` | integer (0–10) | `0` | Settings → Chat | Pre-spawned ACP agent processes kept warm for instant session start. `0` disables. Only useful for ACP agents (subprocess spawn is the cost); the native runtime needs no pool. |
+| `session.pool_agent` | string | `""` | Settings → Chat | Agent name for warm-pool processes. Empty uses `default_agent`. |
+| `session.pool_ttl_secs` | integer (0–7200) | `1800` | Settings → Chat | Max age for pooled processes; stale ones are discarded at claim time. `0` disables. |
+
+## Goal loops (`loops.*`)
+
+Per-loop values (set in the loop creation form) override the defaults, and the hard cap
+binds everything. The four runtime knobs are on **Settings → Autonomous loops**; the rest
+are operator knobs with no control.
+
+| Key | Type | Default | Where to set | Description |
+|---|---|---|---|---|
+| `loops.max_cycles_hard_cap` | integer | `100` | backend-only | Absolute ceiling on any loop's cycle budget, regardless of the per-loop limit. Safety brake against runaway cost. |
+| `loops.default_idle_secs` | integer | `120` | backend-only | Seconds between worker cycles when a loop doesn't specify its own idle timer. |
+| `loops.trust_ttl_secs` | integer | `86400` | backend-only | How long a loop worker keeps auto-approved tool trust before the supervisor expires it and requires re-authorization. |
+| `loops.judge_use_case` | enum: `reasoning`, `chat`, `code_tools`, `background`, `orchestration`, `loops` | `reasoning` | Settings → Autonomous loops | Which model use case the loop JUDGE rides — deliberately not the `loops` axis the worker rides, so a reviewer mistake is not correlated with the mistake it is reviewing. Set to `loops` to put judge and worker back on one binding. |
+| `loops.stagnation_window` | integer (2–50) | `5` | Settings → Autonomous loops | How many consecutive cycles of no progress stall a loop. The supervisor compares the last N findings: byte-identical reports, an identical source set, or N cycles with no new findings all mean the loop is spinning. Minimum 2 — a window of 1 can only compare a cycle with itself. |
+| `loops.check_work_stages` | boolean | `false` | Settings → Autonomous loops | After an SDLC stage's gate passes, re-derive 2–4 executable checks from what the stage CLAIMED and run them. Catches "the gate command passed but the claim was broader than the command". Off by default: it adds a filesystem pass per stage advance. |
+| `loops.worktree_sparse` | boolean | `true` | Settings → Autonomous loops | When a parallel task's plan names the files it will touch, hydrate only those directories in its git worktree instead of the whole repo — most of a worktree's setup cost on a large codebase. A task that writes outside its stated scope widens its own worktree automatically, a task with no usable scope gets a full checkout, and the merged result is identical either way. Set `false` to always hydrate the full repo. |
+
+## AI feedback (`feedback.*`)
+
+The 👍/👎 capture on AI judgment outputs and the deterministic per-producer accuracy
+thresholds. All four have a control in **Settings → AI feedback**. No model call anywhere
+and no telemetry: every number here is counted locally.
+
+| Key | Type | Default | Where to set | Description |
+|---|---|---|---|---|
+| `feedback.enabled` | boolean | `true` | Settings → AI feedback | Show 👍/👎 on AI judgment outputs (inbox classifications, drafted replies, digests, loop findings) and track per-source accuracy. Off is a full kill switch — every `/api/feedback` route 404s and the thumbs stop rendering. Verdicts already collected are kept. |
+| `feedback.retire_threshold` | number (0.1–0.9) | `0.4` | Settings → AI feedback | Accuracy below which a judgment source earns a "retire this rule?" proposal, once it has at least `min_n` verdicts — and stops surfacing where that kind of source has a surfacing gate (today, skills). Higher retires sooner. |
+| `feedback.min_n` | integer (3–50) | `5` | Settings → AI feedback | Verdicts required before a source's accuracy is shown or acted on. Below this its row reads "collecting" and no number is displayed. |
+| `feedback.window_days` | integer (7–365) | `90` | Settings → AI feedback | How far back verdicts count toward a source's rolling accuracy. Shorter forgets an old mistake faster. |
+
+## Memory (`memory.*`)
+
+Behavior toggles live in Settings → Memory; tuning constants are backend-only.
+
+| Key | Type | Default | Where to set | Description |
+|---|---|---|---|---|
+| `memory.semantic_confidence_threshold` | number | `0.8` | backend-only | Minimum similarity for a semantic-memory hit to be injected. |
+| `memory.episodic_dedup_threshold` | number | `0.88` | backend-only | Cosine similarity above which a new episodic record is treated as a duplicate and skipped. |
+| `memory.episodic_max_results` | integer | `8` | backend-only | Episodic records recalled per query. |
+| `memory.episodic_max_count` | integer | `10000` | backend-only | Episodic store size cap; oldest records are pruned past it. |
+| `memory.semantic_keys` | list of strings | `[]` | backend-only | Extra top-level semantic-record prefixes (namespaces) beyond the built-ins. |
+| `memory.l1_manifest` | boolean | `true` | Settings → Memory | Inject only a small always-on manifest of your most-recalled facts; the agent pulls deeper memory on demand via the `memory_recall` tool. Off = inject full semantic + episodic memory every turn (legacy). |
+| `memory.active_recall` | boolean | `true` | Settings → Memory | On an interactive turn, surface query-relevant memory just before the reply — bounded by a timeout + circuit breaker. Skipped for temporary/incognito/headless turns. |
+| `memory.proactive_commitments` | boolean | `false` | Settings → Memory | Let the agent infer future check-ins from conversation and deliver ONE natural reminder per window via the heartbeat. Opt-in; high-confidence only; capped per day; one-tap dismiss. |
+| `memory.proactive_commitments_max_per_day` | integer | `3` | backend-only | Hard maximum active proactive check-ins per agent per day. |
+| `memory.active_recall_timeout_ms` | integer | `1500` | backend-only | Hard budget for the pre-reply recall pass; on timeout the turn proceeds without it (circuit breaker trips after repeats). |
+| `memory.auto_promote_enabled` | boolean | `true` | backend-only | Periodically promote repeated episodic memories into durable semantic facts (the self-learning loop) — guarded by a per-run cap + min-interval + single-flight. Off = promotion only via the Memory Studio button. |
+| `memory.auto_promote_every_n` | integer | `10` | backend-only | Run promotion after every Nth history consolidation. |
+| `memory.auto_promote_max_per_run` | integer | `5` | backend-only | Cap on clusters promoted in a single autonomous run. |
+| `memory.history_idle_hours` | number (≥0.5) | `3.0` | Settings → Memory | Hours of inactivity before history consolidation. |
+| `memory.history_max_days` | integer (≥7) | `365` | Settings → Memory | Maximum days of history to retain. |
+| `memory.migrated` | boolean | `false` | managed automatically | Whether memory has been migrated to the vector store (set by `personalclaw memory migrate` / the API). |
+| `memory.vault_mode` | `off` \| `mirror` \| `two_way` | `off` | Settings → Memory | The readable markdown vault (Obsidian-compatible: YAML frontmatter + `[[wikilinks]]` + graph view). `mirror` writes memory out and never reads it back — hand edits are overwritten. `two_way` also reads hand-edited pages back into memory on the next sync (your edit wins); a page the sync cannot parse confidently is left untouched and reported under Settings → Memory → Health. Back-reads the retired `memory.vault_enabled` bool: `true` loads as `mirror`, never `two_way`. |
+| `memory.vault_path` | string | `memory-vault` | Settings → Memory | Where the markdown vault is written. Relative paths resolve under `~/.personalclaw`; absolute paths are used as-is. Only the default path is covered by `personalclaw snapshot`. |
+| `memory.graph_enabled` | boolean | `true` | Settings → Memory | Link each memory to the people, projects and tools it mentions, so "what do I know about X?" follows links instead of relying on similarity search. Matching is exact-name and costs no tokens or LLM calls. Off = every graph surface falls back to today's search behavior; existing links are kept, so re-enabling needs no backfill. |
+| `memory.push_context` | boolean | `false` | Settings → Memory | When a message names something the entity graph knows, volunteer up to 3 linked memories for that turn — even ones sharing no words with what you typed. Opt-in: it puts context in front of the model you did not ask for. Settings → Memory → Health reports how often what it volunteered was actually used. Never injects knowledge items (chips only). |
+| `memory.push_min_confidence` | number (0-1) | `0.7` | Settings → Memory | How sure the entity match must be before memory is volunteered. Higher = declared aliases and exact names only; lower also admits looser matches (more offered, more of it irrelevant). |
+| `memory.graph_topology_in_context` | boolean | `false` | Settings → Memory | At the start of a new session, add a ≤400-char map of the neighbourhoods in your memory graph ("people around project X") so the assistant knows which areas exist before it searches. Off by default: it spends context on every new session and says nothing useful until the graph has distinct communities. |
+| `memory.holder_attribution` | boolean | `false` | Settings → Memory | Record WHOSE claim a memory is (you, the assistant, a named person, an outside source) and render it that way ("Alex believes…"). Second-hand claims are weight-capped lower, and a lower-authority claim can never retire something you said. Off = every memory is stored unattributed; already-attributed rows keep their holder, so flipping it back on needs no backfill. |
+| `memory.slot_size_cap` | integer (200-4000) | `1400` | Settings → Memory | Character budget for the ONE always-injected Slots block (persona, preferences, pending items, glossary, self notes, self model). A spend paid on every session, so it is clamped at the consumer — a value outside the range cannot widen the block by editing this file. The per-slot caps that decide which individual register is full are fixed in code. |
+
+## Skills (`skills.*`)
+
+Skill management (install/enable/proposals) is the Skills page; these backend-only
+keys tune the automatic skill machinery.
+
+| Key | Type | Default | Where to set | Description |
+|---|---|---|---|---|
+| `skills.max_triggered` | integer (≥1) | `3` | backend-only | Max skills surfaced per message (semantic ∪ keyword match). |
+| `skills.auto_create_from_sessions` | boolean | `false` | backend-only | Analyze completed sessions and synthesize a reusable SKILL.md when a non-trivial procedure is detected (lands under `skills/auto/`). |
+| `skills.auto_refine_on_deviation` | boolean | `false` | backend-only | Update an auto-created skill when the agent succeeds via a different tool sequence (requires `auto_create_from_sessions`). |
+| `skills.auto_min_tool_calls` | integer (≥2) | `5` | backend-only | Minimum tool calls for a session to qualify for skill extraction. |
+| `skills.auto_similarity_threshold` | number (0–1) | `0.85` | backend-only | Skip creation when an existing skill's description overlaps ≥ this fraction. |
+| `skills.progressive_disclosure_threshold` | integer | `2` | backend-only | When more skills than this match a turn, inject only their index (name + description) and let the agent pull bodies on demand via `skill_invoke`. Clamped to `max_triggered - 1` (floor 1) — the match list is already capped at `max_triggered`, so a threshold at or above it can never be exceeded. `0` = always inline, and is never clamped. |
+
+## After-turn learning (`learning.*`)
+
+The continuous self-improvement review that runs after learning-worthy turns
+(distinct from session-end consolidation). All backend-only.
+
+| Key | Type | Default | Where to set | Description |
+|---|---|---|---|---|
+| `learning.enabled` | boolean | `true` | backend-only | Kill switch for the after-turn review (always skipped for incognito/temporary sessions). |
+| `learning.min_tool_calls` | integer | `4` | backend-only | A turn with at least this many tool calls qualifies even without a correction signal. |
+| `learning.correction_heuristic` | boolean | `true` | backend-only | Treat a correcting user message ("no, actually, …") as a first-class learning signal. |
+| `learning.surface_chip` | boolean | `true` | backend-only | Show the quiet "Learned: …" chip in chat when something is captured. |
+| `learning.skill_ladder` | boolean | `true` | backend-only | Allow the review to PROPOSE reusable skills — never auto-installed; proposals land in the Skill-proposals inbox for approval. |
+
+## Workflows (`workflows.*`)
+
+The engine's runtime knobs live on **Settings → Workflows**. Workflow definitions, runs and
+triggers are the `#/workflows` page, not this file.
+
+| Key | Type | Default | Where to set | Description |
+|---|---|---|---|---|
+| `workflows.enabled` | boolean | `true` | Settings → Workflows | Master switch. Off stops new runs from starting and leaves stored definitions untouched. |
+| `workflows.self_schedule_max_outstanding` | integer (0–200) | `20` | Settings → Workflows | How many enabled automations the agent may hold at once via its own scheduling tools. Counted over ENABLED agent-created automations, so pausing one frees a slot without deleting it. |
+| `workflows.max_concurrent_llm_nodes` | integer (1–32) | `4` | Settings → Workflows | How many model-backed nodes may run at once in one workflow. |
+| `workflows.max_concurrent_io_nodes` | integer (1–32) | `2` | Settings → Workflows | How many action nodes may run at once. Kept low on purpose: a fan-out over minutes-long local-model actions would otherwise starve the run's model calls. |
+| `workflows.default_node_timeout_total_secs` | integer (0–86400) | `900` | Settings → Workflows | Wall-clock cap for one node. `0` disables it. |
+| `workflows.default_node_timeout_stall_secs` | integer (0–86400) | `300` | Settings → Workflows | Stop a node after this long with NO progress, even under the total cap. Progress events reset the clock. `0` disables it. |
+| `workflows.lease_ttl_secs` | integer (30–3600) | `900` | Settings → Workflows | How long a session's exclusive claim on a task lasts before another may take it. Deliberately short: a worker that needs longer renews, which proves it is alive. |
+| `workflows.model_tier_reasoning` | string | `reasoning` | Settings → Workflows | Which model use case a node asking for the `reasoning` tier resolves to. Templates name an intent, never a model, so they stay portable. |
+| `workflows.model_tier_standard` | string | `orchestration` | Settings → Workflows | Use case for the `standard` tier. Distinct from `fast` on purpose: collapsed onto one use case, the three tiers are decorative. |
+| `workflows.model_tier_fast` | string | `background` | Settings → Workflows | Use case for the `fast` tier. |
+| `workflows.surface_mode_default` | enum: `off`, `passive`, `suggest` | `off` | Settings → Workflows | What a NEWLY authored workflow does before you opt it in. `off` never surfaces itself (explicit invocation always works), `passive` injects its guidance, `suggest` may propose running itself. |
+| `workflows.match_threshold` | number (0–1) | `0.62` | Settings → Workflows | How confident the embedding tie-breaker must be to override a keyword tie when two templates score alike. Only consulted on a tie — keyword matches decide first. |
+| `workflows.max_materialized_per_foreach` | integer (1–500) | `20` | Settings → Workflows | The most Tasks one `foreach` node may put on your board. The run still executes every item; only the board rows are capped, and the run reports what it withheld. |
+| `workflows.retention_per_def` | integer (1–10000) | `100` | Settings → Workflows | Oldest runs beyond this are pruned. Matches the per-job cap schedules use. |
+| `workflows.confirmation_ttl_secs` | integer (0–2592000) | `604800` | Settings → Workflows | How long a pending approval stays live. A week, because the realistic case is being away. `0` never expires. A destructive confirmation auto-REJECTS on expiry; an ordinary one keeps waiting. |
+| `workflows.default_quiet_windows` | string (`HH:MM-HH:MM`) | `""` | Settings → Workflows | A quiet window applied to new automations that set none of their own. May wrap midnight. Empty means no default. Per-trigger settings always win. |
+| `workflows.duty_gate_default` | string | `""` | Settings → Workflows | The is-the-user-on-duty check applied to new automations that name none. Empty means no gate; `manual` is the built-in toggle and apps can supply others. The gate always fails OPEN. |
+| `workflows.workspace_default_mode` | enum: `scratch`, `worktree`, `in_place`, `container` | `scratch` | Settings → Workflows | Where a run works when its template declares no `workspace.mode`. A template's own declaration always wins. `in_place` is deliberately never the default — that is the mode in which a destructive step runs against real state. |
+| `workflows.workspace_teardown_on_expiry` | boolean | `true` | Settings → Workflows | Run a workspace's declared `teardown` before its directory is deleted by retention or an explicit delete. On, because teardown's job is to stop services while the directory still exists. |
+`workflows.max_concurrent_nodes` was **removed** in this release (#465). It claimed to be the
+per-run total "partitioned across typed lanes", and `lane_caps()` never consulted it — the two
+`max_concurrent_*_nodes` rows above are the live partition. A stored value for it is ignored.
+
+`workflows.max_active_runs` was also **removed** (#465). It had no reader and imposed no runtime
+cap, so removing it changes no run-start behaviour; a stored value is ignored.
+
+## Security (`security.*`)
+
+| Key | Type | Default | Where to set | Description |
+|---|---|---|---|---|
+| `security.denied_commands` | list of regexes (≤100) | `[]` | Settings → Security | User-added regexes for shell commands the agent must never run, appended to the always-on built-in denylist. Matched case-insensitively against the full command string. |
+| `security.egress.allow_hosts` | list of strings | `[]` | Settings → Security | Hosts (bare domain covers subdomains) permitted even when they resolve to a private/LAN address — for homelab webhooks/services. Applies to all egress surfaces. |
+| `security.egress.deny_hosts` | list of strings | `[]` | Settings → Security | Hosts the agent must never reach, even if public. A deny always overrides an allow. |
+| `security.egress.allow_private` | boolean | `false` | Settings → Security | Permit egress to private/LAN addresses globally. Only enable on a fully trusted network — it removes SSRF protection for the whole LAN. |
+
+## Inbox (`inbox.*`)
+
+Alert keywords, name-mention alerts, and retention live in the Inbox settings panel
+(entity store, not `config.json`). Config-side:
+
+| Key | Type | Default | Where to set | Description |
+|---|---|---|---|---|
+| `inbox.enabled` | boolean | `false` | Inbox → Settings ("Poll sources" toggle) | Gates the poll-based message sources. The UI toggle calls `/api/inbox/restart` after flipping so the service re-attaches. |
+| `inbox.user_id` | string | `""` | channel-app setup | Your user id on the connected channel — used to skip your own messages. |
+| `inbox.watched_channels` | list of strings | `[]` | channel-app setup | Channel ids the poll loop watches. |
+| `inbox.poll_interval_seconds` | integer (min 30) | `60` | backend-only | Poll cadence. |
+| `inbox.style_rules` | list of strings | `[]` | backend-only | Voice/style lines injected into AI reply drafting. |
+| `inbox.test_mode` | boolean | `false` | backend-only | Ingest your OWN messages too (demo/testing). |
+| `inbox.engagement_ranking_enabled` | boolean | `false` | Inbox → Settings | Rank the inbox by how much you engage with each channel/sender (favorites, opens, replies boost; dismisses lower) on top of recency. |
+| `inbox.engagement_half_life_days` | number (0–365) | `0.0` | Inbox → Settings | How fast an engagement boost fades (`0` = the default ~6.6 days). |
+
+## Tool output (`tools.*`)
+
+| Key | Type | Default | Where to set | Description |
+|---|---|---|---|---|
+| `tools.projection_rules` | list of objects | `[]` | Settings → Tool output | User-taught rules mapping a tool-output content marker (regex) to a builtin projection strategy, so a large output keeps its salient slice instead of a generic cut. Consulted before the heuristic sniff; a bad regex is skipped. |
+| `tools.projection_rules[].name` | string | `""` | Settings → Tool output | Short label for the rule. |
+| `tools.projection_rules[].match_regex` | string | `""` | Settings → Tool output | Regex matched against the start of a tool's output. |
+| `tools.projection_rules[].strategy` | enum: `log`, `diff`, `json`, `test`, `csv` | `log` | Settings → Tool output | The builtin projector to apply. |
+| `tools.bg_compress_enabled` | boolean | `true` | Settings → Chat | Continuously compress old, idle conversation history in the background (topic-segmented, attention-weighted) so long sessions stay fast. Every dropped span is archived first and stays recoverable, and the summary names its archive. Incognito/temporary chats are never touched. |
+| `tools.bg_compress_idle_days` | number (0–365) | `7.0` | Settings → Chat | Only compress sessions untouched for at least this long — an active session is never compressed. |
+
+## Voice (`voice.*`)
+
+Behaviour of dictation and spoken replies. The MODEL for speech-to-text and
+text-to-speech is bound in Settings → Models; these are the provider-agnostic knobs on
+top of it. All of them are comfort settings rather than safety guards — turning one off
+makes the voice loop noisier, never less safe.
+
+| Key | Type | Default | Where to set | Description |
+|---|---|---|---|---|
+| `voice.push_to_talk_chord` | string | `CommandOrControl+Shift+Space` | Settings → Speech & Transcription | The global shortcut the **desktop app** binds for push-to-talk: press to start capturing the microphone, press again to stop and transcribe into the composer at your cursor. An Electron accelerator string; needs at least one modifier, since a bare key would be taken from every other app on the machine. The desktop shell binds it and refuses an unusable or already-taken chord with a reason. Ignored in a browser tab (no global shortcuts). See [the desktop guide](../guides/desktop.md). |
+| `voice.confirmation_phrases` | list of strings | `["do it", "go ahead", "send it", "execute"]` | Settings → Speech & Transcription | In hands-free mode a transcript accumulates and is only sent once one of these phrases ends what you just said, so a half-finished thought never becomes an executed instruction. Push-to-talk and typed input ignore this. An empty list falls back to these defaults. |
+| `voice.exit_phrases` | list of strings | `["cancel", "never mind", "forget it"]` | Settings → Speech & Transcription | Saying one of these in hands-free mode discards the accumulated transcript without sending it. |
+| `voice.duplex_mute_enabled` | boolean | `true` | Settings → Speech & Transcription | Suspend the microphone and discard queued audio while a spoken reply plays. This is what stops the assistant hearing itself. |
+| `voice.echo_filter_enabled` | boolean | `true` | Settings → Speech & Transcription | Drop a transcription sharing three consecutive words with what the assistant just spoke — the backstop for speaker bleed. Hands-free requests only; the dashboard shows the drop instead of looking deaf. |
+| `voice.clean_for_speech_enabled` | boolean | `true` | Settings → Speech & Transcription | Strip code blocks, reduce URLs to their domain and paths to their filename, and drop CLI flags before synthesis. The chat transcript always keeps the full text — only the audio is cleaned. |
+| `voice.voice_disclaimer_enabled` | boolean | `true` | Settings → Speech & Transcription | Append a one-line note to a dictated message telling the model the text came from speech recognition, so it self-corrects garbled homophones instead of confidently misreading them. |
+
+## Dashboard (`dashboard.*`)
+
+| Key | Type | Default | Where to set | Description |
+|---|---|---|---|---|
+| `dashboard.url` | string | `""` | written by `personalclaw setup` | Advertised dashboard origin — used in links delivered to external channels and by server bind/origin checks. |
+| `dashboard.restore_sessions` | boolean | `false` | Settings → Chat | Re-open recently active sessions on startup. |
+| `dashboard.restore_window_minutes` | integer (0–1440) | `30` | Settings → Chat | Time window for session restoration. `0` = restore all. |
+| `dashboard.user_name` | string | `""` | Settings → Account | How the system addresses the operator. Set during first-run onboarding; instance-level so it follows you across browsers/machines. |
+| `dashboard.merge_queued_messages` | boolean | `false` | Settings → Chat | Concatenate follow-up messages while the agent is busy instead of queueing them separately. |
+| `dashboard.auto_tag_sessions` | boolean | `true` | Settings → Chat | When a chat's title is auto-generated, also propose and assign tags in the same pass. Never touches chats you've tagged, or incognito/temporary chats. |
+| `dashboard.mcp_probe_timeout_secs` | integer (5–120) | `15` | backend-only (PATCH-editable) | Per-server timeout for MCP tool-discovery probes; the gateway's MCP status sweep budget derives from it (+15s). |
+| `dashboard.widget_density` | enum: `more`, `less` | `more` | Settings → Chat | How aggressively the agent uses inline widgets. |
+| `dashboard.send_on_enter` | boolean | `true` | Settings → Chat | Enter sends (Shift+Enter for newline). Off: Enter inserts a newline; Cmd/Ctrl+Enter sends. |
+| `dashboard.show_timestamps` | boolean | `false` | Settings → Chat | Display a timestamp on each chat message. |
+| `dashboard.show_thinking_inline` | boolean | `false` | Settings → Chat | Show intermediate reasoning between tool calls instead of collapsing it. |
+| `dashboard.simplified_tool_names` | boolean | `false` | Settings → Chat | Inline tool pills show a simplified purpose instead of the exact command. |
+| `dashboard.screen_share_enabled` | boolean | `false` | Settings → Chat | Master opt-in for the composer's "Share screen" control. Off (the default) hides the control **and** makes the server refuse a frame outright. On, a message can carry ONE frame of a screen/window you pick in the browser's own share dialog: held in memory for that single turn, never written to disk, dropped as soon as it is used. Pinning a frame (composer "+" → "Pin shared frame") is the only path to disk, and is refused in temporary/incognito chats. |
+| `dashboard.auto_open_browser` | boolean | `true` | backend-only | Open the dashboard in a browser on gateway start (`--no-open` overrides per-run). |
+| `dashboard.terminal` | object | `{"enabled": true}` | `enabled`: backend-only; `persist`: Terminal page | `enabled` is the kill switch for the built-in terminal (PTY) feature, read raw with a 30s cache. `persist` (tmux-backed persistence across gateway restarts) is toggled on the Terminal page. |
+
+## Top-level keys
+
+| Key | Type | Default | Where to set | Description |
+|---|---|---|---|---|
+| `hooks` | object | `{}` | Triggers page / `/api/hooks` | Webhook trigger config by hook id, plus `webhook_token` and `auto_approve_sources`. Managed via the Triggers UI; documented here because the raw shape is config-visible. |
+| `observe_max_messages` | integer | `200` | backend-only | Channel-observation ring-buffer size (messages kept per channel for context). |
+| `observe_ttl_hours` | number | `168.0` | backend-only | How long observed channel messages stay usable as context. |
+| `agents` | object | `{}` | Agents page | Named agent definitions (see below). |
+| `default_agent` | string | `""` | Settings → Agent defaults | Active agent name from the `agents` section (also `PUT /api/config/default-agent`). |
+| `memory_stores` | object | `{}` | backend-only | Named memory store definitions; `memory_stores.<name>.description` is a human-readable purpose. Stores are referenced by agent profiles. |
+| `updates.auto` | string | `"off"` | Settings → Updates | Opt-in unattended-apply mode (retired the legacy `auto_update` bool, RUM-5). `"off"` only notifies; `"staged"` applies at the next safe point — held while a session/subagent is in flight, and only ever the resolved channel/pin release tag, never raw `main`. |
+| `timezone` | string | `""` (system) | set by `personalclaw setup` | IANA timezone (e.g. `Asia/Tokyo`) for schedules and the clock the LLM sees. Per-job trigger timezones override it. |
+| `snapshot_dir` | string | `""` | backend-only | Where `personalclaw snapshot` writes/reads portability snapshots. Empty = `~/.personalclaw/snapshots`. |
+
+## Agent definitions (`agents.<name>.*`)
+
+Managed on the **Agents page** (create/edit forms); stored under `agents` keyed by
+agent name. Every field is optional — empty inherits the global default.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `agents.*.provider` | string | `""` | Runtime backend: `native` (in-process loop) or `acp:<cli>` (external CLI). Empty inherits the global `agent.provider`. |
+| `agents.*.provider_agent` | string | `""` | ACP provider agent name (modeId for `session/set_mode`). |
+| `agents.*.acp_mode` | string | `""` | ACP permission/operating mode for adapters that expose one (e.g. `default`, `acceptEdits`, `plan`, `bypassPermissions`). Distinct from Approval Mode (the host gate). |
+| `agents.*.default_dir` | string | `""` | Working directory this agent opens in. Empty inherits the workspace root. Overridable per-session. |
+| `agents.*.memory_store` | string | `""` | Memory provider for this agent. Empty uses the filesystem fallback scoped by working directory. |
+| `agents.*.description` | string | `""` | Human-readable agent description. |
+| `agents.*.system_prompt` | string | `""` | System prompt injected at session start. |
+| `agents.*.voice` | string | `""` | WHO the agent is — tone, opinions, persona — kept separate from the operating rules and injected high-priority so personality survives long prompts. |
+| `agents.*.model` | string | `""` | Default model for this agent. Overridable per-chat. |
+| `agents.*.approval_mode` | string | `""` | `auto`, `interactive`, or empty (inherit global). |
+| `agents.*.skills` | list | `[]` | Skill names loaded for this agent. |
+| `agents.*.tools` | list | `[]` | Allowed tool name patterns for this agent. |
+| `agents.*.triggers` | list | `[]` | Referenced lifecycle-trigger IDs. A lifecycle trigger fires ONLY for agents that list it. |
+| `agents.*.source` | string | `personalclaw` | Agent origin: `personalclaw`, `marketplace`, or `builtin`. |
+
+---
+
+## Environment variables
+
+Not config-file fields, but part of the same operator surface:
+
+| Variable | Effect |
+|---|---|
+| `PERSONALCLAW_HOME` | Relocate the config/state directory (default `~/.personalclaw`). |
+| `PERSONALCLAW_PORT` | Override the dashboard/API port (default `10000`). Validated at CLI entry. A running gateway **overwrites** this in its own environment with the port it actually bound, so every child it spawns agrees with the live socket even under `--port` / `--port auto`. |
+| `PERSONALCLAW_WORKSPACE` | Workspace root for LLM working directories. |
+| `PERSONALCLAW_BIND_HOST` | Bind address for the gateway (e.g. `0.0.0.0` for LAN access). |
+| `PERSONALCLAW_BYPASS_LOCAL_NETWORKS` | `1` = skip token auth for any client whose **resolved** address is private (loopback/RFC1918/link-local/ULA). Dev convenience for a trusted LAN. **Do not set it behind a reverse proxy:** the address the gateway resolves is then the proxy's own, which is private, so requests forwarded from anywhere are admitted with no token. `personalclaw doctor`'s `remote` row fails when this is set together with `dashboard.trusted_proxies` or `dashboard.public_url`. See [remote-access.md](../guides/remote-access.md). |
+| `PERSONALCLAW_FIRST_PARTY_APPS_DIR` | Point a packaged install at a first-party apps directory. |
+| `PERSONALCLAW_SKIP_APP_BACKENDS` | Don't launch app backend subprocesses (test isolation). |
+| `PERSONALCLAW_CREDENTIAL_BACKEND` | Where new credentials are stored: `keychain` (OS secret service, needs the `keychain` extra) or `dotenv` (default — `~/.personalclaw/.env` at mode 0600). A `keychain` request on a machine with no usable secret service falls back to `.env` 0600 and `personalclaw doctor` says so. Reads always see both stores, so switching back never hides an existing secret. |
+
+### How a child finds its gateway
+
+Tool subprocesses (the `personalclaw-core` MCP server, sandboxed cron scripts, an ACP CLI's
+MCP children) resolve the gateway's API base through **one** owner, `personalclaw.gateway_base`,
+which answers from the socket the gateway actually bound — in order:
+
+1. `PERSONALCLAW_PORT`, which the gateway overwrites with its bound port after binding;
+2. `~/.personalclaw/gateway.runtime.json`, the same value recorded inside the home for a child
+   whose environment was rebuilt from an allowlist (ignored when the pid it names is gone);
+3. an **explicit** port in `dashboard.url`.
+
+If none of the three answers, the call is **refused** with a message naming all three. It is
+never sent to the default port: on a host running more than one instance, `10000` is another
+instance's gateway — with its own home, config and state — so a guess is a cross-instance
+read or write, not a degraded local call.
+
+- `GET /api/config/personalclaw` — full config as JSON (owner-only).
+- `PATCH /api/config/personalclaw {path, value}` — single-field writes, allowlisted; non-editable paths return 400.
+- `GET /api/config/schema` — the full field registry (labels, help, types, defaults, deprecations) auto-derived from the config dataclasses. This document is generated against it.
+- `personalclaw config get|set <key> [value]` — CLI equivalent; `set` validates through the same loader. `get` withholds credential-named fields (`api_key`, `bot_token`, …) unless `--reveal` is passed.
+
+See also: [API overview](api-overview.md) · [CLI reference](cli.md) ·
+[Getting started](../guides/getting-started.md)

@@ -1,0 +1,70 @@
+import { useState, useEffect, useRef } from 'react'
+import { ArrowLeft, Check } from 'lucide-react'
+import { TopBar } from '../../ui/TopBar'
+import { IconButton } from '../../ui/IconButton'
+import { Button } from '../../ui/Button'
+import { PageTitle } from '../../ui/PageTitle'
+import { api, type TaskCollection, type TaskItem } from '../../lib/api'
+import { PartialNotice } from '../../ui/PartialNotice'
+import { useQuery, invalidateKeys } from '../../lib/data'
+import { TaskForm, emptyDraft, draftToPayload, type TaskDraft } from './TaskForm'
+
+/** A failed read is empty AND complete: the picker offers nothing, and must not claim it is
+ *  hiding candidates it never heard about. */
+const EMPTY_TASKS: TaskCollection = { tasks: [], total: 0, complete: true, owner: '' }
+
+/** Dedicated full-page create flow (not the sidebar, per the directive). The
+ *  same TaskForm the edit panel uses, laid out at content width with a sticky
+ *  footer. On success, hands the new task back to the section to open it. */
+export function TaskCreatePage({ onBack, onCreated }: { onBack: () => void; onCreated: (t: TaskItem) => void }) {
+  const [draft, setDraft] = useState<TaskDraft>(emptyDraft)
+  // A cheap cached snapshot for the dependency picker — NOT the list page's 'tasks'
+  // key (that's persist:false for live status); a separate persisted key is fine here.
+  // `allTasks`, not `tasks()`: the picker's whole job is to offer EVERY candidate, and the
+  // unlimited call took the server's default 50 — so past that you could not select an
+  // existing task as a prerequisite at all, with nothing saying the list was partial (#485).
+  const { data: collection } = useQuery('tasks-all', () => api.allTasks().catch(() => EMPTY_TASKS), { persist: true })
+  const allTasks = collection?.tasks ?? []
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+  // A failed create used to render its message at the BOTTOM OF THE SCROLLING BODY while the Create
+  // button lives in a sticky footer. Measured on `#/tasks/new` at 1440x900: the button sat at y=848 and
+  // the message at y=1744 — 844px BELOW the fold — with `role` null and no live region, so clicking
+  // Create produced no observable effect at all. The role announces it; the ref scrolls it into view,
+  // using the `scrollIntoView({ block: 'nearest' })` idiom this app already uses in 13 places.
+  const errRef = useRef<HTMLParagraphElement>(null)
+  useEffect(() => { if (err) errRef.current?.scrollIntoView({ block: 'nearest' }) }, [err])
+
+  async function create() {
+    if (!draft.title.trim()) { setErr('Title is required'); return }
+    setSaving(true); setErr('')
+    try {
+      const t = await api.createTask(draftToPayload(draft))
+      // This page's own picker reads a persisted `tasks-all`, so without this the next visit paints
+      // the pre-create list before its revalidation lands — and a hard reload paints it again.
+      invalidateKeys('tasks', true)
+      onCreated(t)
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Create failed') } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><PageTitle>New task</PageTitle></div>} />
+      <div className="flex-1 overflow-y-auto">
+        <div className="mx-auto px-l py-l pb-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+          <PartialNotice className="mb-l" complete={collection?.complete ?? true} shown={allTasks.length}
+            total={collection?.total ?? 0} what="tasks"
+            detail="a prerequisite outside this window cannot be picked here" />
+          <TaskForm draft={draft} onChange={setDraft} allTasks={allTasks} />
+          {err && <p ref={errRef} role="alert" data-type="body-s" className="mt-l text-danger">{err}</p>}
+        </div>
+      </div>
+      <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-m">
+        <div className="mx-auto flex justify-end gap-s" style={{ maxWidth: 'var(--content-width)' }}>
+          <Button variant="ghost" onClick={onBack}>Cancel</Button>
+          <Button onClick={create} loading={saving} loadingLabel="Creating…" disabled={saving || !draft.title.trim()} disabledReason={!draft.title.trim() ? 'Enter a task title first' : undefined}><Check size={16} /> Create task</Button>
+        </div>
+      </div>
+    </div>
+  )
+}

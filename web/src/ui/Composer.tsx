@@ -1,0 +1,351 @@
+import { useEffect, useRef, useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { ArrowUp, Square, CornerDownLeft, Sparkles, Mic, Ear, Loader2, Paperclip, Check, MonitorUp } from 'lucide-react'
+import { IconButton } from './IconButton'
+import { spring, physics, expr } from '../design/motion'
+import { AgentPill, ModelPill, ApprovalPill, ReasoningPill, NaturalVoicePill, effortsForAgent, PlusMenu } from './composer/controls'
+import { MarkdownInput, type MarkdownInputHandle } from './composer/MarkdownInput'
+import { resolveSendButton } from './composer/sendButtonState'
+import { useMicRecorder } from './composer/useMicRecorder'
+import type { ComposerProps } from './composer/types'
+import { useIsMobile } from '../app/useIsMobile'
+import { api } from '../lib/api'
+import { useQuery } from '../lib/data'
+import { usePushToTalk, ensureMicGrant } from '../lib/pushToTalk'
+import { MicCaptureChip } from './MicCaptureChip'
+
+// MIN_MAX_H is the resize FLOOR (user can shrink to ~1 line); DEFAULT_REST_H is
+// the resting height a fresh composer opens at — ~3-4 lines tall (17px × 1.5
+// line-height ≈ 25px/line) so there's room to type before it has to grow.
+const MIN_MAX_H = 48, DEFAULT_REST_H = 92, MAX_MAX_H = 480, STORE_KEY = 'composer-resth2'
+
+const DEFAULT_CONTROLS = { agent: true, model: true, approval: true, reasoning: false, attach: true, mic: true, optimize: true }
+
+/** The one configurable composer — used by Chat and the goal composer. `controls` picks
+ *  which inline pills + "+"-menu items appear; `data`/`selection` feed real
+ *  agent/model/mode options. Pill cluster: [+] agent · model · approval ·
+ *  reasoning … [mic] [send]. Textarea auto-grows to a user-resizable max. */
+export function Composer({
+  value, onChange, onSend, streaming, processing, onStop, placeholder = 'Ask anything',
+  controls = DEFAULT_CONTROLS, data, selection, onSelect, onAttach, onOpenPrompts, plusMenuExtra, onFocusChange,
+  mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
+  onOptimize, optimizing, history, onTranscribe, onMicError, canQueue, contextPct, minChars = 1,
+  openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit, screenShare,
+  naturalVoice,
+}: ComposerProps) {
+  const [focused, setFocused] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
+  // On mobile the return key inserts a newline (send is button-only) — a phone
+  // keyboard's Enter must not fire a half-typed message. Reactive to rotation/resize.
+  const isMobile = useIsMobile()
+  // "Send on Enter" is read HERE rather than threaded in from each page, so every composer in the
+  // app answers to the setting from one shared, persisted cache key. Threading it would mean
+  // repeating the prop at each ComposerStage site (chat, the launcher, the loop composer) — the
+  // same per-site omission that let this setting ship persisted, written by two controls, and read
+  // by nothing. An unresolved or failed read leaves `data` undefined, which MarkdownInput treats as
+  // "keep sending on Enter" — matching the config default rather than silently changing the keyboard.
+  const { data: sendOnEnter } = useQuery('chat:send-on-enter', () => api.dashboardConfig().then((c) => c.send_on_enter), { persist: true })
+  const canSend = value.trim().length >= minChars
+  const setFocus = (f: boolean) => { setFocused(f); onFocusChange?.(f) }
+  // Send→check bloom (brand shape-morph): on a send from the idle button, flash a
+  // success check for a beat before the turn's `streaming` takes over the button.
+  // Purely cosmetic + self-clearing; the real send fires immediately.
+  const [justSent, setJustSent] = useState(false)
+  const sentTimer = useRef<number | undefined>(undefined)
+  const fireSend = () => {
+    onSend()
+    window.clearTimeout(sentTimer.current)
+    setJustSent(true)
+    sentTimer.current = window.setTimeout(() => setJustSent(false), 620)
+  }
+  useEffect(() => () => window.clearTimeout(sentTimer.current), [])
+  // Drag-and-drop file attach — mirrors the "+" button (both call onAttach).
+  // depth counter so child dragenter/leave events don't flicker the overlay.
+  const dragDepth = useRef(0)
+  const canAttach = controls.attach && !!onAttach
+  const onDragEnter = (e: React.DragEvent) => {
+    if (!canAttach || !Array.from(e.dataTransfer?.types ?? []).includes('Files')) return
+    e.preventDefault(); dragDepth.current += 1; setDragOver(true)
+  }
+  const onDragLeave = (e: React.DragEvent) => {
+    if (!canAttach) return
+    e.preventDefault(); dragDepth.current = Math.max(0, dragDepth.current - 1); if (dragDepth.current === 0) setDragOver(false)
+  }
+  const onDrop = (e: React.DragEvent) => {
+    if (!canAttach) return
+    e.preventDefault(); dragDepth.current = 0; setDragOver(false)
+    const files = Array.from(e.dataTransfer?.files ?? [])
+    if (files.length) onAttach!(files)
+  }
+
+  const inputRef = useRef<MarkdownInputHandle>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  // Hands-free (MULTIMODAL-IO §4.1): the loop is a composer-local mode, so the
+  // toggle and the mode live together. Dictation lands in the draft (the surface
+  // the user is already watching) and only a confirmation phrase sends it.
+  const [listening, setListening] = useState(false)
+  const canHandsFree = !!handsFree && !!onHandsFreeSubmit && !!onTranscribe
+  useEffect(() => { if (!canHandsFree) setListening(false) }, [canHandsFree])
+
+  // mic → STT: insert the transcript at the caret (or append) when it returns.
+  const mic = useMicRecorder(onTranscribe, (text) => {
+    inputRef.current?.insertAtCaret(text)
+  }, onMicError, canHandsFree ? {
+    enabled: listening,
+    confirmationPhrases: handsFree!.confirmationPhrases,
+    exitPhrases: handsFree!.exitPhrases,
+    muted: (handsFree!.muteWhileSpeaking ?? true) && !!handsFree!.speaking,
+    onBuffer: (text) => onChange(text),
+    onSubmit: (text) => { onChange(text); onHandsFreeSubmit!(text) },
+  } : undefined)
+
+  // Push-to-talk (DESKTOP-CAPABILITIES S3): the desktop shell's global chord drives the
+  // SAME recorder the mic button drives — one owner of the microphone, so a chord press
+  // and a button click cannot end up holding two tracks. `capturing` is read from the
+  // recorder's real state, which is what the shell's menu-bar indicator is drawn from.
+  // Inert in a browser tab (no bridge, no config read, no binding).
+  usePushToTalk({
+    capturing: mic.state === 'recording',
+    enabled: !!controls.mic && !!onTranscribe && !listening,
+    // The grant is checked BEFORE opening the stream so a denied microphone produces an
+    // actionable sentence rather than a bare getUserMedia rejection.
+    onStart: () => { void ensureMicGrant().then((err) => (err ? onMicError?.(err) : mic.toggle())) },
+    onStop: mic.toggle,
+  })
+
+  // `restH` is the user-set resting height — the editor is at least this tall
+  // even when empty (so the handle resizes it at rest), and auto-grows with
+  // content up to MAX_MAX_H. Dragging the handle sets restH.
+  const [restH, setRestH] = useState<number>(() => {
+    const v = Number(localStorage.getItem(STORE_KEY))
+    return v >= MIN_MAX_H && v <= MAX_MAX_H ? v : DEFAULT_REST_H
+  })
+  useEffect(() => { localStorage.setItem(STORE_KEY, String(restH)) }, [restH])
+
+  function onHandleDown(e: React.PointerEvent) {
+    e.preventDefault()
+    const startY = e.clientY
+    const startH = restH
+    const move = (ev: PointerEvent) => setRestH(Math.max(MIN_MAX_H, Math.min(MAX_MAX_H, startH + (startY - ev.clientY))))
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
+  }
+
+  const sel = selection
+  const pills = (
+    <div className="flex items-center gap-xs min-w-0 flex-wrap">
+      {controls.attach && <PlusMenu onAttach={() => fileRef.current?.click()} onOpenPrompts={onOpenPrompts} extra={plusMenuExtra} />}
+      {controls.agent && <AgentPill data={data} value={sel?.agent ?? ''} openSignal={openAgentSignal} onSelect={(a) => onSelect?.({ agent: a })} />}
+      {controls.model && <ModelPill data={data} agent={sel?.agent ?? ''} value={sel?.model ?? ''} contextPct={contextPct} openSignal={openModelSignal} onSelect={(m) => onSelect?.({ model: m })} />}
+      {controls.approval && <ApprovalPill value={sel?.approval ?? 'normal'} onSelect={(m) => onSelect?.({ approval: m })} />}
+      {controls.reasoning && <ReasoningPill value={sel?.reasoning ?? ''} efforts={effortsForAgent(data, sel?.agent ?? '')} openSignal={openReasoningSignal} onSelect={(e) => onSelect?.({ reasoning: e })} />}
+      {/* Natural voice (PT-7) — feature-detected on the prop, not a `controls` flag:
+          it needs a conversation to scope itself to, and the goal composer has none.
+          Always rendered when present, including in its off state, so a prose change
+          is attributable to a control the owner can see. */}
+      {naturalVoice && <NaturalVoicePill {...naturalVoice} />}
+    </div>
+  )
+
+  // Right-hand action cluster: optimize · voice · send/stop/queue.
+  // Two names, not three: "Stop recording" is a different ACTION, so it earns its own name.
+  // Transcription is the same action working — `loading` announces that as `aria-busy`, so the
+  // name stays the one the user can find the control by.
+  const micLabel = mic.state === 'recording' ? 'Stop recording' : 'Voice input'
+  // The label states what the control does, never why it is unavailable — a reason
+  // folded into the name makes the action unfindable by the name it has when it works.
+  const handsFreeLabel = !listening
+    ? 'Hands-free voice'
+    : mic.muted
+      ? 'Hands-free voice — paused while speaking'
+      : `Hands-free voice — say “${handsFree?.confirmationPhrases[0] ?? 'go ahead'}” to send`
+  const actions = (
+    <div className="flex items-center gap-xs">
+      {/* The reason rides `disabledReason`, NOT the label. Folding it into the label mutates the
+          accessible NAME, so the action stops being findable by the name it has when it works —
+          the failure cycle 56 measured and ruled against. */}
+      {/* 🔑 THE SAME RULE, ONE STATE FURTHER. The comment above bans folding a REASON into the
+          name; this button was folding its PROGRESS in ("Optimizing…"), for the same reason the
+          reason used to live there — there was nowhere else to put it. `loading` is that place:
+          `aria-busy` says "working" and the primitive cross-fades the glyph to a spinner, so the
+          name stays "Optimize prompt (⌘↵)" in every state and the hand-rolled
+          `icon={optimizing ? Loader2 : …}` + `[&_svg]:animate-spin` swap is gone. The click guard
+          goes too — `loading` refuses it through the primitive's own `off` check. */}
+      {controls.optimize && onOptimize && (
+        <IconButton icon={Sparkles}
+          label="Optimize prompt (⌘↵)"
+          disabledReason="Type something first"
+          active={optimizing} size={40}
+          disabled={!optimizing && !canSend}
+          loading={optimizing}
+          onClick={onOptimize} />
+      )}
+      {/* The in-app half of the capture indicator. Rendered from the recorder's LIVE
+          state, so a denied microphone (no stream) shows nothing — and a capture that
+          ends any way at all takes the chip with it. */}
+      {mic.state === 'recording' && <MicCaptureChip onStop={mic.toggle} />}
+      {/* Its neighbour's twin: transcription is in flight, so it is `loading`. "Stop recording"
+          stays a real name change (the action genuinely differs); "Transcribing…" was progress
+          wearing the name, and `aria-busy` carries that now. */}
+      {controls.mic && onTranscribe && !listening && (
+        <IconButton icon={Mic} label={micLabel}
+          active={mic.state !== 'idle'} size={40}
+          loading={mic.state === 'transcribing'}
+          onClick={mic.toggle} />
+      )}
+      {/* Screen context (MULTIMODAL-IO §5.2). Rendered only when the config master
+          switch is on, so an install that never opted in has no capture affordance at
+          all. `active` gives it the pressed state; the browser's own picker and capture
+          indicator do the consent work, and the header chip pulses alongside them for
+          as long as the stream is live. When no model can read a frame the control is
+          still SHOWN, disabled, carrying the server's reason — an absent control would
+          leave the user guessing why sharing isn't there. */}
+      {screenShare?.available && (
+        <IconButton icon={MonitorUp} label={screenShare.sharing ? 'Stop sharing screen' : 'Share screen'}
+          active={screenShare.sharing} size={40}
+          disabled={!!screenShare.disabledReason}
+          disabledReason={screenShare.disabledReason}
+          onClick={screenShare.disabledReason ? undefined : screenShare.onToggle} />
+      )}
+      {/* Hands-free: keeps listening and only sends when a confirmation phrase lands.
+          It replaces the push-to-talk button while active so there is one mic owner —
+          two live capture paths would fight over the same track. */}
+      {controls.mic && canHandsFree && (
+        <IconButton icon={Ear} label={handsFreeLabel}
+          active={listening} size={40}
+          disabled={!listening && mic.state !== 'idle'}
+          disabledReason="Finish the current recording first"
+          onClick={() => setListening((v) => !v)} />
+      )}
+      {/* The send/stop/steer/sent/processing choice is a pure state machine
+          (resolveSendButton) so it's unit-testable without mounting the composer. */}
+      {(() => {
+        switch (resolveSendButton({ processing: !!processing, streaming: !!streaming, canSend, canQueue: !!canQueue, justSent })) {
+          // one-shot pre-send processing (e.g. the goal analyze pass) → a spinning
+          // send button, no stop/queue affordance.
+          case 'processing':
+            return <IconButton icon={Loader2} label="Processing…" filled size={40} className="[&_svg]:animate-spin" onClick={undefined} />
+          // mid-stream with a typed draft → STEER it into the running turn
+          // (injected at the next model boundary), not queued to run after.
+          case 'steer':
+            return <IconButton icon={CornerDownLeft} label="Steer — send into the running turn" filled size={40} onClick={() => onSend()} />
+          case 'stop':
+            return <IconButton icon={Square} label="Stop" filled size={40} onClick={onStop} />
+          // Idle send. On send it briefly morphs arrow→check with a bounce bloom
+          // (the streaming spinner then takes over for the turn).
+          case 'sent':
+            return <IconButton icon={Check} label="Sent" filled size={40} onClick={undefined} iconKey="sent" bloom />
+          // Disabled until the draft meets minChars. The name stays "Send message" in every
+          // state — the reason rides `disabledReason` (the accessible description), so the
+          // button is still findable by its own name while it is unavailable.
+          case 'send-disabled':
+            return <IconButton icon={ArrowUp} label="Send message" disabledReason="Type a bit more first" filled={false} disabled size={40} onClick={undefined} iconKey="send" />
+          case 'send':
+            return <IconButton icon={ArrowUp} label="Send message" filled disabled={false} size={40} onClick={fireSend} iconKey="send" />
+        }
+      })()}
+    </div>
+  )
+
+  return (
+    <div className="relative w-full" style={{ maxWidth: 'var(--content-width)' }}>
+      {/* Two "awake" states drive the composer's motion, both scaled through expr()
+          (bold rises tall, refined barely): FOCUS = "rises to meet you"; DRAG-OVER =
+          "opens its arms to receive" — a bigger lift + fuller ring than focus, since
+          a file is about to land. Springs on a bounce tier so it settles with life. */}
+      <motion.div
+        layout
+        animate={{
+          y: dragOver ? -expr(11, 0.4) : focused ? -expr(6, 0.4) : 0,
+          scale: dragOver ? 1 + expr(0.028, 0.4) : focused ? 1 + expr(0.016, 0.4) : 1,
+        }}
+        transition={physics.playful}
+        className="relative"
+      >
+        {/* Pill↔pill-rounder shape morph: on mobile the resting composer rounds up
+            toward a soft capsule; on focus (or on desktop) it settles to the
+            standard sheet radius. Ring + surface morph in lockstep. The ring's glow
+            intensity scales with expressiveness and surges to full on drag-over,
+            where it also breathes (a slow opacity pulse) so the halo reads as a live,
+            liquid surface eager to receive the drop rather than a static outline. */}
+        <motion.div aria-hidden className="absolute -inset-px"
+          animate={{
+            opacity: dragOver ? [0.7 + expr(0.3, 0.4), 0.85 + expr(0.15, 0.4), 0.7 + expr(0.3, 0.4)] : focused ? 0.55 + expr(0.4, 0.4) : 0,
+            borderRadius: (isMobile && !focused && !dragOver) ? 'var(--radius-2xl)' : 'calc(var(--radius-xli) + 1px)',
+          }}
+          transition={dragOver ? { opacity: { duration: 1.4, ease: 'easeInOut', repeat: Infinity }, borderRadius: spring.spatialDefault } : spring.spatialDefault}
+          style={{ background: 'conic-gradient(from 0deg, var(--ring-stop-1), var(--ring-stop-2), var(--ring-stop-3), var(--ring-stop-4), var(--ring-stop-1))' }} />
+        <motion.div
+          animate={{ boxShadow: (focused || dragOver) ? 'var(--shadow-lift)' : 'var(--shadow-rest)', borderRadius: (isMobile && !focused && !dragOver) ? 'var(--radius-2xl)' : 'var(--radius-xli)' }}
+          transition={spring.spatialDefault}
+          className="relative flex flex-col gap-s bg-surface-container px-m py-s"
+          onDragEnter={onDragEnter} onDragOver={canAttach ? (e) => e.preventDefault() : undefined}
+          onDragLeave={onDragLeave} onDrop={onDrop}
+        >
+          {/* drag-and-drop file attach overlay — shown while dragging files over
+              the composer; dropping calls onAttach (same path as the + button). It
+              blooms in on a bounce spring and the clip gently floats (scaled by
+              expr) so "drop here" feels like an invitation, not a static scrim. */}
+          <AnimatePresence>
+            {dragOver && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.94 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                transition={physics.playful}
+                className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-s rounded-[var(--radius-xli)] border-2 border-dashed border-primary/70 bg-surface-container/85 text-primary"
+                data-type="label-m"
+              >
+                <motion.span
+                  animate={{ y: [0, -expr(4, 0.3), 0] }}
+                  transition={{ duration: 1.6, ease: 'easeInOut', repeat: Infinity }}
+                >
+                  <Paperclip size={16} />
+                </motion.span>
+                Drop files to attach
+              </motion.div>
+            )}
+          </AnimatePresence>
+          {/* resize handle — always available so the composer can be made taller
+              even at rest (empty), not only once it has wrapped to multiple lines.
+              The grip springs wider + brighter on hover/drag (scaled by expr) so it
+              telegraphs "grab me" with a little life instead of a bare color swap. */}
+          <div onPointerDown={onHandleDown} title="Drag to resize"
+            className="absolute left-1/2 -translate-x-1/2 -top-1.5 z-10 h-4 w-12 flex items-center justify-center cursor-ns-resize group">
+            <motion.span
+              className="h-1.5 rounded-pill bg-on-surface-low/30 group-hover:bg-on-surface-low/70 transition-colors"
+              initial={false}
+              animate={{ width: 40 }}
+              whileHover={{ width: 40 + expr(14, 0.3) }}
+              transition={physics.snappy}
+            />
+          </div>
+
+          {/* live-markdown editor (CodeMirror 6): the caret line shows raw
+              markdown, other lines render. Replaces the old <textarea>. */}
+          <MarkdownInput
+            ref={inputRef}
+            value={value} onChange={onChange} onSend={fireSend} canSend={canSend}
+            placeholder={placeholder ?? 'Ask anything'}
+            minHeight={restH} maxHeight={MAX_MAX_H}
+            onFocusChange={setFocus}
+            onOptimize={onOptimize} history={history}
+            onMentionFile={onMentionFile} onMentionKnowledge={onMentionKnowledge} mentionProject={mentionProject}
+            slashCommands={!!controls.slash}
+            onLargePaste={onLargePaste}
+            mobile={isMobile}
+            sendOnEnter={sendOnEnter}
+          />
+
+          <div className="flex items-end justify-between gap-s">
+            {pills}
+            {actions}
+          </div>
+
+          <input ref={fileRef} type="file" multiple hidden onChange={(e) => { const f = e.target.files; if (f && onAttach) onAttach(Array.from(f)); e.target.value = '' }} />
+        </motion.div>
+      </motion.div>
+    </div>
+  )
+}

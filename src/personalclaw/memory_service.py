@@ -1,0 +1,2117 @@
+"""The Memory Service (L3) — where ALL memory intelligence consolidates.
+
+This is the platform-owned, vendor-neutral layer that mirrors how Knowledge's
+platform service runs over every item regardless of source
+(memory-architecture.md §3). Supersession, promotion, recall ranking, the L1
+manifest, lessons + the contradiction judge, preference-facet derivation, lint,
+and the reversible WAL all live *here* — expressed over the provider contract —
+not trapped inside one concrete provider that every consumer must duck-type past.
+
+M1 scope: this is a **facade**. It wraps today's ``MemoryStore`` (which holds the
+markdown projection files + an attached ``VectorMemoryStore``) and delegates the
+intelligence to it, with identical behavior. The point of M1 is that consumers
+stop saying ``getattr(memory, "vector_store").X`` and start saying
+``service.X`` — so M2/M3 can re-cut what's *behind* the facade (the provider
+ABC) without touching a single consumer again.
+
+After M3, nothing outside L2 (provider) / L3 (this) references ``vector_store``.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from typing import TYPE_CHECKING, Any, Callable, cast
+
+from personalclaw.identity import current_username
+from personalclaw.memory_providers.base import MemoryProvider
+
+if TYPE_CHECKING:
+    from personalclaw.memory import MemoryStore
+    from personalclaw.memory_record import MemoryCapabilities, MemoryRecord, MemoryScope
+    from personalclaw.vector_memory import SemanticRejectCode, VectorMemoryStore
+
+logger = logging.getLogger(__name__)
+
+
+def normalize_workspace_ref(workspace: str | None) -> str:
+    """The canonical ``scope_ref`` a workspace-scoped record is filed under.
+
+    A workspace **is** a working directory — that is what the `workspace-identity`
+    prompt snippet tells the agent ("You are operating in workspace (working
+    directory): …"), and what `config.loader._slug_cwd` already partitions memory by.
+    So the ref is that directory's realpath, and nothing else.
+
+    Exact match only, deliberately: no basename, prefix, or case-insensitive
+    matching. Two unrelated checkouts are routinely both named ``web``, so a fuzzy
+    comparison would surface one project's private lesson inside another — the leak
+    this scope exists to prevent. A ref that matches nothing simply shows no lesson,
+    which is the safe direction to fail.
+
+    Returns "" for empty input or a non-absolute path (see
+    :func:`resolve_lesson_scope`, which refuses rather than storing an
+    unmatchable ref).
+    """
+    raw = (workspace or "").strip()
+    if not raw:
+        return ""
+    expanded = os.path.expanduser(raw)
+    if not os.path.isabs(expanded):
+        return ""
+    return os.path.realpath(expanded)
+
+
+def resolve_lesson_scope(
+    scope: str | None, workspace: str | None
+) -> tuple["MemoryScope", str | None]:
+    """Resolve a caller-declared ``(scope, workspace)`` pair into stored axes.
+
+    Raises :class:`ValueError` with a caller-facing message when the pair cannot be
+    honored **exactly as asked**. Never downgrades: writing a global lesson because a
+    workspace one could not be resolved is the silent-rescope defect, so an
+    unresolvable request is refused instead of quietly widened.
+
+    Every :class:`MemoryScope` member is handled explicitly and there is no default
+    branch — a member added later raises rather than falling through to GLOBAL.
+    """
+    from personalclaw.memory_record import MemoryScope
+
+    # Absent OR blank means "not declared" → the documented default. Treating "" as
+    # absent but " " as an unknown value would be a distinction no caller can see.
+    raw = (scope or "").strip().lower() or MemoryScope.GLOBAL.value
+    try:
+        parsed = MemoryScope(raw)
+    except ValueError:
+        writable = ", ".join(repr(s.value) for s in (MemoryScope.GLOBAL, MemoryScope.WORKSPACE))
+        raise ValueError(f"unknown scope {raw!r}: expected one of {writable}") from None
+    if parsed is MemoryScope.GLOBAL:
+        return (parsed, None)
+    if parsed is MemoryScope.WORKSPACE:
+        if not (workspace or "").strip():
+            return _refuse("workspace is required when scope='workspace'")
+        ref = normalize_workspace_ref(workspace)
+        if not ref:
+            return _refuse(
+                "workspace must be an absolute working-directory path "
+                f"(got {str(workspace).strip()!r}); use the working directory from "
+                "your session context"
+            )
+        return (parsed, ref)
+    if parsed is MemoryScope.SESSION or parsed is MemoryScope.AGENT:
+        return _refuse(
+            f"scope {parsed.value!r} is not writable for a lesson: use 'global' or 'workspace'"
+        )
+    return _refuse(f"scope {parsed.value!r} has no lesson storage rule")
+
+
+def _refuse(message: str) -> "tuple[MemoryScope, str | None]":
+    """Raise a caller-facing ``ValueError`` (typed as a return so the exhaustive
+    branches in :func:`resolve_lesson_scope` all read as terminal)."""
+    raise ValueError(message)
+
+
+# Ceiling on records the push reflex may volunteer per turn (§3's hard 5). A config
+# value cannot exceed it: an unbounded "possibly relevant" block is precisely the
+# context bloat the plan's soul guardrail forbids, and a cap enforced here can't be
+# raised by editing config.json.
+HARD_CAP_RECORDS = 5
+
+#: The CLOSED procedural outcome vocabulary (M5d). Every member has a live writer:
+#: `success`/`failed` from `after_turn_review.record_procedural_outcomes` and
+#: `learning/run_end.py`, `denied` from the same drain now that the native runtime
+#: distinguishes a refused call from a broken one. `record_procedural` rejects
+#: anything else, and `MemoryService._is_surfaceable_prior` maps every member — so a
+#: sixth outcome cannot be captured-and-never-read the way `corrected` was.
+PROCEDURAL_OUTCOMES: frozenset[str] = frozenset({"success", "failed", "denied"})
+
+#: The ambient procedural block's header. Named "how you have worked" rather than
+#: "rules": these are observed priors, not user instructions, and a header that
+#: overstates them competes with the lesson block's genuine authority.
+PROCEDURAL_HEADER = "[Learned how-to-work priors — observed from your own tool history]"
+
+#: …and its explicit END, like the skills block's `[End of skills]`. Load-bearing rather than
+#: decorative: the allocator renders the whole `lesson` slot as ONE chunk joined by newlines, so a
+#: prior list that outranked the second lesson would leave that lesson sitting under this block's
+#: header. The footer is what closes the block wherever the ranking puts it.
+PROCEDURAL_FOOTER = "[End of how-to-work priors]"
+
+
+def _push_text(row: dict) -> str:
+    """The readable claim inside a semantic row, for the volunteered block.
+
+    Mirrors ``vector_memory._linkable_text``'s reasoning: semantic values are either a
+    plain string or a payload dict whose readable text lives under a known field. Dumping
+    the JSON would inject key names and structural noise into the prompt.
+    """
+    import json as _json
+
+    raw = row.get("value_json")
+    try:
+        value = _json.loads(raw) if isinstance(raw, str) else raw
+    except (ValueError, TypeError):
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        for field_name in ("text", "rule", "value", "description"):
+            candidate = value.get(field_name)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+    return ""
+
+
+# Category → time-to-live in days (memory-architecture.md §3.6, O-A1). Memories
+# age at different rates by what kind of thing they are. A category absent here
+# never expires (facts/prefs are durable). Only records that carry a category are
+# subject to TTL — legacy uncategorized rows are untouched.
+_CATEGORY_TTL_DAYS: dict[str, float] = {
+    "debug": 7.0,  # transient debugging context
+    "event": 30.0,  # a thing that happened — ages out of relevance
+    "decision": 180.0,  # decisions stay relevant for a while
+    # "fact" / "pref" intentionally absent → durable, never TTL-expired
+}
+
+# The session working-memory summary is a bounded rolling digest, not the
+# transcript — cap it so always-injection stays cheap (memory-architecture §3.5).
+_WORKING_MEMORY_CAP = 2_000
+
+
+def _is_episodic(rec: "MemoryRecord") -> bool:
+    from personalclaw.memory_record import MemoryKind
+
+    return rec.kind == MemoryKind.EPISODIC
+
+
+class MemoryService:
+    """L3 facade over a memory provider + its vector layer.
+
+    Construct with the ``MemoryStore`` (the markdown/FTS provider) that may carry
+    an attached ``vector_store``. Every intelligence operation routes through
+    here; callers never touch ``vector_store`` directly.
+    """
+
+    def __init__(
+        self,
+        provider: "MemoryProvider",
+        *,
+        vector_store: "VectorMemoryStore | None" = None,
+        fallback: "MemoryProvider | None" = None,
+    ) -> None:
+        self._provider = provider
+        # An explicit vector store overrides the one discovered on the provider.
+        # Used where the caller holds the record/vector provider directly (e.g.
+        # the consolidator's write path) rather than a markdown projection that
+        # carries an attached vector store.
+        self._explicit_vs = vector_store
+        # The fallback provider in the chain (memory-architecture.md §3.4): when
+        # the primary record provider can't do vector search (no embedder), the
+        # service degrades retrieval through this provider's FTS — the real
+        # expression of VISION's "Qdrant primary → filesystem plain-text fallback"
+        # as capability-degradation rather than a fiction inside one class.
+        self._fallback = fallback
+
+    @classmethod
+    def over_vector_store(cls, vector_store: "VectorMemoryStore | None") -> "MemoryService":
+        """Build a service whose backing provider IS the record/vector store.
+
+        For L3 write paths (consolidation, after-turn review, CLI) that operate
+        directly on the record store, not through a markdown projection. When
+        ``vector_store`` is None the service degrades to no-op (no memory wired).
+        """
+        provider = vector_store if vector_store is not None else _NULL_PROVIDER
+        return cls(provider, vector_store=vector_store)
+
+    # ── identity / wiring ────────────────────────────────────────────────────
+
+    @property
+    def provider(self) -> "MemoryProvider":
+        return self._provider
+
+    @property
+    def _vs(self) -> "VectorMemoryStore | None":
+        """The record/vector store the service drives, or None.
+
+        Either explicitly supplied (``over_vector_store`` — the provider IS the
+        store) or discovered on a markdown-projection provider's
+        ``vector_store`` attribute. This is the ONE place the service reaches the
+        vector layer; M4 generalizes it to the ordered provider list.
+        """
+        if self._explicit_vs is not None:
+            return self._explicit_vs
+        return getattr(self._provider, "vector_store", None)
+
+    def capabilities(self) -> "MemoryCapabilities":
+        """What the backing provider can do (L2 flags). Degrades to FTS-only when
+        no vector store is wired."""
+        vs = self._vs
+        if vs is not None:
+            return vs.capabilities()
+        from personalclaw.memory_record import MemoryCapabilities
+
+        return MemoryCapabilities(
+            vector=False, transactional_batch=False, event_log=False, full_text_search=True
+        )
+
+    @property
+    def has_vector(self) -> bool:
+        """Whether a record store is wired (can do semantic/episodic CRUD).
+
+        NOTE: this is store-presence, not vector-retrieval capability — a store
+        with no embedder still does semantic key/value CRUD + FTS. Use
+        ``can_vector_search`` to gate vector retrieval specifically."""
+        return self._vs is not None
+
+    @property
+    def can_vector_search(self) -> bool:
+        """Whether the primary can do VECTOR retrieval right now (embedder wired).
+
+        The capability check that replaces ``vs.embed_fn is not None`` scattered
+        at call sites — a store with no embedder reports vector=False and the
+        service degrades to the fallback FTS."""
+        vs = self._vs
+        return vs is not None and vs.capabilities().vector
+
+    def fts_fallback_search(self, query: str, *, k: int = 8) -> list[dict]:
+        """Degraded keyword search through the fallback provider (no vectors).
+
+        Used when the primary can't do vector retrieval — the capability-
+        degradation path. Returns the fallback's scored FTS hits, or [] when no
+        fallback is wired."""
+        if self._fallback is None or not query:
+            return []
+        try:
+            return self._fallback.vector_query(text=query, k=k)
+        except Exception:
+            logger.debug("fts fallback search failed", exc_info=True)
+            return []
+
+    # ── read path: context injection / recall ─────────────────────────────────
+
+    def get_context(
+        self,
+        *,
+        query: str = "",
+        prefs_cap: int = 4_000,
+        projects_cap: int = 6_000,
+        history_cap: int = 25_000,
+        semantic_cap: int = 12_000,
+        episodic_cap: int = 12_000,
+        l1_manifest: bool | None = None,
+    ) -> str:
+        """The full memory-context block for prompt injection — COMPOSED here at
+        L3 from the markdown projection (prefs/projects/history) + the vector
+        layer (L1 manifest, or legacy query-scored semantic+episodic).
+
+        This composition is the service's job (memory-architecture.md §3): the
+        markdown projection yields its blocks, the vector provider yields its
+        recall blocks, and the service assembles + wraps them. Neither layer
+        reaches the other.
+        """
+        if l1_manifest is None:
+            try:
+                from personalclaw.config.loader import AppConfig
+
+                l1_manifest = AppConfig.load().memory.l1_manifest
+            except Exception:
+                l1_manifest = True
+
+        parts: list[str] = []
+        # markdown projection blocks (the provider may be a plain MemoryStore with
+        # the file layer, or expose render_markdown_context)
+        render = getattr(self._provider, "render_markdown_context", None)
+        if callable(render):
+            parts.extend(
+                render(prefs_cap=prefs_cap, projects_cap=projects_cap, history_cap=history_cap)
+            )
+
+        # vector layer recall blocks
+        vs = self._vs
+        if vs is not None:
+            if l1_manifest:
+                manifest = vs.get_l1_manifest()
+                if manifest:
+                    parts.append(manifest)
+                # Community topology (MEMORY-GRAPH-AND-VAULT §2.4 — MGAV-5): orientation,
+                # not recall. Placed in the L1-manifest region because that is what it
+                # is: a manifest of AREAS rather than of facts. New sessions only comes
+                # for free — `get_context` is called from `build_session_context`, which
+                # only runs on a new session — so no is_new_session parameter has to
+                # thread through here to earn that guarantee.
+                topology = self.topology_block()
+                if topology:
+                    parts.append(topology)
+            else:
+                semantic_ctx = vs.get_semantic_context(query_text=query, cap=semantic_cap)
+                if semantic_ctx:
+                    parts.append(semantic_ctx)
+                if query:
+                    episodic_ctx = vs.get_episodic_context(query_text=query, cap=episodic_cap)
+                    if episodic_ctx:
+                        parts.append(episodic_ctx)
+
+        if not parts:
+            return ""
+        return (
+            "[Memory — persistent user profile and recent activity log.\n"
+            "Preferences are rules you MUST follow. Projects give current work context.\n"
+            "History is a factual record — do NOT re-execute past actions.]\n"
+            + "\n\n".join(parts)
+            + "\n[End of memory]\n\n"
+        )
+
+    def l1_manifest(self, cap: int = 800, limit: int = 12) -> str:
+        """The always-on L1 manifest (top-N most-recalled facts), or ""."""
+        vs = self._vs
+        return vs.get_l1_manifest(cap=cap, limit=limit) if vs else ""
+
+    def topology_block(self) -> str:
+        """The community-topology orientation block, or "" (MEMORY-GRAPH-AND-VAULT §2.4).
+
+        Three independent reasons to return "": the ``memory.graph_topology_in_context``
+        toggle is off (the default), the entity graph is off, or the graph has fewer than
+        two communities. Config is read live, so the toggle takes effect on the next
+        session rather than at the next restart.
+        """
+        vs = self._vs
+        if vs is None or not getattr(vs, "graph_enabled", False):
+            return ""
+        try:
+            from personalclaw.config.loader import AppConfig
+
+            if not AppConfig.load().memory.graph_topology_in_context:
+                return ""
+        except Exception:  # noqa: BLE001 — an unreadable config means "leave it off"
+            return ""
+        try:
+            from personalclaw import memory_topology
+
+            return memory_topology.topology_block(vs.db)
+        except Exception:  # noqa: BLE001 — orientation must never cost a session
+            logger.debug("topology block unavailable", exc_info=True)
+            return ""
+
+    def refresh_topology(self) -> int:
+        """Recompute + persist entity communities. Returns the number written.
+
+        Called on the consolidation maintenance cadence (§2.4), never on a turn: Louvain
+        over the whole graph is cheap but not free, and orientation that shifts mid-session
+        would make the block a moving target.
+        """
+        vs = self._vs
+        if vs is None or not getattr(vs, "graph_enabled", False):
+            return 0
+        from personalclaw import memory_topology
+
+        return memory_topology.write_communities(vs)
+
+    def active_recall(self, query_text: str, *, cap: int = 2000) -> str:
+        """Query-relevant episodic context for THIS turn (active recall), or "".
+
+        The primary record store self-degrades (its episodic retrieval already
+        falls back to keyword matching when no embedder is wired), so we defer to
+        it whenever a store is present. ONLY when there is no record store at all
+        do we degrade to the markdown FTS fallback — the real bottom of the chain.
+        """
+        vs = self._vs
+        if vs is not None:
+            return vs.get_episodic_context(query_text=query_text, cap=cap) or ""
+        # No record store at all → markdown FTS fallback (capability-degraded).
+        return self._fts_recall_block(query_text, cap=cap)
+
+    def _fts_recall_block(self, query_text: str, *, cap: int = 2000) -> str:
+        """Render fallback FTS hits as a recall block (degraded active recall)."""
+        hits = self.fts_fallback_search(query_text, k=6)
+        if not hits:
+            return ""
+        lines = [h["text"] for h in hits if h.get("text")]
+        if not lines:
+            return ""
+        block = "\n".join(f"- {ln}" for ln in lines)
+        return block[:cap]
+
+    def episodic_context(
+        self, query_text: str, *, cap: int = 3000, citations_out: list[dict] | None = None
+    ) -> str:
+        """Episodic context block for a query (new-session injection), or "".
+
+        When *citations_out* is supplied, the block labels each fragment
+        ``[Memory N]`` and appends a resolvable manifest entry per fragment
+        (MEMORY-GRAPH-AND-VAULT §5.4) — see ``VectorMemoryStore.get_episodic_context``.
+        """
+        vs = self._vs
+        return (
+            (
+                vs.get_episodic_context(query_text=query_text, cap=cap, citations_out=citations_out)
+                or ""
+            )
+            if vs
+            else ""
+        )
+
+    def semantic_context(self, query_text: str = "", *, cap: int = 1500) -> str:
+        vs = self._vs
+        return (vs.get_semantic_context(query_text=query_text, cap=cap) or "") if vs else ""
+
+    def lessons_context(self, workspace: str | None = None) -> str:
+        """The lessons block for injection (empty if none / no vector store).
+
+        ``workspace`` is the reading session's working directory — the only thing that
+        makes a workspace-scoped lesson visible. A caller that omits it (the dashboard
+        grill-tree recall, the debug preview) gets GLOBAL lessons only, which is why a
+        workspace lesson cannot leak through a path that has no workspace identity.
+        """
+        vs = self._vs
+        if vs is None:
+            return ""
+        return vs.get_lessons_context(normalize_workspace_ref(workspace) or None) or ""
+
+    def search_episodic(
+        self,
+        *,
+        query_text: str = "",
+        query_embedding: list[float] | None = None,
+        limit: int = 8,
+        tag_filter: list[str] | None = None,
+        mmr: bool = True,
+    ) -> list[dict]:
+        """Nearest-neighbour search over episodic memory.
+
+        ``mmr`` defaults True — for RECALL, diversity is the right bias: injecting five phrasings of
+        one memory wastes the window. A COUNTING caller must pass False, because MMR deliberately
+        suppresses near-duplicates and near-duplicates are exactly what a repetition detector is
+        looking for (see `learning.mining.similar_run_matches`: three runs of the same plan reranked
+        for diversity collapse to one, and the "you built this three times" verdict never fires).
+        """
+        vs = self._vs
+        if vs is None:
+            return []
+        if query_embedding is None and query_text and self.has_vector:
+            query_embedding = self.embed(query_text)
+        return vs.search_episodic(
+            query_embedding=query_embedding,
+            query_text=query_text,
+            limit=limit,
+            tag_filter=tag_filter,
+            mmr=mmr,
+        )
+
+    def episodic_list(
+        self, *, limit: int = 50, offset: int = 0, tag_filter: list[str] | None = None
+    ) -> list[dict]:
+        vs = self._vs
+        if vs is None:
+            return []
+        return vs.get_episodic_list(limit=limit, offset=offset, tag_filter=tag_filter)
+
+    def delete_episodic(self, mem_id: str, *, source: str = "user_explicit") -> bool:
+        vs = self._vs
+        return vs.delete_episodic(mem_id, source=source) if vs else False
+
+    def lint(self) -> dict:
+        """Run the memory-health sweep over the backing store; report dict.
+
+        Also runs the readable-vault checks (§5.3) when a vault is configured — the
+        vault is where a two-way edit can get stuck, so its conflicts belong in the
+        same Health surface as every other memory-health finding rather than in a
+        second report nobody opens."""
+        vs = self._vs
+        if vs is None:
+            return {}
+        from personalclaw.memory_lint import lint_memory
+        from personalclaw.memory_vault import vault_for
+
+        try:
+            vault = vault_for(self)
+        except Exception:
+            logger.debug("lint: vault unavailable", exc_info=True)
+            vault = None
+        return lint_memory(vs, vault=vault).to_dict()
+
+    def apply_vault_edit(self, key: str, value: str) -> tuple[bool, str]:
+        """Write a hand-edited vault page back into memory (§5.2). ``(ok, detail)``.
+
+        The normal semantic write path, entered with ``source="vault_edit"`` — chosen
+        for two properties that pull in opposite directions:
+
+        * **The human is authoritative.** ``vault_edit`` is treated like
+          ``user_explicit`` by conflict resolution, so an edit wins over the stored
+          value instead of being refused as "an automated source cannot overwrite a
+          user fact". Without that, editing a fact you typed yourself would silently
+          do nothing — the exact failure §5.2's propose-don't-write inversion exists
+          to avoid.
+        * **The bytes are not.** ``vault_edit`` is deliberately NOT in
+          :attr:`_TRUSTED_WRITE_SOURCES`, so the text passes the S5 injection scan.
+          A vault file is a file: it can hold pasted output from anywhere, and
+          "a human saved it" is not evidence about what is in it.
+
+        Confidence is 1.0 because there is nothing to be unsure about — a person typed
+        it. The write logs its own ``memory_events`` row, so ``undo_event`` restores the
+        pre-edit value; that is what keeps edit-wins recoverable.
+        """
+        vs = self._vs
+        if vs is None:
+            return (False, "no vector store")
+        if self._memory_write_blocked(value, "vault_edit"):
+            return (False, "blocked: injection/steering payload in the edited page")
+        try:
+            rejection = vs.set_semantic(key, value, 1.0, "vault_edit")
+        except Exception as exc:  # a cap/validation error must not lose the page
+            logger.info("vault edit to %s refused: %s", key, exc)
+            return (False, f"refused: {exc}")
+        if rejection is not None:
+            code, reason = rejection
+            return (False, f"rejected ({getattr(code, 'value', code)}): {reason}")
+        return (True, "applied")
+
+    # ── entity graph (MEMORY-GRAPH-AND-VAULT §1) ──────────────────────────────
+    # Every method degrades to an empty answer when the backing store has no graph
+    # (a foreign MemoryProvider, or `memory.graph_enabled: false`) — the same
+    # posture as every other capability-gated op on this service.
+
+    def _graph_store(self):
+        """The backing store IF it offers a usable entity graph, else None.
+
+        One helper instead of a `has_graph` check plus a separate `_vs` read at
+        every call site: two lookups can disagree, and the narrowed return is what
+        lets the callers below be straight-line code.
+        """
+        vs = self._vs
+        if vs is None or not getattr(vs, "graph_enabled", False):
+            return None
+        return vs
+
+    @property
+    def has_graph(self) -> bool:
+        return self._graph_store() is not None
+
+    def graph_summary(self) -> dict:
+        """Graph size + orphan counts, for the health surface."""
+        vs = self._graph_store()
+        return vs.graph.summary() if vs else {}
+
+    def graph_entities(self) -> list[dict]:
+        vs = self._graph_store()
+        if vs is None:
+            return []
+        return [
+            {
+                "id": e.id,
+                "name": e.name,
+                "entity_type": e.entity_type,
+                "aliases": list(e.aliases),
+                "source": e.source,
+                **vs.graph.stats(e.id),
+            }
+            for e in vs.graph.entities()
+        ]
+
+    def graph_backlinks(self, entity_id: str, *, limit: int = 100) -> list[dict]:
+        """Records linking to an entity — 'what do I know about X?'."""
+        vs = self._graph_store()
+        return vs.graph.backlinks(entity_id, limit=limit) if vs else []
+
+    def graph_add_entity(
+        self, name: str, entity_type: str, *, aliases: "list[str] | None" = None
+    ) -> str:
+        """Create an entity by hand and re-link the store against it.
+
+        Re-linking matters: adding "Ana" should immediately connect the memories
+        that already mention her, not just future ones.
+        """
+        vs = self._graph_store()
+        if vs is None:
+            return ""
+        eid = vs.graph.upsert_entity(name, entity_type, aliases=aliases, source="user")
+        vs.invalidate_alias_index()
+        return eid
+
+    def graph_entity_by_name(self, name: str) -> "dict | None":
+        """One live entity by name, or None — a READ, so a caller can check before declaring."""
+        vs = self._graph_store()
+        if vs is None:
+            return None
+        entity = vs.graph.entity_by_name(name)
+        if entity is None:
+            return None
+        return {
+            "id": entity.id,
+            "name": entity.name,
+            "entity_type": entity.entity_type,
+            "aliases": list(entity.aliases),
+            "source": entity.source,
+        }
+
+    def graph_delete_entity(self, entity_id: str) -> bool:
+        """Remove an entity by hand and stop matching it.
+
+        The mirror of :meth:`graph_add_entity`, and it needs the same index invalidation for
+        the same reason: the alias index is a compiled snapshot, so without this the deleted
+        entity would keep matching text — and keep being linked to new records — until the
+        process restarted.
+        """
+        vs = self._graph_store()
+        if vs is None:
+            return False
+        removed = vs.graph.delete_entity(entity_id)
+        if removed:
+            vs.invalidate_alias_index()
+        return removed
+
+    def graph_accept_proposal(self, name: str, entity_type: str) -> str:
+        vs = self._graph_store()
+        if vs is None:
+            return ""
+        eid = vs.graph.accept_proposal(name, entity_type)
+        vs.invalidate_alias_index()
+        return eid
+
+    def graph_reject_proposal(self, name: str) -> bool:
+        vs = self._graph_store()
+        return vs.graph.reject_proposal(name) if vs else False
+
+    def graph_proposals(self) -> list[dict]:
+        """The proposal queue — recurring unknown names awaiting a human decision (§1).
+
+        A READ for the accept queue. Until MGAV-9 the only way to see these was the lint
+        report's flag list, which could show a name but not offer the accept/reject the
+        POST route already implemented — a decision surface with no way to reach it.
+        """
+        vs = self._graph_store()
+        return vs.graph.proposals() if vs else []
+
+    def entity_graph(self) -> dict:
+        """The entity topology for the graph canvas (§7.2). Empty when no graph is wired."""
+        vs = self._graph_store()
+        return vs.graph.entity_graph() if vs else {"nodes": [], "edges": []}
+
+    def graph_record_links(self, ref: str) -> list[dict]:
+        """One record's outbound entity links, entity NAMES resolved (§7.1's inspect view).
+
+        The inverse of :meth:`graph_backlinks`: "what does this memory link to?" rather than
+        "what links to this entity?". Resolving the name here rather than in the handler is
+        what makes the link legible — a row holding only ``ent_9f2c`` tells a reader nothing,
+        and the name IS the evidence tag ("the graph surfaced this because it mentions Ana").
+
+        *ref* is the studio's composite handle (``sem:<key>`` / ``epi:<id>``) — the same shape
+        the graph nodes and the citation deep-links use, so one identifier travels the whole
+        path instead of three. The prefix map is CLOSED and matches the only two ``from_kind``
+        values anything writes (``vector_memory.set_semantic`` / ``write_episodic``): an
+        unrecognized prefix returns ``[]`` rather than guessing a kind and silently reporting
+        "no links" for a record that has them. Lessons are deliberately absent — nothing links
+        them, so offering a lesson link view would be a surface that can never fill.
+        """
+        vs = self._graph_store()
+        if vs is None or ":" not in ref:
+            return []
+        prefix, _, tail = ref.partition(":")
+        kind = {"sem": "semantic", "epi": "episodic"}.get(prefix, "")
+        if not kind or not tail:
+            return []
+        names = {e.id: e.name for e in vs.graph.entities()}
+        out: list[dict] = []
+        for link in vs.graph.links_from(kind, tail):
+            row = dict(link)
+            row["entity_name"] = names.get(str(row.get("to_entity") or ""), "")
+            out.append(row)
+        return out
+
+    # ── Memory slots (§6 — MGAV-8's registers, MGAV-9's editor) ───────────────
+    # The store is the only dependency `memory_slots` takes, so these are thin
+    # pass-throughs that add the ONE thing a UI needs and the primitive deliberately
+    # does not carry: the spec (title/cap/scope) beside the lines, so the editor can
+    # show "412 / 500" without re-deriving the budget it is not allowed to change.
+
+    def slots(self) -> list[dict]:
+        """Every built-in slot plus any ad-hoc ``slot.*`` row, with lines and budget.
+
+        Built-ins are listed even when not materialized (``materialized: false``,
+        ``lines: []``) — MGAV-8 keeps them lazy so a fresh install pays nothing, but an
+        editor that only listed written rows would give a new user no way to write the
+        first line into a slot the system will actually read.
+        """
+        from personalclaw import memory_slots
+
+        vs = self._vs
+        if vs is None:
+            return []
+        names = list(memory_slots.BLOCK_ORDER)
+        for row in vs.get_all_semantic():
+            name = memory_slots.name_from_key(str(row.get("key", "")))
+            if name and name not in names:
+                names.append(name)
+        out: list[dict] = []
+        for name in names:
+            spec = memory_slots.spec_for(name)
+            lines = memory_slots.load(vs, name)
+            live = memory_slots.live_lines(lines)
+            out.append(
+                {
+                    "name": name,
+                    "title": spec.title,
+                    "description": spec.description,
+                    "cap_chars": spec.cap_chars,
+                    "scope": spec.scope,
+                    "builtin": name in memory_slots.BUILTIN_SLOTS,
+                    "materialized": memory_slots.is_materialized(vs, name),
+                    "live_chars": memory_slots.live_chars(memory_slots.to_value(lines)),
+                    "live_count": len(live),
+                    "lines": [line.to_dict() for line in lines],
+                }
+            )
+        return out
+
+    def slot_append(self, name: str, text: str) -> list[dict]:
+        """Append one line to a slot as the USER. Raises ``SlotCapExceeded`` over cap.
+
+        ``source="user_explicit"`` is the point of the editor: a line the human typed must
+        outrank a reflection-derived one, and the trim proposal must reach the human rather
+        than being resolved on their behalf — which is why the exception propagates.
+        """
+        from personalclaw import memory_slots
+
+        vs = self._vs
+        if vs is None:
+            return []
+        return [
+            line.to_dict() for line in memory_slots.append(vs, name, text, source="user_explicit")
+        ]
+
+    def slot_tombstone(self, name: str, text: str) -> bool:
+        """Retire a slot line as the HUMAN — final, never re-derived (MGAV-8's guard)."""
+        from personalclaw import memory_slots
+
+        vs = self._vs
+        if vs is None:
+            return False
+        return memory_slots.tombstone(vs, name, text, actor="human", source="user_explicit")
+
+    # ── Preference facets (C15) — the pinned/forgotten overrides the user owns ──
+    # The flags persist and every scoring branch reads them; until #1783 nothing outside
+    # the tests could SET one, so the documented override was unreachable. These three are
+    # the service half of that writer, sitting beside the slot editor above because both
+    # are "the human correcting learned state", and both must travel through MemoryService
+    # so the WAL covers a hand-made change exactly as it covers an inferred one.
+
+    def facets(self) -> list[dict]:
+        """Every stored facet with its KEY, state and decayed stability.
+
+        The key is the whole point and is why this is not the identity report's facet
+        section: :func:`learning_report._gather_facets` drops it (that document is
+        contractually propose-don't-write) and also hides forgotten facets, so a pin could
+        not be addressed from it. A forgotten facet IS listed here, flagged — not because it
+        can be brought back (see :meth:`facet_forget`: it cannot) but because this is the
+        only surface where a retirement is visible at all. Hiding them would leave the user
+        unable to tell a facet they retired from one the detector never found.
+
+        ``stability`` is the DECAYED value the surfacing path actually trusts, not the
+        stored score — showing the stored one would tell the user a facet is strong while
+        the profile block has already dropped it. The raw score rides along as
+        ``stored_stability`` so a reader can see the decay rather than infer it.
+        """
+        from personalclaw.preference_facets import (
+            decayed_stability,
+            facet_state,
+            load_facets,
+        )
+
+        vs = self._vs
+        if vs is None:
+            return []
+        out: list[dict] = []
+        for key, facet in load_facets(vs):
+            out.append(
+                {
+                    "key": key,
+                    "cls": str(facet.cls or ""),
+                    "text": facet.text,
+                    "cue": str(facet.cue or ""),
+                    "stability": round(float(decayed_stability(facet)), 3),
+                    "stored_stability": round(float(facet.stability), 3),
+                    "state": facet_state(facet),
+                    "updated_at": str(facet.updated_at or ""),
+                    "pinned": bool(facet.pinned),
+                    "forgotten": bool(facet.forgotten),
+                }
+            )
+        # Strongest first, so the facets shaping the profile block right now lead the list.
+        out.sort(key=lambda f: (-f["stability"], f["key"]))
+        return out
+
+    def facet_pin(self, key: str, pinned: bool = True) -> bool:
+        """Pin (or unpin) a facet — pinned holds stability at 1.0, exempt from decay.
+
+        Reversible on purpose, hence the flag rather than a pin-only route: pinning is the
+        user saying "keep trusting this", and there is no reason that should be a one-way
+        door the way a tombstone is.
+        """
+        from personalclaw.preference_facets import pin_facet
+
+        vs = self._vs
+        if vs is None:
+            return False
+        return pin_facet(vs, key, pinned)
+
+    def facet_forget(self, key: str) -> bool:
+        """Forget a facet — stability reads 0.0 and it leaves the profile block. FINAL.
+
+        A flag, not a delete: the row survives so the memory event log keeps the history.
+        But the decision is **irreversible through this API, and that is the design** —
+        :func:`preference_facets.decayed_stability` tests ``forgotten`` BEFORE ``pinned``,
+        so pinning does not bring one back, and :func:`preference_facets.reinforce` never
+        clears the flag, so re-observing the same preference cannot resurrect it either.
+        That is the facet analogue of MGAV-8's human tombstone: a preference the user
+        retired must not come back because the detector saw it again.
+
+        Callers that expose this need a destructive confirm, for the same reason the slot
+        editor's retire does. See `web/src/pages/settings/MemoryPanel.tsx`.
+        """
+        from personalclaw.preference_facets import forget_facet
+
+        vs = self._vs
+        if vs is None:
+            return False
+        return forget_facet(vs, key)
+
+    def resolve_entities(self, text: str) -> list[dict]:
+        """Entities NAMED in ``text``, resolved deterministically through the alias index (§2.1).
+
+        The planner's grounding preamble (UNIVERSAL-PLANNING UP-R14) calls this to turn "book a
+        table for Ana" into the resolved identity it should carry into every stage, rather than
+        letting each stage re-guess who Ana is. Uses the SAME matcher as write time, so a name
+        resolves exactly the way the records that mention it did. Returns ``[]`` when no graph is
+        wired (the degraded fallback the caller records), and never raises — a preamble is an
+        enhancement to a plan, not a precondition for one.
+        """
+        vs = self._graph_store()
+        if vs is None or not text:
+            return []
+        try:
+            ids = vs.graph.resolve_query(text, index=vs.alias_index)
+            if not ids:
+                return []
+            by_id = {e.id: e for e in vs.graph.entities()}
+            out: list[dict] = []
+            for entity_id in ids:
+                entity = by_id.get(entity_id)
+                if entity is not None:
+                    out.append(
+                        {
+                            "id": entity.id,
+                            "name": entity.name,
+                            "entity_type": entity.entity_type,
+                            "aliases": list(entity.aliases),
+                        }
+                    )
+            return out
+        except Exception:  # noqa: BLE001
+            logger.debug("entity resolution failed for planning preamble", exc_info=True)
+            return []
+
+    def graph_recall_evidence(self, query_text: str) -> dict:
+        """Which entities connected each graph-surfaced record (§2.2).
+
+        Answers "why did recall show me this?" for the inspect/recall surfaces — a
+        graph hit that can't name its link is an unfalsifiable claim.
+        """
+        vs = self._graph_store()
+        if vs is None or not query_text:
+            return {}
+        try:
+            return vs.graph.recall_evidence(query_text, index=vs.alias_index)
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def push_context(
+        self,
+        turns: "list[str]",
+        *,
+        session_key: str = "",
+        log_events: bool = True,
+        max_records: int | None = None,
+        min_confidence: float | None = None,
+    ) -> "tuple[str, list[dict]]":
+        """The push reflex (§3): volunteer records this conversation is *about*.
+
+        Returns ``(injected_block, volunteered)`` — the block is "" when nothing clears
+        the confidence gate, which is the common and correct case on an entity-free turn.
+        ``volunteered`` describes what was offered, for the debug surface.
+
+        ``log_events=False`` suppresses the volunteer-event WRITE while still returning
+        the block: that is the incognito posture (reads allowed, writes suppressed), and
+        it is why logging is a parameter rather than an internal decision.
+
+        Never raises. A reflex is an enhancement; if it fails, the turn proceeds with
+        exactly today's context.
+        """
+        from personalclaw import memory_push as push
+
+        vs = self._graph_store()
+        if vs is None or not turns:
+            return "", []
+        cap = min(HARD_CAP_RECORDS if max_records is None else max_records, HARD_CAP_RECORDS)
+        gate = push.DEFAULT_MIN_CONFIDENCE if min_confidence is None else float(min_confidence)
+        try:
+            entities = vs.graph.entities()
+            if not entities:
+                return "", []
+            candidates = push.resolve_candidates(
+                turns, entities, vs.alias_index, min_confidence=gate
+            )
+            if not candidates:
+                return "", []
+            return self._volunteer_for(
+                vs, candidates, cap=cap, session_key=session_key, log_events=log_events
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("push reflex skipped", exc_info=True)
+            return "", []
+
+    def _volunteer_for(
+        self, vs, candidates: "list", *, cap: int, session_key: str, log_events: bool
+    ) -> "tuple[str, list[dict]]":
+        """Pick records for the resolved entities, render the block, log the events."""
+        from personalclaw import memory_push as push
+
+        rendered: list[tuple[str, str]] = []
+        volunteered: list[dict] = []
+        seen_refs: set[str] = set()
+        for cand in candidates:
+            if len(rendered) >= cap:
+                break
+            for link in vs.graph.backlinks(cand.entity_id, limit=cap * 4):
+                if len(rendered) >= cap:
+                    break
+                ref = str(link.get("from_ref") or "")
+                kind = str(link.get("from_kind") or "")
+                # A record already volunteered this turn (via another entity) must not
+                # be offered twice — duplicated context reads as a bug, not as emphasis.
+                if not ref or ref in seen_refs:
+                    continue
+                # Only semantic records inject. An episodic row is a conversation
+                # fragment; volunteering one would paste old dialogue into a new turn.
+                if kind != "semantic":
+                    continue
+                row = vs.get_semantic(ref)
+                if not row:
+                    continue
+                text = _push_text(row)
+                if not text:
+                    continue
+                seen_refs.add(ref)
+                rendered.append((cand.name, text))
+                volunteered.append(
+                    {
+                        "entity": cand.name,
+                        "arm": cand.arm,
+                        "confidence": cand.confidence,
+                        "record_ref": ref,
+                    }
+                )
+                if log_events:
+                    vs.graph.log_volunteer(
+                        entity_id=cand.entity_id,
+                        entity_name=cand.name,
+                        arm=cand.arm,
+                        confidence=cand.confidence,
+                        from_kind=kind,
+                        record_ref=ref,
+                        recall_at_volunteer=int(row.get("recall_count", 0) or 0),
+                        session_key=session_key,
+                    )
+        return push.render_block(rendered), volunteered
+
+    def volunteer_precision(self, *, window_days: int | None = None) -> dict:
+        """Per-arm volunteered-vs-used precision for the health tab (§3)."""
+        vs = self._graph_store()
+        if vs is None:
+            return {"arms": {}, "overall": {"n": 0, "used": 0, "precision": 0.0}}
+        try:
+            return vs.graph.volunteer_precision(window_days=window_days)
+        except Exception:  # noqa: BLE001
+            return {"arms": {}, "overall": {"n": 0, "used": 0, "precision": 0.0}}
+
+    def prune_volunteer_events(self, *, keep_days: int = 90) -> int:
+        """Maintenance-cadence prune of the volunteer log (§3's 90d retention)."""
+        vs = self._graph_store()
+        if vs is None:
+            return 0
+        try:
+            return vs.graph.prune_volunteer_events(keep_days=keep_days)
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def graph_seed(self) -> dict:
+        """Seed entities from facts + knowledge, then link the whole store."""
+        vs = self._graph_store()
+        if vs is None:
+            return {}
+        from personalclaw.memory_linker import seed_all
+
+        seeded = seed_all(vs.graph)
+        vs.invalidate_alias_index()
+        return seeded
+
+    def graph_backfill(self) -> dict:
+        """Link every existing record. Idempotent — safe to re-run."""
+        vs = self._graph_store()
+        if vs is None:
+            return {}
+        from personalclaw.memory_linker import backfill
+
+        vs.invalidate_alias_index()
+        return backfill(vs.graph)
+
+    # ── session working memory (M5c — §3.5) ───────────────────────────────────
+    # An always-injected, bounded, continuously-distilled running summary of THE
+    # SESSION (tier=working, scope=session). Unlike active recall / L1 (relevance-
+    # gated), this is injected EVERY turn for its session. Reuses the structured-
+    # compaction summary as the distillation source (decision #5) — one pass, not
+    # a second summarizer. Keyed by a deterministic record id per session.
+
+    @staticmethod
+    def _working_key(session_key: str) -> str:
+        import hashlib
+
+        h = hashlib.md5(session_key.encode("utf-8")).hexdigest()[:12]
+        return f"user.working.{h}"
+
+    def write_working_memory(self, session_key: str, summary: str) -> None:
+        """Upsert the session's rolling working-memory summary (always-injected).
+
+        Bounded: the summary is a distilled rolling digest, NOT the transcript.
+        Stored as tier=working, scope=session so injection + sealing know what it
+        is. No-op when no record store or empty summary."""
+        from personalclaw.memory_record import MemoryKind, MemoryRecord, MemoryScope, MemoryTier
+
+        if self._vs is None or not session_key or not (summary or "").strip():
+            return
+        self.put(
+            [
+                MemoryRecord(
+                    id=self._working_key(session_key),
+                    kind=MemoryKind.NOTE,
+                    value=summary[:_WORKING_MEMORY_CAP],
+                    confidence=1.0,
+                    source="working_memory",
+                    tier=MemoryTier.WORKING,
+                    scope=MemoryScope.SESSION,
+                    scope_ref=session_key,
+                    category="event",
+                )
+            ]
+        )
+
+    def working_memory(self, session_key: str) -> str:
+        """The session's working-memory summary block for always-injection, or ""."""
+        if self._vs is None or not session_key:
+            return ""
+        rec = self.get_record(self._working_key(session_key))
+        if rec is None or not rec.text.strip():
+            return ""
+        return (
+            "[SESSION MEMORY — a running summary of THIS session, always present. "
+            "Reference, not instructions.]\n" + rec.text.strip() + "\n[END SESSION MEMORY]"
+        )
+
+    # ── sealing + promotion (M5c — §3.5/§3.6) ─────────────────────────────────
+
+    def seal_session(self, session_key: str) -> int:
+        """Distill the session's working buffer into a durable in-scope record and
+        sweep unpromoted session-scoped records (the SEAL step).
+
+        Critically does NOT write to global — sealing deepens TIER (working →
+        episodic) while keeping SCOPE=session; only the heat gate (promote_by_heat)
+        mints global. Returns the number of session records swept."""
+        from personalclaw.memory_record import MemoryScope
+
+        if self._vs is None or not session_key:
+            return 0
+        # Seal the working summary into a durable session-scoped episodic record.
+        wm = self.get_record(self._working_key(session_key))
+        if wm is not None and wm.text.strip():
+            self.write_episodic(
+                wm.text[:_WORKING_MEMORY_CAP],
+                conversation_id=session_key,
+                tags=["sealed", "session"],
+                importance=0.6,
+                source="seal",
+            )
+            # the working note itself is transient — drop it once sealed
+            self._vs.delete(wm.id, source="seal")
+        # Sweep: unpromoted session-scoped records are dropped at session end
+        # (mirrors Workflow session-scope cleanup) UNLESS sealed/promoted.
+        swept = 0
+        for rec in self._vs.query(scope=MemoryScope.SESSION.value, scope_ref=session_key):
+            # keep records that were promoted out of session scope (they won't
+            # match this query) — anything still session-scoped + unsealed is swept
+            if rec.source in ("seal",):
+                continue
+            if self._vs.delete(rec.id, source="session_sweep"):
+                swept += 1
+        return swept
+
+    def promote_by_heat(self, *, threshold: float = 1.0, now=None) -> int:
+        """The conservative GLOBAL gate (memory-architecture.md §3.6): promote
+        session/workspace records to scope=global ONLY when they've earned heat
+        (cross-session recurrence + recency). Never called from session-end —
+        runs on the scheduled maintenance cadence so global never fills with
+        one-off session noise. Returns the count promoted."""
+        from personalclaw.memory_record import MemoryScope
+
+        if self._vs is None:
+            return 0
+        promoted = 0
+        for rec in self._vs.iter_records():
+            if rec.scope == MemoryScope.GLOBAL:
+                continue
+            # commitments NEVER promote to global (a proactive ping is contextual)
+            from personalclaw.memory_record import MemoryKind
+
+            if rec.kind == MemoryKind.COMMITMENT:
+                continue
+            if rec.heat(now=now) >= threshold and rec.recall_count >= 2:
+                self._vs.db.execute(
+                    f"UPDATE {'semantic_memory' if not _is_episodic(rec) else 'episodic_memories'} "
+                    f"SET scope = ? WHERE {'key' if not _is_episodic(rec) else 'id'} = ?",
+                    (MemoryScope.GLOBAL.value, rec.id),
+                )
+                self._vs.db.commit()
+                self._vs.append_event(
+                    event_type="promote_scope",
+                    memory_type=rec.kind.value,
+                    memory_key=rec.id,
+                    old_value=rec.scope.value,
+                    new_value=MemoryScope.GLOBAL.value,
+                    source="heat_promote",
+                )
+                promoted += 1
+        return promoted
+
+    # ── procedural memory (M5d — O-A3) ────────────────────────────────────────
+    # How the agent learns to WORK: tool/source outcomes → priors. A procedural
+    # record captures "tool X on task-shape Y succeeded / failed / was denied",
+    # mined at the after-turn-review seam, promoted into priors via the heat gate.
+    # Failure-pattern synthesis collapses ≥N same-root-cause records into ONE prior
+    # so the class never becomes tool-call-log noise.
+    #
+    # The outcome vocabulary is CLOSED (`PROCEDURAL_OUTCOMES`) and enforced by
+    # `record_procedural`. It used to be a docstring set of four that included
+    # `corrected`, which no writer produced and no reader consumed — WF2LEA-13
+    # dropped that member (a correction's tool attribution is not observable at the
+    # seam that detects it: the correction signal is the user's reaction to the
+    # PREVIOUS turn, whose tool set nothing carries forward) and gave `denied` the
+    # live writer that `synthesize_failures` had always been reading for.
+
+    @staticmethod
+    def _procedural_key(tool: str, task_shape: str, outcome: str) -> str:
+        import hashlib
+
+        h = hashlib.md5(f"{tool}|{task_shape}|{outcome}".encode("utf-8")).hexdigest()[:12]
+        return f"user.procedural.{h}"
+
+    def record_procedural(
+        self,
+        *,
+        tool: str,
+        task_shape: str,
+        outcome: str,
+        detail: str = "",
+        scope_ref: str | None = None,
+    ) -> str | None:
+        """Record a how-to-work observation (tool X on task-shape Y → outcome).
+
+        ``outcome`` must be one of :data:`PROCEDURAL_OUTCOMES` — an unknown value
+        RAISES rather than storing a row no reader can classify: the surfacing side
+        maps the vocabulary exhaustively, and a fifth spelling would be captured
+        forever and read by nothing (which is the state this contract was found in).
+
+        Stored at scope=session (the heat gate promotes recurring ones to global
+        priors). Reinforces the visit_count when the same observation recurs.
+        Returns the record key, or None when no record store."""
+        from personalclaw.memory_record import MemoryKind, MemoryRecord, MemoryScope, MemoryTier
+
+        if outcome not in PROCEDURAL_OUTCOMES:
+            raise ValueError(
+                f"unknown procedural outcome {outcome!r} — expected one of "
+                f"{sorted(PROCEDURAL_OUTCOMES)}"
+            )
+        if self._vs is None or not tool or not task_shape:
+            return None
+        key = self._procedural_key(tool, task_shape, outcome)
+        existing = self.get_record(key)
+        visit = (existing.recall_count if existing else 0) + 1
+        text = f"{tool} on '{task_shape}' → {outcome}" + (f": {detail}" if detail else "")
+        self.put(
+            [
+                MemoryRecord(
+                    id=key,
+                    kind=MemoryKind.PROCEDURAL,
+                    value=text,
+                    confidence=0.85,
+                    source="procedural",
+                    tier=MemoryTier.SEMANTIC,
+                    scope=MemoryScope.SESSION,
+                    scope_ref=scope_ref,
+                    category="decision",
+                    recall_count=visit,
+                )
+            ]
+        )
+        return key
+
+    def procedural_priors(self, *, limit: int = 12) -> list[dict]:
+        """The learned how-to-work priors that may be SURFACED. Highest-heat first.
+
+        Global scope only — a session-scoped observation is one turn's evidence, and
+        the heat gate (`promote_by_heat`) is what turns recurrence into a prior.
+
+        **A raw failure/denial row is never a prior.** It is
+        :meth:`synthesize_failures` INPUT: below the cluster threshold one failure is
+        not evidence, and above it the synthesized "prefer an alternative" row is the
+        durable form. Surfacing the raw rows too would both defeat the anti-noise
+        mechanism (the block becomes a tool-call log) and contradict it (N scattered
+        "→ failed" lines beside the one line that replaces them). So exactly two
+        shapes reach the prompt: a `success` prior, and a `failure_synthesis` row.
+
+        The environment-failure guardrail applies on the READ side as well as the
+        write side — a world condition that got promoted before synthesis could
+        collapse it must not become durable guidance either.
+
+        Ranked by heat, which is permitted: `learning/decay.py`'s doctrine bars
+        *strength* (the bare recency curve) from rank, and heat weights its usage
+        term above its recency term precisely so recency can break a tie but never
+        create one. The kernel's prune/review VERDICT is not consulted here at all.
+        """
+        from personalclaw.after_turn_review import is_environment_failure_claim
+        from personalclaw.memory_record import MemoryKind, MemoryScope
+
+        recs = [
+            r
+            for r in self.get_records(kinds={MemoryKind.PROCEDURAL.value})
+            if r.scope == MemoryScope.GLOBAL
+            and self._is_surfaceable_prior(r)
+            and not is_environment_failure_claim(r.text)
+        ]
+        recs.sort(key=lambda r: r.heat(), reverse=True)
+        return [{"key": r.id, "text": r.text, "heat": round(r.heat(), 3)} for r in recs[:limit]]
+
+    @staticmethod
+    def _is_surfaceable_prior(rec) -> bool:
+        """Whether one procedural record is guidance (vs. synthesis input).
+
+        The outcome vocabulary is closed and mapped EXHAUSTIVELY — there is no
+        default branch, so a member added to `PROCEDURAL_OUTCOMES` without a
+        surfacing decision fails `test_learning_procedural_loop.py`'s vocabulary rail
+        instead of quietly inheriting one.
+        """
+        if rec.source == "failure_synthesis":
+            return True  # already collapsed; this IS the durable form
+        surfaceable = {"success": True, "failed": False, "denied": False}
+        for outcome, allowed in surfaceable.items():
+            if f"→ {outcome}" in rec.text:
+                return allowed
+        return False
+
+    def procedural_block(self, *, limit: int = 5) -> str:
+        """The how-to-work priors as one ambient block, or ``""``.
+
+        The reader that closes M5d's loop (WF2LEA-13): `record_procedural` had two
+        live writers and `procedural_priors` had no production caller at all, so the
+        system paid to capture priors every turn and used none of them.
+
+        Deliberately SMALL (`limit` 5, one line each) and pre-capped here rather
+        than in the allocator: it enters the budget as ONE all-or-nothing candidate
+        (`learning.ambient.procedural_candidate`), and a block that could grow with
+        the store is how a prior class turns into per-call noise.
+        """
+        priors = self.procedural_priors(limit=max(0, limit))
+        if not priors:
+            return ""
+        lines = "\n".join(f"- {p['text']}" for p in priors)
+        return f"{PROCEDURAL_HEADER}\n{lines}\n{PROCEDURAL_FOOTER}"
+
+    def synthesize_failures(self, *, min_cluster: int = 3) -> int:
+        """Failure-pattern synthesis (the load-bearing anti-noise mechanism): when
+        ≥``min_cluster`` procedural FAILURE records share a root cause (same tool),
+        collapse them into ONE synthesized prior ("prefer not / domain unreliable")
+        and retire the scattered rows. Returns the number of priors synthesized.
+
+        Without this the procedural class bloats into a tool-call log — it is NOT
+        optional (memory-architecture.md §3.7)."""
+        from collections import defaultdict
+
+        from personalclaw.memory_record import MemoryKind, MemoryRecord, MemoryScope, MemoryTier
+
+        if self._vs is None:
+            return 0
+        # cluster failed/denied procedural records by tool (the root-cause key)
+        clusters: dict[str, list] = defaultdict(list)
+        for r in self.get_records(kinds={MemoryKind.PROCEDURAL.value}):
+            if "→ failed" in r.text or "→ denied" in r.text:
+                tool = r.text.split(" on ", 1)[0].strip()
+                clusters[tool].append(r)
+        synthesized = 0
+        for tool, members in clusters.items():
+            if len(members) < min_cluster:
+                continue
+            # one synthesized prior replaces the N scattered rows
+            prior_key = (
+                f"user.procedural.synth.{__import__('hashlib').md5(tool.encode()).hexdigest()[:12]}"
+            )
+            self.put(
+                [
+                    MemoryRecord(
+                        id=prior_key,
+                        kind=MemoryKind.PROCEDURAL,
+                        value=f"{tool} is unreliable for these task shapes — prefer an alternative "
+                        f"(synthesized from {len(members)} failures)",
+                        confidence=0.8,
+                        source="failure_synthesis",
+                        tier=MemoryTier.SEMANTIC,
+                        scope=MemoryScope.GLOBAL,
+                        category="decision",
+                        recall_count=sum(m.recall_count for m in members),
+                    )
+                ]
+            )
+            for m in members:
+                self._vs.delete(m.id, source="failure_synthesis")
+            synthesized += 1
+        return synthesized
+
+    # ── self-persona (M5e) ────────────────────────────────────────────────────
+    # A positive self-model: who the agent is BECOMING with this user (distinct
+    # from the corrective lesson store, which records what NOT to do). scope=agent,
+    # injected always-on like the L1 manifest but from the agent's own namespace.
+
+    @staticmethod
+    def _persona_key(agent: str, trait: str) -> str:
+        import hashlib
+
+        h = hashlib.md5(f"{agent}|{trait}".encode("utf-8")).hexdigest()[:12]
+        return f"user.persona.{h}"
+
+    def record_persona(self, *, agent: str, trait: str) -> str | None:
+        """Record/reinforce an agent self-persona trait (scope=agent)."""
+        from personalclaw.memory_record import MemoryKind, MemoryRecord, MemoryScope, MemoryTier
+
+        if self._vs is None or not agent or not trait.strip():
+            return None
+        key = self._persona_key(agent, trait)
+        existing = self.get_record(key)
+        visit = (existing.recall_count if existing else 0) + 1
+        self.put(
+            [
+                MemoryRecord(
+                    id=key,
+                    kind=MemoryKind.SELF_PERSONA,
+                    value=trait.strip(),
+                    confidence=0.85,
+                    source="self_persona",
+                    tier=MemoryTier.SEMANTIC,
+                    scope=MemoryScope.AGENT,
+                    scope_ref=agent,
+                    recall_count=visit,
+                )
+            ]
+        )
+        return key
+
+    def persona_block(self, *, agent: str, limit: int = 6) -> str:
+        """The agent's self-persona block for always-on injection (scope matches
+        the running agent), or ""."""
+        from personalclaw.memory_record import MemoryKind
+
+        traits = [
+            r
+            for r in self.get_records(kinds={MemoryKind.SELF_PERSONA.value})
+            if r.scope_ref == agent
+        ]
+        if not traits:
+            return ""
+        traits.sort(key=lambda r: r.heat(), reverse=True)
+        lines = [r.text for r in traits[:limit] if r.text.strip()]
+        if not lines:
+            return ""
+        return (
+            "[SELF — who you are becoming with this user (your own growth notes)]\n"
+            + "\n".join(f"- {t}" for t in lines)
+            + "\n[END SELF]"
+        )
+
+    # ── commitments (M5e — O-A4) — the proactive brain, GUARDRAILED ────────────
+    # An inferred future check-in the agent notices from conversation, WITHOUT the
+    # user setting a reminder. The one class with a 'creepy when wrong' failure
+    # mode, so the guardrails are architecture, not config: OFF BY DEFAULT, hard
+    # per-day cap, high-confidence only, scoped to exact agent+channel, one-tap
+    # dismiss, heartbeat-clamped. NEVER injected into context; NEVER promotes to
+    # global. Delivered at most once per window by the heartbeat.
+
+    @staticmethod
+    def _commitment_key(agent: str, text: str) -> str:
+        import hashlib
+
+        h = hashlib.md5(f"{agent}|{text}".encode("utf-8")).hexdigest()[:12]
+        return f"user.commitment.{h}"
+
+    def record_commitment(
+        self,
+        *,
+        agent: str,
+        channel: str,
+        text: str,
+        due_window: str,
+        confidence: float = 0.0,
+        enabled: bool = False,
+        max_per_day: int = 3,
+    ) -> str | None:
+        """Record an inferred future check-in (M5e — O-A4). Returns the key, or
+        None when refused by a guardrail.
+
+        GUARDRAILS (all enforced here, not optional config):
+        - ``enabled`` must be True (the feature is OFF BY DEFAULT).
+        - high-confidence only (``confidence`` >= 0.8).
+        - hard per-day cap (``max_per_day``) on active commitments for this agent.
+        Scoped to the exact agent+channel; stored at scope=session|agent so it
+        NEVER promotes to global (a proactive ping is contextual, not durable)."""
+        from personalclaw.memory_record import MemoryKind, MemoryRecord, MemoryScope, MemoryTier
+
+        if self._vs is None or not enabled:
+            return None
+        if confidence < 0.8 or not text.strip() or not agent or not due_window:
+            return None
+        # hard per-day cap: count active (non-dismissed) commitments for this agent
+        active = [
+            r
+            for r in self.get_records(kinds={MemoryKind.COMMITMENT.value})
+            if r.scope_ref == agent and not (r.extra or {}).get("dismissed_at")
+        ]
+        if len(active) >= max_per_day:
+            logger.info(
+                "commitment refused: per-day cap (%d) reached for agent %s", max_per_day, agent
+            )
+            return None
+        key = self._commitment_key(agent, text)
+        # The full envelope rides value_json (text + delivery metadata) since the
+        # semantic row has no due_window/channel columns — commitments are a small,
+        # heartbeat-delivered class, not a queryable column space.
+        envelope = {"text": text.strip(), "due_window": due_window, "channel": channel}
+        self.put(
+            [
+                MemoryRecord(
+                    id=key,
+                    kind=MemoryKind.COMMITMENT,
+                    value=envelope,
+                    confidence=confidence,
+                    source="commitment",
+                    tier=MemoryTier.EPISODIC,
+                    scope=MemoryScope.AGENT,
+                    scope_ref=agent,
+                    category="event",
+                )
+            ]
+        )
+        return key
+
+    def due_commitments(self, *, agent: str, now_iso: str) -> list[dict]:
+        """Active commitments whose due_window has arrived, for heartbeat delivery
+        (NOT context injection). One natural check-in per window; the caller marks
+        delivered/dismissed via ``dismiss_commitment``."""
+        from personalclaw.memory_record import MemoryKind
+
+        out: list[dict] = []
+        for r in self.get_records(kinds={MemoryKind.COMMITMENT.value}):
+            if r.scope_ref != agent:
+                continue
+            env = r.value if isinstance(r.value, dict) else {}
+            due = env.get("due_window")
+            if due and due <= now_iso:
+                out.append(
+                    {
+                        "key": r.id,
+                        "text": env.get("text", ""),
+                        "channel": env.get("channel"),
+                        "due_window": due,
+                    }
+                )
+        return out
+
+    def due_commitments_all(self, *, now_iso: str) -> list[dict]:
+        """Every active commitment whose due_window has arrived, across all agents
+        — the heartbeat's delivery scan (the per-agent ``due_commitments`` powers
+        the capture cap). Each dict carries the owning ``agent`` so the caller can
+        scope delivery + dismiss correctly."""
+        from personalclaw.memory_record import MemoryKind
+
+        out: list[dict] = []
+        for r in self.get_records(kinds={MemoryKind.COMMITMENT.value}):
+            env = r.value if isinstance(r.value, dict) else {}
+            due = env.get("due_window")
+            if due and due <= now_iso:
+                out.append(
+                    {
+                        "key": r.id,
+                        "text": env.get("text", ""),
+                        "channel": env.get("channel"),
+                        "due_window": due,
+                        "agent": r.scope_ref or "",
+                    }
+                )
+        return out
+
+    def dismiss_commitment(self, key: str) -> bool:
+        """One-tap dismiss — supersede a commitment so the heartbeat never re-fires
+        it (a delivered-or-dismissed commitment is done)."""
+        if self._vs is None:
+            return False
+        return self._vs.delete(key, source="commitment_dismiss")
+
+    # ── two-stage retrieval rank (M5b — O-A2) ─────────────────────────────────
+
+    def rank_episodic(self, *, query_text: str, limit: int = 8, now=None) -> list[dict]:
+        """Two-stage episodic retrieval: stage 1 = the store's relevance search
+        (vector or FTS), stage 2 = a multiplicative operational boost by record
+        heat (memory-architecture.md §3.3 read path). Returns the reranked hits.
+
+        Heat boost is multiplicative + bounded so it nudges ordering without
+        letting a frequently-recalled-but-irrelevant record outrank a strong
+        semantic match — relevance still dominates."""
+        # over-fetch so the boost can reorder a wider candidate set
+        hits = self.search_episodic(query_text=query_text, limit=max(limit * 2, limit))
+        if not hits:
+            return []
+        from personalclaw.memory_record import MemoryRecord
+
+        for h in hits:
+            base = float(h.get("score", h.get("cosine_sim", 0.0)) or 0.0)
+            # build a lightweight record view to compute heat from the hit fields
+            rec = MemoryRecord.from_episodic_row(h) if "created_at" in h else None
+            heat = rec.heat(now=now) if rec is not None else 0.0
+            # multiplicative boost in [1.0, 1.5]: relevance dominates, heat nudges
+            h["ranked_score"] = base * (1.0 + min(0.5, 0.33 * heat))
+        # Owner preference (TEAM-SHARED-ENTITIES §2.3), applied in the SORT KEY rather
+        # than folded into ranked_score. Stage 1 already fixed the candidate set, so this
+        # cannot admit anything — but keeping it out of the stored score also means an
+        # inspector reading `ranked_score` sees relevance × heat, not relevance × heat ×
+        # whose-it-is. Locality decides ordering; it never decides what was retrieved.
+        from personalclaw.vector_memory import _owner_rank_bonus
+
+        owner = current_username()
+        hits.sort(
+            key=lambda x: (
+                float(x.get("ranked_score", 0.0) or 0.0)
+                + _owner_rank_bonus(x.get("contributor"), owner)
+            ),
+            reverse=True,
+        )
+        return hits[:limit]
+
+    # ── category-TTL expiry (M5b — O-A1) ──────────────────────────────────────
+
+    def expire_by_category(self, *, now=None) -> int:
+        """Soft-delete records past their category-TTL. Returns count expired.
+
+        Categories age at different rates (memory-architecture.md §3.6): debug/
+        event memories are short-lived; facts/prefs are durable. Only touches
+        records that carry a ``category`` (legacy uncategorized rows never expire),
+        and NEVER expires user_explicit or globally-promoted durable facts."""
+        vs = self._vs
+        if vs is None:
+            return 0
+        from datetime import datetime, timezone
+
+        from personalclaw.memory_record import MemoryScope
+
+        ref = now or datetime.now(tz=timezone.utc)
+        expired = 0
+        for rec in vs.iter_records():
+            ttl_days = _CATEGORY_TTL_DAYS.get(rec.category or "", None)
+            if ttl_days is None:
+                continue  # no category / non-expiring category → keep
+            # never expire durable global facts or user-set entries
+            if rec.scope == MemoryScope.GLOBAL and rec.source == "user_explicit":
+                continue
+            stamp = rec.last_accessed_at or rec.updated_at or rec.created_at
+            if not stamp:
+                continue
+            try:
+                last = datetime.fromisoformat(stamp)
+                if last.tzinfo is None:
+                    last = last.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                continue
+            age_days = (ref - last).total_seconds() / 86400.0
+            if age_days > ttl_days:
+                if vs.delete(rec.id, source="category_ttl"):
+                    expired += 1
+        return expired
+
+    # ── daily digest (mem-tree, descoped) ─────────────────────────────────────
+    # The one "tree" node kind PClaw lacked: a per-day rollup of what happened,
+    # so "what happened on day D?" is answerable without scanning every fragment.
+    # A digest is itself an EPISODIC record (dated narrative — episodic's exact
+    # shape) tagged ``daily-digest`` + the date; idempotency is by date-tag lookup
+    # (episodic ids are content UUIDs, so we dedup on the tag, not the id). Runs on
+    # the SAME maintenance cadence as promotion/TTL — no new scheduler, and LLM-free
+    # by default (extractive summary; an injected summarizer is optional).
+
+    _DIGEST_TAG = "daily-digest"
+
+    def _digest_exists(self, day: str) -> bool:
+        """Whether a daily-digest episodic already exists for ``day`` (idempotency).
+
+        A digest carries BOTH the ``daily-digest`` tag and the date tag; match on
+        both so a normal episodic that merely happens to be tagged with the date
+        can't be mistaken for the digest."""
+        for e in self.episodic_list(limit=50, tag_filter=[self._DIGEST_TAG]):
+            tags = e.get("tags") or []
+            if isinstance(tags, str):
+                import json as _json
+
+                try:
+                    tags = _json.loads(tags)
+                except ValueError:
+                    tags = []
+            if day in tags:
+                return True
+        return False
+
+    def build_daily_digest(self, *, now=None, max_days: int = 3, summarizer=None) -> int:
+        """Synthesize one digest per past day that has episodic activity but no
+        digest yet. Returns the number of digests created.
+
+        Only *completed* days are digested (never the current day, still accruing).
+        ``summarizer(day, texts)->str`` is an optional LLM condenser; without it the
+        digest is a bounded extractive list — the maintenance cadence stays LLM-free
+        by default."""
+        from datetime import datetime, timezone
+
+        from personalclaw.memory_record import MemoryKind, MemoryRecord
+
+        vs = self._vs
+        if vs is None:
+            return 0
+        ref = now or datetime.now(tz=timezone.utc)
+        today = ref.date().isoformat()
+
+        # Group real episodic fragments by their calendar day (excluding existing
+        # digests, so a digest never feeds the next day's digest).
+        by_day: dict[str, list[MemoryRecord]] = {}
+        for rec in vs.iter_records(kinds={MemoryKind.EPISODIC.value}):
+            if self._DIGEST_TAG in (rec.tags or []):
+                continue
+            stamp = rec.created_at
+            if not stamp:
+                continue
+            day = stamp[:10]  # ISO date prefix
+            if len(day) != 10 or day >= today:  # skip today (still open) + junk
+                continue
+            by_day.setdefault(day, []).append(rec)
+
+        created = 0
+        # Newest completed days first; bound the per-run work.
+        for day in sorted(by_day, reverse=True)[:max_days]:
+            if self._digest_exists(day):
+                continue  # already digested — idempotent
+            frags = sorted(by_day[day], key=lambda r: r.created_at)
+            texts = [" ".join((r.text or "").split()) for r in frags if r.text.strip()]
+            if not texts:
+                continue
+            body = None
+            if summarizer is not None:
+                try:
+                    body = summarizer(day, texts)
+                except Exception:
+                    logger.debug("daily-digest summarizer failed for %s", day, exc_info=True)
+                    body = None
+            if not body:
+                # Extractive fallback: a bounded bullet list of the day's fragments.
+                shown = texts[:20]
+                body = f"Daily digest for {day} — {len(texts)} memory event(s):\n" + "\n".join(
+                    f"- {t[:200]}" for t in shown
+                )
+                if len(texts) > len(shown):
+                    body += f"\n- …and {len(texts) - len(shown)} more."
+            # Written as an episodic record (dated narrative); source marks it a
+            # digest, tags make it findable + idempotent.
+            self.write_episodic(
+                body,
+                conversation_id=f"daily-digest:{day}",
+                tags=[self._DIGEST_TAG, day],
+                importance=0.9,
+                source="daily_digest",
+            )
+            created += 1
+        return created
+
+    def daily_digests(self, *, limit: int = 30) -> list[dict]:
+        """The daily-digest nodes, newest first — the 'what happened when' view."""
+        digests: list[dict] = []
+        for e in self.episodic_list(limit=max(limit * 2, 60), tag_filter=[self._DIGEST_TAG]):
+            tags = e.get("tags") or []
+            if isinstance(tags, str):
+                import json as _json
+
+                try:
+                    tags = _json.loads(tags)
+                except ValueError:
+                    tags = []
+            day = next((t for t in tags if t != self._DIGEST_TAG), "")
+            digests.append(
+                {"day": day, "text": e.get("text", ""), "created_at": e.get("created_at", "")}
+            )
+        digests.sort(key=lambda d: d["day"], reverse=True)
+        return digests[:limit]
+
+    # ── provenance-first recall (mem-tree, descoped) ──────────────────────────
+
+    def recall_with_provenance(self, *, query_text: str, limit: int = 8, now=None) -> list[dict]:
+        """Episodic recall that carries PROVENANCE, not just text — each hit keeps
+        its source, originating session, and timestamp so the agent (and the UI)
+        can see *where* and *when* a memory came from, the mem-tree provenance-
+        first-retrieval property expressed over the existing episodic store."""
+        hits = self.rank_episodic(query_text=query_text, limit=limit, now=now)
+        out: list[dict] = []
+        for h in hits:
+            out.append(
+                {
+                    "text": h.get("text", ""),
+                    "source": h.get("source") or "",
+                    "session": h.get("conversation_id") or "",
+                    "created_at": h.get("created_at") or "",
+                    "score": round(float(h.get("ranked_score", h.get("score", 0.0)) or 0.0), 4),
+                    # Who contributed it (§2.3). Empty for the owner's own and for
+                    # unattributed records, so a consumer can render a label only when
+                    # there is actually another contributor to name.
+                    "contributor": str(h.get("contributor") or ""),
+                }
+            )
+        return out
+
+    def embed(self, text: str) -> list[float] | None:
+        """Embed text via the provider's wired embedding function, or None."""
+        vs = self._vs
+        if vs is None or vs.embed_fn is None:
+            return None
+        return vs._try_embed(text)
+
+    # ── read path: semantic CRUD (dashboard + recall) ─────────────────────────
+
+    def get_all_semantic(self) -> list[dict]:
+        vs = self._vs
+        return vs.get_all_semantic() if vs else []
+
+    def get_semantic(self, key: str) -> dict | None:
+        vs = self._vs
+        return vs.get_semantic(key) if vs else None
+
+    def set_semantic(
+        self,
+        key: str,
+        value: object,
+        confidence: float,
+        source: str,
+        *,
+        holder: str | None = None,
+        weight: float | None = None,
+    ) -> "tuple[SemanticRejectCode, str] | None":
+        vs = self._vs
+        if vs is None:
+            return None
+        return vs.set_semantic(key, value, confidence, source, holder=holder, weight=weight)
+
+    def delete_semantic(self, key: str, source: str = "user_explicit") -> bool:
+        vs = self._vs
+        return vs.delete_semantic(key, source) if vs else False
+
+    def supersede_semantic(self, old_key: str, new_key: str, source: str) -> bool:
+        vs = self._vs
+        return vs.supersede_semantic(old_key, new_key, source) if vs else False
+
+    def record_recall(self, keys: list[str]) -> None:
+        vs = self._vs
+        if vs is not None:
+            vs.record_recall(keys)
+
+    # ── write path: episodic + lessons + promotion (consolidation) ─────────────
+
+    # Sources that are DIRECT user input — trusted, never scanned (decision #3). Any
+    # other source (a tool result, a skill, an autonomous consolidation over external
+    # content) is UNTRUSTED and passes through the injection/invisible-Unicode gate: a
+    # poisoned tool output must not quietly write a steering instruction into durable
+    # memory that re-injects on later turns.
+    _TRUSTED_WRITE_SOURCES = frozenset(
+        {"user_explicit", "user", "seal", "session_sweep", "heat_promote", "supersede"}
+    )
+
+    def _memory_write_blocked(self, text: str, source: str) -> bool:
+        """S5 gate: reject an untrusted memory write carrying a high-confidence injection
+        / bidi-steering payload. Returns True (block) only on a DANGEROUS verdict — a
+        lower-band signal is allowed (a lesson legitimately mentioning "ignore" prose
+        shouldn't be lost). No-op for trusted (user) sources and empty text."""
+        if not text or source in self._TRUSTED_WRITE_SOURCES:
+            return False
+        try:
+            from personalclaw.supply_chain import Verdict, default_scanner
+
+            report = default_scanner.scan_text(text, surface="manifest")
+            if report.verdict is Verdict.DANGEROUS:
+                logger.warning(
+                    "memory write BLOCKED (source=%s): injection/steering payload (%s)",
+                    source,
+                    ", ".join(sorted({f.rule for f in report.findings})),
+                )
+                try:
+                    from personalclaw.sel import sel
+
+                    sel().log_api_access(
+                        caller=f"memory_service.write:{source}",
+                        operation="memory_write",
+                        outcome="blocked",
+                        source="memory",
+                        resources="",
+                        error="injection/bidi payload in untrusted memory write",
+                    )
+                except Exception:
+                    pass
+                return True
+        except Exception:
+            logger.debug("memory-write scan errored (fail-open)", exc_info=True)
+        return False
+
+    def write_episodic(
+        self,
+        text: str,
+        *,
+        embedding: list[float] | None = None,
+        conversation_id: str = "",
+        tags: list[str] | None = None,
+        importance: float = 0.5,
+        source: str = "consolidation",
+    ) -> bool:
+        vs = self._vs
+        if vs is None:
+            return False
+        if self._memory_write_blocked(text, source):
+            return False
+        return vs.write_episodic(
+            text,
+            embedding=embedding,
+            conversation_id=conversation_id,
+            tags=tags,
+            importance=importance,
+            source=source,
+        )
+
+    def put(self, records: "list[MemoryRecord]") -> None:
+        """Upsert axis-bearing records (tier × scope) through the provider's
+        record contract. The write surface M5 uses for scoped/working/procedural
+        records — the legacy write_lesson/write_episodic keep today's defaults."""
+        vs = self._vs
+        if vs is not None:
+            vs.put(records)
+
+    def write_lesson(
+        self,
+        rule: str,
+        category: str = "knowledge",
+        negative: str | None = None,
+        source: str = "user_explicit",
+        *,
+        scope: "MemoryScope | None" = None,
+        scope_ref: str | None = None,
+    ) -> bool:
+        """Write a lesson. ``scope``/``scope_ref`` come from
+        :func:`resolve_lesson_scope` — ``None`` means GLOBAL (every existing caller)."""
+        vs = self._vs
+        if vs is None:
+            return False
+        if self._memory_write_blocked(rule, source) or (
+            negative and self._memory_write_blocked(negative, source)
+        ):
+            return False
+        # Normalize HERE, not at the endpoint alone: `lessons_context` normalizes what
+        # it reads, so the write must normalize by the same function or the two sides
+        # drift and a lesson lands under a ref nothing will ever match.
+        ok = vs.write_lesson(
+            rule,
+            category=category,
+            negative=negative,
+            source=source,
+            scope=scope,
+            scope_ref=normalize_workspace_ref(scope_ref) or None,
+        )
+        if ok:
+            # `MemoryWrite` (AUTO crit 5): selectable in the hook UI since it was declared, and
+            # fired by nothing until now. Emitted only on a SUCCESSFUL write, and only after the
+            # write — a hook that ran for a blocked or failed write would report memory the user
+            # does not have. The payload carries the category and source, never the rule text:
+            # a lesson body is user content, and it must not travel into something that executes.
+            from personalclaw.triggers.lifecycle_fire import fire_sync, memory_write_payload
+
+            fire_sync(memory_write_payload(kind="lesson", key=category, scope=source))
+        return ok
+
+    def get_lessons(self, limit: int | None = None) -> list[dict]:
+        """The lesson INVENTORY (every scope) — management lists, counts, deletes."""
+        vs = self._vs
+        return vs.get_lessons(limit=limit) if vs else []
+
+    def lessons_visible_in(
+        self, workspace: str | None = None, limit: int | None = None
+    ) -> list[dict]:
+        """Lessons a session in ``workspace`` may be shown: global + that workspace's
+        own. ``None`` → global only (see ``VectorMemoryStore.lessons_visible_in``).
+
+        Normalized by the same function the write path uses, so a caller may pass a raw
+        working directory and cannot land on a ref the writer never produced."""
+        vs = self._vs
+        if vs is None:
+            return []
+        return vs.lessons_visible_in(normalize_workspace_ref(workspace) or None, limit=limit)
+
+    def lesson_standings(self, rows: list[dict]) -> dict[str, Any]:
+        """Each row's derived confidence + injection standing, keyed by lesson key.
+
+        A passthrough on purpose: the derivation has exactly one home
+        (:meth:`VectorMemoryStore.lesson_standings`), so the management surface and
+        the prompt filter cannot report different answers about the same lesson.
+        """
+        vs = self._vs
+        return vs.lesson_standings(rows) if vs else {}
+
+    def delete_lesson(self, rule_substring: str) -> bool:
+        vs = self._vs
+        return vs.delete_lesson(rule_substring) if vs else False
+
+    def promote_episodic_patterns(self, **kw: Any) -> int:
+        vs = self._vs
+        return vs.promote_episodic_patterns(**kw) if vs else 0
+
+    # ── lifecycle: events / WAL / stats ────────────────────────────────────────
+
+    def get_events(self, limit: int = 50, offset: int = 0) -> list[dict]:
+        vs = self._vs
+        return vs.get_events(limit=limit, offset=offset) if vs else []
+
+    def undo_event(self, event_id: int) -> tuple[bool, str]:
+        vs = self._vs
+        if vs is None:
+            return (False, "no vector store")
+        return vs.undo_event(event_id)
+
+    def memory_stats(self) -> dict:
+        vs = self._vs
+        return vs.memory_stats() if vs else {}
+
+    def get_records(
+        self, kinds: "set[str] | None" = None, include_deleted: bool = False
+    ) -> "list[MemoryRecord]":
+        """The unified typed-record view (M0) over all backing tables."""
+        vs = self._vs
+        return vs.iter_records(kinds=kinds, include_deleted=include_deleted) if vs else []
+
+    def get_record(self, record_id: str) -> "MemoryRecord | None":
+        vs = self._vs
+        return vs.get_record(record_id) if vs else None
+
+    # ── intelligence wiring (contradiction judge / embed fn) ───────────────────
+
+    def set_contradiction_judge(self, judge: "Callable[[str, str], bool] | None") -> None:
+        vs = self._vs
+        if (
+            vs is not None
+            and judge is not None
+            and getattr(vs, "contradiction_judge", None) is None
+        ):
+            vs.contradiction_judge = judge
+
+    @property
+    def contradiction_judge(self) -> "Callable[[str, str], bool] | None":
+        vs = self._vs
+        return getattr(vs, "contradiction_judge", None) if vs else None
+
+
+class _NullProvider(MemoryProvider):
+    """A provider stand-in for "no memory wired" — yields nothing, accepts
+    nothing. Lets ``MemoryService.over_vector_store(None)`` exist as a real
+    object so callers don't special-case None. Implements the full
+    ``MemoryProvider`` surface as no-ops so it satisfies the interface."""
+
+    name = "null"
+    vector_store = None
+
+    def init(self) -> None:
+        return None
+
+    def capabilities(self) -> "MemoryCapabilities":
+        from personalclaw.memory_record import MemoryCapabilities
+
+        return MemoryCapabilities(
+            vector=False, transactional_batch=False, event_log=False, full_text_search=False
+        )
+
+    def put(self, records: "list[MemoryRecord]") -> None:
+        return None
+
+    def get(self, record_id: str) -> "MemoryRecord | None":
+        return None
+
+    def delete(self, record_id: str, *, source: str = "user_explicit") -> bool:
+        return False
+
+    def query(self, **_kw: Any) -> "list[MemoryRecord]":
+        return []
+
+    def vector_query(self, **_kw: Any) -> "list[dict]":
+        return []
+
+    def embed(self, text: str) -> "list[float] | None":
+        return None
+
+    def append_event(self, **_kw: Any) -> int:
+        return 0
+
+    def read_events(self, *, limit: int = 50, offset: int = 0) -> "list[dict]":
+        return []
+
+    def render_markdown_context(self, **_kw: Any) -> list:
+        return []
+
+
+_NULL_PROVIDER = _NullProvider()
+
+
+# ── service resolution ─────────────────────────────────────────────────────────
+
+# A MemoryService wraps a provider; we key the cache by the provider object id so
+# the same provider always yields the same service (services are cheap, stateless
+# facades — the state lives in the provider).
+_services: "dict[int, MemoryService]" = {}
+
+
+def service_for(provider: "MemoryProvider") -> MemoryService:
+    """Return the MemoryService wrapping ``provider`` (cached per provider).
+
+    When the provider is a markdown ``MemoryStore`` (the common per-session case),
+    the service is built with a ``FilesystemMemoryProvider`` fallback over the
+    SAME store — so vector retrieval degrades to FTS keyword search when no
+    embedder is configured (the real fallback chain, memory-architecture.md §3.4).
+    """
+    key = id(provider)
+    svc = _services.get(key)
+    if svc is None or svc.provider is not provider:
+        fallback = None
+        # Build the FTS fallback when the provider carries a markdown projection
+        # (read_preferences/search). The native record store is the primary; the
+        # markdown FTS is the degraded path.
+        if hasattr(provider, "read_preferences") and hasattr(provider, "search"):
+            try:
+                from personalclaw.memory_providers.filesystem import FilesystemMemoryProvider
+
+                fallback = FilesystemMemoryProvider(cast("MemoryStore", provider))
+            except Exception:
+                fallback = None
+        svc = MemoryService(provider, fallback=fallback)
+        _services[key] = svc
+    return svc

@@ -1,0 +1,46 @@
+{
+  "id": "t-4d7f0135",
+  "title": "Set up the weekly capture template",
+  "status": "done",
+  "description": "",
+  "provider": "native",
+  "project": "",
+  "task_list_id": "tl-3c9d20a7",
+  "dependencies": [],
+  "author": "",
+  "assignee": "",
+  "priority": "medium",
+  "labels": [
+    "setup"
+  ],
+  "due": "",
+  "order": 4.0,
+  "exit_criteria": [
+    {
+      "description": "Five fields, same order, every week",
+      "status": "complete",
+      "comment": "",
+      "met": true
+    }
+  ],
+  "action_plan": [],
+  "notes": [
+    {
+      "content": "Dropped the 'mood' field \u2014 never once affected what got reread.",
+      "timestamp": "2026-08-11T19:02:33Z"
+    }
+  ],
+  "research_notes": [],
+  "execution_notes": [],
+  "agent_instructions_template": "",
+  "blocked_reason_kind": "",
+  "workflow_binding": null,
+  "blocked_kind": "",
+  "preview": "",
+  "done_criterion": "Template produces the same five fields every week.",
+  "evidence": [],
+  "attempts": [],
+  "created_at": "2026-08-10T08:05:27Z",
+  "updated_at": "2026-08-11T19:02:33Z",
+  "url": ""
+}

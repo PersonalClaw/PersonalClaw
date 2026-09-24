@@ -1,0 +1,161 @@
+# The Provider Boundary — What Belongs in Core, and Why
+
+PersonalClaw's central architectural tenet: **the core package is
+provider-agnostic**. Core contains capability-enabling mechanisms (protocols,
+registries, resolvers); every integration with a *specific* provider — a
+vendor's endpoints, auth, catalogs, binaries, wire quirks — lives in an app
+bundle. This document records where the line is drawn and, for each surface
+that *looks* vendor-flavored but stays in core, why that judgment was made.
+
+Paths are relative to `PersonalClaw/src/personalclaw/` unless noted;
+`apps/` is the first-party bundle directory at the workspace root.
+
+## Why a boundary at all
+
+The boundary is what makes the system composable: any model provider, channel,
+agent runtime, or search engine can be added by installing an app — no core
+edits. It also keeps core testable in isolation (the core test suite collects
+and passes without the sibling `apps/` directory present) and keeps
+vendor-specific dependencies (SDKs, scrapers, block-format builders) out of the
+core dependency set. Apps import core **only** through the `personalclaw.sdk.*`
+facade (26 modules), enforced by `tests/test_apps_import_boundary.py`.
+
+## The boundary-judgment table
+
+Not everything with a vendor's name in it is drift. Some surfaces are
+*protocol* or *reference data* that core must own to function. Each row below
+is a deliberate, documented judgment (also recorded in-module at each site).
+
+| Surface | Home | Judgment |
+|---|---|---|
+| `llm/anthropic.py`, `llm/openai.py` | core | **Wire-protocol clients only.** They speak the Anthropic/OpenAI HTTP message formats — formats many providers reuse. Neither module calls `register_type` at import; registration is owned by `apps/anthropic-models/provider.py` and `apps/openai-models/provider.py`. Core ships the client; an app decides it is *used*. |
+| `stt/`, `tts/`, `image_gen/` `openai_provider.py` | core | **OpenAI-*compatible* protocol clients.** The `/v1/audio`, `/v1/images` shapes are a de-facto protocol implemented by many vendors. Vendor **catalogs** (which model ids exist, their properties) are contributed by apps via the `media_catalogs.py` catalog-contribution seam — `apps/openai-models` owns the OpenAI ones. |
+| `acp/dialect.py` (`ClaudeCodeDialect`, `CodexDialect`) | core | **Protocol-shape strategies**, not vendor logic. They encode the small frame-shape differences between the Zed-maintained ACP adapters. App bundles select a dialect by id (`options["dialect"]`); nothing in core infers a vendor from argv or binary names. |
+| `llm/catalog.py` family map + `infer_capabilities()` | core | **Fallback-only reference data.** Providers that *declare* capabilities always win; the vendor-name markers only classify unknown models discovered via `/v1/models`. Same class as public model-pricing tables (`pricing.py`, `model_pricing.json`) — data about the world, not an integration. |
+| `security.py` `xox[bpas]-` token patterns; `sandbox.py` `SLACK_*` env denylist | core | **Secret-DETECTION data.** These patterns exist to *redact and block* leaked credentials. Renaming them to something generic would break the control they implement. Deliberate keep. |
+| `CRED_SLACK_*` constants | core `config/loader.py`, re-exported by `sdk/channel.py` | The literal `.env` credential-store key names (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`) that existing installs already hold. The loader is the credential store's home (the bottom layer, below all apps); `sdk/channel.py` re-exports them as the app-facing surface, so the slack app imports via the SDK and no import direction is inverted. Renaming the keys would break existing installs for zero gain. |
+| `constants.APP_LOGGER_ROOTS` (`"slack_runtime"`) | core | The list of app logger namespaces the CLI log setup (`cli.py`) and the dashboard log-level handler consume. Apps *registering* their own logger roots (instead of core listing them) is a post-publication roadmap item — deliberately not built yet. |
+| Everything else vendor-specific | `apps/` bundles | Endpoints, auth flows, catalogs, binary resolution, block/attachment formats, scraping — all bundle-resident. |
+
+## The app-bundle landscape
+
+The families an app can belong to are not a list this document keeps — they are
+exactly `PROVIDER_TYPES` (`apps/manifest.py`), which a manifest is validated
+against at install time. Read that frozenset for what exists; read
+[PersonalClawApps](https://github.com/PersonalClaw/PersonalClawApps) for who
+implements it. What matters here is where the boundary sits inside each family:
+
+- **Model providers** come in three construction shapes, all bundle-resident:
+  protocol-thin branded apps (built on `sdk/provider_helpers.py`
+  `register_branded_app`), generic-endpoint apps taking a base URL, and
+  full-protocol apps owning their own wire translation. Local-inference apps
+  (whisper, TTS, embeddings, diarization) additionally implement the
+  `local_models/` management contract.
+- **Search providers** register through `search_providers/`; the zero-config
+  floor is a declared `keyless` *capability*, not a vendor name in core
+  (`search_providers/registry.py::_keyless_provider`: first registered keyless
+  provider wins).
+- **Agent apps** own binary resolution, dialect selection, and login argv; core
+  `acp/` is the vendor-neutral protocol layer.
+- **OCR engines** register through `ocr/` (`OcrProvider`, re-exported by `sdk/ocr.py`).
+  Deliberately its own type rather than a `model` serving `image_modality`: an engine takes
+  no prompt and must be byte-stable for the same input, which the model seam does not
+  promise. Core ships **no** engine, so an empty registry is the normal state — the
+  ingestion graph's `ocr` node has a model-backed backend (`vision-llm`) and an
+  engine-backed one (`engine`) and runs whichever can run, falling back to today's
+  graceful skip when neither can. The true-type gate every engine must pass its input
+  through (`ocr/filetype.py`) is core's, not each bundle's: a magic-number table copied per
+  bundle is a table that drifts per bundle.
+- **Vector-store backends** register through `vector_stores/`
+  (`VectorStoreProvider`, re-exported by `sdk/vector_store.py`) and let knowledge
+  chunk-vector search run against a store the user owns — Qdrant, pgvector, Chroma. Core
+  ships **no** vector-store client and holds no core exception for one: a Qdrant or Chroma
+  REST dialect is one vendor's API, not a de-facto multi-vendor protocol in the
+  `/v1/chat/completions` sense, so the judgment in the table above lands the whole client
+  in the bundle. What core keeps is everything that turns a similarity into a rank — the
+  `_VECTOR_MIN_SIMILARITY` floor, the max roll-up to the parent document, the
+  archived/active liveness filter and RRF fusion — so a backend can move where the
+  nearest-neighbour work happens without being able to change what a search means. An
+  empty registry is the normal state: with nothing bound, retrieval is the bundled
+  `sqlite-vec`/FTS5/graph path unchanged. Enabling exactly one such app IS the binding
+  (there is no second config field naming it, so enablement and "which store is knowledge
+  searching" cannot disagree), and two enabled at once is refused rather than
+  arbitrated — see `vector_stores/base.py` for the fail-soft-never-substitute rule.
+- **Channel apps** own the vendor transport and delivery both ways.
+  `slack-channel` is the completed reference — see
+  [inbox-channels.md](inbox-channels.md) and
+  [build-a-channel-app.md](../guides/build-a-channel-app.md).
+- **`skills-sh`** is a marketplace app rather than a single provider, and
+  **backend+UI apps** contribute their own dashboard pages behind a `ui` block
+  plus a subprocess backend.
+
+## How resolution works (no vendor names in the path)
+
+1. **Bindings** — `~/.personalclaw/active_models.json` maps *use cases*
+   (chat, background, embedding, ingestion, stt, tts, …) to an ordered list of
+   provider/model refs; the first resolvable ref wins.
+2. **Build** — `llm/registry.py` `registry.build` constructs the client via the
+   factory the owning app registered with `register_type`. A per-session
+   `model` override kwarg is threaded through and honored by every factory.
+3. **Catalog/management** — `ModelCatalog`/`ModelManager` is the shared
+   catalog and management seam; provider instances live in `config.json`
+   `providers[]` (credential-chain providers store no secret material there).
+4. **Local models** — `local_models/provider.py` defines the unified
+   `LocalModel`/`LocalModelProvider` contract (list/download/delete plus
+   gated/source metadata), orthogonal to the inference ABCs. Download detection
+   must probe every filesystem layout a provider writes; deletes clear all
+   layouts; a binding to a catalog-absent model surfaces as a synthetic
+   not-downloaded row rather than disappearing.
+5. **Subscription credentials** — a provider whose vendor bills by subscription
+   has no API key to paste; it rides an agent CLI the user already signed in.
+   `llm/subscription_credentials.py` knows how to read a *declared* credential
+   store read-only and nothing else: the app registers a `SubscriptionSource`
+   (paths, JSON key walk, expiry shape, and its own `login_hint` naming its own
+   login verb) and names it in `BrandedProviderSpec.credential_source`. **Core
+   ships no source rows** — do not add one; a vendor path or login verb in core
+   is the boundary violation, not a shortcut. The resolver sits at one fixed
+   place in the credential order (below `entry.credential` and
+   `options.api_key`, above `spec.api_key_env`), never writes/refreshes the
+   store it reads, and reports not-signed-in through the `availability()` probe
+   `providers/loader.py` derives from that declaration.
+
+## Case study: how Slack left core
+
+The clearest illustration of the tenet is the Slack extraction (originally
+13,097 LOC across 11 core modules). The end state:
+
+- **Core kept the seams**: `channel_transports/` (inbound; a
+  `ChannelTransportProvider` ABC with `start_inbound(services)`) and
+  `channel_delivery.py` (outbound; the `ChannelDelivery` protocol —
+  `deliver_text`, `deliver_rich`, `upload_attachment`, streaming primitives,
+  `resolve_user_name`, `build_thread_link`, …). Core never constructs a vendor
+  URL — even the "open this thread" deep link is produced by the app behind
+  `build_thread_link`.
+- **The app got the vendor logic**: `apps/slack-channel/slack_runtime/` —
+  transport, runtime facade, delivery, events, interactions, blocks, files, and
+  settings with a loud one-time `migrate_from_core()`.
+- **Generic residue was extracted, not deleted**: LLM text utilities misfiled
+  in the Slack module became core `textfmt.py`; the gateway orchestrator
+  (which was ~95% core boot logic living in `slack/gateway.py`) became core
+  `gateway.py`.
+- **Naming followed the seam**: routes are `/api/channels/reply-targets`,
+  `/api/channel/profile`; the delivery grammar is `deliver="channel[:...]"`;
+  session-origin labels are `origin="channel"`. Old Slack-named routes 404 —
+  clean break, no aliases.
+
+The same pattern applied to the Ollama client (`llm/ollama.py`, 1002 LOC →
+`apps/ollama-models/provider.py`) and the vendor-specific inbox source
+(deleted outright — channels are channel providers, not inbox sources).
+
+## Rules of thumb for contributors
+
+- Adding a provider? Start an app bundle. If core needs an edit, you are
+  probably missing a seam — propose the seam, not the vendor patch.
+- A vendor name in core is acceptable only as (a) a wire-protocol
+  implementation many vendors share, (b) fallback-only reference data that
+  declared capabilities override, or (c) secret-detection material. Document
+  the judgment in-module.
+- Apps import core only via `personalclaw.sdk.*`. The boundary test will fail
+  your PR otherwise.
+- Registration belongs to the app (`register_type`, transport registration,
+  catalog contribution) — never module-level side effects in core.

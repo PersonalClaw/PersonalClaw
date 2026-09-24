@@ -1,0 +1,273 @@
+import { useRef, type ReactNode } from 'react'
+import { AnimatePresence, motion, useMotionValue, useMotionTemplate, useReducedMotion } from 'framer-motion'
+import { Loader2 } from 'lucide-react'
+import { cx } from './cx'
+import { spring, physics, expr, exprHeavy } from '../design/motion'
+import { fvs } from '../design/fontWeight'
+
+type Variant = 'primary' | 'tonal' | 'secondary' | 'ghost' | 'danger' | 'ghost-accent'
+type Size = 'xs' | 'sm' | 'md' | 'lg'
+
+const variants: Record<Variant, string> = {
+  primary: 'bg-primary text-on-primary hover:bg-primary-emphasis',
+  // tonal: the primary-tinted chip CTA (Material's tonal button) — the pattern
+  // pages kept hand-rolling as `bg-primary/15 text-primary hover:bg-primary/25`.
+  tonal: 'bg-primary/15 text-on-primary-tint hover:bg-primary/25',
+  secondary: 'bg-surface-high text-on-surface hover:bg-surface-highest',
+  ghost: 'bg-transparent text-on-surface hover:bg-surface-high',
+  danger: 'bg-danger text-on-danger hover:opacity-90',
+  // ghost-accent: a ghost button whose LABEL carries the accent — the "Try again" retry after a
+  // failed load, four sites of it. They each wrote `variant="ghost" className="text-primary"`, which
+  // is wrong twice over:
+  //
+  //   1. TWO COLOUR UTILITIES LAND ON ONE ELEMENT. `ghost` already sets `text-on-surface`, so which
+  //      one wins is decided by Tailwind's stylesheet ORDER, not by the order they are written. It
+  //      happens to be the accent today; nothing guarantees that.
+  //   2. THE ACCENT IT PICKED FAILS AA. Measured on `#/artifacts/…`, where the retry sits on
+  //      `--color-canvas`: **4.37:1** at 13px/450 against a 4.5 floor, axe agreeing [serious].
+  //
+  // `primary-emphasis` is the shade the design system already ships for accent text off
+  // `--color-surface`, and it clears the floor on every ground this button can land on — canvas 4.82
+  // worst across the 12 schemes (coral 6.0), surface-low 4.92, surface-high 4.70, surface 6.63.
+  // That last one matters because `hover:bg-surface-high` makes surface-high the HOVER ground.
+  //
+  // 🪤 Why this is shippable while `ui/Segmented`'s coral branch is still deferred: Segmented needs a
+  // tinted BACKGROUND with a hover shade the token set does not define, and inventing one is a
+  // redesign. Here the background stays transparent and only the ink moves, so there is nothing to
+  // invent.
+  'ghost-accent': 'bg-transparent text-primary-emphasis hover:bg-surface-high',
+}
+
+const sizes: Record<Size, string> = {
+  // xs: dense in-panel chrome (cockpit banners, error retries, inline strips) —
+  // the tier whose absence made pages hand-roll <button>s.
+  xs: 'h-7 px-m',
+  sm: 'h-8 px-l',
+  md: 'h-10 px-xl',
+  lg: 'h-12 px-2xl',
+}
+// The label's type role per size — the label-* tier (wght 470, which the inline
+// fvs(470) below already pinned; the role now carries size + line-height too).
+const sizeRole: Record<Size, string> = {
+  xs: 'label-s',
+  sm: 'label-s',
+  md: 'label-m',
+  lg: 'label-l',
+}
+
+/** The one shared button. Redesign-v2: bold, physical, expressiveness-scaled.
+ *  Signature moments (all scale through the global `--expressiveness` knob and
+ *  fully yield to reduced-motion):
+ *   • spring press-in whose depth grows with expressiveness,
+ *   • hover-lift,
+ *   • a liquid pointer-tracking sheen on solid (primary/danger) buttons — a
+ *     radial highlight following the cursor; dropped below the heavy-effect
+ *     threshold so "refined" stays flat,
+ *   • a `loading` state that cross-fades the label out for a centered spinner
+ *     while preserving the button's width (no layout jump), optionally naming
+ *     what is happening via `loadingLabel`.
+ *  Pill by default; `shape="squircle"` opts into the superellipse corner. No
+ *  hardcoded colors/px — all via tokens. */
+export function Button({
+  children, variant = 'primary', size = 'md', shape = 'pill',
+  loading = false, loadingLabel, className, onClick, disabled, type = 'button', title, ariaLabel, ariaExpanded, ariaPressed,
+  disabledReason,
+}: {
+  children: ReactNode
+  variant?: Variant
+  size?: Size
+  shape?: 'pill' | 'squircle'
+  loading?: boolean
+  // WHAT is happening, for a `loading` button whose progress is worth naming.
+  //
+  // Bare `loading` withholds the label: it cross-fades the whole thing to opacity 0 and centers a
+  // spinner. That is right for a short, obvious action ("Save" → spinner → done), and it is the
+  // reason this prop exists — because for a SLOW action it is the wrong trade, and 8 sites in this
+  // tree had already worked around it by hand:
+  //
+  //     {busy === 'rebuild' ? <><Loader2 className="animate-spin"/> Linking…</> : <><Share2/> Rebuild links</>}
+  //
+  // Seven of those eight name a multi-second operation — "Dreaming…", "Consolidating…",
+  // "Rendering…", "Syncing…", "Building…", "Linking…", "Running…" — and every one is strictly more
+  // informative than an unlabelled spinner. But hand-rolling it costs them `aria-busy`, because
+  // that attribute is published from `loading` and these buttons never set it. So the workaround
+  // traded an announcement for a word, and a screen-reader user got neither.
+  //
+  // 🔑 THE PROGRESS VERB IS NOT DECORATION — it is the only thing distinguishing "still working"
+  // from "stuck". A spinner alone cannot say which of five long operations is running, and these
+  // buttons sit in rows where several could be.
+  //
+  // Omit it and nothing changes: `loading` alone keeps the withheld-label behaviour every existing
+  // caller relies on.
+  loadingLabel?: string
+  className?: string
+  onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void
+  disabled?: boolean
+  type?: 'button' | 'submit'
+  title?: string
+  // The accessible name, for a button whose CHILDREN are only an icon.
+  //
+  // Measured across the tree with a depth-aware tag scan: THREE `<Button>`s wrap a single icon and
+  // nothing else, so they had no name at all — axe `button-name` [critical] on the one that renders
+  // by default (`#/knowledge` → Intents, a DESTRUCTIVE delete, both themes). A `title` alone is not
+  // an accessible name in every engine, which is why this is `aria-label` and not the tooltip.
+  //
+  // Prefer plain children where there IS a label — a name that repeats the visible text is a second
+  // string that can drift from it. This is for the icon-only case, the same role `TileButton`'s
+  // `ariaLabel` plays for a card whose content is a document.
+  ariaLabel?: string
+  // A disclosure/toggle button announces its state to assistive tech. Optional so the common
+  // action button carries no misleading `aria-expanded`; set it only when the button folds
+  // content (e.g. the runs-inbox "Show N suppressed" archive toggle).
+  ariaExpanded?: boolean
+  // A button acting as a SELECTED/UNSELECTED choice (a list row that stays chosen, a view toggle)
+  // must announce that state, or a screen-reader user hears an identical label for the row they are
+  // on and the row they are not. Separate from `ariaExpanded` on purpose: expanded means "reveals
+  // content", pressed means "is the current selection", and one attribute cannot carry both.
+  ariaPressed?: boolean
+  // WHY this button is unavailable, when `disabled` is true.
+  //
+  // A native `disabled` button is removed from the tab order entirely, so a keyboard user
+  // cannot reach it to hear anything — they tab straight past the action they are looking for
+  // with no way to learn what is missing. Measured on the New-project modal: the Create button
+  // was `disabled`, `title: null`, `aria-describedby: null`, and `NOT focusable`.
+  //
+  // Given a reason, the button stays REACHABLE and announces it: `aria-disabled` (semantically
+  // unavailable, still focusable) instead of the native attribute, with the click suppressed in
+  // the handler. That is the standard trade — the native attribute is stronger protection but
+  // silences the control, and a form submit that cannot explain itself is the worse failure.
+  //
+  // Omit it and nothing changes: `disabled` stays native, which is right for a button whose
+  // unavailability is self-evident from context (a Delete that needs a selection).
+  disabledReason?: string
+}) {
+  const reduce = useReducedMotion()
+  const ref = useRef<HTMLButtonElement>(null)
+  const isSolid = variant === 'primary' || variant === 'danger'
+  const off = !!disabled || loading
+  // Reachable-but-unavailable only when a reason exists to announce; otherwise stay native.
+  const softOff = off && !!disabledReason && !loading
+
+  // Pointer-tracked sheen origin (0..100% within the button) — Motion values so
+  // the highlight follows the cursor with no per-move React re-render.
+  const mx = useMotionValue(50)
+  const my = useMotionValue(50)
+  const sheen = useMotionTemplate`radial-gradient(circle at ${mx}% ${my}%, color-mix(in srgb, var(--color-on-primary) 22%, transparent), transparent 60%)`
+
+  const onMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (reduce) return
+    const r = ref.current?.getBoundingClientRect()
+    if (!r) return
+    mx.set(((e.clientX - r.left) / r.width) * 100)
+    my.set(((e.clientY - r.top) / r.height) * 100)
+  }
+  const onLeave = () => { mx.set(50); my.set(50) }
+
+  // Press/hover depth scale with expressiveness (floor keeps a hint when refined).
+  const pressScale = reduce ? 1 : 1 - expr(0.05, 0.4)
+  const hoverScale = reduce ? 1 : 1 + expr(0.025, 0.4)
+  const showSheen = isSolid && !reduce && exprHeavy(0.45) && !off
+
+  return (
+    <motion.button
+      ref={ref}
+      type={type}
+      title={softOff ? [title, disabledReason].filter(Boolean).join(' — ') : title}
+      aria-label={ariaLabel}
+      aria-expanded={ariaExpanded}
+      aria-pressed={ariaPressed}
+      // `loading` cross-fades the label to opacity 0 and swaps in an aria-hidden spinner, so
+      // sighted users see the action is in flight and everyone else got NO signal at all —
+      // the button just went quiet and disabled while keeping its original name. `aria-busy`
+      // is the state that says "working"; measured 0 buttons in the app carrying it before.
+      aria-busy={loading || undefined}
+      // The reason rides `title`, NOT an aria-describedby target inside the button.
+      // Measured: an sr-only <span> in the button body is CONCATENATED into the accessible
+      // name — "Create project" became "Create projectEnter a name first", so the action
+      // stopped being findable by its own name. A describedby target outside the button would
+      // need a wrapper element at 100+ call sites. `title` is already the kit's convention
+      // (ruled cycle 37) and is both the sighted tooltip and the AT description.
+      // aria-disabled when there is a reason to announce (keeps the tab stop), native
+      // `disabled` otherwise. Both paths must refuse the click.
+      aria-disabled={softOff || undefined}
+      onClick={softOff ? (e) => e.preventDefault() : onClick}
+      disabled={softOff ? undefined : off}
+      onPointerMove={onMove}
+      onPointerLeave={onLeave}
+      whileTap={off ? undefined : { scale: pressScale, transition: physics.snappy }}
+      whileHover={off ? undefined : { scale: hoverScale, transition: physics.snappy }}
+      data-type={sizeRole[size]}
+      style={fvs(470)}
+      className={cx(
+        // whitespace-nowrap + shrink-0: a labelled pill must never wrap its text
+        // or be squeezed below its content in a tight flex row.
+        'relative inline-flex shrink-0 items-center justify-center gap-s overflow-hidden whitespace-nowrap font-[450] select-none',
+        shape === 'squircle' ? 'squircle' : 'rounded-pill',
+        'transition-colors duration-100 ease-[cubic-bezier(0.2,0,0,1)]',
+        // aria-disabled needs the same dimming as the native attribute, and must not
+        // swallow pointer events (a hover has to reveal the title/tooltip).
+        //
+        // 🔴 …EXCEPT WHEN A LOADING LABEL HAS TO BE READ. `loading` disables the button, so
+        // `disabled:opacity-40` fires and the whole control renders at 40% — measured on the real
+        // component, not reasoned about. For a bare spinner that is fine. For `loadingLabel` it
+        // defeats the prop: "Consolidating…" exists to be read, and CSS opacity COMPOUNDS, so no
+        // descendant can win it back. The dim is therefore omitted in that one case.
+        //
+        // 🪤 OMITTED, NOT OVERRIDDEN. Adding `disabled:opacity-100` alongside would put two opacity
+        // utilities on one element, and which wins is decided by Tailwind's STYLESHEET order rather
+        // than the order written here — the exact trap recorded above this file's `ghost-accent`
+        // variant, where `text-on-surface` and `text-primary` collided and the winner was accidental.
+        //
+        // Interactivity does not rely on the dim: `disabled` plus `pointer-events-none` still refuse
+        // the click, and a spinner beside a progress verb says "working" more clearly than grey does.
+        loading && loadingLabel ? 'disabled:pointer-events-none' : 'disabled:opacity-40 disabled:pointer-events-none',
+        'aria-disabled:opacity-40 aria-disabled:cursor-not-allowed',
+        variants[variant], sizes[size], className,
+      )}
+    >
+      {/* Liquid pointer-tracking sheen (solid buttons, bold intensity only). */}
+      {showSheen && (
+        <motion.span aria-hidden className="pointer-events-none absolute inset-0" style={{ background: sheen, opacity: 0.9 }} />
+      )}
+      {/* Label — cross-fades out under a spinner while loading; width preserved. */}
+      <motion.span
+        className="relative inline-flex items-center gap-s"
+        animate={{ opacity: loading ? 0 : 1, y: loading ? -4 : 0 }}
+        transition={spring.effects}
+      >
+        {children}
+      </motion.span>
+      <AnimatePresence>
+        {loading && (
+          <motion.span
+            // 🪤 aria-hidden STAYS, and `loadingLabel` does not change that. The button's
+            // accessible name must keep being its ACTION ("Rebuild links"), or the control stops
+            // being findable by the name the user is looking for — the exact regression that killed
+            // the first `disabledReason` implementation, where an sr-only span was concatenated into
+            // the name and "Create project" became "Create projectEnter a name first".
+            // `aria-busy` is what carries "working" to assistive tech; this span is the sighted
+            // channel for the same fact, so it is decorative by construction.
+            aria-hidden
+            className="absolute inset-0 grid place-items-center"
+            initial={{ opacity: 0, scale: 0.6 }}
+            animate={{ opacity: 1, scale: 1, transition: physics.snappy }}
+            exit={{ opacity: 0, scale: 0.6, transition: spring.effects }}
+          >
+            {loadingLabel ? (
+              // Same row shape the 8 hand-rolled sites used, so adopting the prop is
+              // appearance-preserving: spinner, gap, verb. `min-w-0` + `truncate` because this span
+              // is absolutely positioned over a button sized by its ORIGINAL label — a longer verb
+              // than the action it replaces would otherwise overflow the pill rather than wrap.
+              <span className="inline-flex min-w-0 items-center gap-s">
+                <Loader2 size={16} className="shrink-0 animate-spin" />
+                <span className="truncate">{loadingLabel}</span>
+              </span>
+            ) : (
+              <Loader2 size={16} className="animate-spin" />
+            )}
+          </motion.span>
+        )}
+      </AnimatePresence>
+    </motion.button>
+  )
+}

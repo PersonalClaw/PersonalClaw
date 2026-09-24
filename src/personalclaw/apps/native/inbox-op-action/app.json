@@ -1,0 +1,64 @@
+{
+  "name": "inbox-op-action",
+  "version": "1.0.0",
+  "displayName": "Inbox Operation Hook",
+  "description": "Archive, mark read, mute a thread, dismiss, or write a draft reply on an inbox item when a trigger fires. Every operation is reversible, so an auto-executed one always keeps a one-click undo. A native action, no shell-out.",
+  "icon": "Inbox",
+  "author": "PersonalClaw",
+  "tags": [
+    "action",
+    "bundled",
+    "native"
+  ],
+  "provider": {
+    "type": "action",
+    "entity": "inbox",
+    "implementation": "personalclaw.action_providers.inbox_op_provider:create_provider",
+    "capabilities": [
+      "execute",
+      "reverse"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "required": [
+        "op",
+        "item_id"
+      ],
+      "properties": {
+        "op": {
+          "type": "string",
+          "enum": [
+            "archive",
+            "mark_read",
+            "mute_thread",
+            "dismiss",
+            "reply_draft"
+          ],
+          "default": "archive",
+          "x-meta": {
+            "label": "Operation",
+            "help": "What to do to the item. Archive, mark read and mute are the reversible everyday ones; dismiss removes it from the surface; reply_draft writes a draft and never sends."
+          }
+        },
+        "item_id": {
+          "type": "string",
+          "x-meta": {
+            "label": "Inbox Item",
+            "help": "The inbox item id to operate on. Supports $<payload-key> so a trigger can pass the item that fired it."
+          }
+        },
+        "draft": {
+          "type": "string",
+          "x-meta": {
+            "label": "Draft Reply",
+            "help": "Body to write into the item's draft field. Only used by reply_draft — it is never sent.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "native": true
+}

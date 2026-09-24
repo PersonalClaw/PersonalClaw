@@ -1,0 +1,12 @@
+{
+  "generated_from": "scripts/generate_docs_lint_baseline.py",
+  "per_file": {},
+  "totals": {
+    "by_kind": {
+      "dead_link": 0,
+      "stale_citation": 0,
+      "stale_header": 0
+    },
+    "total": 0
+  }
+}

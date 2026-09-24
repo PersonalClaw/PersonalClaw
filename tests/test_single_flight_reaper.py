@@ -1,0 +1,195 @@
+"""Tests for cross-process single-flight locks + the ONE boot-adoption path."""
+
+import multiprocessing
+from dataclasses import dataclass
+from pathlib import Path
+
+import pytest
+
+from personalclaw.concurrency import boot_sweep, lock_path, single_flight
+
+
+@pytest.fixture(autouse=True)
+def _tmp_home(monkeypatch, tmp_path, _isolate_single_flight_locks):
+    """Point config_dir() at a tmp dir so lock files land in isolation.
+
+    This suite tests the REAL single-flight primitive, including a cross-PROCESS
+    case where a spawned child (which re-sets PERSONALCLAW_HOME and re-imports
+    concurrency) must contend on the SAME lock file as the parent. So here the lock
+    dir must derive from PERSONALCLAW_HOME — not from the fixed per-test dir the root
+    conftest's ``_isolate_single_flight_locks`` patches in for every other test (that
+    patch lives only in the parent process, so it would desync parent and child).
+    Depending on that fixture forces this override to run last, so it wins."""
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+
+    def _derive() -> Path:
+        d = tmp_path / "locks"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    monkeypatch.setattr("personalclaw.concurrency._locks_dir", _derive)
+    return tmp_path
+
+
+# ── single_flight ──────────────────────────────────────────────────────────
+
+
+def test_single_flight_grants_when_free():
+    with single_flight("job:a") as acquired:
+        assert acquired is True
+
+
+def test_single_flight_reentrant_after_release():
+    with single_flight("job:a") as acquired:
+        assert acquired is True
+    # Released on exit — a second acquisition of the same key succeeds.
+    with single_flight("job:a") as acquired:
+        assert acquired is True
+
+
+def test_single_flight_distinct_keys_independent():
+    with single_flight("job:a") as a:
+        with single_flight("job:b") as b:
+            assert a is True and b is True
+
+
+def test_lock_path_distinct_for_colliding_prefixes():
+    # Two keys that sanitize to the same readable prefix must not collide,
+    # because the digest suffix differs.
+    p1 = lock_path("consolidate:a/b")
+    p2 = lock_path("consolidate:a:b")
+    assert p1 != p2
+    assert p1.parent == p2.parent
+
+
+def _hold_lock(key: str, home: str, hold_secs: float, ready, done):
+    """Child process: grab the lock, signal ready, hold until told, then exit."""
+    import os
+
+    os.environ["PERSONALCLAW_HOME"] = home
+    from personalclaw.concurrency import single_flight as sf
+
+    with sf(key) as acquired:
+        ready.put(acquired)
+        if acquired:
+            done.wait(hold_secs)
+
+
+def test_single_flight_blocks_across_processes(tmp_path):
+    """A second OS process cannot acquire a lock the first still holds."""
+    key = "job:cross-proc"
+    ctx = multiprocessing.get_context("spawn")
+    ready: multiprocessing.Queue = ctx.Queue()
+    done = ctx.Event()
+    child = ctx.Process(target=_hold_lock, args=(key, str(tmp_path), 5.0, ready, done))
+    child.start()
+    try:
+        assert ready.get(timeout=15) is True  # child holds the lock
+        # While the child holds it, this process must NOT acquire it.
+        with single_flight(key) as acquired:
+            assert acquired is False
+    finally:
+        done.set()
+        child.join(timeout=10)
+
+    # Once the child has released (exited), the lock is free again.
+    assert not child.is_alive()
+    with single_flight(key) as acquired:
+        assert acquired is True
+
+
+def test_single_flight_ignores_stale_lock_file():
+    """A leftover lock FILE from a crashed process must not block acquisition.
+
+    We guard with ``fcntl.flock`` on the file, not the file's existence — flock
+    is released when its holder dies, so a stale ``.lock`` file on disk (the only
+    artifact a crashed process leaves) is freely re-acquirable. This is the
+    crash-zombie resistance that motivated a file lock over a DB lock row.
+    """
+    key = "job:stale"
+    # Simulate the artifact a dead holder leaves: the lock file exists, but no
+    # process holds an flock on it.
+    lock_path(key).write_text("")
+    assert lock_path(key).exists()
+    with single_flight(key) as acquired:
+        assert acquired is True
+
+
+# ── boot_sweep ───────────────────────────────────────────────────────────────
+#
+# The ONE boot-adoption path both work-unit nouns run through (`PP-16`). These pin the
+# generic contract; the per-noun call sites are pinned by `test_pp16_boot_adoption.py`.
+
+
+@dataclass
+class _Row:
+    """The minimum `BootSweepRow` — an id. Both real rows (`Loop`, `WorkflowRun`) are wider."""
+
+    id: str
+
+
+@pytest.mark.asyncio
+async def test_boot_sweep_with_no_survivors_never_calls_decide():
+    """A boot with nothing stale must not touch a single row."""
+    decided = []
+
+    async def _decide(row):
+        decided.append(row.id)
+        return True
+
+    out = await boot_sweep("x", [_Row("a"), _Row("b")], survived=lambda r: False, decide=_decide)
+    assert out == set()
+    assert decided == []
+
+
+@pytest.mark.asyncio
+async def test_boot_sweep_decides_only_the_survivors():
+    """The partition is `survived`'s alone — a live row is never handed to `decide`."""
+    seen = []
+
+    async def _decide(row):
+        seen.append(row.id)
+        return True
+
+    out = await boot_sweep(
+        "x",
+        [_Row("a"), _Row("live"), _Row("c")],
+        survived=lambda r: r.id != "live",
+        decide=_decide,
+    )
+    assert out == {"a", "c"}
+    assert seen == ["a", "c"]
+
+
+@pytest.mark.asyncio
+async def test_boot_sweep_returns_only_the_ids_whose_fate_it_wrote():
+    """`decide` returning False means "I looked and deliberately left it to adoption", so its
+    id must NOT come back — the run side's inline path depends on exactly this, because the
+    same poll has to go on and drive it."""
+
+    async def _decide(row):
+        return row.id == "written"
+
+    out = await boot_sweep(
+        "x", [_Row("written"), _Row("left")], survived=lambda r: True, decide=_decide
+    )
+    assert out == {"written"}
+
+
+@pytest.mark.asyncio
+async def test_boot_sweep_isolates_failures():
+    """One failing decision is logged + skipped; the rest are still decided. A single
+    unreadable row must never cost a whole process its boot adoption."""
+    seen = []
+
+    async def _decide(row):
+        if row.id == "boom":
+            raise RuntimeError("boom")
+        seen.append(row.id)
+        return True
+
+    out = await boot_sweep(
+        "x", [_Row("a"), _Row("boom"), _Row("c")], survived=lambda r: True, decide=_decide
+    )
+    assert out == {"a", "c"}
+    assert seen == ["a", "c"]

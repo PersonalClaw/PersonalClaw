@@ -1,0 +1,324 @@
+import { useEffect, useMemo, useState } from 'react'
+import { motion } from 'framer-motion'
+import { Bell, Check, CheckCheck, Filter, Trash2, Undo2, X, Target } from 'lucide-react'
+import { TopBar } from '../../ui/TopBar'
+import { Button } from '../../ui/Button'
+import { IconButton } from '../../ui/IconButton'
+import { InvestigateButton } from '../../ui/InvestigateButton'
+import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
+import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
+import { SidePanel } from '../../ui/SidePanel'
+import { ListControls } from '../../ui/ListControls'
+import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
+import { Markdown } from '../../ui/Markdown'
+import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
+import { RowHitTarget } from '../../ui/RowHitTarget'
+import { UnreadRail } from './UnreadRail'
+import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
+import { spring } from '../../design/motion'
+import { confirm, confirmDelete } from '../../ui/dialog'
+import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
+import { rowSubject } from '../../lib/rowSubject'
+import { useQuery, invalidateKeys } from '../../lib/data'
+import { api, type NotificationItem } from '../../lib/api'
+import { useAutonomyLadder } from '../../lib/rungs'
+import { kindMeta, kindsPresent, bucketOf, BUCKET_ORDER, relTime, clockTime, firstLine, toneChipBg } from './notificationMeta'
+import { fvs } from '../../design/fontWeight'
+import { useQueryParam, type RouteProps } from '../../app/useQueryState'
+import { PageTitle } from '../../ui/PageTitle'
+import { accentChip, toneChipSkin } from '../../design/accent'
+import { notify } from '../../app/appSdk'
+import { reportingWrite } from '../../app/reportingWrite'
+
+/** Notifications = a triage feed of agent/schedule/trigger/task events. Items are
+ *  keyed by `ts`; the backend supports ack / unack / ack-all / delete / clear
+ *  (all by ts). Filter by read-state + kind; grouped Today / Yesterday / Earlier.
+ *  Live via the shared WS `notification_ack` / new-notification events. */
+
+
+export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 'setQuery' | 'navigate'>) {
+  const [filter, setFilter] = useQueryParam(query, setQuery, 'filter', 'all', { replace: true })  // 'all' | 'unread' | <kind>
+  const [openTsRaw, setOpenTs] = useQueryParam(query, setQuery, 'open', '')
+  const openTs = openTsRaw || null
+  const [now, setNow] = useState(() => Date.now())
+
+  // Cached feed (instant paint on revisit) that still polls — persist:false so the
+  // live read-state never goes stale across a hard reload.
+  // No `.catch(() => [])`. An empty list is a CLAIM, and this page states it out loud: with the feed at
+  // 500 the surface rendered "You're all caught up", a reassuring sentence produced by a failed request.
+  // The read POLLS every 10s, so the failure belongs in the render (once) rather than in a toast (every
+  // tick) — hence `LoadError` below rather than `notify`.
+  const { data: items, error: loadErr, refresh } = useQuery('notifications', () => api.notifications().then((d) => d.notifications), { persist: false })
+  // A mutation reloads against the changed feed; the WS + interval just revalidate.
+  const load = () => { invalidateKeys('notifications'); refresh() }
+  useEffect(() => {
+    const t = window.setInterval(() => { setNow(Date.now()); refresh() }, 10000)
+    return () => clearInterval(t)
+  }, [refresh])
+  useChatSocket((m: WsMessage) => { if (m.type.startsWith('notification')) refresh() })
+
+  // The undo affordance on an `auto_with_undo` notice (AUTONOMY-GUARDRAILS §6.1). The button
+  // is rendered from the persisted reversal RECORD, not from the `reversal_id` sitting on the
+  // notification: a record that has already been undone (here, in Settings, or on another
+  // machine) must not still offer an undo, and the notification itself never changes once
+  // written. So the id is the key and the ladder read is the state.
+  const { ladder, refresh: refreshLadder } = useAutonomyLadder()
+  const undoable = useMemo(
+    () => new Set((ladder?.reversals ?? []).filter((r) => !r.reversed_at).map((r) => r.id)),
+    [ladder],
+  )
+  async function undoAction(n: NotificationItem) {
+    if (!n.reversal_id) return
+    try {
+      await api.autonomyUndo(n.reversal_id)
+      notify(`Undone. ${n.action_type || 'That action'} will not do this on its own any more.`, 'success')
+    } catch (e) {
+      notify(`Couldn't undo: ${String((e as Error)?.message || e)}`, 'error')
+    }
+    invalidateKeys('autonomy:ladder'); refreshLadder()
+  }
+
+  // newest first (the log is appended chronologically)
+  const ordered = useMemo(() => (items ? [...items].reverse() : null), [items])
+  const unread = items?.filter((n) => !n.acked).length ?? 0
+  const kinds = useMemo(() => (items ? kindsPresent(items) : []), [items])
+
+  const filtered = useMemo(() => {
+    if (!ordered) return null
+    return ordered.filter((n) => filter === 'all' ? true : filter === 'unread' ? !n.acked : (n.kind || 'info') === filter)
+  }, [ordered, filter])
+
+  // group filtered into Today / Yesterday / Earlier (order preserved within)
+  const groups = useMemo(() => {
+    const g: Record<string, NotificationItem[]> = {}
+    for (const n of filtered ?? []) { const b = bucketOf(n.ts, now); (g[b] ??= []).push(n) }
+    return g
+  }, [filtered, now])
+
+  const open = items?.find((n) => n.ts === openTs) ?? null
+
+  // Every mutation below is followed by `load()`, so a swallowed failure REVERTS the row and the click
+  // reads as a no-op — the user marks something read, it stays unread, and nothing explains why. Same
+  // `notify` shape the settings panels use.
+  async function ack(n: NotificationItem) {
+    await api.ackNotification(n.ts).catch((e) => notify(`Couldn't mark this notification read: ${String((e as Error)?.message || e)}`, 'error'))
+    load()
+  }
+  async function unack(n: NotificationItem) {
+    await api.unackNotification(n.ts).catch((e) => notify(`Couldn't mark this notification unread: ${String((e as Error)?.message || e)}`, 'error'))
+    load()
+  }
+  async function remove(n: NotificationItem) {
+    // #628: one row's delete is as irreversible as Clear all four lines down —
+    // the entry leaves disk and messaging.py has no restore. Every per-row
+    // delete in the app gates on confirmDelete; this was the one that did not.
+    // The subject line names WHICH notification, since rows can look alike.
+    if (!(await confirmDelete('notification', n.title || undefined))) return
+    // Through the shared sentence owner (was a hand-rolled copy of its wording), and the tail is
+    // gated: a failed delete used to close the open panel and reload anyway — the row survived,
+    // but the panel the user was reading vanished as if the delete had worked.
+    if (!(await reportingWrite('delete this notification', () => api.deleteNotification(n.ts)))) return
+    if (openTs === n.ts) setOpenTs("")
+    load()
+  }
+  async function ackAll() {
+    await api.ackAllNotifications().catch((e) => notify(`Couldn't mark all notifications read: ${String((e as Error)?.message || e)}`, 'error'))
+    load()
+  }
+  // The worst member of the family: the user CONFIRMS a destructive action, it fails, the list comes
+  // back unchanged, and silence reads as "cleared".
+  async function clearAll() {
+    // 🪤 A bare title on the app's most total destructive action. Every other danger dialog says what
+    // happens to what — "The shelf goes away. The items on it stay in your library." — and the sibling
+    // in `InboxPage` even names the count ("Dismiss all 4 pending items?"). This said neither.
+    //
+    // The count is `items`, not `filtered`, ON PURPOSE: `clear_notifications()` truncates the whole log
+    // ("Remove all notifications from memory and disk"), so it IGNORES the active filter. A user
+    // looking at 3 of 50 needs the dialog to say 50, or the filter reads as a limit on the action.
+    const total = items?.length ?? 0
+    if (!(await confirm({
+      title: `Clear all ${total} notification${total === 1 ? '' : 's'}?`,
+      body: 'The whole history is removed from disk, including any hidden by the current filter. This cannot be undone.',
+      danger: true,
+      confirmLabel: 'Clear all',
+    }))) return
+    await api.clearNotifications().catch((e) => notify(`Couldn't clear notifications: ${String((e as Error)?.message || e)}`, 'error'))
+    setOpenTs("")
+    load()
+  }
+
+  const filterSection: FilterSectionDef = useMemo(() => ({
+    title: 'Show', value: filter, defaultKey: 'all', onChange: setFilter,
+    options: [
+      { key: 'all', label: 'All', count: items?.length ?? 0 },
+      { key: 'unread', label: 'Unread', count: unread },
+      ...kinds.map((k) => ({ key: k, label: kindMeta(k).label, count: items?.filter((n) => (n.kind || 'info') === k).length ?? 0 })),
+    ],
+  }), [items, unread, kinds, filter, setFilter])
+
+  return (
+    <WorkbenchLayout
+      topBar={
+        <TopBar
+          keepCornerPadding
+          left={<PageTitle className="flex items-center gap-s">Notifications {unread > 0 && <span className="rounded-pill px-2 h-5 inline-flex items-center text-[0.75rem]" style={accentChip}>{unread}</span>}</PageTitle>}
+          right={items && items.length > 0 ? (
+            // Direct header actions (the header is otherwise empty now that the
+            // filter lives on the page); each collapses to an icon when tight.
+            <HeaderActions>
+              {unread > 0 && <HeaderControl icon={CheckCheck} label="Mark all read" priority="primary" onClick={ackAll} />}
+              <HeaderControl icon={Trash2} label="Clear all" danger priority="low" onClick={clearAll} />
+            </HeaderActions>
+          ) : undefined}
+        />
+      }
+      controls={(items === undefined || items.length > 0)
+        ? <ListControls results={{ count: (filtered ?? []).length, noun: 'notifications', active: filter !== 'all' }}>
+            <FilterMenu sections={[filterSection]} />
+          </ListControls>
+        : undefined}
+      panel={open && (
+        <SidePanel key={open.ts} fillHeight storeKey="notif-panel-w" icon={(() => { const km = kindMeta(open.kind); return <km.icon size={18} style={{ color: km.tone }} /> })()} title={open.title} onClose={() => setOpenTs("")}>
+          <div className="flex flex-col gap-l">
+            <div className="flex flex-wrap items-center gap-s text-[0.8125rem]">
+              {(() => { const km = kindMeta(open.kind); return <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={toneChipSkin(km.tone, 16)}><km.icon size={13} /> {km.label}</span> })()}
+              <span className="text-on-surface-low">{clockTime(open.ts)}</span>
+              {open.acked && <span className="text-on-surface-low inline-flex items-center gap-1"><Check size={13} /> read</span>}
+            </div>
+            <div className="text-on-surface-var text-[0.9375rem] leading-relaxed"><Markdown>{open.body}</Markdown></div>
+            <div className="flex flex-wrap gap-s border-t border-outline-variant/40 pt-l">
+              {/* A loop notification carries the loop_id — let the user jump straight to
+                  it (a 'needs your input' / 'stalled' notice is actionable). Route by the
+                  loop KIND: a code loop lives at #/code/<id> (the mini-IDE cockpit), every
+                  other kind (general/goal/design) at #/loops/<id>. The label stays neutral
+                  "Open loop" for the latter — "Open goal" mislabeled a general/design loop. */}
+              {open.loop_id && (
+                <Button size="sm" onClick={() => { ack(open); navigate(`${open.loop_kind === 'code' ? 'code' : 'loops'}/${open.loop_id}`) }}>
+                  <Target size={14} /> {open.loop_kind === 'code' ? 'Open project' : 'Open loop'}
+                </Button>
+              )}
+              {/* Undo the action this notice is ABOUT — offered only while the reversal record
+                  is still pending. The label says both halves of what the click does, because
+                  "your automation will stop doing this by itself" is not a consequence to
+                  discover afterwards. */}
+              {open.reversal_id && undoable.has(open.reversal_id) && (
+                <Button size="sm" variant="secondary" onClick={() => { undoAction(open); ack(open) }}>
+                  <Undo2 size={14} /> Undo & stop doing this automatically
+                </Button>
+              )}
+              {open.acked
+                ? <Button size="sm" variant="ghost" onClick={() => unack(open)}><Undo2 size={14} /> Mark unread</Button>
+                : <Button size="sm" variant="secondary" onClick={() => ack(open)}><Check size={14} /> Mark read</Button>}
+              <Button size="sm" variant="ghost" onClick={() => remove(open)}><Trash2 size={14} /> Delete</Button>
+            </div>
+          </div>
+        </SidePanel>
+      )}
+    >
+      <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+        {items === undefined && loadErr ? (
+          // Before the skeleton branch, or a failed first read spins it forever.
+          <LoadError what="notifications" error={loadErr} onRetry={load} />
+        ) : filtered === null ? <ListSkeleton rows={6} what="notifications" /> : items && items.length === 0 ? (
+          <EmptyState icon={Bell} title="You're all caught up" hint="Schedule runs, trigger fires, agent updates, and task results surface here for you to review." />
+        ) : (
+          <>
+            {filtered.length === 0 ? (
+              // 🔑 THE PRIMITIVE, NOT A CENTRED DIV — and this file already used it eight lines above
+              // for its blank slate. That is the sharp form of the drift: the same component reaches
+              // for `EmptyState` on one branch and hand-rolls the sibling branch, so there was never
+              // a container argument for it (the two live in the same slot).
+              //
+              // The old copy also failed the family's own criterion — it must name what the user can
+              // CHANGE. `Nothing matches this filter.` named the narrowing and not the way out, so a
+              // user who filtered a fresh install could not tell an empty filter from an empty app.
+              // Shape matched to `code/CodeSection`, which main converged onto the same form: how
+              // many exist, that they are merely elsewhere, and the un-narrowing as the action.
+              <EmptyState
+                icon={Filter}
+                title="No matching notifications"
+                hint={`You have ${items?.length ?? 0} notification${(items?.length ?? 0) === 1 ? '' : 's'} — just none in this view.`}
+                action={{ label: 'Show all', onClick: () => setFilter('all') }}
+              />
+            ) : (
+              <div className="flex flex-col gap-l">
+                {BUCKET_ORDER.filter((b) => groups[b]?.length).map((b) => (
+                  <div key={b}>
+                    <div className="mb-s text-on-surface-low text-[0.75rem] uppercase tracking-wide">{b}</div>
+                    <div className="flex flex-col gap-s">
+                      {groups[b].map((n, i) => <Row key={n.ts} n={n} index={i} now={now} onOpen={() => setOpenTs(n.ts)} onAck={() => ack(n)} onUnack={() => unack(n)} onDelete={() => remove(n)} />)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </WorkbenchLayout>
+  )
+}
+
+function Row({ n, index, now, onOpen, onAck, onUnack, onDelete }: { n: NotificationItem; index: number; now: number; onOpen: () => void; onAck: () => void; onUnack: () => void; onDelete: () => void }) {
+  const km = kindMeta(n.kind)
+  // What this row IS, bound once: the row's own hit target and all three actions must
+  // announce the same subject, and it was being recomputed per control.
+  const subject = rowSubject([n.title, firstLine(n.body ?? '')])
+  // Right-click / long-press → the same actions the row's click + hover buttons
+  // already wire (open, ack/unack by read-state, delete) — the shared ContextMenu
+  // primitive, no duplicated logic.
+  const menuItems: ContextMenuItem[] = [
+    { icon: <Bell size={15} />, label: 'Open', onSelect: onOpen },
+    n.acked
+      ? { icon: <Undo2 size={15} />, label: 'Mark unread', onSelect: onUnack }
+      : { icon: <Check size={15} />, label: 'Mark read', onSelect: onAck },
+    { icon: <Trash2 size={15} />, label: 'Delete', onSelect: onDelete, danger: true },
+  ]
+  return (
+    <ContextMenu items={menuItems}>
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(index * 0.03, 0.3) }}
+      // 🔴 OPENING A NOTIFICATION WAS POINTER-ONLY. Driven with the keyboard across all 83 rows on
+      // this surface: no row is ever a tab stop (measured `tabindex` = null on every one), so the
+      // only keyboard route to `Open` was Shift+F10 on one of the hover actions — and those are
+      // `opacity-0` until hover/focus-within, so nothing advertises it. Same shape the tasks list
+      // carried before cycle 159; same fix, through the same primitive.
+      tabIndex={-1}
+      className="group relative flex items-center gap-m rounded-lg bg-surface-container px-m py-2.5 cursor-pointer hover:bg-surface-high transition-colors has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary"
+      onClick={onOpen}>
+      {/* 🪤 THE UNREAD RAIL HAD TO STOP BEING A BOX-SHADOW FOR THIS ROW TO SHOW FOCUS — the whole reason
+          `ui/RowHitTarget`'s ring painted nothing here. Written out in `UnreadRail`, which is where the
+          rail now lives for both this row and the bell's. */}
+      <UnreadRail tone={km.tone} acked={n.acked} />
+      <RowHitTarget label={subject} />
+      <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: toneChipBg(km.tone) }}><km.icon size={19} style={{ color: km.tone }} /></span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-s">
+          <span className={`truncate text-[0.9375rem] ${n.acked ? 'text-on-surface-var' : 'text-on-surface'}`} style={fvs(500)}>{n.title}</span>
+          <span className="shrink-0 text-on-surface-low text-[0.75rem]">{relTime(n.ts, now)}</span>
+        </div>
+        <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{firstLine(n.body)}</p>
+      </div>
+      <div className="shrink-0 flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+        {/* Investigate (plan 60): a failure notification carries the link to what
+            failed, so the chat opens with the run/job state already resolved. */}
+        {/* Each of these acts on THIS notification, and there are 83 rows here. Measured in Chrome's
+            AX tree before naming them: 83x "Investigate in chat", 83x "Delete", 81x "Mark unread" —
+            three names for 247 controls.
+
+            🪤 `n.title` ALONE IS NOT THE ROW, and re-measuring proved it: naming from the title left
+            35x "…: Refine a skill" and 26x "…: Loop progress", because the title is a KIND here, not
+            an identity. The row shows title + the body's first line, and so does the name — capped,
+            because the other half of this cycle fixed a tile named by 695 characters of its body. */}
+        <InvestigateButton kind="notification" id={n.ts} backLink="#/notifications" size={34}
+          label={`Investigate in chat: ${subject}`} />
+        {n.acked
+          ? <IconButton icon={Undo2} label={`Mark unread: ${subject}`} title="Mark unread" size={34} onClick={onUnack} />
+          : <IconButton icon={Check} label={`Mark read: ${subject}`} title="Mark read" size={34} onClick={onAck} />}
+        <IconButton icon={X} label={`Delete: ${subject}`} title="Delete" size={34} tone="danger" onClick={onDelete} />
+      </div>
+    </motion.div>
+    </ContextMenu>
+  )
+}
+
+

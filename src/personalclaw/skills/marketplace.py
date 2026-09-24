@@ -1,0 +1,641 @@
+"""Skills marketplace — abstract base, SkillsRegistry, and local skill discovery.
+
+The agentskills.io format (https://agentskills.io) is the standard:
+  - A skill is a directory containing a SKILL.md file with YAML frontmatter.
+  - Frontmatter fields: name, description, license, compatibility, metadata, allowed-tools.
+  - The body is Markdown loaded on demand by the LLM.
+
+Discovery paths (loaded by ``_all_skill_paths()`` in ``agent.py``):
+  - ``~/.agents/skills/``        — agentskills.io cross-client standard
+  - ``PERSONALCLAW_PROJECT_DIR/skills/``  — project-level
+  - ``~/.personalclaw/skills/``      — user-created
+
+``SkillsRegistry`` holds named ``SkillsMarketplace`` implementations.
+Additional marketplaces (skills.sh, custom registries) register via
+``get_default_skills_registry().register(name, marketplace)``.
+"""
+
+import builtins
+import logging
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from personalclaw.record_ids import record_path
+from personalclaw.skills.loader import validate_skill_md as _validate_skill_md
+
+
+def _path_home_pclaw():
+    """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
+    try:
+        from personalclaw.config.loader import config_dir as _cd
+
+        return _cd()
+    except Exception:
+        from pathlib import Path as _P
+
+        return _P.home() / ".personalclaw"
+
+
+logger = logging.getLogger(__name__)
+
+_SKILL_FILENAME = "SKILL.md"
+
+# Standard discovery paths in priority order
+SKILL_DISCOVERY_PATHS: list[Path] = [
+    Path.home() / ".agents" / "skills",  # agentskills.io cross-client standard
+    _path_home_pclaw() / "skills",  # user-created skills
+]
+
+# Default target for `skills install` when the caller doesn't override.
+# Matches the first discovery path so the installed skill is immediately
+# visible to running sessions without further config.
+DEFAULT_SKILLS_INSTALL_PATH: Path = Path.home() / ".agents" / "skills"
+
+
+# ── Data model ────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class SkillEntry:
+    """Metadata for a skill returned from a marketplace search."""
+
+    id: str  # marketplace-scoped id, e.g. "vercel-labs/agent-skills/next-js"
+    name: str  # from SKILL.md frontmatter
+    description: str  # from SKILL.md frontmatter
+    source: str  # marketplace name or "local"
+    url: str = ""  # human-readable URL on the marketplace
+    installs: int = 0  # install count if known
+    # Already present in the user's skills dir. An ANNOTATION, never a reason to withhold
+    # the row: the fan-out used to DROP every already-installed hit, which emptied the
+    # store on a stock install (every bundled skill is auto-installed at startup, and the
+    # `native` marketplace mirrors exactly that bundle — so its whole catalogue matched the
+    # drop filter and "all marketplaces" answered 0 for every query, issue #301). A search
+    # that omits what you have cannot tell you that you already have it.
+    installed: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "source": self.source,
+            "url": self.url,
+            "installs": self.installs,
+            "installed": self.installed,
+        }
+
+
+@dataclass
+class SkillDetail:
+    """Full skill contents returned from marketplace fetch.
+
+    Each ``files`` entry is ``{path, contents}`` for a text file or ``{path, data}``
+    (raw ``bytes``) for a binary — the whole tree is carried so nothing is dropped
+    before the scan/commit/lock. Use :func:`read_skill_file_entry` to build entries."""
+
+    id: str
+    name: str
+    files: list[dict[str, Any]] = field(default_factory=list)  # [{path, contents|data}]
+    audit_status: str = "unknown"  # "pass", "warn", "fail", or "unknown"
+
+    def skill_md(self) -> str | None:
+        """Return the SKILL.md content, or None if not present."""
+        for f in self.files:
+            if f.get("path", "").endswith("SKILL.md"):
+                return f.get("contents", "")
+        return None
+
+
+# ── Abstract base ─────────────────────────────────────────────────────────────
+
+
+class SkillsMarketplace(ABC):
+    """Abstract skills marketplace."""
+
+    @abstractmethod
+    def search(self, query: str, limit: int = 20) -> list[SkillEntry]:
+        """Search the marketplace for skills matching *query*."""
+
+    @abstractmethod
+    def fetch(self, skill_id: str) -> SkillDetail:
+        """Fetch full skill detail (including SKILL.md contents) for *skill_id*.
+
+        A marketplace is a read-only SOURCE: it only searches and fetches. Installing
+        is not its job — :meth:`SkillsRegistry.install_guarded` stages the fetched
+        payload to quarantine, scans it at this marketplace's trust tier, and commits
+        the exact scanned bytes via the shared ``install_skill_files`` writer. That one
+        chokepoint is the only path that writes to the live skills tree, so a fetch
+        never has to be trusted to write."""
+
+    @property
+    def marketplace_type(self) -> str:
+        return "unknown"
+
+    @property
+    def trust_tier(self) -> str:
+        """Provenance tier that modulates the scan verdict (S2). Bundled/native content
+        is trusted; an arbitrary community registry (skills.sh) gets the full gate.
+        Returns a :class:`~personalclaw.supply_chain.TrustTier` value string."""
+        return "community"
+
+
+# ── Guarded-install result + refusal ────────────────────────────────────────
+
+
+@dataclass
+class InstallResult:
+    """A successful guarded install: where it landed + the scan evidence surfaced."""
+
+    path: Path
+    report: "Any"  # supply_chain.ScanReport
+    tier: "Any"  # supply_chain.TrustTier
+
+
+class SkillNotFoundError(KeyError):
+    """A marketplace was asked for a skill id it does not have.
+
+    Typed so HTTP handlers can map "no such skill" to 404 instead of the
+    500 a bare ``RuntimeError`` produced. Also raised for a syntactically
+    invalid id (path separators, ``..``, absolute paths) — to a caller those
+    are indistinguishable from "not found", and saying more would leak
+    which paths exist outside the marketplace root.
+    """
+
+    def __init__(self, skill_id: str) -> None:
+        super().__init__(skill_id)
+        self.skill_id = skill_id
+
+    def __str__(self) -> str:
+        return f"Skill not found: {self.skill_id!r}"
+
+
+class SkillInstallRefused(Exception):
+    """A guarded install was blocked by the supply-chain gate.
+
+    ``dangerous`` distinguishes the non-overridable floor (high-confidence malice — no
+    ``force`` installs it) from an overridable ``warning`` (a calculated risk the caller
+    may re-attempt with ``force=True``). ``report`` carries the findings for the UX.
+    """
+
+    def __init__(self, report: "Any", *, dangerous: bool) -> None:
+        self.report = report
+        self.dangerous = dangerous
+        cats = ", ".join(sorted({f.rule for f in report.findings})) or "no specific rule"
+        verb = (
+            "refused (dangerous, non-overridable)" if dangerous else "needs confirmation (warning)"
+        )
+        super().__init__(f"skill install {verb}: {cats}")
+
+
+def read_skill_file_entry(path: Path, rel: str) -> "dict[str, Any]":
+    """Read one skill file into a payload entry, preserving binary content.
+
+    Text (UTF-8-decodable) files carry ``contents: str``; anything else carries
+    ``data: bytes``. Binaries must NOT be dropped — an icon/asset that goes missing
+    means an incomplete install AND a spurious S6 "added" finding on the untracked
+    file. Both variants flow through staging, the scan, the commit, and the lock."""
+    raw = path.read_bytes()
+    try:
+        return {"path": rel, "contents": raw.decode("utf-8")}
+    except UnicodeDecodeError:
+        return {"path": rel, "data": raw}
+
+
+def _entry_bytes(entry: "dict[str, Any]") -> bytes:
+    """The raw bytes a file entry writes to disk — text ``contents`` UTF-8-encoded, or
+    binary ``data`` verbatim. One definition shared by stage, commit, and lock so all
+    three hash/write identical bytes (a fresh install verifies intact under S6)."""
+    if "data" in entry:
+        data = entry["data"]
+        return data if isinstance(data, bytes) else str(data).encode("utf-8")
+    return str(entry.get("contents", "")).encode("utf-8")
+
+
+def _stage_files(files: "list[dict[str, Any]]", staged_skill: Path) -> None:
+    """Write the fetched payload into a quarantine dir, path-safe, for scanning BEFORE
+    it can touch the live skills tree. Rejects traversal (mirrors install_skill_files)."""
+    staged_skill.mkdir(parents=True, exist_ok=True)
+    for entry in files:
+        rel = entry.get("path", "")
+        if ".." in rel or rel.startswith("/"):
+            raise ValueError(f"Rejected unsafe file path: {rel!r}")
+        out = staged_skill / rel
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(_entry_bytes(entry))
+
+
+def _write_lock(
+    target_dir: Path, detail: "SkillDetail", source: str, tier: "Any", report: "Any"
+) -> None:
+    """Record install provenance + an integrity baseline in ``<skill>/.pclaw-lock.json``:
+    id, source, tier, verdict, per-file sha256, timestamp. A later integrity lint (S6)
+    compares on-disk sha256 vs this to detect a skill mutated after install."""
+    import hashlib
+    import json
+    import time
+
+    skill_dir = Path(target_dir) / (detail.name or detail.id)
+    if not skill_dir.is_dir():
+        return
+    hashes: dict[str, str] = {}
+    for entry in detail.files:
+        rel = entry.get("path", "")
+        if rel and ".." not in rel and not rel.startswith("/"):
+            hashes[rel] = hashlib.sha256(_entry_bytes(entry)).hexdigest()
+    lock = {
+        "id": detail.id,
+        "source": source,
+        "trust_tier": getattr(tier, "value", str(tier)),
+        "verdict": getattr(report.verdict, "value", str(report.verdict)),
+        "sha256": hashes,
+        "installed_at": time.time(),
+    }
+    try:
+        (skill_dir / ".pclaw-lock.json").write_text(json.dumps(lock, indent=2), encoding="utf-8")
+    except OSError:
+        logger.debug("could not write skill lock file for %s", skill_dir, exc_info=True)
+
+
+@dataclass
+class IntegrityReport:
+    """S6 post-install integrity check for one skill vs its ``.pclaw-lock.json``.
+
+    ``ok`` is True when every locked file's on-disk sha256 matches the baseline recorded
+    at install. ``mutated`` / ``missing`` / ``added`` name the drift so a tamper (a skill
+    edited on disk after a clean install) is visible. ``unlocked`` = no lock file (a
+    pre-gate or hand-placed skill — not a failure, just unverifiable)."""
+
+    skill: str
+    ok: bool = True
+    unlocked: bool = False
+    mutated: list[str] = field(default_factory=list)  # locked file whose hash changed
+    missing: list[str] = field(default_factory=list)  # locked file now gone
+    added: list[str] = field(default_factory=list)  # new file not in the lock
+
+    def summary(self) -> str:
+        if self.unlocked:
+            return f"{self.skill}: no lock (unverifiable)"
+        if self.ok:
+            return f"{self.skill}: intact"
+        parts = []
+        if self.mutated:
+            parts.append(f"{len(self.mutated)} mutated")
+        if self.missing:
+            parts.append(f"{len(self.missing)} missing")
+        if self.added:
+            parts.append(f"{len(self.added)} added")
+        return f"{self.skill}: TAMPERED ({', '.join(parts)})"
+
+
+def verify_skill_integrity(skill_dir: Path) -> IntegrityReport:
+    """S6: compare a skill's on-disk file hashes against its ``.pclaw-lock.json`` baseline
+    to detect post-install mutation (a skill edited/replaced after a clean install — the
+    tamper case a static install-time scan can't catch on its own). Content-only:
+    ``.pclaw-lock.json`` itself is excluded. Emits a SEL audit on detected tamper."""
+    import hashlib
+    import json
+
+    skill_dir = Path(skill_dir)
+    name = skill_dir.name
+    lock_path = skill_dir / ".pclaw-lock.json"
+    if not lock_path.is_file():
+        return IntegrityReport(skill=name, unlocked=True)
+    try:
+        locked = (json.loads(lock_path.read_text(encoding="utf-8")) or {}).get("sha256", {})
+    except (OSError, json.JSONDecodeError):
+        return IntegrityReport(skill=name, unlocked=True)
+
+    rep = IntegrityReport(skill=name)
+    on_disk: dict[str, str] = {}
+    for f in sorted(skill_dir.rglob("*")):
+        if not f.is_file() or f.name == ".pclaw-lock.json":
+            continue
+        rel = f.relative_to(skill_dir).as_posix()
+        try:
+            on_disk[rel] = hashlib.sha256(f.read_bytes()).hexdigest()
+        except OSError:
+            continue
+    for rel, want in locked.items():
+        got = on_disk.get(rel)
+        if got is None:
+            rep.missing.append(rel)
+        elif got != want:
+            rep.mutated.append(rel)
+    for rel in on_disk:
+        if rel not in locked:
+            rep.added.append(rel)
+    rep.ok = not (rep.mutated or rep.missing or rep.added)
+    if not rep.ok:
+        try:
+            from personalclaw.sel import sel
+
+            sel().log_api_access(
+                caller="skills.verify_integrity",
+                operation="skill_integrity",
+                outcome="tampered",
+                source="skills",
+                resources=name,
+                error=rep.summary(),
+            )
+        except Exception:
+            logger.debug("integrity SEL audit failed", exc_info=True)
+    return rep
+
+
+def _audit_install(source: str, skill_id: str, tier: "Any", report: "Any", *, outcome: str) -> None:
+    """Emit a SEL audit event for a scan/install/refuse (best-effort)."""
+    try:
+        from personalclaw.sel import sel
+
+        sel().log_api_access(
+            caller=f"skills.install_guarded:{source}",
+            operation="skill_install",
+            outcome=outcome,
+            source="skills",
+            resources=f"{source}/{skill_id}",
+            error=f"tier={getattr(tier, 'value', tier)} verdict={getattr(report.verdict, 'value', report.verdict)}",  # noqa: E501
+        )
+    except Exception:
+        logger.debug("skill install SEL audit failed", exc_info=True)
+
+
+# ── Registry ──────────────────────────────────────────────────────────────────
+
+
+class SkillsRegistry:
+    """Holds named ``SkillsMarketplace`` implementations."""
+
+    def __init__(self) -> None:
+        self._marketplaces: dict[str, SkillsMarketplace] = {}
+
+    def register(self, name: str, marketplace: SkillsMarketplace) -> None:
+        self._marketplaces[name] = marketplace
+
+    def unregister(self, name: str) -> None:
+        """Remove a registered marketplace. Idempotent — a name that was never registered
+        is a no-op. Used by transient, single-operation sources (a pack import registers a
+        ``PackMarketplace`` for one commit, then unregisters it — it is not a public
+        marketplace and must not outlive the import)."""
+        self._marketplaces.pop(name, None)
+
+    def get(self, name: str) -> SkillsMarketplace:
+        mp = self._marketplaces.get(name)
+        if mp is None:
+            raise KeyError(f"No skills marketplace registered as {name!r}")
+        return mp
+
+    def list(self) -> "list[str]":
+        return sorted(self._marketplaces)
+
+    # `builtins.list`, not `list`: this class defines a method named `list` (just above), which
+    # shadows the builtin inside its own annotation scope — so `"list[dict[str, str]]"` resolved
+    # to the METHOD and mypy read the return type as uniterable. That was silenced with a
+    # `type: ignore[valid-type]` and went unnoticed for as long as nobody iterated the result;
+    # the first caller that did got `"list?[dict[str, str]]" has no attribute "__iter__"`.
+    # Qualifying the name states the type correctly instead of suppressing the complaint.
+    def info(self) -> "builtins.list[dict[str, str]]":
+        return [
+            {"name": n, "type": mp.marketplace_type, "trust_tier": mp.trust_tier}
+            for n, mp in sorted(self._marketplaces.items())
+        ]
+
+    def install_guarded(
+        self,
+        marketplace_name: str,
+        skill_id: str,
+        target_dir: Path,
+        *,
+        force: bool = False,
+    ) -> "InstallResult":
+        """The install CHOKEPOINT (S3): every install routes through here so one gate
+        covers all marketplaces and each ``install()`` stays a dumb file-writer.
+
+        Resolves the registered marketplace by name and delegates to the shared gate
+        :func:`install_scanned`. Raises :class:`SkillInstallRefused` on a blocked
+        verdict; returns an :class:`InstallResult` on success."""
+        return install_scanned(
+            self.get(marketplace_name), marketplace_name, skill_id, target_dir, force=force
+        )
+
+
+def install_scanned(
+    marketplace: "SkillsMarketplace",
+    source: str,
+    skill_id: str,
+    target_dir: Path,
+    *,
+    force: bool = False,
+) -> "InstallResult":
+    """The single supply-chain install gate — used by both registered-marketplace
+    installs (:meth:`SkillsRegistry.install_guarded`) and app-owned skill seeding
+    (:mod:`personalclaw.apps.skill_seed`), which passes a transient marketplace
+    rooted at the app dir. One gate implementation, so nothing writes to the live
+    skills tree without passing through it.
+
+    fetch → stage to quarantine → whole-dir scan at the marketplace's trust tier →
+    decide → commit the scanned bytes + ``.pclaw-lock.json`` provenance + SEL audit.
+
+    - ``clean`` / ``low`` → commit.
+    - ``warning`` → refuse unless ``force`` (a calculated, explicit override).
+    - ``dangerous`` → REFUSE; ``force`` does NOT override (the load-bearing floor).
+
+    Quarantine-first means dangerous content never lands in the live skills tree.
+    Raises :class:`SkillInstallRefused` on a blocked verdict; returns an
+    :class:`InstallResult` on success."""
+    import shutil
+    import tempfile
+
+    from personalclaw.supply_chain import TrustTier, Verdict, scan_dir
+
+    try:
+        tier = TrustTier(marketplace.trust_tier)
+    except ValueError:
+        tier = TrustTier.COMMUNITY
+
+    detail = marketplace.fetch(skill_id)
+    staged_root = Path(tempfile.mkdtemp(prefix="pclaw-skill-quarantine-"))
+    try:
+        # Stage the fetched payload to quarantine (path-safe) BEFORE any scan/commit.
+        #
+        # 🔴 The QUARANTINE directory's name is marketplace-supplied too, and it had the same hole
+        # `install_skill_files` had (#739): `detail.name` comes from `fetch`, so a name of
+        # `"../../evil"` escaped the temp dir that exists to contain it — and it escaped HERE, which
+        # is before `scan_dir` runs, so the supply-chain gate could not refuse a write it had not
+        # yet been asked about. `_stage_files` validates every file path and then `mkdir`s whatever
+        # this expression produced.
+        staged_skill = record_path(
+            staged_root, detail.name or skill_id, suffix="", kind="skill name"
+        )
+        _stage_files(detail.files, staged_skill)
+
+        report = scan_dir(staged_skill, tier)
+        _audit_install(source, skill_id, tier, report, outcome="scanned")
+
+        if report.verdict is Verdict.DANGEROUS:
+            _audit_install(source, skill_id, tier, report, outcome="refused")
+            raise SkillInstallRefused(report, dangerous=True)
+        if report.verdict is Verdict.WARNING and not force:
+            _audit_install(source, skill_id, tier, report, outcome="needs_confirm")
+            raise SkillInstallRefused(report, dangerous=False)
+
+        # Commit the EXACT bytes we just scanned — write ``detail.files`` (the same
+        # in-memory payload that was staged + scanned) straight to the live tree.
+        # We never re-fetch: a re-fetch would open a TOCTOU window (a server could
+        # serve clean content to the scan and malicious content to the commit) and,
+        # for the skills.sh CLI fallback, would skip the scan entirely. Committing the
+        # scanned bytes closes both. install_skill_files re-runs its per-file scan as
+        # defense-in-depth and validates SKILL.md.
+        written = install_skill_files(detail.files, detail.name or skill_id, target_dir)
+        _write_lock(target_dir, detail, source, tier, report)
+        _audit_install(source, skill_id, tier, report, outcome="installed")
+        return InstallResult(path=written, report=report, tier=tier)
+    finally:
+        shutil.rmtree(staged_root, ignore_errors=True)
+
+
+_DEFAULT_REGISTRY: SkillsRegistry | None = None
+
+
+def get_default_skills_registry() -> SkillsRegistry:
+    global _DEFAULT_REGISTRY
+    if _DEFAULT_REGISTRY is None:
+        _DEFAULT_REGISTRY = SkillsRegistry()
+    return _DEFAULT_REGISTRY
+
+
+# ── Local skill discovery ─────────────────────────────────────────────────────
+
+
+def list_local_skills(extra_paths: list[Path] | None = None) -> list[dict[str, str]]:
+    """Scan all skill discovery paths and return a list of skill metadata dicts.
+
+    Each dict contains: ``{name, description, path, source}``.
+    The ``source`` field is the discovery directory name.
+
+    🔴 RECURSIVE, through ``loader.iter_skill_files`` — the same enumeration the runtime
+    loader uses. This walked ONE level with ``iterdir()``, so ``auto/`` (the namespace holding
+    every accepted skill proposal, with no ``SKILL.md`` of its own) was skipped whole and both
+    consumers went blind to it: ``personalclaw skills list`` printed none of them, and the
+    loop classifier's capability catalog (``handlers/loop_routes._installed_capability_
+    catalogs``) could never rank a skill the user had just approved. Measured before the fix:
+    3 ``auto/*`` skills on disk, 0 in this list (#302, #409).
+
+    ``name`` is the path RELATIVE to the discovery root, so ``auto/loop-worker`` keeps its
+    namespace — which is what the loader calls it and what stops it colliding in ``seen_names``
+    with a top-level skill of the same basename.
+    """
+    from personalclaw.skills.loader import iter_skill_files
+
+    search_paths = list(SKILL_DISCOVERY_PATHS)
+    if extra_paths:
+        search_paths.extend(extra_paths)
+
+    skills: list[dict[str, str]] = []
+    seen_names: set[str] = set()
+
+    for base in search_paths:
+        if not base.is_dir():
+            continue
+        for name, skill_md in iter_skill_files(base):
+            if name in seen_names:
+                continue  # project-level wins; skip duplicates
+            seen_names.add(name)
+            skills.append(
+                {
+                    "name": name,
+                    "description": _parse_description(skill_md),
+                    "path": str(skill_md),
+                    "source": str(base),
+                }
+            )
+
+    return skills
+
+
+def _parse_description(skill_md: Path) -> str:
+    """Extract the description field from SKILL.md YAML frontmatter.
+
+    Delegated to the one parser. This copy's block-scalar folding was the ONLY
+    capability any duplicate had over the loader, so it was promoted into
+    `_parse_frontmatter_text` rather than dropped — the behavior is preserved,
+    the duplication is not.
+    """
+    from personalclaw.skills.loader import SkillsLoader
+
+    try:
+        text = skill_md.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return ""
+    return SkillsLoader._parse_frontmatter_text(text).get("description", "")
+
+
+def install_skill_files(
+    files: list[dict[str, str]],
+    skill_name: str,
+    target_base: Path,
+) -> Path:
+    """Write skill files to ``target_base/<skill_name>/``.
+
+    Validates SKILL.md content and rejects any path containing ``..``.
+    Returns the path to the written SKILL.md.
+
+    🔴 THE DIRECTORY NAME IS VALIDATED TOO. Every *file* path here was checked for ``..`` and for a
+    leading ``/`` — and ``skill_name``, which names the directory all of them are written into, was
+    not. So a marketplace-supplied name of ``"../../evil"`` escaped the skills tree entirely, and
+    `mkdir(parents=True)` created wherever it landed (#739). Checking the leaves while the branch is
+    unchecked is the whole bug: a safe relative path under an unsafe root is an unsafe path.
+
+    Latent rather than exploited — only trusted marketplaces are registered by default — which is
+    also why it is worth closing now rather than after that changes.
+    """
+    skill_dir = record_path(target_base, skill_name, suffix="", kind="skill name")
+
+    # Supply-chain gate (S3): scan ALL incoming content with the shared scanner
+    # BEFORE writing anything to disk. A skill carries executable instructions +
+    # optional scripts — the same install-time gate apps run through. A
+    # ``dangerous`` verdict is terminal (never written); the scan runs on the
+    # in-memory payload so nothing dangerous ever touches the filesystem.
+    from personalclaw.supply_chain import Verdict, default_scanner
+
+    for file_entry in files:
+        rel_path = file_entry.get("path", "")
+        if ".." in rel_path or rel_path.startswith("/"):
+            raise ValueError(f"Rejected unsafe file path: {rel_path!r}")
+        # A binary entry (``data``) carries no scannable text — the text ruleset can't
+        # analyze it; its provenance is the sha256 recorded in the lock. Only text
+        # ``contents`` runs through the injection/destructive-script scan.
+        if "data" in file_entry:
+            continue
+        contents = file_entry.get("contents", "")
+        is_script = (
+            rel_path.endswith((".sh", ".bash", ".py", ".js", ".rb", ".pl"))
+            or "/scripts/" in f"/{rel_path}"
+        )
+        report = default_scanner.scan_text(
+            contents,
+            surface="script" if is_script else "manifest",
+        )
+        if report.verdict is Verdict.DANGEROUS:
+            cats = ", ".join(sorted({f.rule for f in report.findings})) or "dangerous content"
+            raise ValueError(
+                f"skill install refused: scanner flagged {rel_path!r} as dangerous ({cats})"
+            )
+
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    written_skill_md: Path | None = None
+    for file_entry in files:
+        rel_path = file_entry.get("path", "")
+        out_path = skill_dir / rel_path
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        if rel_path.endswith("SKILL.md") or rel_path == "SKILL.md":
+            errors = _validate_skill_md(str(file_entry.get("contents", "")))
+            if errors:
+                raise ValueError(f"SKILL.md validation failed: {'; '.join(errors)}")
+            written_skill_md = out_path
+        out_path.write_bytes(_entry_bytes(file_entry))
+
+    if written_skill_md is None:
+        raise ValueError(f"No SKILL.md found in files for skill {skill_name!r}")
+    return written_skill_md

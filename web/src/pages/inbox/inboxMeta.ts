@@ -1,0 +1,170 @@
+import { Reply, Info, BellOff, CheckCircle2, Send, XCircle, Inbox as InboxIcon, AlertTriangle, ShieldQuestion, Eye, Filter, MessageSquare, AtSign, Mail, HelpCircle, Lightbulb, Newspaper, Settings2, StickyNote, UserCheck } from 'lucide-react'
+import { epochSeconds } from '../../lib/epoch'
+import type { LucideIcon } from 'lucide-react'
+import type { InboxClassification, InboxConfidence, InboxItemStatus, InboxItemKind, InboxItem } from '../../lib/api'
+
+// ── classification (what KIND of message the triage layer decided) ──
+export interface ClassMeta { key: InboxClassification; label: string; tone: string; icon: LucideIcon }
+export const CLASSIFICATIONS: ClassMeta[] = [
+  { key: 'needs_reply', label: 'Needs reply', tone: 'var(--color-info)', icon: Reply },
+  { key: 'fyi', label: 'FYI', tone: 'var(--color-on-surface-low)', icon: Info },
+  { key: 'noise', label: 'Noise', tone: 'var(--color-on-surface-low)', icon: BellOff },
+]
+export function classMeta(c?: string): ClassMeta {
+  return CLASSIFICATIONS.find((x) => x.key === c) ?? CLASSIFICATIONS[0]
+}
+
+// ── confidence (how sure the triage layer is — drives review urgency) ──
+export interface ConfMeta { key: InboxConfidence; label: string; tone: string; icon: LucideIcon }
+export const CONFIDENCES: ConfMeta[] = [
+  { key: 'high', label: 'High confidence', tone: 'var(--color-ok)', icon: CheckCircle2 },
+  { key: 'needs_review', label: 'Needs review', tone: 'var(--color-warn)', icon: ShieldQuestion },
+  { key: 'escalate', label: 'Escalate', tone: 'var(--color-danger)', icon: AlertTriangle },
+  // A manual reclassification: the verdict is the user's own, so no machine confidence
+  // applies. Neutral tone — a human decision needs no review urgency.
+  { key: 'user', label: 'Set by you', tone: 'var(--color-info)', icon: UserCheck },
+]
+export function confMeta(c?: string): ConfMeta {
+  return CONFIDENCES.find((x) => x.key === c) ?? CONFIDENCES[1]
+}
+
+// ── item status ──
+export interface StatusMeta { key: InboxItemStatus; label: string; tone: string; icon: LucideIcon }
+export const STATUSES: StatusMeta[] = [
+  { key: 'pending', label: 'Pending', tone: 'var(--color-info)', icon: InboxIcon },
+  // Seen = surfaced but not resolved. Deliberately low-contrast: it is still open work,
+  // but it is not new, so it should not compete with pending for attention.
+  { key: 'seen', label: 'Seen', tone: 'var(--color-on-surface-low)', icon: Eye },
+  { key: 'sent', label: 'Replied', tone: 'var(--color-ok)', icon: Send },
+  { key: 'handled', label: 'Handled', tone: 'var(--color-ok)', icon: CheckCircle2 },
+  { key: 'dismissed', label: 'Dismissed', tone: 'var(--color-on-surface-low)', icon: XCircle },
+  // Filtered = withheld by the INU-6 second-opinion pass: persisted but its notification
+  // suppressed because a verification check refuted the claim. Warn-toned because it may be
+  // a false positive the user will want to Restore — it is held for review, not resolved.
+  { key: 'filtered', label: 'Filtered', tone: 'var(--color-warn)', icon: Filter },
+]
+export function statusMeta(s?: string): StatusMeta {
+  return STATUSES.find((x) => x.key === s) ?? STATUSES[0]
+}
+
+/** Statuses that still want the user: unresolved, whether or not already glanced at.
+ *
+ *  RE-EXPORTED, not defined here. `lib/attentionLanes` owns the exhaustive
+ *  `Record<InboxItemStatus, boolean>` these derive from, so this page's counts and Mission
+ *  Control's lane counts read ONE set. Spelling the pair out here was the frontend's half of
+ *  issue 493: the server published a PENDING-only `pending_count` for the header while this
+ *  predicate drove every filter and chip, so one screen showed 33 and 37, and a glance — which
+ *  marks a row SEEN — decremented the header without resolving anything. */
+export { OPEN_STATUSES, isOpenStatus as isOpen } from '../../lib/attentionLanes'
+
+/** TSE2-3 — whether *item* is attributed to somebody OTHER than *owner*.
+ *
+ *  The ONE foreignness test, mirroring the server's `InboxItem.belongs_to` inverted, and it
+ *  must keep mirroring it: an unattributed item is NOT foreign (it predates attribution, so
+ *  it reads as the owner's), and nothing is foreign when the install has no username
+ *  configured. A `!!item.owner_username` shortcut would mark every attributed row foreign,
+ *  including the owner's own.
+ *
+ *  🪤 Lives HERE and not in `lib/api.ts` alongside the `InboxItem` type it takes. It is a pure
+ *  predicate, so it belongs with `isOpen` — and putting it in `api.ts` broke six unrelated test
+ *  files at once: those suites `vi.mock('../../lib/api')` with a partial object, so every NEW
+ *  named export from that module is a missing-export error in each of them. A module that is
+ *  routinely partially mocked is the wrong home for a helper. */
+export function isForeignItem(item: Pick<InboxItem, 'owner_username'>, owner: string): boolean {
+  const me = (owner || '').trim().toLowerCase()
+  const who = (item.owner_username || '').trim().toLowerCase()
+  return !!me && !!who && who !== me
+}
+
+// ── item kind (WHAT is asking for attention — orthogonal to classification) ──
+// classification is the triage layer's judgment ABOUT a message; item_kind is what the
+// row fundamentally IS. A needs_input row has no sender and no reply — treating it as a
+// message would render dead controls.
+export interface KindMeta { key: InboxItemKind; label: string; tone: string; icon: LucideIcon }
+export const ITEM_KINDS: KindMeta[] = [
+  { key: 'message', label: 'Messages', tone: 'var(--color-primary)', icon: MessageSquare },
+  { key: 'mention', label: 'Mentions', tone: 'var(--color-primary)', icon: AtSign },
+  { key: 'email', label: 'Email', tone: 'var(--color-primary)', icon: Mail },
+  { key: 'needs_input', label: 'Needs you', tone: 'var(--color-warn)', icon: HelpCircle },
+  { key: 'agent_request', label: 'Agent requests', tone: 'var(--color-warn)', icon: ShieldQuestion },
+  { key: 'proposal', label: 'Proposals', tone: 'var(--color-info)', icon: Lightbulb },
+  { key: 'digest', label: 'Digests', tone: 'var(--color-on-surface-low)', icon: Newspaper },
+  { key: 'system', label: 'System', tone: 'var(--color-on-surface-low)', icon: Settings2 },
+  // INU-9 — the only kind the USER writes. `info`, matching `proposal`: both are open items
+  // you will decide something about. NOT coral — coral in this registry is reserved for the
+  // three channel-shaped kinds and means "a conversation" (`design/accentChipTone.test.tsx`
+  // censuses exactly that, and it caught this row set to primary). NOT the low tone either:
+  // a note you left yourself is something you meant to return to, not background chatter.
+  { key: 'user_note', label: 'Notes', tone: 'var(--color-info)', icon: StickyNote },
+]
+export function kindMeta(k?: string): KindMeta {
+  return ITEM_KINDS.find((x) => x.key === (k || 'message')) ?? ITEM_KINDS[0]
+}
+
+/** Kinds with no channel behind them: no sender, no reply, no #channel label.
+ *  Mirrors NON_CHANNEL_KINDS in inbox.py — rendering reply affordances for these
+ *  would be dead controls. */
+export const NON_CHANNEL_ITEM_KINDS: InboxItemKind[] = [
+  'agent_request', 'proposal', 'needs_input', 'digest', 'system',
+  // A note has no sender to reply TO — you wrote it.
+  'user_note',
+]
+
+/** The router PATH an item's `refs` point at, or '' when it has nowhere to go.
+ *  A bare path (no leading '#/') because callers hand it to RouteProps.navigate(), which
+ *  owns hash-router mutation — pages must never assign location.hash themselves (there's a
+ *  doctrine test).
+ *  Loop kind decides the cockpit: a code loop lives at code/<id>, not loops/<id>. */
+export function refTarget(it: Pick<InboxItem, 'refs'>): string {
+  const refs = it.refs || {}
+  if (refs.loop) return refs.loop_kind === 'code' ? `code/${refs.loop}` : `loops/${refs.loop}`
+  if (refs.session) return `chat/${encodeURIComponent(refs.session)}`
+  if (refs.workflow) return `workflows/${refs.workflow}`
+  // LV-4's identity report links the artifact it wrote. LAST in the chain, so every
+  // pre-existing ref resolves exactly as before — an item that carries both a session and
+  // an artifact still goes to the session, which is the referent it always went to.
+  if (refs.artifact) return `artifacts/${encodeURIComponent(refs.artifact)}`
+  // AGENT-ROOMS' pause item (`agent/room_paused`) stamps `refs.room` and nothing else, so this
+  // is the row's only route. LAST in the chain like `artifact` above, so every pre-existing ref
+  // resolves exactly as it did. It is the reason the pause card is not a second notice: the row
+  // and the card are one event with one destination, and this is the link between them.
+  if (refs.room) return `chat/room/${encodeURIComponent(refs.room)}`
+  return ''
+}
+
+/** What the deep-link button says. Named after the REFERENT (the loop, the chat), not the
+ *  item kind — "Go to needs you" is what you get from naively de-pluralizing a chip label. */
+export function refLabel(it: Pick<InboxItem, 'refs'>): string {
+  const refs = it.refs || {}
+  if (refs.loop) return 'Go to loop'
+  if (refs.session) return 'Go to chat'
+  if (refs.workflow) return 'Go to workflow'
+  if (refs.artifact) return 'Open the report'
+  if (refs.room) return 'Go to the room'
+  return 'Go to source'
+}
+
+// Direct-message labels ("DM", "@name") render as-is; anything else renders as a
+// #channel. Items use whatever channel_name the source provider gave — provider-neutral.
+export function channelLabel(it: Pick<InboxItem, 'channel' | 'channel_name'>): string {
+  const n = it.channel_name || it.channel
+  if (!n) return ''
+  return n === 'DM' || n.startsWith('@') ? n : `#${n.replace(/^#/, '')}`
+}
+
+/** Short label for the source provider that produced an item (agent-native vs a
+ *  connected source's provider id). */
+export function sourceLabel(source?: string): string {
+  if (!source || source === 'native') return 'agent'
+  return source
+}
+
+export function relPast(ts?: number | string | null): string {
+  const t = epochSeconds(ts)
+  if (t == null) return ''
+  const s = Date.now() / 1000 - t
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
+  return `${Math.floor(s / 86400)}d ago`
+}

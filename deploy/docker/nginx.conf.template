@@ -1,0 +1,137 @@
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ""      close;
+}
+
+# ── HTTP :80 — redirect to HTTPS so HTTP/2 (which browsers require over TLS)
+# is used for the app + its many SSE/WS streams. A bare /healthz stays on HTTP
+# for container/proxy health checks that don't want to deal with the self-
+# signed cert.
+server {
+    listen 80;
+    server_name _;
+    absolute_redirect off;
+
+    location = /healthz {
+        return 200 'ok';
+        add_header Content-Type text/plain;
+    }
+    location / {
+        return 308 https://$host$request_uri;
+    }
+}
+
+server {
+    # TLS + HTTP/2. HTTP/2 multiplexes every SSE/WS stream over one connection,
+    # so the per-host connection budget is never a constraint regardless of how
+    # many panels (campaign streams, file-watch, logs, terminal) are open at
+    # once. The cert is a self-signed pair generated at container start
+    # (10-self-signed-cert.sh) so the stack works out of the box; operators can
+    # mount a real cert at the same paths to override.
+    listen 443 ssl;
+    http2 on;
+    server_name _;
+
+    ssl_certificate     /etc/nginx/certs/personalclaw.crt;
+    ssl_certificate_key /etc/nginx/certs/personalclaw.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Re-resolve the gateway hostname at runtime instead of caching the IP at
+    # worker startup. ${NGINX_LOCAL_RESOLVERS} is injected by the official
+    # nginx image's 15-local-resolvers.envsh entrypoint (reads the container's
+    # /etc/resolv.conf), so this works on both Docker (127.0.0.11) and Podman
+    # (the network's DNS). Without this, recreating the gateway container gives
+    # it a new IP that nginx never picks up → 502s until the proxy restarts.
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=10s ipv6=off;
+
+    # Upstream host:port as a single variable — the one place the gateway port
+    # appears in this file. Using a variable in proxy_pass also forces nginx to
+    # resolve the host per request via the resolver above, rather than once at
+    # config-load time.
+    set $gateway_upstream personalclaw-gateway:10000;
+
+    # Gzip static assets
+    gzip on;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    # Security headers
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    # SSE stream endpoints — must disable buffering for real-time events.
+    # Covers every per-resource stream (/api/<resource>/.../stream, e.g.
+    # /api/loops/<id>/stream). The trailing-`stream$` alternation also
+    # matches a top-level /api/stream should one ever be reintroduced; today
+    # always-on dashboard state rides the WebSocket, not a global SSE stream.
+    location ~ ^/api/(stream$|.*/stream$) {
+        proxy_pass http://$gateway_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 86400s;
+        chunked_transfer_encoding off;
+    }
+
+    # Large-file upload routes (resumable chunked protocol). These carry media up
+    # to the video category cap (2 GB), so they get their own large body ceiling +
+    # long timeouts — a 2 GB upload on a slow link exceeds the default 300s. The
+    # per-part PUTs are small, but /complete streams the whole file; keep buffering
+    # off so nginx streams to the gateway instead of spooling the body to disk.
+    location /api/uploads/ {
+        proxy_pass http://$gateway_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        client_max_body_size 2g;
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    # Reverse-proxy all /api/* requests to the gateway backend. nginx terminates
+    # HTTP/2 from the browser and proxies HTTP/1.1 upstream (incl. WebSocket
+    # Upgrade), which the gateway speaks. Small single-POST uploads (chat attach,
+    # small files) ride here; the body cap tracks the gateway's single-POST ceiling
+    # (~66 MB) — large media goes through /api/uploads/ above.
+    location /api/ {
+        proxy_pass http://$gateway_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        client_max_body_size 96m;
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+
+    # SPA fallback — all non-asset paths serve index.html.
+    # absolute_redirect off prevents nginx from emitting absolute 301s
+    # that would lose the port when running behind a port-mapped proxy.
+    # We skip $uri/ to avoid 403 when a same-named directory exists in dist/
+    # (e.g., the /apps/ builtin-app bundle directory).
+    absolute_redirect off;
+    location / {
+        try_files $uri /index.html;
+    }
+
+    # Static assets — long cache TTL for hashed filenames
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+}

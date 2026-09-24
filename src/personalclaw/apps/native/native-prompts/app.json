@@ -1,0 +1,27 @@
+{
+  "name": "native-prompts",
+  "version": "1.0.0",
+  "displayName": "Native Filesystem Prompts",
+  "description": "Stores prompt templates as YAML files under ~/.personalclaw/prompts/. Supports typed variables and {{var}} substitution.",
+  "icon": "MessageSquareText",
+  "author": "PersonalClaw",
+  "tags": [
+    "prompt",
+    "bundled"
+  ],
+  "provider": {
+    "type": "prompt",
+    "implementation": "personalclaw.prompt_providers.native_provider:create_provider",
+    "capabilities": [
+      "list",
+      "read",
+      "write",
+      "render"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  "native": true
+}

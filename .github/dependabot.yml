@@ -1,0 +1,123 @@
+# Dependabot — native dependency update PRs (no hosted service). Weekly, grouped
+# to keep PR volume low for a solo maintainer (CI-RELEASE-ENGINEERING S4).
+version: 2
+updates:
+  # Python — the packaging metadata + uv.lock (pip ecosystem covers pyproject/uv).
+  #
+  # 🔴 A pip PR here CANNOT be merged as-opened, and the reason is mechanical: dependabot
+  # rewrites `pyproject.toml` and does NOT regenerate `uv.lock`, so `uv sync --locked` — the
+  # first step of every Python job in ci.yml — fails with "The lockfile at `uv.lock` needs to
+  # be updated, but `--locked` was provided." Every Python lane then dies in its SETUP step in
+  # 10-20s while `web` and `client` pass, which reads like a broken repo rather than a
+  # dependency PR that is simply incomplete. Regenerate the lock on the branch (`uv lock`)
+  # before evaluating one, or close it.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      python-deps:
+        patterns: ["*"]
+    # Three upper bounds in `pyproject.toml` are LOAD-BEARING, argued in comments beside them,
+    # and dependabot cannot read prose — so it re-proposes widening them every week and each
+    # such PR is unmergeable on the merits, not on CI. Ignoring only the MAJOR bump keeps
+    # minor/patch updates flowing, which is the half that is safe.
+    # 🔴 `versions:`, NOT `update-types:` — MEASURED, because the first attempt at this did not
+    # work. #2723 wrote `update-types: ["version-update:semver-major"]` for these two names, and
+    # dependabot proposed both widenings again in #2726 **four minutes after that merged** (ignore
+    # live on the default branch at 21:48:39Z, PR opened 21:52:38Z), so timing does not explain it.
+    #
+    # The reason `update-types` misses: what dependabot is doing here is not bumping an installed
+    # version, it is WIDENING A CONSTRAINT (`<2` -> `<3`) so a newer major becomes admissible. A
+    # version range is the mechanism that does not depend on how that gets classified — it says
+    # "never propose this dependency at 2.x or above", which is the actual policy either way.
+    ignore:
+      # `mcp>=1.2,<2`: mcp 2.0.0 renamed `mcp.client.streamable_http.streamablehttp_client`,
+      # which `src/personalclaw/mcp_client.py:287` imports and `:289` calls. Allowing 2.x makes a
+      # FRESH install resolve a version whose import fails, so moving this bound is a code
+      # migration (update the import with a fallback, verify the transport), never a version bump.
+      - dependency-name: mcp
+        versions: [">=2"]
+      # `croniter>=2.0,<3`: croniter majors 2 and 6 DISAGREE ON THE CRON GRAMMAR — `0 9 * * * * *`,
+      # `0 9 * * * * 2026`, `0 9 * * * 30 *` and `5-1 * * * *` all parse differently, so a fresh
+      # editable install (which resolved 6.2.4 while CI's `uv sync --locked` resolved 2.0.7) fails
+      # tests CI passes. `tests/test_cron_expr_corpus.py:69` asserts this specifier string verbatim
+      # to hold the parser on the major the shared frontend/backend corpus was measured against, so
+      # a widening PR reds that rail by construction. Moving it is a grammar migration, not a bump
+      # (full argument: `docs/maintainers/local-pytest-determinism.md`, "Installer-dependent cron
+      # grammar"). Added after #3282 proposed `<7` and was closed on the merits.
+      - dependency-name: croniter
+        versions: [">=3"]
+      # `isort>=8,<9`: isort 9 reorders imports this tree already formats to a byte-clean state
+      # under 8 — measured at 8 files flagged on an untouched tree — so a major here reds the
+      # lint gate for every contributor on a change none of them made.
+      - dependency-name: isort
+        versions: [">=9"]
+
+  # Frontend — the single root npm workspace (web + desktop share one lockfile).
+  # Merge bar: every npm PR must pass ci.yml's `web` job INCLUDING the render
+  # smoke (the built bundle mounted in headless Chromium). The v0.1.0 blank
+  # dashboard came from a dependabot React bump whose failure mode was invisible
+  # to typecheck/vitest/build — never merge a toolchain/React bump on green
+  # static checks alone.
+  #
+  # The framework/build/test-runtime packages below are DELIBERATELY excluded from
+  # the js-deps group so each arrives as its own PR and gets individually
+  # validated — a React/vite/vitest/TS major is a migration, not a bump, and must
+  # never ride in a group PR where its breakage blocks safe minor/patch updates
+  # (see the deferred grouped bump that mixed React 18->19, TS 5->7, vite 6->8,
+  # vitest 2->4, jsdom 25->30 into one un-mergeable PR).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      # React is excluded from `js-deps` below so it arrives as its own PR and gets
+      # individually validated — but excluding the four names SEPARATELY produced two
+      # PRs that are each unmergeable BY CONSTRUCTION: #2834 moved `react` +
+      # `@types/react` to 19.3.0 while #2835 moved `react-dom` + `@types/react-dom` to
+      # 19.3.0, and either one alone leaves the pair skewed, so `web`, `e2e-a11y` and
+      # `e2e-pwa` fail on both. react and react-dom ship as one release train and their
+      # @types follow it; a version of one is only ever meaningful against the matching
+      # version of the other. Grouping the four keeps the ORIGINAL intent — a React bump
+      # is still its own PR, still individually validated, still never riding in a
+      # minor/patch group — while making that PR a thing that CAN go green.
+      #
+      # Order is load-bearing: dependabot assigns a dependency to the FIRST group whose
+      # patterns match, so this must precede `js-deps` (`patterns: ["*"]`). The four
+      # names stay in `js-deps`'s exclude list as well — redundant given the ordering,
+      # kept so the exclusion reads as deliberate rather than as an ordering accident.
+      react-family:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+      js-deps:
+        patterns: ["*"]
+        exclude-patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+          - "typescript"
+          - "vite"
+          - "@vitejs/plugin-react"
+          - "@tailwindcss/vite"
+          - "esbuild"
+          - "rollup"
+          - "vitest"
+          - "@vitest/*"
+          - "jsdom"
+          - "@testing-library/*"
+
+  # The GitHub Actions the workflows pin (setup-uv, setup-node, publish, buildx, …).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

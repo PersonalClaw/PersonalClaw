@@ -1,0 +1,725 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
+import { Inbox as InboxIcon, CheckCheck, RotateCcw, Circle, Reply, Settings as SettingsIcon, ScrollText, Loader2, ExternalLink, LayoutGrid, StickyNote, Star, User, UserCheck, Users } from 'lucide-react'
+import { TopBar } from '../../ui/TopBar'
+import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
+import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
+import { WindowedList } from '../../ui/WindowedList'
+import { SidePanel } from '../../ui/SidePanel'
+import { ListControls } from '../../ui/ListControls'
+import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
+import { Popover, MenuRow } from '../../ui/Popover'
+import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
+import { confirm } from '../../ui/dialog'
+import { useQueryParam, useQueryFlag, type RouteProps } from '../../app/useQueryState'
+import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
+import { useQuery, invalidateKeys } from '../../lib/data'
+import { api, type InboxItem, type InboxStatus } from '../../lib/api'
+import { ForeignBadge } from './ForeignContent'
+import { rowSubject } from '../../lib/rowSubject'
+import { previewText } from '../../lib/previewText'
+import { Segmented } from '../../ui/Segmented'
+import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpen, isForeignItem, ITEM_KINDS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
+import { InboxDetail } from './InboxDetail'
+import { InboxSettingsPanel } from './InboxSettingsPanel'
+import { ComposeNoteModal } from './ComposeNoteModal'
+import { ProposalsLens } from './ProposalsLens'
+import { TriageDigestCard } from './TriageDigestCard'
+import { ContextMenu, EntranceGroup, EntranceRegion, type ContextMenuItem } from '../../ui/motion'
+import { PageTitle } from '../../ui/PageTitle'
+import { reportActionFailure, reportingWrite } from '../../app/reportingWrite'
+
+// 'open' means unresolved — pending OR seen. It replaces the old 'pending' key, which
+// compared status === 'pending' exactly: once viewing an item marks it SEEN, that filter
+// would make the row VANISH from the list the user is looking at, even though they haven't
+// dealt with it. "Open" is what the user means by their inbox.
+const FILTERS = [
+  { key: 'open', label: 'Open' },
+  { key: 'needs_reply', label: 'Needs reply' },
+  { key: 'all', label: 'All' },
+  { key: 'handled', label: 'Done' },
+]
+
+/** Inbox = a general triage queue fed by pluggable message-source providers
+ *  (filesystem today; Slack/email future). Each item is AI-classified with a
+ *  confidence and an optional drafted reply. Header shows source health; rows
+ *  triage at a glance; the SidePanel is the full triage workspace. */
+export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 'setQuery' | 'navigate'>) {
+  // No `.catch(() => [])` on the items read. Swallowing the rejection handed the hook an EMPTY
+  // LIST, and an empty inbox is the state this surface is proudest of: measured against a 500,
+  // `#/inbox` said "Inbox zero — you're all caught up" and rendered PIXEL-IDENTICAL to a healthy
+  // empty queue. The most reassuring sentence in the app, produced by a failed request.
+  // `status` keeps its catch on purpose — it feeds the header's source-health readout, which has
+  // its own "unknown" rendering and must not take the whole list down with it.
+  const { data: items, error: itemsErr, stale: itemsStale, refresh: refreshItems } = useQuery<InboxItem[]>('inbox:items', () => api.inbox(), { persist: false })
+  const { data: status, refresh: refreshStatus } = useQuery<InboxStatus | null>('inbox:status', () => api.inboxStatus().catch(() => null), { persist: false })
+  const [filter, setFilter] = useQueryParam(query, setQuery, 'filter', 'open', { replace: true })
+  const [kind, setKind] = useQueryParam(query, setQuery, 'kind', '', { replace: true })
+  // `''` = every owner (the shared view's default: hiding a teammate's rows by default would
+  // make the shared inbox look empty). `mine` is the pseudo-value for the owner's own scope —
+  // it means `belongs_to`, which INCLUDES unattributed rows, so it cannot be expressed as an
+  // owner handle. Any other value is an exact handle (`authored_by`).
+  const [ownerFilter, setOwnerFilter] = useQueryParam(query, setQuery, 'owner', '', { replace: true })
+  const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
+  const [openIdRaw, setOpenId] = useQueryParam(query, setQuery, 'open', '')
+  const openId = openIdRaw || null
+  const [settingsOpen, setSettingsOpen] = useQueryFlag(query, setQuery, 'settings')
+  // INU-9 — `?capture=1` is the desktop tray's quick-capture deep link (`desktop/main.js`
+  // builds `${DEEP_LINKS.inbox}?capture=1`). Reading it here is what turns that tray row
+  // from a navigation into a capture: before this the flag was parsed by the router and
+  // dropped, so the menu item opened the inbox and wrote nothing. It is the same flag the
+  // header's Capture control sets, so the tray and the dashboard share one surface.
+  const [captureOpen, setCaptureOpen] = useQueryFlag(query, setQuery, 'capture')
+  const [busy, setBusy] = useState(false)
+
+  const load = () => { refreshItems(); refreshStatus() }
+  // Live: triage layer pushes new/updated items over the shared WS.
+  useChatSocket((m: WsMessage) => { if (m.type === 'inbox_item_updated' || m.type === 'inbox_new_item') load() })
+
+  // TSE2-3 — the local owner's handle, off the status payload this page ALREADY reads.
+  //
+  // 🪤 Deliberately not a third `useQuery` on `/api/inbox/owners`. That endpoint exists (it is
+  // the API-side census, paired with `?owner=` exactly as `/api/inbox/kinds` is paired with
+  // `?kind=`), but this page must not call it, for the same reason it does not call
+  // `api.inboxKinds`: `api.inbox()` already returns EVERY item, so the census is derivable
+  // locally and a fourth request would add a round trip, a loading state, and — measured — a
+  // new mock obligation that broke four unrelated test files whose mocks predated it. The
+  // shipped `kindChips` below is the precedent, not an exception to it.
+  //
+  // `''` means "no username configured", and NOTHING is foreign then — `isForeignItem` encodes
+  // that, so a solo install needs no special case here.
+  const me = status?.owner ?? ''
+  /** The one owner predicate the filter, the chip counts and the list all read.
+   *
+   *  `mine` → `belongs_to` (unattributed included); an exact handle → `authored_by`
+   *  (unattributed excluded). Mirrors the server's two predicates so the client-side
+   *  narrowing and `?owner=`/`?mine=1` cannot disagree about which rows belong where. */
+  const matchesOwner = (it: InboxItem) => {
+    if (!ownerFilter) return true
+    const who = (it.owner_username || '').trim().toLowerCase()
+    if (ownerFilter === 'mine') return !me || !who || who === me.trim().toLowerCase()
+    return who === ownerFilter.trim().toLowerCase()
+  }
+
+  const filtered = useMemo(() => {
+    if (!items) return null
+    const n = q.trim().toLowerCase()
+    return items
+      .filter(matchesOwner)
+      // `favorites` is a CURATION view, not a status one: it cuts across open/handled
+      // deliberately, because a starred item the user then handled is still the thing they
+      // starred. Same predicate Knowledge uses for the same field (issue 620).
+      .filter((it) => filter === 'all' ? true : filter === 'favorites' ? !!it.favorited : filter === 'open' ? isOpen(it.status) : filter === 'handled' ? (it.status === 'handled' || it.status === 'sent' || it.status === 'dismissed') : filter === 'filtered' ? it.status === 'filtered' : it.classification === filter && isOpen(it.status))
+      .filter((it) => !kind || (it.item_kind || 'message') === kind)
+      .filter((it) => !n || `${it.sender_name} ${it.channel_name} ${it.message} ${kindMeta(it.item_kind).label}`.toLowerCase().includes(n))
+  }, [items, filter, kind, q, ownerFilter, me])
+  const open = items?.find((it) => it.id === openId) ?? null
+
+  // P11: fire the "open" engagement signal when the user opens an item's panel. Once per
+  // distinct id (a ref-guard so re-renders / a reopen of the same panel don't re-fire).
+  // Fire-and-forget + backend-gated — a no-op unless engagement ranking is enabled.
+  const openedRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (openId && open && openedRef.current !== openId) {
+      openedRef.current = openId
+      api.openInboxItem(openId).catch(() => { /* best-effort signal */ })
+      // Opening an item IS having seen it — that is what makes SEEN mean anything. Only
+      // for a still-PENDING item: re-marking a resolved one would drag it backwards, and
+      // the backend refuses that anyway. Scoped to this id so a re-open doesn't re-fire.
+      if (open.status === 'pending') {
+        api.markInboxSeen({ ids: [openId] }).then(() => { refreshItems() }).catch(() => { /* non-fatal */ })
+      }
+    }
+    if (!openId) openedRef.current = null
+  }, [openId, open])
+
+  const reload = () => { invalidateKeys('inbox:items'); invalidateKeys('inbox:status'); refreshItems(); refreshStatus() }
+  // Dismiss all sweeps EVERY open item of every kind (proposals, messages, digests
+  // alike) with no undo, so it gets the same danger confirm as the analogous
+  // Notifications → "Clear all". The count comes from the same status the header shows,
+  // so the blast radius is on screen before the click lands.
+  async function dismissAll() {
+    // 🪤 `open_count`, and the server's sweep is `open_items()` — the SAME set. Sized from the old
+    // `pending_count` this understated the blast radius of the most destructive control on the
+    // page by exactly the rows the user had read: measured, the confirm said "dismiss all 33
+    // pending items" and the endpoint answered `{"dismissed": 37}` (issue 493).
+    const n = status?.open_count ?? 0
+    // 🪤 "There is no undo" is TRUE — `/api/inbox/{id}/restore` 409s on anything that is not FILTERED, and
+    // no surface un-dismisses — but on its own it implied the items were GONE. They are not: this page's
+    // own `handled` filter includes `status === 'dismissed'`, so every one of them stays readable one tab
+    // away. Saying only the irreversible half of a fact is how a reversible-looking action reads as
+    // destruction (and the app's house style already pairs the two: "Completed work is kept",
+    // "Workspace files on disk are left untouched").
+    if (!(await confirm({
+      title: `Dismiss all ${n} open item${n === 1 ? '' : 's'}?`,
+      // Says BOTH halves, and now three: dismissing a proposal row also ANSWERS the proposal
+      // (the same reject the row's own button does), which is a real deletion and not something
+      // Handled keeps. A confirm that named only the reversible half would understate it.
+      body: 'Every open item of every kind is dismissed at once — including ones you have already read. There is no undo — but they stay readable under Handled. Skill proposals are also rejected, which removes them from the Skills queue.',
+      danger: true,
+      confirmLabel: 'Dismiss all',
+    }))) return
+    // 🪤 NO CATCH AT ALL — a failure here rejected unhandled, so the strongest confirm on this page
+    // ("every open item of every kind", "there is no undo") could do nothing and say nothing.
+    // `reload()` is gated: an unchanged list after a failed sweep reads as "nothing happened".
+    setBusy(true)
+    try {
+      if (!(await reportingWrite(`dismiss ${n === 1 ? 'this item' : `all ${n} items`}`, () => api.dismissAllInbox()))) return
+      // The Skills proposal queue shrinks with this sweep, so its cached list has to go too —
+      // otherwise the Skills page keeps showing rows the user just answered from here. PREFIX
+      // mode, because this is now a FOURTH proposal-decision site and `SkillsPage` renders its
+      // "Proposals (N)" badge off the sibling `skill-proposals-count` key: busting the exact key
+      // leaves that number counting rows this sweep just rejected. Same convention the other
+      // three sites carry, asserted for all four by `lib/siblingCacheStaleness.test.ts`.
+      invalidateKeys('skill-proposals', true)
+      reload()
+    } finally { setBusy(false) }
+  }
+  // Restart answers with an {ok,error} envelope instead of throwing on a failed relaunch, so both
+  // failure shapes funnel through the one sentence owner. The delayed reload is gated: refetching
+  // after a failure re-renders the same stalled sources as "nothing happened".
+  async function restart() {
+    setBusy(true)
+    try {
+      if (!(await reportingWrite('restart the inbox sources', async () => {
+        const r = await api.restartInbox()
+        if (!r?.ok) throw new Error(r?.error || 'the gateway declined to restart')
+      }))) return
+      setTimeout(reload, 800)
+    } finally { setBusy(false) }
+  }
+  // Generate a catch-up digest for a channel → arrives as a new inbox item (also
+  // pushed live over the WS); open it so the user lands on the summary.
+  async function digest(channelId: string) {
+    setBusy(true)
+    try {
+      // The result is needed (the new item is opened), so this takes the `.catch` form of the
+      // shared report rather than `reportingWrite`'s boolean. Reload only on success — after a
+      // failure it would re-render the same list, twice saying nothing.
+      const it = await api.digestInboxChannel(channelId)
+        .catch((e: unknown) => { reportActionFailure('generate the digest')(e); return null })
+      if (!it) return
+      reload()
+      if (it.id) setOpenId(it.id)
+    } finally { setBusy(false) }
+  }
+  // Digest picker channels: watched channels ∪ channels present in stored items
+  // (the backend digests any channel's stored items — gating on watched_channels
+  // alone made Digest unreachable for filesystem/native items). Agent-pushed
+  // items all share the synthetic "agent" channel; skip it (a digest of your own
+  // agents' pings is noise) unless it's all there is? No — skip it always.
+  const watched = useMemo(() => {
+    const byId = new Map<string, { id: string; name: string }>()
+    for (const ch of status?.watched_channels ?? []) byId.set(ch.id, ch)
+    for (const it of items ?? []) {
+      if (it.channel && it.channel !== 'agent' && it.source !== 'digest' && !byId.has(it.channel)) {
+        byId.set(it.channel, { id: it.channel, name: it.channel_name || it.channel })
+      }
+    }
+    return Array.from(byId.values())
+  }, [status, items])
+
+  const health = status?.health
+  /** Nothing has ever landed here. Read off `items` — the list this branch already has — NOT off
+   *  `status.enabled`, which is a different fact entirely.
+   *
+   *  🔴 `!status.enabled` DOES NOT MEAN "the inbox is not connected". `handlers_inbox.py` publishes
+   *  `enabled` for the POLL providers only and says so at the site ("the native source is ALWAYS
+   *  active (push-based agent→inbox sink); the poll-based providers run only when
+   *  cfg.inbox.enabled"), which is why the same payload carries `native_source_active: true`
+   *  unconditionally and why the banner sixty lines below renders "Native source active — agents
+   *  post here directly" off it. Measured on a fresh container (`/api/inbox/status` → `{"enabled":
+   *  false, "native_source_active": true}`): the blank slate read `enabled` and headlined **"Inbox
+   *  is not connected yet — Enable a source to begin"** one inch under that banner, and the header's
+   *  own "Capture a note" then delivered an item into the inbox it had just called unconnected. The
+   *  page received the truth and rendered its opposite; nothing 4xx'd.
+   *
+   *  So the axis was wrong, not the flag. What a never-used inbox and a cleared one actually differ
+   *  on is whether anything ever arrived, and `items` answers that from a read: we are inside
+   *  `filtered.length === 0`, a failed items read renders `LoadError` before this branch, and a user
+   *  who handled everything keeps `items.length > 0` and is genuinely at inbox zero. Unlike
+   *  `status`, it has no unknown state here — the gap the sibling rail recorded and left open. */
+  const neverReceived = (items?.length ?? 0) === 0
+  /** Whether an external POLL source is collecting. Only the CTA reads it, and only as an offer:
+   *  "connect a source" is useful on an inbox nothing has reached, and wrong once one is connected. */
+  const pollConnected = !!status?.enabled
+  // This surface's own definition of "the user has narrowed": a query, a status filter off its
+  // default (`open` — NOT `all`, which is the trap the results-announcement rail records), or a kind
+  // chip. Shared by the empty state's title AND hint so the two can never disagree about which state
+  // the list is in.
+  const narrowed = !!(q.trim() || filter !== 'open' || kind || ownerFilter)
+
+  // Live per-filter counts so the menu shows where items sit. Counts respect the active
+  // KIND chip — a count that ignored it would disagree with the list right beside it.
+  const inKind = (it: InboxItem) => !kind || (it.item_kind || 'message') === kind
+  const filterCount = (key: string) => {
+    if (!items) return undefined
+    const scoped = items.filter(inKind)
+    if (key === 'all') return scoped.length
+    if (key === 'open') return scoped.filter((it) => isOpen(it.status)).length
+    if (key === 'handled') return scoped.filter((it) => it.status === 'handled' || it.status === 'sent' || it.status === 'dismissed').length
+    if (key === 'filtered') return scoped.filter((it) => it.status === 'filtered').length
+    // Counted across every status, matching the predicate above — a count that only saw open
+    // items would disagree with the list it labels the moment a starred item is handled.
+    if (key === 'favorites') return scoped.filter((it) => !!it.favorited).length
+    return scoped.filter((it) => it.classification === key && isOpen(it.status)).length
+  }
+  // Kind chips are driven by what's PRESENT (kinds with zero items are dead controls), and
+  // the counts are of OPEN items — the chip badge answers "how much is waiting here".
+  const kindChips = useMemo(() => {
+    if (!items) return []
+    const counts = new Map<string, number>()
+    for (const it of items) {
+      const k = it.item_kind || 'message'
+      counts.set(k, (counts.get(k) ?? 0) + (isOpen(it.status) ? 1 : 0))
+    }
+    return ITEM_KINDS.filter((k) => counts.has(k.key)).map((k) => ({ ...k, open: counts.get(k.key) ?? 0 }))
+  }, [items])
+  // TSE2-3 — owner chips, driven by what is PRESENT in the list, with OPEN counts from the
+  // same array the rows come from so a badge cannot disagree with its own list. Exactly the
+  // `kindChips` shape above. The unattributed rows get no chip: they are not a person, and
+  // "Mine" already covers them (`belongs_to`).
+  const ownerChips = useMemo(() => {
+    if (!items) return []
+    const counts = new Map<string, { total: number; open: number }>()
+    for (const it of items) {
+      const who = (it.owner_username || '').trim()
+      if (!who) continue
+      const e = counts.get(who) ?? { total: 0, open: 0 }
+      e.total += 1
+      if (isOpen(it.status)) e.open += 1
+      counts.set(who, e)
+    }
+    return [...counts.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([username, c]) => ({ username, ...c, isMe: !!me && username.toLowerCase() === me.toLowerCase() }))
+  }, [items, me])
+  // Only a SHARED inbox gets owner controls: on a solo install every row is the owner's, so
+  // a single "me" chip would be a control with nothing to choose — the same dead-control rule
+  // the kind chips follow.
+  const shared = ownerChips.length > 1
+  const myOpenCount = useMemo(
+    () => (items ?? []).filter((it) => !isForeignItem(it, me) && isOpen(it.status)).length,
+    [items, me],
+  )
+  const filterSections: FilterSectionDef[] = [{
+    title: 'Show', value: filter, defaultKey: 'open', onChange: setFilter,
+    // The Filtered view is only offered when something is actually withheld — an always-on
+    // chip that reads 0 for most users would be a dead control (INU-6).
+    options: [
+      ...FILTERS.map((f) => ({ key: f.key, label: f.label, count: filterCount(f.key) })),
+      // Favorites, offered only once something is starred — the same dead-control rule the
+      // Filtered chip follows (INU-6). Before this the star was WRITE-ONLY: you could favorite
+      // an item and then had no way to find it again, in a list of forty (issue 620). Knowledge
+      // already implements the filter, the count and the row star for this exact field; this is
+      // that pattern, not a new one.
+      ...((filterCount('favorites') ?? 0) > 0 ? [{ key: 'favorites', label: 'Favorites', count: filterCount('favorites') }] : []),
+      ...((filterCount('filtered') ?? 0) > 0 ? [{ key: 'filtered', label: 'Filtered', count: filterCount('filtered') }] : []),
+    ],
+  }]
+  return (
+    <WorkbenchLayout
+      topBar={
+        <TopBar
+          keepCornerPadding
+          // The name and the count are SEPARATE children so the count can shrink first: a
+          // `truncate` on this flex container does nothing (it has no text of its own), which
+          // left the row 111px under the controls at 390px. Now "Inbox" holds its width and
+          // the secondary count truncates — the same shape `notifications` uses.
+          // 🔴 "N OPEN", from `open_count`. This read `pending_count` — a PENDING-only count — while
+          // the Open filter, every classification count and every kind chip below used
+          // `isOpen = pending | seen`. Measured on a seeded store: the header said 33 and the Open
+          // filter said 37, four `seen` rows apart, and neither was wrong on its own terms. Worse,
+          // opening a row marks it SEEN, so a GLANCE decremented this number (33 → 32) while
+          // resolving nothing — training the user that the count means nothing. One count, one
+          // definition, shared with the server (issue 493). The read/unread distinction survives
+          // where it belongs: the per-row accent rail and dot, which key off `pending` below.
+          //
+          // TSE2-3's SHARED-inbox split is kept, re-expressed in open terms: on a shared inbox the
+          // label says how much of the queue is the owner's, because "12 open" where nine are a
+          // teammate's misreads as personal backlog. Both halves now read OPEN counts from the one
+          // owner (`my_open_count` / `open_count`), so this label, the `mine` chip and the Open
+          // filter cannot disagree — pairing the new open total with the old PENDING owner-count
+          // would have rebuilt this very defect inside the sentence that fixes it. Solo installs
+          // render the two-part open count exactly as before.
+          left={<PageTitle className="flex min-w-0 items-baseline gap-s"><span className="shrink-0">Inbox</span> {status && <span data-type="caption" className="min-w-0 truncate text-on-surface-low">
+            {shared && status.my_open_count !== undefined
+              ? <>{status.my_open_count} of {status.open_count} open are yours · {status.total_count} total</>
+              : <>{status.open_count} open · {status.total_count} total</>}
+          </span>}</PageTitle>}
+          right={
+            // The header has room now (search/filter live on the page), so surface
+            // the actions directly — the cluster collapses them (icon-only → …) if tight.
+            <div className="flex items-center gap-1">
+              {/* Channel digest — only meaningful when channels are watched. Picks a
+                  channel, generates a catch-up summary that lands as a new item. */}
+              {watched.length > 0 && (
+                <Popover placement="bottom" align="right" trigger={(open, toggle) => (
+                  <button onClick={toggle} disabled={busy}
+                    data-type="body-s"
+                    className="inline-flex items-center gap-1.5 rounded-pill h-9 px-m text-on-surface-var hover:bg-surface-high hover:text-on-surface transition-colors disabled:opacity-40"
+                    style={{ background: open ? 'var(--color-surface-high)' : undefined }}
+                    title="Generate a catch-up digest for a watched channel">
+                    {busy ? <Loader2 size={15} className="animate-spin" /> : <ScrollText size={15} />}
+                    <span className="hidden sm:inline">Digest</span>
+                  </button>
+                )}>
+                  {(close) => (
+                    <div className="flex flex-col gap-0.5" style={{ minWidth: 220 }}>
+                      <div data-type="caption" className="px-m pt-1 pb-1.5 uppercase tracking-wide text-on-surface-low">Catch-up digest · last 4h</div>
+                      {watched.map((ch) => (
+                        <MenuRow key={ch.id} icon={<ScrollText size={15} />} label={ch.name || ch.id}
+                          onClick={() => { close(); digest(ch.id) }} />
+                      ))}
+                    </div>
+                  )}
+                </Popover>
+              )}
+              <HeaderActions>
+                {/* Gated on `open_count`, the same set the sweep reaches. Gating on the old
+                    PENDING-only count made the only bulk control VANISH once every row had been
+                    read, while the queue was still full (issue 493). */}
+                {(status?.open_count ?? 0) > 0 && (
+                  <HeaderControl icon={CheckCheck} label="Dismiss all" danger priority="low" onClick={dismissAll} disabled={busy} />
+                )}
+                <HeaderControl icon={RotateCcw} label="Restart sources" priority="low" onClick={restart} disabled={busy} />
+                {/* INU-9. `priority="primary"` so writing a note survives into the
+                    icon-only and overflow tiers — it is the one action on this page that
+                    CREATES something, and the cluster sheds `low` first. Placed after the
+                    destructive control and before the panel opener, per HeaderActions'
+                    ordering tenet. */}
+                <HeaderControl icon={StickyNote} label="Capture a note" priority="primary" onClick={() => setCaptureOpen(true)} />
+                <HeaderControl icon={SettingsIcon} label="Inbox settings" active={settingsOpen} priority="low" onClick={() => setSettingsOpen(!settingsOpen)} />
+              </HeaderActions>
+            </div>
+          }
+        />
+      }
+      controls={
+        <ListControls search={(items === undefined || items.length > 0)
+          ? { value: q, onChange: setQ, placeholder: 'Search inbox', label: 'Search inbox' }
+          : undefined}
+          // `active` compares against the DEFAULT filter, not 'all': inbox opens on 'open', so
+          // `filter !== 'all'` was true on mount and the list announced "39 items" before the user
+          // did anything. The announcement is for a query the USER made.
+          results={{ count: (filtered ?? []).length, noun: 'items', active: narrowed }}
+          stale={itemsStale}>
+          <FilterMenu sections={filterSections} label="Show" />
+        </ListControls>
+      }
+      panel={
+        <>
+          {open && (
+            /* 🔴 THE PANEL HEADER CONTRADICTED ITS OWN BODY. The row 120 lines below already
+                decides this — a non-channel kind's `sender_name` is the emitting SUBSYSTEM, so
+                those rows "lead with the KIND and its own icon instead" — and `InboxDetail:101`
+                already hides the sender line for exactly those rows. Only this header still
+                printed it, so a note the USER wrote opened a panel titled **"user"** under a
+                REPLY arrow (`classMeta` is the triage verdict, and a non-channel row was never
+                triaged — the same reason the row hides its confidence chip). Measured in the
+                browser on INU-9's own surface; the sibling kinds read "system" and "loop".
+                This applies the file's existing rule to the one place that had drifted from it,
+                rather than minting a note-only exception. */
+            <SidePanel key={open.id} fillHeight storeKey="inbox-panel-w" urlKey={{ key: 'open', setQuery }}
+              icon={(() => {
+                const channelBacked = !NON_CHANNEL_ITEM_KINDS.includes(open.item_kind || 'message')
+                const m = channelBacked ? classMeta(open.classification) : kindMeta(open.item_kind)
+                return <m.icon size={18} style={{ color: m.tone }} />
+              })()}
+              title={!NON_CHANNEL_ITEM_KINDS.includes(open.item_kind || 'message')
+                ? (open.sender_name || open.sender_id || 'Item')
+                : kindMeta(open.item_kind).label}
+              onClose={() => setOpenId("")}>
+              <InboxDetail item={open} owner={me} onChanged={load} navigate={navigate} />
+            </SidePanel>
+          )}
+          {settingsOpen && (
+            <SidePanel key="inbox-settings" fillHeight storeKey="inbox-panel-w" urlKey={{ key: 'settings', setQuery }} icon={<SettingsIcon size={18} className="text-primary" />} title="Inbox settings" onClose={() => setSettingsOpen(false)}>
+              <InboxSettingsPanel />
+            </SidePanel>
+          )}
+        </>
+      }
+    >
+      {/* The inbox body is one ENTRANCE GROUP (FLUID-MOTION §S3 T3.2): the source-health
+          banner lands, then the queue — context first, then the work, rather than the
+          two arriving in the same frame. This surface has exactly those two regions, and
+          the group sits above BOTH the `status` fetch and the items fetch, so the live
+          WebSocket pushes this page takes all day (`inbox_new_item`) re-render inside a
+          mounted group and never replay the entrance (see `ui/motion/Entrance`). */}
+      <EntranceGroup>
+        {/* source health banner — the native agent→inbox source is ALWAYS active
+            (push), so the inbox is never "off"; poll providers are extra. */}
+        {status && (() => {
+          const pollActive = (status.sources ?? []).filter((s) => s.kind === 'poll' && s.active)
+          const hasPollProviders = (status.sources ?? []).some((s) => s.kind === 'poll')
+          return (
+            <EntranceRegion className="mx-auto w-full px-l" style={{ maxWidth: 'var(--content-width)' }}>
+              <div data-type="body-s" className="flex items-center gap-s rounded-md px-m py-2" style={{ background: 'var(--color-surface-container)' }}>
+                <span className="relative flex size-2">
+                  <span className="relative inline-flex size-2 rounded-pill" style={{ background: 'var(--color-ok)' }} />
+                </span>
+                <span className="text-on-surface-var">
+                  Native source active — agents post here directly.
+                  {pollActive.length > 0
+                    ? ` Also polling ${pollActive.map((s) => s.name).join(', ')}${health?.last_poll_at ? ` · last checked ${relPast(health.last_poll_at)}` : ''}.`
+                    : hasPollProviders ? ' Connect a message source (filesystem/Slack) to collect more.' : ''}
+                </span>
+              </div>
+            </EntranceRegion>
+          )
+        })()}
+
+        {/* `data-tour="inbox"` — the product tour's inbox stop points at the queue column
+            (ONBOARDING-UX T5.1). The wrapper, not the list, so an empty inbox still anchors.
+            The region wraps it rather than replacing it: the tour anchor and the centered
+            column stay one element, so neither the tour nor the layout learns about motion. */}
+        <EntranceRegion>
+        <div data-tour="inbox" className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+        {/* PA-5 — the triage DIGEST card (PROACTIVE-ASSISTANT §5.1). Above the list rather than
+            beside it: the digest is the summary of everything below, and a digest a user has to
+            scroll past their inbox to find is a digest they read after doing the work by hand.
+            It renders its own five states (never installed / off / not yet run / a digest / a
+            failed read), so nothing here needs to know which one is showing. */}
+        <TriageDigestCard />
+        {/* Kind chips. Only rendered once MORE THAN ONE kind is present: on an inbox that
+            only ever receives messages, a single "Messages" chip is a control with nothing
+            to choose. Uses the canonical Segmented so it matches every other pick-one in
+            the app rather than inventing a chip style here. */}
+        {kindChips.length > 1 && (
+          <div className="mb-m">
+            <Segmented
+              size="sm"
+              collapse="scroll"
+              ariaLabel="Filter by kind"
+              value={kind || 'all'}
+              onChange={(k) => setKind(k === 'all' ? '' : k)}
+              options={[
+                { key: 'all', label: 'All', icon: LayoutGrid },
+                ...kindChips.map((k) => ({
+                  key: k.key,
+                  label: k.open > 0 ? `${k.label} ${k.open}` : k.label,
+                  icon: k.icon,
+                  tone: k.tone,
+                  title: `${k.label} — ${k.open} open`,
+                })),
+              ]}
+            />
+          </div>
+        )}
+        {/* TSE2-3 — OWNER chips, rendered only for a genuinely shared inbox (more than one
+            attributed owner present). Three scopes, and the middle one is not an owner handle:
+            "Everyone" is the shared view's default, "Mine" is `belongs_to` (so it keeps the
+            unattributed rows an owner still owns), and each handle is an exact attribution.
+            Uses the same canonical `Segmented` as the kind chips rather than a second chip
+            style. */}
+        {shared && (
+          <div className="mb-m">
+            <Segmented
+              size="sm"
+              collapse="scroll"
+              ariaLabel="Filter by owner"
+              value={ownerFilter || 'all'}
+              onChange={(o) => setOwnerFilter(o === 'all' ? '' : o)}
+              options={[
+                { key: 'all', label: 'Everyone', icon: Users },
+                { key: 'mine', label: myOpenCount > 0 ? `Mine ${myOpenCount}` : 'Mine', icon: UserCheck, title: `Yours — ${myOpenCount} open` },
+                ...ownerChips.filter((o) => !o.isMe).map((o) => ({
+                  key: o.username,
+                  label: o.open > 0 ? `${o.username} ${o.open}` : o.username,
+                  icon: User,
+                  title: `${o.username} — ${o.open} open of ${o.total}`,
+                })),
+              ]}
+            />
+          </div>
+        )}
+        {/* INU-7 — the Proposals LENS. Narrowing to `proposal` swaps the triage list for a
+            surface built for deciding: each row shows what approving would DO (its apply
+            case), batch-approve is offered only within one (provenance, kind) group, and an
+            editable payload can be edited before it is applied. A proposal row in the plain
+            list could only be opened, one at a time. */}
+        {filtered !== null && kind === 'proposal' ? (
+          <ProposalsLens items={filtered} onChanged={reload} />
+        ) : items === undefined && itemsErr ? (
+          <LoadError what="inbox items" error={itemsErr} onRetry={reload} />
+        ) : filtered === null ? <ListSkeleton rows={6} what="inbox items" /> : filtered.length === 0 ? (
+          // 🪤 NARROWED FIRST, THEN THE BLANK SLATE. The title always distinguished the two
+          // ('Nothing here' vs 'Inbox zero'), but the HINT tested `disabled` first — so a user with
+          // items who searched for something that does not match was told "Enable a source to begin",
+          // advice for a completely different problem, under a title saying their filter found
+          // nothing. Measured on `#/inbox`: filtering to no matches rendered the blank-slate
+          // onboarding paragraph. Eleven other list surfaces answer the same state with "Try a
+          // different …"; this is the twelfth.
+          // 🔑 AND THE TITLE HAD THE SAME BUG THE HINT WAS FIXED FOR, ON THE OTHER AXIS. The comment
+          // above records making the hint branch on `narrowed` before `disabled`. But the title only
+          // ever branched on `narrowed` — so a brand-new user, on a fresh install, was congratulated
+          // with **"Inbox zero"** above a hint reading "Enable a source to begin." The headline said
+          // "you are done"; the body said "you have not started". Both halves now read one flag, in
+          // one order, which is the invariant this file states for the hint.
+          //
+          // 🔴 THAT FIX THEN NAMED THE WRONG FLAG, AND THE REPLACEMENT SENTENCE WAS FALSE. It read
+          // `disabled = !status.enabled` as "no source is connected" and headlined "Inbox is not
+          // connected yet — Enable a source to begin". `enabled` is the POLL half only; the native
+          // agent→inbox sink is always live, the payload says so in `native_source_active`, and the
+          // banner sixty lines above renders that very sentence. Measured on a fresh container: the
+          // blank slate called the inbox unconnected directly beneath "Native source active — agents
+          // post here directly", and the header's own "Capture a note" then landed an item in it. See
+          // `neverReceived` for the full measurement.
+          //
+          // So the flag is `neverReceived`, off `items`: nothing ever arrived vs. you cleared what
+          // did. Both are TRUE sentences, and neither contradicts the banner.
+          // 🪤 "Enable a source to begin" was prose with nothing to click, so the ONE actionable state
+          // was the only one with no action — the user had to already know Settings › Inbox exists.
+          // `navigate` is in scope (this component's props) and `settings/inbox` is a real section id
+          // (`settings/SettingsPage.tsx`), so this was a wiring omission, not anything structural.
+          //
+          // The action is an OFFER on one branch — nothing has arrived AND no poll source is
+          // collecting. "Inbox zero" and a no-match filter are both states with nothing for the user
+          // to do, and a CTA there would invent a task out of good news, which is what
+          // `emptyStateRollout`'s taxonomy forbids. `pollConnected` is what keeps it off an inbox
+          // that already has a source and simply has not heard anything.
+          //
+          // 🪤 The icon is `SettingsIcon` (already imported) and NOT `Plug`, even though Plug reads
+          // more like "connect": this product already assigns `Plug` to the **Providers** settings
+          // section (`SettingsPage.tsx`, `settingsWidgets.tsx`), so it would point at Settings with the
+          // glyph meaning a different panel. The LABEL names the goal; the ICON names the destination.
+          //
+          // 🪤 KEEP THE REASONING ABOVE THE TAG, NOT INSIDE IT. `narrowedNotBlankSlate.test.tsx`
+          // extracts this element with `/<EmptyState icon=\{InboxIcon\}[\s\S]{0,900}?\/>/` — a
+          // 900-character window. Inline comments pushed the closing `/>` past it, the match came back
+          // empty, and all four of that rail's assertions failed on a change that broke none of them.
+          // Widening the rail was the wrong instrument: the window is a fair proxy for "this tag must
+          // not sprawl", so the prose belongs here and the tag stays readable.
+          <EmptyState icon={InboxIcon}
+            title={narrowed ? 'Nothing here' : neverReceived ? 'Nothing has arrived yet' : 'Inbox zero'}
+            hint={narrowed
+              ? (kind ? `No ${kindMeta(kind).label.toLowerCase()} matches the current search or filter.` : 'Try a different search or filter.')
+              : neverReceived
+                ? 'Messages, questions and notifications from your agents land here for triage — they post directly, so nothing needs connecting first. Add a filesystem or Slack source to collect from outside too.'
+                : 'Messages your agents and connected sources surface for triage land here. You’re all caught up.'}
+            action={neverReceived && !narrowed && !pollConnected
+              ? { label: 'Add a message source', onClick: () => navigate('settings/inbox'), icon: SettingsIcon }
+              : undefined} />
+        ) : (
+          // DSC-13: uncapped client-side — `filtered` is a pure filter over everything
+          // the endpoint returned, with no slice and no MoreRow. `anchorKey` is the fix
+          // for a defect the windowing survey turned up on the way past: `#/inbox?open=<id>`
+          // opened the panel for a row 400 deep and never scrolled the list to it, so the
+          // deep link landed on a list showing row 1.
+          <WindowedList
+            items={filtered}
+            rowKey={(it) => it.id}
+            // VARIABLE: `ListRow` has no `h-*`, its padding is `calc(16px * --space-scale)`
+            // (a user setting with 0.8 / 0.68 density presets), and the title line carries
+            // 0-4 conditional chips above a truncated preview.
+            rowHeights="variable"
+            estimateRowHeight={76}
+            gap={8}
+            noun="items"
+            findHint="use the Search inbox field above, which searches every item."
+            anchorKey={openId ?? undefined}
+            className="flex flex-col gap-s"
+          >
+            {(it, i, listCtx) => {
+              const cm = classMeta(it.classification)
+              const cf = confMeta(it.confidence)
+              const sm = statusMeta(it.status)
+              const km = kindMeta(it.item_kind)
+              const unread = it.status === 'pending'
+              const open = isOpen(it.status)
+              // A non-channel kind (needs_input, proposal, …) has no sender and no channel:
+              // its `sender_name` is the emitting subsystem. Rendering "Unknown" + a
+              // #channel chip for it would be noise pretending to be provenance, so those
+              // rows lead with the KIND and its own icon instead.
+              const channelBacked = !NON_CHANNEL_ITEM_KINDS.includes(it.item_kind || 'message')
+              const target = refTarget(it)
+              // Right-click / long-press → scoped actions. Only "open" is wired at
+              // the row level here (triage actions live in the detail panel); reuse
+              // the SAME open the row's onClick calls — no duplicated behavior.
+              const menuItems: ContextMenuItem[] = [
+                { icon: <InboxIcon size={15} />, label: 'Open', onSelect: () => setOpenId(it.id) },
+              ]
+              if (target) menuItems.push({ icon: <ExternalLink size={15} />, label: refLabel(it), onSelect: () => navigate(target) })
+              // The accent rail marks UNREAD only. Keeping it on `seen` would leave every
+              // glanced-at row visually shouting, which is the noise this plan set out to fix.
+              const accentTone = channelBacked ? cm.tone : km.tone
+              return (
+                <ContextMenu key={it.id} items={menuItems}>
+                {/* 🔴 THE ROW WAS NAMED BY ITS KIND, NOT ITS IDENTITY. `km.label` is the kind word, so
+                    measured on this surface: **39 rows → 3 distinct names**, 35 of them "Proposals"
+                    (36 buttons whose whole computed name is a kind word). A screen-reader user tabbing
+                    the inbox heard "Proposals, button" thirty-five times while every row's own text
+                    identified it. Same defect cycle 141 measured for rows named by kind, and the helper
+                    cycle 142 built for it — join the identifying parts, drop repeats, cap at 55 — is
+                    what `#/notifications` already uses for exactly this. The sender stays first for a
+                    channel-backed row (that IS its identity); the message line distinguishes the rest.
+
+                    🪤 `firstLine()` — which `#/notifications` uses — was WRONG here, and only measuring
+                    showed it: an inbox message wraps its subject onto several lines, so the first line
+                    is often just "Refine a skill" and 34 rows still collapsed to one name. The visible
+                    `<p>` renders those newlines as spaces, so a sighted user reads the whole subject.
+                    Collapsing whitespace is what matches what is on screen. */}
+                {/* index=0 while windowed: a windowed row REMOUNTS every time it scrolls
+                    back in, and ListRow's entrance stagger is keyed on the index — so an
+                    index-keyed delay replays the fade on every row, on every scroll. */}
+                <ListRow index={listCtx.windowed ? 0 : i} accent={unread ? accentTone : undefined} onClick={() => setOpenId(it.id)}
+                  label={rowSubject([channelBacked ? (it.sender_name || it.sender_id || 'Unknown') : km.label, previewText(it.message)])}>
+                  <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${accentTone} 16%, transparent)` }}>
+                    {channelBacked ? <cm.icon size={18} style={{ color: cm.tone }} /> : <km.icon size={18} style={{ color: km.tone }} />}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-s">
+                      <span data-type="label-m" className={`truncate ${open ? 'text-on-surface' : 'text-on-surface-var'}`} style={fvs(500)}>{channelBacked ? (it.sender_name || it.sender_id || 'Unknown') : km.label}</span>
+                      {channelBacked && channelLabel(it) && <span data-type="caption" className="shrink-0 text-on-surface-low">{channelLabel(it)}</span>}
+                      {!channelBacked && target && <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 text-on-surface-low"><ExternalLink size={11} /> deep link</span>}
+                      {it.draft && <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 text-ok"><Reply size={11} /> draft</span>}
+                      {/* The star the api.ts comment already promised ("a strong engagement
+                          signal + a star in the UI"). It carries an accessible name because it is
+                          the only thing conveying the state — an icon with no name is invisible to
+                          a screen reader, which would leave the read half missing for exactly the
+                          users who need it most. */}
+                      {it.favorited && <Star size={12} className="shrink-0 text-primary" style={{ fill: 'currentColor' }} aria-label="Favorited" />}
+                      {/* TSE2-3 — whose item this is, on the ROW. Without it the attribution
+                          would only appear once the panel is open, i.e. after the reader has
+                          already taken the text as the owner's own. Renders nothing for the
+                          owner's own rows. */}
+                      <ForeignBadge item={it} owner={me} />
+                    </div>
+                    {/* The panel renders this content as real markup; the ROW is a one-line
+                        plain-text preview, so the marks must go — a digest body's `**` and `##`
+                        rendered literally here for every digest row (issue 618). */}
+                    <p data-type="body-s" className="mt-0.5 truncate text-on-surface-low">{previewText(it.message)}</p>
+                  </div>
+                  <div className="hidden sm:flex shrink-0 items-center gap-s">
+                    {/* Confidence is a TRIAGE judgment; a needs_input row was never triaged,
+                        so showing "needs review" against it would invent a verdict. */}
+                    {channelBacked && <span data-type="caption" className="inline-flex items-center gap-1" style={{ color: cf.tone }} title={cf.label}><cf.icon size={12} /></span>}
+                    {!open ? <span data-type="caption" className="inline-flex items-center gap-1 text-on-surface-low"><sm.icon size={12} style={{ color: sm.tone }} /> {sm.label}</span> : it.created_at && <span data-type="caption" className="text-on-surface-low">{relPast(it.created_at)}</span>}
+                    {unread && <Circle size={7} fill={accentTone} stroke="none" />}
+                  </div>
+                </ListRow>
+                </ContextMenu>
+              )
+            }}
+          </WindowedList>
+        )}
+        </div>
+        </EntranceRegion>
+      </EntranceGroup>
+      {/* INU-9 — a MODAL, not a SidePanel: composing is a focused, short-lived task with one
+          field, and the panel slot is already the place a row's detail lives. Rendered from
+          the same `?capture=1` flag the tray deep-links, so the tray's menu item and the
+          header's Capture control open the identical surface.
+          `onCreated` closes the flag AND refreshes, because the row the WS push announces is
+          the one this call just created — refreshing is what puts it on screen immediately
+          rather than on the next socket tick. */}
+      {captureOpen && (
+        <ComposeNoteModal
+          onClose={() => setCaptureOpen(false)}
+          onCreated={() => { setCaptureOpen(false); load() }}
+        />
+      )}
+    </WorkbenchLayout>
+  )
+}

@@ -1,0 +1,15 @@
+{
+  "id": "changelog-page",
+  "displayName": "Changelog or release-notes page",
+  "description": "A product changelog that is a web page rather than a feed. The five-detector stack reads it with zero model calls; if it finds nothing, the page is probably a single post rather than a listing.",
+  "provider": "watched-page",
+  "itemType": "bookmark",
+  "matchPatterns": [
+    "^(?P<url>https?://[^\\s?#]*/(?:changelog|changelogs|releases|release-notes|releasenotes|whats-new|whatsnew|updates|news)(?:/[^\\s?#]*)?)/?(?:[?#].*)?$"
+  ],
+  "urlGuidance": "Paste the LISTING page — a /changelog or /releases index, not one entry from it.",
+  "spec": {
+    "url": "{{url}}"
+  },
+  "tags": ["changelogs", "releases"]
+}

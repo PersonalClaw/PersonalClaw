@@ -1,0 +1,319 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ArrowLeft, FolderInput, MessagesSquare } from 'lucide-react'
+import { TopBar } from '../../ui/TopBar'
+import { HeaderActions } from '../../ui/HeaderActions'
+import { Loading, LoadError } from '../../ui/ListScaffold'
+import { SearchField } from '../../ui/SearchField'
+import { ResultAnnouncement } from '../../ui/ListControls'
+import { Segmented } from '../../ui/forms'
+import { QuietButton } from '../../ui/QuietButton'
+import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
+import { api, type Artifact } from '../../lib/api'
+import { useQueryParam, type RouteProps } from '../../app/useQueryState'
+import { newSessionTarget } from '../../ui/content/commentTarget'
+import { notify } from '../../app/appSdk'
+import { promptInput } from '../../ui/dialog'
+import { ARTIFACT_KINDS } from '../files/fileMeta'
+import { Morph } from '../../ui/motion'
+import { ArtifactGrid } from './ArtifactGrid'
+import { ArtifactViewer } from './ArtifactViewer'
+import { ArtifactIteratePanel, ITERATE_PENDING } from './ArtifactIteratePanel'
+import { DeployedAppsMenu } from './ArtifactDeploy'
+import { PageTitle } from '../../ui/PageTitle'
+
+const SOURCES = ['chat', 'cron', 'subagent', 'manual', 'import'] as const
+const SORTS = [
+  { key: 'updated', label: 'Recent' },
+  { key: 'name', label: 'Name' },
+  { key: 'kind', label: 'Kind' },
+] as const
+
+/** Artifacts — the library surface (ARTIFACTS S2 on the S1b route).
+ *
+ *  No slug → the LIBRARY: a grid of live sandboxed preview cards with a
+ *  URL-query-backed toolbar (search ?q, kind ?kind, source ?src, collection
+ *  ?col, sort ?sort — shareable filter state). A slug → the full-page detail
+ *  viewer (version rail + events timeline), with `?v=N` deep-linking a
+ *  historical snapshot. Selection state IS the URL. */
+export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }: RouteProps) {
+  const slug = (sub || '').split('/')[0] || ''
+
+  const [artifacts, setArtifacts] = useState<Artifact[]>([])
+  const [loading, setLoading] = useState(false)
+  /** The library read's rejection. Distinct from `artifacts.length === 0`, which a failure and an
+   *  empty library both produce — the whole defect this replaces. */
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+  // The base library stays the cheap metadata-only read. Searching is a separate, debounced
+  // server query because cards show body excerpts that the base rows deliberately omit.
+  const [searchResult, setSearchResult] = useState<{ q: string; artifacts: Artifact[] } | null>(null)
+  const [searchErr, setSearchErr] = useState<{ q: string; error: unknown } | null>(null)
+  const [searchAttempt, setSearchAttempt] = useState(0)
+
+  // URL-backed toolbar state (replace — in-place refinements, not navigations).
+  const [q, setQ] = useQueryParam(routeQuery, setQuery, 'q', '', { replace: true })
+  const [kind, setKind] = useQueryParam(routeQuery, setQuery, 'kind', '', { replace: true })
+  const [src, setSrc] = useQueryParam(routeQuery, setQuery, 'src', '', { replace: true })
+  const [col, setCol] = useQueryParam(routeQuery, setQuery, 'col', '', { replace: true })
+  const [sort, setSort] = useQueryParam(routeQuery, setQuery, 'sort', 'updated', { replace: true })
+  // ?v=N pins the detail viewer to a historical version (deep-linkable snapshot).
+  const [vParam, setVParam] = useQueryParam(routeQuery, setQuery, 'v', '', { replace: true })
+  // ?iterate=<session-key> opens the split-view iterate panel on that session
+  // (AE-10). `ITERATE_PENDING` means "open it, it still needs staging" — the panel
+  // rewrites the param once /api/investigate hands back the real key, which makes
+  // an open iteration thread deep-linkable and survives a close/reopen.
+  const [iterate, setIterate] = useQueryParam(routeQuery, setQuery, 'iterate', '', { replace: true })
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    // `catch { setArtifacts([]) }` made a failed read indistinguishable from an empty library, and
+    // the grid then told a user with a full library to go ask the agent to save their first artifact.
+    // The rejection is kept instead; the list only renders once it is absent.
+    try { setArtifacts(await api.artifacts()); setLoadErr(null) }
+    catch (e) { setLoadErr(e) }
+    finally { setLoading(false) }
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const searchQuery = q.trim()
+  useEffect(() => {
+    if (!searchQuery) {
+      setSearchResult(null)
+      setSearchErr(null)
+      return
+    }
+    let alive = true
+    const timer = window.setTimeout(() => {
+      api.artifacts({ q: searchQuery })
+        .then((rows) => {
+          if (!alive) return
+          setSearchResult({ q: searchQuery, artifacts: rows })
+          setSearchErr(null)
+        })
+        .catch((error) => {
+          if (!alive) return
+          setSearchResult(null)
+          setSearchErr({ q: searchQuery, error })
+        })
+    }, 200)
+    return () => { alive = false; window.clearTimeout(timer) }
+  }, [searchQuery, searchAttempt, artifacts])
+
+  const currentSearch = searchResult?.q === searchQuery ? searchResult : null
+  const currentSearchErr = searchErr?.q === searchQuery ? searchErr.error : null
+  const searchPending = !!searchQuery && !currentSearch && !currentSearchErr
+  const retrySearch = () => {
+    setSearchResult(null)
+    setSearchErr(null)
+    setSearchAttempt((n) => n + 1)
+  }
+
+  // Collections present in the library (derived; free-form labels).
+  const collections = useMemo(() => {
+    const s = new Set<string>()
+    for (const a of artifacts) if (a.collection) s.add(a.collection)
+    return [...s].sort()
+  }, [artifacts])
+
+  // The canonical "Filter & sort" pill (`ui/FilterMenu`), which eight other list surfaces already
+  // render. This page used to line up its own source dropdown + collection dropdown + a sort
+  // Segmented across the toolbar — the exact arrangement that primitive's doc says it replaced — so
+  // artifacts was the last surface without the active-count badge or the inline Clear. The kind strip
+  // stays a Segmented: it is this surface's primary axis and carries a deliberate `collapse="scroll"`
+  // treatment, and the inbox already ships the same "primary strip + one pill" pairing.
+  const filterSections = useMemo<FilterSectionDef[]>(() => {
+    const bySource = new Map<string, number>()
+    const byCollection = new Map<string, number>()
+    for (const a of artifacts) {
+      if (a.source) bySource.set(a.source, (bySource.get(a.source) ?? 0) + 1)
+      if (a.collection) byCollection.set(a.collection, (byCollection.get(a.collection) ?? 0) + 1)
+    }
+    const list: FilterSectionDef[] = [{
+      title: 'Source', value: src, defaultKey: '', onChange: setSrc,
+      options: [
+        { key: '', label: 'Any source', count: artifacts.length },
+        ...SOURCES.map((k) => ({ key: k, label: k[0].toUpperCase() + k.slice(1), count: bySource.get(k) })),
+      ],
+    }]
+    // Collections are user-created, so the section only exists once one does — same conditional the
+    // old dropdown carried.
+    if (collections.length > 0) list.push({
+      title: 'Collection', value: col, defaultKey: '', onChange: setCol,
+      options: [
+        { key: '', label: 'All collections', count: artifacts.length },
+        ...collections.map((c) => ({ key: c, label: c, count: byCollection.get(c) })),
+      ],
+    })
+    list.push({
+      title: 'Sort by', value: sort, defaultKey: 'updated', onChange: setSort,
+      options: SORTS.map((o) => ({ key: o.key, label: o.label })),
+    })
+    return list
+  }, [artifacts, collections, src, col, sort, setSrc, setCol, setSort])
+
+  // Exact filters + sort stay client-side over the server's q-matched rows. This gives the
+  // URL one search meaning everywhere: name, description, tags, collection, or card body.
+  const filtered = useMemo(() => {
+    const base = searchQuery ? (currentSearch?.artifacts ?? []) : artifacts
+    let out = base.filter((a) => {
+      if (kind && a.kind !== kind) return false
+      if (src && a.source !== src) return false
+      if (col && a.collection !== col) return false
+      return true
+    })
+    if (sort === 'name') out = [...out].sort((a, b) => a.name.localeCompare(b.name))
+    else if (sort === 'kind') out = [...out].sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name))
+    // 'updated' keeps the server order (newest first).
+    return out
+  }, [artifacts, currentSearch, searchQuery, kind, src, col, sort])
+
+  const open = (a: Artifact) => navigate(`artifacts/${a.slug}`)
+  const back = () => { setVParam(''); setIterate(''); navigate('artifacts') }
+
+  // "Source file" on a file-backed artifact opens it in the Files page (its home).
+  const openSourceFile = useCallback((path: string) => {
+    const dir = path.replace(/\/[^/]*$/, '')
+    const params = new URLSearchParams()
+    if (dir && dir !== path) params.set('dir', dir)
+    params.set('file', path)
+    navigate(`files?${params.toString()}`)
+  }, [navigate])
+
+  // Assign/clear a collection from the detail header (persists via PATCH).
+  const active = slug
+    ? artifacts.find((a) => a.slug === slug)
+      ?? currentSearch?.artifacts.find((a) => a.slug === slug)
+    : undefined
+  const assignCollection = async () => {
+    if (!slug) return
+    const name = await promptInput({
+      title: 'Set collection', label: 'Collection',
+      placeholder: collections[0] ?? 'e.g. Dashboards',
+      initial: active?.collection ?? '',
+      confirmLabel: 'Save',
+    })
+    if (name === null || name === undefined) return
+    try {
+      await api.updateArtifact(slug, { collection: name.trim() })
+      await load()
+    } catch (e) { notify(`Couldn't set collection: ${String((e as Error)?.message || e)}`, 'error') }
+  }
+
+  const initialVersion = vParam ? Number(vParam) || undefined : undefined
+  // A read-only artifact (SM-9) refuses every update, collection included — it is a frozen
+  // record, not a filing target — so the control is absent rather than
+  // present-and-always-failing.
+  const canFile = !!slug && !!active && !active.readonly
+  // Iterating means the agent WRITES this slug (AE-7 stages the session in `agent`
+  // mode), so a frozen record is not an iteration target — same reason it can't be
+  // filed. The panel is absent rather than present-and-always-refused.
+  const canIterate = canFile
+  const iterateOpen = canIterate && !!iterate
+
+  return (
+    <div className="flex h-full flex-col">
+      <TopBar
+        keepCornerPadding
+        left={<div className="flex min-w-0 items-center gap-m">
+          {slug
+            ? <QuietButton onClick={back} title="Back to the library"><ArrowLeft size={13} /> Library</QuietButton>
+            : <PageTitle className="shrink-0">Artifacts</PageTitle>}
+          {slug && active && <span className="truncate text-on-surface" data-type="title-l">{active.name}</span>}
+        </div>}
+        right={canFile ? (
+          <HeaderActions>
+            <QuietButton onClick={() => setIterate(iterate ? '' : ITERATE_PENDING)} ariaExpanded={iterateOpen}
+              title={iterateOpen ? 'Close the iterate panel' : 'Open a chat beside this artifact and change it by asking'}>
+              <MessagesSquare size={13} /> {iterateOpen ? 'Close iterate' : 'Iterate with agent'}
+            </QuietButton>
+            <QuietButton onClick={assignCollection} title="Group this artifact under a library collection">
+              <FolderInput size={13} /> {active.collection || 'Set collection'}
+            </QuietButton>
+          </HeaderActions>
+        ) : undefined}
+      />
+
+      {slug ? (
+        // The split view (AE-10): artifact left, chat right — stacked below `lg`,
+        // where a 26rem side panel would leave the preview unreadable. The reading
+        // column's `--content-width` cap is released while the panel is open, or the
+        // two halves would share one column's worth of space.
+        <div className="mx-auto flex min-h-0 w-full flex-1 flex-col lg:flex-row"
+          style={{ maxWidth: iterateOpen ? undefined : 'var(--content-width)' }}>
+          {/* The CLOSING half of the library's shared-element morph (FM-2) — the same
+              `artifact-<slug>` id the grid card carries, so the viewer flies out of that
+              card's box and folds back into it on Back. The id is on this stable
+              container, NOT on anything inside the viewer: the viewer mounts before its
+              fetch resolves, and a morph end that appears a tick late is silently no
+              morph at all. */}
+          <Morph id={`artifact-${slug}`} className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <ArtifactViewer key={slug} slug={slug} onChanged={load}
+              onDeleted={() => { back(); load() }} onOpenSourceFile={openSourceFile}
+              initialVersion={initialVersion}
+              onVersionChange={(v) => setVParam(v === null ? '' : String(v))}
+              defaultDetailsOpen={initialVersion != null}
+              commentTarget={navigate ? newSessionTarget(navigate, { name: `Comments: ${active?.name ?? slug}` }) : undefined} />
+          </Morph>
+          {iterateOpen && (
+            <div className="flex min-h-0 shrink-0 basis-1/2 flex-col lg:w-[26rem] lg:basis-auto xl:w-[30rem]">
+              <ArtifactIteratePanel key={slug} slug={slug} name={active?.name ?? slug}
+                session={iterate} onSession={setIterate} onClose={() => setIterate('')} />
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="mx-auto flex min-h-0 w-full flex-1 flex-col" style={{ maxWidth: 'var(--content-width)' }}>
+          {/* toolbar — URL-backed filter state (shareable) */}
+          <div className="flex flex-wrap items-center gap-m border-b border-outline/40 px-l py-2.5">
+            <div className="w-64"><SearchField size="sm" value={q} onChange={setQ} placeholder="Search artifacts…" ariaLabel="Search artifacts" name="artifacts-search" /></div>
+            {/* `ARTIFACT_KINDS` is 16 kinds, so this strip renders 17 tabs at a measured 1152px —
+                nearly 3x the next-largest registry feeding a Segmented anywhere in the app (6). With
+                no collapse strategy the strip could not shrink and the row it sits in is
+                `overflow: hidden`, so the tail was simply CUT OFF and unreachable: 7 of 17 tabs off
+                screen at 834px (tablet), 12 of 17 at 390px — 'SVG' through 'Video' had no way to be
+                picked at all. `collapse="scroll"` is the primitive's own form of what the Files
+                root-tab strip hand-rolls for the same reason (a variable-count strip in a bounded
+                slot), and what the inbox strip already declares; the strip is untouched at any width
+                where it fits, so desktop is byte-identical. Keyboard reach is unaffected — the
+                roving-tabindex arrow nav scrolls each tab into view as it takes focus. */}
+            <Segmented ariaLabel="Artifact kind" value={kind} onChange={setKind} collapse="scroll"
+              options={[{ key: '', label: 'All kinds' }, ...ARTIFACT_KINDS.map((k) => ({ key: k.key, label: k.label }))]} />
+            <FilterMenu sections={filterSections} />
+            {/* The deployed-app listing (PEP-8) — absent when nothing is served. Not a filter, so it
+                stays its own control, and keeps the right edge the sort strip used to hold. */}
+            <div className="ml-auto"><DeployedAppsMenu onOpen={(s) => navigate(`artifacts/${s}`)} onChanged={load} /></div>
+            {/* `narrowed` is this surface's own definition of "the user has filtered" — the grid
+                already uses it to tell an empty library from a filtered-to-nothing one, so the
+                announcement rides the same flag rather than inventing a second rule.
+                🪤 `&& !searchPending` rather than unmounting the tag while the query is in
+                flight: text search is now a REMOTE read, and an un-gated `active` would
+                announce the PREVIOUS query's count as though it answered this one. Gating
+                `active` is how the other two remote searches (Local/Ollama model managers)
+                do it, and it matters more than it looks — `ResultAnnouncement` renders its
+                live region unconditionally and only blanks the TEXT, so the region stays in
+                the DOM across the fetch. Unmounting it instead would re-insert an
+                aria-live node with its content already present, which screen readers do not
+                reliably announce; the count would land silently on exactly the path this
+                change adds. */}
+            <ResultAnnouncement count={filtered.length} noun="artifacts"
+              active={!!(q.trim() || kind || src || col) && !searchPending} />
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {loadErr && artifacts.length === 0 && !currentSearch
+              ? <LoadError what="artifacts" error={loadErr} onRetry={load} />
+              : loading && artifacts.length === 0
+              ? <Loading what="artifacts" />
+              : currentSearchErr
+              ? <LoadError what="artifact search" error={currentSearchErr} onRetry={retrySearch} />
+              : searchPending
+              ? <Loading what="matching artifacts" />
+              // `narrowed` lets the grid distinguish an empty library from a filtered-to-nothing
+              // one — it only ever sees the post-filter list.
+              : <ArtifactGrid artifacts={filtered} onOpen={open}
+                  onBrowseFiles={() => navigate('files')}
+                  narrowed={!!(searchQuery || kind || src || col)} />}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

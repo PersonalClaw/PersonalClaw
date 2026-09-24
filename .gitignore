@@ -1,0 +1,145 @@
+# Editor / OS junk
+*~
+*#
+*.swp
+*.log
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+dist-client/
+
+# Test / lint caches
+.coverage
+.coverage.*
+.cache/
+.pytest_cache/
+.mypy_cache/
+.hypothesis/
+htmlcov/
+# JUnit XML written by CI's `--junitxml=reports/…` steps (.github/workflows/ci.yml,
+# full.yml). Ignored so copying a CI invocation locally cannot leave a report a
+# `git add -A` would sweep into a commit.
+/reports/
+
+# Virtualenvs (lives at the repo root: .venv/)
+venv/
+.venv/
+.venv-client/
+
+# Linked git worktrees (`git worktree add .worktrees/<name>`). GLOB-anchored at the root
+# because each entry is an EMBEDDED GIT REPOSITORY: `git add -A` stages it as a gitlink
+# pointing at a local absolute path that exists on no other machine, and git says so
+# itself — "Clones of the outer repository will not contain the contents of the embedded
+# repository and will not know how to obtain it." So the artefact of the single most
+# ordinary contributor reflex is a broken clone for every user of a PUBLIC repo. Ignored
+# rather than documented-around, because the reflex is what has to be safe (#3413).
+/.worktrees/
+
+# Per-user local tool state (`gh` writes .local/state/gh/device-id — a stable installation
+# identifier). Nothing under here is repo content and none of it is reproducible on another
+# machine; it exists only because XDG-style tools default to the nearest writable root.
+/.local/
+
+# IDE / editor configs
+.vscode/
+.idea/
+*.sublime-*
+*.iml
+*.code-workspace
+pyrightconfig.json
+
+# Environment / secrets (.env.example stays tracked)
+.env
+.env.local
+
+# Frontend
+node_modules/
+web/dist/
+*.tsbuildinfo
+# Workspace members must NOT carry their own lockfiles — the root package-lock.json
+# is the single source of truth for the npm workspace (web, desktop). Stray member
+# lockfiles trip npm's optional-dependency bug (npm/cli#4828) → broken native builds.
+web/package-lock.json
+desktop/package-lock.json
+web/test-results/
+web/playwright-report/
+# The e2e harness's authenticated cookie jar — holds a LIVE gateway token.
+web/e2e/.auth/
+
+# Static assets generated from frontend build (tracked as a symlink is fine;
+# a real directory here would be a stale copy — see docs on web build/serve)
+src/personalclaw/static/dist
+
+# Desktop app build artifacts (Electron + bundled PyInstaller backend)
+desktop/dist/
+desktop/out/
+desktop/backend-dist/
+*.dmg
+
+# Local dev / runtime state
+.personalclaw-dev*/
+.mcp.json
+runs.json
+TASK_PROGRESS.md
+dev-seed.sh
+# Dev-session screenshots dropped at repo root (the app icon lives in desktop/)
+/*.png
+
+# Eval harness output
+eval_results/
+
+# Local tooling
+.claude/
+.playwright-mcp/
+playwright-responses/
+
+# Bare local dev gateway home (make serve creates $(CURDIR)/.dev-home).
+# GLOB, not a fixed name: every dev home holds live credentials (.local_secret,
+# session_key, sel_hmac.key), so an ad-hoc `.dev-home-<something>` for a one-off
+# validation run must be ignored by default rather than each name being added
+# after the fact. A `git add -A` in a repo root with an unignored dev home stages
+# secrets — do not narrow this back to an exact match.
+/.dev-home*/
+# e2e harness dev home (playwright.config.ts recipe)
+/.dev-home-e2e/
+# Seeded marketing-screenshot home (the release runbook clones .dev-home into this).
+# It holds a real signing key, live session records and credential material, so it must
+# never be committable — the same reason .dev-home is ignored.
+/.screenshot-home/
+
+# Owner-provided local secrets — never committed. The real file lives at the
+# workspace root (outside every repo); this rule is belt-and-braces.
+.secrets.env
+
+# SQLite sidecars beside the COMMITTED test fixtures. The fixture homes ship real `.db`
+# files, and every store opens with `PRAGMA journal_mode=WAL`, so merely booting a gateway
+# or opening one of those databases in place drops a `-wal`/`-shm` next to it. Those are
+# runtime residue, never fixture content: the generator folds the WAL back in with
+# `PRAGMA wal_checkpoint(TRUNCATE)` (scripts/generate_six_month_home_fixture.py::_checkpoint)
+# precisely so the committed `.db` is self-contained. Ignored because a `git add -A` that
+# swept them in would pin a half-checkpointed fixture — the silent-emptying the six-month
+# home exists to catch. If a fixture ever looks EMPTY, re-run the generator; do not commit
+# a sidecar to carry the missing rows.
+src/personalclaw/tests_fixtures/**/*.db-wal
+src/personalclaw/tests_fixtures/**/*.db-shm
+
+# Outstanding mutation session (scripts/mutation_harness.py): pristine copies of the
+# files a mutation run is holding, plus its journal. Ignored so the residue-detection
+# directory never becomes a staged file — but NOT ignored by the rail: `pre-commit`
+# tests for the directory itself and refuses the commit, so an ignored residue is a
+# LOUD residue rather than a hidden one.
+/.mutation-session/
+
+# Per-worktree pytest bootstrap. A linked worktree has no venv of its own, and an editable
+# install in the main checkout means a bare `import personalclaw` from a worktree resolves to
+# the MAIN checkout's src — so a lane writes a small runner that strips the editable finder
+# and re-points sys.path before collecting. It is scaffolding for one session, never repo
+# content, and `git add -A` would sweep it in (it did, once, during this rule's own change).
+/.lane_pytest.py

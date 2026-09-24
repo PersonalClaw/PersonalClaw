@@ -1,0 +1,197 @@
+"""Regression guard for the native tool-category split (docs/plans/native-tool-categories.md).
+
+The monolithic personalclaw-core tool surface was split into 5 cohesive category
+tool-providers (core / subagents / memory / artifacts / prompts). Two invariants
+hold the split together and must never silently drift:
+
+1. **In-process** — each category is its own provider in the tool registry, and every
+   tool is owned by exactly one provider (no duplication, no orphan).
+2. **ACP MCP-server** — ``run_mcp_core_server`` aggregates residual core + every
+   category module into ONE surface (``_aggregated_list_tools``/``_aggregated_call_tool``)
+   so a CLI sees the full set. The aggregate must equal the union of all category
+   modules + residual core, with no duplicate tool names, and stay a superset of the
+   in-process catalog's core-family tools.
+
+A future edit that adds a tool to a category module but forgets
+``_AGGREGATED_CATEGORY_MODULES``, or that collides two categories' tool names, breaks
+ACP parity with no other failing test — these pin it.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import importlib
+
+import pytest
+
+import personalclaw.mcp_core as core
+
+# The category modules the aggregation root composes, and the providers they back.
+_CATEGORY_MODULES = [
+    "personalclaw.mcp_artifacts",
+    "personalclaw.mcp_prompts",
+    "personalclaw.mcp_memory",
+    "personalclaw.mcp_subagents",
+    "personalclaw.mcp_workflows",
+    "personalclaw.mcp_automation",
+    # Desktop computer use (`DCU-4`). Not named `mcp_computer_use` because the module is also
+    # `DCU-4`'s tool-surface DECLARATION, which `computer_use/service.py` reads — it lives
+    # inside the package whose chain it declares rather than beside the other adapters.
+    "personalclaw.computer_use.tools",
+]
+_CATEGORY_PROVIDERS = {
+    "personalclaw-core",
+    "personalclaw-subagents",
+    "personalclaw-memory",
+    "personalclaw-artifacts",
+    "personalclaw-prompts",
+    "personalclaw-workflows",
+    "personalclaw-automation",
+    "personalclaw-computer-use",
+}
+# The cross-cutting tools that stay in residual core (not a single entity category).
+# skill_invoke + skill_search + skill_remember are the skill-library-spanning trio
+# (load one / find any / capture one) — all live in core since they span the whole
+# skill library rather than one entity category. get_context is the routed-context
+# provider (PLATFORM-LEGIBILITY §7): it assembles a whole-project manifest spanning
+# rules + memory + knowledge + skills, so it too belongs in core rather than any one
+# entity category.
+_RESIDUAL_CORE_TOOLS = {
+    "skill_invoke",
+    # skill_resource (WF2LEA-10) is skill_invoke's deeper tier — it reads one file the
+    # skill declared beside its SKILL.md. Same library-spanning residence as the trio
+    # below: it owns no entity category, it loads part of a skill.
+    "skill_resource",
+    "skill_search",
+    "skill_remember",
+    "wait",
+    "hook_register",
+    "notify",
+    "notify_attachment",
+    "loop_nudge_stop",
+    "get_context",
+    # project_context_review (WF2LEA-12) spans a project's instructions + context files +
+    # skills — three entity categories, not one — so like get_context it stays in residual
+    # core rather than any single category module.
+    "project_context_review",
+    # dashboard_tile_propose (AMBIENT-SURFACES §1.3) proposes a saved artifact onto the
+    # composable home. It spans the artifact store + the dashboard-views registry rather
+    # than owning either, so like get_context it is a cross-cutting core tool, not an
+    # artifacts-category tool.
+    "dashboard_tile_propose",
+    # template_save_from_session (WF2LEA-7) reads the SESSION's just-carried-out steps,
+    # checks the WORKFLOW library for an already-surfaced definition, and files into the
+    # LEARNING proposal queue — three categories, owning none of them. Same reason
+    # get_context and project_context_review sit here: a tool that spans categories in
+    # a category module would make that module the owner of things it does not own.
+    "template_save_from_session",
+    # suggest_template (UNIVERSAL-PLANNING UP-R9) offers to turn a recurring CONVERSATIONAL
+    # shape into a workflow template. It is a conversation-level affordance, not a workflow
+    # entity operation: it creates nothing, reads no run or def, and its state is the
+    # per-shape anti-nag record. Naming it `workflow_*` would put it in the workflows
+    # category alongside 19 tools that all act on a def or a run, and a model reaching for
+    # "how do I start a workflow" would find a nudge helper.
+    "suggest_template",
+    # skill_promote (WF2LEA-11) is the retroactive half of skill_remember: it reads a completed
+    # WORKFLOW run, files into the LEARNING proposal queue, and installs (once accepted) into the
+    # SKILL library — the same three-category span that put template_save_from_session here.
+    "skill_promote",
+    # The template refiner's tool pair (WF2LEA-6). refiner_evidence READS a workflow def's run
+    # ledger; propose_template_diff files into the LEARNING proposal queue against that def —
+    # spanning the WORKFLOW and LEARNING categories while owning neither, exactly like
+    # template_save_from_session. Naming either `workflow_*` would put it in the workflows
+    # category (a 19-tool count + prefix it does not fit) and make that module own a learning
+    # proposal path it does not own.
+    "refiner_evidence",
+    "propose_template_diff",
+}
+
+
+def _names(list_tools_fn) -> list[str]:
+    return [t["name"] for t in list_tools_fn()]
+
+
+# ── Residual core ───────────────────────────────────────────────────────────
+
+
+def test_residual_core_is_exactly_the_cross_cutting_tools():
+    assert set(_names(core._list_tools)) == _RESIDUAL_CORE_TOOLS
+
+
+def test_residual_core_owns_no_category_tools():
+    core_names = set(_names(core._list_tools))
+    for prefix in ("artifact_", "workflow_", "memory_", "subagent_"):
+        assert not any(n.startswith(prefix) for n in core_names), f"core still owns {prefix}*"
+
+
+# ── Category modules each expose a coherent surface ───────────────────────────
+
+
+@pytest.mark.parametrize("mod_path", _CATEGORY_MODULES)
+def test_category_module_has_list_and_call(mod_path):
+    mod = importlib.import_module(mod_path)
+    assert callable(mod._list_tools) and callable(mod._call_tool)
+    assert _names(mod._list_tools), f"{mod_path} exposes no tools"
+
+
+def test_aggregated_modules_registered_in_root():
+    # The aggregation root must reference exactly the category modules (so a new
+    # category can't be added without wiring it into the ACP surface).
+    assert set(core._AGGREGATED_CATEGORY_MODULES) == set(_CATEGORY_MODULES)
+
+
+# ── ACP aggregate completeness + no collisions ────────────────────────────────
+
+
+def test_aggregate_equals_core_plus_all_categories():
+    expected: set[str] = set(_names(core._list_tools))
+    for mod_path in _CATEGORY_MODULES:
+        expected |= set(_names(importlib.import_module(mod_path)._list_tools))
+    assert set(_names(core._aggregated_list_tools)) == expected
+
+
+def test_aggregate_has_no_duplicate_tool_names():
+    agg = _names(core._aggregated_list_tools)
+    dupes = {n for n in agg if agg.count(n) > 1}
+    assert not dupes, f"duplicate tool names across categories: {dupes}"
+
+
+def test_no_tool_name_collision_between_categories():
+    seen: dict[str, str] = {}
+    sources = {"personalclaw.mcp_core": core._list_tools}
+    sources.update({m: importlib.import_module(m)._list_tools for m in _CATEGORY_MODULES})
+    for src, fn in sources.items():
+        for n in _names(fn):
+            assert n not in seen, f"{n} defined in both {seen[n]} and {src}"
+            seen[n] = src
+
+
+# ── In-process registry: every tool grouped under exactly one category provider ──
+
+
+def test_in_process_catalog_matches_aggregate_and_groups_by_provider():
+    from personalclaw.providers.loader import load_all_extensions
+    from personalclaw.tool_providers.registry import list_all_tools, list_providers
+
+    load_all_extensions()
+    provs = {p.name for p in list_providers()}
+    assert (
+        _CATEGORY_PROVIDERS <= provs
+    ), f"missing category providers: {_CATEGORY_PROVIDERS - provs}"
+
+    tools = asyncio.run(list_all_tools())
+    # Every tool the ACP aggregate exposes is present in the in-process catalog too.
+    inproc = {t.name for t in tools}
+    assert set(_names(core._aggregated_list_tools)) <= inproc
+
+    # Each category's tools are owned in-process by its own provider (not core).
+    owner = {t.name: t.provider for t in tools}
+    expectations = {
+        "artifact_save": "personalclaw-artifacts",
+        "prompt_render": "personalclaw-prompts",
+        "memory_recall": "personalclaw-memory",
+        "subagent_run": "personalclaw-subagents",
+        "skill_invoke": "personalclaw-core",
+    }
+    for tool, prov in expectations.items():
+        assert owner.get(tool) == prov, f"{tool} owned by {owner.get(tool)!r}, want {prov!r}"

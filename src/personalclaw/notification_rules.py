@@ -1,0 +1,633 @@
+"""Per-(source, kind) notification rules (INBOX-NOTIFICATIONS-UNIFICATION C2/C3).
+
+Before this, notification policy was one global switch: mute-all, a minimum severity, and
+quiet hours. Every emitter was treated identically, so "stop telling me about heartbeats
+but always interrupt me when a loop needs input" was inexpressible — the only way to
+quieten one noisy kind was to raise the floor for everything.
+
+This module adds the second axis. Each ``(source, kind)`` from
+:mod:`personalclaw.notification_kinds` gets a rule:
+
+* **mode** — ``never`` (drop), ``badge`` (persist, no toast), ``immediate`` (today's
+  behavior), ``digest`` (batch for the scheduled summary).
+* **targets** — where an ``immediate`` goes: ``dashboard`` today, ``channel_dm`` when a
+  channel is configured, ``native`` as a real OS notification whenever the desktop shell is
+  connected (DESKTOP-CAPABILITIES DC-5 — see :func:`native_delivery`), ``push`` for a
+  content-free phone ping (:mod:`personalclaw.push`, live since MOBILE-COMPANION ``MC-5``).
+* **conditions** — keywords / name-mention that ESCALATE a quieter mode to ``immediate``.
+
+**The global gate still runs first, unchanged.** ``notification_allowed()`` in
+`providers/entity_routes.py` remains the outermost check: mute-all means mute, whatever a
+rule says. Rules refine *delivery* for notifications that already passed the gate; they
+never resurrect a suppressed one. Keeping that order means the existing settings keep
+their meaning and this file cannot become a way to bypass them.
+
+**Conditions generalize the inbox's own alert fields.** The keyword and name-mention
+semantics are lifted verbatim from ``inbox.evaluate_alert`` — case-insensitive substring
+for keywords, whole-word matching on name parts of 3+ characters — so the behavior users
+already configured survives the move to rules (S3 backfills those fields into conditions).
+
+**Every failure path is fail-OPEN.** A missing file, malformed JSON, a bad mode, a corrupt
+rule: all fall back to the registry default, which is ``immediate``. This mirrors the
+existing gate ("a broken settings file must not silence the system") and is the
+deliberate choice for an attention system — a notification shown when it could have been
+batched is a small annoyance, while one silently dropped can lose a loop that needed an
+answer. The one exception is ``mode: never``, which is only ever honored when it was read
+cleanly from a well-formed rule.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from personalclaw import notification_addressing
+from personalclaw import notification_kinds as nk
+from personalclaw.atomic_write import atomic_write
+from personalclaw.config import loader as config_loader
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
+
+logger = logging.getLogger(__name__)
+
+#: Delivery targets. ``native`` is LIVE as of DESKTOP-CAPABILITIES `DC-5` (see
+#: :func:`native_delivery`) and ``push`` is LIVE as of MOBILE-COMPANION `MC-5` — a rule
+#: carrying it sends a content-free ``{kind, item_id}`` ping through
+#: :mod:`personalclaw.push`. ``channel_dm`` is the one target still accepted and persisted
+#: but inert; storing it means a user's choice survives rather than being silently dropped
+#: and needing re-entry later.
+TARGETS: tuple[str, ...] = ("dashboard", "channel_dm", "push", "native")
+DEFAULT_TARGETS: tuple[str, ...] = ("dashboard",)
+
+#: The closed set of cue VOICES a rule may name for a mobile push (MOBILE-COMPANION `MC-6`).
+#: A service worker cannot play audio, so the push notification is silent/vibrate and the SW maps
+#: the push's `kind` to this voice for an open client to play through `soundCues.playCue`. SOURCE OF
+#: TRUTH is `web/src/design/soundCues.ts` (`CueName` / the `CUES` keys) — mirrored here rather than
+#: imported because Python cannot read the TS module; `web/src/app/pushPolicy.test.ts` pins the
+#: frontend list to `CUES` so the two cannot drift. Absent (`None`) is the default: a silent push.
+SOUND_CUES: tuple[str, ...] = (
+    "turn_complete",
+    "approval_needed",
+    "error",
+    "coin_blip",
+    "terminal_bell",
+)
+
+#: The desktop target (DESKTOP-CAPABILITIES DC-5) and the shell capability it needs. Named
+#: because three files have to agree on both strings: this module decides, `dashboard/
+#: state.py` reads the decision onto the note, and `dashboard/desktop_registry.py` owns the
+#: capability vocabulary the second name comes from.
+NATIVE_TARGET = "native"
+NATIVE_CAPABILITY = "native_notifications"
+
+#: Digest defaults. 08:00 local, matching the plan's morning-digest intent.
+DEFAULT_DIGEST_SCHEDULE = "0 8 * * *"
+
+#: The digest queue. Append-only JSONL, trimmed at 2x the cap so a digest that never runs
+#: (cron disabled, machine asleep) cannot grow without bound.
+DIGEST_QUEUE_NAME = "digest_queue.jsonl"
+DIGEST_QUEUE_CAP = 500
+
+_RULES_ENTITY = "notification_rules"
+
+#: Minimum length of a name part that may trigger a name-mention match. Lifted from
+#: ``inbox.evaluate_alert``: initials and particles ("de", "van") false-positive badly.
+_MIN_NAME_PART = 3
+
+
+@dataclass(frozen=True)
+class Conditions:
+    """Escalation conditions. Empty conditions never escalate."""
+
+    keywords: tuple[str, ...] = ()
+    name_mention: bool = False
+
+    def matches(self, text: str, user_name: str = "") -> str:
+        """Why this escalates, or "" — the same shape as ``inbox.evaluate_alert``."""
+        low = (text or "").lower()
+        if not low:
+            return ""
+        for kw in self.keywords:
+            k = str(kw).strip().lower()
+            if k and k in low:
+                return f"keyword: {kw}"
+        if self.name_mention and user_name.strip():
+            for part in user_name.strip().lower().split():
+                if len(part) >= _MIN_NAME_PART and re.search(rf"\b{re.escape(part)}\b", low):
+                    return "name mention"
+        return ""
+
+
+@dataclass(frozen=True)
+class Rule:
+    """The resolved policy for one ``(source, kind)``."""
+
+    source: str
+    kind: str
+    mode: str = "immediate"
+    targets: tuple[str, ...] = DEFAULT_TARGETS
+    conditions: Conditions = field(default_factory=Conditions)
+    #: Opt into the INU-6 second-opinion verification pass for this kind. Only meaningful
+    #: for a kind whose registration is ``verifiable=True`` — the rules PUT rejects
+    #: ``verify:true`` on a non-verifiable kind, so a persisted ``verify`` on an ineligible
+    #: kind cannot arise through the API. Defaults off: no rule verifies until asked.
+    verify: bool = False
+    #: The cue VOICE an open client plays when a mobile push for this kind arrives
+    #: (MOBILE-COMPANION `MC-6`) — one of :data:`SOUND_CUES`, or ``None`` (the default) for a
+    #: silent/vibrate-only push. Validated at the PUT boundary and again on read
+    #: (:func:`_coerce_sound`), so a value outside the closed set never reaches the client.
+    sound: str | None = None
+
+    @property
+    def key(self) -> str:
+        return f"{self.source}/{self.kind}"
+
+    def escalated(self) -> "Rule":
+        """This rule at ``immediate``.
+
+        Escalation is capped at ``immediate`` rather than promoting targets: a keyword hit
+        means "show me now", not "also text me" — adding delivery channels the user never
+        selected for this kind would be a surprise, and channel_dm leaves the machine.
+        """
+        if self.mode == "immediate":
+            return self
+        return Rule(
+            self.source,
+            self.kind,
+            "immediate",
+            self.targets,
+            self.conditions,
+            self.verify,
+            self.sound,
+        )
+
+
+def native_delivery(rule: Rule | None, capability: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Whether an ``immediate`` note should be raised as a native OS notification (DC-5).
+
+    This is the whole ``native`` target decision, in one pure function so the rule half is
+    testable without a gateway and the Electron half without a rule. It answers three
+    questions in order, and each ``None``/``False`` answer is a distinct product outcome:
+
+    * **The rule does not name ``native``** → ``None``. No key on the note, so nothing
+      downstream can raise one. This is the vacuity property the target rests on: a rule
+      that did not ask for the desktop cannot get it, however the shell is configured.
+    * **The rule names it but no shell can deliver it** → ``{"deliver": False, "reason": …}``.
+      The dashboard delivery that runs anyway IS the fallback — the caller does not choose
+      a different path, it just does not raise an OS notification. The reason rides along
+      because "I asked for native and got a bell instead" needs an answer, and a UI that
+      cannot say why reads as a broken toggle.
+    * **The rule names it and the shell reports the capability available** →
+      ``{"deliver": True, "reason": ""}``.
+
+    *capability* is ``DesktopRegistry.capability("native_notifications")`` — ``None`` when
+    no shell is registered at all. ``available`` is the only field consulted: the registry
+    normalizes ``granted``/``requestable`` into it and fails closed, and macOS never
+    reports notification authorization, so a ``granted`` check here would mean refusing to
+    deliver on the one platform that cannot answer.
+
+    Note what this does NOT do: it never promotes ``dashboard`` off the note and never runs
+    for ``never``/``badge``/``digest``. ``native`` is an interruption, and the three quieter
+    modes have already said not to interrupt.
+    """
+    if rule is None or NATIVE_TARGET not in rule.targets:
+        return None
+    if not capability:
+        return {"deliver": False, "reason": "the desktop shell is not connected"}
+    if not capability.get("available"):
+        reason = str(capability.get("reason") or "").strip()
+        return {
+            "deliver": False,
+            "reason": reason or "the desktop shell cannot show native notifications",
+        }
+    return {"deliver": True, "reason": ""}
+
+
+def _rules_path() -> Path:
+    return config_dir() / "entity_settings" / f"{_RULES_ENTITY}.json"
+
+
+def digest_queue_path() -> Path:
+    return config_dir() / DIGEST_QUEUE_NAME
+
+
+def _coerce_targets(raw: Any) -> tuple[str, ...]:
+    """Known targets from *raw*, order-preserving and de-duplicated.
+
+    An unknown target is dropped rather than rejected: a rules file written by a NEWER
+    build (one that knows a target this build doesn't) must still load its other targets
+    instead of failing the whole rule closed.
+    """
+    if not isinstance(raw, list):
+        return DEFAULT_TARGETS
+    out: list[str] = []
+    for t in raw:
+        name = str(t).strip().lower()
+        if name in TARGETS and name not in out:
+            out.append(name)
+    return tuple(out) if out else DEFAULT_TARGETS
+
+
+def _coerce_conditions(raw: Any) -> Conditions:
+    if not isinstance(raw, dict):
+        return Conditions()
+    kws_raw = raw.get("keywords")
+    keywords = (
+        tuple(str(k).strip() for k in kws_raw if str(k).strip())
+        if isinstance(kws_raw, list)
+        else ()
+    )
+    return Conditions(keywords=keywords, name_mention=bool(raw.get("name_mention")))
+
+
+def _coerce_sound(raw: Any) -> str | None:
+    """A known cue voice from *raw*, or ``None``.
+
+    Fail-open like every other field here: an unknown voice (one written by a NEWER build, or a
+    hand-edited file) resolves to ``None`` — a silent push — rather than failing the whole rule
+    or reaching the client. The PUT guard rejects an unknown voice before it can persist, so this
+    is the defense-in-depth read, not the primary check.
+    """
+    if isinstance(raw, str) and raw in SOUND_CUES:
+        return raw
+    return None
+
+
+def _coerce_rule(source: str, kind: str, raw: Any, default_mode: str) -> Rule:
+    """One rule from its persisted form, falling back to *default_mode* per field.
+
+    Per-FIELD fallback, not per-rule: a rule with a good mode and a malformed targets
+    list keeps its mode. Failing the whole rule back to defaults would discard a
+    deliberate ``never`` because of an unrelated typo.
+    """
+    if not isinstance(raw, dict):
+        return Rule(source, kind, default_mode)
+    mode = str(raw.get("mode", default_mode)).strip().lower()
+    if mode not in nk.MODES:
+        logger.warning(
+            "notification rule %s/%s has unknown mode %r — using %s",
+            source,
+            kind,
+            raw.get("mode"),
+            default_mode,
+        )
+        mode = default_mode
+    return Rule(
+        source=source,
+        kind=kind,
+        mode=mode,
+        targets=_coerce_targets(raw.get("targets")),
+        conditions=_coerce_conditions(raw.get("conditions")),
+        verify=bool(raw.get("verify")),
+        sound=_coerce_sound(raw.get("sound")),
+    )
+
+
+def load_rules() -> dict[str, Any]:
+    """The raw rules document, or ``{}`` when absent/unreadable (fail-open).
+
+    Runs the inbox-alert backfill first, so the very first read after an upgrade already
+    reflects the keyword/name-mention alerts the user had configured.
+    """
+    _backfill_inbox_alerts()
+    path = _rules_path()
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        logger.warning("notification_rules.json unreadable — using registry defaults")
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _backfill_inbox_alerts() -> None:
+    """Project legacy ``inbox.json`` alert fields onto the channel-message rules, once.
+
+    The inbox used to carry its own two-field alert config (``alert_keywords``,
+    ``alert_on_name_mention``) evaluated at ingestion. Rules generalize exactly that, so
+    those fields move here rather than being dropped — a user who configured "alert me when
+    someone says deploy" must keep that behavior across the upgrade without re-entering it.
+
+    **Idempotent by data inspection, not by a version number** (there is no schema version
+    for entity settings, and inventing one is the machinery the doctrine rejects): the
+    backfill runs only when the rules file is ABSENT and the legacy fields are still
+    present. Writing the rules file is itself the marker that it has run, so a user who
+    later clears their keywords does not get them resurrected.
+
+    Deliberately does NOT delete the legacy fields here — a read path must not mutate a
+    different store. `load_inbox_settings()` stops returning them in the same change, which
+    is what actually retires them.
+    """
+    if _rules_path().is_file():
+        return
+    try:
+        from personalclaw.providers.entity_routes import legacy_inbox_alert_fields
+
+        legacy = legacy_inbox_alert_fields()
+    except Exception:
+        logger.debug("inbox alert backfill: legacy read failed", exc_info=True)
+        return
+    keywords = [str(k).strip() for k in (legacy.get("alert_keywords") or []) if str(k).strip()]
+    name_mention = bool(legacy.get("alert_on_name_mention"))
+    if not keywords and not name_mention:
+        return
+
+    conditions = {"keywords": keywords, "name_mention": name_mention}
+    # Both kinds, because an alert was about the MESSAGE arriving and a mention is the same
+    # event seen from the other side; splitting them would silently narrow what the user set.
+    doc: dict[str, Any] = {
+        "rules": {
+            "inbox/alert": {"mode": "immediate", "conditions": dict(conditions)},
+            "agent/message": {"mode": "immediate", "conditions": dict(conditions)},
+        }
+    }
+    try:
+        save_rules(doc)
+        logger.info(
+            "migrated inbox alert config to notification rules (%d keyword(s), name_mention=%s)",
+            len(keywords),
+            name_mention,
+        )
+    except OSError:
+        logger.warning("inbox alert backfill: write failed", exc_info=True)
+
+
+def save_rules(doc: dict[str, Any]) -> None:
+    path = _rules_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(path, json.dumps(doc, indent=2) + "\n")
+
+
+def ensure_target(source: str, kind: str, target: str) -> bool:
+    """Add *target* to ``(source, kind)``'s rule — but ONLY if the user has never set one.
+
+    Returns True when a rule was written.
+
+    This exists so MOBILE-COMPANION `MC-5` has no hidden second switch. Tapping **Turn on
+    push** on the phone is an unambiguous statement of intent ("wake me for this"), and if
+    the user then had to go find Settings → Notifications and tick a box before anything
+    arrived, the button would read as broken. So that tap CONFIGURES the rule.
+
+    Two things it deliberately is NOT:
+
+    * **Not a default.** ``test_no_rules_file_delivers_exactly_like_before`` pins a universal
+      invariant with its rationale written down — *"an unconfigured rule adds no delivery
+      channel"*, for every kind including a brand-new one. A per-kind default target would
+      break exactly that. Here the rule stops being unconfigured because the user configured
+      it, and it shows up ticked in the rules matrix afterwards, where it can be changed.
+    * **Not an override.** A stored rule for this key is an explicit choice — including the
+      choice to leave ``push`` off — so this returns False and writes nothing. A user who
+      turned approval pushes off and later re-subscribed a device would otherwise have their
+      decision silently reversed.
+    """
+    if target not in TARGETS:
+        raise ValueError(f"unknown notification target: {target!r}")
+    registered = nk.resolve_kind(source, kind)
+    doc = load_rules()
+    rules = doc.get("rules")
+    rules = rules if isinstance(rules, dict) else {}
+    if registered.key in rules:
+        return False
+    existing = _coerce_rule(registered.source, registered.kind, None, registered.default_mode)
+    rules[registered.key] = {
+        "mode": existing.mode,
+        "targets": list(existing.targets) + [target],
+    }
+    doc["rules"] = rules
+    save_rules(doc)
+    logger.info("added %r target to notification rule %s", target, registered.key)
+    return True
+
+
+def resolve_rule(source: str, kind: str) -> Rule:
+    """The effective rule for ``(source, kind)`` — registry default when unset."""
+    registered = nk.resolve_kind(source, kind)
+    stored = load_rules().get("rules")
+    raw = stored.get(registered.key) if isinstance(stored, dict) else None
+    return _coerce_rule(registered.source, registered.kind, raw, registered.default_mode)
+
+
+def resolve_rule_for_legacy(flat_kind: str) -> Rule:
+    """The effective rule for a flat pre-registry kind string (the wire format)."""
+    registered = nk.kind_for_legacy(flat_kind)
+    return resolve_rule(registered.source, registered.kind)
+
+
+def digest_settings() -> dict[str, Any]:
+    """The digest schedule block, with defaults filled in."""
+    raw = load_rules().get("digest")
+    schedule = DEFAULT_DIGEST_SCHEDULE
+    if isinstance(raw, dict):
+        candidate = str(raw.get("schedule", "")).strip()
+        if len(candidate.split()) == 5:
+            schedule = candidate
+        elif candidate:
+            logger.warning("digest schedule %r is not a 5-field cron — using default", candidate)
+    return {"schedule": schedule}
+
+
+def rules_document() -> dict[str, Any]:
+    """The full effective document: every configurable kind with its resolved rule.
+
+    This is what the settings matrix renders. A kind with a declared production owner appears
+    even with no stored rule (showing its default); a resolution-only kind stays available to
+    old persisted wire values without advertising policy that no current emitter can consult.
+    """
+    stored = load_rules().get("rules")
+    stored = stored if isinstance(stored, dict) else {}
+    rows = []
+    for registered in nk.configurable_kinds():
+        rule = _coerce_rule(
+            registered.source,
+            registered.kind,
+            stored.get(registered.key),
+            registered.default_mode,
+        )
+        rows.append(
+            {
+                "key": rule.key,
+                "source": rule.source,
+                "kind": rule.kind,
+                "label": registered.label,
+                "severity": registered.default_severity,
+                "mode": rule.mode,
+                "default_mode": registered.default_mode,
+                "configured": registered.key in stored,
+                "targets": list(rule.targets),
+                "conditions": {
+                    "keywords": list(rule.conditions.keywords),
+                    "name_mention": rule.conditions.name_mention,
+                },
+                # INU-6: whether this kind may be verified (registry) and whether the user
+                # opted in (rule). The matrix renders the toggle only for a verifiable kind.
+                "verifiable": registered.verifiable,
+                "verify": rule.verify,
+                # MOBILE-COMPANION MC-6. `wire` is the flat kind a push payload carries — the SW
+                # keys the per-kind sound by it (same string `pushPolicy.COPY` is keyed on), so it
+                # is exposed here rather than re-deriving the registry mapping on the client.
+                # `sound` is the voice an open client plays for such a push (None ⇒ silent).
+                "wire": nk.kind_for_legacy_pair(rule.source, rule.kind),
+                "sound": rule.sound,
+            }
+        )
+    return {"rules": rows, "digest": digest_settings(), "targets": list(TARGETS)}
+
+
+def queue_for_digest(note: dict[str, Any]) -> None:
+    """Append *note* to the digest queue, trimming at 2x the cap.
+
+    Best-effort by design: a digest is a convenience, and failing a notification's
+    delivery because a queue file is unwritable would trade a small feature for a real
+    loss. The exception is logged and swallowed.
+    """
+    path = digest_queue_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(note, ensure_ascii=False) + "\n")
+    except OSError:
+        logger.warning("digest queue append failed", exc_info=True)
+        return
+    _trim_digest_queue(path)
+
+
+def _trim_digest_queue(path: Path) -> None:
+    """Keep the newest ``DIGEST_QUEUE_CAP`` entries once the file exceeds 2x that.
+
+    Trimming at 2x rather than every append keeps the common path one write.
+    """
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        if len(lines) <= DIGEST_QUEUE_CAP * 2:
+            return
+        keep = lines[-DIGEST_QUEUE_CAP:]
+        atomic_write(path, "\n".join(keep) + "\n")
+    except OSError:
+        logger.warning("digest queue trim failed", exc_info=True)
+
+
+def drain_digest_queue() -> list[dict[str, Any]]:
+    """Read and clear the digest queue, returning its entries oldest-first.
+
+    Read-then-truncate rather than read-then-delete: the file keeps its permissions and a
+    concurrent appender's write lands in the next digest instead of recreating a file this
+    process just unlinked. A malformed line is skipped, not fatal — one bad append must
+    not strand every queued notification.
+    """
+    path = digest_queue_path()
+    if not path.is_file():
+        return []
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        logger.warning("digest queue read failed", exc_info=True)
+        return []
+    out: list[dict[str, Any]] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            logger.debug("skipping malformed digest queue line")
+            continue
+        if isinstance(parsed, dict):
+            out.append(parsed)
+    try:
+        atomic_write(path, "")
+    except OSError:
+        logger.warning("digest queue truncate failed", exc_info=True)
+    return out
+
+
+# ── The digest (T5.1) ───────────────────────────────────────────────────
+
+
+#: Per-group lines in the digest body. A digest that reproduces every notification is just
+#: the notification list with extra steps; the count carries the volume, a few examples
+#: carry the substance.
+DIGEST_LINES_PER_GROUP = 3
+
+
+def build_digest_body(entries: list[dict[str, Any]]) -> str:
+    """One grouped summary of *entries*, or "" when there is nothing to say.
+
+    Grouped by the notification's wire kind rather than listed flat: the point of a digest is
+    that "9 heartbeats" is one fact, not nine. Within a group the newest lines come first,
+    capped, with a remainder count so the summary never grows unbounded on a busy day.
+    """
+    if not entries:
+        return ""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for e in entries:
+        groups.setdefault(str(e.get("kind") or nk.GENERIC_KIND), []).append(e)
+
+    lines: list[str] = []
+    for kind in sorted(groups):
+        items = groups[kind]
+        registered = nk.kind_for_legacy(kind)
+        label = registered.label or kind
+        lines.append(f"**{label}** — {len(items)}")
+        # Newest first: on a long list the recent ones are the ones still worth reading.
+        for e in list(reversed(items))[:DIGEST_LINES_PER_GROUP]:
+            title = " ".join(str(e.get("title") or "").split())
+            lines.append(f"- {title}" if title else "- (no title)")
+        remainder = len(items) - DIGEST_LINES_PER_GROUP
+        if remainder > 0:
+            lines.append(f"- …and {remainder} more")
+    return "\n".join(lines)
+
+
+def run_digest(state: Any = None) -> str:
+    """Drain the digest queue into ONE inbox item. Returns its id, or "" when empty.
+
+    An empty queue produces **nothing** — not an empty "you have no notifications" item,
+    which would be a daily reminder that nothing happened.
+
+    The queue is drained BEFORE the item is written, so a failure to write cannot leave
+    entries that get re-digested tomorrow *and* re-notified. Losing one digest body is a
+    smaller harm than a queue that never clears.
+    """
+    entries = drain_digest_queue()
+    # Keep only what is addressed HERE (`TSE2-5`). The digest is one more local delivery, and
+    # ``DashboardState.notify`` already withholds a foreign-addressed note before the ``digest``
+    # branch — so this filter is not that decision repeated, it is the one the QUEUE FILE needs.
+    # ``digest_queue.jsonl`` is durable state under the home: it can hold rows appended by a
+    # build that predates the addressee, and DURABILITY-AND-SYNC can put a teammate's rows in a
+    # synced home. Filtering at drain is what makes "a foreign note is never summarized at the
+    # local owner" a property of the digest rather than of one writer's good behaviour.
+    entries = notification_addressing.locally_addressed(entries)
+    if not entries:
+        logger.debug("digest: nothing addressed here to summarize")
+        return ""
+    body = build_digest_body(entries)
+    if not body:
+        return ""
+    try:
+        from personalclaw.inbox import ItemKind, emit_attention_item
+
+        return emit_attention_item(
+            state,
+            source="system",
+            kind="digest",
+            item_kind=ItemKind.DIGEST.value,
+            title=f"Digest — {len(entries)} notification{'s' if len(entries) != 1 else ''}",
+            body=body,
+        )
+    except Exception:
+        logger.warning("digest: could not create the inbox item", exc_info=True)
+        return ""

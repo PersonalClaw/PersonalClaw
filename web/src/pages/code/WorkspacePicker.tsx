@@ -1,0 +1,304 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ResultAnnouncement } from '../../ui/ListControls'
+import { Check, CornerDownLeft, CornerLeftUp, Folder, FolderPlus, GitBranch, Loader2 } from 'lucide-react'
+import { Modal } from '../../ui/Modal'
+import { SearchField } from '../../ui/SearchField'
+import { Button } from '../../ui/Button'
+import { unavailableWhen, BUSY_REASON } from '../../ui/unavailable'
+import { api } from '../../lib/api'
+
+/** Filesystem navigator for choosing a Code project's workspace directory.
+ *
+ *  Brownfield: pick an EXISTING directory (the codebase to work in). Greenfield:
+ *  navigate to a parent and create a NEW folder for the project. Walks arbitrary
+ *  non-sensitive dirs via /api/browse-dirs (not the dashboard allowlist), so any
+ *  real project on disk is reachable. The chosen absolute path is returned to the
+ *  caller, which stores it on the code project's workspace_dir.
+ */
+export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
+  mode: 'brownfield' | 'greenfield'
+  // Force-enable the "New folder here" create path regardless of mode. Greenfield
+  // always allows it; a project workspace bind is brownfield (it shows git status +
+  // can use an existing codebase) but ALSO needs create — a project built from
+  // scratch has no workspace dir yet, so without this the user could only bind a
+  // pre-existing folder and never make the new one.
+  allowCreate?: boolean
+  onPick: (absPath: string) => void
+  onClose: () => void
+}) {
+  const canCreate = mode === 'greenfield' || !!allowCreate
+  const [path, setPath] = useState('')          // current dir being browsed
+  const [parent, setParent] = useState('')
+  const [dirs, setDirs] = useState<{ name: string; path: string; is_repo?: boolean }[]>([])
+  // Whether the CURRENT dir is inside a git repo — surfaced near "Use this folder" so a
+  // brownfield pick confirms it lands on a version-tracked codebase (a non-repo pick
+  // means no diff/history; see the cockpit Changes tab).
+  const [inRepo, setInRepo] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState('')
+  // In-flight guard for the folder-create POST: createDir is async, so without it a
+  // double-click / held Enter fires two creates — the second hits the now-existing
+  // dir and surfaces a spurious "already exists" error AFTER onPick already advanced
+  // the wizard. Disables the submit + ignores re-entry until the call settles.
+  const [submitting, setSubmitting] = useState(false)
+  // The path bar is an editable input so the user can type/paste a known absolute
+  // path (e.g. their repo root) and jump straight there — clicking down from root
+  // through many levels is tedious when you already know the destination.
+  const [pathDraft, setPathDraft] = useState('')
+  // Filter within the current dir — real parents (home, a workspace root, /usr/local)
+  // routinely hold dozens of folders, so scanning the whole list to find one repo is
+  // tedious. A substring filter narrows it in place; cleared on every navigation.
+  const [filter, setFilter] = useState('')
+
+  // `to` is the destination; `from` is the dir we're still actually in (the current
+  // `path`) so a FAILED jump can restore the path-bar draft to it — else the bar keeps
+  // showing the bad path the user typed while the list still shows the old dir (the bar
+  // and list silently disagree until a blur resets it).
+  //
+  // Returns the RESOLVED directory (the backend's realpath) on success and null on failure, so a
+  // caller that needs to act on the destination — "Use this folder" resolving a typed draft — can
+  // use one already-validating round trip instead of re-implementing the read, and can tell
+  // "resolved to X" from "refused" without racing the state it sets.
+  // Set the moment the user edits the path bar, cleared whenever the picker writes the bar itself.
+  // The bar belongs to the user once they touch it — see `keepTypedDraft` below.
+  const draftTouched = useRef(false)
+  const browse = useCallback(async (to?: string, from?: string, keepTypedDraft = false): Promise<string | null> => {
+    setLoading(true); setError(null)
+    try {
+      const r = await api.browseDirs(to)
+      setPath(r.path); setParent(r.parent); setDirs(r.dirs); setFilter(''); setInRepo(!!r.in_repo)
+      // A browse the user did NOT ask for (the one on mount) must not overwrite a path they have
+      // already started typing. Found while driving the #311 fix on a loaded machine: the first
+      // browse-dirs response landed AFTER the keystrokes, reset the draft to the default browse
+      // location, and the footer button bound THAT — the same silent substitution as #311 through
+      // a different door, and a wider window the slower the filesystem.
+      if (!(keepTypedDraft && draftTouched.current)) { setPathDraft(r.path); draftTouched.current = false }
+      return r.path
+    } catch (e) {
+      setError((e as Error).message || 'Could not open that directory')
+      // Snap the path bar back to where we still are, so it doesn't keep showing the
+      // rejected path while the list below shows the prior (valid) directory.
+      if (from !== undefined) setPathDraft(from)
+      return null
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  // A typed path the user has NOT navigated to yet — the draft differing from the browsed dir.
+  // This is the whole of issue 311: the footer button submitted `path` while the input visibly
+  // showed something else, so typing `/tmp` and clicking "Use this folder" bound the browsed
+  // directory — by default the user's entire HOME — with no error and no hint. `workspace_dir` is
+  // what loops and code sessions read, write and run `bash` in, so a silent substitution points
+  // real agent work at an unintended tree.
+  const typedTarget = pathDraft.trim() && pathDraft.trim() !== path ? pathDraft.trim() : ''
+
+  /** Bind the folder the footer button names: the typed path when there is one, else the browsed
+   *  dir. A typed path is RESOLVED first (browse-dirs 404s a path that doesn't exist and returns
+   *  the realpath of one that does), so the outcome is either the path the user typed or a visible
+   *  refusal — never a different directory. */
+  const useThisFolder = async () => {
+    if (loading) return
+    if (typedTarget) {
+      // No `from` here on purpose: on refusal the rejected text stays in the bar so the user can
+      // fix a typo, next to an error that names what was wrong with it.
+      const resolved = await browse(typedTarget)
+      if (resolved) onPick(resolved)
+      return
+    }
+    if (path) onPick(path)
+  }
+
+  // The only browse nobody asked for — so it yields the path bar to anything already typed.
+  useEffect(() => { void browse(undefined, undefined, true) }, [browse])
+
+  const shownDirs = useMemo(() => {
+    const needle = filter.trim().toLowerCase()
+    return needle ? dirs.filter((d) => d.name.toLowerCase().includes(needle)) : dirs
+  }, [dirs, filter])
+
+  async function createFolder() {
+    if (submitting) return
+    const name = newName.trim()
+    if (!name) return
+    // "New folder here" must create exactly ONE folder in the current dir. A name
+    // with slashes silently created a nested tree (foo/bar/baz) and buried the
+    // workspace at the deepest level; '.'/'..' escape the current dir. Reject those
+    // with an inline reason instead of a surprising directory chain.
+    if (/[/\\]/.test(name) || name === '.' || name === '..') {
+      setError('Folder name can’t contain slashes — it’s created here. Navigate into a folder first if you want it nested.')
+      return
+    }
+    const target = `${path.replace(/\/$/, '')}/${name}`
+    setSubmitting(true)
+    try {
+      // Bind the RESOLVED path the backend returns (realpath — e.g. /tmp →
+      // /private/tmp on macOS), not the unresolved `target` we sent. The file tree /
+      // git status / follow-worker all emit realpath paths, so binding the unresolved
+      // form as workspace_dir reintroduces the exact /tmp-vs-/private/tmp mismatch the
+      // cockpit then has to paper over (canonPath/rel/wsBase). Resolve at the source.
+      const r = await api.createDir(target)
+      setCreating(false); setNewName(''); setError(null)
+      onPick(r?.path || target)  // greenfield: the freshly-created dir IS the workspace
+    } catch (e) {
+      setError((e as Error).message || 'Could not create the folder')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Modal title={mode === 'brownfield' ? 'Choose the codebase directory' : 'Choose where to create the project'}
+      icon={<Folder size={18} className="text-primary" />} onClose={onClose}>
+      <div className="flex min-h-[360px] flex-col gap-3">
+        {/* current path + up */}
+        <div className="flex items-center gap-2">
+          {/* Stays REACHABLE at the filesystem root (`aria-disabled`, not the native attribute)
+              and names the limit. Browsing upward with the keyboard otherwise destroys focus at
+              the top: the button being pressed leaves the tab order and focus falls to <body>. */}
+          <button type="button" onClick={() => parent && parent !== path && browse(parent)}
+            aria-label="Up one level"
+            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-on-surface-low hover:bg-surface-high hover:text-on-surface aria-disabled:opacity-40 aria-disabled:hover:bg-transparent aria-disabled:hover:text-on-surface-low aria-disabled:cursor-default"
+            {...unavailableWhen(!parent || parent === path, 'Already at the top level', { title: 'Up one level' })}>
+            <CornerLeftUp size={16} />
+          </button>
+          {/* Editable: type/paste an absolute path + Enter to jump there, or type it and hit
+              "Use this folder" to bind it directly. Escape abandons the draft.
+              🪤 NO `onBlur` REVERT. It used to reset the draft to the browsed dir, and since
+              clicking a button blurs the input first, the typed value was destroyed a moment
+              before the click that was meant to submit it (issue 311). Losing focus is not a
+              retraction — Escape is, and it stays. */}
+          <input value={pathDraft} onChange={(e) => { draftTouched.current = true; setPathDraft(e.target.value) }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { const t = pathDraft.trim(); if (t && t !== path) void browse(t, path) }
+              else if (e.key === 'Escape') { draftTouched.current = false; setPathDraft(path) }
+            }}
+            spellCheck={false} autoCapitalize="off" autoCorrect="off" aria-label="Workspace path"
+            placeholder="/absolute/path/to/folder"
+            data-type="body-s" className="min-w-0 flex-1 rounded-md bg-surface-high px-2.5 py-1.5 font-mono text-on-surface-var outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+        </div>
+
+        {/* in-dir filter — only worth showing once the list is long enough to scan */}
+        {!loading && dirs.length > 8 && (
+          <div className="flex items-center gap-2 rounded-md bg-surface-high px-2.5 py-1.5">
+            <SearchField variant="inline" size="md" value={filter} onChange={setFilter} ariaLabel="Filter folders"
+              placeholder={`Filter ${dirs.length} folders…`} spellCheck={false} autoCapitalize="off" autoCorrect="off"
+              onKeyDown={(e) => {
+                // Enter opens (navigates into) the first matching folder — the natural
+                // "type a few chars → Enter → I'm in" flow (the path bar already has its
+                // own Enter-to-jump). Escape clears the filter.
+                if (e.key === 'Enter' && shownDirs.length > 0) { e.preventDefault(); void browse(shownDirs[0].path) }
+                else if (e.key === 'Escape' && filter) { e.preventDefault(); setFilter('') }
+              }} />
+            {/* Same correction as PromptPalette: no cursor, so no listbox — just the count, which is
+                the one thing typing here changed silently. */}
+            <ResultAnnouncement count={shownDirs.length} noun="folders" active={!!filter.trim()} />
+            {/* Same unstated behaviour as PromptPalette: Enter navigates INTO the first matching
+                folder, which is a bigger surprise than picking a row — it changes what the whole panel
+                is showing. */}
+            {shownDirs.length > 0 && (
+              <span data-type="caption" className="inline-flex shrink-0 items-center gap-1 pl-1 text-on-surface-low">
+                <CornerDownLeft size={11} /> opens the first folder
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* dir list */}
+        <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-outline-variant/40">
+          {loading ? (
+            <div className="flex h-40 items-center justify-center"><Loader2 size={20} className="animate-spin text-on-surface-low" /></div>
+          ) : dirs.length === 0 ? (
+            <div data-type="body-s" className="flex h-40 items-center justify-center px-4 text-center text-on-surface-low">No sub-folders here.</div>
+          ) : shownDirs.length === 0 ? (
+            <div data-type="body-s" className="flex h-40 items-center justify-center px-4 text-center text-on-surface-low">No folders match “{filter.trim()}”.</div>
+          ) : (
+            <div className="flex flex-col">
+              {shownDirs.map((d) => (
+                // The row opens the folder (navigate in); a trailing "Use" button
+                // selects it directly — so the user can pick a repo they can SEE in
+                // the list without having to navigate into it then hit the footer.
+                <div key={d.path} data-type="body-s" className="group/row flex items-center gap-2 px-3 py-2 text-on-surface-var transition-colors hover:bg-surface-high">
+                  <button type="button" onClick={() => browse(d.path)}
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left hover:text-on-surface" title={`Open ${d.name}`}>
+                    <Folder size={15} className="shrink-0 text-on-surface-low" />
+                    <span className="truncate">{d.name}</span>
+                    {d.is_repo && (
+                      <span data-type="caption" className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 fw-500"
+                        style={{ color: 'var(--color-primary)', border: '1px solid color-mix(in srgb, var(--color-primary) 40%, transparent)' }}
+                        title="This folder is a git repository">
+                        <GitBranch size={10} /> repo
+                      </span>
+                    )}
+                  </button>
+                  {/* Faintly visible by default (opacity-50), full on hover/focus — a
+                      pure opacity-0 hid this primary "select without navigating in"
+                      action from touch users entirely (no hover, no easy focus), leaving
+                      the footer "Use this folder" as their only path. */}
+                  <button type="button" onClick={() => onPick(d.path)}
+                    data-type="caption" className="shrink-0 rounded px-1.5 py-0.5 text-on-surface-low opacity-50 transition-opacity hover:bg-surface-highest hover:text-primary hover:opacity-100 focus-visible:opacity-100 group-hover/row:opacity-100"
+                    title={mode === 'brownfield' ? `Use ${d.name} as the codebase` : `Use ${d.name} as the project home`}>
+                    Use
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {error && (
+          <div role="alert" data-type="body-s" className="rounded-lg px-3 py-2"
+            style={{ background: 'color-mix(in srgb, var(--color-danger) 8%, transparent)', color: 'var(--color-danger)' }}>{error}</div>
+        )}
+
+        {/* create a new folder here (greenfield always; brownfield when allowCreate) */}
+        {canCreate && (
+          creating ? (
+            <div className="flex items-center gap-2">
+              <input autoFocus value={newName} onChange={(e) => { setNewName(e.target.value); if (error) setError(null) }}
+                onKeyDown={(e) => { if (e.key === 'Enter') createFolder(); else if (e.key === 'Escape' && !submitting) { setCreating(false); setError(null) } }}
+                disabled={submitting} placeholder="new-project-folder"
+                data-type="body-s" className="h-9 min-w-0 flex-1 rounded-md bg-surface-high px-2.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-60" />
+              <Button size="sm" onClick={createFolder} loading={submitting} disabled={!newName.trim() || submitting}
+                disabledReason={!newName.trim() ? 'Enter a folder name first' : undefined}><Check size={14} /> Create + use
+              </Button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setCreating(true)}
+              data-type="body-s" className="inline-flex items-center gap-1.5 self-start rounded-md px-2 py-1.5 text-on-surface-low hover:text-on-surface">
+              <FolderPlus size={15} /> New folder here
+            </button>
+          )
+        )}
+
+        {/* footer: select the current dir. Brownfield = the codebase to work in;
+            greenfield = use an existing (e.g. pre-made empty) folder as the new
+            project's home, alongside the "New folder here" create-new path above. */}
+        <div className="flex items-center justify-between gap-2 border-t border-outline-variant/40 pt-3">
+          <span data-type="caption" className="min-w-0 text-on-surface-low">
+            {mode === 'brownfield' ? 'Open a folder to navigate; use the current one as the codebase.' : 'Create a new folder, or use the current one as the project home.'}
+            {/* A pending typed path is what the button will bind, so name it — and DON'T claim a
+                git status for a directory the button isn't going to use. That note is derived from
+                the browsed dir (`inRepo`), so it read "· not a git repo" identically for /etc, a
+                ../ traversal and a nonexistent path; keeping it visible next to a typed draft is
+                the same wrong subject the bug had. Once the draft is committed (Enter, or the
+                resolve the button does) the note describes the bound dir again and comes back. */}
+            {typedTarget
+              ? <span className="ml-1.5 font-mono text-on-surface-low/70">· will use {typedTarget}</span>
+              : mode === 'brownfield' && path && !loading && (
+                inRepo
+                  ? <span className="ml-1.5 inline-flex items-center gap-1" style={{ color: 'var(--color-ok)' }}><GitBranch size={11} /> git repo</span>
+                  : <span className="ml-1.5 text-on-surface-low/70">· not a git repo (changes won’t be version-tracked)</span>
+              )}
+          </span>
+          <Button size="sm" onClick={() => void useThisFolder()} disabled={(!path && !typedTarget) || loading}
+            disabledReason={!path && !typedTarget && !loading ? 'Choose a folder first' : BUSY_REASON}>
+            <Check size={14} /> Use this folder
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}

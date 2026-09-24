@@ -1,0 +1,43 @@
+{
+  "name": "native-skills",
+  "version": "1.0.0",
+  "displayName": "Native Skills",
+  "description": "Filesystem-based skill definitions. Create, edit, and manage agent skills with markdown procedures.",
+  "icon": "Sparkles",
+  "author": "PersonalClaw",
+  "tags": [
+    "skills",
+    "bundled"
+  ],
+  "provider": {
+    "type": "skills",
+    "implementation": "personalclaw.skills.native:create_provider",
+    "capabilities": [
+      "crud",
+      "triggers",
+      "auto_generation"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "properties": {
+        "max_triggered": {
+          "type": "integer",
+          "default": 3,
+          "x-meta": {
+            "label": "Max Triggered Skills",
+            "help": "Maximum skills auto-loaded per message based on trigger matching."
+          }
+        },
+        "auto_create_from_sessions": {
+          "type": "boolean",
+          "default": false,
+          "x-meta": {
+            "label": "Auto-Create Skills",
+            "help": "Automatically generate skills from successful session patterns."
+          }
+        }
+      }
+    }
+  },
+  "native": true
+}

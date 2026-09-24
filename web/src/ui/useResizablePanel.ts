@@ -1,0 +1,186 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+
+/** A persisted, drag- AND keyboard-resizable panel SIZE — the app's one window-splitter
+ *  primitive (WAI-ARIA `separator`). Lives in `ui/` because it is shared across areas:
+ *  the Code cockpit's sidebars + terminal, and `ui/SidePanel`'s docked inspector. Size
+ *  persists to localStorage at `${key}-w`. `side` says which edge the drag handle sits on
+ *  so the delta is applied with the correct sign — and whether the axis is horizontal
+ *  (left/right → width, clientX) or vertical (top/bottom → height, clientY). The returned
+ *  `width` is the panel's size along its axis (px), named generically for both axes.
+ *
+ *  Collapse is OPT-IN (`collapsible: true`). It is a distinct concept from size — most
+ *  resizable panels (every `SidePanel` docking, the composer, the chat file panel) are
+ *  never "collapsed", they are opened and closed by a parent — and bundling it meant a
+ *  width-only consumer wrote a dead `${key}-collapsed` key it never read. Off by default,
+ *  the primitive serves a width-only panel cleanly; the Code cockpit opts in.
+ *
+ *  Attach `onHandleDown`/`onHandleKey` to a handle that carries `role="separator"`,
+ *  `aria-orientation`, `tabIndex={0}`, an arrow-key-hinting `aria-label`, and
+ *  `aria-valuenow`/`min`/`max` — the contract `ui/splitterContract.test.tsx` enforces.
+ */
+export function useResizablePanel(
+  key: string,
+  opts: {
+    def: number
+    min: number
+    /** A number, or a thunk for a viewport-relative ceiling (e.g. the terminal drawer's
+     *  `() => window.innerHeight * 0.85`). A dynamic max is resolved live at every clamp,
+     *  and the returned `max` tracks window resize so `aria-valuemax` stays honest. */
+    max: number | (() => number)
+    side: 'left' | 'right' | 'top' | 'bottom'
+    collapsible?: boolean
+    /** Where the width persists. Defaults to `${key}-w`. Pass this to preserve a panel's
+     *  EXISTING localStorage key that does not follow the `-w` convention (e.g. the terminal
+     *  drawer's `terminal-drawer-h`), so adopting this hook resets no saved size. */
+    storageKey?: string
+    /** Sliver of what sits behind the panel that `fitWidth` always leaves visible, so a panel can
+     *  never occupy the entire viewport and strand its own controls at the far edge. 32px is
+     *  `SidePanel`'s original `EDGE_PEEK`, kept as the default because every edge-docked panel
+     *  wants it. Only affects `fitWidth`; the stored `width` is untouched. */
+    edgePeek?: number
+  },
+) {
+  const { def, min, max, side, collapsible = false, edgePeek = 32 } = opts
+  const vertical = side === 'top' || side === 'bottom'
+  const wKey = opts.storageKey ?? `${key}-w`
+  // A dynamic max is read through a ref so it never enters a callback's dep array (the thunk
+  // is a fresh closure each render); the ref always holds the latest, and the resolver reads it.
+  const maxRef = useRef(max); maxRef.current = max
+  const resolveMax = () => { const m = maxRef.current; return typeof m === 'function' ? m() : m }
+  const dynamicMax = typeof max === 'function'
+  const [width, setWidth] = useState<number>(() => {
+    const v = Number(localStorage.getItem(wKey))
+    return v >= min && v <= resolveMax() ? v : def
+  })
+  // The max as a value, for the returned `max` (→ `aria-valuemax`). Recomputed on viewport
+  // resize when the max is a thunk, so a screen reader is never told a stale ceiling.
+  const [resolvedMax, setResolvedMax] = useState<number>(resolveMax)
+  useEffect(() => {
+    setResolvedMax(resolveMax())
+    if (!dynamicMax) return
+    const on = () => setResolvedMax(resolveMax())
+    window.addEventListener('resize', on)
+    return () => window.removeEventListener('resize', on)
+  }, [dynamicMax])
+  const [collapsed, setCollapsed] = useState<boolean>(() => collapsible && localStorage.getItem(`${key}-collapsed`) === '1')
+
+  // ── fitWidth: the width to RENDER, which is not always the width the user chose ──────────────
+  //
+  // 🔑 A PANEL WIDER THAN THE VIEWPORT CLIPS ITS OWN CLOSE BUTTON OFF-SCREEN, AND THE APP HAS NO
+  // HORIZONTAL SCROLLBAR TO REACH IT. `design/tokens.css` sets `overflow: hidden` on
+  // `html, body, #root`, so an overflowing panel is not a scroll nuisance — the controls at its far
+  // edge simply become unreachable by pointer. Drag a panel to 900px on a large monitor, then
+  // split-screen to 720px, and its Expand/Close buttons are gone.
+  //
+  // 🪤 A VIEWPORT-RELATIVE `max` THUNK DOES NOT FIX THIS, which is the trap here. `resolveMax()` is
+  // consulted only when a clamp RUNS — on drag and on keyboard resize. The resize listener above
+  // deliberately updates `resolvedMax` alone, so `aria-valuemax` stays honest, and never re-clamps
+  // `width`. The defect needs no drag at all: the window narrows and nothing recomputes. A thunk
+  // would fix only the drag-while-already-narrow case, which is not the failure.
+  //
+  // 🪤 AND IT MUST NOT CLAMP THE STORED VALUE. `SidePanel` invented this mechanism and
+  // `ui/sidePanelClamp.test.tsx` pins the reason: "clamps a WIDER stored width WITHOUT overwriting
+  // it — a wide screen restores the choice", asserting the persisted value stays `720` while the
+  // render clamps. Capping storage would silently destroy the user's preference the first time they
+  // ever split-screened. So `width` (stored, persisted, reported to `aria-valuenow`) and `fitWidth`
+  // (rendered) are deliberately two values.
+  //
+  // This lives in the primitive rather than being copied per panel because that copy is exactly how
+  // an invariant gets lost — the same shape as the armed-delete timer that went missing from one of
+  // seven hand-rolled copies.
+  const [viewport, setViewport] = useState(() => (vertical ? window.innerHeight : window.innerWidth))
+  useEffect(() => {
+    // Unconditional, unlike the `resolvedMax` listener above (which is gated on a thunk max): a
+    // static max is exactly the case that needs this, since nothing else re-reads the viewport.
+    const on = () => setViewport(vertical ? window.innerHeight : window.innerWidth)
+    on()
+    window.addEventListener('resize', on)
+    return () => window.removeEventListener('resize', on)
+  }, [vertical])
+  const fitWidth = Math.min(width, Math.max(0, viewport - edgePeek))
+
+  // Persist the width, but DEBOUNCED: a pointer drag fires setWidth on every
+  // pointermove (60+/sec), and an un-debounced effect did a synchronous localStorage
+  // write per frame — a hot-path jank source for a value only the final resting size
+  // of which matters. Coalesce rapid changes into one write ~200ms after the drag
+  // settles. (collapsed is a discrete toggle → write immediately.)
+  const widthRef = useRef(width); widthRef.current = width
+  useEffect(() => {
+    const t = setTimeout(() => localStorage.setItem(wKey, String(width)), 200)
+    return () => clearTimeout(t)
+  }, [wKey, width])
+  // Flush the latest width on UNMOUNT so a resize-then-immediately-close (within the
+  // 200ms debounce window) doesn't lose the final size. Unmount-only (empty dep) so it
+  // doesn't reintroduce the per-frame write; reads the live width via a ref.
+  useEffect(() => () => { localStorage.setItem(wKey, String(widthRef.current)) }, [wKey])
+  // Only a collapsible panel persists (or writes) its collapsed flag; a width-only
+  // consumer must not litter localStorage with a `${key}-collapsed` key nothing reads.
+  useEffect(() => {
+    if (!collapsible) return
+    localStorage.setItem(`${key}-collapsed`, collapsed ? '1' : '0')
+  }, [key, collapsed, collapsible])
+
+  // Pointer-drag the handle. For a LEFT panel the handle is on its right edge, so a
+  // rightward drag grows it; for a RIGHT panel the handle is on its left edge, so a
+  // leftward drag grows it (delta sign flips).
+  //
+  // Uses POINTER CAPTURE on the handle element rather than window listeners: the
+  // cockpit's center hosts a Monaco editor + sandboxed artifact iframes, which
+  // SWALLOW window-level pointermove/up if the cursor crosses them mid-drag — the
+  // drag would then stick (panel keeps resizing with no button held, userSelect
+  // frozen app-wide). Capturing routes every move/up/cancel back to the handle
+  // regardless of what's underneath, and `pointercancel` (OS gesture / touch
+  // interruption — never handled before) cleanly tears down so userSelect is always
+  // restored.
+  const onHandleDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault()
+    const handle = e.currentTarget as HTMLElement
+    const start = vertical ? e.clientY : e.clientX
+    const startW = width
+    try { handle.setPointerCapture(e.pointerId) } catch { /* unsupported → falls back to bubbling */ }
+    const move = (ev: PointerEvent) => {
+      // The handle sits on the panel's INNER edge; dragging away from that edge grows
+      // the panel. left/top: delta = pos − start; right/bottom: delta = start − pos.
+      const pos = vertical ? ev.clientY : ev.clientX
+      const delta = side === 'left' || side === 'top' ? pos - start : start - pos
+      setWidth(Math.max(min, Math.min(resolveMax(), startW + delta)))
+    }
+    const up = () => {
+      handle.removeEventListener('pointermove', move)
+      handle.removeEventListener('pointerup', up)
+      handle.removeEventListener('pointercancel', up)
+      document.body.style.userSelect = ''
+    }
+    document.body.style.userSelect = 'none'
+    handle.addEventListener('pointermove', move)
+    handle.addEventListener('pointerup', up)
+    handle.addEventListener('pointercancel', up)
+  }, [width, min, side])
+
+  // Keyboard resize (WAI-ARIA window-splitter pattern): arrows step the inner edge,
+  // Home/End jump to min/max. Left/Right map to the visual direction the panel grows
+  // (a left panel grows rightward, a right panel grows leftward), so the key always
+  // matches what the user sees. Up/Down are accepted as orientation-agnostic ±steps.
+  const onHandleKey = useCallback((e: React.KeyboardEvent) => {
+    const STEP = e.shiftKey ? 48 : 16
+    // The arrow that GROWS the panel points away from its inner-edge handle: a left
+    // panel grows right, a right panel grows left, a bottom panel grows up, a top
+    // panel grows down. The cross-axis arrows act as orientation-agnostic ±step.
+    const grow = side === 'left' ? 'ArrowRight' : side === 'right' ? 'ArrowLeft' : side === 'bottom' ? 'ArrowUp' : 'ArrowDown'
+    const shrink = side === 'left' ? 'ArrowLeft' : side === 'right' ? 'ArrowRight' : side === 'bottom' ? 'ArrowDown' : 'ArrowUp'
+    const altGrow = vertical ? 'ArrowRight' : 'ArrowUp'
+    const altShrink = vertical ? 'ArrowLeft' : 'ArrowDown'
+    let next: number | null = null
+    if (e.key === grow || e.key === altGrow) next = width + STEP
+    else if (e.key === shrink || e.key === altShrink) next = width - STEP
+    else if (e.key === 'Home') next = min
+    else if (e.key === 'End') next = resolveMax()
+    if (next == null) return
+    e.preventDefault()
+    setWidth(Math.max(min, Math.min(resolveMax(), next)))
+  }, [width, min, side])
+
+  // `width` is the user's stored choice — persist it, report it to `aria-valuenow`. `fitWidth` is
+  // what to put in a style. They differ only while the viewport cannot hold the choice.
+  return { width, fitWidth, collapsed, setCollapsed, onHandleDown, onHandleKey, min, max: resolvedMax }
+}

@@ -1,0 +1,876 @@
+"""Knowledge collections + item curation (KNOWLEDGE-LIBRARY S1, C2).
+
+Two shelf kinds with genuinely different semantics: a MANUAL collection holds an
+explicit membership list, a SMART one stores a query re-run on every read. The
+live-ness of the smart kind is the point — it stays current as items arrive, with no
+backfill — and it is also why a smart shelf must refuse membership writes rather than
+accept rows it will never read.
+
+The migration half matters as much: this adds two item columns and two tables to an
+EXISTING knowledge.db, using the store's own additive ladder (there is no `lifecycle/`
+package — the deferred-governance premise in the plan is stale; same ruling as
+Memory-Graph S1's v7).
+"""
+
+from __future__ import annotations
+
+import sqlite3
+
+import pytest
+
+from personalclaw.knowledge.store import KnowledgeStore
+
+
+@pytest.fixture
+def store(tmp_path):
+    return KnowledgeStore(tmp_path / "k.db")
+
+
+def _item(store, title: str, content: str = "body") -> str:
+    return store.create_typed_item(item_type="note", title=title, content=content)
+
+
+# ── migration: an existing DB must upgrade in place ───────────────────────────
+
+
+def test_a_pre_collections_db_upgrades_in_place_without_losing_items(tmp_path):
+    """The upgrade path. A user's existing library predates these columns and tables;
+    opening the store must add them and leave every item intact."""
+    dbp = tmp_path / "old.db"
+    con = sqlite3.connect(dbp)
+    con.executescript("""
+        CREATE TABLE items (id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL,
+          item_type TEXT NOT NULL, summary TEXT, tags TEXT DEFAULT '[]', embedding BLOB,
+          status TEXT DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+        INSERT INTO items VALUES
+          ('i1','Old note','body','note',NULL,'[]',NULL,'active','2026-01-01','2026-01-01');
+        """)
+    con.commit()
+    con.close()
+
+    st = KnowledgeStore(dbp)
+    cols = {r[1] for r in st.db.execute("PRAGMA table_info(items)").fetchall()}
+    assert {"read_state", "favorited"} <= cols
+    tables = {
+        r[0] for r in st.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }
+    assert {"collections", "collection_items"} <= tables
+    item = st.get_item("i1")
+    assert item is not None and item["title"] == "Old note"
+    # A pre-existing row has NULL read_state on disk; the API contract is the enum.
+    assert item["read_state"] == "unread"
+    assert item["favorited"] is False
+
+
+def test_opening_twice_is_idempotent(tmp_path):
+    dbp = tmp_path / "k.db"
+    first = KnowledgeStore(dbp)
+    iid = _item(first, "One")
+    second = KnowledgeStore(dbp)
+    assert second.get_item(iid) is not None
+
+
+# ── manual collections ────────────────────────────────────────────────────────
+
+
+def test_create_and_resolve_a_manual_shelf(store):
+    iid = _item(store, "Pandoc guide")
+    cid = store.create_collection(name="Reading")
+    assert store.add_to_collection(cid, iid) is True
+    assert [i["title"] for i in store.resolve_collection(cid)] == ["Pandoc guide"]
+
+
+def test_shelving_twice_is_a_no_op_not_a_duplicate(store):
+    iid = _item(store, "One")
+    cid = store.create_collection(name="Shelf")
+    store.add_to_collection(cid, iid)
+    store.add_to_collection(cid, iid)
+    assert len(store.resolve_collection(cid)) == 1
+
+
+def test_shelving_a_missing_item_is_refused(store):
+    """A membership row pointing at a nonexistent item would render as a phantom entry."""
+    cid = store.create_collection(name="Shelf")
+    assert store.add_to_collection(cid, "no-such-item") is False
+    assert store.resolve_collection(cid) == []
+
+
+def test_shelving_onto_a_missing_shelf_is_refused(store):
+    iid = _item(store, "One")
+    assert store.add_to_collection("no-such-shelf", iid) is False
+
+
+def test_one_item_can_sit_on_many_shelves(store):
+    iid = _item(store, "Shared")
+    a = store.create_collection(name="A")
+    b = store.create_collection(name="B")
+    store.add_to_collection(a, iid)
+    store.add_to_collection(b, iid)
+    assert {c["name"] for c in store.collections_for_item(iid)} == {"A", "B"}
+
+
+def test_unshelving_removes_only_the_membership(store):
+    iid = _item(store, "One")
+    cid = store.create_collection(name="Shelf")
+    store.add_to_collection(cid, iid)
+    assert store.remove_from_collection(cid, iid) is True
+    assert store.resolve_collection(cid) == []
+    assert store.get_item(iid) is not None, "the item itself must survive"
+
+
+def test_deleting_a_shelf_keeps_its_items(store):
+    """A shelf is a view onto the library, not a container that owns its contents."""
+    iid = _item(store, "One")
+    cid = store.create_collection(name="Shelf")
+    store.add_to_collection(cid, iid)
+    assert store.delete_collection(cid) is True
+    assert store.get_item(iid) is not None
+    assert store.collections_for_item(iid) == []
+
+
+def test_deleting_a_missing_shelf_reports_false(store):
+    assert store.delete_collection("nope") is False
+
+
+def test_archived_items_do_not_appear_on_a_shelf(store):
+    """An archive is the user saying "not in my active library"; a shelf is an
+    active-library view."""
+    iid = _item(store, "Old")
+    cid = store.create_collection(name="Shelf")
+    store.add_to_collection(cid, iid)
+    store.update_item(iid, is_archived=1)
+    assert store.resolve_collection(cid) == []
+
+
+# ── smart collections ─────────────────────────────────────────────────────────
+
+
+def test_a_smart_shelf_resolves_its_query(store):
+    _item(store, "Pandoc guide", "converting markdown to pdf")
+    _item(store, "Coffee notes", "the grinder settings")
+    cid = store.create_collection(name="PDF stuff", kind="smart", query="markdown pdf")
+    titles = [i["title"] for i in store.resolve_collection(cid)]
+    assert "Pandoc guide" in titles
+
+
+def test_a_smart_shelf_picks_up_new_items_with_no_backfill(store):
+    """The live-ness that justifies the kind existing at all."""
+    cid = store.create_collection(name="Rust", kind="smart", query="borrow checker")
+    assert store.resolve_collection(cid) == []
+    _item(store, "Rust ownership", "the borrow checker explained")
+    assert [i["title"] for i in store.resolve_collection(cid)] == ["Rust ownership"]
+
+
+def test_a_smart_shelf_requires_a_query(store):
+    """Without one it would match nothing forever — a shelf that looks broken."""
+    with pytest.raises(ValueError, match="requires a query"):
+        store.create_collection(name="Empty", kind="smart")
+
+
+def test_switching_a_shelf_to_smart_without_a_query_is_refused(store):
+    cid = store.create_collection(name="Manual")
+    with pytest.raises(ValueError, match="requires a query"):
+        store.update_collection(cid, kind="smart")
+
+
+def test_switching_to_smart_with_a_query_in_the_same_call_is_allowed(store):
+    cid = store.create_collection(name="Manual")
+    assert store.update_collection(cid, kind="smart", query="anything") is True
+    assert store.get_collection(cid)["kind"] == "smart"
+
+
+def test_an_unknown_kind_is_refused(store):
+    with pytest.raises(ValueError, match="unknown collection kind"):
+        store.create_collection(name="X", kind="magic")
+
+
+def test_a_smart_and_a_manual_shelf_hand_back_the_same_shape(store):
+    """The UI renders one row component for both, so a retrieval projection leaking
+    through would break the smart view."""
+    iid = _item(store, "Pandoc guide", "markdown to pdf")
+    manual = store.create_collection(name="M")
+    store.add_to_collection(manual, iid)
+    smart = store.create_collection(name="S", kind="smart", query="markdown pdf")
+    m = store.resolve_collection(manual)[0]
+    s = next(i for i in store.resolve_collection(smart) if i["id"] == iid)
+    assert set(m) == set(s)
+
+
+# ── the rail ──────────────────────────────────────────────────────────────────
+
+
+def test_new_shelves_go_to_the_end_of_the_rail(store):
+    """The user's ordering is theirs; a create must not reshuffle it."""
+    a = store.create_collection(name="First")
+    b = store.create_collection(name="Second")
+    order = [c["id"] for c in store.list_collections()]
+    assert order == [a, b]
+
+
+def test_reordering_is_persisted(store):
+    a = store.create_collection(name="First")
+    b = store.create_collection(name="Second")
+    store.update_collection(a, position=5)
+    assert [c["id"] for c in store.list_collections()] == [b, a]
+
+
+def test_a_manual_shelf_reports_its_count_and_a_smart_one_reports_unknown(store):
+    """A per-shelf search on every rail render would be a real cost; smart counts are
+    deliberately deferred to the point the user opens the shelf."""
+    iid = _item(store, "One")
+    m = store.create_collection(name="M")
+    store.add_to_collection(m, iid)
+    store.create_collection(name="S", kind="smart", query="one")
+    by_name = {c["name"]: c for c in store.list_collections()}
+    assert by_name["M"]["item_count"] == 1
+    assert by_name["S"]["item_count"] is None
+
+
+def test_renaming_a_shelf(store):
+    cid = store.create_collection(name="Old name")
+    assert store.update_collection(cid, name="New name") is True
+    assert store.get_collection(cid)["name"] == "New name"
+
+
+def test_updating_with_no_recognized_field_reports_false(store):
+    cid = store.create_collection(name="X")
+    assert store.update_collection(cid, nonsense="y") is False
+
+
+def test_a_nameless_shelf_is_refused(store):
+    with pytest.raises(ValueError, match="name is required"):
+        store.create_collection(name="   ")
+
+
+# ── item curation ─────────────────────────────────────────────────────────────
+
+
+def test_read_state_cycles_through_all_three(store):
+    iid = _item(store, "One")
+    assert store.get_item(iid)["read_state"] == "unread"
+    for state in ("reading", "read", "unread"):
+        assert store.set_read_state(iid, state) is True
+        assert store.get_item(iid)["read_state"] == state
+
+
+def test_an_unknown_read_state_is_refused(store):
+    iid = _item(store, "One")
+    with pytest.raises(ValueError, match="unknown read state"):
+        store.set_read_state(iid, "skimmed")
+
+
+def test_marking_read_does_not_bump_updated_at(store):
+    """Marking something read is not editing it. If it touched updated_at, reading
+    through a backlog would silently reorder a recency-sorted library."""
+    iid = _item(store, "One")
+    before = store.get_item(iid)["updated_at"]
+    store.set_read_state(iid, "read")
+    assert store.get_item(iid)["updated_at"] == before
+
+
+def test_favoriting_round_trips_as_a_bool(store):
+    iid = _item(store, "One")
+    assert store.get_item(iid)["favorited"] is False
+    store.set_favorited(iid, True)
+    assert store.get_item(iid)["favorited"] is True
+    store.set_favorited(iid, False)
+    assert store.get_item(iid)["favorited"] is False
+
+
+def test_favoriting_does_not_bump_updated_at(store):
+    iid = _item(store, "One")
+    before = store.get_item(iid)["updated_at"]
+    store.set_favorited(iid, True)
+    assert store.get_item(iid)["updated_at"] == before
+
+
+def test_curating_a_missing_item_reports_false(store):
+    assert store.set_read_state("nope", "read") is False
+    assert store.set_favorited("nope", True) is False
+
+
+# ── bulk curation (S2, T2.3) ──────────────────────────────────────────────────
+
+
+def test_bulk_reports_changed_unchanged_and_missing_separately(store):
+    """The whole reason the endpoint returns per-item results.
+
+    A selection can go stale between the click and the request, and "already read" is
+    not a failure — collapsing all three into one ok/error would make "38 of 40" and
+    "everything broke" look identical to the UI.
+    """
+    a, b = _item(store, "A"), _item(store, "B")
+    store.set_read_state(b, "read")  # already in the target state
+
+    res = store.bulk_apply("read_state", [a, b, "ghost"], state="read")
+
+    assert res["changed"] == [a]
+    assert res["unchanged"] == [b]
+    assert res["missing"] == ["ghost"]
+
+
+def test_bulk_read_state_actually_persists(store):
+    a, b = _item(store, "A"), _item(store, "B")
+    store.bulk_apply("read_state", [a, b], state="reading")
+    assert store.get_item(a)["read_state"] == "reading"
+    assert store.get_item(b)["read_state"] == "reading"
+
+
+def test_bulk_rejects_an_invalid_read_state_before_touching_anything(store):
+    """A bad arg must be a typed refusal, not a silent no-op over the whole selection."""
+    a = _item(store, "A")
+    with pytest.raises(ValueError, match="read_state requires state"):
+        store.bulk_apply("read_state", [a], state="skimmed")
+    assert store.get_item(a)["read_state"] == "unread"
+
+
+def test_bulk_favorite_and_unfavorite(store):
+    a = _item(store, "A")
+    assert store.bulk_apply("favorite", [a], value=True)["changed"] == [a]
+    assert store.get_item(a)["favorited"] is True
+    # Re-running is unchanged, not changed — the count a user sees stays honest.
+    assert store.bulk_apply("favorite", [a], value=True)["unchanged"] == [a]
+    assert store.bulk_apply("favorite", [a], value=False)["changed"] == [a]
+    assert store.get_item(a)["favorited"] is False
+
+
+def test_bulk_collect_shelves_many_items_at_once(store):
+    a, b = _item(store, "A"), _item(store, "B")
+    shelf = store.create_collection(name="Reading")
+
+    res = store.bulk_apply("collect", [a, b], collection_id=shelf)
+
+    assert sorted(res["changed"]) == sorted([a, b])
+    assert {i["id"] for i in store.resolve_collection(shelf)} == {a, b}
+
+
+def test_bulk_collect_is_idempotent_and_says_so(store):
+    """`add_to_collection` uses INSERT OR IGNORE, so a repeat silently succeeds. The
+    bulk path checks membership first, or re-shelving 40 items would report 40
+    changes and no-ops indistinguishably."""
+    a = _item(store, "A")
+    shelf = store.create_collection(name="Reading")
+    store.bulk_apply("collect", [a], collection_id=shelf)
+
+    res = store.bulk_apply("collect", [a], collection_id=shelf)
+
+    assert res["changed"] == []
+    assert res["unchanged"] == [a]
+
+
+def test_bulk_uncollect_removes_membership_only(store):
+    a = _item(store, "A")
+    shelf = store.create_collection(name="Reading")
+    store.bulk_apply("collect", [a], collection_id=shelf)
+
+    res = store.bulk_apply("uncollect", [a], collection_id=shelf)
+
+    assert res["changed"] == [a]
+    assert store.resolve_collection(shelf) == []
+    assert store.get_item(a) is not None  # the item itself survives
+
+
+def test_bulk_collect_refuses_a_smart_shelf(store):
+    """A smart shelf resolves membership from its query at read time, so a stored row
+    would be ignored by its own reads. Refuse loudly rather than write dead rows."""
+    a = _item(store, "A")
+    smart = store.create_collection(name="All notes", kind="smart", query="note")
+
+    with pytest.raises(ValueError, match="smart_collection_immutable"):
+        store.bulk_apply("collect", [a], collection_id=smart)
+
+
+def test_bulk_collect_requires_a_real_collection(store):
+    a = _item(store, "A")
+    with pytest.raises(ValueError, match="no such collection"):
+        store.bulk_apply("collect", [a], collection_id="nope")
+    with pytest.raises(ValueError, match="requires collection_id"):
+        store.bulk_apply("collect", [a])
+
+
+def test_bulk_archive_and_restore_round_trip(store):
+    a = _item(store, "A")
+    assert store.bulk_apply("archive", [a])["changed"] == [a]
+    assert store.get_item(a)["is_archived"] is True
+    assert store.bulk_apply("archive", [a])["unchanged"] == [a]
+    assert store.bulk_apply("restore", [a])["changed"] == [a]
+    assert store.get_item(a)["is_archived"] is False
+
+
+def test_bulk_pin(store):
+    a = _item(store, "A")
+    assert store.bulk_apply("pin", [a], value=True)["changed"] == [a]
+    assert store.get_item(a)["is_pinned"] is True
+
+
+def test_bulk_refuses_an_unknown_op(store):
+    with pytest.raises(ValueError, match="unknown bulk op"):
+        store.bulk_apply("obliterate", [_item(store, "A")])
+
+
+def test_delete_is_not_a_bulk_op(store):
+    """Deliberate exclusion, mirroring the chat bulk endpoint: every op here is
+    reversible, and an irreversible one beside them is a mis-click from data loss."""
+    assert "delete" not in store.BULK_OPS
+
+
+def test_bulk_read_state_does_not_reorder_a_recency_sorted_library(store):
+    """Marking a backlog read must not masquerade as editing every item — that would
+    reshuffle a library sorted by `updated_at` out from under the user."""
+    a = _item(store, "A")
+    before = store.get_item(a)["updated_at"]
+
+    store.bulk_apply("read_state", [a], state="read")
+
+    assert store.get_item(a)["updated_at"] == before
+
+
+# ── tag taxonomy (S2, T2.2) ───────────────────────────────────────────────────
+
+
+def _tag_ids(store) -> dict:
+    return {t["name"]: t["id"] for t in store.list_tags()}
+
+
+def test_tags_round_trip_as_a_plain_list_of_strings(store):
+    """Storage moved to rows; the API shape did NOT. Every consumer — the agent tool
+    schemas, the HTTP layer, the whole frontend — still gets `list[str]`."""
+    iid = store.create_typed_item(item_type="note", title="N", content="c", tags=["b", "a"])
+    # Name-ordered, because rows have no insertion order to preserve.
+    assert store.get_item(iid)["tags"] == ["a", "b"]
+
+
+def test_write_paths_drop_blanks_and_duplicates(store):
+    iid = store.create_typed_item(
+        item_type="note", title="N", content="c", tags=["x", "  ", "x", "", "y"]
+    )
+    assert store.get_item(iid)["tags"] == ["x", "y"]
+
+
+def test_update_replaces_tags_rather_than_merging(store):
+    iid = store.create_typed_item(item_type="note", title="N", content="c", tags=["a", "b"])
+    store.update_item(iid, tags=["z"])
+    assert store.get_item(iid)["tags"] == ["z"]
+
+
+def test_usage_counts_exclude_archived_items(store):
+    """Counts come from the join so they can respect the live-library scope. A stored
+    counter could not: archiving an item would have to decrement every one of its tags."""
+    live = store.create_typed_item(item_type="note", title="L", content="c", tags=["shared"])
+    gone = store.create_typed_item(item_type="note", title="G", content="c", tags=["shared"])
+    assert {t["name"]: t["usage_count"] for t in store.list_tags()}["shared"] == 2
+
+    store.update_item(gone, is_archived=1)
+
+    assert {t["name"]: t["usage_count"] for t in store.list_tags()}["shared"] == 1
+    assert store.get_item(live)["tags"] == ["shared"]
+
+
+def test_hierarchy_reparents_and_reports_the_parent_name(store):
+    store.create_typed_item(item_type="note", title="N", content="c", tags=["rust", "async"])
+    ids = _tag_ids(store)
+    assert store.set_tag_parent(ids["async"], ids["rust"]) is True
+    by_name = {t["name"]: t for t in store.list_tags()}
+    assert by_name["async"]["parent_name"] == "rust"
+    assert by_name["rust"]["parent_id"] is None  # a root
+
+
+def test_hierarchy_refuses_cycles(store):
+    """The chat-folders hierarchy this mirrors has no cycle guard, so A->B->A is
+    constructible there. A cycle here would hang any recursive walk of the taxonomy."""
+    store.create_typed_item(item_type="note", title="N", content="c", tags=["a", "b", "c"])
+    ids = _tag_ids(store)
+    with pytest.raises(ValueError, match="tag_cycle"):
+        store.set_tag_parent(ids["a"], ids["a"])  # self-parent
+    store.set_tag_parent(ids["b"], ids["a"])
+    with pytest.raises(ValueError, match="tag_cycle"):
+        store.set_tag_parent(ids["a"], ids["b"])  # would close a 2-cycle
+    store.set_tag_parent(ids["c"], ids["b"])
+    with pytest.raises(ValueError, match="tag_cycle"):
+        store.set_tag_parent(ids["a"], ids["c"])  # would close a 3-cycle
+
+
+def test_rename_is_one_row_and_refuses_a_collision(store):
+    iid = store.create_typed_item(item_type="note", title="N", content="c", tags=["old", "keep"])
+    ids = _tag_ids(store)
+    assert store.rename_tag(ids["old"], "new") is True
+    assert store.get_item(iid)["tags"] == ["keep", "new"]
+    # Renaming ONTO an existing name is a merge, which is a different, lossier
+    # operation — refuse rather than silently merging.
+    with pytest.raises(ValueError, match="tag_name_taken"):
+        store.rename_tag(_tag_ids(store)["new"], "keep")
+
+
+def test_rename_stops_the_old_term_matching_in_search(store):
+    """The silent-rot path. A plain `DELETE FROM items_fts WHERE rowid = ?` is a NO-OP
+    on an external-content FTS5 table (measured), so a naive resync leaves the renamed
+    tag findable under BOTH names forever."""
+    store.create_typed_item(item_type="note", title="N", content="body", tags=["rust"])
+    assert [h["id"] for h in store.search_items_fts("rust", limit=5)]
+
+    store.rename_tag(_tag_ids(store)["rust"], "rustlang")
+
+    assert store.search_items_fts("rust", limit=5) == [], "stale term still indexed"
+    assert [h["id"] for h in store.search_items_fts("rustlang", limit=5)]
+
+
+def test_merge_moves_memberships_and_clears_the_source_term(store):
+    a = store.create_typed_item(item_type="note", title="A", content="c", tags=["src"])
+    b = store.create_typed_item(item_type="note", title="B", content="c", tags=["src", "dst"])
+    ids = _tag_ids(store)
+
+    result = store.merge_tags(ids["src"], ids["dst"])
+
+    assert result == {"moved": 1, "already": 1}
+    assert store.get_item(a)["tags"] == ["dst"]
+    assert store.get_item(b)["tags"] == ["dst"]
+    assert "src" not in {t["name"] for t in store.list_tags()}
+    assert store.search_items_fts("src", limit=5) == []
+
+
+def test_merge_keeps_the_more_human_provenance(store):
+    """If either side was user-authored the merged membership is, so a merge can never
+    downgrade a user's tag into one enrichment may overwrite."""
+    iid = store.create_typed_item(item_type="note", title="N", content="c", tags=["mine"])
+    store.update_item(iid, tags=["mine", "ai-tag"], tag_source="ai")
+    ids = _tag_ids(store)
+    # Re-assert one as the user's, then merge the AI one into it.
+    store.update_item(iid, tags=["mine", "ai-tag"])  # default source='user'
+    store.merge_tags(ids["ai-tag"], ids["mine"])
+    assert store.tags_are_all_ai_authored(iid) is False
+
+
+def test_merge_reparents_children_of_the_source(store):
+    store.create_typed_item(item_type="note", title="N", content="c", tags=["src", "dst", "kid"])
+    ids = _tag_ids(store)
+    store.set_tag_parent(ids["kid"], ids["src"])
+
+    store.merge_tags(ids["src"], ids["dst"])
+
+    by_name = {t["name"]: t for t in store.list_tags()}
+    assert by_name["kid"]["parent_name"] == "dst", "a child must follow, not be orphaned"
+
+
+def _tag_cycles(store) -> list[str]:
+    """Names of tags that can reach themselves by walking up. Empty is the invariant."""
+    rows = store.list_tags()
+    by_id = {t["id"]: t for t in rows}
+    bad = []
+    for tag in rows:
+        seen, cursor = set(), tag
+        while cursor is not None:
+            if cursor["id"] in seen:
+                bad.append(tag["name"])
+                break
+            seen.add(cursor["id"])
+            cursor = by_id.get(cursor.get("parent_id"))
+    return bad
+
+
+def test_merging_a_tag_into_one_nested_under_it_leaves_no_cycle(store):
+    """The invariant no merge may break: afterwards, no tag can reach itself walking up.
+
+    Folding a tag into one below it is a legitimate merge ("these are the same thing, keep
+    the child's name"), and the blanket `parent_id = target WHERE parent_id = source`
+    pointed the survivor's own ancestor chain back at the survivor. At depth 1 that is a
+    self-cycle; at depth 2 it is a two-node loop, which is why this asserts the general
+    property rather than `parent_id != id`. `set_tag_parent` refuses both via the same
+    ancestor walk; this path had no guard at all.
+
+    A tag inside a cycle is neither a root (`parent_id === null`) nor any root's child, so
+    `TagManager.tsx` cannot place it and appends it as a bottom-of-list straggler, flat and
+    detached from where the user filed it, along with everything beneath it."""
+    store.create_typed_item(item_type="note", title="N", content="c", tags=["a", "b", "c"])
+    ids = _tag_ids(store)
+    assert store.set_tag_parent(ids["b"], ids["a"]) is True
+    assert store.set_tag_parent(ids["c"], ids["b"]) is True
+
+    store.merge_tags(ids["a"], ids["c"])  # fold the GRANDPARENT into its grandchild
+
+    assert _tag_cycles(store) == []
+    rows = {t["name"]: t for t in store.list_tags()}
+    assert "a" not in rows
+    # `c` inherits the merged-away tag's position — a root here, since `a` was one.
+    assert not rows["c"].get("parent_name")
+    assert rows["b"]["parent_name"] == "c", "the child still follows the merge"
+
+
+def test_a_merged_away_parent_hands_its_branch_position_to_the_survivor(store):
+    """The generalization: the survivor takes the SOURCE's place, so a merge inside a
+    branch keeps the branch where the user put it instead of promoting it to a root."""
+    store.create_typed_item(item_type="note", title="N", content="c", tags=["p", "a", "b"])
+    ids = _tag_ids(store)
+    assert store.set_tag_parent(ids["a"], ids["p"]) is True
+    assert store.set_tag_parent(ids["b"], ids["a"]) is True
+
+    store.merge_tags(ids["a"], ids["b"])  # fold `a` into its child, under `p`
+
+    assert _tag_cycles(store) == []
+    rows = {t["name"]: t for t in store.list_tags()}
+    assert rows["b"]["parent_name"] == "p", "the survivor stayed inside the branch"
+
+
+def test_delete_reparents_children_to_root_rather_than_cascading(store):
+    """Deleting a parent must not silently destroy the branch beneath it."""
+    store.create_typed_item(item_type="note", title="N", content="c", tags=["parent", "child"])
+    ids = _tag_ids(store)
+    store.set_tag_parent(ids["child"], ids["parent"])
+
+    assert store.delete_tag(ids["parent"]) is True
+
+    remaining = {t["name"]: t for t in store.list_tags()}
+    assert "child" in remaining
+    assert remaining["child"]["parent_id"] is None
+
+
+def test_delete_removes_the_tag_from_items_and_from_search(store):
+    iid = store.create_typed_item(item_type="note", title="Alpha", content="c", tags=["doomed"])
+    store.delete_tag(_tag_ids(store)["doomed"])
+    assert store.get_item(iid)["tags"] == []
+    assert store.search_items_fts("doomed", limit=5) == []
+    # The item itself survives and stays findable by its other text.
+    assert [h["id"] for h in store.search_items_fts("Alpha", limit=5)] == [iid]
+
+
+def test_the_fts_index_survives_a_rebuild(store):
+    """`rebuild` against an external-content table whose source cannot produce every
+    column WIPES THE INDEX AND REPORTS SUCCESS (measured; integrity-check still says
+    ok afterwards). The FTS table sources from a view precisely so this stays safe."""
+    iid = store.create_typed_item(item_type="note", title="Alpha", content="body", tags=["rust"])
+    store.db.execute("INSERT INTO items_fts (items_fts) VALUES ('rebuild')")
+    store.db.commit()
+    assert [h["id"] for h in store.search_items_fts("rust", limit=5)] == [iid]
+    assert [h["id"] for h in store.search_items_fts("Alpha", limit=5)] == [iid]
+
+
+def test_non_ascii_tags_are_searchable(store):
+    """A pre-existing bug this migration fixes: `json.dumps` defaults to
+    ensure_ascii=True, so a tag like 日本語 was stored — and indexed — as escape
+    sequences, making it unfindable. Measured 0 matches before, 1 after."""
+    iid = store.create_typed_item(item_type="note", title="N", content="c", tags=["日本語"])
+    assert store.get_item(iid)["tags"] == ["日本語"]
+    assert [h["id"] for h in store.search_items_fts("日本語", limit=5)] == [iid]
+
+
+def test_the_tag_migration_survives_every_hostile_value(tmp_path):
+    """The unrecoverable step, so it gets the nastiest fixture in the suite.
+
+    Opening the store moves `items.tags` (JSON) into rows and DROPS the column. Once
+    dropped the source is gone — there is no second attempt and, pre-1.0, no migration
+    safety net. So this pins every value shape the column is known to hold:
+
+      * duplicates          — a composite PK collapses them; the count must stay honest
+      * blank / whitespace  — already invisible (`all_tags` filtered falsy names)
+      * non-ASCII           — stored as \\uXXXX escapes by json.dumps; must arrive intact
+      * MALFORMED JSON      — genuinely exists, because `_serialize_item` has always
+                              swallowed JSONDecodeError. SQL `json_each` RAISES on these,
+                              which is exactly why the migration parses per-row in Python
+      * NULL                — pre-dates the `DEFAULT '[]'`
+      * AI-authored         — provenance is inferred once, here, from stored insights
+    """
+    dbp = tmp_path / "legacy.db"
+    con = sqlite3.connect(dbp)
+    con.executescript("""
+        CREATE TABLE items (id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL,
+          item_type TEXT NOT NULL, summary TEXT, tags TEXT DEFAULT '[]', embedding BLOB,
+          status TEXT DEFAULT 'active', insights TEXT DEFAULT '{}',
+          is_archived INTEGER DEFAULT 0,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE VIRTUAL TABLE items_fts USING fts5(title, content, tags,
+          content=items, content_rowid=rowid);
+        """)
+    rows = [
+        ("dup", '["rust", "systems", "rust"]', "{}"),
+        ("blank", '["", "  ", "kept"]', "{}"),
+        ("unicode", '["\\u65e5\\u672c\\u8a9e"]', "{}"),
+        ("broken", "not json at all", "{}"),
+        ("nulled", None, "{}"),
+        ("aiauthored", '["caching", "redis"]', '{"topics": ["redis", "caching"]}'),
+    ]
+    for iid, tags, insights in rows:
+        con.execute(
+            "INSERT INTO items (id,title,content,item_type,tags,insights,created_at,updated_at) "
+            "VALUES (?,?,?,'note',?,?,'2026-01-01','2026-01-01')",
+            (iid, f"Title {iid}", f"body {iid}", tags, insights),
+        )
+    con.commit()
+    con.close()
+
+    st = KnowledgeStore(dbp)
+
+    # The column is gone and the tables exist.
+    assert "tags" not in {r[1] for r in st.db.execute("PRAGMA table_info(items)").fetchall()}
+    tables = {
+        r[0] for r in st.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }
+    assert {"tags", "item_tags"} <= tables
+
+    assert st.get_item("dup")["tags"] == ["rust", "systems"]  # duplicate collapsed
+    assert st.get_item("blank")["tags"] == ["kept"]  # blanks dropped
+    assert st.get_item("unicode")["tags"] == ["日本語"]  # escapes decoded
+    assert st.get_item("broken")["tags"] == ["not json at all"]  # salvaged, not lost
+    assert st.get_item("nulled")["tags"] == []
+    assert st.get_item("aiauthored")["tags"] == ["caching", "redis"]
+
+    # Provenance: only the item whose insights.topics match its tags is AI-authored, so
+    # only that one may be refreshed by a later enrichment pass.
+    assert st.tags_are_all_ai_authored("aiauthored") is True
+    assert st.tags_are_all_ai_authored("dup") is False
+
+    # Search works against the migrated index — including the term that was previously
+    # unfindable because json.dumps had escaped it.
+    assert [h["id"] for h in st.search_items_fts("rust", limit=5)] == ["dup"]
+    assert [h["id"] for h in st.search_items_fts("日本語", limit=5)] == ["unicode"]
+
+
+def test_reopening_a_migrated_db_is_idempotent(tmp_path):
+    """The guard is `"tags" in cols` — there is no schema version to gate on (the
+    store's own `IF NOT EXISTS` discipline). Re-opening must not double-insert or
+    re-run the drop."""
+    dbp = tmp_path / "twice.db"
+    con = sqlite3.connect(dbp)
+    con.executescript("""
+        CREATE TABLE items (id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL,
+          item_type TEXT NOT NULL, summary TEXT, tags TEXT DEFAULT '[]', embedding BLOB,
+          status TEXT DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE VIRTUAL TABLE items_fts USING fts5(title, content, tags,
+          content=items, content_rowid=rowid);
+        INSERT INTO items VALUES
+          ('i1','N','body','note',NULL,'["a","b"]',NULL,'active','2026-01-01','2026-01-01');
+        """)
+    con.commit()
+    con.close()
+
+    first = KnowledgeStore(dbp)
+    before = first.get_item("i1")["tags"]
+    counts = first.db.execute("SELECT COUNT(*) FROM item_tags").fetchone()[0]
+    first.close()
+
+    second = KnowledgeStore(dbp)
+
+    assert second.get_item("i1")["tags"] == before
+    assert second.db.execute("SELECT COUNT(*) FROM item_tags").fetchone()[0] == counts
+
+
+# ── shelf names are unique, like tag names (#755) ─────────────────────────────
+
+
+def test_a_duplicate_shelf_name_is_refused(store):
+    """`tags.name` is `TEXT NOT NULL UNIQUE` and the tag UI says "Merge them instead of
+    renaming"; `collections.name` had neither, so two shelves called "ZFS incident evidence"
+    both returned 201 and rendered as indistinguishable chips in the rail — a `?collection=<id>`
+    deep-link being the only way to tell them apart."""
+    store.create_collection(name="ZFS incident evidence", kind="manual")
+
+    with pytest.raises(ValueError, match="collection_name_taken:"):
+        store.create_collection(name="ZFS incident evidence", kind="manual")
+
+    assert [c["name"] for c in store.list_collections()] == ["ZFS incident evidence"]
+
+
+@pytest.mark.parametrize("variant", ["  ZFS incident evidence  ", "zfs INCIDENT evidence"])
+def test_a_name_a_reader_cannot_distinguish_is_a_duplicate(variant, store):
+    """Case- and whitespace-insensitive, unlike the `tags` UNIQUE index. Two chips reading
+    "Evidence" and "evidence" are as indistinguishable as two identical ones, and a guard that
+    admits the case a human cannot see is not worth having."""
+    store.create_collection(name="ZFS incident evidence", kind="manual")
+
+    with pytest.raises(ValueError, match="collection_name_taken:"):
+        store.create_collection(name=variant, kind="manual")
+
+
+def test_renaming_onto_an_existing_shelf_name_is_refused(store):
+    """Guarding create alone would leave the rail reachable through the other door."""
+    store.create_collection(name="Keep", kind="manual")
+    other = store.create_collection(name="Other", kind="manual")
+
+    with pytest.raises(ValueError, match="collection_name_taken:Keep"):
+        store.update_collection(other, name="Keep")
+
+    assert sorted(c["name"] for c in store.list_collections()) == ["Keep", "Other"]
+
+
+def test_re_saving_a_shelf_under_its_own_name_is_not_a_clash(store):
+    """The `exclude_id` case, and the reason it is needed: the PATCH body carries `name`
+    whenever the panel saves, so an icon change resends the current name. Without this, editing
+    a shelf's icon would fail as a collision with itself."""
+    cid = store.create_collection(name="Reading", kind="manual")
+
+    assert store.update_collection(cid, name="Reading") is True
+    assert store.update_collection(cid, name="Reading", icon="📚") is True
+    assert store.get_collection(cid)["icon"] == "📚"
+
+
+def test_a_distinct_name_is_still_created(store):
+    """The vacuity floor: a guard that refused everything would pass the tests above."""
+    store.create_collection(name="First", kind="manual")
+    assert store.create_collection(name="Second", kind="manual")
+    assert len(store.list_collections()) == 2
+
+
+# ── shelf-name length cap (#393) ──────────────────────────────────────────────
+#
+# A shelf name renders as a chip in the Library filter rail, so an unbounded one is a layout
+# weapon, not merely a long stored string: a 10,000-character name was accepted and rendered
+# as one pill ~15x the viewport width, pushing every sibling shelf chip out of reach.
+# 200 is the ceiling `tasks/hierarchy` and `artifacts/models` already enforce on a user-facing
+# container name. Over-long is REFUSED, not truncated — a silently truncated name can collide
+# with one that already exists, which this surface turns into `collection_name_taken`.
+
+
+def test_an_over_long_shelf_name_is_refused_at_create(store):
+    """🔴 THE BUG: `POST /api/knowledge/collections` with a 10k-char name returned 201."""
+    with pytest.raises(ValueError) as exc:
+        store.create_collection(name="L" * 10_000, kind="manual")
+    # The handler maps a store ValueError straight to a 400, so the message IS the API error.
+    assert "at most 200 characters" in str(exc.value)
+    assert "10000" in str(exc.value), "the message should name what was actually sent"
+    assert store.list_collections() == [], "nothing may be stored when the name is refused"
+
+
+def test_an_over_long_shelf_name_is_refused_at_rename_too(store):
+    """The SECOND door. A cap on create alone leaves a 10k-char name reachable by PATCH —
+    the same argument `update_collection` already makes for the clash guard."""
+    cid = store.create_collection(name="ZFS evidence", kind="manual")
+    with pytest.raises(ValueError) as exc:
+        store.update_collection(cid, name="L" * 10_000)
+    assert "at most 200 characters" in str(exc.value)
+    assert store.get_collection(cid)["name"] == "ZFS evidence", "the rename must not land"
+
+
+def test_a_name_at_the_cap_is_accepted(store):
+    """The bound is inclusive — 200 is a legal name, 201 is not. A cap that refused its own
+    stated limit would be a different bug."""
+    at_limit = "L" * store.MAX_COLLECTION_NAME_LEN
+    cid = store.create_collection(name=at_limit, kind="manual")
+    assert store.get_collection(cid)["name"] == at_limit
+    with pytest.raises(ValueError):
+        store.create_collection(name="M" * (store.MAX_COLLECTION_NAME_LEN + 1), kind="manual")
+
+
+def test_the_cap_agrees_with_the_other_container_name_ceilings():
+    """Three surfaces, one number — so a future change moves them together instead of leaving
+    the shelf rail as the odd one out again."""
+    from personalclaw.artifacts.models import MAX_NAME_LEN as ARTIFACT_MAX
+    from personalclaw.tasks.hierarchy import MAX_NAME_LEN as TASK_MAX
+
+    assert KnowledgeStore.MAX_COLLECTION_NAME_LEN == TASK_MAX == ARTIFACT_MAX == 200
+
+
+def test_the_existing_empty_and_whitespace_rules_still_hold(store):
+    """The cap is added to a shared validator, so the rules it replaced must survive on BOTH
+    doors — including the whitespace-only case, which strips to empty."""
+    cid = store.create_collection(name="Keep", kind="manual")
+    for bad in ("", "   ", "\t\n"):
+        with pytest.raises(ValueError, match="collection name is required"):
+            store.create_collection(name=bad, kind="manual")
+        with pytest.raises(ValueError, match="collection name is required"):
+            store.update_collection(cid, name=bad)
+
+
+def test_a_renamed_shelf_is_stored_stripped(store):
+    """Create stripped its name and rename did not, so the same label could be stored two ways
+    — and the clash guard compares the STRIPPED form, so the two doors disagreed."""
+    cid = store.create_collection(name="Evidence", kind="manual")
+    store.update_collection(cid, name="  Renamed evidence  ")
+    assert store.get_collection(cid)["name"] == "Renamed evidence"

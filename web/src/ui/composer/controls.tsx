@@ -1,0 +1,335 @@
+import { useState, type ReactNode } from 'react'
+import { fvs } from '../../design/fontWeight'
+import { motion } from 'framer-motion'
+import { Bot, Cpu, ShieldCheck, Gauge, ChevronDown, Plus, Search, Paperclip, BookText, Feather, RotateCcw } from 'lucide-react'
+import { Popover, MenuRow } from '../Popover'
+import { Button } from '../Button'
+import { spring, physics, expr } from '../../design/motion'
+import { cx } from '../cx'
+import type { ComposerData } from './types'
+import type { ApprovalMode, ReasoningEffort } from '../../lib/api'
+
+const APPROVAL: { id: ApprovalMode; label: string; hint: string }[] = [
+  { id: 'normal', label: 'Normal', hint: 'Ask before every tool' },
+  { id: 'trust_reads', label: 'Trust reads', hint: 'Auto-approve read-only' },
+  { id: 'trust', label: 'Trust', hint: 'Auto-approve in this chat' },
+  { id: 'yolo', label: 'YOLO', hint: 'Auto-approve everywhere — auto-expires, re-enable to extend' },
+]
+// Native effort levels (map to Anthropic thinking budget / OpenAI reasoning_effort).
+// ACP agents override this with their backend-declared supported_efforts.
+const NATIVE_EFFORTS: { value: string; label: string }[] = [
+  { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' }, { value: 'max', label: 'Max' },
+]
+
+// Shared trigger for every composer pill (Agent/Model/Approval/Reasoning/Plus).
+// v2: a spring press (whileTap, expr-scaled), an active tint while its popover is
+// open, and a spring chevron flip — one physical touch across all pills. The
+// popover itself opens via the (already-v2) Popover.
+/** The composer's value-selector trigger: an icon, the CURRENT VALUE, a chevron.
+ *
+ *  `dimension` is what the pill controls ("Model", "Agent"), and it exists because the visible
+ *  label cannot carry it. These pills show a value and nothing else, so a screen-reader user
+ *  tabbing the composer heard four bare values — "Agent", "Auto", "Default", "Normal" — with no
+ *  indication that they were the agent, the model, the reasoning effort and the permission mode.
+ *  Measured before this: every one of the four announced its value alone.
+ *
+ *  The name is composed exactly as `HeaderModePill` already composes its own
+ *  (`aria-label={`${ariaLabel}: ${label}`}`, giving "Task mode: Agent"), so the two pill families
+ *  in the app agree instead of one being precise and the other mute. Sighted users see no change —
+ *  the dimension is already obvious from position and icon on screen, which is exactly why the
+ *  visible label spends its width on the value. */
+function PillButton({ icon, label, dimension, open, toggle }: { icon: React.ReactNode; label: string; dimension: string; open: boolean; toggle: () => void }) {
+  return (
+    <motion.button
+      type="button" onClick={toggle} aria-expanded={open}
+      // A pill whose value IS its dimension ("Agent" when no specific agent is bound) would
+      // otherwise announce "Agent: Agent".
+      aria-label={label === dimension ? dimension : `${dimension}: ${label}`}
+      whileTap={{ scale: 1 - expr(0.04, 0.3) }} transition={spring.spatialFast}
+      data-type="label-s"
+      className={cx('flex items-center gap-1.5 h-9 rounded-pill px-m transition-colors max-w-[160px]',
+        open ? 'bg-surface-high text-on-surface' : 'text-on-surface-var hover:bg-surface-high')}
+      style={fvs(470)}
+    >
+      {icon}
+      <span className="truncate">{label}</span>
+      <motion.span className="shrink-0" animate={{ rotate: open ? 180 : 0 }} transition={physics.snappy}>
+        <ChevronDown size={15} strokeWidth={2} />
+      </motion.span>
+    </motion.button>
+  )
+}
+
+/** Trim boilerplate governance suffixes that runtime-provided agents append to
+ *  their descriptions (e.g. "DO NOT EDIT MANUALLY") so the picker hint shows
+ *  only the meaningful part. */
+function cleanAgentHint(desc?: string): string {
+  return (desc ?? '').replace(/\s*--\s*⚠️[^]*$/u, '').replace(/\s*\(?\[?DO NOT (UPDATE|EDIT)[^]*$/i, '').trim()
+}
+
+export function AgentPill({ data, value, onSelect, openSignal }: { data?: ComposerData; value: string; onSelect: (agent: string) => void; openSignal?: number }) {
+  const [q, setQ] = useState('')
+  const nativeAgents = data?.agents ?? []
+  const discoveredEntries = Object.entries(data?.discovered ?? {})
+  const total = nativeAgents.length + discoveredEntries.reduce((n, [, a]) => n + a.length, 0)
+  // 🪤 `ready` DEFAULTS TRUE when absent, not false. Callers that pass fixed lists
+  // (the goal composer, tests) never set it, and defaulting to false would leave
+  // them stuck on "Loading agents…" forever. Only a host that opted in by threading
+  // `useComposerData` can report not-yet-read, which is exactly the host that knows.
+  const ready = data?.ready ?? true
+  const agentsErr = data?.agentsErr
+  const retry = data?.retry
+  // Long agent rosters (native + every discovered ACP agent) need a filter — 60+
+  // entries is unscannable. Show the search box only once the list is big enough
+  // to warrant it, so small setups stay clutter-free.
+  const showSearch = total > 8
+  const nq = q.trim().toLowerCase()
+  const native = nq ? nativeAgents.filter((a) => a.name.toLowerCase().includes(nq)) : nativeAgents
+  const discovered = discoveredEntries
+    .map(([rt, agents]) => [rt, nq ? agents.filter((d) => `${d.name} ${d.description}`.toLowerCase().includes(nq) || rt.toLowerCase().includes(nq)) : agents] as const)
+    .filter(([, agents]) => agents.length > 0)
+  const noMatches = nq && native.length === 0 && discovered.length === 0
+  return (
+    <Popover portal width={280} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={<Bot size={16} strokeWidth={2} />} label={value || 'Agent'} dimension="Agent" open={open} toggle={toggle} />}>
+      {(close) => (
+        <div className="flex max-h-[340px] flex-col">
+          {showSearch && (
+            <div className="relative shrink-0 px-1 pb-1">
+              <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-low" />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search agents" autoFocus
+                data-type="body-s"
+                className="h-8 w-full rounded-md bg-surface-high pl-8 pr-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+            </div>
+          )}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {native.map((a) => (
+              <MenuRow key={a.name} label={a.name} selected={a.name === value} onClick={() => { onSelect(a.name); close() }} />
+            ))}
+            {discovered.map(([rt, agents]) => (
+              <div key={rt}>
+                <div data-type="caption" className="px-m pt-m pb-1 uppercase tracking-wide text-on-surface-low">{rt}</div>
+                {agents.map((d) => (
+                  <MenuRow key={d.id} label={d.name} hint={cleanAgentHint(d.description)} selected={d.name === value} onClick={() => { onSelect(d.name); close() }} />
+                ))}
+              </div>
+            ))}
+            {noMatches && <div data-type="body-s" className="px-m py-2 text-on-surface-low">No agents match “{q.trim()}”</div>}
+            {/* 🔑 THREE STATES, NOT ONE. `total === 0` used to print "No agents available" on all
+                three, and two of them are false. `useComposerData` seeds every list to `[]` and
+                readies via `Promise.allSettled`, so an unread roster and a REJECTED roster read are
+                both `[]` — indistinguishable from a user who genuinely has no agents installed.
+                "No agents available" is a statement about the user's own setup, the kind they
+                believe, so on an unreachable gateway it sent them looking for a problem in their
+                install. The order below is deliberate: not-yet-known, then could-not-be-read, then
+                the one real emptiness. */}
+            {total === 0 && (
+              !ready
+                ? <div data-type="body-s" className="px-m py-2 text-on-surface-low">Loading agents…</div>
+                : agentsErr
+                  ? <div role="alert" className="px-m py-2">
+                      <p data-type="body-s" className="text-on-surface-low">Couldn’t load your agents — this is a load error, nothing is missing from your setup.</p>
+                      {retry && <Button variant="ghost-accent" size="xs" onClick={() => retry()} className="mt-1"><RotateCcw size={13} /> Try again</Button>}
+                    </div>
+                  : <div data-type="body-s" className="px-m py-2 text-on-surface-low">No agents available</div>
+            )}
+          </div>
+        </div>
+      )}
+    </Popover>
+  )
+}
+
+function ContextRing({ pct }: { pct: number }) {
+  // A 16px ring that fills with context-window usage; warms to danger as it nears
+  // full so a user notices an at-risk turn before it truncates.
+  const r = 6, c = 2 * Math.PI * r
+  const clamped = Math.max(0, Math.min(100, pct))
+  const tone = clamped >= 90 ? 'var(--color-danger)' : clamped >= 70 ? 'var(--color-warn)' : 'var(--color-primary)'
+  return (
+    <span title={`Context: ${clamped.toFixed(0)}% used`} className="relative inline-flex shrink-0 items-center justify-center" style={{ width: 16, height: 16 }}>
+      <svg width="16" height="16" viewBox="0 0 16 16" className="-rotate-90">
+        <circle cx="8" cy="8" r={r} fill="none" stroke="var(--color-outline-variant)" strokeWidth="2" opacity={0.4} />
+        <circle cx="8" cy="8" r={r} fill="none" stroke={tone} strokeWidth="2" strokeLinecap="round"
+          strokeDasharray={c} strokeDashoffset={c * (1 - clamped / 100)} />
+      </svg>
+    </span>
+  )
+}
+
+export function ModelPill({ data, agent, value, onSelect, contextPct, openSignal }: { data?: ComposerData; agent?: string; value: string; onSelect: (m: string) => void; contextPct?: number; openSignal?: number }) {
+  // If the selected agent is an ACP-discovered agent, scope the model list to
+  // the models THAT agent provides (not the native global model list).
+  const acp = agent
+    ? Object.values(data?.discovered ?? {}).flat().find((d) => d.name === agent)
+    : undefined
+  const acpModels = acp?.models ?? []
+  // `undefined` = the backend measured NO context usage → plain dot, no number.
+  // A measured 0 still renders the ring (reading "0% used"): an empty context is a
+  // real answer, and folding it into "unmeasured" is the inverse of the fabricated-
+  // zero bug this guard replaced (it used to also require `> 0`, which hid it).
+  const dot = contextPct !== undefined
+    ? <ContextRing pct={contextPct} />
+    : <span className="size-1.5 rounded-pill bg-primary" />
+  // The pill shows the friendly model_name, not the raw "Provider:model_id" ref
+  // stored as the value (the dropdown rows already display model_name).
+  const pillLabel = !value || value === 'Auto'
+    ? 'Auto'
+    : (data?.models ?? []).find((m) => m.name === value)?.model_name || value
+  return (
+    <Popover portal width={280} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={dot} label={pillLabel} dimension="Model" open={open} toggle={toggle} />}>
+      {(close) => (
+        <div className="max-h-[320px] overflow-y-auto">
+          <MenuRow icon={<Cpu size={16} />} label="Auto" hint="Use-case chain (Settings → Models)" selected={!value || value === 'Auto'} onClick={() => { onSelect('Auto'); close() }} />
+          {acp
+            ? acpModels.length > 0
+              ? acpModels.map((m) => <MenuRow key={m} icon={<Cpu size={16} />} label={m} hint={acp.runtime} selected={m === value} onClick={() => { onSelect(m); close() }} />)
+              : <div data-type="body-s" className="px-m py-2 text-on-surface-low">No selectable models — this runtime uses its own default.</div>
+            : (data?.models ?? []).map((m) => (
+                <MenuRow key={m.name} icon={<Cpu size={16} />} label={m.model_name || m.name} hint={m.provider} selected={m.name === value} onClick={() => { onSelect(m.name); close() }} />
+              ))}
+          {/* Precedence explainer (MODEL-USE-CASES-V2 T3.4): the pick sits one level
+              above the use-case chain — it never replaces the chain, only fronts it. */}
+          <div data-type="caption" className="border-t border-outline-variant/30 px-m py-2 text-on-surface-low">
+            A picked model overrides this session's use-case chain; if it fails, the chain takes over.
+          </div>
+        </div>
+      )}
+    </Popover>
+  )
+}
+
+export function ApprovalPill({ value, onSelect }: { value: ApprovalMode; onSelect: (m: ApprovalMode) => void }) {
+  const cur = APPROVAL.find((a) => a.id === value) ?? APPROVAL[0]
+  return (
+    <Popover portal width={240} trigger={(open, toggle) => <PillButton icon={<ShieldCheck size={16} strokeWidth={2} />} label={cur.label} dimension="Permission mode" open={open} toggle={toggle} />}>
+      {(close) => APPROVAL.map((a) => (
+        <MenuRow key={a.id} label={a.label} hint={a.hint} selected={a.id === value} onClick={() => { onSelect(a.id); close() }} />
+      ))}
+    </Popover>
+  )
+}
+
+/** Reasoning-effort selector. `efforts` are the bound agent's advertised effort
+ *  options (ACP: backend-declared; native: NATIVE_EFFORTS). Renders nothing when
+ *  the agent has no effort axis, so the pill only appears for reasoning-capable
+ *  agents. A "Default" row (value "") always leads, for the model's own default. */
+export function ReasoningPill({ value, efforts, onSelect, openSignal }: {
+  value: ReasoningEffort
+  efforts: { value: string; label: string }[]
+  onSelect: (e: ReasoningEffort) => void
+  openSignal?: number
+}) {
+  if (!efforts.length) return null
+  const rows = [{ value: '', label: 'Default' }, ...efforts]
+  const cur = rows.find((e) => e.value === value) ?? rows[0]
+  return (
+    <Popover portal width={180} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={<Gauge size={16} strokeWidth={2} />} label={cur.label} dimension="Reasoning effort" open={open} toggle={toggle} />}>
+      {(close) => rows.map((e) => (
+        <MenuRow key={e.value || 'default'} label={e.label} selected={e.value === value} onClick={() => { onSelect(e.value as ReasoningEffort); close() }} />
+      ))}
+    </Popover>
+  )
+}
+
+/** Natural-voice selector (PT-7) — plainer, less machine-sounding prose.
+ *
+ *  Three rows because the control is a TRI-state: a conversation can inherit the bound
+ *  agent's preference, or state its own "on", or state its own "off". Without the third,
+ *  a conversation could never turn plainer prose OFF for an agent whose definition asks
+ *  for it.
+ *
+ *  This component RESOLVES NOTHING. `effective` and `source` arrive already decided by
+ *  the backend, which owns the one statement of the resolution order
+ *  (`natural_voice.NATURAL_VOICE_PRECEDENCE`); a label computed here from `choice` and
+ *  the agent default would be a second statement of that order, free to drift from the
+ *  one the turn actually uses.
+ *
+ *  The pill always shows the EFFECTIVE state, including when it comes from the agent —
+ *  that is the whole point of it being a pill and not a hidden setting. When the prose
+ *  changes, the owner can see which control changed it. */
+export function NaturalVoicePill({ choice, effective, source, agentDefault, onSelect }: {
+  choice: '' | 'on' | 'off'
+  effective: boolean
+  /** Which scope decided — a member of the backend's precedence tuple, or `''` before
+   *  a conversation exists to resolve against (a brand-new chat). In that state the
+   *  pill shows the CHOICE rather than an effect, because the only honest way to show
+   *  an effect would be to resolve the order here. */
+  source: string
+  /** What the bound agent's definition carries, for the inherit row's hint. */
+  agentDefault: boolean
+  onSelect: (choice: '' | 'on' | 'off') => void
+}) {
+  const label = source === ''
+    ? (choice === 'on' ? 'Plain' : choice === 'off' ? 'Off' : 'Agent default')
+    : effective ? (source === 'agent' ? 'Plain (agent)' : 'Plain') : 'Default'
+  return (
+    <Popover portal width={280} trigger={(open, toggle) => (
+      <PillButton icon={<Feather size={16} strokeWidth={2} />} label={label} dimension="Natural voice" open={open} toggle={toggle} />
+    )}>
+      {(close) => (
+        <div className="flex flex-col">
+          <MenuRow label="Agent default"
+            hint={agentDefault ? 'This agent asks for plainer prose' : 'This agent states no preference — plainer prose off'}
+            selected={choice === ''} onClick={() => { onSelect(''); close() }} />
+          <MenuRow label="Plainer prose" hint="Answer first, no filler openers, no summary close, shortest accurate word"
+            selected={choice === 'on'} onClick={() => { onSelect('on'); close() }} />
+          <MenuRow label="Off" hint="Standard prose here, even if the agent asks for plainer"
+            selected={choice === 'off'} onClick={() => { onSelect('off'); close() }} />
+          <div data-type="caption" className="border-t border-outline-variant/30 px-m py-2 text-on-surface-low">
+            Changes style only — never a fact, a caveat or a refusal. A choice here applies to this conversation and does not edit the agent.
+          </div>
+        </div>
+      )}
+    </Popover>
+  )
+}
+
+/** Resolve the effort options for the bound agent: an ACP discovered agent's
+ *  backend-declared supported_efforts, else the native effort ladder. Empty when
+ *  the ACP agent declares none (→ pill hidden). */
+export function effortsForAgent(data: ComposerData | undefined, agent: string): { value: string; label: string }[] {
+  const disc = agent ? Object.values(data?.discovered ?? {}).flat().find((d) => d.name === agent) : undefined
+  if (disc) return disc.supported_efforts ?? []
+  return NATIVE_EFFORTS
+}
+
+/** The "+" toolbar menu — the single entry point for composer add-ons, like the
+ *  "+" in Claude.ai / ChatGPT. Always offers Attach; offers Saved prompts when the
+ *  host wires `onOpenPrompts`; and renders any host `extra` items (e.g. Auto-nudge)
+ *  at the bottom. Replaces the old attach-only button + the floating "Prompts" and
+ *  auto-nudge chips that overlapped the composer's edge. Collapses to a plain
+ *  attach button when nothing but attach is available (keeps the goal composer lean). */
+export function PlusMenu({ onAttach, onOpenPrompts, extra }: {
+  onAttach: () => void
+  onOpenPrompts?: () => void
+  extra?: (close: () => void) => ReactNode
+}) {
+  const hasMenu = !!onOpenPrompts || !!extra
+  if (!hasMenu) {
+    return (
+      <button type="button" onClick={onAttach} aria-label="Attach files" title="Attach files"
+        className="inline-flex items-center justify-center size-10 rounded-pill text-on-surface-var hover:bg-surface-high transition-colors">
+        <Plus size={20} strokeWidth={2} />
+      </button>
+    )
+  }
+  return (
+    <Popover portal width={240} trigger={(open, toggle) => (
+      <button type="button" onClick={toggle} aria-label="Add to message" title="Add"
+        aria-expanded={open}
+        className={cx('inline-flex items-center justify-center size-10 rounded-pill transition-colors',
+          open ? 'bg-surface-high text-on-surface' : 'text-on-surface-var hover:bg-surface-high')}>
+        <Plus size={20} strokeWidth={2} className={cx('transition-transform', open && 'rotate-45')} />
+      </button>
+    )}>
+      {(close) => (
+        <div className="flex flex-col">
+          <MenuRow icon={<Paperclip size={16} />} label="Attach files" onClick={() => { close(); onAttach() }} />
+          {onOpenPrompts && <MenuRow icon={<BookText size={16} />} label="Saved prompts" hint="Insert a saved prompt" onClick={() => { close(); onOpenPrompts() }} />}
+          {extra?.(close)}
+        </div>
+      )}
+    </Popover>
+  )
+}
+

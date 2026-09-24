@@ -1,0 +1,414 @@
+"""The experiment-matrix RUNNER (EVALUATION-SUBSTRATE §1.2/§1.3).
+
+``run_matrix`` expands a :class:`~personalclaw.evals.matrix.MatrixSpec` into the
+cartesian product of its axes × ``trial_count``, and executes each cell
+**sequentially** in a **spawned child process** (:mod:`personalclaw.evals.child`)
+whose ``PERSONALCLAW_WORKSPACE`` points at a fresh per-cell temp workspace. The
+parent gateway's ``os.environ`` is NEVER mutated — that is the §1.3 isolation fix,
+achieved by constructing the child env at spawn (precedent:
+``schedule_script.run_script_sandboxed``).
+
+That construction is a BUILD, not a copy: :func:`personalclaw.sandbox.build_child_env`
+composes the child env from the measured name ALLOWLIST, so nothing a cell may reach is
+there merely because the launching shell happened to export it. What a cell needs beyond
+that floor it gets by NAME — see :data:`_FORWARDED_ENV_NAMES` and
+:mod:`personalclaw.evals.cell_provider`.
+
+Three-state outcome mapping (§1.2), the load-bearing contract:
+
+* the child ran and reported ``passed`` ⇒ ``PASSED`` / ``FAILED`` with its score;
+* the SpendMeter preflight says ``EXCEEDED`` ⇒ ``VERIFIER_ABSENT`` (couldn't run
+  within budget), and NO child is spawned;
+* the child timed out / exited non-zero / emitted unparseable output ⇒
+  ``VERIFIER_ABSENT`` — an infra failure is never averaged in as a ``0`` score.
+
+The runner never raises out: a cell's infra failure becomes a ``VERIFIER_ABSENT``
+cell, not an exception that aborts the whole matrix. Every cell's raw artifact is
+retained under ``matrices/<id>/`` so a surprising aggregate is always drillable.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+from personalclaw.evals import cell_provider
+from personalclaw.evals import gate as gate_lib
+from personalclaw.evals import overlay as overlay_lib
+from personalclaw.evals import pinning
+from personalclaw.evals import scenarios as scenario_lib
+from personalclaw.evals import store
+from personalclaw.evals.child import CELL_RESULT_SENTINEL
+from personalclaw.evals.matrix import (
+    FAILED,
+    PASSED,
+    TRIAL_KEY,
+    VERIFIER_ABSENT,
+    CellResult,
+    MatrixResult,
+    MatrixSpec,
+    aggregate,
+    expand_cells,
+)
+from personalclaw.llm import registry as registry_lib
+from personalclaw.sel import sel
+
+logger = logging.getLogger(__name__)
+
+#: Parent-environment variables a cell inherits BY NAME, on top of
+#: :data:`personalclaw.sandbox.CHILD_ENV_BASE_NAMES`.
+#:
+#: The base allowlist is written for agent-influenced children and knows nothing about
+#: evals, so the one variable an UNBOUND cell genuinely needs is granted here explicitly:
+#: without it the offline ``scripted`` fixture stops registering and the default cell loses
+#: the only provider it ever had. It names a replay-script PATH, not a secret — every
+#: credential-shaped variable stays withheld, bound cell or not.
+_FORWARDED_ENV_NAMES: tuple[str, ...] = (registry_lib.SCRIPTED_PROVIDER_ENV,)
+
+# Default per-cell wall-clock ceiling. A single-user machine runs cells one at a
+# time, so this bounds one scenario, not a fleet.
+DEFAULT_CELL_TIMEOUT_SECS = 600.0
+
+
+def _budget_blocks_cell(spec: MatrixSpec) -> bool:
+    """SpendMeter preflight: does the spec's ``budget_usd`` cap forbid this cell?
+
+    Returns ``True`` only when a meter is present AND the day total is already at/over
+    the dollar cap (``BudgetVerdict.EXCEEDED``). No meter / no budget ⇒ unlimited is
+    the safe default and the cell proceeds. Best-effort: any meter error fails OPEN
+    (proceed), because the meter is a guardrail, not a hard gate here."""
+    if not spec.budget_usd or spec.budget_usd <= 0.0:
+        return False
+    try:
+        from personalclaw.guardrails.budgets import Budget, BudgetVerdict, get_meter
+
+        meter = get_meter()
+        budget = Budget(max_dollars=float(spec.budget_usd))
+        verdict, _reason = meter.check_day(budget)
+        return verdict == BudgetVerdict.EXCEEDED
+    except Exception:
+        logger.debug("budget preflight failed open", exc_info=True)
+        return False
+
+
+def _parse_child_stdout(stdout: str) -> dict | None:
+    """Extract the sentinel-prefixed JSON result line from child stdout (scanned
+    in reverse, the ``schedule_script`` pattern). ``None`` on absent/garbage."""
+    for line in reversed((stdout or "").splitlines()):
+        if line.startswith(CELL_RESULT_SENTINEL):
+            try:
+                data = json.loads(line[len(CELL_RESULT_SENTINEL) :])
+                return data if isinstance(data, dict) else None
+            except json.JSONDecodeError:
+                return None
+    return None
+
+
+def _cell_overlay(spec: MatrixSpec, coords: dict) -> "overlay_lib.ComponentOverlay | None":
+    """The component overlay for one cell, or ``None`` for a plain matrix.
+
+    The spec names the component; the cell's ``arm_mask`` coordinate names the arm. A spec
+    with a component but a cell with no arm coordinate falls back to the ``on`` baseline —
+    which changes nothing — rather than guessing that an unlabelled cell meant ``off``.
+    """
+    if not spec.component:
+        return None
+    try:
+        base = overlay_lib.ComponentOverlay.from_dict(spec.component)
+    except ValueError:
+        logger.warning("invalid component on matrix spec; running cells unmodified")
+        return None
+    arm = str((coords or {}).get(overlay_lib.ARM_AXIS) or overlay_lib.ARM_ON)
+    if arm not in overlay_lib.ARMS:
+        logger.warning("unknown arm %r on cell; running the ON baseline", arm)
+        return base.for_arm(overlay_lib.ARM_ON)
+    return base.for_arm(arm)
+
+
+def _cell_base_env(workspace: Path, cell_home: Path) -> dict[str, str]:
+    """The environment ONE cell's child starts from — built, never inherited.
+
+    ``build_child_env`` is the repo's one answer to "what may a spawned child see": a name
+    allowlist rather than a copy, measured at 121 inherited variables on a real gateway
+    process, with a credential floor no declaration can lower. A matrix cell is a spawn site
+    like any other, and it is the one whose inheritance was load-bearing in the wrong
+    direction — ``config/loader.py`` deliberately seeds stored credentials into
+    ``os.environ`` so trusted children get them for free, which is exactly the free gift a
+    measurement must not accept.
+
+    On top of the allowlist: the two per-cell overrides (computed here, not inherited) and
+    :data:`_FORWARDED_ENV_NAMES` by name. Nothing else crosses.
+    """
+    from personalclaw.sandbox import build_child_env
+
+    extra = {"PERSONALCLAW_WORKSPACE": str(workspace), "PERSONALCLAW_HOME": str(cell_home)}
+    for name in _FORWARDED_ENV_NAMES:
+        value = os.environ.get(name, "")
+        if value:
+            extra[name] = value
+    return build_child_env(site="evals-cell", extra=extra)
+
+
+def _spawn_cell(
+    spec: MatrixSpec,
+    coords: dict,
+    *,
+    matrix_id: str,
+    cell_index: int,
+    timeout_secs: float,
+    pin: pinning.RunPin,
+    artifact_arm: "gate_lib.ArtifactArm | None" = None,
+    provider_binding: "cell_provider.CellProviderBinding | None" = None,
+) -> CellResult:
+    """Run ONE cell in a child process and map its outcome to a ``CellResult``.
+
+    Env construction is the load-bearing §1.3 isolation code, and it is a BUILD rather than
+    a copy: ``build_child_env`` composes the child environment from the measured name
+    allowlist, then ``PERSONALCLAW_WORKSPACE``/``PERSONALCLAW_HOME`` are set on that fresh
+    dict, so both overrides exist in the child and nowhere else and the parent's own env is
+    never touched. ``PERSONALCLAW_HOME`` points at an empty per-cell dir the child seeds
+    from the scenario's named ``fixture_home`` (ES-2): the run executes over a known clean
+    state, and everything the child writes lands in the throwaway home rather than the
+    user's.
+
+    An ``os.environ.copy()`` here would hand a cell every credential the launching shell
+    exported — a provider key a study never declared is a provider a study never declared,
+    and a benchmark that reached one by accident could not say which model produced its
+    numbers. So the ONLY model grant a cell gets is ``provider_binding``: one use case, one
+    model ref, expressed by the caller. With none declared the cell keeps exactly the
+    offline ``scripted`` default it has always had.
+
+    The cell's own pin (the matrix pin with the model-axis override applied) is
+    persisted beside the cell artifact, so a surprising cell is attributable without
+    re-deriving which model produced it."""
+    cell_dir = store.matrix_dir(matrix_id) / f"cell-{cell_index:04d}"
+    cell_dir.mkdir(parents=True, exist_ok=True)
+    cell_pin = pin.with_model_override(coords.get("model") if isinstance(coords, dict) else None)
+    pinning.write_pin(cell_dir, cell_pin)
+    descriptor_path = cell_dir / "descriptor.json"
+    descriptor = {
+        "matrix_id": matrix_id,
+        "coords": coords,
+        "subject": spec.subject,
+        "scorer": spec.scorer,
+        # Resolved in the PARENT (which can see the real home's scenario library);
+        # the child runs with a throwaway home and could not resolve a bare name.
+        "scenario_path": str(scenario_lib.resolve_scenario_path(spec.subject)),
+        "fixture_home": cell_pin.fixture_home,
+        "pin": cell_pin.to_dict(),
+    }
+    # ES-7 §3.1: the component overlay for THIS cell's arm. Recorded in the descriptor for
+    # attribution and handed to the child through its spawn env below — never applied here.
+    cell_overlay = _cell_overlay(spec, coords)
+    if cell_overlay is not None:
+        descriptor["overlay"] = cell_overlay.to_dict()
+    # ES-6: which gate ARM this cell is (the candidate artifact rides the spawn env, not the
+    # descriptor — the content can be large and the descriptor is a retained artifact). The
+    # LABEL is recorded so a surprising cell says which side of the before/after it was.
+    if artifact_arm is not None:
+        descriptor["arm"] = artifact_arm.label
+    # The declared provider binding, recorded (secret-free — it carries only the NAME of the
+    # variable it forwards) so a retained cell artifact says on its face whether this cell ran
+    # a real model or the offline replay. A reader must never have to infer which.
+    if provider_binding is not None:
+        descriptor["provider_binding"] = provider_binding.to_dict()
+    descriptor_path.write_text(json.dumps(descriptor, indent=2, sort_keys=True), encoding="utf-8")
+    artifact_ref = str(cell_dir)
+
+    with tempfile.TemporaryDirectory(prefix="pclaw_matrix_cell_") as cell_tmp:
+        ws = Path(cell_tmp) / "workspace"
+        ws.mkdir(parents=True, exist_ok=True)
+        # The child seeds this path itself; ``seed()`` refuses a non-empty target
+        # without ``replace=True``, so we deliberately do NOT create it here.
+        cell_home = Path(cell_tmp) / "home"
+        # ── §1.3 isolation: a BUILT child env, parent env never touched ──
+        env = _cell_base_env(ws, cell_home)
+        # The component toggle rides the child's env, on the same fresh dict. This is the
+        # whole of "child-process overlay toggling": nothing in the parent applies the
+        # overlay, so no code path here can reach the live spec/config.
+        env = overlay_lib.spawn_env_for(env, cell_overlay)
+        # The ES-6 gate arm rides the SAME dict. Nothing in the parent stages the candidate, so
+        # no code path here can reach the live home — the child's `throwaway_home()` refusal is
+        # what actually enforces that.
+        env = gate_lib.spawn_env_for(env, artifact_arm)
+        # The declared model grant rides it too — and it is the only way one can. An unbound
+        # cell's env carries no provider binding and no secret, so it resolves the offline
+        # `scripted` fixture and nothing else.
+        env = cell_provider.spawn_env_for(env, provider_binding)
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "personalclaw.evals.child", str(descriptor_path)],
+                env=env,
+                timeout=timeout_secs,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.TimeoutExpired:
+            _write_cell_artifact(cell_dir, {"outcome": VERIFIER_ABSENT, "reason": "timeout"})
+            return CellResult(coords=coords, outcome=VERIFIER_ABSENT, artifact_ref=artifact_ref)
+        except Exception as exc:  # noqa: BLE001 - a spawn fault is one absent cell
+            logger.warning("cell spawn failed (mapped to verifier_absent)", exc_info=True)
+            _write_cell_artifact(
+                cell_dir, {"outcome": VERIFIER_ABSENT, "reason": f"spawn_error: {exc}"}
+            )
+            return CellResult(coords=coords, outcome=VERIFIER_ABSENT, artifact_ref=artifact_ref)
+
+        parsed = _parse_child_stdout(proc.stdout)
+        _write_cell_artifact(
+            cell_dir,
+            {
+                "returncode": proc.returncode,
+                "parsed": parsed,
+                "stdout_tail": (proc.stdout or "")[-2000:],
+                "stderr_tail": (proc.stderr or "")[-2000:],
+            },
+        )
+
+        # Non-zero exit, unparseable output, or an explicit infra error → absent.
+        if proc.returncode != 0 or parsed is None or not parsed.get("ok"):
+            return CellResult(coords=coords, outcome=VERIFIER_ABSENT, artifact_ref=artifact_ref)
+
+        outcome = PASSED if parsed.get("passed") else FAILED
+        raw_score = parsed.get("score")
+        score = None if raw_score is None else float(raw_score)
+        return CellResult(coords=coords, outcome=outcome, score=score, artifact_ref=artifact_ref)
+
+
+def _write_cell_artifact(cell_dir: Path, payload: dict) -> None:
+    """Retain a cell's raw run artifact (best-effort — never breaks the run)."""
+    try:
+        (cell_dir / "result.json").write_text(
+            json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+        )
+    except OSError:
+        logger.debug("cell artifact write failed for %s", cell_dir, exc_info=True)
+
+
+def run_matrix(
+    spec: MatrixSpec,
+    *,
+    matrix_id: str,
+    timeout_secs: float = DEFAULT_CELL_TIMEOUT_SECS,
+    artifact_arm: "gate_lib.ArtifactArm | None" = None,
+    provider_binding: "cell_provider.CellProviderBinding | None" = None,
+) -> MatrixResult:
+    """Execute ``spec`` cell-by-cell in child processes; persist + return the result.
+
+    Sequential by design (single-user machine; also sidesteps any residual
+    env-mutation concern). Writes ``experiment.json`` up front, then for each cell:
+    a SpendMeter preflight (``EXCEEDED`` → ``VERIFIER_ABSENT``, no spawn), else a
+    child spawn with the per-cell workspace in the child's env only. Persists
+    ``aggregates.json`` + ``trials.json``, appends a ``results.tsv`` row, and
+    SEL-logs matrix-run start + completion (best-effort).
+
+    ``artifact_arm`` (ES-6) is the Loop-2 gate's before/after arm: a set of home-relative files
+    the CHILD stages into its throwaway home. It is threaded here rather than given its own
+    runner because a second spawn path would be a second isolation contract to keep true.
+
+    ``provider_binding`` is the model grant the CALLER declares for this run: one use case
+    bound to one ``Provider:model`` ref, applied by the child inside its throwaway home. It
+    is an explicit parameter rather than a field on the spec because it is a property of
+    THIS invocation's environment, not of the experiment being described — an
+    ``experiment.json`` that hardcoded an endpoint would stop being reproducible elsewhere.
+    Omit it and every cell resolves the offline ``scripted`` fixture, exactly as before.
+
+    ES-2: the pin is computed FIRST, before any cell runs, and persisted as
+    ``matrices/<id>/pin.json``. A scenario that cannot be resolved — or that names a
+    fixture home that does not ship — raises
+    :class:`~personalclaw.evals.scenarios.ScenarioLibraryError` out of here, on
+    purpose: the "never raises out" contract covers a CELL's infra failure (mapped to
+    ``VERIFIER_ABSENT``), not a whole run that could only produce unattributable
+    scores.
+
+    #2561: ``compute_pin`` reads the INVOKING HOME's ``active_models.json`` and never saw
+    ``provider_binding``, so a bound run and a run where every cell failed with
+    ``ProviderResolutionError`` carried the identical ``model_fp``. What the CELLS could reach is
+    recorded here as its own fact — ``{}`` when no binding is declared, which is a MEASUREMENT
+    (these cells could reach no model, so they resolved the offline ``scripted`` replay) and never
+    an absence."""
+    pin = pinning.compute_pin(spec.subject).with_cell_models(
+        {provider_binding.use_case: provider_binding.model_ref()}
+        if provider_binding is not None
+        else {}
+    )
+    if not pin.is_complete():
+        # Fail fast, BEFORE any cell burns a model call: an incomplete pin means the
+        # row could not be written at the end anyway, and a run whose result cannot
+        # enter the ledger is wasted spend, not evidence.
+        raise store.PinRequiredError(
+            f"refusing to run matrix {matrix_id}: incomplete RunPin "
+            f"(missing: {', '.join(pin.missing_parts())})"
+        )
+    store.write_matrix_experiment(matrix_id, spec.to_dict())
+    pinning.write_pin(store.matrix_dir(matrix_id), pin)
+    _sel_log(matrix_id, spec, outcome="started")
+
+    cells: list[CellResult] = []
+    combos = expand_cells(spec)
+    for cell_index, combo in enumerate(combos):
+        coords = {k: v for k, v in combo.items() if k != TRIAL_KEY}
+        if _budget_blocks_cell(spec):
+            cells.append(CellResult(coords=coords, outcome=VERIFIER_ABSENT))
+            continue
+        cells.append(
+            _spawn_cell(
+                spec,
+                coords,
+                matrix_id=matrix_id,
+                cell_index=cell_index,
+                timeout_secs=timeout_secs,
+                pin=pin,
+                artifact_arm=artifact_arm,
+                provider_binding=provider_binding,
+            )
+        )
+
+    aggregates = aggregate(cells)
+    store.write_matrix_aggregates(matrix_id, aggregates)
+    store.write_matrix_trials(matrix_id, cells)
+    store.append_result(
+        {
+            "study_id": matrix_id,
+            "kind": "matrix",
+            "verdict": _matrix_verdict(aggregates),
+            "score_new": aggregates.get("mean_score"),
+            "k": spec.trial_count,
+            "ts": datetime.now(tz=timezone.utc).isoformat(),
+        },
+        pin=pin,
+    )
+    result = MatrixResult(spec=spec, cells=cells, aggregates=aggregates)
+    _sel_log(matrix_id, spec, outcome="completed")
+    return result
+
+
+def _matrix_verdict(aggregates: dict) -> str:
+    """One-word ledger verdict from the three-state counts: ``pass`` if any scored
+    cell passed and none failed, ``fail`` if any failed, ``verifier_absent`` if no
+    cell scored at all."""
+    counts = aggregates.get("counts") or {}
+    if counts.get(FAILED):
+        return "fail"
+    if counts.get(PASSED):
+        return "pass"
+    return VERIFIER_ABSENT
+
+
+def _sel_log(matrix_id: str, spec: MatrixSpec, *, outcome: str) -> None:
+    """SEL-log a matrix-run lifecycle event (§10). Best-effort — never breaks a run."""
+    try:
+        sel().log_api_access(
+            caller=f"matrix:{matrix_id}",
+            operation="evals_matrix",
+            outcome=outcome,
+            source="evals",
+            resources=f"subject={spec.subject} scorer={spec.scorer}",
+        )
+    except Exception:
+        logger.debug("SEL matrix log failed", exc_info=True)

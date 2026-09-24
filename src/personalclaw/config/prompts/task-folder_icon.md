@@ -1,0 +1,1 @@
+Reply with exactly ONE emoji that best represents a project folder named "{{folder_name}}". No text, no explanation, just the single emoji character.

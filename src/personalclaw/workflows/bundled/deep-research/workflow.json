@@ -1,0 +1,263 @@
+{
+  "name": "deep-research",
+  "description": "Research a question in judged rounds: sweep search angles, read the sources, fold cited evidence into RESEARCH.md, and stop when a round adds nothing new.",
+  "source": "bundled",
+  "provenance": "user",
+  "version": 1,
+  "tags": [
+    "research",
+    "general",
+    "loop"
+  ],
+  "inputs": {
+    "question": {
+      "type": "string",
+      "required": true,
+      "loop_field": "task",
+      "help": "The question to answer. A specific question produces a usable answer; 'tell me about X' produces a summary."
+    },
+    "exit_condition": {
+      "type": "string",
+      "default": "Every claim in RESEARCH.md cites a source that was actually fetched, the disagreements between sources are named, and a further round would add nothing",
+      "loop_field": "success_criteria",
+      "help": "What 'done' means. The judge holds each round to this, so vagueness here becomes vagueness there."
+    },
+    "output_manner": {
+      "type": "string",
+      "default": "",
+      "help": "Tone, format, depth and audience the report must follow (e.g. 'a one-page brief for a non-specialist'). Left blank, the report is shaped to the question."
+    },
+    "source_budget": {
+      "type": "number",
+      "default": 0,
+      "help": "Roughly how many sources to consult before converging. 0 means no cap — the rounds stop when returns dry up instead."
+    }
+  },
+  "runtime_hints": {
+    "judge": {
+      "rubric": [
+        {
+          "criterion": "new sources were fetched and read this round",
+          "target_score": 2
+        },
+        {
+          "criterion": "every claim added cites the source it came from",
+          "target_score": 2
+        }
+      ],
+      "ratchet": "strict",
+      "stop_condition": {
+        "consecutive_clean": 2
+      },
+      "marginal_threshold": 2.0,
+      "freedom_level": "medium",
+      "judge_isolation": "fresh",
+      "fallback_check": "artifact_exists",
+      "forbidden_success_modes": [
+        "conclusions asserted from memory instead of from a fetched source",
+        "sources already read counted again as new findings"
+      ]
+    },
+    "execution": {
+      "depth": "balanced",
+      "escalation": {
+        "attempt_cap": 3,
+        "ladder": [
+          "classified_retry",
+          "fresh_session",
+          "surface"
+        ]
+      },
+      "breaker": {
+        "fingerprint_window": 3,
+        "no_progress_stop": 5
+      }
+    }
+  },
+  "metadata": {
+    "risk": "medium",
+    "capabilities": [
+      "read",
+      "write",
+      "research",
+      "web"
+    ],
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Why did our p99 latency double after the 3.2 release? Check the changelog, the dependency diff, and anything in the issue tracker from that week."
+      },
+      {
+        "event": "mutation",
+        "description": "Skip the by-time angle — this isn't a regression, it's a design question. Add a by-entity sweep over the two competing libraries instead."
+      }
+    ],
+    "keywords": [
+      "research",
+      "find out",
+      "investigate",
+      "look into",
+      "what are the options"
+    ],
+    "example_outputs": [
+      "a RESEARCH.md report with cited sources and a recommendation"
+    ],
+    "shapes": [
+      "compare"
+    ],
+    "when_not_to_use": "not for questions the store already answers — use knowledge-synthesis"
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "deep_research",
+    "children": [
+      {
+        "kind": "infer",
+        "id": "triage",
+        "config": {
+          "model_tier": "fast",
+          "prompt": "Classify what this question needs.\n\ntier=lookup: one fact, one source. A wide sweep would be waste.\ntier=survey: needs several sources reconciled.\ntier=investigation: contested, or the answer depends on evidence that has to be assembled.\n\nReturn JSON: {\"tier\": \"lookup|survey|investigation\", \"why\": \"one line\"}.\n\nQuestion:\n{{inputs.question}}",
+          "schema": {
+            "tier": "string",
+            "why": "string"
+          }
+        }
+      },
+      {
+        "kind": "branch",
+        "id": "entry",
+        "config": {
+          "on": "{{nodes.triage.output.tier}}",
+          "enum": [
+            "lookup",
+            "survey",
+            "investigation"
+          ]
+        },
+        "cases": {
+          "lookup": {
+            "kind": "transform",
+            "id": "shape_lookup",
+            "config": {
+              "expr": {
+                "tier": "lookup",
+                "angles": [
+                  "by-content"
+                ],
+                "breadth": 1,
+                "depth": 2,
+                "target_rounds": 1
+              }
+            }
+          },
+          "survey": {
+            "kind": "transform",
+            "id": "shape_survey",
+            "config": {
+              "expr": {
+                "tier": "survey",
+                "angles": [
+                  "by-content",
+                  "by-entity"
+                ],
+                "breadth": 3,
+                "depth": 2,
+                "target_rounds": 2
+              }
+            }
+          },
+          "investigation": {
+            "kind": "transform",
+            "id": "shape_investigation",
+            "config": {
+              "expr": {
+                "tier": "investigation",
+                "angles": [
+                  "by-content",
+                  "by-entity",
+                  "by-time"
+                ],
+                "breadth": 4,
+                "depth": 3,
+                "target_rounds": 6
+              }
+            }
+          }
+        }
+      },
+      {
+        "kind": "loop",
+        "id": "investigate",
+        "config": {
+          "mode": "until_dry",
+          "streak": 2,
+          "progress_field": "new_findings_count",
+          "max_iterations": 8,
+          "timeout_stall_secs": 1800,
+          "supervisor": {
+            "convergence": {
+              "signal": "judge_assessment",
+              "command_key": "verify_command",
+              "ground_truth_deliverable": "RESEARCH.md"
+            }
+          }
+        },
+        "body": {
+          "kind": "sequence",
+          "id": "round",
+          "children": [
+            {
+              "kind": "stage",
+              "id": "sweep",
+              "config": {
+                "prompt": "Advance one round of deep research on this question, then stop and report.\n\nQuestion:\n{{inputs.question}}\n\nDone when:\n{{inputs.exit_condition}}\n\nHow deep to sweep this round, decided by triage:\n{{nodes.entry.output}}\nRun the listed angles, advance that many open subtopics (breadth), and fetch and read that many sources per subtopic (depth). Source budget for the whole run: {{inputs.source_budget}} (0 means no cap). Report manner the finished report must follow: {{inputs.output_manner}} (blank means shape it to the question).\n\nRESEARCH.md IS THE STATE OF THIS RUN, and it is how each round starts where the last one stopped. Read `RESEARCH.md` first if it exists. It carries three sections you maintain: `## Open subtopics` (the living research plan), `## Sources read` (every URL you have already fetched), and the report body itself. On the first round, create it and seed `## Open subtopics` from the question.\n\nThis round:\n1. Read `RESEARCH.md`. Do not re-fetch anything already under `## Sources read` — that is how a round spends money to learn nothing.\n2. `web_search` for the open subtopics along this round's angles, then `web_fetch` the highest-signal result URLs and read their ACTUAL content, not the snippets. Only fetch URLs a search surfaced.\n3. Fold what they say into the report body, with the source cited inline for every claim. Where two sources disagree, record both — an averaged hedge is worse than either source alone.\n4. Save each high-value source to the knowledge base with `knowledge_create` (type `bookmark`, the URL, a one-line summary) so the evidence outlives the run. Skip near-duplicates.\n5. Revise `## Open subtopics`: add the gaps this round exposed, delete the ones it closed, drop dead ends. Append every URL you fetched to `## Sources read`.\n6. Write `RESEARCH.md` back.\n\nSet new_findings_count to the number of sources you read this round that MATERIALLY changed the report — not the number you opened. It is the field the engine reads to decide whether another round is worth paying for, so a round that found nothing must report 0. Inflating it keeps the run going on the user's money; an honest 0 twice in a row is how the research finishes.\n\nReturn JSON: {\"summary\": string, \"new_findings_count\": integer, \"sources_read\": array, \"open_subtopics\": array}",
+                "schema": {
+                  "summary": "string",
+                  "new_findings_count": "integer",
+                  "sources_read": "array",
+                  "open_subtopics": "array"
+                },
+                "model_tier": "standard",
+                "tools_posture": "full"
+              }
+            },
+            {
+              "kind": "stage",
+              "id": "judge",
+              "config": {
+                "prompt": "You are verifying research you did not do. Assume the round read nothing until RESEARCH.md and the cited URLs prove otherwise.\n\nDo not talk yourself into approving. Your job is not to be agreeable to the researcher — it is to be right on behalf of the user, who is not reading these sources and cannot check them.\n\nQuestion the round was meant to advance:\n{{inputs.question}}\n\nDone when:\n{{inputs.exit_condition}}\n\nRubric — score each 0, 1 or 2, citing evidence for each:\n  - new sources were fetched and read this round (target 2)\n  - every claim added cites the source it came from (target 2)\n\nThese passes are forbidden. Actively check they did NOT happen:\n  - conclusions asserted from memory instead of from a fetched source\n  - sources already read counted again as new findings\n\nRead `RESEARCH.md` yourself and `web_fetch` a sample of the URLs it cites. A citation that does not say what the report claims it says is a failed claim, not a formatting nit. Compare `## Sources read` against the previous round's entries: a URL that was already there is not a new source, however it is presented.\n\nIf you genuinely cannot tell — RESEARCH.md missing, a cited URL unreachable — say so in cannot_judge rather than guessing. A refusal is useful; a coin-flip dressed as a verdict is not.\n\nExpect two or three rounds of real revision. Reporting real issues is the normal outcome, and zero issues on a first round is itself worth a second look.\n\nReturn JSON: {\"reasoning\": string, \"verdict\": \"PASS\"|\"REJECT\"|\"RETRY\"|\"REPLAN\"|\"ESCALATE\"|\"NEEDS_INPUT\", \"scores\": {\"new sources were fetched and read this round\": integer, \"every claim added cites the source it came from\": integer}, \"evidence_refs\": [string], \"proof\": string, \"shortfalls\": [string], \"cannot_judge\": string}",
+                "schema": {
+                  "reasoning": "string",
+                  "verdict": "string",
+                  "scores": "object",
+                  "evidence_refs": "array",
+                  "proof": "string",
+                  "shortfalls": "array",
+                  "cannot_judge": "string"
+                },
+                "model_tier": "standard",
+                "tools_posture": "verify",
+                "isolation": "fresh",
+                "judge_contract": true
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "stage",
+        "id": "synthesize",
+        "config": {
+          "prompt": "Finish the report. Read `RESEARCH.md`, then rewrite it as the deliverable a reader actually opens.\n\nLead with the answer, then the evidence for it. Where sources disagree, say so and say which you find more credible and why. Name what remains unknown rather than smoothing it over. Keep every inline citation — an unsourced sentence in a research report is an opinion wearing a report's clothes. Delete the `## Open subtopics` working section; keep `## Sources read`.\n\nQuestion:\n{{inputs.question}}\n\nDone when:\n{{inputs.exit_condition}}\n\nReport manner the finished report must follow: {{inputs.output_manner}} (blank means shape it to the question).\n\nThe last round's verdict on the research: {{nodes.judge.output.verdict}}\nWhat it scored below target: {{nodes.judge.output.shortfalls}}\nFix those in the final pass rather than restating them.\n\nWrite the finished report to `RESEARCH.md` and return the headline answer.\n\nReturn JSON: {\"answer\": string, \"confidence\": \"high|medium|low\", \"unknowns\": array}",
+          "schema": {
+            "answer": "string",
+            "confidence": "string",
+            "unknowns": "array"
+          },
+          "model_tier": "reasoning",
+          "tools_posture": "full"
+        }
+      }
+    ]
+  }
+}

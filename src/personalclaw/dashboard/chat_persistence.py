@@ -1,0 +1,971 @@
+"""Session persistence — save, restore, history prefix."""
+
+import json
+import logging
+import re
+import time
+import uuid
+
+from personalclaw.agent import AGENTS_DIR
+from personalclaw.atomic_write import atomic_write
+from personalclaw.config.loader import AppConfig
+from personalclaw.dashboard.chat_utils import (
+    _normalize_model,
+    _sync_dashboard_sessions,
+    apply_task_mode,
+    candidate_history_keys,
+    persisted_history_key,
+    resolve_history_key,
+)
+from personalclaw.dashboard.state import DashboardState, _ChatSession
+from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.task_modes import VALID_TASK_MODES
+
+
+def _load_providers_raw() -> list[dict]:
+    """Load the raw providers array from config.json."""
+    try:
+        from personalclaw.config.loader import config_path
+
+        path = config_path()
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data.get("providers", [])
+    except Exception:
+        pass
+    return []
+
+
+def _build_agent_model_map() -> dict[str, str]:
+    """Map each agent's name and file-stem to its configured model.
+
+    Lets sessions without a persisted ``model`` resolve the model their agent
+    would use. Keyed by both ``name`` and filename stem so either form found in
+    session metadata resolves.
+    """
+    model_map: dict[str, str] = {}
+    try:
+        for f in AGENTS_DIR.glob("*.json"):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                model = data.get("model", "")
+                if data.get("name"):
+                    model_map[data["name"]] = model
+                model_map[f.stem] = model
+            except (json.JSONDecodeError, OSError):
+                continue
+    except Exception:
+        logger.debug("Failed to build agent model map", exc_info=True)
+    return model_map
+
+
+def _active_provider_model() -> str:
+    """Return the model configured on the active provider, or '' if unavailable."""
+    providers = _load_providers_raw()
+    if providers:
+        return providers[0].get("model", "")
+    return ""
+
+
+def _model_matches_provider(model: str) -> bool:
+    """Check if a persisted session model is compatible with the active provider.
+
+    On restore, a session may carry a model pinned by a provider the user has since
+    swapped out (e.g. a ``claude-*`` model when the active provider now speaks a
+    different family) — that model would fail at call time, so the caller replaces
+    it with the active provider's model instead.
+
+    The check is provider-agnostic: it asks whether the active provider TYPE serves
+    the model's family, using the shared, data-driven family→type map in
+    :func:`personalclaw.llm.catalog.model_family_provider_types` (no vendor name is
+    hard-coded here). When the family is unknown, or the active provider's type isn't
+    in the map, the model is accepted (permissive — never strand a restorable model
+    on a guess)."""
+    if not model:
+        return True
+    from personalclaw.llm.catalog import model_family_provider_types
+
+    owning_types = model_family_provider_types(model)
+    if not owning_types:
+        return True  # unrecognized family → accept
+    providers = _load_providers_raw()
+    if not providers:
+        return True
+    active_type = providers[0].get("type", "")
+    # ``acp`` agent-runtimes can front any model family (they proxy a CLI), so they
+    # never disqualify a persisted model.
+    return active_type in owning_types or active_type == "acp"
+
+
+def _redact_value(v: object) -> object:
+    """Redact a single value recursively (str, dict, list, or passthrough)."""
+    if isinstance(v, str):
+        v, _ = redact_exfiltration_urls(v)
+        v, _ = redact_credentials(v)
+        return v
+    if isinstance(v, dict):
+        return _redact_meta(v)
+    if isinstance(v, list):
+        return [_redact_value(i) for i in v]
+    return v
+
+
+def _redact_meta(meta: dict) -> dict:
+    """Recursively redact string values in meta dict (credentials + URLs)."""
+    out: dict = {}
+    for k, v in meta.items():
+        out[k] = _redact_value(v)
+    return out
+
+
+logger = logging.getLogger(__name__)
+
+_MAX_HISTORY_CHARS = 8000
+
+# Reasoning-effort is no longer a fixed PClaw scale — each backend declares its
+# OWN effort options (native: low/medium/high/max; ACP: whatever configOptions.
+# effort advertises, e.g. minimal/xhigh). Persisted JSON is untrusted input and
+# the value flows into a subprocess CLI arg / set_config_option value, so instead
+# of a value allowlist we enforce a strict FORMAT: a short lowercase-alnum token
+# (no spaces/shell metachars), which admits any real backend value while blocking
+# injection. "" = default. Re-exported by chat_handlers for the API validator.
+_REASONING_EFFORT_RE = re.compile(r"^[a-z][a-z0-9_-]{0,23}$")
+
+
+def _validate_reasoning_effort(raw: object) -> str:
+    """Return *raw* if it's a safe reasoning_effort token, else "".
+
+    Enforces a format (not a fixed value set) so any backend-declared effort is
+    accepted while a tampered/corrupted metadata file cannot smuggle spaces or
+    shell metacharacters into a subprocess ``--effort`` arg / config value.
+    """
+    if raw == "" or raw is None:
+        return ""
+    if isinstance(raw, str) and _REASONING_EFFORT_RE.match(raw):
+        return raw
+    if raw:  # truthy but malformed — log so we notice corruption
+        logger.warning("Discarding invalid persisted reasoning_effort: %r", raw)
+    return ""
+
+
+#: Roles that are STREAM BOOKKEEPING, never transcript. The write loop below has always
+#: dropped them; the save guard now counts what will actually be written, so the filter
+#: has to exist exactly once or the guard would compare a padded buffer length against a
+#: filtered disk length and let a shorter transcript through.
+_NON_TRANSCRIPT_ROLES = frozenset({"chunk", "done", "streaming", "queued", "permission"})
+
+
+def _persistable(msgs: list[dict]) -> list[dict]:
+    """The subset of *msgs* that :func:`save_session_to_history` will actually write."""
+    return [m for m in msgs if m.get("role", "assistant") not in _NON_TRANSCRIPT_ROLES]
+
+
+#: Meta-line keys a session can carry without anyone having written to it — the structural
+#: ones plus everything ``POST /api/chat/sessions`` sets from the create request. Used by
+#: :func:`save_session_to_history` to tell a message-less conversation someone actually
+#: titled/pinned/coloured/filed (persist it — #2969) from a pristine empty tab (don't).
+_CREATE_TIME_META_KEYS = frozenset(
+    {
+        "_type",
+        "created_at",
+        "last_consolidated",
+        "memory_mode",
+        "model",
+        "agent",
+        "mode",
+        "reasoning_effort",
+        "workspace_dir",
+        "project_id",
+        "task_mode",
+        "tab_id",
+        "app",
+    }
+)
+
+
+def _persisted_message_count(state: DashboardState, history_key: str) -> int:
+    """How many transcript messages the PERSISTED side already holds for *history_key*.
+
+    The disk-side half of "does this buffer hold more than the file does?" — the
+    question :func:`save_session_to_history` has to answer before overwriting a
+    transcript, and which it used to answer from ``session._resumed_count``, an
+    IN-MEMORY count. Reads the single file the write is about to replace (not
+    ``read_messages_chained``, which spans rotated siblings and would over-count into a
+    permanent refusal). ``ConversationLog`` mtime-caches the parse, so on the hot path
+    this is a ``stat``.
+
+    An unreadable file answers ``0`` — fail OPEN, never refuse a live write because the
+    disk misbehaved. Same posture as :func:`session_key_exists`, for the same reason.
+    """
+    log = state.conversation_log
+    if log is None:
+        return 0
+    try:
+        return len(log.read_messages(history_key))
+    except Exception:  # noqa: BLE001 — an unreadable log must not block a live write
+        logger.warning("persisted message count failed for %s", history_key, exc_info=True)
+        return 0
+
+
+def save_all_sessions_to_history(state: DashboardState) -> None:
+    """Save all active sessions to history. Called on gateway shutdown."""
+    for session in list(state._sessions.values()):
+        try:
+            save_session_to_history(state, session, force=True)
+        except Exception:
+            logger.error("Shutdown: failed to save session %s", session.key, exc_info=True)
+
+
+def _attach_variants(session: _ChatSession, m: dict) -> None:
+    """Copy variant history from a persisted message onto the session's last message, with redaction."""  # noqa: E501
+    if m.get("variants"):
+        session.messages[-1]["variants"] = [  # type: ignore[assignment]
+            {
+                **v,
+                "content": redact_credentials(redact_exfiltration_urls(v.get("content", ""))[0])[0],
+            }
+            for v in m["variants"]
+            if isinstance(v, dict)
+        ]
+        session.messages[-1]["variant_idx"] = m.get("variant_idx", 0)
+
+
+def _redact_snapshot_message(m: dict) -> dict:
+    """Redact one message dict inside a rewind tail snapshot.
+
+    Keeps only the fields the read-only tail viewer renders (role, content, ts,
+    cls, meta) and applies the same credential/URL passes as the main transcript
+    for non-user roles.
+    """
+    role = m.get("role", "assistant")
+    content = m.get("content", "")
+    if role not in ("user", "system"):
+        content, _ = redact_exfiltration_urls(content)
+        content, _ = redact_credentials(content)
+    out: dict = {"role": role, "content": content, "ts": m.get("ts", "")}
+    if m.get("cls"):
+        out["cls"] = m["cls"]
+    if m.get("meta"):
+        out["meta"] = _redact_meta(m["meta"])
+    return out
+
+
+def _redact_rewound(raw: object) -> list[dict]:
+    """Redact a rewind-tail chain for persistence/rehydration.
+
+    Tolerant of the pre-rewind shape (non-list / missing key → empty). Each entry
+    is ``{"messages": [<redacted msg dicts>], "ts": <ISO>}``.
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for snap in raw:
+        if not isinstance(snap, dict):
+            continue
+        snap_msgs = snap.get("messages")
+        if not isinstance(snap_msgs, list):
+            continue
+        out.append(
+            {
+                "messages": [
+                    _redact_snapshot_message(sm) for sm in snap_msgs if isinstance(sm, dict)
+                ],
+                "ts": snap.get("ts", ""),
+            }
+        )
+    return out
+
+
+def _attach_rewound(session: _ChatSession, m: dict) -> None:
+    """Copy a rewind tail chain onto the session's last message, tolerantly.
+
+    Missing/old-shape key = today's behaviour (pre-rewind sessions load
+    unchanged — the plan's one clean-break field under the pre-1.0 banner).
+    """
+    out = _redact_rewound(m.get("rewound"))
+    if out:
+        session.messages[-1]["rewound"] = out
+
+
+def _restore_runtime_binding(state: DashboardState, session: _ChatSession, meta: dict) -> None:
+    """Restore a session's RUNTIME binding from its persisted metadata line.
+
+    One helper for both restore paths — the bulk startup restore
+    (``restore_recent_sessions``) and the targeted single-session rehydrate — because
+    they had silently drifted: only the targeted path read ``acp_provider``, so a
+    gateway restart, which goes through the BULK path, always brought the session back
+    on the native axis. Two independent readers of one contract is how a restore ends
+    up half-implemented; there is now one.
+
+    ``_acp_meta_binding`` records what the meta line ASKED the runtime to be, whether
+    or not the binding was honoured, so the first turn after a restore can say so
+    rather than resolving on a different axis in silence. The task mode goes through
+    ``apply_task_mode`` (never a bare attribute write) because the mode is TWO writes —
+    the session's posture and the runtime's tool gate — and restoring only the first
+    would bring back a "plan" session whose tools still run.
+    """
+    _acp_prov = meta.get("acp_provider")
+    if isinstance(_acp_prov, str) and _acp_prov:
+        session._acp_meta_binding = _acp_prov
+        if _acp_prov.startswith("acp:"):
+            session.acp_provider = _acp_prov
+            _acp_pa = meta.get("acp_provider_agent")
+            session.acp_provider_agent = _acp_pa if isinstance(_acp_pa, str) else ""
+    if meta.get("workspace_dir"):
+        session.workspace_dir = meta["workspace_dir"]
+    # The project this chat belongs to (issue 314). Restored HERE rather than in either caller,
+    # for the reason this helper exists at all: the two restore paths had already drifted once over
+    # `acp_provider`, and a gateway restart goes through the BULK path — which is precisely the
+    # path a project↔chat binding has to survive.
+    #
+    # A string check, not just truthiness: this is read back from a file a user can hand-edit, and
+    # `/api/projects/<id>/linked` compares it with `!=` against a project id. A non-string here
+    # would make every comparison false and empty the Chats list in a way that looks like the bug
+    # this fixes.
+    _pid = meta.get("project_id")
+    if isinstance(_pid, str) and _pid:
+        session.project_id = _pid
+    if meta.get("mode"):
+        session.mode = meta["mode"]
+    # Re-normalized against the closed set on read, so a hand-edited meta line can
+    # only ever yield a real mode (and never a silently un-gated one).
+    _tm = meta.get("task_mode")
+    if isinstance(_tm, str) and _tm in VALID_TASK_MODES:
+        apply_task_mode(state, session, _tm)
+
+
+def _rehydrate_session_from_history(
+    state: DashboardState, session_name: str, *, include_archived: bool = False
+) -> _ChatSession | None:
+    """Rehydrate a single dashboard session from persisted history.
+
+    Unlike ``state.get_or_create_session`` (which creates a fresh, empty session with
+    default ``memory_mode='persistent'``), this helper reads the session's
+    metadata and messages from ``conversation_log`` so the restored session has
+    the original title/agent/model/memory_mode and its message history
+    populated. Returns ``None`` if the session does not exist on disk (so
+    callers can fall through to other delivery paths without creating a
+    phantom empty tab).
+
+    Intended for targeted resume paths (e.g. cron→origin injection after
+    gateway restart). Bulk startup restore still uses ``restore_recent_sessions``.
+
+    *include_archived* loads a session whose metadata carries ``closed``. It exists for
+    exactly one caller — the ``POST /api/chat`` SEED, which has already asked
+    :func:`session_key_exists` "may I write this key?" and been told yes, because
+    "archival is not deletion" and an archived session stays WRITABLE. Writable but not
+    SEEDABLE is incoherent, and it is the incoherence that caused the data loss: the
+    seed returned ``None``, ``get_or_create_session`` minted a BLANK session for a key
+    holding a real transcript, and the save then wrote that blank buffer over it.
+    Readers keep the default (``False``) — for them ``closed`` still means "not
+    resident", which is what makes an archived chat absent from the UI.
+    """
+    if not state.conversation_log:
+        return None
+    if session_name in state._sessions:
+        return state._sessions[session_name]
+    # Resolve the canonical persisted key provider-agnostically: a channel-provider
+    # thread (Slack/Discord/…) persists under its own bare key; a dashboard session
+    # under the dashboard: namespace. Ask the log which one actually has metadata
+    # rather than assuming a key shape.
+    history_key = resolve_history_key(state.conversation_log, session_name)
+    if not history_key:
+        return None
+    meta = state.conversation_log.get_metadata(history_key)
+    # No metadata → session was never persisted. Don't create a phantom session.
+    if not meta:
+        return None
+    if meta.get("closed") and not include_archived:
+        return None
+    try:
+        _restore_cfg = AppConfig.load()
+    except Exception:
+        _restore_cfg = None
+    provider_model_map = _build_agent_model_map()
+    session = state.get_or_create_session(session_name)
+    # Pull display fields from session listing for title parity with bulk restore.
+    sessions = state.conversation_log.list_sessions()
+    session_info = next(
+        (s for s in sessions if s.get("key") == history_key),
+        {},
+    )
+    # Titles may have been auto-generated by an LLM (_generate_title_via_provider)
+    # and are surfaced on the dashboard, so apply the same redaction passes
+    # used on assistant content before setting. Defence-in-depth — the title
+    # author is trusted-ish (our own agent process), but the generation input
+    # is user content, so a prompt injection could craft a title with an
+    # exfiltration URL or leaked credential.
+    raw_title = session_info.get("title") or meta.get("title") or session_name
+    raw_title, _ = redact_exfiltration_urls(raw_title)
+    raw_title, _ = redact_credentials(raw_title)
+    session.title = raw_title
+    session._titled = bool(session_info.get("title") or meta.get("title"))
+    if meta.get("created_at"):
+        session.created_at = meta["created_at"]
+    if meta.get("agent"):
+        session.agent = meta["agent"]
+    if meta.get("model"):
+        normalized = _normalize_model(meta["model"])
+        if _model_matches_provider(normalized):
+            session.model = normalized
+        else:
+            session.model = _active_provider_model()
+    elif session.agent:
+        try:
+            pc = _restore_cfg.agents.get(session.agent) if _restore_cfg else None
+            provider_name = pc.provider_agent if pc and pc.provider_agent else session.agent
+            session.model = provider_model_map.get(provider_name, "")
+        except Exception:
+            logger.debug(
+                "Failed to resolve model for rehydrated session %s", session_name, exc_info=True
+            )
+    if meta.get("reasoning_effort"):
+        session.reasoning_effort = _validate_reasoning_effort(meta["reasoning_effort"])
+    # Runtime binding: the ephemeral discovered-ACP override (per-session, never in
+    # config), the workspace, the session mode and the task mode. Shared with the bulk
+    # startup restore so the two paths cannot drift again.
+    _restore_runtime_binding(state, session, meta)
+    if meta.get("folder_id"):
+        session.folder_id = meta["folder_id"]
+    if meta.get("pinned"):
+        session.pinned = True
+    if meta.get("color_index") is not None:
+        session.color_index = meta["color_index"]
+    raw_tags = meta.get("tags")
+    if isinstance(raw_tags, list):
+        session.tags = [str(t) for t in raw_tags if isinstance(t, str) and t]
+    # Session lifecycle (S2). Tolerant: an old session has none of these keys and
+    # reads as an active, never-yet-touched, non-exempt session.
+    _lc = meta.get("lifecycle")
+    if isinstance(_lc, str) and _lc in ("active", "archived"):
+        session.lifecycle = _lc
+    _la = meta.get("last_activity_at")
+    if isinstance(_la, (int, float)):
+        session.last_activity_at = float(_la)
+    if meta.get("never_archive"):
+        session.never_archive = True
+    mm = meta.get("memory_mode", "persistent")
+    session.memory_mode = mm
+    if mm != "persistent":
+        state._restricted_keys.add(f"dashboard:{session_name}")
+    if meta.get("forked_from") is not None:
+        session.forked_from = meta["forked_from"]
+    # Restore the persisted side-chat buffer (transcript only; settled state).
+    _side_meta = meta.get("side")
+    if isinstance(_side_meta, dict) and _side_meta.get("messages"):
+        from personalclaw.dashboard.side_state import SideState
+
+        session._side = SideState.from_dict(_side_meta)
+    messages = state.conversation_log.read_messages(history_key)
+    for m in messages[-200:]:
+        role = m.get("role", "assistant")
+        cls = m.get("cls") or ("msg msg-u" if role == "user" else "msg msg-a")
+        content = m.get("content", "")
+        if role != "user":
+            content, _ = redact_exfiltration_urls(content)
+            content, _ = redact_credentials(content)
+        session.append(
+            role,
+            content,
+            cls,
+            ts=m.get("ts", ""),
+            meta=_redact_meta(m["meta"]) if m.get("meta") else None,
+        )
+        _attach_variants(session, m)
+        _attach_rewound(session, m)
+    session.drain()
+    session._resumed_count = len(session.messages)
+    session._dirty = False
+    logger.info("Rehydrated session %s (%s) from history", session_name, session.title)
+    return session
+
+
+def resolve_session(state: DashboardState, name: str):
+    """Return the in-memory session for *name*, rehydrating from disk on miss.
+
+    Org actions (tag/folder/pin/color) target sessions chosen from the chat
+    history list, which now surfaces disk-only sessions (not in memory after a
+    restart). A bare ``state._sessions.get`` 404s on those, so editing tags on
+    an older chat silently fails. Returns None only if never persisted.
+    """
+    return state._sessions.get(name) or _rehydrate_session_from_history(state, name)
+
+
+def session_key_exists(state: DashboardState, name: str) -> bool:
+    """THE owner of "does this session key exist, and may it be written?".
+
+    ``True`` when *name* addresses a real chat session — resident in
+    ``state._sessions``, or holding a conversation log FILE on disk. ``False`` when the
+    key names nothing at all: never created, or hard-deleted by
+    ``api_chat_session_delete`` (which unlinks that file).
+
+    **Why a writer needs this and cannot just call get_or_create_session.**
+    ``state.get_or_create_session`` mints a blank session on a name MISS — which is
+    correct for the paths that own creation (``POST /api/chat/sessions``, a fork, a
+    channel thread, a loop) and wrong for every path where the name arrived from a
+    CLIENT. There, a miss means the client is addressing something that is not there,
+    and creating it turns "delete" into "close": a stale tab, a retried request or a
+    queued send re-materialises a conversation the user destroyed, minus everything
+    the original carried. Measured before this helper existed: ``POST /api/chat``
+    naming a hard-deleted key answered **200** and put the key back in
+    ``GET /api/chat/sessions`` with an empty transcript.
+
+    **The predicate is FILE PRESENCE, and deliberately neither of its two neighbours.**
+    Not :func:`resolve_session` — that answers ``None`` for an ARCHIVED (``closed``)
+    session, because a soft-closed chat is not resident; but archival is not deletion,
+    ``api_chat_session_resume`` exists to reopen one, and refusing a write there would
+    be a brand-new refusal on live user data. And not "has readable metadata" either:
+    :func:`resolve_history_key` collapses "no metadata" and "I could not READ the
+    metadata" into the same ``None``, so asking it would 404 a session whose file is
+    right there the moment a read fails — measured with a ``get_metadata`` that raises
+    ``OSError``. So the question is put to :meth:`ConversationLog.has_log`, a bare
+    ``Path.exists()`` that no unreadable byte and no corrupt first line can defeat.
+    A broken disk degrades to the old permissive behaviour; a hard-deleted key, whose
+    file is gone, is still refused.
+
+    Provider-agnostic without assuming a key SHAPE: both candidate keys are tried — the
+    bare one (a channel-provider thread persists under its own key, exactly as the
+    channel app wrote it) and the ``dashboard:`` form. The pair now comes from
+    :func:`~personalclaw.dashboard.chat_utils.candidate_history_keys`, which
+    :func:`resolve_history_key` reads too, so the two cannot disagree about which files
+    belong to a key — it used to be built inline in both places.
+    """
+    if name in state._sessions:
+        return True
+    try:
+        log = state.conversation_log
+        if log is None:
+            return True  # no log configured — absence is unprovable, so don't refuse
+        return any(log.has_log(k) for k in candidate_history_keys(name))
+    except Exception:  # noqa: BLE001 — an unreadable log must not refuse a live send
+        logger.warning("session existence check failed for %s", name, exc_info=True)
+        return True
+
+
+def restore_recent_sessions(
+    state: DashboardState, window_minutes: int = 30, *, folders_only: bool = False
+) -> int:
+    """Restore sessions as chat sessions."""
+    if not state.conversation_log:
+        return 0
+    cutoff = time.time() - (window_minutes * 60) if window_minutes > 0 else None
+    restored = 0
+
+    provider_model_map = _build_agent_model_map()
+    try:
+        _restore_cfg = AppConfig.load()
+    except Exception:
+        _restore_cfg = None
+    for s in state.conversation_log.list_sessions():
+        key = s.get("key", "")
+        if key.startswith("dashboard:"):
+            session_name = key.removeprefix("dashboard:")
+        elif key.startswith("dashboard_"):
+            session_name = key.removeprefix("dashboard_")
+        else:
+            continue
+        if session_name in state._sessions:
+            continue
+        meta = state.conversation_log.get_metadata(key)
+        has_folder = bool(meta.get("folder_id"))
+        has_pin = bool(meta.get("pinned"))
+        if folders_only and not has_folder and not has_pin:
+            continue
+        if meta.get("closed"):
+            continue
+        if not has_folder and not has_pin:
+            if cutoff is not None and s.get("modified", 0) < cutoff:
+                continue
+        session = state.get_or_create_session(session_name)
+        # Titles can be LLM-generated (auto-title) and are surfaced on the
+        # dashboard — apply the same redaction as assistant content. Matches
+        # the treatment in _rehydrate_session_from_history above.
+        raw_title = s.get("title", session_name)
+        raw_title, _ = redact_exfiltration_urls(raw_title)
+        raw_title, _ = redact_credentials(raw_title)
+        session.title = raw_title
+        session._titled = bool(s.get("title"))
+        if meta.get("created_at"):
+            session.created_at = meta["created_at"]
+        if meta.get("agent"):
+            session.agent = meta["agent"]
+        if meta.get("model"):
+            normalized = _normalize_model(meta["model"])
+            if _model_matches_provider(normalized):
+                session.model = normalized
+            else:
+                session.model = _active_provider_model()
+        elif session.agent:
+            try:
+                pc = _restore_cfg.agents.get(session.agent) if _restore_cfg else None
+                provider_name = pc.provider_agent if pc and pc.provider_agent else session.agent
+                session.model = provider_model_map.get(provider_name, "")
+            except Exception:
+                logger.debug(
+                    "Failed to resolve model for restored session %s", session_name, exc_info=True
+                )
+        if meta.get("reasoning_effort"):
+            session.reasoning_effort = _validate_reasoning_effort(meta["reasoning_effort"])
+        # Runtime binding (ACP override / workspace / session mode / task mode). This is
+        # THE path a gateway restart takes, and it used to skip ``acp_provider`` and
+        # ``task_mode`` entirely — so every restart resolved the next turn on the native
+        # axis with a default-Agent tool gate. Shared with the targeted rehydrate above.
+        _restore_runtime_binding(state, session, meta)
+        if meta.get("folder_id"):
+            session.folder_id = meta["folder_id"]
+        if meta.get("pinned"):
+            session.pinned = True
+        if meta.get("color_index") is not None:
+            session.color_index = meta["color_index"]
+        if meta.get("color_theme"):
+            session.color_theme = meta["color_theme"]
+        # Natural voice (PT-7), per-conversation scope. Re-normalized on read so a
+        # hand-edited meta line can only ever yield a member of the closed tri-state.
+        if meta.get("natural_voice"):
+            from personalclaw.natural_voice import normalize_conversation_choice
+
+            session.natural_voice = normalize_conversation_choice(meta["natural_voice"])
+        raw_tags = meta.get("tags")
+        if isinstance(raw_tags, list):
+            session.tags = [str(t) for t in raw_tags if isinstance(t, str) and t]
+        # Session lifecycle (S2). Tolerant: an old session has none of these keys and
+        # reads as an active, never-yet-touched, non-exempt session.
+        _lc = meta.get("lifecycle")
+        if isinstance(_lc, str) and _lc in ("active", "archived"):
+            session.lifecycle = _lc
+        _la = meta.get("last_activity_at")
+        if isinstance(_la, (int, float)):
+            session.last_activity_at = float(_la)
+        if meta.get("never_archive"):
+            session.never_archive = True
+        mm = meta.get("memory_mode", "persistent")
+        session.memory_mode = mm
+        if mm != "persistent":
+            state._restricted_keys.add(f"dashboard:{session_name}")
+        if meta.get("forked_from") is not None:
+            session.forked_from = meta["forked_from"]
+        _side_meta = meta.get("side")
+        if isinstance(_side_meta, dict) and _side_meta.get("messages"):
+            from personalclaw.dashboard.side_state import SideState
+
+            session._side = SideState.from_dict(_side_meta)
+        tab_id = meta.get("tab_id")
+        if not tab_id:
+            tab_id = uuid.uuid4().hex[:12]
+            state.conversation_log.update_metadata(key, {"tab_id": tab_id})
+        session._tab_id = tab_id
+        messages = state.conversation_log.read_messages_chained(key)
+        session._disk_older_count = max(0, len(messages) - 500)
+        for m in messages[-500:]:
+            role = m.get("role", "assistant")
+            cls = m.get("cls") or ("msg msg-u" if role == "user" else "msg msg-a")
+            content = m.get("content", "")
+            if role != "user":
+                content, _ = redact_exfiltration_urls(content)
+                content, _ = redact_credentials(content)
+            session.append(
+                role,
+                content,
+                cls,
+                ts=m.get("ts", ""),
+                meta=_redact_meta(m["meta"]) if m.get("meta") else None,
+            )
+            _attach_variants(session, m)
+            _attach_rewound(session, m)
+        session.drain()
+        session._resumed_count = len(session.messages)
+        session._dirty = False
+        restored += 1
+        logger.info("Restored session %s (%s)", session_name, session.title)
+    _sync_dashboard_sessions(state)
+    return restored
+
+
+def save_session_to_history(
+    state: DashboardState,
+    session: _ChatSession,
+    messages: list[dict] | None = None,
+    *,
+    closed: bool = False,
+    force: bool = False,
+) -> None:
+    """Persist session messages to JSONL history.
+
+    Public because it is re-exported as `personalclaw.sdk.channel.save_session_to_history`:
+    a channel app that mutates a linked session out-of-band (an interactive option pick,
+    a link/unlink) has to flush it, or the thread it just changed is lost on restart.
+    """
+    msgs = messages if messages is not None else session.messages
+    if not state.conversation_log:
+        return
+    # Save back under the key this session is actually persisted under — the one owner
+    # of on-disk identity (a channel-provider thread keeps its own bare key; a dashboard
+    # session uses the dashboard: namespace; a brand-new session falls back to the
+    # dashboard form). Resolved BEFORE the overwrite guard below, because that guard's
+    # whole job is to compare against the file this key names.
+    history_key = persisted_history_key(state.conversation_log, session.key)
+    # 🔴 THE OVERWRITE GUARD. This function does not append — it REWRITES the whole
+    # transcript file from `msgs`. So it must not run when `msgs` holds less than the
+    # file does, or the difference is destroyed.
+    #
+    # It used to ask an IN-MEMORY question: `session._resumed_count > 0 and len(msgs) <=
+    # session._resumed_count`. `_resumed_count` is set from `len(session.messages)` right
+    # after a seed, so it means "this buffer was seeded from persisted content" — a fact
+    # about the BUFFER, not about the file. For a session that was never seeded it is 0,
+    # the predicate is false, and the guard does not fire *however much the file holds*.
+    # That is the data loss: a send to an archived session was seeded by nothing (the
+    # seed refuses `closed`), so a BLANK session was minted with `_resumed_count == 0`
+    # and its empty buffer was written straight over a real transcript — measured at
+    # 785 B / 2 turns → 693 B / 1 turn.
+    #
+    # The question is now put to the DISK. This is the same principle the `side` buffer
+    # twenty lines below already applies (prefer the persisted copy when the in-memory
+    # one was dropped) and the same comparison `chat_runner` already makes to decide
+    # whether to re-inject a history prefix (`mem_count > disk_count`); `messages` simply
+    # never got it. Counted over `_persistable` on both sides so the comparison is
+    # apples-to-apples with what actually reaches the file.
+    #
+    # `force` is the ONE escape hatch, and it means "my buffer is authoritative, write
+    # it even though it is shorter" — which is exactly what undo / regenerate /
+    # edit-resend / switch-variant need. They used to get it by lying to the old
+    # predicate (`session._resumed_count = 0`), which also corrupted the count
+    # `chat_fork` reads off the same field; they now pass `force` and say so.
+    outgoing = _persistable(msgs)
+    # 🔴 A CONVERSATION WITH NO TURNS YET IS STILL REAL STATE (#2969). This function used
+    # to return on `not msgs` before it ever reached the meta line, so a brand-new chat's
+    # title, pin, colour, folder, tags and `never_archive` were accepted `200 {"ok": true}`
+    # and then lost on restart — and `force=True` could not reach past it either, so
+    # /pin and /folder asking for an immediate write got nothing. `never_archive` was the
+    # sharpest case: the one flag whose entire job is protection could not protect itself.
+    #
+    # The transcript-empty case now falls through to the single write below, which emits
+    # the meta line and zero message lines — a metadata-only persist, no second write path.
+    #
+    # It is gated on the DISK holding no transcript either, and that gate is what makes it
+    # safe under `force`. `force` means "my buffer is authoritative, write it even though it
+    # is shorter"; it has never meant "write my EMPTY buffer over five persisted turns", and
+    # `save_all_sessions_to_history` passes it for every resident session on shutdown. That
+    # case returns without writing, exactly as `not msgs` did — and it now also covers a
+    # buffer holding only non-transcript rows (chunk/done/streaming/queued/permission),
+    # which `not msgs` let through to a forced full rewrite.
+    if not outgoing and _persisted_message_count(state, history_key):
+        logger.debug(
+            "metadata-only save skipped for %s: buffer holds no transcript, disk does",
+            history_key,
+        )
+        return
+    if not force:
+        _persisted = _persisted_message_count(state, history_key)
+        if _persisted and len(outgoing) <= _persisted:
+            if closed:
+                # An archive still has to land its flag — but never by trading the
+                # richer persisted transcript for this buffer. A metadata-only merge
+                # leaves every message byte on disk untouched.
+                try:
+                    state.conversation_log.update_metadata(history_key, {"closed": True})
+                except Exception:
+                    logger.warning("archive flag write failed for %s", history_key, exc_info=True)
+            else:
+                logger.debug(
+                    "save skipped for %s: buffer holds %d transcript message(s), disk holds %d",
+                    history_key,
+                    len(outgoing),
+                    _persisted,
+                )
+            return
+    try:
+        existing_meta = state.conversation_log.get_metadata(history_key)
+
+        path = state.conversation_log._path(history_key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        meta_line: dict = {
+            "_type": "metadata",
+            "created_at": existing_meta.get("created_at") or session.created_at,
+            "last_consolidated": existing_meta.get("last_consolidated", 0),
+        }
+        # UN-ARCHIVING IS EXPLICIT. This function rebuilds the whole meta line from the
+        # in-memory session, so omitting `closed` silently CLEARED it on every save — a
+        # normal send, a title write, a shutdown flush. None of those is a user asking to
+        # un-archive; the shutdown flush in particular un-archived every still-resident
+        # archived session with no user in the loop at all. `_ChatSession.append` already
+        # draws this exact line on the S2 `lifecycle` axis (state.py: a live turn
+        # un-archives, a replay or a restore must not), and `closed` simply never got it.
+        # The single explicit un-archiver is `api_chat_session_resume`, which has a
+        # dedicated block that rewrites the meta line with `closed` popped.
+        if closed or existing_meta.get("closed"):
+            meta_line["closed"] = True
+        meta_line["memory_mode"] = session.memory_mode
+        if session.title and session.title != session.key:
+            meta_line["title"] = session.title
+        if session.agent:
+            meta_line["agent"] = session.agent
+        meta_line["model"] = session.model
+        if session.reasoning_effort:
+            meta_line["reasoning_effort"] = session.reasoning_effort
+        if session.mode:
+            meta_line["mode"] = session.mode
+        if session.workspace_dir:
+            meta_line["workspace_dir"] = session.workspace_dir
+        # The project this chat belongs to (issue 314). Omitted here, it was in-memory only, so
+        # every project↔chat binding died on restart: `/api/projects/<id>/linked` scans
+        # `state._sessions` rather than storage (`tasks/hierarchy_handlers.py`), so the project's
+        # Chats list came back EMPTY — and a restored project chat also lost the context-dir access
+        # the binding grants.
+        #
+        # Written beside `workspace_dir` deliberately: they are the same kind of fact (what this
+        # session is scoped to), and the neighbour being persisted while this one was not is what
+        # made the omission read as an oversight rather than a decision.
+        #
+        # The comment below applies with full force here — this function REBUILDS the whole meta
+        # line from the in-memory session on every turn, so a field missing from this list is not
+        # merely unsaved: it CLOBBERS any out-of-band write at the end of the next turn.
+        if session.project_id:
+            meta_line["project_id"] = session.project_id
+        # Runtime binding (G5). The chat picker's bind endpoint already persists the
+        # ephemeral ACP override with ``update_metadata`` — but this function REBUILDS
+        # the whole meta line from the in-memory session on every turn, so omitting the
+        # keys here CLOBBERED that write at the end of the very next turn. The binding
+        # then read as "never set" and the session came back on the native axis after a
+        # restart: different tools, different confinement, looking normal. Task mode is
+        # written only when non-default, matching every field above, so an Agent-mode
+        # session's meta line stays byte-identical.
+        if session.acp_provider:
+            meta_line["acp_provider"] = session.acp_provider
+            if session.acp_provider_agent:
+                meta_line["acp_provider_agent"] = session.acp_provider_agent
+        _task_mode = getattr(session, "_task_mode", "agent") or "agent"
+        if _task_mode != "agent":
+            meta_line["task_mode"] = _task_mode
+        if session.folder_id:
+            meta_line["folder_id"] = session.folder_id
+        if session.pinned:
+            meta_line["pinned"] = True
+        if session.color_index is not None:
+            meta_line["color_index"] = session.color_index
+        if session.color_theme:
+            meta_line["color_theme"] = session.color_theme
+        # Written only when the conversation actually states something ("on"/"off"),
+        # matching every field above — an inheriting session adds no key.
+        if session.natural_voice:
+            meta_line["natural_voice"] = session.natural_voice
+        if session.tags:
+            meta_line["tags"] = list(session.tags)
+        # Lifecycle (S2). Written only when non-default, matching every field above —
+        # an active, untouched, non-exempt session adds no keys, so existing meta lines
+        # are byte-identical and the rollout is invisible until something changes.
+        if session.lifecycle and session.lifecycle != "active":
+            meta_line["lifecycle"] = session.lifecycle
+        if session.last_activity_at:
+            meta_line["last_activity_at"] = session.last_activity_at
+        if session.never_archive:
+            meta_line["never_archive"] = True
+        if session.forked_from is not None:
+            meta_line["forked_from"] = session.forked_from
+        # Persist the side-chat buffer attached to the session (so it reloads with
+        # it) — but only the transcript, never in `messages`. Falls back to the
+        # existing persisted side if the in-memory buffer was dropped/closed.
+        _side = getattr(session, "_side", None)
+        if _side is not None and _side.messages:
+            meta_line["side"] = _side.to_dict()
+        elif existing_meta.get("side"):
+            meta_line["side"] = existing_meta["side"]
+        tab_id = getattr(session, "_tab_id", None) or existing_meta.get("tab_id")
+        if tab_id:
+            meta_line["tab_id"] = tab_id
+        # Origin tag (loop/code/campaign worker vs manual chat) — persisted so the
+        # history list can classify + filter a disk-only session without relying
+        # solely on the key prefix.
+        _app = getattr(session, "_app", "") or existing_meta.get("app", "")
+        if _app:
+            meta_line["app"] = _app
+        # A message-less session is only worth a file if something was written to it AFTER
+        # it was created. Every key below is one the CREATE path itself populates, so a
+        # meta line carrying nothing else describes a pristine empty tab — and minting a
+        # file for each of those on every shutdown flush would resurrect them all on the
+        # next restart. Derived from the meta line rather than a hand-listed set of session
+        # attributes, so a newly persisted field counts as real state without this gate
+        # having to learn about it.
+        if not outgoing and not (set(meta_line) - _CREATE_TIME_META_KEYS):
+            logger.debug("metadata-only save skipped for %s: nothing set since create", history_key)
+            return
+        lines = [json.dumps(meta_line) + "\n"]
+        for m in outgoing:
+            role = m.get("role", "assistant")
+            content = m.get("content", "")
+            if role not in ("user", "system"):
+                content, _ = redact_exfiltration_urls(content)
+                content, _ = redact_credentials(content)
+            entry: dict = {
+                "role": role,
+                "content": content,
+                "ts": m.get("ts", ""),
+                "source_thread": "dashboard",
+                "source_user": "dashboard",
+            }
+            if m.get("variants"):
+                redacted_variants: list[dict] = []
+                for v in m["variants"]:
+                    if not isinstance(v, dict):
+                        continue
+                    vc = v.get("content", "")
+                    vc, _ = redact_exfiltration_urls(vc)
+                    vc, _ = redact_credentials(vc)
+                    redacted_variants.append({**v, "content": vc})
+                entry["variants"] = redacted_variants
+                entry["variant_idx"] = m.get("variant_idx", 0)
+            # Rewind tails (the retained discarded messages from an edit-and-replay).
+            # Redacted like variants; tolerant of the pre-rewind shape. Clean-break
+            # field under the pre-1.0 banner — old sessions simply lack it.
+            if m.get("rewound"):
+                rewound = _redact_rewound(m["rewound"])
+                if rewound:
+                    entry["rewound"] = rewound
+            cls_val = m.get("cls", "")
+            if role == "system" and cls_val:
+                entry["cls"] = cls_val
+            if m.get("meta"):
+                entry["meta"] = _redact_meta(m["meta"])
+            lines.append(json.dumps(entry) + "\n")
+
+        atomic_write(path, "".join(lines), fsync=True)
+        state.conversation_log._invalidate_cache(history_key)
+        state.conversation_log.invalidate_tab_id_cache()
+        # Keep cross-session search current (SESSION-MANAGEMENT §C1). Runs after the
+        # cache invalidation so the re-read sees the file we just wrote, and after
+        # the write so a search-index failure can never cost a transcript.
+        # Restricted sessions are refused inside index_turn.
+        try:
+            from personalclaw import session_search
+
+            session_search.index_turn(
+                history_key, "", "", memory_mode=getattr(session, "memory_mode", "")
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("session search index skipped for %s", history_key, exc_info=True)
+    except Exception:
+        logger.error("Failed to save session %s to history", session.key, exc_info=True)
+        raise
+
+
+def _build_history_prefix(session: _ChatSession) -> str:
+    """Build a condensed history prefix from session messages for session re-injection."""
+    lines: list[str] = []
+    total = 0
+    for m in session.messages:
+        role = m.get("role", "")
+        if role in ("chunk", "done", "streaming", "queued", "permission", "error", "tool"):
+            continue
+        label = "User" if role == "user" else "Assistant"
+        text = m.get("content", "")[:500]
+        line = f"{label}: {text}"
+        if total + len(line) > _MAX_HISTORY_CHARS:
+            break
+        lines.append(line)
+        total += len(line)
+    if not lines:
+        return ""
+    return (
+        "[Previous chat history for this tab — session was reset after stop]\n"
+        + "\n".join(lines)
+        + "\n[End of history]\n\n"
+    )

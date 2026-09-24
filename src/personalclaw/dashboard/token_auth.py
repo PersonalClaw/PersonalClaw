@@ -1,0 +1,1418 @@
+"""Dashboard token authentication.
+
+HMAC-SHA256 token generation, validation, IP binding, consumption
+tracking, and aiohttp middleware for channel-gated dashboard access.
+
+``auth_middleware`` is the primary entry point for callers that have an
+``AuthConfig``.  It dispatches by ``AuthMode``:
+
+* ``NONE``        — passes all requests through (loopback enforced by
+                    ``effective_bind`` before the server starts).
+* ``LOCAL_TOKEN`` — delegates to ``token_auth_middleware``.
+* ``API_KEY``     — validates ``Authorization: Bearer <key>`` against
+                    ``os.environ[auth_cfg.api_key_env]``.
+* ``OAUTH2``      — verifies a bearer JWT via :mod:`personalclaw.auth.oidc`.
+
+On any authentication failure the middleware returns HTTP 401 with a
+JSON body that does NOT echo request headers, cookies, or tokens.
+"""
+
+import base64
+import hashlib
+import hmac
+import json
+import logging
+import os
+import re
+import threading
+import time
+from collections import OrderedDict
+from collections.abc import Callable
+from typing import Any
+
+from aiohttp import web
+
+from personalclaw.config.loader import _DEFAULT_PORT
+from personalclaw.dashboard.origin import is_loopback, is_private_network
+from personalclaw.sel import AUDIT_OUTCOME_SUCCESS
+from personalclaw.sel import sel as _sel_fn
+
+logger = logging.getLogger(__name__)
+
+
+def _sel_reason_kwargs(outcome: str, reason: str) -> dict[str, Any]:
+    """Route an auth decision's explanatory text to the SEL field it belongs in.
+
+    A denied outcome's text IS the failure, so it belongs in ``error``. A
+    granted/ok outcome's text is context for WHY access was allowed, not a
+    failure — putting it in ``error`` is what made ``personalclaw security
+    events`` print "error: local-network bypass" under an `-> ok` row (#2948).
+    Centralizing the routing here (keyed off the same
+    :data:`personalclaw.sel.AUDIT_OUTCOME_SUCCESS` vocabulary the audit surface
+    itself uses) means a future call site cannot reintroduce the bug just by
+    passing a reason string positionally.
+    """
+    if not reason:
+        return {}
+    if outcome in AUDIT_OUTCOME_SUCCESS:
+        return {"metadata": {"reason": reason}}
+    return {"error": reason}
+
+
+# The signing key is loaded LAZILY, not at import: this module is imported long before
+# PERSONALCLAW_HOME is necessarily settled (CLI parsing, test collection), and reading the key
+# at import time would bind it to whichever home happened to be current — the same class of bug
+# as the SEL singleton pinning its directory to the first caller's home.
+#
+# `None` means "not yet loaded". `_ephemeral_secret` is the deliberate opt-out for tests and
+# `--test-mode`, where persisting a key to a real home would be a side effect.
+_SECRET: bytes | None = None
+_EPHEMERAL_SECRET: bytes | None = None
+
+
+def _secret() -> bytes:
+    """The HMAC signing key — persistent across restarts (REMOTE-USER-AUTH S1).
+
+    This used to be `os.urandom(32)` at module scope, so **every gateway restart invalidated
+    every token**: on a local box you re-ran `personalclaw token`, and off-network you were
+    locked out entirely because minting a URL requires being on the machine.
+    """
+    global _SECRET
+    if _EPHEMERAL_SECRET is not None:
+        return _EPHEMERAL_SECRET
+    if _SECRET is None:
+        from personalclaw.dashboard.session_store import load_or_create_key
+
+        _SECRET = load_or_create_key()
+    return _SECRET
+
+
+def use_ephemeral_secret(value: bytes | None = None) -> None:
+    """Sign with a fresh in-memory key instead of the persisted one.
+
+    For tests and `--test-mode`, where writing a key into a real home would be a side effect.
+    Explicit rather than a swallowed failure, so nothing accidentally runs on an ephemeral key
+    and silently re-introduces the logged-out-on-restart bug.
+
+    Pass a key to use it; pass nothing to generate one. Call `use_persistent_secret()` to go
+    back to the on-disk key — deliberately a SEPARATE function, because overloading ``None``
+    to mean both "generate one for me" and "turn this off" is how the first version of this
+    got it backwards, enabling ephemeral mode when a test asked to disable it.
+    """
+    global _EPHEMERAL_SECRET, _SECRET
+    _EPHEMERAL_SECRET = value if value is not None else os.urandom(32)
+    _SECRET = None
+
+
+def use_persistent_secret() -> None:
+    """Go back to the on-disk signing key, dropping any ephemeral override."""
+    global _EPHEMERAL_SECRET, _SECRET
+    _EPHEMERAL_SECRET = None
+    _SECRET = None
+
+
+def reset_secret_cache() -> None:
+    """Drop the cached key so the next sign/verify re-reads it (rotation, tests)."""
+    global _SECRET
+    _SECRET = None
+
+
+#: Cap on the in-memory `last_seen` throttle map. Larger than the concurrent-nonce cap on
+#: purpose: the map also holds nonces that have since been evicted or revoked, and over-trimming
+#: it only costs a redundant file read, never a wrong verdict.
+_MAX_LAST_SEEN_TRACKED = 64
+
+
+class TokenStateManager:
+    """Thread-safe manager for token authentication state.
+
+    Encapsulates all mutable token state (nonces, IP bindings, consumption)
+    with consistent locking. Uses OrderedDict for O(1) nonce eviction.
+
+    Threading model: This class uses threading.Lock (not asyncio.Lock) because
+    token operations are called from both async contexts (aiohttp middleware)
+    and sync contexts (CLI commands like `personalclaw token`). The lock hold time
+    is minimal (dict operations only), so blocking the event loop is negligible.
+    """
+
+    def __init__(self, max_concurrent_nonces: int = 5) -> None:
+        self._lock = threading.Lock()
+        self._max_nonces = max_concurrent_nonces
+        # OrderedDict maintains insertion order for O(1) oldest eviction
+        self._nonces: OrderedDict[str, float] = OrderedDict()
+        self._ip_bindings: dict[str, tuple[str, float]] = {}  # token → (ip, exp)
+        self._consumed: dict[str, float] = {}  # token → exp
+        # nonce → when we last ATTEMPTED a `last_seen` stamp. In-memory so the common request
+        # is a dict lookup and never a file read; see `_touch_last_seen`.
+        self._last_seen_touched: dict[str, float] = {}
+
+    def register_nonce(self, nonce: str, expiry: float) -> str | None:
+        """Register a nonce with its expiry time, evicting oldest if over limit."""
+        with self._lock:
+            self._nonces[nonce] = expiry
+            self._nonces.move_to_end(nonce)  # Most recent at end
+            if len(self._nonces) > self._max_nonces:
+                evicted, _ = self._nonces.popitem(last=False)
+                return evicted
+            return None
+
+    def is_nonce_valid(self, nonce: str) -> tuple[bool, str]:
+        """Check if nonce is valid. Returns (valid, reason).
+
+        Deny-by-default: rejects if the nonce is in neither the in-memory set nor the durable
+        store. Refreshes the nonce's eviction position on each successful check so that
+        actively-used sessions are not evicted by newer token grants.
+
+        **The durable fallback is what makes a persisted signing key useful** (S1). With the
+        key alone, a token minted before a restart would verify its signature and then be
+        rejected here as "no active sessions" — the user would still be logged out, just with
+        a more confusing reason. A signature check without a live session record is not
+        enough to authorize; a session record is the second half of the same fix.
+        """
+        with self._lock:
+            in_memory = nonce in self._nonces
+            if in_memory:
+                self._nonces.move_to_end(nonce)
+        if in_memory:
+            # Outside the lock: the stamp takes it again, and it must never gate the verdict.
+            self._touch_last_seen(nonce)
+            return True, ""
+
+        # Not in memory: consult the durable store before refusing. A hit means this process
+        # restarted (or never saw the mint), NOT that the session is invalid.
+        try:
+            from personalclaw.dashboard.session_store import load_sessions
+
+            stored = load_sessions()
+        except Exception:  # noqa: BLE001 — an unreadable store means "no session", fail closed
+            logger.debug("session store unreadable during nonce check", exc_info=True)
+            stored = {}
+        expiry = stored.get(nonce)
+        if expiry is None:
+            with self._lock:
+                return False, "no active sessions" if not self._nonces else "token superseded"
+        if expiry <= time.time():
+            return False, "session expired"
+        # Adopt it into memory so subsequent checks are lock-only, and so eviction ordering
+        # treats a restored session like any other active one.
+        with self._lock:
+            self._nonces[nonce] = expiry
+            self._nonces.move_to_end(nonce)
+        self._touch_last_seen(nonce)
+        return True, ""
+
+    def _touch_last_seen(self, nonce: str, now: float | None = None) -> None:
+        """Stamp ``last_seen`` for an authorized device session. NEVER affects the verdict.
+
+        Called on both success paths of :meth:`is_nonce_valid` — an adopted-from-store session
+        is as authorized as an in-memory one, and skipping it would make every device look
+        "never seen" for the first request after a restart.
+
+        Two layers of throttle, for two different costs. This in-memory map suppresses the
+        **file read**, so a device polling every second costs one dict lookup; the store's own
+        staleness check (:data:`LAST_SEEN_THROTTLE_SECS`) suppresses the **write**, and is what
+        holds when several processes share one home. The attempt time is recorded BEFORE the
+        write, so a store that is failing is retried once a minute rather than once a request.
+
+        Non-device sessions fall through to a no-op inside the store; this layer deliberately
+        does not know which sessions carry a device, because that answer lives in the file.
+
+        The ENTIRE body is guarded, import included, because the caller has already decided to
+        authorize by the time this runs.
+        """
+        if not nonce:
+            return
+        try:
+            from personalclaw.dashboard.session_store import (
+                LAST_SEEN_THROTTLE_SECS,
+                touch_device_last_seen,
+            )
+
+            stamp = time.time() if now is None else now
+            with self._lock:
+                if stamp - self._last_seen_touched.get(nonce, 0.0) < LAST_SEEN_THROTTLE_SECS:
+                    return
+                self._last_seen_touched[nonce] = stamp
+                if len(self._last_seen_touched) > _MAX_LAST_SEEN_TRACKED:
+                    # Bounded: a revoked or expired nonce never comes back, so the oldest
+                    # attempt is always the safest to forget, and forgetting one costs a
+                    # single extra file read rather than correctness.
+                    oldest = min(self._last_seen_touched, key=self._last_seen_touched.__getitem__)
+                    self._last_seen_touched.pop(oldest, None)
+            touch_device_last_seen(nonce, now=stamp)
+        except Exception:  # noqa: BLE001 — a failed stamp must not deny a valid session
+            logger.debug("could not stamp last_seen for an authorized session", exc_info=True)
+
+    def bind_ip(self, token: str, ip: str, session_exp: float) -> None:
+        """Bind a token to a client IP address."""
+        with self._lock:
+            self._ip_bindings[token] = (ip, session_exp)
+
+    def check_ip(self, token: str, ip: str) -> bool:
+        """Check if token is bound to the given IP (or unbound)."""
+        with self._lock:
+            entry = self._ip_bindings.get(token)
+            return entry is None or entry[0] == ip
+
+    def mark_consumed(self, token: str, session_exp: float) -> None:
+        """Mark a token as consumed (used for one-time token patterns)."""
+        with self._lock:
+            self._consumed[token] = session_exp
+
+    def is_consumed(self, token: str) -> bool:
+        """Check if a token has been consumed."""
+        with self._lock:
+            return token in self._consumed
+
+    def try_consume(self, token: str, session_exp: float) -> bool:
+        """Atomically mark token consumed if not already.
+
+        Returns True if this call consumed it, False if already consumed.
+        """
+        with self._lock:
+            if token in self._consumed:
+                return False
+            self._consumed[token] = session_exp
+            return True
+
+    def evict_expired(self, now: float) -> None:
+        """Remove all expired entries from all state stores."""
+        with self._lock:
+            # Evict expired IP bindings
+            expired_tokens = [t for t, (_, exp) in self._ip_bindings.items() if exp < now]
+            for t in expired_tokens:
+                self._ip_bindings.pop(t, None)
+            # Evict consumed tokens independently using their own expiry
+            expired_consumed = [t for t, exp in self._consumed.items() if exp < now]
+            for t in expired_consumed:
+                self._consumed.pop(t, None)
+            # Evict expired nonces
+            expired_nonces = [n for n, exp in self._nonces.items() if exp < now]
+            for n in expired_nonces:
+                self._nonces.pop(n, None)
+
+    def revoke_nonce(self, nonce: str, token: str = "") -> bool:
+        """Drop ONE nonce (single-session logout). Returns whether it was present.
+
+        Also drops the token's IP binding and consumed marker so nothing about the dead
+        session lingers to be matched against a future token.
+        """
+        with self._lock:
+            existed = self._nonces.pop(nonce, None) is not None
+            if token:
+                self._ip_bindings.pop(token, None)
+                self._consumed.pop(token, None)
+            return existed
+
+    def clear_all(self) -> None:
+        """Clear all token state (nonces, IP bindings, consumed tokens, last-seen throttle)."""
+        with self._lock:
+            self._nonces.clear()
+            self._ip_bindings.clear()
+            self._consumed.clear()
+            # The throttle is in-memory state like the rest: a restart must forget it, so the
+            # first authorized request after one stamps instead of being suppressed by a
+            # timestamp from the previous process.
+            self._last_seen_touched.clear()
+
+
+# Maximum concurrent valid tokens before oldest is evicted
+MAX_CONCURRENT_NONCES = 5
+
+# Module-level singleton instance
+_state: TokenStateManager = TokenStateManager(max_concurrent_nonces=MAX_CONCURRENT_NONCES)
+
+_BYPASS_PREFIXES = ("/assets/", "/fonts/", "/sprites/", "/vendor/")
+_BYPASS_EXACT = {"/claw.svg", "/api/token/local", "/api/healthz"}
+# `/api/logout` authenticates ITSELF exactly like `/api/token/local` above: loopback rail plus a
+# constant-time `X-Local-Secret` check inside `api_logout`. It was missing here, so the dashboard
+# middleware demanded a session token first and `personalclaw logout` / `auth revoke --all`
+# always got 403 — a revoke-everything command that could never revoke anything, while the CLI's
+# own fallback reported success. Found in live validation: the "revoked" session kept working.
+# Exempting it opens nothing; it lets the request reach the check that actually guards it.
+_BYPASS_EXACT.add("/api/logout")
+# The inbound MCP surface authenticates ITSELF (MCP-READONLY-INBOUND §T1.1): it
+# carries a dedicated bearer token plus its own loopback rail, so it must bypass
+# the DASHBOARD's cookie auth rather than be reachable with a dashboard session.
+# Exempting it here does not make it open — inbound/mcp_http.py refuses every
+# request that fails enablement, peer, or token checks, and only mounts the route
+# at all when a valid dedicated token exists.
+_BYPASS_EXACT.add("/mcp")
+# The Dialect-5 capture proxy authenticates ITSELF for exactly the same reason
+# (EXTERNAL-ACCESS §7.1): each route runs `capture_proxy._admit` — surface enablement,
+# then an unconditional loopback rail, then a constant-time bearer check against the
+# capture surface token or a registered per-client token — before it reads a body. The
+# external agent pointing `OPENAI_BASE_URL` here presents that bearer in `Authorization`
+# and has no dashboard cookie, so without these two entries the middleware demanded a
+# session token first and both routes were unreachable: an inert surface.
+# Enumerated EXACTLY rather than prefix-exempting `/capture/v1/`, so a route added under
+# that prefix later does not inherit the exemption without its author choosing it.
+_BYPASS_EXACT.update({"/capture/v1/chat/completions", "/capture/v1/messages"})
+
+# The login front door (REMOTE-USER-AUTH C3). These three MUST be reachable without a
+# session, because they are how a remote browser gets one — gating them behind the session
+# they exist to mint would be circular. Exempting them does not make them open:
+#   * `/login` renders a form and redirects to `/` when login is disabled;
+#   * `/api/auth/login` verifies argon2 fail-closed, refuses unless `login_enabled`, checks
+#     the CSRF origin, and rate-limits per IP with lockout;
+#   * `/api/auth/status` returns two booleans an unauthenticated caller may already infer
+#     from being served a login page at all — never the username or whether a credential
+#     exists.
+# NOTHING else auth-related is exempt: logout, the session view, and setting a password all
+# stay behind the normal middleware.
+_BYPASS_EXACT.update({"/login", "/api/auth/login", "/api/auth/status"})
+# Device enrollment COMPLETION is exempt for the same reason login is: the device redeeming a
+# code has no session yet — that is the point. `enroll/start` is NOT exempt (you must already be
+# authenticated to mint a code), and completion is origin-checked and rate-limited like login.
+_BYPASS_EXACT.add("/api/auth/enroll/complete")
+# Device pairing COMPLETION, exempt for the same reason and with the same compensating guards
+# (origin check, per-IP lockout, single-use hashed short-TTL code). `pair/start` is NOT exempt:
+# minting a pairing code requires already being the owner. See handlers/devices.py.
+_BYPASS_EXACT.add("/api/devices/pair/complete")
+# The pairing device's PAGE, exempt for the same reason `/login` the page is exempt alongside
+# `/api/auth/login`: the browser that must open it has no session, so gating it behind one is
+# circular — and without it the URL `pair/start` hands out 403s and tells the joining device to
+# run `personalclaw token` in a terminal it does not have. Exempting it opens nothing: the
+# document is a CONSTANT with no secret on it (the code is read from `location.search` in the
+# browser, never interpolated server-side), and every grant still happens at
+# `/api/devices/pair/complete` behind that route's own guards. See handlers/devices.py.
+_BYPASS_EXACT.add("/pair")
+
+# Link click window — URL must be opened within this time.
+# 24 hours for local installs; the URL only works on loopback anyway.
+LINK_WINDOW_SECS = 24 * 3600
+# Maximum session TTL — sessions effectively never expire for local installs.
+#: Query params this module CONSUMES as credentials, so they are not the handler's arguments.
+#:
+#: ``?token=`` is the query-token auth path: read here (and in ``handlers/auth.py``) and
+#: deliberately **not stripped** from ``request.query``, so it arrives at every handler along
+#: with the caller's real parameters. A route with a strict, fail-closed query allowlist must
+#: therefore subtract this set before diffing, or it refuses the very callers the auth mode
+#: requires — which is exactly what ``GET /api/security/audit`` did (issue 2927): a
+#: catch-22 where no token meant 403 from auth and a token meant 400 ``unknown_filter`` from
+#: the handler, so a query-token client could never read the audit trail at all.
+#:
+#: Subtracting is the fix, not widening the route's own allowlist: ``token`` is a credential,
+#: not a filter, and it must never reach a SEL query as one.
+RESERVED_QUERY_PARAMS: frozenset[str] = frozenset({"token"})
+
+# The cookie is re-issued on every page load via the session renewal path so
+# the clock only matters for completely idle browsers.
+MAX_SESSION_TTL_SECS = 365 * 24 * 3600  # 1 year
+
+# Default BROWSER session lifetime (owner ruling, REMOTE-USER-AUTH S1).
+#
+# Sessions used to be minted at the 1-year cap because they were ephemeral in practice — a
+# restart wiped them, so the number never really applied. Now that they survive restarts, a
+# 1-year default would mean a browser cookie that outlives the reason it was issued, and a
+# stolen one stays good for a year. 30 days is long enough that a daily-driven instance never
+# prompts you, short enough that an abandoned session ages out.
+#
+# The 1-year cap REMAINS reachable, but only when a caller asks for it explicitly — that is
+# the CLI/automation token case (`personalclaw token`), where re-minting is manual and the
+# user chose the lifetime.
+DEFAULT_BROWSER_SESSION_TTL_SECS = 30 * 24 * 3600  # 30 days
+
+_403_HTML = (
+    "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><meta name='viewport' "
+    "content='width=device-width,initial-scale=1'><title>Connect — PersonalClaw</title>"
+    "<style>"
+    # Theme token mirror (dark default; .light via prefers-color-scheme).
+    # Standalone gate served before the React bundle, so values are inlined rather
+    # than imported from tokens.css — but the palette/shape/motion match NE exactly.
+    ":root{{--canvas:#0f0f0f;--surface:#1e1f20;--surface-high:#282a2c;"
+    "--ink:#e3e3e3;--ink-low:#9a9b9c;--outline:#444746;"
+    "--primary:#9d8bff;--on-primary:#21134f;--primary-emphasis:#b6bdff;"
+    "--danger:#f55e57;--radius-card:28px;--radius-field:12px;"
+    "--ease:cubic-bezier(0.2,0,0,1);"
+    "--font:'Google Sans Flex','Google Sans',system-ui,-apple-system,sans-serif;"
+    "--mono:'Google Sans Code',ui-monospace,'SF Mono',monospace}}"
+    "*{{margin:0;padding:0;box-sizing:border-box}}"
+    "body{{font-family:var(--font);display:flex;align-items:center;"
+    "justify-content:center;min-height:100vh;background:var(--canvas);"
+    "color:var(--ink);-webkit-font-smoothing:antialiased;overflow:hidden}}"
+    # expressive lavender→pink bloom behind the card (NE signature glow)
+    "body::before{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;"
+    "background:radial-gradient(60% 55% at 50% 38%,"
+    "color-mix(in srgb,var(--primary) 22%,transparent),transparent 70%);"
+    "filter:blur(8px)}}"
+    ".c{{position:relative;z-index:1;text-align:center;width:100%;max-width:420px;"
+    "margin:24px;padding:40px 32px;background:var(--surface);"
+    "border:1px solid var(--outline);border-radius:var(--radius-card);"
+    "box-shadow:0 16px 40px rgb(0 0 0 / 0.42)}}"
+    ".logo{{margin-bottom:20px}}.logo svg{{width:60px;height:60px;display:inline-block}}"
+    "h1{{font-size:26px;line-height:1.15;margin-bottom:10px;"
+    "font-variation-settings:'wght' 360;letter-spacing:-0.01em}}"
+    "p{{color:var(--ink-low);font-size:14px;line-height:1.6;margin-bottom:24px}}"
+    "code{{font-family:var(--mono);background:var(--surface-high);padding:2px 7px;"
+    "border-radius:6px;color:var(--primary-emphasis);font-size:13px}}"
+    "input{{width:100%;padding:13px 15px;border-radius:var(--radius-field);"
+    "border:1px solid var(--outline);background:var(--canvas);color:var(--ink);"
+    "font-family:var(--font);font-size:14px;margin-bottom:12px;outline:none;"
+    "transition:border-color .2s var(--ease),box-shadow .2s var(--ease)}}"
+    "input::placeholder{{color:var(--ink-low)}}"
+    "input:focus{{border-color:var(--primary);"
+    "box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 28%,transparent)}}"
+    "button{{width:100%;padding:13px 24px;border-radius:9999px;border:none;"
+    "cursor:pointer;background:var(--primary);color:var(--on-primary);"
+    "font-family:var(--font);font-size:15px;font-variation-settings:'wght' 600;"
+    "transition:background .2s var(--ease),transform .1s var(--ease),"
+    "box-shadow .2s var(--ease)}}"
+    "button:hover{{background:var(--primary-emphasis);"
+    "box-shadow:0 0 28px -6px color-mix(in srgb,var(--primary) 55%,transparent)}}"
+    "button:active{{transform:scale(0.985)}}"
+    ".err{{color:var(--danger);font-size:13px;margin-top:14px;display:none}}"
+    "@media(prefers-color-scheme:light){{:root{{--canvas:#f0f4f8;--surface:#ffffff;"
+    "--surface-high:#e6eaef;--ink:#1f1f1f;--ink-low:#5f6368;--outline:#e1e3e1;"
+    "--primary:#6a4fd0;--on-primary:#ffffff;--primary-emphasis:#563bbf}}"
+    ".c{{box-shadow:0 16px 40px rgb(96 110 130 / 0.22)}}"
+    "input:focus{{box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 18%,transparent)}}}}"
+    "@media(prefers-reduced-motion:reduce){{*{{transition-duration:.001ms!important}}}}"
+    "</style></head><body>"
+    "<div class='c'>"
+    "<div class='logo'><svg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg' aria-label='PersonalClaw'>"  # noqa: E501
+    "<defs><linearGradient id='cg' x1='0' y1='0' x2='512' y2='512' gradientUnits='userSpaceOnUse'>"
+    "<stop stop-color='#8e75b2'/><stop offset='0.45' stop-color='#9d8bff'/>"
+    "<stop offset='0.75' stop-color='#c597ff'/><stop offset='1' stop-color='#d8627e'/>"
+    "</linearGradient></defs>"
+    "<path fill='url(#cg)' d='M256 16C106 76 46 226 46 226c0 45 60 90 90 90 90 0 180-195 135-285l-15-15zm45 15c30 60 0 135 0 135 120 30 120 180 75 330 75-75 90-150 90-210 0-90-15-225-165-255z'/></svg></div>"  # noqa: E501
+    "<h1>403 — {reason}</h1>"
+    "<p>Run <code>personalclaw token</code> in your terminal, then paste the URL below.</p>"
+    "<input id='u' type='text' placeholder='Paste token URL or raw token…' autofocus>"
+    "<button onclick='go()'>Connect</button>"
+    "<div class='err' id='e'>Invalid URL</div>"
+    "</div>"
+    "<script>"
+    "function go(){{var v=document.getElementById('u').value.trim();if(!v)return;"
+    "var t;try{{var u=new URL(v);t=u.searchParams.get('token')}}"
+    "catch(_){{t=v}}if(t){{window.location.href="
+    "window.location.protocol+'//'+window.location.host+'?token='+encodeURIComponent(t)}}"
+    "else{{document.getElementById('e').style.display='block'}}}}"
+    "document.getElementById('u').addEventListener('keydown',"
+    "function(e){{if(e.key==='Enter')go()}});"
+    "</script>"
+    "</body></html>"
+)
+
+
+def _b64url_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _b64url_decode(s: str) -> bytes:
+    padding = 4 - len(s) % 4
+    return base64.urlsafe_b64decode(s + "=" * (padding % 4))
+
+
+def _sign(payload: bytes) -> str:
+    return _b64url_encode(hmac.new(_secret(), payload, hashlib.sha256).digest())
+
+
+def generate_token(user_id: str, ttl_seconds: int = 3600, *, app: str = "") -> str:
+    """Return ``base64url(payload).base64url(signature)``.
+
+    The token carries two expiry times:
+    - ``exp``: link click window (5 minutes) — URL must be opened before this
+    - ``session_exp``: cookie session TTL (capped at 20 hours)
+
+    When *app* is provided, the token payload includes ``"app": app`` so
+    downstream middleware can extract the verified app identity.
+
+    Up to ``_MAX_CONCURRENT_NONCES`` tokens can be valid concurrently.
+    When the limit is exceeded, the oldest nonce is evicted (O(1) via OrderedDict).
+    """
+    _evict_expired()
+    now = time.time()
+    nonce = os.urandom(8).hex()
+    session_ttl = min(ttl_seconds, MAX_SESSION_TTL_SECS)
+
+    evicted = _state.register_nonce(nonce, now + session_ttl)
+    # Persist the session so it survives a restart (S1). Best-effort: a store that cannot be
+    # written must not fail the mint — the token still works for this process's lifetime,
+    # which is strictly better than refusing to issue one at all.
+    try:
+        from personalclaw.dashboard.session_store import forget_session, remember_session
+
+        remember_session(nonce, now + session_ttl)
+        if evicted:
+            # Keep the durable store in step with the in-memory eviction, or the file would
+            # accumulate sessions the running process has already forgotten.
+            forget_session(evicted)
+    except Exception:  # noqa: BLE001
+        logger.debug("could not persist the minted session", exc_info=True)
+    if evicted:
+        _sel_fn().log_api_access(
+            caller=user_id,
+            operation="nonce_evicted",
+            outcome="ok",
+            source="token_auth",
+            resources=f"evicted_nonce={evicted}",
+        )
+
+    payload_dict: dict[str, object] = {
+        "sub": user_id,
+        "exp": now + LINK_WINDOW_SECS,
+        "session_exp": now + session_ttl,
+        "iat": now,
+        "nonce": nonce,
+    }
+    if app:
+        payload_dict["app"] = app
+    payload = json.dumps(payload_dict, separators=(",", ":")).encode()
+    encoded_payload = _b64url_encode(payload)
+    signature = _sign(payload)
+    return f"{encoded_payload}.{signature}"
+
+
+def validate_token(token: str, *, use_session_exp: bool = False) -> tuple[bool, str, str]:
+    """Return ``(valid, user_id, reason)``.
+
+    When *use_session_exp* is ``True`` (cookie-based access), validates
+    against ``session_exp`` instead of ``exp`` (link click window).
+    """
+    parts = token.split(".", 1)
+    if len(parts) != 2:
+        return False, "", "malformed token"
+    encoded_payload, sig = parts
+    try:
+        payload_bytes = _b64url_decode(encoded_payload)
+    except Exception:
+        return False, "", "invalid encoding"
+    expected = _sign(payload_bytes)
+    if not hmac.compare_digest(sig, expected):
+        return False, "", "invalid signature"
+    try:
+        data = json.loads(payload_bytes)
+    except Exception:
+        return False, "", "invalid payload"
+    exp_field = "session_exp" if use_session_exp else "exp"
+    if time.time() > data.get(exp_field, data.get("exp", 0)):
+        return False, "", "token expired"
+    # Validate nonce is still in the valid set (not evicted due to limit)
+    token_nonce = data.get("nonce", "")
+    valid, reason = _state.is_nonce_valid(token_nonce)
+    if not valid:
+        return False, "", reason
+    return True, data.get("sub", ""), ""
+
+
+def validate_token_with_app(
+    token: str, *, use_session_exp: bool = False
+) -> tuple[bool, str, str, str]:
+    """Return ``(valid, user_id, reason, app_name)``.
+
+    Extends :func:`validate_token` by also extracting the ``app`` field
+    from the token payload.  This avoids changing the existing
+    ``validate_token`` signature.
+    """
+    valid, user_id, reason = validate_token(token, use_session_exp=use_session_exp)
+    if not valid:
+        return False, user_id, reason, ""
+    # Extract app from payload
+    app_name = ""
+    try:
+        payload_bytes = _b64url_decode(token.split(".")[0])
+        data = json.loads(payload_bytes)
+        app_name = data.get("app", "")
+    except Exception:
+        pass
+    return valid, user_id, reason, app_name
+
+
+def token_nonce(token: str) -> str:
+    """The ``nonce`` claim of *token*, or ``""`` when it cannot be read.
+
+    **Precondition: the caller has already validated the token.** This decodes the payload
+    WITHOUT checking the signature, because the one caller (the token middleware) has just run
+    :func:`validate_token_with_app` over the same string — re-verifying here would be a second
+    copy of the validation rules, which is worse than stating the precondition.
+
+    Returning ``""`` on any malformed input is deliberate: every consumer treats an empty nonce
+    as "this session cannot be identified" and falls back to the stricter branch, so a decode
+    failure fails CLOSED rather than producing a nonce that matches nothing by accident.
+    """
+    try:
+        data = json.loads(_b64url_decode(token.split(".")[0]))
+    except Exception:  # noqa: BLE001 — an unreadable payload is an unidentifiable session
+        return ""
+    nonce = data.get("nonce", "") if isinstance(data, dict) else ""
+    return nonce if isinstance(nonce, str) else ""
+
+
+def presented_session_nonce(request: Any, port: int) -> str:
+    """The nonce of the VALID session token *request* presents, or ``""``.
+
+    For the auth paths that GRANT WITHOUT CONSULTING the session token — ``AuthMode.NONE``'s
+    dev middleware and the IP-gated local-network bypass. Both hand the request straight to
+    the handler, so neither reaches the line in :func:`token_auth_middleware` that records
+    ``session_nonce``. The request is authorized, and yet the session behind it is anonymous.
+
+    That silently disables **every** paired-device distinction in those modes, which is the
+    same shape of hole the ``app`` claim had before none-mode learned to adopt it: pairing
+    succeeds, ``GET /api/devices`` lists the device, and then ``POST /api/browse/connector``
+    answers ``browse_connector_unpaired`` with that device's own cookie, because
+    ``_paired_device`` has no nonce to look up. ``/api/ws``'s origin-less upgrade (CA-7) reads
+    the same key and fails closed for the same reason.
+
+    Naming the session cannot WIDEN either path — a caller these modes admit already holds
+    unrestricted owner reach — it only lets a handler tell *which kind of client* is calling.
+    And it names only a session the token proves: the token is fully validated here (same
+    ``validate_token`` the strict path uses, same ``use_session_exp`` rule keyed on whether it
+    arrived as a cookie), so an absent, forged, or expired credential yields ``""`` and every
+    consumer keeps its stricter branch. Validation also stamps the device's ``last_seen``,
+    exactly as it does on the authenticated path.
+    """
+    token = request.query.get("token") or ""
+    from_cookie = False
+    if not token:
+        token = request.cookies.get(f"pc_token_{port}", "")
+        from_cookie = bool(token)
+    if not token:
+        return ""
+    valid, _user_id, _reason = validate_token(token, use_session_exp=from_cookie)
+    if not valid:
+        return ""
+    return token_nonce(token)
+
+
+def _evict_expired() -> None:
+    """Remove token state entries whose session has expired."""
+    _state.evict_expired(time.time())
+
+
+def bind_token_ip(token: str, ip: str, session_exp: float = 0.0) -> None:
+    """Bind a token to a client IP for session validation."""
+    _state.bind_ip(token, ip, session_exp or time.time() + MAX_SESSION_TTL_SECS)
+
+
+def check_token_ip(token: str, ip: str) -> bool:
+    """Check if token is bound to the given IP (or unbound)."""
+    return _state.check_ip(token, ip)
+
+
+def mark_consumed(token: str, session_exp: float = 0.0) -> None:
+    """Mark a token as consumed."""
+    _state.mark_consumed(token, session_exp or time.time() + MAX_SESSION_TTL_SECS)
+
+
+def is_consumed(token: str) -> bool:
+    """Check if a token has been consumed."""
+    return _state.is_consumed(token)
+
+
+def try_consume(token: str, session_exp: float = 0.0) -> bool:
+    """Atomically consume a token if not already consumed.
+
+    Returns True if this call consumed it, False if already consumed.
+    """
+    return _state.try_consume(token, session_exp or time.time() + MAX_SESSION_TTL_SECS)
+
+
+def revoke_all_sessions() -> None:
+    """Revoke all active dashboard sessions (also used for test isolation).
+
+    Emits a SEL audit event before clearing state so the revocation is recorded.
+
+    **Clears the DURABLE store too, not just memory** (S1). This is the security half of
+    persisting sessions: with only the in-memory clear, a revoked token would be rejected
+    until the next restart and then accepted again, because `is_nonce_valid` would find its
+    nonce still recorded on disk. "Revoke" that un-revokes itself on reboot is worse than no
+    revoke at all — you would believe you had cut access off. Caught by
+    `test_token_rejected_when_no_nonces_registered`, which is exactly the assertion that
+    should notice.
+    """
+    _sel_fn().log_api_access(
+        caller="system",
+        operation="dashboard_sessions_revoked",
+        outcome="ok",
+        source="token_auth",
+        resources="action=revoke_all",
+    )
+    _state.clear_all()
+    try:
+        from personalclaw.dashboard.session_store import clear_sessions
+
+        clear_sessions()
+    except Exception:  # noqa: BLE001
+        logger.warning("could not clear the durable session store during revoke", exc_info=True)
+
+
+def secure_cookies() -> bool:
+    """Whether session cookies should carry ``Secure`` (REMOTE-USER-AUTH T4.1).
+
+    True only when the operator has declared an **https** public URL. Deliberately NOT the
+    default: `Secure` makes a cookie undeliverable over plain http, which is how essentially
+    every local install runs, so switching it on unconditionally would silently break login
+    and page auth for everyone with nothing pointing at the cause.
+
+    Any failure resolving this returns False — the value that keeps the box usable.
+    """
+    try:
+        from personalclaw.dashboard.exposure import is_https
+
+        return bool(is_https())
+    except Exception:  # noqa: BLE001
+        logger.debug("could not determine whether to set Secure on cookies", exc_info=True)
+        return False
+
+
+def revoke_token(token: str) -> bool:
+    """Revoke the ONE session *token* belongs to (logout). Returns whether it was live.
+
+    Clears the nonce from memory **and** from the durable store. The second half is the
+    security-relevant one: with only the in-memory drop, a logged-out session would be
+    refused until the next restart and then accepted again, because `is_nonce_valid` would
+    still find its nonce on disk — the same class of bug S1's `revoke_all_sessions` fixed.
+
+    Note this revokes the SESSION, not just the presented string: any other copy of the same
+    token dies with it, which is what a user pressing "log out" means.
+    """
+    nonce = ""
+    try:
+        payload_b64 = token.split(".")[0]
+        nonce = str(json.loads(_b64url_decode(payload_b64)).get("nonce") or "")
+    except Exception:  # noqa: BLE001 — a malformed token has no session to revoke
+        logger.debug("could not extract a nonce from the token being revoked", exc_info=True)
+        return False
+    if not nonce:
+        return False
+
+    existed = _state.revoke_nonce(nonce, token)
+    try:
+        from personalclaw.dashboard.session_store import forget_session, load_sessions
+
+        stored = load_sessions()
+        if nonce in stored:
+            existed = True
+        forget_session(nonce)
+    except Exception:  # noqa: BLE001
+        logger.warning("could not remove the session from the durable store", exc_info=True)
+
+    _sel_fn().log_api_access(
+        caller="system",
+        operation="session_revoked",
+        outcome="ok",
+        source="token_auth",
+        resources=f"nonce={nonce[:8]}…",
+    )
+    return existed
+
+
+def revoke_nonce(nonce: str) -> bool:
+    """Drop ONE nonce from this process's live set. Returns whether it was there.
+
+    The IN-MEMORY half of a revoke, for callers that hold a nonce rather than a token — the
+    device registry, which never sees the device's token. The DURABLE half is
+    ``session_store.forget_session``, and a caller needs both: memory alone lets the session
+    return at the next restart, the file alone lets it keep working until then.
+    """
+    if not nonce:
+        return False
+    return _state.revoke_nonce(nonce)
+
+
+def parse_duration(s: str) -> int | None:
+    """Parse ``'<int>h'`` or ``'<int>m'`` into seconds, or *None*.
+
+    Returns *None* for invalid input. Caps at ``MAX_SESSION_TTL_SECS``.
+    """
+    m = re.fullmatch(r"(\d+)(h|m)", s)
+    if not m:
+        return None
+    value, unit = int(m.group(1)), m.group(2)
+    secs = value * 3600 if unit == "h" else value * 60
+    return min(secs, MAX_SESSION_TTL_SECS)
+
+
+#: Seconds per unit for `parse_config_duration`.
+_DURATION_UNITS = {"m": 60, "h": 3600, "d": 86400}
+
+
+def parse_config_duration(s: str, *, default_secs: int) -> int:
+    """Parse ``'<int>[mhd]'`` from CONFIG into seconds, falling back to *default_secs*.
+
+    Deliberately a second function rather than a widened `parse_duration`. That one serves
+    `personalclaw token --ttl` and the token endpoint, where an unrecognised unit must be a
+    hard error the user sees immediately — silently reading ``30d`` as something else would
+    mint a token with the wrong lifetime. Here the input is a config file that may have been
+    hand-edited, so the posture is the opposite: never let a typo brick the box; take the
+    documented default and carry on. ``d`` is accepted because a browser session lifetime is
+    naturally expressed in days (the plan's ``30d``), where a token's is in hours.
+    """
+    m = re.fullmatch(r"(\d+)([mhd])", (s or "").strip())
+    if not m:
+        logger.warning("unparseable duration %r in config — using the default", s)
+        return default_secs
+    secs = int(m.group(1)) * _DURATION_UNITS[m.group(2)]
+    if secs <= 0:
+        return default_secs
+    return min(secs, MAX_SESSION_TTL_SECS)
+
+
+def token_auth_middleware(
+    *,
+    internal_paths: frozenset[str] = frozenset(),
+    mixed_internal_paths: frozenset[str] = frozenset(),
+    internal_secret: str = "",
+    port: int = _DEFAULT_PORT,
+    local_only: bool = True,
+) -> Callable[..., Any]:
+    """Factory returning aiohttp middleware for token-based dashboard auth.
+
+    ALL requests require a valid token — loopback is not exempt, because
+    local port forwarders (socat, ssh -R, custom scripts) make remote
+    traffic appear as 127.0.0.1, which would otherwise bypass auth entirely.
+
+    *internal_paths* are exact paths that internal processes (mcp-core,
+    doctor) call — these require loopback AND a matching
+    ``X-Internal-Secret`` header (read from ``~/.personalclaw/.local_secret``).
+    Non-loopback access to these paths is always denied.
+
+    *mixed_internal_paths* are paths called by BOTH internal processes
+    (loopback + secret) AND the browser (cookie auth).  On non-loopback
+    they perform explicit cookie validation (deny-by-default) instead
+    of hard-denying, so DCV/SSH-forwarded browsers polling these routes
+    (e.g. ``/api/spawn`` every 5s) don't trigger false session-expired
+    banners.  Use this for any internal-path that the browser polls.
+
+    """
+
+    def _resolved_client_ip(request: web.Request) -> str:
+        """Return the browser's IP, preferring a forwarded header from a TRUSTED peer.
+
+        nginx (or any reverse proxy in the same compose network) sees the gateway's container
+        IP as the TCP remote, not the actual client, so a forwarded header is the only way to
+        recover the real one — and the real one is what IP binding binds to.
+
+        **REMOTE-USER-AUTH T4.1 tightens who may set it.** Once the operator declares this
+        instance internet-exposed (`dashboard.public_url`), only a peer listed in
+        `dashboard.trusted_proxies` is believed. Before that change the rule was the shape of
+        the TCP remote — "starts with 10./172.1x/192.168." — which is the classic mistake: on
+        an exposed box every container neighbour, LAN device and SSRF-able local service sits
+        on a private address, so any of them could set `X-Real-IP` and move a bound session to
+        an address of their choosing.
+
+        **Not exposed ⇒ behavior is unchanged**, deliberately. Home/compose installs depend on
+        the private-subnet heuristic today, and silently breaking their nginx would be a
+        regression paid by everyone to harden the few. Exposure is the operator's own
+        statement, and it is what switches the strict rule on.
+        """
+        raw = request.remote or "unknown"
+        forwarded = request.headers.get("X-Real-IP", "").strip()
+        if not forwarded:
+            return raw
+        try:
+            from personalclaw.dashboard.exposure import is_exposed, is_trusted_proxy
+
+            if is_exposed():
+                # Strict: an explicitly trusted peer, or the header is ignored entirely.
+                if is_trusted_proxy(raw):
+                    return forwarded
+                logger.debug("ignoring X-Real-IP from untrusted peer on an exposed instance")
+                return raw
+        except Exception:  # noqa: BLE001 — never let this decision break a request
+            logger.debug("exposure check failed; using the legacy proxy heuristic", exc_info=True)
+        is_proxy = raw.startswith(
+            ("127.", "10.", "172.1", "172.2", "172.3", "192.168.", "::1", "fc", "fd")
+        )
+        return forwarded if is_proxy else raw
+
+    def _extract_and_validate_token(request: web.Request, _port: int) -> tuple[bool, str, str]:
+        """Extract token from query param or cookie and validate it.
+
+        Used by internal-path browser auth (no secret header).  The main
+        auth flow has its own extraction with IP-binding and from_cookie
+        tracking that this helper intentionally does not replicate.
+        """
+        cookie_name = f"pc_token_{_port}"
+        token = request.query.get("token") or request.cookies.get(cookie_name, "")
+        if not token:
+            return False, "", "no token"
+        return validate_token(token, use_session_exp=True)
+
+    @web.middleware
+    async def middleware(request: web.Request, handler: object) -> web.StreamResponse:
+        if os.environ.get("PERSONALCLAW_DEV_NO_AUTH") == "1":
+            request["user"] = request.get("user") or "dev-local"
+            return await handler(request)  # type: ignore[operator]
+
+        # Local-network bypass — opt-in, IP-gated.
+        # When PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1, requests from loopback,
+        # RFC1918, link-local, or ULA addresses skip token validation.
+        # Off by default; intended for trusted home/dev LANs.
+        if os.environ.get("PERSONALCLAW_BYPASS_LOCAL_NETWORKS") == "1":
+            client_ip = _resolved_client_ip(request)
+            if is_private_network(client_ip):
+                request["user"] = request.get("user") or f"local-net:{client_ip}"
+                # The bypass grants on the IP, so it never reaches the session_nonce line
+                # below — which left a paired device on a bypassed LAN indistinguishable from
+                # the owner's browser. Name the session when (and only when) the request
+                # presents one the token proves. See presented_session_nonce.
+                if not request.get("session_nonce"):
+                    request["session_nonce"] = presented_session_nonce(request, port)
+                _log_auth(request, request["user"], "ok", "local-network bypass")
+                return await handler(request)  # type: ignore[operator]
+
+        path = request.path
+
+        # Internal API paths: loopback + secret grants immediate access.
+        # If the secret is missing (browser request), fall through to
+        # normal cookie auth so dashboard pages can call these routes.
+        _matches_strict = internal_paths and (
+            path in internal_paths or any(path.startswith(p + "/") for p in internal_paths)
+        )
+        _matches_mixed = mixed_internal_paths and (
+            path in mixed_internal_paths
+            or any(path.startswith(p + "/") for p in mixed_internal_paths)
+        )
+        # local_only=False: treat ALL internal paths as mixed (the user has
+        # opted into remote access).
+        if not local_only and _matches_strict and not _matches_mixed:
+            _matches_mixed = True
+            _matches_strict = False
+        _matches_internal = _matches_strict or _matches_mixed
+        if _matches_internal and is_loopback(request.remote or ""):
+            _has_secret_header = "X-Internal-Secret" in request.headers
+            if _has_secret_header:
+                _provided_secret = request.headers["X-Internal-Secret"]
+                # Secret header present — validate it strictly
+                if not internal_secret:
+                    _sel = _sel_fn()
+                    _sel.log_api_access(
+                        caller=request.remote or "",
+                        operation="internal_auth",
+                        outcome="denied",
+                        source="token_auth",
+                        resources=path,
+                        error="no internal secret configured",
+                    )
+                    _log_auth(request, "internal", "denied", "no internal secret configured")
+                    return _deny(request, "Forbidden")
+                if hmac.compare_digest(internal_secret, _provided_secret):
+                    _sel = _sel_fn()
+                    _sel.log_api_access(
+                        caller=request.remote or "",
+                        operation="internal_auth",
+                        outcome="granted",
+                        source="token_auth",
+                        resources=path,
+                    )
+                    _log_auth(request, "internal", "granted", "")
+                    return await handler(request)  # type: ignore[operator]
+                # Wrong secret → deny (don't fall through)
+                _sel = _sel_fn()
+                _sel.log_api_access(
+                    caller=request.remote or "",
+                    operation="internal_auth",
+                    outcome="denied",
+                    source="token_auth",
+                    resources=path,
+                    error="wrong secret",
+                )
+                _log_auth(request, "internal", "denied", "wrong secret")
+                return _deny(request, "Forbidden")
+            # No secret header (browser request) → verify cookie/query-param auth
+            # inline to satisfy deny-by-default: positively confirm auth
+            # at the decision point rather than deferring to downstream.
+            # NOTE: uses _extract_and_validate_token helper (defined above)
+            # for cookie/query-param validation.
+            _valid, _uid, _reason = _extract_and_validate_token(request, port)
+            if not _valid:
+                _sel = _sel_fn()
+                _sel.log_api_access(
+                    caller=request.remote or "",
+                    operation="internal_auth",
+                    outcome="denied",
+                    source="token_auth",
+                    resources=path,
+                    error=f"cookie auth failed: {_reason}",
+                )
+                _log_auth(request, "internal", "denied", f"cookie auth failed: {_reason}")
+                return _deny(request, "Forbidden")
+            _sel = _sel_fn()
+            _sel.log_api_access(
+                caller=request.remote or "",
+                operation="internal_auth",
+                outcome="granted",
+                source="token_auth",
+                resources=path,
+                metadata={"reason": "cookie auth (no secret header)"},
+            )
+            _log_auth(request, "internal", "granted", f"cookie auth for {_uid}")
+            return await handler(request)  # type: ignore[operator]
+        elif _matches_internal:
+            if _matches_mixed:
+                # Mixed paths on non-loopback (DCV/SSH-forwarded browsers):
+                # explicit cookie validation, mirroring the loopback
+                # no-secret-header branch above.  Deny-by-default —
+                # positively confirm auth at this decision point rather
+                # than relying on downstream fall-through.
+                # If X-Internal-Secret header is present, validate it first
+                # (defense-in-depth: wrong secret = deny, even with valid cookie)
+                if "X-Internal-Secret" in request.headers:
+                    if not internal_secret or not hmac.compare_digest(
+                        internal_secret, request.headers["X-Internal-Secret"]
+                    ):
+                        _sel = _sel_fn()
+                        _sel.log_api_access(
+                            caller=request.remote or "",
+                            operation="internal_auth",
+                            outcome="denied",
+                            source="token_auth",
+                            resources=path,
+                            error="wrong secret (non-loopback mixed)",
+                        )
+                        _log_auth(
+                            request, "internal", "denied", "wrong secret (non-loopback mixed)"
+                        )
+                        return _deny(request, "Forbidden")
+                _valid, _uid, _reason = _extract_and_validate_token(request, port)
+                if not _valid:
+                    _sel = _sel_fn()
+                    _sel.log_api_access(
+                        caller=request.remote or "",
+                        operation="internal_auth",
+                        outcome="denied",
+                        source="token_auth",
+                        resources=path,
+                        error=f"mixed non-loopback cookie auth failed: {_reason}",
+                    )
+                    _log_auth(
+                        request,
+                        "internal",
+                        "denied",
+                        f"mixed non-loopback cookie auth failed: {_reason}",
+                    )
+                    return _deny(request, "Forbidden")
+                _sel = _sel_fn()
+                _sel.log_api_access(
+                    caller=request.remote or "",
+                    operation="internal_auth",
+                    outcome="granted",
+                    source="token_auth",
+                    resources=path,
+                    metadata={"reason": "mixed non-loopback cookie auth"},
+                )
+                _log_auth(
+                    request, "internal", "granted", f"mixed non-loopback cookie auth for {_uid}"
+                )
+                return await handler(request)  # type: ignore[operator]
+            else:
+                # INVARIANT: non-loopback access to strict internal paths is
+                # ALWAYS denied.  Do NOT remove this branch — without it,
+                # non-loopback requests would silently fall through to
+                # normal cookie auth, defeating the machine-to-machine
+                # isolation that the internal-secret design provides.
+                _sel = _sel_fn()
+                _sel.log_api_access(
+                    caller=request.remote or "",
+                    operation="internal_auth",
+                    outcome="denied",
+                    source="token_auth",
+                    resources=path,
+                    error="non-loopback source",
+                )
+                _log_auth(request, "internal", "denied", "non-loopback source")
+                return _deny(request, "Forbidden")
+
+        # Bypass static assets
+        if any(path.startswith(p) for p in _BYPASS_PREFIXES):
+            return await handler(request)  # type: ignore[operator]
+        if path in _BYPASS_EXACT:
+            return await handler(request)  # type: ignore[operator]
+        # Extract token from query param or cookie
+        cookie_name = f"pc_token_{port}"
+        token = request.query.get("token") or ""
+        from_cookie = False
+        if not token:
+            token = request.cookies.get(cookie_name, "")
+            from_cookie = bool(token)
+
+        if not token:
+            _log_auth(request, "", "denied", "Token required")
+            return _deny(request, "Token required")
+
+        valid, user_id, reason, app_name = validate_token_with_app(
+            token, use_session_exp=from_cookie
+        )
+        if not valid:
+            _log_auth(request, "", "denied", reason)
+            return _deny(request, reason)
+
+        # Prefer X-Real-IP set by a trusted reverse proxy (nginx) over the
+        # TCP remote address. See _resolved_client_ip for the trust rules.
+        client_ip = _resolved_client_ip(request)
+
+        # IP binding only applies on the initial query-param token exchange.
+        # Cookie-based requests skip IP checks — the cookie itself is the
+        # credential, and IP validation behind a proxy is unreliable.
+        if not from_cookie and not check_token_ip(token, client_ip):
+            _log_auth(request, user_id, "denied", "IP mismatch")
+            return _deny(request, "IP mismatch")
+
+        # Extract session_exp for cookie and IP binding on first query-param use
+        session_exp = 0.0
+        if not from_cookie:
+            try:
+                payload_bytes = _b64url_decode(token.split(".")[0])
+                data = json.loads(payload_bytes)
+                session_exp = data.get("session_exp", 0.0)
+            except Exception:
+                pass
+            bind_token_ip(token, client_ip, session_exp)
+
+        # Expose authenticated identity to handlers (deny-by-default)
+        request["user"] = user_id
+        request["app"] = app_name
+        # WHICH session authorized this request, so a handler can ask what kind of client is
+        # on the other end without re-deriving it from the raw credential. Only the nonce
+        # travels — it is the registry handle, and the token itself stays in this middleware.
+        # Consumed by the `/api/ws` origin check (CA-7): a paired device session is the one
+        # thing that can vouch for an origin-less upgrade.
+        request["session_nonce"] = token_nonce(token)
+
+        # Layered app identity (untrusted-app sandbox, P1): an app's SDK sends the
+        # owner cookie (browser-attached) PLUS an app-scoped token — as an
+        # ``Authorization: Bearer`` header (fetch) or a ``?app_token=`` query param
+        # (the /api/ws handshake, which can't set headers). When present and valid
+        # for the SAME owner user, adopt its ``app`` claim so the app-permission
+        # middleware + WS event filter scope this request to that app. Owner auth
+        # (above) is unchanged — the app token only NARROWS, never widens.
+        if not app_name:
+            app_token = ""
+            _auth = request.headers.get("Authorization", "")
+            if _auth.startswith("Bearer "):
+                app_token = _auth[7:].strip()
+            if not app_token:
+                app_token = request.query.get("app_token", "")
+            if app_token and app_token != token:
+                a_valid, a_user, _reason, a_app = validate_token_with_app(app_token)
+                if a_valid and a_app and a_user == user_id:
+                    request["app"] = a_app
+
+        # Proceed to handler
+        resp = await handler(request)  # type: ignore[operator]
+
+        # Set cookie after handler (needs response object)
+        if not from_cookie:
+            cookie_max_age = MAX_SESSION_TTL_SECS
+            if session_exp:
+                remaining = int(session_exp - time.time())
+                if 0 < remaining <= MAX_SESSION_TTL_SECS:
+                    cookie_max_age = remaining
+            resp.set_cookie(
+                cookie_name,
+                token,
+                httponly=True,
+                samesite="Lax",
+                path="/",
+                max_age=cookie_max_age,
+                secure=secure_cookies(),
+            )
+            # Clear the non-port-specific cookie so only pc_token_{port} is used.
+            resp.set_cookie("pc_token", "", max_age=0, path="/")
+
+        _log_auth(request, user_id, "ok", "")
+        return resp  # type: ignore[return-value]
+
+    middleware._is_token_auth = True  # type: ignore[attr-defined]  # sentinel for server.py security gate  # noqa: E501
+    return middleware
+
+
+def auth_middleware(
+    auth_cfg: Any,  # personalclaw.auth.modes.AuthConfig — typed as Any to avoid circular import
+    *,
+    internal_paths: frozenset[str] = frozenset(),
+    mixed_internal_paths: frozenset[str] = frozenset(),
+    internal_secret: str = "",
+    port: int = _DEFAULT_PORT,
+    local_only: bool = True,
+) -> Callable[..., Any]:
+    """Factory returning aiohttp middleware dispatched by ``auth_cfg.mode``.
+
+    Dispatches to the appropriate auth strategy based on ``AuthMode``:
+
+    * ``NONE``        — passthrough (loopback invariant enforced at bind time).
+    * ``LOCAL_TOKEN`` — delegates to :func:`token_auth_middleware`.
+    * ``API_KEY``     — validates ``Authorization: Bearer`` against
+                        ``os.environ[auth_cfg.api_key_env]``.
+    * ``OAUTH2``      — verifies bearer JWT via :mod:`personalclaw.auth.oidc`.
+
+    Failures always return HTTP 401 JSON with a generic message — request
+    headers, cookies, and tokens are never echoed.
+
+    The returned middleware carries the ``_is_token_auth = True`` sentinel
+    so the ``server.py`` security invariant check still passes for all modes
+    except ``NONE`` (where auth is intentionally absent).
+    """
+    from personalclaw.auth.modes import AuthMode
+
+    mode: AuthMode = auth_cfg.mode
+
+    if mode == AuthMode.NONE:
+
+        @web.middleware
+        async def _passthrough(request: web.Request, handler: object) -> web.StreamResponse:
+            return await handler(request)  # type: ignore[operator]
+
+        _passthrough._is_token_auth = False  # type: ignore[attr-defined]
+        return _passthrough
+
+    if mode == AuthMode.LOCAL_TOKEN:
+        return token_auth_middleware(
+            internal_paths=internal_paths,
+            mixed_internal_paths=mixed_internal_paths,
+            internal_secret=internal_secret,
+            port=port,
+            local_only=local_only,
+        )
+
+    if mode == AuthMode.API_KEY:
+        api_key_env: str = auth_cfg.api_key_env or ""
+
+        @web.middleware
+        async def _api_key_mw(request: web.Request, handler: object) -> web.StreamResponse:
+            path = request.path
+            # Static assets bypass (same set as LOCAL_TOKEN for consistency)
+            if any(path.startswith(p) for p in _BYPASS_PREFIXES):
+                return await handler(request)  # type: ignore[operator]
+            if path in _BYPASS_EXACT:
+                return await handler(request)  # type: ignore[operator]
+
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer "):
+                logger.debug("api_key_mw: missing Bearer header for %s", path)
+                return _deny_401(request, "Unauthorized")
+            provided = auth_header[len("Bearer ") :]
+            if not api_key_env:
+                logger.warning("api_key_mw: api_key_env not configured")
+                return _deny_401(request, "Unauthorized")
+            expected = os.environ.get(api_key_env, "")
+            if not expected:
+                logger.warning("api_key_mw: env var %r is not set", api_key_env)
+                return _deny_401(request, "Unauthorized")
+            if not hmac.compare_digest(provided, expected):
+                logger.debug("api_key_mw: invalid API key for %s", path)
+                return _deny_401(request, "Unauthorized")
+            request["user"] = "api_key"
+            return await handler(request)  # type: ignore[operator]
+
+        _api_key_mw._is_token_auth = True  # type: ignore[attr-defined]
+        return _api_key_mw
+
+    if mode == AuthMode.OAUTH2:
+        oauth2_issuer: str = auth_cfg.oauth2_issuer or ""
+        oauth2_audience: str = auth_cfg.oauth2_audience or ""
+        oauth2_client_id: str | None = auth_cfg.oauth2_client_id
+
+        from personalclaw.auth.oidc import OidcVerificationError, OidcVerifier
+
+        _verifier = OidcVerifier(
+            oauth2_issuer,
+            oauth2_audience,
+            client_id=oauth2_client_id,
+        )
+
+        @web.middleware
+        async def _oauth2_mw(request: web.Request, handler: object) -> web.StreamResponse:
+            path = request.path
+            if any(path.startswith(p) for p in _BYPASS_PREFIXES):
+                return await handler(request)  # type: ignore[operator]
+            if path in _BYPASS_EXACT:
+                return await handler(request)  # type: ignore[operator]
+
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer "):
+                logger.debug("oauth2_mw: missing Bearer header for %s", path)
+                return _deny_401(request, "Unauthorized")
+            token = auth_header[len("Bearer ") :]
+            try:
+                claims = _verifier.verify(token)
+            except OidcVerificationError as exc:
+                logger.debug("oauth2_mw: JWT verification failed for %s: %s", path, exc)
+                return _deny_401(request, "Unauthorized")
+            request["user"] = claims.get("sub", "")
+            return await handler(request)  # type: ignore[operator]
+
+        _oauth2_mw._is_token_auth = True  # type: ignore[attr-defined]
+        return _oauth2_mw
+
+    # Unknown mode — fail closed
+    logger.error("auth_middleware: unknown AuthMode %r; denying all requests", mode)
+
+    @web.middleware
+    async def _deny_all(request: web.Request, handler: object) -> web.StreamResponse:
+        return _deny_401(request, "Unauthorized")
+
+    _deny_all._is_token_auth = True  # type: ignore[attr-defined]
+    return _deny_all
+
+
+def _deny_401(request: web.Request, reason: str) -> web.Response:
+    """Return HTTP 401 with a generic JSON body; never echoes request data."""
+    return web.json_response({"error": reason}, status=401)
+
+
+def _login_offered() -> bool:
+    """Whether a password login page should be offered instead of the paste-token gate.
+
+    Requires BOTH `auth.login_enabled` and an actually-configured credential. The second
+    condition is what keeps a misconfiguration from becoming a lockout: enabling login and
+    then losing the credential file would otherwise redirect every page to a form nobody can
+    pass, with the paste-token gate — the escape hatch — no longer reachable. Any error here
+    falls back to the existing gate, because that is the behavior that always works.
+    """
+    try:
+        from personalclaw.auth.credentials import has_credentials
+        from personalclaw.config.loader import AppConfig
+
+        if not bool(AppConfig.load().auth.login_enabled):
+            return False
+        return bool(has_credentials())
+    except Exception:  # noqa: BLE001
+        logger.debug("could not determine whether login is offered", exc_info=True)
+        return False
+
+
+def _deny(request: web.Request, reason: str) -> web.Response:
+    headers = {"X-Auth-Required": "true"}
+    if request.path.startswith("/api/"):
+        return web.json_response({"error": reason}, status=403, headers=headers)
+    # REMOTE-USER-AUTH T3.3 — when a password login is on offer, an expired or absent session
+    # on a PAGE request lands on /login instead of the paste-token gate. Telling a remote user
+    # to "run personalclaw token in your terminal" is useless advice when the whole reason
+    # they are here is that they are not at the terminal.
+    #
+    # Deliberately narrow: only non-API GETs, and never /login itself (that would loop). The
+    # `?token=` path never reaches here at all — a valid token is authorized upstream — so the
+    # local flow is untouched, and the gate remains the fallback whenever login is not offered.
+    if request.method == "GET" and request.path != "/login" and _login_offered():
+        return web.Response(
+            status=302,
+            headers={**headers, "Location": "/login", "Cache-Control": "no-store"},
+        )
+    return web.Response(
+        text=_403_HTML.format(reason=reason),
+        status=403,
+        content_type="text/html",
+        headers=headers,
+    )
+
+
+def _log_auth(request: web.Request, user_id: str, outcome: str, reason: str) -> None:
+    """Log an auth decision to the SEL.
+
+    ``reason`` is context for the decision, not necessarily a failure — see
+    :func:`_sel_reason_kwargs`, which decides whether it lands in ``error`` or
+    ``metadata`` based on ``outcome``.
+    """
+    try:
+        _sel_fn().log_api_access(
+            caller=user_id or request.remote or "unknown",
+            operation="dashboard.token_auth",
+            outcome=outcome,
+            resources=request.path,
+            **_sel_reason_kwargs(outcome, reason),
+        )
+    except Exception:
+        logger.warning("Failed to log auth event to SEL", exc_info=True)

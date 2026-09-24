@@ -1,0 +1,142 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+
+/** The keyboard contract shared by the app's two context menus: **the cursor IS focus.**
+ *
+ *  Both menus already tracked a highlighted row in React state and painted it (heavier label
+ *  weight + a trailing primary dot). Measured on the shared row menu before this hook existed,
+ *  with the menu open on `#/inbox`: ArrowDown moved the paint (`wght 500` from row 0 to row 1,
+ *  the dot with it) while `document.activeElement` stayed on the row BEHIND the menu the whole
+ *  time — so the cursor existed only for people who could see it. axe reported **0 violations**
+ *  on that open menu, because role, name and children were all correct; the missing part was the
+ *  cursor's exposure, which no automated rule can ask about.
+ *
+ *  Moving real focus is what `ui/Popover` — the canonical popup in this kit — already does
+ *  ("restores focus to the trigger on Escape/selection, so keyboard focus isn't dropped to
+ *  <body>"), so this converges the two context menus onto the kit's own contract rather than
+ *  inventing one. Focus, unlike a font weight:
+ *    • is announced ("Open, menu item, 1 of 2"),
+ *    • draws the focus ring, so sighted keyboard users see the cursor too,
+ *    • activates on Enter/Space natively, with no parallel key handler to keep in sync,
+ *    • collapses the menu's tab stops to ONE (roving tabindex), instead of leaving every row a
+ *      stray tab stop at the end of the document.
+ *
+ *  Usage: give the container a ref, mark the rows `role="menuitem"`, spread `tabIndexFor(i)`,
+ *  route Arrow keys to `move(±1)`, and call `restoreFocus()` on the Escape and selection paths
+ *  (NOT on outside-click — the pointer is already elsewhere, mirroring Popover's split).
+ */
+export function useMenuCursor({
+  containerRef,
+  count,
+  openKey,
+  initialIndex = 0,
+  autoFocus = true,
+}: {
+  /** The element that owns the item rows. */
+  containerRef: React.RefObject<HTMLElement | null>
+  count: number
+  /** `null` while closed; any NEW value means "opened afresh" — a reposition (right-clicking a
+   *  second row without closing first) has to reset the cursor to the top, which a boolean
+   *  `open` flag cannot express because it never changes. */
+  openKey: string | null
+  /** Where the cursor starts. `0` for an ACTION menu (Open / Rename / Delete — nothing is
+   *  "current"), but a **pick-one** popup must open on its selected option: APG puts focus on the
+   *  checked item so the user hears what is set before choosing something else. Pass the index of
+   *  the `aria-selected`/`aria-checked` row. */
+  initialIndex?: number
+  /** Move focus into the popup as soon as it opens. **Pass `false` for a popup that also opens on
+   *  HOVER** (`ui/HeaderActions`' mode pill): stealing focus because a pointer crossed a control is
+   *  worse than the defect this hook fixes. With `false` the cursor still arms — the first Arrow
+   *  key pulls focus in — so the keyboard path works without hijacking the mouse path. */
+  autoFocus?: boolean
+}) {
+  // `moved` is what makes `autoFocus: false` work: focus follows the cursor only once the user has
+  // actually moved it, never merely because the popup appeared.
+  const [{ active, moved }, setCursor] = useState({ active: initialIndex, moved: false })
+  const invokerRef = useRef<HTMLElement | null>(null)
+
+  // Remember what to hand focus back to, and start the cursor at the top, on every fresh open.
+  // Declared BEFORE the focus effect so it captures the invoker while it is still the active
+  // element — swapping these two would record the menu's own first row as its own invoker.
+  useEffect(() => {
+    if (openKey === null) return
+    const prev = document.activeElement as HTMLElement | null
+    // On a REPOSITION (right-clicking a second row without closing first) focus is already inside
+    // the menu, and capturing a row as its own invoker would "restore" focus to a node about to
+    // unmount — dropping it on <body>. Same trap `ui/useFocusReturn` documents; keep the original.
+    if (prev && !containerRef.current?.contains(prev)) invokerRef.current = prev
+    setCursor({ active: initialIndex, moved: false })
+  }, [openKey, containerRef, initialIndex])
+
+  /** One selector for every popup in the kit: a container declares exactly one item type, and
+   *  which one it is comes from its own role (`menu` → menuitem/menuitemradio, `listbox` → option).
+   *  Keeping it here rather than as a prop means a new adopter cannot pass the wrong one. */
+  const rows = useCallback(
+    () => Array.from(containerRef.current?.querySelectorAll<HTMLElement>(
+      '[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"],[role="option"]') ?? []),
+    [containerRef],
+  )
+
+  useEffect(() => {
+    if (openKey === null) return
+    if (!autoFocus && !moved) return
+    rows()[active]?.focus({ preventScroll: true })
+  }, [openKey, active, moved, count, rows, autoFocus])
+
+  /** Clamped, not wrapping — matches what the menus did before, so only the channel changed.
+   *
+   *  With `autoFocus: false` the FIRST single-step arrow only pulls focus in: it lands on the option
+   *  the cursor already points at (the selected one) rather than skipping past it. Measured without
+   *  this on the mode pill: one ArrowDown from a trigger showing "Agent" focused "Ask".
+   *  Home/End (the big jumps) are exempt — someone who presses Home is asking for the first item,
+   *  not for "wherever the cursor happens to be". */
+  const move = useCallback(
+    (delta: number) => setCursor((c) => (
+      !autoFocus && !c.moved && Math.abs(delta) === 1
+        ? { active: c.active, moved: true }
+        : { active: Math.max(0, Math.min(count - 1, c.active + delta)), moved: true }
+    )),
+    [count, autoFocus],
+  )
+
+  /** The same guard set `ui/useFocusReturn` uses — converged rather than re-derived, since it is
+   *  the kit's existing answer to "restore focus without dropping it on <body>". The difference is
+   *  WHEN: that hook fires on unmount (a panel), this one is called explicitly, so an outside
+   *  click can decline it the way `ui/Popover` does. */
+  const restoreFocus = useCallback(() => {
+    const el = invokerRef.current
+    // A detached node, or one inside the closing menu, cannot take focus — focusing it is a no-op
+    // that leaves focus on <body>. Deleting an entry from its own row menu is the live case: the
+    // row that opened the menu is gone by the time it closes.
+    if (!el || !el.isConnected || typeof el.focus !== 'function') return
+    if (containerRef.current?.contains(el)) return
+    el.focus({ preventScroll: true })
+  }, [containerRef])
+
+  return {
+    active,
+    move,
+    restoreFocus,
+    /** Roving tabindex: the cursor row is the menu's single tab stop. */
+    tabIndexFor: (i: number) => (i === active ? 0 : -1),
+  }
+}
+
+/** The arrow/Tab half of the contract, so five popups do not spell it five ways.
+ *
+ *  Returns true when it consumed the key, letting the caller keep its own Escape branch (each
+ *  popup closes differently — `ui/Popover` owns Escape for the ones it wraps). Vertical only: every
+ *  popup in this kit is a vertical list; the `role="tablist"` strips have their own horizontal
+ *  handler and do not use this. */
+export function menuCursorKeydown(
+  e: KeyboardEvent,
+  { move, dismiss }: { move: (d: number) => void; dismiss: () => void },
+): boolean {
+  if (e.key === 'ArrowDown') { e.preventDefault(); move(1); return true }
+  if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); return true }
+  if (e.key === 'Home') { e.preventDefault(); move(-Number.MAX_SAFE_INTEGER); return true }
+  if (e.key === 'End') { e.preventDefault(); move(Number.MAX_SAFE_INTEGER); return true }
+  // Tab dismisses and is NOT prevented: focus returns to the trigger, then the browser's own Tab
+  // carries on from there. Without this, Tab walks into the page behind an open popup.
+  if (e.key === 'Tab') { dismiss(); return true }
+  return false
+}

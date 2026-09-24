@@ -1,0 +1,5 @@
+{
+  "name": "Quarterly close",
+  "description": "Close three months, then assemble the quarterly tax picture.",
+  "roster": ["cfo", "cfo-tax-analyst"]
+}

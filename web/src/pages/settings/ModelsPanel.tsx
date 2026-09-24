@@ -1,0 +1,981 @@
+import { useEffect, useMemo, useState } from 'react'
+import { ResultAnnouncement } from '../../ui/ListControls'
+import {
+  Check, MessageSquare, Boxes, Mic, Volume2, Eye, ImagePlus,
+  Ear, Music, ScanEye, Clapperboard, Users, Download, Code2, BrainCircuit,
+  Moon, Network, RefreshCcw, ArrowUp, ArrowDown, X, AlertTriangle, Wrench,
+  Trash2, Gavel, FlaskConical, KeyRound, type LucideIcon,
+} from 'lucide-react'
+import {
+  api, type AvailableModel, type JudgeBenchRecommendation, type ProviderHealth,
+  type HfTokenSource, type LocalModelHealth, type LocalModelSelftest,
+} from '../../lib/api'
+import { humanBytes } from '../../lib/chunkedUpload'
+import {
+  occupantDetail, pressureDetail, pressureTone, reclaimableCount, sortOccupants,
+} from '../../lib/residency'
+import { IconButton } from '../../ui/IconButton'
+import { Button } from '../../ui/Button'
+import { Meter } from '../../ui/Meter'
+import { WavyProgress } from '../../ui/WavyProgress'
+import { SearchField } from '../../ui/SearchField'
+import { TextInput } from '../../ui/forms'
+import { StatusPill } from '../../ui/StatusPill'
+import { useQuery, invalidateKeys } from '../../lib/data'
+import { confirm } from '../../ui/dialog'
+import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow } from './settingsUI'
+import { notify } from '../../app/appSdk'
+import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
+import { fvs } from '../../design/fontWeight'
+import { accentChip } from '../../design/accent'
+import { ERROR_SURFACE_PAINT } from '../../design/errorTreatments'
+import { DisclosureCard } from '../../ui/DisclosureCard'
+import { BUSY_REASON } from '../../ui/unavailable'
+import { reportingWrite } from '../../app/reportingWrite'
+
+// Canonical use-cases (matches the backend's USE_CASES vocabulary).
+// `chain`: the binding is an ordered fallback CHAIN (position 0 = default,
+// later entries tried when an earlier provider's breaker is open or its build
+// fails) with a reorderable editor; else single-select.
+// `fallback` names the use-case this one INHERITS its binding from when no model
+// is pinned here (mirrors backend parent_capability). Its presence changes the
+// empty-picker state from a misleading "add a backend first" to an accurate
+// "already uses your <fallback> chain; pin one here only to override".
+const USE_CASE_META: Record<string, { label: string; group?: string; description: string; chain: boolean; icon: LucideIcon; fallback?: string }> = {
+  chat: { label: 'Chat', description: 'Conversational models for chat and agent interactions. Order matters: the first model is the default; later ones are fallbacks used when an earlier provider is down.', chain: true, icon: MessageSquare },
+  code_tools: { label: 'Code & tools', group: 'Chat routing', description: 'Native agent turns that lean on tool use and code work.', chain: true, icon: Code2, fallback: 'Chat' },
+  reasoning: { label: 'Reasoning', group: 'Chat routing', description: 'One-shot judgment calls — web-page extraction and other guarded single completions.', chain: true, icon: BrainCircuit, fallback: 'Chat' },
+  background: { label: 'Background', group: 'Chat routing', description: 'Housekeeping chores — session titles, tags, suggestions, digests, consolidation. Bind a cheap or local model here so chores stop burning your main chat model.', chain: true, icon: Moon, fallback: 'Chat' },
+  orchestration: { label: 'Orchestration', group: 'Chat routing', description: 'Supervising turns and subagents spawned without an explicit model.', chain: true, icon: Network, fallback: 'Chat' },
+  loops: { label: 'Loops', group: 'Chat routing', description: 'Autonomous goal-loop workers, gates and judges — long-horizon work that benefits from a long-context model.', chain: true, icon: RefreshCcw, fallback: 'Chat' },
+  embedding: { label: 'Embedding', group: 'Capabilities', description: 'Vector embedding models for knowledge and memory.', chain: false, icon: Boxes },
+  stt: { label: 'Speech-to-text', group: 'Capabilities', description: 'Voice transcription models.', chain: false, icon: Mic },
+  tts: { label: 'Text-to-speech', group: 'Capabilities', description: 'Voice synthesis models.', chain: false, icon: Volume2 },
+  diarization: { label: 'Speaker diarization', group: 'Capabilities', description: 'Labels "who spoke when" in audio/video (speaker turns). Served by diarization providers (ONNX, pyannote).', chain: false, icon: Users },
+  image_modality: { label: 'Image · Modality', group: 'Image', description: 'Models that understand images as input (vision / VLM).', chain: true, icon: Eye },
+  image_gen: { label: 'Image · Generation', group: 'Image', description: 'Models that generate images from a prompt.', chain: false, icon: ImagePlus },
+  audio_modality: { label: 'Audio · Modality', group: 'Audio', description: 'Models that understand audio as input.', chain: false, icon: Ear },
+  audio_gen: { label: 'Audio · Generation', group: 'Audio', description: 'Models that generate audio, music, or sound effects.', chain: false, icon: Music },
+  video_modality: { label: 'Video · Modality', group: 'Video', description: 'Models that understand video as input.', chain: false, icon: ScanEye },
+  video_gen: { label: 'Video · Generation', group: 'Video', description: 'Models that generate video from a prompt.', chain: false, icon: Clapperboard },
+  // NOTE: knowledge-ingestion (OCR/vision/classify/consolidation) has NO dedicated
+  // use-case rows — each ingestion node resolves directly to the relevant default
+  // binding (Image·Modality / Chat / Speech-to-text). There is no per-role override.
+}
+const USE_CASE_ORDER = [
+  'chat', 'code_tools', 'reasoning', 'background', 'orchestration', 'loops',
+  'embedding', 'stt', 'tts', 'diarization',
+  'image_modality', 'image_gen', 'audio_modality', 'audio_gen', 'video_modality', 'video_gen',
+]
+
+// Chat sub-categories (mirrors backend CHAT_SUBCATEGORIES): models never declare
+// these as capabilities — their pickable pool is the CHAT-capable catalog.
+const CHAT_SUBCATEGORIES = new Set(['code_tools', 'reasoning', 'background', 'orchestration', 'loops'])
+
+/** The models a use-case can pick from: every catalog model declaring the capability
+ *  (a chat SUB-CATEGORY draws from the chat pool — models never declare "code_tools"),
+ *  deduped by `provider:id`, PLUS a synthetic "unavailable" row for any ACTIVE binding
+ *  whose model is absent from the catalog (e.g. an ollama model deleted or never pulled).
+ *  Without the synthetic row the use-case reads "N active" but the bound model is invisible
+ *  AND unremovable in the picker — a phantom binding the user can't clear. Synthetic rows
+ *  carry `downloaded:false` so the not-downloaded chip renders; toggling one off unbinds it.
+ *  Pure + exported for unit testing. */
+export function capableModels(useCase: string, allModels: AvailableModel[], activeModels: string[]): AvailableModel[] {
+  const capability = CHAT_SUBCATEGORIES.has(useCase) ? 'chat' : useCase
+  const seen = new Set<string>()
+  const out: AvailableModel[] = []
+  for (const m of allModels) {
+    if (!m.capabilities.includes(capability)) continue
+    const ref = `${m.provider}:${m.id}`
+    if (seen.has(ref)) continue
+    seen.add(ref)
+    out.push(m)
+  }
+  for (const ref of activeModels) {
+    if (seen.has(ref)) continue
+    seen.add(ref)
+    const sep = ref.indexOf(':')
+    const provider = sep >= 0 ? ref.slice(0, sep) : ''
+    const id = sep >= 0 ? ref.slice(sep + 1) : ref
+    out.push({ id, name: id, provider, capabilities: [useCase], downloaded: false } as AvailableModel)
+  }
+  return out
+}
+
+/** The contract chips a model row shows (LMMV §2.2/§2.3), as pure data so the mapping
+ *  is unit-testable independently of rendering:
+ *   - `deprecated`/`sunset` status → an informational chip (the model stays bindable).
+ *   - a non-commercial license → a warning chip surfaced AT BIND TIME (Success Criterion 7).
+ *   - `integrity: "truncated"` → a danger chip whose row offers Repair (re-download).
+ *  A hosted/remote model (no catalog fields) yields no chips. */
+export type ChipKind = 'status' | 'non-commercial' | 'truncated'
+export function modelChips(m: AvailableModel): ChipKind[] {
+  const chips: ChipKind[] = []
+  if (m.status === 'deprecated' || m.status === 'sunset') chips.push('status')
+  if (m.non_commercial) chips.push('non-commercial')
+  if (m.integrity === 'truncated') chips.push('truncated')
+  return chips
+}
+
+/** The contract chips (+ a Repair button when truncated) for one model row. Kept beside
+ *  the provider chip in the row; renders nothing for a model carrying no catalog fields. */
+function ModelChips({ model, onRepair, repairing }: {
+  model: AvailableModel; onRepair: () => void; repairing: boolean
+}) {
+  const chips = modelChips(model)
+  if (chips.length === 0) return null
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      {model.status === 'deprecated' && (
+        <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low uppercase tracking-wide"
+          title="Deprecated — still bindable, but a newer model is preferred.">deprecated</span>
+      )}
+      {model.status === 'sunset' && (
+        <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low uppercase tracking-wide"
+          title="Sunset — hidden from new bindings; an existing binding keeps working.">sunset</span>
+      )}
+      {model.non_commercial && (
+        <span data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5"
+          style={{ background: 'color-mix(in srgb, var(--color-warning) 16%, transparent)', color: 'var(--color-warning)' }}
+          title={`Non-commercial license${model.license ? ` (${model.license})` : ''} — for personal/research use only.`}>
+          <AlertTriangle size={9} /> non-commercial
+        </span>
+      )}
+      {model.integrity === 'truncated' && (
+        <>
+          <span data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5"
+            style={{ background: 'color-mix(in srgb, var(--color-danger) 16%, transparent)', color: 'var(--color-danger)' }}
+            title="Downloaded weights are incomplete — this model won't load. Repair to re-download.">
+            truncated
+          </span>
+          <button type="button" onClick={onRepair} disabled={repairing}
+            data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 transition-colors hover:bg-surface-high"
+            style={{ background: 'var(--color-surface-high)', color: 'var(--color-on-surface)' }}
+            title="Re-download this model's weights.">
+            <Wrench size={9} /> {repairing ? 'repairing…' : 'Repair'}
+          </button>
+        </>
+      )}
+    </span>
+  )
+}
+
+/** "Reclaim N GB" — surfaces the partial-download leftovers (cancelled/crashed fetches)
+ *  that otherwise sit invisible across every local provider's cache root, and unlinks
+ *  them on confirm. Renders nothing when there's nothing to reclaim, so a clean install
+ *  shows no affordance. `onReclaimed` lets the caller revalidate the model list after a
+ *  sweep (a repaired/removed partial changes a row's downloaded state). */
+function ReclaimButton({ onReclaimed }: { onReclaimed: () => void }) {
+  const [totalBytes, setTotalBytes] = useState(0)
+  const [busy, setBusy] = useState(false)
+
+  const refreshCandidates = () =>
+    api.modelDownloadCleanupCandidates()
+      .then((r) => setTotalBytes(r.total_bytes))
+      .catch(() => setTotalBytes(0))
+
+  useEffect(() => { refreshCandidates() }, [])
+
+  if (totalBytes <= 0) return null
+
+  const reclaim = async () => {
+    const ok = await confirm({
+      title: `Reclaim ${humanBytes(totalBytes)}?`,
+      body: 'Deletes partial-download leftovers (.part / .tmp / .incomplete files) from cancelled or interrupted fetches. Fully downloaded models are untouched.',
+      confirmLabel: 'Reclaim',
+    })
+    if (!ok) return
+    setBusy(true)
+    try {
+      // Was a bare `try/finally`: a refused cleanup rejected unhandled and the button simply
+      // stopped spinning, which is what success looks like too.
+      if (!(await reportingWrite('reclaim that space', () => api.modelDownloadCleanup()))) return
+      await refreshCandidates()
+      onReclaimed()
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <Button variant="tonal" size="xs" loading={busy} onClick={reclaim}
+      title="Delete partial-download leftovers from cancelled or interrupted fetches.">
+      <Trash2 size={13} /> Reclaim {humanBytes(totalBytes)}
+    </Button>
+  )
+}
+
+/** Models → assign discovered models to use-cases. Reads /api/models/available
+ *  (all backends' models) + /api/models/active (current bindings); writes via
+ *  PUT /api/models/active/{use_case}. Chat + Image·Modality are multi-select;
+ *  the rest take one model. */
+export function ModelsPanel() {
+  // Stale-while-revalidate + sessionStorage persistence: the discovered-models
+  // catalog and use-case bindings barely change, so on revisit (and after a full
+  // reload) the page paints instantly from cache and revalidates in the background
+  // — no "Loading…" flash. Both fetches batch into one cache key.
+  //
+  // 🔴 NEITHER READ SWALLOWS ITS REJECTION, AND THE SITE BINDS `error`. Both halves were wrong
+  // together, which is what made this panel the last surface in the first-run set with no terminal
+  // state: `api.modelsAvailable().catch(() => [])` + `api.modelsActive().catch(() => ({}))` made
+  // `error` structurally unreachable, and the call site read only `data` — so a read that failed
+  // painted "No models discovered" (a confident lie about a page that never loaded) and a read that
+  // never settled left `<ListSkeleton>` up forever. Measured on a fresh home with `/api` held
+  // open: `#/settings/models` was still on "Loading…" with `aria-busy=1` and no Retry at 9.5s,
+  // while Inbox, Apps, Settings-home and Providers had all reached a legible error. Both models
+  // reads are REQUIRED to render a binding, so failing the panel is the honest outcome; the two
+  // optional enrichments below (`health`, `judgeRecs`) keep their catches on purpose and say why.
+  const { data, error: modelsErr, refresh } = useQuery('settings:models', async () => {
+    const [rows, active] = await Promise.all([
+      api.modelsAvailable(),
+      api.modelsActive(),
+    ])
+    return { allModels: rows.flatMap((r) => r.models ?? []), active }
+  }, { persist: true })
+  // Per-provider breaker health for the chain-entry dots — refreshed on panel
+  // mount (persist:false so a broken provider isn't shown green from cache).
+  const { data: health } = useQuery('settings:models-health', () =>
+    api.modelsHealth().then((h) => h.providers).catch(() => [] as ProviderHealth[]), { persist: false })
+  // The judge benchmark's tier recommendations (ES-4), so rebinding a judge to the cheapest
+  // adequate tier is ONE action here rather than a hand-translation from a table on another
+  // page. A failure or a 404 collapses to "no recommendation, no chip" — which is an honest
+  // absence rather than a swallowed error, because the Learning page's Judge tiers panel is
+  // the surface that owns reporting WHY there is none.
+  const { data: judgeRecs } = useQuery('settings:judge-bench-recs', () =>
+    api.judgeBench().then((v) => v.recommendations).catch(() => [] as JudgeBenchRecommendation[]),
+    { persist: false })
+  const allModels = data?.allModels
+  const active = data?.active ?? {}
+
+  // A binding mutation invalidates the cached catalog so the next read revalidates
+  // against the changed state instead of a stale snapshot.
+  const reloadActive = () => { invalidateKeys('settings:models'); refresh() }
+
+  if (!allModels && modelsErr) return <LoadError what="models" error={modelsErr} onRetry={refresh} />
+  if (!allModels) return <ListSkeleton rows={6} what="models" />
+
+  return (
+    <div>
+      <div className="flex items-start justify-between gap-3">
+        <PanelHeader title="Models" hint="Assign discovered models to each use case. Chat and its routing sub-categories store an ordered fallback chain — the first model is the default; later ones take over when an earlier provider is down. Modality means understanding that media as input; Generation means producing it." />
+        <div className="shrink-0 pt-1"><ReclaimButton onReclaimed={reloadActive} /></div>
+      </div>
+      {/* 🔴 Titled: this is the panel's primary group and it was the only one without a heading,
+          while "Prompt caching" further down had one. Measured on `#/settings/models`: 16 controls
+          — every use-case row — belonged to no section, so the heading outline jumped from "Models"
+          straight to "Prompt caching" and skipped the thing the panel is for. The uppercase group
+          labels inside (`meta.group`) stay plain `<div>`s: they are a visual grouping of rows within
+          this one section, and promoting them is its own change. */}
+      <Section title="Model bindings" hint="One model — or an ordered fallback chain — per use case.">
+        {allModels.length === 0 && (
+          <div data-type="body-s" className="mb-3 rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low">
+            No models discovered. Add a backend in <span className="text-on-surface">Providers</span> and test its connection.
+          </div>
+        )}
+        {USE_CASE_ORDER.map((uc, i) => {
+          const meta = USE_CASE_META[uc]
+          const prevGroup = i > 0 ? USE_CASE_META[USE_CASE_ORDER[i - 1]]?.group : undefined
+          const showGroupHeader = meta?.group && meta.group !== prevGroup
+          return (
+            <div key={uc}>
+              {showGroupHeader && <div data-type="caption" className="mb-1.5 mt-3 px-1 text-on-surface-low uppercase tracking-wide">{meta.group}</div>}
+              <UseCaseRow useCase={uc} activeModels={active[uc] ?? []} allModels={allModels} health={health ?? []} judgeRec={(judgeRecs ?? []).find((r) => r.verdict === 'recommended' && r.use_case === uc)} onChanged={reloadActive} />
+            </div>
+          )
+        })}
+      </Section>
+      <HfTokenSection />
+      <LoadedModelsSection />
+      <LocalRuntimeSection />
+      <PromptCacheSection />
+    </div>
+  )
+}
+
+/** The `local_models.*` config section — how the local inference runtime is bounded and how the
+ *  catalog is filtered.
+ *
+ *  All six were PATCH-editable, bounded, `_meta`-labelled and read (`fit.py`, `sidecar.py`,
+ *  `residency.py`, `hf_token.py`, `model_downloads.py`) with NO control anywhere in `web/` — the
+ *  section reads the values (`lib/residency.ts` applies `pressure_warn_pct` to the loaded-models
+ *  bar) and had no way to write any of them. It lives HERE because this panel already owns the
+ *  local stack: the loaded-models bar those two memory knobs govern, and the HuggingFace token
+ *  whose check interval is one of them, are both directly above. */
+function LocalRuntimeSection() {
+  const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
+  const { data, error: loadErr, refresh } = useQuery('settings:local-models', () =>
+    api.personalclawConfig().then((c) => (c.local_models ?? {}) as Record<string, unknown>),
+    { persist: true },
+  )
+  useEffect(() => { if (data) setCfg(data) }, [data])
+
+  if (!data && loadErr) return <LoadError what="local-model settings" error={loadErr} onRetry={refresh} />
+  if (!data || !cfg) return <FormSkeleton sections={1} what="local-model settings" />
+
+  const patch = (key: string, value: unknown, onSaved?: () => void, label?: string) => {
+    const prev = cfg[key]
+    setCfg((c) => ({ ...c, [key]: value }))
+    api.patchConfig(`local_models.${key}`, value).then(() => {
+      onSaved?.()
+      // `hide_unrunnable_models` and `memory_reserve_gb` both change the model-fit verdict this
+      // panel's catalog is filtered by, so the list must revalidate rather than keep a snapshot
+      // taken under the old thresholds.
+      invalidateKeys('settings:models')
+    }).catch((e) => {
+      setCfg((c) => ({ ...c, [key]: prev }))
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+
+  return (
+    <Section title="Local runtime" hint="Memory headroom for local inference, what the browse list shows, and the timeouts around a model sidecar.">
+      <RowGroup>
+        <ToggleRow label="Hide models this device cannot run" cfg={cfg} field="hide_unrunnable_models" patch={patch}
+          hint="Keep models that do not fit this machine's memory out of the browse list. On by default; turn it off to see the whole catalog." />
+        <NumberRow label="Memory reserve (GB)" cfg={cfg} field="memory_reserve_gb" min={0} max={64} step={0.5} patch={patch}
+          hint="Memory held back for your OS and the inference runtime, subtracted before any model-fit verdict. Raise it if models fit on paper but your machine struggles — verdicts get more cautious. It never blocks anything." />
+        <NumberRow label="Memory pressure warning (%)" cfg={cfg} field="pressure_warn_pct" min={1} max={100} patch={patch}
+          hint="Percent of system RAM in use at which the loaded-models bar above warns. Advisory only — nothing is unloaded for you." />
+        <NumberRow label="Sidecar restart limit" cfg={cfg} field="sidecar_restart_max" min={0} max={20} patch={patch}
+          hint="How many times in a row a crashed model sidecar is respawned before the runner gives up and reports the failure instead." />
+        <NumberRow label="Model selftest timeout (seconds)" cfg={cfg} field="selftest_timeout_s" min={5} max={600} patch={patch}
+          hint="How long a per-capability selftest may run before it is stopped and reported as timed out. A selftest runs a real inference on click, so this bounds a model that hangs while loading." />
+        <NumberRow label="HuggingFace token check interval (seconds)" cfg={cfg} field="whoami_ttl_s" min={0} max={86400} step={60} patch={patch}
+          hint="How long a HuggingFace token's validity is cached after a successful check, so listing models does not re-call HuggingFace every time. 0 re-checks on every read." />
+      </RowGroup>
+    </Section>
+  )
+}
+
+/** HuggingFace token cascade (LMMV §5). Shows the three sources — the saved credential, the
+ *  process environment, and a `huggingface-cli login` file — each with HuggingFace's own
+ *  whoami verdict (valid + username, or not), a MASKED preview (the value never crosses the
+ *  wire), and an "active" badge on the first valid one. The set/clear field writes SOURCE 1
+ *  (the credential store); a set/clear is SEL-audited server-side and re-checks the whole
+ *  cascade. Invalidates the models cache too, so a gated model's pre-warn chip clears the
+ *  moment a valid token lands. */
+const HF_SOURCE_LABEL: Record<HfTokenSource['source'], string> = {
+  credential_store: 'Saved token',
+  env: 'Environment (HF_TOKEN)',
+  hf_cli_file: 'huggingface-cli login',
+}
+
+function HfTokenSection() {
+  const { data, error: loadErr, refresh } = useQuery('settings:hf-token', () =>
+    api.hfTokenStatus().then((d) => d.sources), { persist: false })
+  const [value, setValue] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  // A failed read must not render as "no token configured" — an unreachable gateway and a
+  // genuinely empty cascade look identical, and one is a lie about the machine's credentials.
+  if (!data && loadErr) return <LoadError what="HuggingFace token" error={loadErr} onRetry={refresh} />
+  if (!data) return <FormSkeleton sections={1} what="HuggingFace token" />
+
+  const stored = data.find((s) => s.source === 'credential_store')
+
+  const afterWrite = () => {
+    // Repaint the cascade AND the models list — a gated model's `token_ready` pre-warn is
+    // computed from exactly this token, so both must revalidate against the new state.
+    invalidateKeys('settings:hf-token'); invalidateKeys('settings:models'); refresh()
+  }
+  const save = async () => {
+    if (!value.trim()) return
+    setBusy(true)
+    try {
+      if (!(await reportingWrite('save the HuggingFace token', () => api.setHfToken(value.trim())))) return
+      setValue('')
+      afterWrite()
+    } finally { setBusy(false) }
+  }
+  const clear = async () => {
+    const ok = await confirm({
+      title: 'Clear the saved HuggingFace token?',
+      body: 'Removes it from the credential store. Gated models will need a token again before they can download.',
+      confirmLabel: 'Clear',
+    })
+    if (!ok) return
+    setBusy(true)
+    try {
+      if (!(await reportingWrite('clear the HuggingFace token', () => api.clearHfToken()))) return
+      afterWrite()
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <Section title="HuggingFace token" hint="Gated models (e.g. pyannote diarization) need a HuggingFace token with the model's license accepted. PersonalClaw checks each source below and uses the first one HuggingFace confirms is valid.">
+      <div className="flex flex-col gap-2 rounded-lg bg-surface-container px-4 py-3">
+        {data.map((s) => (
+          <div key={s.source} className="flex items-center gap-2">
+            <span data-type="label-s" className="w-44 shrink-0 text-on-surface">{HF_SOURCE_LABEL[s.source] ?? s.source}</span>
+            {!s.present ? (
+              <span data-type="caption" className="text-on-surface-low">not set</span>
+            ) : (
+              <span className="flex min-w-0 flex-wrap items-center gap-2">
+                <span data-type="caption" className="font-mono text-on-surface-low">{s.masked}</span>
+                {s.valid ? (
+                  <span data-type="caption" className="inline-flex items-center gap-1" style={{ color: 'var(--color-ok)' }}>
+                    <Check size={11} /> {s.username ? `valid — ${s.username}` : 'valid'}
+                  </span>
+                ) : (
+                  <span data-type="caption" className="inline-flex items-center gap-1" style={{ color: 'var(--color-warning)' }}>
+                    <AlertTriangle size={11} /> not valid
+                  </span>
+                )}
+                {s.active && (
+                  <span data-type="caption" className="rounded-pill px-1.5 py-0.5" style={accentChip}>active</span>
+                )}
+              </span>
+            )}
+          </div>
+        ))}
+        <div className="mt-1 flex items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <TextInput type="password" value={value} onChange={setValue}
+              placeholder="hf_…  paste a token to save"
+              ariaLabel="HuggingFace token" size="md" mono />
+          </div>
+          <Button variant="tonal" size="sm" loading={busy} disabled={!value.trim()} disabledReason="Paste a token first" onClick={save}>Save</Button>
+          {stored?.present && <Button variant="tonal" size="sm" loading={busy} onClick={clear}>Clear</Button>}
+        </div>
+      </div>
+    </Section>
+  )
+}
+
+/** A per-model "Test" affordance (LMMV §6): runs the provider's health check + a real
+ *  per-capability inference on click and shows the TYPED result inline. User-click only — a
+ *  selftest can page a model into RAM, so it is never fired automatically. Rendered under a
+ *  downloaded LOCAL model row; a broken runtime contract surfaces its typed reason here. */
+function ModelTestButton({ provider, model }: { provider: string; model: string }) {
+  const [busy, setBusy] = useState(false)
+  const [health, setHealth] = useState<LocalModelHealth | null>(null)
+  const [result, setResult] = useState<LocalModelSelftest | null>(null)
+  const [err, setErr] = useState('')
+
+  const run = async () => {
+    setBusy(true); setErr('')
+    try {
+      const [h, s] = await Promise.all([
+        api.localModelHealth(provider).catch(() => null),
+        api.localModelSelftest(provider, model),
+      ])
+      setHealth(h); setResult(s)
+    } catch (e) {
+      setErr(String((e as Error)?.message || e))
+    } finally { setBusy(false) }
+  }
+
+  const caps = result ? Object.entries(result.capabilities) : []
+  return (
+    <div className="flex flex-col gap-1 px-3 pb-2">
+      <Button variant="secondary" size="xs" className="w-fit" onClick={run}
+        loading={busy} loadingLabel="testing…"
+        title="Run a real inference to check this model actually works on this machine.">
+        <FlaskConical size={10} /> Test
+      </Button>
+      {err && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
+      {health && !health.ok && (
+        <span data-type="caption" style={{ color: 'var(--color-warning)' }}>Provider: {health.message}</span>
+      )}
+      {result && (caps.length === 0 ? (
+        <span data-type="caption" className="text-on-surface-low">{result.detail}</span>
+      ) : (
+        <div className="flex flex-col gap-0.5">
+          {caps.map(([cap, r]) => (
+            <span key={cap} data-type="caption" className="inline-flex items-center gap-1"
+              style={{ color: r.ok ? 'var(--color-ok)' : 'var(--color-danger)' }}>
+              {r.ok ? <Check size={10} /> : <X size={10} />}
+              {cap}: {r.ok ? r.detail : (r.reason || r.detail)} ({r.duration_ms} ms)
+            </span>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** Loaded models + memory pressure (LMMV §7) — "what is occupying my RAM right now".
+ *
+ *  Answers the question no surface answered before: a model stays resident after its
+ *  binding moves elsewhere, and a sidecar adds a whole child process. Rows are ordered
+ *  reclaimable-first (see lib/residency), because the row a user can act on is the one
+ *  still in memory with nothing bound to it. Unload is idempotent server-side and the
+ *  reply carries a fresh pressure snapshot, so the bar moves as proof rather than the UI
+ *  claiming the memory went. */
+function LoadedModelsSection() {
+  const { data, error: loadErr, refresh } = useQuery('models:loaded', () =>
+    api.modelsLoaded(), { persist: false },
+  )
+  const [busy, setBusy] = useState('')
+
+  // A failed read must not render as "nothing is loaded" — an empty list and an unreachable
+  // gateway look identical, and one of them is a lie about the machine's memory.
+  if (!data && loadErr) return <LoadError what="loaded models" error={loadErr} onRetry={refresh} />
+  if (!data) return <FormSkeleton sections={1} what="loaded models" />
+
+  const rows = sortOccupants(data.loaded)
+  const reclaimable = reclaimableCount(rows)
+  // A provider paging a multi-gigabyte model in from disk is `loading`, not hung. Saying so
+  // is the whole reason ensure_ready() reports a state instead of a bare boolean — without
+  // this line the payload would carry the answer and the screen would stay silent.
+  const notReady = data.providers.filter((p) => p.state !== 'ready')
+
+  const unload = async (provider: string) => {
+    const ok = await confirm({
+      title: `Unload ${provider}?`,
+      body: 'Frees the memory this provider holds. The next request loads the model again, which takes as long as the first load did.',
+      confirmLabel: 'Unload',
+    })
+    if (!ok) return
+    setBusy(provider)
+    try {
+      await api.unloadModelProvider(provider)
+      // `refresh()` refetches THIS surface's key. The dashboard's "on this machine" widget makes the
+      // byte-identical read and can also unload, so each left the other's cached copy describing memory
+      // that is no longer held — visible on its next mount until the revalidation lands. One shared key
+      // means there is only one answer to be wrong.
+      invalidateKeys('models:loaded')
+      refresh()
+    } catch (e) {
+      notify(`Couldn't unload ${provider}: ${String((e as Error)?.message || e)}`, 'error')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  return (
+    <Section
+      title="On this machine"
+      hint={
+        reclaimable > 0
+          ? `${reclaimable} resident model${reclaimable === 1 ? '' : 's'} no longer bound to a use case — unloading frees its memory until something needs it again.`
+          : 'Models currently held in memory, and how much of this machine they are using.'
+      }
+    >
+      <div className="rounded-lg bg-surface-container px-4 py-3">
+        <Meter
+          label="System memory in use"
+          pct={data.pressure.used_pct}
+          tone={pressureTone(data.pressure)}
+          detail={pressureDetail(data.pressure)}
+        />
+        {notReady.length > 0 && (
+          <ul data-type="body-s" className="mt-3 flex flex-col gap-0.5 text-on-surface-low">
+            {notReady.map((p) => (
+              <li key={p.provider}>
+                {p.display_name}:{' '}
+                {p.state === 'loading' ? 'loading a model now' : 'unavailable on this machine'}
+              </li>
+            ))}
+          </ul>
+        )}
+        {rows.length === 0 ? (
+          <div data-type="body-s" className="mt-3 text-on-surface-low">
+            No models are loaded right now. One loads on its first use.
+          </div>
+        ) : (
+          <div className="mt-3 flex flex-col gap-1.5">
+            {rows.map((row) => (
+              <div
+                key={`${row.provider}:${row.model}`}
+                className="flex items-center gap-2 rounded-md bg-surface-high px-2.5 py-1.5"
+              >
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span data-type="label-s" className="truncate text-on-surface" style={fvs(500)}>
+                    {row.model || row.provider}
+                  </span>
+                  <span data-type="caption" className="truncate text-on-surface-low">
+                    {row.provider} · {occupantDetail(row)}
+                  </span>
+                </span>
+                <Button
+                  variant="tonal"
+                  size="xs"
+                  loading={busy === row.provider}
+                  onClick={() => unload(row.provider)}
+                  ariaLabel={`Unload ${row.model || row.provider}`}
+                  title="Free the memory this provider holds"
+                >
+                  Unload
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Section>
+  )
+}
+
+/** Prompt caching (PROMPT-CACHE-SUBSTRATE §C6) — the one inference-behaviour switch that
+ *  belongs beside the model bindings, since whether it does anything depends entirely on
+ *  which provider a use-case is bound to. Default ON: caching is semantically transparent
+ *  (the model sees the same tokens either way) and a provider that doesn't support it is a
+ *  no-op. Off is the diagnosis position — it stops the cache marker, and deliberately does
+ *  NOT change the served prompt's ORDERING, which is an unconditional repair. */
+function PromptCacheSection() {
+  const { data, error: loadErr, refresh } = useQuery('settings:models-prompt-cache', () =>
+    api.personalclawConfig().then((c) => (c.agent ?? {}) as Record<string, unknown>),
+    { persist: true },
+  )
+  const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
+  useEffect(() => { if (data) setCfg(data) }, [data])
+
+  // A failed read must not render the switch at its fallback — an unloaded `false` would
+  // be indistinguishable from "you turned caching off".
+  if (!data && loadErr) return <LoadError what="prompt-cache setting" error={loadErr} onRetry={refresh} />
+  if (!data || !cfg) return <FormSkeleton sections={1} what="prompt-cache setting" />
+
+  // Optimistic single-field PATCH; a rejected save rolls back and surfaces the error.
+  const patch = (key: string, value: boolean, onSaved: () => void) => {
+    const prev = cfg[key]
+    setCfg((c) => ({ ...c, [key]: value }))
+    api.patchConfig(`agent.${key}`, value).then(onSaved).catch((e) => {
+      setCfg((c) => ({ ...c, [key]: prev }))
+      notify(`Couldn't save prompt caching: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+
+  return (
+    <Section title="Prompt caching" hint="Reuse the stable part of the prompt across turns on providers that support it.">
+      <RowGroup>
+        <ToggleRow label="Prompt caching" cfg={cfg} field="prompt_cache_enabled" patch={patch}
+          hint="Ask providers that support it to cache the stable prompt prefix, cutting cost and latency on multi-turn work. Providers without cache support are unaffected. Turn it off to rule caching out when debugging a provider — what the model is shown, and in what order, is identical either way." />
+      </RowGroup>
+    </Section>
+  )
+}
+
+/** Breaker-state dot for one chain entry's provider: closed→green, half_open→amber,
+ *  open→red (+ retry hint). No health row (provider never called) renders nothing —
+ *  absence of data must not read as "healthy". */
+function HealthDot({ provider, health }: { provider: string; health: ProviderHealth[] }) {
+  const h = health.find((p) => p.name === provider)
+  if (!h) return null
+  const color = h.breaker_state === 'open' ? 'var(--color-danger)'
+    : h.breaker_state === 'half_open' ? 'var(--color-warning)' : 'var(--color-ok)'
+  const label = h.breaker_state === 'open'
+    ? `${provider}: circuit open (${h.consecutive_failures} consecutive failures) — chain entries on this provider are skipped until it recovers`
+    : h.breaker_state === 'half_open' ? `${provider}: recovering — next call probes it` : `${provider}: healthy`
+  // role="img": the dot is the ONLY carrier of the breaker state (no text equivalent
+  // beside it), and on a role-less span `aria-label` is a PROHIBITED attribute — the name
+  // is discarded, so a screen-reader user gets a coloured dot and nothing else.
+  return <span role="img" className="size-2 shrink-0 rounded-pill" style={{ background: color }} title={label} aria-label={label} />
+}
+
+function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChanged }: {
+  useCase: string; activeModels: string[]; allModels: AvailableModel[]; health: ProviderHealth[]
+  judgeRec?: JudgeBenchRecommendation; onChanged: () => void
+}) {
+  // No `open` flag here: `DisclosureCard` owns the disclosure state, which is the only thing this
+  // component ever used it for.
+  const [saving, setSaving] = useState(false)
+  const [query, setQuery] = useState('')
+  const [reindex, setReindex] = useState<import('../../lib/api').ReindexJob | null>(null)
+  // The `provider:id` ref currently being re-downloaded (truncated → Repair), so its
+  // button shows a pending state without blocking the rest of the list.
+  const [repairing, setRepairing] = useState<string | null>(null)
+  const meta = USE_CASE_META[useCase] ?? { label: useCase, description: '', chain: false, icon: Boxes }
+  // Filter to models declaring this capability, then DEDUPE by the `provider:id`
+  // ref. A model can legitimately surface from two discovery paths (e.g.
+  // `OpenAI:gpt-image-1` appears via both the chat `/v1/models` sweep AND the
+  // image_gen registry adapter), which would otherwise render two buttons with
+  // the same React key (key-collision warning + a visible duplicate row).
+  const capable = useMemo(() => capableModels(useCase, allModels, activeModels), [allModels, useCase, activeModels])
+  // Filter by model name / id / provider. Active models always stay visible so a
+  // narrowing search never hides the current selection.
+  const matched = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return capable
+    return capable.filter((m) => {
+      const ref = `${m.provider}:${m.id}`
+      return activeModels.includes(ref)
+        || `${m.name} ${m.id} ${m.provider}`.toLowerCase().includes(q)
+    })
+  }, [capable, query, activeModels])
+  // Float the SELECTED (active) models to the TOP so they're always at hand to
+  // unselect — a stable partition (active first, each group keeping its original
+  // order) so the list doesn't reshuffle on every toggle. (user request 2026-07-06)
+  const filtered = useMemo(() => {
+    const active: typeof matched = []
+    const rest: typeof matched = []
+    for (const m of matched) (activeModels.includes(`${m.provider}:${m.id}`) ? active : rest).push(m)
+    return active.length ? [...active, ...rest] : matched
+  }, [matched, activeModels])
+
+  // Changing the embedding model invalidates every stored vector → warn, then
+  // kick off a re-index of all knowledge + memory embeddings with live progress.
+  const startReindex = () => {
+    api.startEmbeddingReindex().then((job) => {
+      setReindex(job)
+      if (job.status !== 'running') return
+      const es = new EventSource(api.embeddingReindexStreamUrl(job.id))
+      const onFrame = (e: MessageEvent) => {
+        try { const j = JSON.parse(e.data) as import('../../lib/api').ReindexJob; setReindex(j); if (j.status !== 'running') es.close() } catch { /* ignore */ }
+      }
+      for (const ev of ['snapshot', 'progress', 'done', 'error']) es.addEventListener(ev, onFrame as EventListener)
+      // A stream failure is NOT a re-index failure: the job keeps running server-side, we just lost
+      // the progress feed. Closing silently froze this panel on its last percentage forever, so a
+      // user could not tell "still working" from "we stopped hearing about it". Recorded on the job
+      // itself, which this panel already renders — and the copy says what is actually known.
+      es.onerror = () => {
+        es.close()
+        setReindex((r) => (r && r.status === 'running'
+          ? { ...r, status: 'error', error: 'Lost the progress feed — the re-index may still be running in the background. Reload to check.' }
+          : r))
+      }
+    }).catch((err) => {
+      // 409 model_not_ready (or any failure): the change stands but vectors weren't
+      // wiped — tell the user the index is stale until the model is ready.
+      let msg = err instanceof Error ? err.message : String(err)
+      try { msg = JSON.parse(msg).error || msg } catch { /* raw */ }
+      setReindex({ id: '', model: '', status: 'error', phase: 'error', done: 0, total: 0, knowledge: 0, memory: 0, error: msg })
+    })
+  }
+
+  const setActive = async (models: string[]) => {
+    if (useCase === 'embedding') {
+      const ok = await confirm({
+        title: 'Change the embedding model?',
+        body: 'Changing the embedding model will re-index ALL knowledge and memories. Existing embeddings are computed with the current model and are incompatible with a different one, so they must be regenerated.\n\nRe-indexing runs in the background and may take a while for large stores.',
+        confirmLabel: 'Change & re-index',
+      })
+      if (!ok) return
+    }
+    setSaving(true)
+    try {
+      // The embedding branch above warns this re-indexes ALL knowledge and memories. A silent
+      // failure there is the worst case in this file: nothing changes, nothing is said, and the
+      // re-index the user was warned about never starts — so `startReindex()` is gated too.
+      if (!(await reportingWrite('change the model', () => api.setActiveModel(useCase, models)))) return
+      onChanged()
+      if (useCase === 'embedding' && models.length > 0) startReindex()
+    } finally { setSaving(false) }
+  }
+  const toggle = (ref: string) => {
+    // Chain use-cases APPEND a newly-picked model to the end of the chain (the
+    // user then reorders); picking an already-chained model removes it.
+    if (meta.chain) setActive(activeModels.includes(ref) ? activeModels.filter((m) => m !== ref) : [...activeModels, ref])
+    else setActive(activeModels.includes(ref) ? [] : [ref])
+  }
+  const move = (i: number, dir: -1 | 1) => {
+    const j = i + dir
+    if (j < 0 || j >= activeModels.length) return
+    const next = [...activeModels]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    setActive(next)
+  }
+  // Repair a truncated model: re-run the same download the "not downloaded" path uses
+  // (the runner overwrites the incomplete weights), then revalidate so the chip clears.
+  const repair = async (m: AvailableModel) => {
+    const ref = `${m.provider}:${m.id}`
+    setRepairing(ref)
+    try {
+      await api.startModelDownload(m.provider, m.id)
+      onChanged()
+    } catch (e) {
+      // No catch at all meant an unhandled rejection: the spinner stopped (the `finally` below) and
+      // NOTHING else happened, so a failed repair was indistinguishable from a click that did not
+      // register. Two siblings in this same file already report through `notify`.
+      notify(`Couldn't re-download ${m.id}: ${String((e as Error)?.message || e)}`, 'error')
+    } finally { setRepairing(null) }
+  }
+
+  return (
+    <DisclosureCard icon={meta.icon} label={meta.label} active={activeModels.length > 0} count={capable.length}
+      subtitle={activeModels.length > 0
+        ? meta.chain && activeModels.length > 1
+          ? `chain of ${activeModels.length}`
+          : `${activeModels.length} active`
+        : meta.fallback
+          ? <span className="italic">uses your {meta.fallback} chain</span>
+          : <span className="italic">none configured</span>}>
+      {/* BODY ONLY. The card shell — wrapper, disclosure header, chevron, accent icon chip,
+          label/subtitle stack, count pill, bordered body — was byte-identical to `SearchPanel`'s and
+          now lives once in `ui/DisclosureCard`, along with the clipped-focus-ring fix both copies
+          needed and the `aria-controls` neither of them had. */}
+      <p data-type="body-s" className="text-on-surface-low">{meta.description}</p>
+      <div data-type="caption" className="inline-flex w-fit items-center gap-1.5 rounded-md px-2 py-1"
+        style={meta.chain ? accentChip : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
+        <span className="size-1.5 rounded-pill" style={{ background: meta.chain ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
+        {meta.chain ? 'Fallback chain — first is the default, later entries take over on failure' : 'Single-select — one model per use case'}
+      </div>
+
+      {/* ES-4's "one user action": the judge benchmark measured this axis and named the
+          cheapest ADEQUATE tier, so binding it is a click rather than a hand-copy from the
+          Learning page's table. It sets the recommended ref as the DEFAULT — position 0 of a
+          chain, or the single selection — because "rebind the judge" means change what
+          resolves, not append a fallback that never runs.
+          The harness still only recommends: no code binds this without the click. */}
+      {judgeRec && judgeRec.model_ref && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface px-2.5 py-2">
+          <Gavel size={13} className="shrink-0 text-on-surface-low" />
+          <span data-type="caption" className="text-on-surface-low">
+            Judge benchmark: cheapest adequate tier is <span className="text-on-surface">{judgeRec.tier}</span>
+            {' '}at {judgeRec.samples} sample{judgeRec.samples === 1 ? '' : 's'} — <span className="text-on-surface">{judgeRec.model_ref}</span>
+          </span>
+          {activeModels[0] === judgeRec.model_ref ? (
+            <span data-type="caption" className="inline-flex items-center gap-1 text-on-surface-low">
+              <Check size={12} /> already the default
+            </span>
+          ) : (
+            <Button size="sm" variant="tonal" disabled={saving} disabledReason={BUSY_REASON}
+              onClick={() => setActive([judgeRec.model_ref, ...activeModels.filter((m) => m !== judgeRec.model_ref)])}>
+              Bind as default
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* The ordered chain editor: position 0 is the default; reorder with the
+          arrow buttons (keyboard-accessible), remove with ×. Each entry carries
+          its provider's breaker-health dot. */}
+      {meta.chain && activeModels.length > 0 && (
+        <div className="flex flex-col gap-1 rounded-lg bg-surface p-2">
+          {activeModels.map((ref, i) => {
+            const sep = ref.indexOf(':')
+            const provider = sep >= 0 ? ref.slice(0, sep) : ''
+            const id = sep >= 0 ? ref.slice(sep + 1) : ref
+            return (
+              <div key={ref} className="flex items-center gap-2 rounded-md bg-surface-container px-2.5 py-1.5">
+                <span data-type="caption" className="w-16 shrink-0 text-on-surface-low uppercase tracking-wide">
+                  {i === 0 ? 'default' : `fallback ${i}`}
+                </span>
+                <HealthDot provider={provider} health={health} />
+                <span data-type="body-s" className="min-w-0 flex-1 truncate font-mono text-on-surface">{id}</span>
+                {provider && <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{provider}</span>}
+                {/* Two different claims, so two different props. The BOUNDARY (`i === 0`,
+                    last row) is genuine unavailability and keeps `disabled` + the reason that
+                    names it. `saving` is the chain PUT in flight, so it is `loading`: OR-ing
+                    it into `disabled` made all three arrows announce "unavailable" for the
+                    length of a request they had just started. */}
+                <IconButton icon={ArrowUp} label={`Move ${id} up`} size={24} iconSize={13}
+                  disabled={i === 0} loading={saving} onClick={() => move(i, -1)}
+                  disabledReason={i === 0 ? 'Already the default' : undefined} />
+                <IconButton icon={ArrowDown} label={`Move ${id} down`} size={24} iconSize={13}
+                  disabled={i === activeModels.length - 1} loading={saving} onClick={() => move(i, 1)}
+                  disabledReason={i === activeModels.length - 1 ? 'Already the last fallback' : undefined} />
+                <IconButton icon={X} label={`Remove ${id} from chain`} size={24} iconSize={13}
+                  loading={saving} onClick={() => setActive(activeModels.filter((m) => m !== ref))} />
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {useCase === 'embedding' && reindex && (
+        <div data-type="caption" className="rounded-md px-3 py-2"
+          style={{ background: reindex.status === 'error' ? ERROR_SURFACE_PAINT.background : 'var(--color-surface-high)' }}>
+          {/* "Re-index not started" is only true when the POST itself failed — that path sets
+              `id: ''`. A job with an id DID start (e.g. its progress feed dropped), so its message
+              speaks for itself rather than carrying a prefix that contradicts it. */}
+          {reindex.status === 'error' ? (
+            <span style={{ color: ERROR_SURFACE_PAINT.color }}>{reindex.id ? reindex.error : `Re-index not started: ${reindex.error}`}</span>
+          ) : reindex.status === 'done' ? (
+            <span style={{ color: 'var(--color-ok)' }}>Re-indexed {reindex.knowledge} knowledge + {reindex.memory} memory embeddings.</span>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-on-surface-var">Re-indexing embeddings — {reindex.phase}{reindex.total > 0 ? ` (${reindex.done}/${reindex.total})` : '…'}</span>
+              {/* 🔴 A bar must never invent a fill it cannot compute. While a phase has no
+                  total yet (`total === 0`) this parked the bar at a hardcoded 40% — a
+                  fabricated claim that the job is nearly half done, and one that then
+                  JUMPED backwards the moment a real total arrived. Determinate only when
+                  there is a denominator; otherwise the indeterminate wave, which is the
+                  one primitive that already expresses "running, extent unknown" (Meter
+                  deliberately has no indeterminate mode). The wave is aria-hidden on
+                  purpose — the sentence above it already reports the phase, so a second
+                  valueless progressbar would only repeat it. */}
+              {reindex.total > 0 ? (
+                <div className="h-1.5 w-full overflow-hidden rounded-pill bg-surface-container">
+                  <div className="h-full rounded-pill bg-primary transition-[width]" style={{ width: `${Math.min(100, Math.round((reindex.done / reindex.total) * 100))}%` }} />
+                </div>
+              ) : (
+                <WavyProgress width={140} />
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {capable.length === 0 ? (
+        <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low italic">
+          {meta.fallback ? (
+            <>Already uses your <span className="text-on-surface not-italic fw-500">{meta.fallback}</span> chain by default — no dedicated {meta.label} model is required. Add a backend with a chat-capable model to override.</>
+          ) : (
+            <>No models with {meta.label} capability. Add a backend with compatible models first.</>
+          )}
+        </div>
+      ) : (
+        <>
+          {capable.length > 8 && (
+            <>
+              <SearchField value={query} onChange={setQuery} size="md"
+                placeholder={`Search ${capable.length} models — name or provider`}
+                ariaLabel="Search models" />
+              {/* `filtered` is `matched` re-ordered (active models floated to the top), so it is
+                  the array the body maps and the one the count must come from. */}
+              <ResultAnnouncement count={filtered.length} noun="models" active={!!query.trim()} />
+            </>
+          )}
+          {filtered.length === 0 ? (
+            <div data-type="body-s" className="rounded-md border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low italic">
+              No models match “{query}”.
+            </div>
+          ) : (
+            <div className="-m-1 flex max-h-[300px] flex-col gap-0.5 overflow-y-auto p-1" style={{ opacity: saving ? 0.6 : 1 }}>
+              {filtered.map((m) => {
+            const ref = `${m.provider}:${m.id}`
+            const on = activeModels.includes(ref)
+            // A LOCAL model (carries a `downloaded` flag) that's bound but NOT
+            // downloaded won't actually run — surface it so "configured" never
+            // silently means "inert" (e.g. after deleting a bound model's weights).
+            const notDownloaded = m.downloaded === false
+            // A local model carries a `downloaded` flag; a hosted/remote model does not. Only a
+            // present LOCAL model can run a real-inference selftest here.
+            const isLocal = m.downloaded !== undefined
+            // Gated pre-warn (LMMV §5): the server set `token_ready:false` on a gated row when no
+            // valid HF token is configured, so we warn BEFORE the user clicks Download. Absent =
+            // the cascade couldn't answer → no nag.
+            const needsToken = m.gated === true && m.token_ready === false
+            return (
+              // A COLUMN: the controls row plus, below it, the inline Test result for a downloaded
+              // local model. (A row, not a bare button, because the Repair/Test affordances are
+              // themselves buttons and can't nest inside the toggle.)
+              <div key={ref}
+                className="flex flex-col rounded-md transition-colors hover:bg-surface-high"
+                style={on ? { background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' } : undefined}>
+                <div className="flex items-center gap-2.5 pr-3">
+                  <button type="button" onClick={() => toggle(ref)} disabled={saving}
+                    className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-3 py-2 text-left">
+                    <span className="grid size-4 shrink-0 place-items-center rounded border"
+                      style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>
+                      {on && <Check size={10} strokeWidth={3} className="text-on-primary" />}
+                    </span>
+                    <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface font-mono">{m.name}</span>
+                  </button>
+                  <ModelChips model={m} onRepair={() => repair(m)} repairing={repairing === ref} />
+                  {needsToken && (
+                    <StatusPill tone="warn" className="shrink-0 inline-flex items-center gap-1"
+                      role="img" aria-label="This gated model needs a valid HuggingFace token"
+                      title="This gated model needs a valid HuggingFace token — add one under “HuggingFace token” below before downloading.">
+                      <KeyRound size={9} /> needs token
+                    </StatusPill>
+                  )}
+                  {on && notDownloaded && (
+                    <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5"
+                      style={{ background: 'color-mix(in srgb, var(--color-warning) 16%, transparent)', color: 'var(--color-warning)' }}
+                      title="Bound but not downloaded — download it in Providers to activate.">
+                      <Download size={9} /> not downloaded
+                    </span>
+                  )}
+                  <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{m.provider}</span>
+                </div>
+                {isLocal && m.downloaded === true && <ModelTestButton provider={m.provider} model={m.id} />}
+              </div>
+            )
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </DisclosureCard>
+  )
+}

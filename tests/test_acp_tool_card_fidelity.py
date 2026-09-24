@@ -1,0 +1,556 @@
+"""ACP-AGENT-PARITY §2.5 (atom ``AAP-8``) — tool-card fidelity and risk plumbing.
+
+Three gaps, and the reason each one needed a different shape of fix:
+
+* **gap 7, structured input.** ``translate.py`` receives a real ``rawInput`` object and
+  ``json.dumps``-ed it away, so ``chat_runner._redact_tool_input_obj`` was handed a
+  ``str``, returned ``None`` by contract, and every ACP tool card fell back to the flat
+  string preview no matter how well the CLI described its call. Fixed by carrying the
+  object BESIDE the string (``tool_input_obj``) rather than replacing it — the string is
+  what the card prints, and flattening the object into that field would have changed
+  every existing preview to buy the fields.
+* **gap 7, diff chips.** The native chip is inferred: a write-tool NAME set, a workspace
+  path resolution, a disk read. None of that transfers to a CLI whose edit tool is named
+  and shaped however its vendor chose. An ACP ``diff`` content block states path, old
+  text and new text outright, so the chip is built from the declaration alone.
+* **gap 8, declared risk.** Measured, and it needed NO plumbing: for every dict-defined
+  core tool the "declaration" IS the name inference (``agents/native/tools.py`` uses
+  ``infer_risk_from_name`` when the dict carries no explicit ``risk_level``, and none
+  does), so threading a declared level through the MCP listing would compute the same
+  answer twice. The rail below pins that equivalence instead, so the day a core tool
+  declares an explicit level, the divergence fails here rather than silently mislabeling
+  an approval card.
+
+The three tool-name renderings exercised here are the ones MEASURED live on 2026-08-24
+during ``AAP-4``'s reachability drive — codex renders ``mcp.personalclaw-core.notify``,
+claude-code ``mcp__personalclaw-core__notify`` and kiro-cli ``@personalclaw-core/notify``
+for the same server. A risk resolver that only handles one dialect mislabels two thirds
+of the fleet, so every risk assertion runs over all three.
+"""
+
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+
+import pytest
+
+from personalclaw.acp.adapter import acp_event_to_agent_event
+from personalclaw.acp.translate import (
+    extract_tool_event,
+    extract_tool_update_events,
+)
+from personalclaw.acp.types import EVENT_TOOL_CALL_UPDATE, JsonRpcMessage
+from personalclaw.dashboard.chat_runner import (
+    _capture_declared_file_change,
+    _redact_tool_input_obj,
+)
+from personalclaw.task_modes import infer_risk_from_name, resolve_effective_risk
+
+# ── frames a real CLI puts on the wire ───────────────────────────────────────
+
+_DIALECTS = (
+    "mcp.personalclaw-core.{name}",  # codex
+    "mcp__personalclaw-core__{name}",  # claude-code
+    "@personalclaw-core/{name}",  # kiro-cli
+)
+
+
+def _call_frame(raw_input: object, *, title: str = "Read", kind: str = "read") -> JsonRpcMessage:
+    update: dict = {
+        "sessionUpdate": "tool_call",
+        "toolCallId": "c1",
+        "title": title,
+        "kind": kind,
+    }
+    if raw_input is not None:
+        update["rawInput"] = raw_input
+    return JsonRpcMessage(method="session/update", params={"update": update})
+
+
+def _update_frame(**update: object) -> JsonRpcMessage:
+    base: dict = {"sessionUpdate": "tool_call_update", "toolCallId": "c1"}
+    base.update(update)
+    return JsonRpcMessage(method="session/update", params={"update": base})
+
+
+def _session():
+    return SimpleNamespace(_file_changes=[])
+
+
+# ── gap 7a: the object reaches the renderer ──────────────────────────────────
+
+
+class TestStructuredInputSurvivesToTheRenderer:
+    def test_tool_call_frame_carries_the_object_and_the_string(self):
+        ev = extract_tool_event(_call_frame({"path": "/tmp/a.txt", "limit": 40}), {}, {}, [])
+        assert ev is not None
+        assert ev.tool_input_obj == {"path": "/tmp/a.txt", "limit": 40}
+        # The string is untouched: the card's existing preview must not change shape.
+        assert json.loads(ev.tool_input) == {"path": "/tmp/a.txt", "limit": 40}
+
+    def test_update_frame_carries_the_object(self):
+        """The site that matters most: adapters routinely open with ``rawInput: {}`` and
+        stream the real arguments in the update, so a fix that only touched the opening
+        frame would leave the fields empty for the whole turn."""
+        events = extract_tool_update_events(
+            _update_frame(rawInput={"command": "ls -la"}, title="Terminal"), {}, {}
+        )
+        upd = [e for e in events if e.kind == EVENT_TOOL_CALL_UPDATE]
+        assert upd, "no tool_call_update event produced"
+        assert upd[0].tool_input_obj == {"command": "ls -la"}
+
+    def test_the_adapter_does_not_drop_it(self):
+        """``acp_event_to_agent_event`` is a field-for-field mapper, and this repo has
+        already lost ``tool_meta`` there once (`G6`/`G7`) — a mapper that silently omits
+        a field looks exactly like a backend that never populated it."""
+        ev = extract_tool_event(_call_frame({"path": "/tmp/a.txt"}), {}, {}, [])
+        assert ev is not None
+        assert acp_event_to_agent_event(ev).tool_input_obj == {"path": "/tmp/a.txt"}
+
+    def test_the_renderer_now_returns_fields_instead_of_none(self):
+        """The whole point, end to end: before this change the renderer got the string
+        and returned None by contract."""
+        ev = extract_tool_event(_call_frame({"path": "/tmp/a.txt", "limit": 40}), {}, {}, [])
+        assert ev is not None
+        agent_ev = acp_event_to_agent_event(ev)
+        rendered = _redact_tool_input_obj(
+            agent_ev.tool_input_obj if agent_ev.tool_input_obj is not None else agent_ev.tool_input
+        )
+        assert rendered == {"path": "/tmp/a.txt", "limit": 40}
+
+    def test_the_string_only_frame_still_renders_none(self):
+        """Vacuity floor. A frame whose ``rawInput`` is a bare string must NOT be dressed
+        up as a one-key dict — the string preview is the honest rendering, and a fake
+        object would make the card assert a schema the CLI never sent."""
+        ev = extract_tool_event(_call_frame("just a string"), {}, {}, [])
+        assert ev is not None
+        assert ev.tool_input_obj is None
+        assert _redact_tool_input_obj(acp_event_to_agent_event(ev).tool_input) is None
+
+    def test_an_absent_rawinput_is_none_not_empty_dict(self):
+        """SC #6's "native-only meta stays empty (not fabricated) where frames are
+        empty": ``None`` means the frame supplied nothing. An empty dict would read as
+        "the tool was called with no arguments", which is a different claim."""
+        ev = extract_tool_event(_call_frame(None), {}, {}, [])
+        assert ev is not None
+        assert ev.tool_input_obj is None
+
+    def test_secrets_in_the_object_are_redacted_by_the_renderer(self):
+        """The object crosses the boundary unredacted, exactly like the native runtime's
+        dict, because ``_redact_tool_input_obj`` is the single redaction+cap point for
+        the structured shape. So prove the secret does not survive that point."""
+        ev = extract_tool_event(
+            _call_frame({"cmd": "curl -H 'Authorization: Bearer sk-ant-api03-SECRETVALUE'"}),
+            {},
+            {},
+            [],
+        )
+        assert ev is not None
+        rendered = _redact_tool_input_obj(acp_event_to_agent_event(ev).tool_input_obj)
+        assert rendered is not None
+        assert "sk-ant-api03-SECRETVALUE" not in json.dumps(rendered)
+
+
+# ── gap 7b: a declared edit becomes a chip ───────────────────────────────────
+
+
+class TestDeclaredFileChangeBecomesAChip:
+    def _diff_update(self, old: str, new: str, path: str = "src/a.py"):
+        return _update_frame(
+            content=[{"type": "diff", "path": path, "oldText": old, "newText": new}],
+            title="Edit",
+        )
+
+    def test_diff_content_block_declares_the_change(self):
+        events = extract_tool_update_events(self._diff_update("a\n", "b\n"), {}, {})
+        upd = [e for e in events if e.kind == EVENT_TOOL_CALL_UPDATE]
+        assert upd, "no update event produced"
+        assert upd[0].file_change == {"path": "src/a.py", "before": "a\n", "after": "b\n"}
+
+    def test_the_chip_lands_on_the_session(self):
+        events = extract_tool_update_events(self._diff_update("a\n", "b\n"), {}, {})
+        ev = acp_event_to_agent_event([e for e in events if e.kind == EVENT_TOOL_CALL_UPDATE][0])
+        session = _session()
+        _capture_declared_file_change(session, ev.file_change)
+        assert session._file_changes == [{"path": "src/a.py", "before": "a\n", "after": "b\n"}]
+
+    def test_a_noop_edit_files_no_chip(self):
+        """Same guard the native path enforces — an edit that changed nothing must not
+        render a chip that implies it did."""
+        session = _session()
+        _capture_declared_file_change(session, {"path": "src/a.py", "before": "x", "after": "x"})
+        assert session._file_changes == []
+
+    def test_a_pathless_declaration_files_no_chip(self):
+        """``_flush_file_changes`` dedups per path, so a chip keyed on "" would collapse
+        every unnamed edit in the turn into one row."""
+        session = _session()
+        _capture_declared_file_change(session, {"path": "", "before": "a", "after": "b"})
+        assert session._file_changes == []
+
+    def test_strreplace_fragments_are_deliberately_not_a_chip(self):
+        """``oldStr``/``newStr`` are the FRAGMENTS being replaced, not the file's
+        contents. Filing one as ``before`` would render a chip asserting the file
+        contained only that fragment. The unified diff still shows the user the change —
+        assert that too, so this reads as a scoped withholding and not a lost feature."""
+        events = extract_tool_update_events(
+            _update_frame(
+                rawInput={
+                    "command": "strReplace",
+                    "path": "src/a.py",
+                    "oldStr": "one_line()",
+                    "newStr": "another_line()",
+                },
+                title="Edit",
+            ),
+            {},
+            {},
+        )
+        upd = [e for e in events if e.kind == EVENT_TOOL_CALL_UPDATE]
+        assert upd
+        assert upd[0].file_change is None
+        assert "another_line()" in upd[0].tool_input
+
+    def test_a_plain_tool_update_declares_no_change(self):
+        """Vacuity floor: the chip must come from a DECLARATION, never from a tool whose
+        name merely sounds like a write."""
+        events = extract_tool_update_events(
+            _update_frame(rawInput={"path": "src/a.py"}, title="write_file"), {}, {}
+        )
+        upd = [e for e in events if e.kind == EVENT_TOOL_CALL_UPDATE]
+        assert upd
+        assert upd[0].file_change is None
+
+    def test_a_progressive_redeclaration_replaces_both_sides(self):
+        """MEASURED live on claude-code (2026-08-24) and the reason this path does NOT
+        reuse the native merge rule. A streaming adapter re-declares the same edit as its
+        arguments fill in: an early frame named the replaced FRAGMENT as ``oldText`` and a
+        later one the whole file. ``_flush_file_changes`` keeps the earliest ``before`` and
+        the latest ``after``, so the merge produced a chip whose before was one line and
+        whose after was the entire file — a diff asserting the file used to contain only
+        that line. Last declaration wins on BOTH sides."""
+        session = _session()
+        _capture_declared_file_change(
+            session,
+            {"path": "src/a.py", "before": '    return "hello"', "after": '    return "bye"'},
+        )
+        _capture_declared_file_change(
+            session,
+            {
+                "path": "src/a.py",
+                "before": 'def greet():\n    return "hello"\n',
+                "after": 'def greet():\n    return "bye"\n',
+            },
+        )
+        assert session._file_changes == [
+            {
+                "path": "src/a.py",
+                "before": 'def greet():\n    return "hello"\n',
+                "after": 'def greet():\n    return "bye"\n',
+            }
+        ], "a progressive re-declaration must replace the partial one, not append beside it"
+
+    def test_two_different_paths_still_get_two_chips(self):
+        """Vacuity floor for the replacement above — it is keyed per path, so an agent
+        editing two files must not have the second chip overwrite the first."""
+        session = _session()
+        _capture_declared_file_change(session, {"path": "a.py", "before": "1", "after": "2"})
+        _capture_declared_file_change(session, {"path": "b.py", "before": "3", "after": "4"})
+        assert [c["path"] for c in session._file_changes] == ["a.py", "b.py"]
+
+    def test_a_huge_snapshot_is_capped(self):
+        from personalclaw.dashboard.chat_runner import _MAX_FILE_SNAPSHOT
+
+        session = _session()
+        _capture_declared_file_change(
+            session, {"path": "src/a.py", "before": "", "after": "x" * (_MAX_FILE_SNAPSHOT + 500)}
+        )
+        assert len(session._file_changes[0]["after"]) < _MAX_FILE_SNAPSHOT + 100
+
+
+# ── which providers the chip actually covers — MEASURED, not inferred ─────────
+
+
+class TestTheDiffBlockIsNotACodexOnlyShape:
+    """The `diff` content block is **claude's shape too**, so the chip is not the
+    codex-only path the parity matrix's wording implies.
+
+    Measured statically from the installed adapter — `@agentclientprotocol/`
+    `claude-agent-acp@0.74.0`, the exact build the 2026-09-19 re-drive ran, read out of
+    `dist/tools.js` rather than guessed:
+
+    * ``Write`` → ``{type:"diff", path: file_path, oldText: null, newText: content}``
+      with ``kind: "edit"``. Whole-file by construction, and ``oldText: null`` is the
+      adapter's *creation* spelling.
+    * ``Edit``  → ``{type:"diff", path: file_path, oldText: old_string || null,
+      newText: new_string ?? ""}``, also ``kind: "edit"``.
+    * the completion frame re-declares the edit whole-file from the SDK's
+      ``originalFile``/``content`` when it has them.
+
+    So `translate.py`'s ``cb["type"] == "diff"`` branch already fires on claude, and the
+    parity row's "the host drops it / claude sends `kind` + `rawInput`" is a description
+    of the ADAPTER VERSION IT WAS FILLED AT, not a statement that claude needs a second
+    decoder. The frames below are that adapter's output, so the day claude stops sending
+    diff blocks this fails here instead of silently reverting the chip to one provider.
+
+    What this class deliberately does NOT assert: that every claude declaration is a
+    whole-file pair. It is not — ``Edit``'s old/new are the replaced FRAGMENT, and the
+    completion frame emits one diff block PER HUNK of the structured patch. Both are
+    recorded in the parity doc as the open half of this row; pinning today's handling of
+    them as correct is what would make them permanent.
+    """
+
+    def _chip(self, blocks: list[dict], *, on_update: bool) -> dict | None:
+        if on_update:
+            events = extract_tool_update_events(_update_frame(content=blocks, title="Edit"), {}, {})
+            upd = [e for e in events if e.kind == EVENT_TOOL_CALL_UPDATE]
+            assert upd, "no update event produced"
+            return upd[0].file_change
+        msg = JsonRpcMessage(
+            method="session/update",
+            params={
+                "update": {
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": "c1",
+                    "title": "Write src/a.py",
+                    "kind": "edit",
+                    "content": blocks,
+                }
+            },
+        )
+        ev = extract_tool_event(msg, {}, {}, [])
+        assert ev is not None
+        return ev.file_change
+
+    def test_claudes_write_frame_declares_a_creation_chip(self):
+        """``oldText: null`` must not be read as "no declaration" — it is the adapter
+        saying the file did not exist, and the chip's ``before`` for a creation is ``""``.
+        """
+        chip = self._chip(
+            [{"type": "diff", "path": "src/a.py", "oldText": None, "newText": "hello\n"}],
+            on_update=False,
+        )
+        assert chip == {"path": "src/a.py", "before": "", "after": "hello\n"}
+
+    def test_claudes_edit_frame_declares_a_chip_on_the_opening_frame(self):
+        """Claude puts its diff block on the ``tool_call`` frame, not only the update —
+        which is why the opening frame reads ``content`` at all."""
+        chip = self._chip(
+            [{"type": "diff", "path": "src/a.py", "oldText": "a\n", "newText": "b\n"}],
+            on_update=False,
+        )
+        assert chip == {"path": "src/a.py", "before": "a\n", "after": "b\n"}
+
+    def test_claudes_completion_frame_redeclares_it_whole_file(self):
+        """The adapter's own repair path: when the SDK hands it ``originalFile`` it
+        re-declares both sides whole-file, and ``_capture_declared_file_change``'s
+        last-declaration-wins is what lets that replace an earlier partial one."""
+        chip = self._chip(
+            [
+                {
+                    "type": "diff",
+                    "path": "src/a.py",
+                    "oldText": 'def f():\n    return "a"\n',
+                    "newText": 'def f():\n    return "b"\n',
+                }
+            ],
+            on_update=True,
+        )
+        assert chip == {
+            "path": "src/a.py",
+            "before": 'def f():\n    return "a"\n',
+            "after": 'def f():\n    return "b"\n',
+        }
+
+    def test_a_non_diff_content_block_beside_it_is_not_mistaken_for_one(self):
+        """Vacuity floor. Claude also emits ``{type:"content"}`` blocks (``Write`` with no
+        ``file_path``), and the branch must key on the declared type, not on position."""
+        chip = self._chip(
+            [{"type": "content", "content": {"type": "text", "text": "hello\n"}}],
+            on_update=False,
+        )
+        assert chip is None
+
+
+# ── gap 8: the declared level and the inferred level are ONE function ────────
+
+
+_CORE_TOOL_RISK = {
+    "artifact_delete": "destructive",
+    "memory_forget": "destructive",
+    "notify": "caution",
+    "knowledge_search": "safe",
+}
+
+
+class TestDeclaredRiskNeedsNoPlumbing:
+    @pytest.mark.parametrize("bare,expected", sorted(_CORE_TOOL_RISK.items()))
+    @pytest.mark.parametrize("dialect", _DIALECTS)
+    def test_every_dialect_infers_the_same_risk_as_the_bare_name(self, dialect, bare, expected):
+        """§2.5 gap 8 measured: the ACP-rendered name does NOT break inference, in any of
+        the three dialects a live drive observed. This is why no name-normalizing
+        resolver was added — it would have returned the same value it was handed."""
+        assert infer_risk_from_name(dialect.format(name=bare)) == expected
+
+    @pytest.mark.parametrize("dialect", _DIALECTS)
+    def test_a_destructive_core_tool_resolves_destructive_through_the_acp_path(self, dialect):
+        """The clause that matters on screen: the approval card for a destructive core
+        tool must show destructive, with the empty ``declared`` an ACP event carries."""
+        name = dialect.format(name="artifact_delete")
+        assert resolve_effective_risk("", name, "other", "") == "destructive"
+
+    def test_a_declaration_still_wins_when_one_exists(self):
+        """The plumbing would only ever matter for a tool that declares a level the name
+        does not imply. Prove the resolver already honours that, so the day a core tool
+        does declare one, passing it through is the whole change."""
+        assert resolve_effective_risk("destructive", "knowledge_search", "other", "") == (
+            "destructive"
+        )
+
+    def test_no_core_tool_dict_declares_an_explicit_risk_level(self):
+        """The census this conclusion rests on, as a rail. If a core tool ever sets
+        ``risk_level`` explicitly, the equivalence above stops holding and the ACP path
+        starts showing an inferred level where a declared one exists — so fail HERE,
+        loudly, rather than mislabeling an approval card.
+
+        Scoped to ``mcp_core`` and the category modules it aggregates; ``llm/scripted.py``
+        (a scripted test backend) and ``browse/cdp.py`` (its own outcome shape) are
+        legitimate writers of that key and are not core tool dicts."""
+        import importlib
+        import pathlib
+
+        from personalclaw.mcp_core import _AGGREGATED_CATEGORY_MODULES
+
+        # Resolved through the import system, not by joining the last dotted segment onto
+        # the package root. That shortcut was silently wrong for a NESTED category module and
+        # its own vacuity floor is what caught it: `personalclaw.computer_use.tools` (DCU-4)
+        # reduced to `tools.py`, pointing the census at an unrelated top-level module. Asking
+        # the module where it lives cannot drift from where it actually lives.
+        modules = ["personalclaw.mcp_core", *_AGGREGATED_CATEGORY_MODULES]
+        paths = [pathlib.Path(importlib.import_module(m).__file__ or "") for m in modules]
+        # Vacuity floor: a mistyped path would scan nothing and pass. Assert the sweep
+        # actually opened the modules, and enough of them to be the real set.
+        assert all(p.is_file() for p in paths), [str(p) for p in paths if not p.is_file()]
+        assert len(paths) >= 6, len(paths)
+        offenders = []
+        for path in paths:
+            for num, line in enumerate(path.read_text().splitlines(), 1):
+                if '"risk_level"' in line and not line.lstrip().startswith("#"):
+                    offenders.append(f"{path.name}:{num}")
+        assert offenders == [], (
+            "a core tool dict now declares an explicit risk_level; the ACP path passes "
+            f"declared='' and would show the INFERRED level instead: {offenders}"
+        )
+
+
+# ── gap 8: WHICH tools clause 3 can be about, and the no-downgrade rail ──────
+#
+# Both rails below exist because clause 3 ("the approval card for a personalclaw-core
+# destructive tool shows its declared risk chip, not the heuristic one") has twice been
+# adjudicated against tool names that cannot reach an ACP card, and a `resolve_effective_risk`
+# call is happy to answer for a name nobody can send. The resolver arithmetic was right both
+# times; the tool UNIVERSE was wrong. So the universe is pinned here, executably, instead of
+# being restated in prose that the next audit re-derives from scratch.
+
+#: The native runtime's workspace tools. They are native-ONLY by construction, and
+#: ``builtin_tools.py``'s own header says why: "In the ACP architecture the file/edit/shell
+#: tools were the external CLI's own built-ins (claude-code provides Read/Write/Bash);
+#: ``personalclaw-core`` only layered orchestration (spawn/memory/artifact) on top." The
+#: provider exists *because* the native loop has no CLI to supply them.
+_PLATFORM_ONLY_TOOLS = ("bash", "read_file", "write_file", "edit_file", "list_dir")
+
+#: Ascending risk, local on purpose: ``task_modes._RISK_ORDER`` is private, and a rail that
+#: imported it could not fail if that mapping were the thing that broke.
+_ASCENDING = ("safe", "caution", "destructive")
+
+
+def _acp_core_surface() -> list[dict]:
+    """The tool dicts an ACP CLI actually sees through the ``personalclaw-core`` server.
+
+    ``mcp_core._aggregated_list_tools`` is the listing the stdio server answers
+    ``tools/list`` with (``run_mcp_core_server``), so it is the only set a CLI can name in a
+    ``tool_call`` frame. Listing only — no call, no write, no home touched.
+    """
+    from personalclaw.mcp_core import _aggregated_list_tools
+
+    return list(_aggregated_list_tools())
+
+
+class TestClauseThreeCanOnlyBeAboutTheAcpSurface:
+    def test_the_platform_shell_and_file_tools_are_not_on_the_acp_surface(self):
+        """``mcp__personalclaw-core__bash`` is not a name any ACP frame can carry.
+
+        This rail is the one that would have failed the two adjudications: both reasoned
+        about ``bash`` (declared ``RiskLevel.DESTRUCTIVE`` at ``builtin_tools.py:581``) and
+        ``read_file`` (declared SAFE) as though they were core tools an ACP CLI calls. They
+        are not exposed on that server at all, so a downgrade measured on those names is a
+        fact about the resolver, not about any reachable approval card.
+        """
+        names = {t["name"] for t in _acp_core_surface()}
+        # Vacuity floor + positive control: an empty or mistyped surface must not pass. The
+        # absences asserted below are only meaningful because this set is real and populated.
+        assert len(names) >= 50, f"ACP core surface implausibly small: {len(names)}"
+        assert (
+            "artifact_delete" in names
+        ), "positive control missing — probe is not reading the surface"
+        present = [n for n in _PLATFORM_ONLY_TOOLS if n in names]
+        assert present == [], (
+            "a native-only workspace tool is now on the personalclaw-core ACP surface: "
+            f"{present}. These DO declare explicit risk levels, so clause 3's plumbing "
+            "question becomes live the moment one of them is reachable over ACP."
+        )
+
+    def test_no_tool_on_the_acp_surface_is_labelled_LOWER_than_its_native_answer(self):
+        """The clause's observable, over the real surface and every dialect.
+
+        For each tool an ACP CLI can actually name, compare the level the ACP path produces
+        (``declared=''``, which is what ``AcpEvent`` carries) against the level the native
+        path produces (the tool's own declared-or-inferred level). A DOWNGRADE — the ACP card
+        showing less risk than the native card for the same tool — is what clause 3 forbids,
+        and it is what the plumbing would fix. An UPGRADE is permitted and does occur: a core
+        read floors at ``caution`` over ACP where native says ``safe``, which is friction, not
+        a security hole, and relaxing it means trusting an unauthenticated wire name.
+        """
+        surface = _acp_core_surface()
+        assert len(surface) >= 50, f"vacuity floor: {len(surface)}"
+        downgrades = []
+        compared = 0
+        for tool in surface:
+            bare = tool["name"]
+            # The native answer uses the tool's own declaration when it has one, and the
+            # inference the in-process provider applies when it does not — i.e. exactly what
+            # `InProcessMcpToolProvider` hands the native gate.
+            native_declared = tool.get("risk_level") or infer_risk_from_name(bare)
+            for dialect in _DIALECTS:
+                wire = dialect.format(name=bare)
+                acp = resolve_effective_risk("", wire, "other", "")
+                native = resolve_effective_risk(native_declared, wire, "other", "")
+                compared += 1
+                if _ASCENDING.index(acp) < _ASCENDING.index(native):
+                    downgrades.append(f"{wire}: acp={acp} < native={native}")
+        assert compared >= 150, f"vacuity floor: only {compared} comparisons"
+        assert downgrades == [], (
+            "the ACP approval card now under-states risk for a reachable core tool — this is "
+            "clause 3's defect and the declared level must be carried onto AcpEvent: "
+            f"{downgrades}"
+        )
+
+    def test_that_no_downgrade_rail_can_actually_fail(self):
+        """The failable control for the rail above — its green is otherwise unfalsifiable.
+
+        Today no surface tool declares a level its name does not imply (the census rail
+        above), so the comparison is green because the two answers are ONE function. Prove
+        the comparison detects a real divergence by synthesising the tool clause 3 is about:
+        a core tool declaring DESTRUCTIVE behind a read-verb name. This is the shape whose
+        arrival makes the plumbing necessary.
+        """
+        bare, declared = "knowledge_search", "destructive"
+        assert infer_risk_from_name(bare) == "safe", "premise: the name implies a read"
+        for dialect in _DIALECTS:
+            wire = dialect.format(name=bare)
+            acp = resolve_effective_risk("", wire, "other", "")
+            native = resolve_effective_risk(declared, wire, "other", "")
+            assert _ASCENDING.index(acp) < _ASCENDING.index(
+                native
+            ), f"{wire}: expected a detectable downgrade, got acp={acp} native={native}"

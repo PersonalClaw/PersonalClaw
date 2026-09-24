@@ -1,0 +1,555 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Box, Search, FilePlus2, FolderPlus, RefreshCw, GitBranch, Files as FilesIcon, X, Loader2, CornerDownRight, PanelRight,
+} from 'lucide-react'
+import { TopBar } from '../../ui/TopBar'
+import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
+import { SidePanel } from '../../ui/SidePanel'
+import { EmptyState, Loading, LoadError } from '../../ui/ListScaffold'
+import { Modal } from '../../ui/Modal'
+import { SearchField } from '../../ui/SearchField'
+import { ResultAnnouncement } from '../../ui/ListControls'
+import { PartialCount } from '../../ui/MoreRow'
+import { Segmented, TextInput } from '../../ui/forms'
+import { Button } from '../../ui/Button'
+import { InlineError } from '../../ui/InlineError'
+import { Meter } from '../../ui/Meter'
+import { api, type Artifact, type FsEntry, type ContentMatch } from '../../lib/api'
+import { useQueryParam, type RouteProps } from '../../app/useQueryState'
+import { confirm } from '../../ui/dialog'
+import { notify } from '../../app/appSdk'
+import { useFileRoots, useDirCache, useGitStatus } from './filesData'
+import { FileTree } from './browse/FileTree'
+import { FileViewer, type FileViewerHandle } from './browse/FileViewer'
+import { PathBar } from './browse/PathBar'
+import { useFileTabs } from './browse/useFileTabs'
+import { newSessionTarget } from '../../ui/content/commentTarget'
+import { baseName, fileIcon } from './fileMeta'
+import { PageTitle } from '../../ui/PageTitle'
+import { tabListKeys } from '../../lib/tabListKeys'
+
+const TAB_KEY = 'files-tab'
+
+/** Files page — the raw file roots (Workspace/Home/Outbox): explorer + a rich
+ *  multi-tab editor/preview. Artifacts moved to their OWN top-level surface
+ *  (`#/artifacts`, ARTIFACTS S1b) — they were a tab here for navigational
+ *  similarity only. Old `#/files/<slug>` deep-links redirect there. */
+export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: RouteProps) {
+  // 🔴 `rootsErr` used to be discarded in `useFileRoots`, so an unreachable `/api/files/roots`
+  // rendered the explorer with an EMPTY root strip and no tabs — a file browser that says the
+  // gateway exposes nothing, which is also what a correctly-locked-down gateway looks like. The
+  // error branch below is tested before the workbench so the failure cannot read as a config.
+  const { roots, loading: rootsLoading, error: rootsErr, refresh: refreshRoots } = useFileRoots()
+  // Legacy deep-link `#/files/<slug>` (the pre-split artifact link, persisted in
+  // old chat transcripts/events) → redirect to the artifact's new home.
+  const deepSlug = (sub || '').split('/')[0] || ''
+  useEffect(() => {
+    if (deepSlug) navigate(`artifacts/${deepSlug}`, { replace: true })
+  }, [deepSlug, navigate])
+  // The explorer's current directory rides the URL (?dir=<abspath>, push → Back =
+  // up a dir; deep-link/refresh restores it). It is the SINGLE source of truth for
+  // where the explorer is pointing — a bare ?dir-less route means "the root tab".
+  // The dir lives under a registered root (Home/Workspace), so the allowlist permits
+  // it. `?file=<path>` opens one exact file in the workbench (used by source-file
+  // links); content search rides ?q/?include (replace — an in-place refinement).
+  const [dir, setDir] = useQueryParam(routeQuery, setQuery, 'dir', '')
+  const sourceFile = routeQuery.file || ''
+  const [tab, setTab] = useState<string>(() => localStorage.getItem(TAB_KEY) || '')
+  useEffect(() => { if (tab) localStorage.setItem(TAB_KEY, tab) }, [tab])
+
+  // The explorer browses ?dir when set, else the root tab. Navigating the path bar
+  // writes ?dir (push → Back = up a dir); switching root tabs clears it so a stale
+  // subdir from one root can't leak into another (the seed effect would otherwise
+  // flip the tab back). A user-driven tab switch goes through switchTab.
+  const activeRoot = dir || tab
+  const switchTab = useCallback((t: string) => {
+    setTab(t)
+    if (dir) setQuery({ dir: null }, { replace: true })
+  }, [dir, setQuery])
+
+  const dirs = useDirCache()
+  const [nonce, setNonce] = useState(0)
+  const { branch, statuses } = useGitStatus(activeRoot || null, nonce)
+
+  // Multi-tab open files.
+  const fileTabs = useFileTabs()
+  useEffect(() => {
+    if (!sourceFile) return
+    fileTabs.open({ name: baseName(sourceFile), path: sourceFile, is_dir: false })
+  }, [sourceFile, fileTabs.open])
+  // One viewer is mounted at a time (the active tab), so one ref — not a per-path map.
+  const viewerRef = useRef<FileViewerHandle>(null)
+  // The host-owned draft cache FileViewer documents (issue 2279): without one, any
+  // remount of a keyed viewer — a rename re-points the tab to a new path, which is a
+  // new key — discarded an unsaved edit silently. Lifecycle matches the Code cockpit:
+  // a confirmed close is a discard (purge), a rename moves the entry with the file.
+  const draftStore = useRef(new Map<string, { draft: string; base: string; warned?: boolean }>()).current
+  const closeTab = useCallback(async (path: string) => {
+    if (await fileTabs.close(path)) draftStore.delete(path)
+  }, [fileTabs, draftStore])
+
+  // Content (grep) search — lives in the always-visible header box. URL-backed
+  // (?q/?include, replace) so a search is shareable + refresh-stable.
+  const [grep, setGrep] = useQueryParam(routeQuery, setQuery, 'q', '', { replace: true })
+  const [include, setInclude] = useQueryParam(routeQuery, setQuery, 'include', '', { replace: true })
+  const [results, setResults] = useState<ContentMatch[]>([])
+  const [searchEngine, setSearchEngine] = useState<'rg' | 'python' | ''>('')
+  /** The server hit its match cap, so these results are a prefix of the answer, not the answer. */
+  const [searchCapped, setSearchCapped] = useState(false)
+  const [searchBusy, setSearchBusy] = useState(false)
+  /** A failed content search used to render "No matches." — a claim about the user's files that a
+   *  rejected request cannot make. Kept so the panel can say the search itself failed. */
+  const [searchErr, setSearchErr] = useState<unknown>(null)
+
+  // Inline create row + artifact-name modal.
+  const [creating, setCreating] = useState<null | 'file' | 'dir'>(null)
+  const [newName, setNewName] = useState('')
+  // Inline error banner for file ops (move/delete/upload).
+  const [fileErr, setFileErr] = useState<string | null>(null)
+  // Live progress for large (chunked/resumable) uploads; small files finish in one POST.
+  const [uploadRows, setUploadRows] = useState<{ name: string; pct: number }[]>([])
+  // Controller for the in-flight upload batch, so a Cancel button can abort it (parity
+  // with the composer attach). Cleared when the batch settles.
+  const uploadAbortRef = useRef<AbortController | null>(null)
+  const [rootDrop, setRootDrop] = useState(false)
+  const [artModal, setArtModal] = useState<{ entry: FsEntry; content: string; name: string } | null>(null)
+
+  // File-backed artifact paths — the drift badge in the tree. The full artifact
+  // surface lives at #/artifacts; Files only needs to know WHICH paths are backed.
+  const [artifacts, setArtifacts] = useState<Artifact[]>([])
+  // The file explorer is a right-docked, hidable panel (standard SidePanel),
+  // open by default so browsing works on arrival.
+  const [explorerOpen, setExplorerOpen] = useState(true)
+
+  // When ?dir is set (deep-link, refresh, or in-tree nav), keep the root tab aligned
+  // to the dir's OWNING root (longest path prefix) so the explorer + path bar show the
+  // right root. Runs whenever ?dir or roots change — no one-shot ref needed, because
+  // ?dir is now the durable source (not a fleeting seed).
+  useEffect(() => {
+    if (!dir || !roots.length) return
+    const owning = roots.filter((r) => dir === r.path || dir.startsWith(r.path.replace(/\/$/, '') + '/'))
+      .sort((a, b) => b.path.length - a.path.length)[0]
+    if (owning && owning.path !== tab) setTab(owning.path)
+  }, [dir, roots]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Default to the first root once roots arrive, unless the saved tab is valid.
+  // (A pre-split localStorage tab may still say 'artifacts' — no longer valid here.)
+  useEffect(() => {
+    if (!roots.length) return
+    if (!roots.some((r) => r.path === tab)) setTab(roots[0].path)
+  }, [roots, tab])
+
+  const loadArtifacts = useCallback(async () => {
+    // This list only feeds `artifactPaths`, the set that marks a file as already saved as an
+    // artifact. `catch { setArtifacts([]) }` therefore did not render an error — it made the tree
+    // ASSERT that no file is an artifact, which a failed read cannot know. Keeping the previous set
+    // is the honest degrade: a stale marker is a far smaller lie than a confidently absent one, and
+    // the badge is decoration on a surface whose primary job (browsing files) still works.
+    try { setArtifacts(await api.artifacts()) } catch { /* keep the last known set */ }
+  }, [])
+  useEffect(() => { loadArtifacts() }, [loadArtifacts])
+
+  const artifactPaths = useMemo(() => new Set(artifacts.filter((a) => a.source_path).map((a) => a.source_path)), [artifacts])
+
+  const refresh = useCallback(() => { dirs.invalidate(activeRoot); setNonce((n) => n + 1) }, [dirs, activeRoot])
+
+  const openByPath = useCallback((path: string, rootPath?: string) => {
+    if (rootPath) setTab(rootPath)
+    fileTabs.open({ name: baseName(path), path, is_dir: false })
+  }, [fileTabs])
+
+  // Debounced content search under the active root.
+  useEffect(() => {
+    if (!activeRoot || grep.trim().length < 2) { setResults([]); setSearchEngine(''); setSearchErr(null); setSearchCapped(false); return }
+    setSearchBusy(true)
+    const t = setTimeout(() => {
+      api.fileContentSearch(activeRoot, grep.trim(), include.trim() || undefined)
+        // 🔴 `truncated` HAS SHIPPED IN THIS RESPONSE ALL ALONG and was dropped here, so a search
+        // that stopped at the server's 500-match cap was summarised as "500 matches" — a stated
+        // count that was not the answer. Same silence as the knowledge graph's edge thinning
+        // (issue 808); this one is sharper, because a capped search looks like a complete one.
+        .then((r) => { setResults(r.results); setSearchEngine(r.engine); setSearchCapped(!!r.truncated); setSearchErr(null) })
+        .catch((e) => { setResults([]); setSearchEngine(''); setSearchCapped(false); setSearchErr(e) })
+        .finally(() => setSearchBusy(false))
+    }, 250)
+    return () => clearTimeout(t)
+  }, [grep, include, activeRoot])
+
+  // Keyboard: ⌘S saves the focused tab, ⌘F focuses the search box.
+  const searchRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return
+      const k = e.key.toLowerCase()
+      if (k === 's' && fileTabs.activePath) { e.preventDefault(); viewerRef.current?.save() }
+      else if (k === 'f') { e.preventDefault(); searchRef.current?.focus() }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [fileTabs.activePath])
+
+  const saveAsArtifact = (entry: FsEntry, content: string) => setArtModal({ entry, content, name: baseName(entry.path) })
+  const confirmArtifact = async () => {
+    if (!artModal || !artModal.name.trim()) return
+    try {
+      const created = await api.createArtifact({ name: artModal.name.trim(), content: artModal.content, source: 'manual', source_path: artModal.entry.path, kind: guessKind(artModal.entry.name) })
+      setArtModal(null); await loadArtifacts()
+      // The artifact surface is its own page now — jump to the saved artifact there.
+      navigate(`artifacts/${created.slug}`)
+    } catch (e) { notify(`Could not save artifact: ${(e as Error).message}`, 'error') }
+  }
+
+  const submitCreate = async () => {
+    const name = newName.trim()
+    if (!name || !creating || !activeRoot) { setCreating(null); setNewName(''); return }
+    try {
+      const r = await api.fileCreate(activeRoot, name, creating)
+      setCreating(null); setNewName(''); refresh()
+      if (creating === 'file') fileTabs.open({ name, path: r.path, is_dir: false })
+    } catch (e) { notify(`Could not create: ${(e as Error).message}`, 'error') }
+  }
+
+  const onRename = useCallback(async (entry: FsEntry, nextName: string) => {
+    const parent = entry.path.slice(0, entry.path.length - entry.name.length).replace(/\/$/, '')
+    const dest = parent ? `${parent}/${nextName}` : nextName
+    setFileErr(null)
+
+    // With a host-owned draft cache (issue 2279) a rename PRESERVES unsaved edits: the
+    // cache entry moves to the new key before `renamePath` re-points the tab, so the
+    // remounted viewer seeds from the draft instead of disk. The old consent prompt
+    // ("Rename and discard unsaved changes?") existed because this page had no store to
+    // carry the draft — nothing is discarded now, so nothing needs consent. `renamePath`
+    // already carries the dirty flag across; the moved cache entry is what makes that
+    // flag TRUE instead of a dirty dot on a clean editor.
+    const moved = (p: string) => (p === entry.path ? dest : p.startsWith(`${entry.path}/`) ? dest + p.slice(entry.path.length) : p)
+
+    try {
+      await api.fileMove(entry.path, dest)
+      for (const [key, val] of [...draftStore]) {
+        const next = moved(key)
+        if (next !== key) { draftStore.delete(key); draftStore.set(next, val) }
+      }
+      // The tab FOLLOWS the file — and now, so does the work in it.
+      fileTabs.renamePath(entry.path, dest)
+      refresh()
+    } catch (e) {
+      setFileErr(`Rename failed: ${(e as Error).message}`)
+    }
+  }, [fileTabs, refresh, draftStore])
+
+  const onDelete = useCallback(async (entry: FsEntry) => {
+    const ok = await confirm({
+      title: entry.is_dir ? `Delete folder "${entry.name}"?` : `Delete file "${entry.name}"?`,
+      body: entry.is_dir ? 'This deletes the folder and all its contents. This cannot be undone.' : 'This cannot be undone.',
+      danger: true,
+      confirmLabel: 'Delete',
+    })
+    if (!ok) return
+    setFileErr(null)
+    try {
+      await api.fileDelete(entry.path)
+      if (fileTabs.tabs.some((t) => t.path === entry.path)) void closeTab(entry.path)
+      refresh()
+    } catch (e) { setFileErr(`Delete failed: ${(e as Error).message}`) }
+  }, [fileTabs, refresh])
+
+  const onUpload = useCallback(async (dir: string, files: File[]) => {
+    if (!files.length) return
+    setFileErr(null)
+    // Client-side per-filetype pre-check — reject oversize before uploading a byte.
+    const { precheck } = await import('../../lib/chunkedUpload')
+    const ok: File[] = []
+    for (const f of files) {
+      const err = await precheck(f)
+      if (err) setFileErr(err)
+      else ok.push(f)
+    }
+    if (!ok.length) return
+    setUploadRows(ok.map((f) => ({ name: f.name, pct: 0 })))
+    const ctrl = new AbortController()
+    uploadAbortRef.current = ctrl
+    try {
+      const r = await api.fileUpload(dir, ok, (idx, p) => {
+        setUploadRows((prev) => prev.map((u, i) => (i === idx ? { ...u, pct: p.pct } : u)))
+      }, ctrl.signal)
+      if (r.ok) refresh()
+      else setFileErr(`Upload failed: ${r.error ?? 'unknown error'}`)
+    } catch (e) {
+      // A user cancel is a silent clear, not a failure (abort is named inconsistently
+      // across engines — isAbortError normalises it).
+      const { isAbortError } = await import('../../lib/chunkedUpload')
+      if (!isAbortError(e)) setFileErr(`Upload failed: ${(e as Error).message}`)
+    } finally {
+      uploadAbortRef.current = null
+      setUploadRows([])
+    }
+  }, [refresh])
+
+  const tabOptions = roots.map((r) => ({ key: r.path, label: r.label }))
+  const showResults = grep.trim().length >= 2
+
+  return (
+    <div className="flex h-full flex-col">
+      <TopBar
+        keepCornerPadding
+        // The root-tab strip is variable-count NAVIGATION (Workspace/Home/roots/
+        // Artifacts) — it lives in the LEFT slot (flex-1 min-w-0), which bounds its
+        // width so the overflow-x-auto actually engages and it self-scrolls instead of
+        // pushing the header wide. (In the right/shrink-0 slot it had no width bound
+        // and overflowed under a docked panel.) Tab-strip overflow is its own concern
+        // (plan) — separate from the action cluster, which holds only the toggle.
+        left={<div className="flex min-w-0 items-center gap-m">
+          <PageTitle className="shrink-0">Files</PageTitle>
+          {!rootsLoading && roots.length > 0 && <div className="min-w-0 overflow-x-auto"><Segmented ariaLabel="File root" value={tab} onChange={switchTab} options={tabOptions} /></div>}
+        </div>}
+        right={
+          <HeaderActions>
+            <HeaderControl icon={PanelRight}
+              label={explorerOpen ? 'Hide explorer' : 'Show explorer'}
+              active={explorerOpen} onClick={() => setExplorerOpen((v) => !v)} />
+          </HeaderActions>
+        }
+      />
+
+      {/* The roots are the page's premise: with none readable there is no tree to browse and no tab
+          to pick, so this branch REPLACES the workbench rather than decorating it. Tested before the
+          body for the reason `ui/loadErrorState.test.tsx` states — `roots.length === 0` is true for
+          the loading, error AND genuinely-empty cases, so an error branch after it never runs. */}
+      {rootsErr && roots.length === 0 ? (
+        <LoadError what="file roots" error={rootsErr} onRetry={refreshRoots} />
+      ) : (
+      /* Workbench body is centered + bounded to the shell content-width preset
+         (the 'full' preset still fills — min(1600px,100%)); its internal columns
+         flex within that. */
+      <div className="mx-auto flex min-h-0 w-full flex-1" style={{ maxWidth: 'var(--content-width)' }}>
+            {/* editor column — tab strip + the focused file's viewer (fills width;
+                the explorer is a right-docked, hidable panel beside it) */}
+            <div className="flex min-w-0 flex-1 flex-col">
+              {fileTabs.tabs.length > 0 && (
+                // Third copy of the same strip (the two terminal ones are the others): tabs with no
+                // owning `role="tablist"` — `aria-required-parent`, critical — and here every tab
+                // carried `tabIndex={0}`, so an open editor put N separate stops in the tab order
+                // instead of one stop plus arrows, and none said which was selected.
+                // 🪤 A `{/* … */}` comment cannot go here: this is EXPRESSION position (right after
+                // `&& (`), where only `//` and bare `/* */` parse. Third time this session.
+                <div role="tablist" aria-label="Open files"
+                  onKeyDown={tabListKeys((i) => fileTabs.setActivePath(fileTabs.tabs[i].path))}
+                  className="flex items-stretch gap-1 overflow-x-auto border-b border-outline/40 px-2 pt-2">
+                  {fileTabs.tabs.map((t) => {
+                    const Icon = fileIcon(t.name, false)
+                    const on = t.path === fileTabs.activePath
+                    return (
+                      <div key={t.path} role="tab" aria-selected={on} tabIndex={on ? 0 : -1}
+                        onClick={() => fileTabs.setActivePath(t.path)} title={t.path}
+                        aria-keyshortcuts="Delete"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileTabs.setActivePath(t.path); return }
+                          if (e.key === 'Delete') { e.preventDefault(); void closeTab(t.path) }
+                        }}
+                        className="group/tab inline-flex h-10 shrink-0 cursor-pointer items-center gap-2 rounded-t-lg border border-b-0 pl-3.5 pr-2 text-[0.8125rem] transition-colors"
+                        style={on ? { background: 'var(--color-surface-container)', color: 'var(--color-on-surface)', borderColor: 'var(--color-outline)' } : { color: 'var(--color-on-surface-low)', borderColor: 'transparent' }}>
+                        <Icon size={14} className="shrink-0 opacity-70" />
+                        <span className="max-w-[180px] truncate">{t.name}</span>
+                        {fileTabs.dirty[t.path] && <span className="size-1.5 shrink-0 rounded-full" style={{ background: 'var(--color-primary)' }} />}
+                        <button type="button" onClick={(e) => { e.stopPropagation(); void closeTab(t.path) }}
+                          aria-label={`Close ${t.name}`} title="Close file"
+                          className="grid size-6 -mr-0.5 shrink-0 place-items-center rounded opacity-50 hover:bg-surface-high hover:opacity-100"><X size={13} /></button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              {/* ONLY the active tab's viewer is mounted — the same shape the Code cockpit
+                  already used, and the fix for issue 515. Mounting every open tab and hiding the
+                  inactive ones with `display:none` meant every tab kept its `useFileWatch`
+                  EventSource open on /api/file-watch, whose handler is an infinite poll: 6 tabs
+                  reached the browser's 6-per-ORIGIN connection cap and every fetch in the WHOLE
+                  dashboard hung forever, silently (the status poll was one of the hung requests,
+                  so the header still read "Gateway connected"). Tabs persist to localStorage, so
+                  a reload re-opened the streams and landed re-wedged.
+                  An unmounted tab loses nothing: `draftStore` (below) carries its unsaved edit
+                  and the concurrent-edit flag across the remount — that store exists for exactly
+                  this lifecycle, and the cockpit has relied on it since issue 2279. */}
+              <div className="relative min-h-0 flex-1">
+                {!fileTabs.active ? (
+                  <EmptyState icon={FilesIcon} title="No file open" hint="Pick a file from the explorer to view or edit it. Type in the search box to grep contents (⌘F)." />
+                ) : (
+                  <FileViewer key={fileTabs.active.path} ref={viewerRef}
+                    entry={{ name: fileTabs.active.name, path: fileTabs.active.path, is_dir: false }} onSaved={refresh} onSaveAsArtifact={saveAsArtifact}
+                    onDirtyChange={(d) => fileTabs.markDirty(fileTabs.activePath, d)} onMissing={(p) => { draftStore.delete(p); fileTabs.closeNow(p) }}
+                    draftStore={draftStore}
+                    commentTarget={navigate ? newSessionTarget(navigate, { name: `Comments: ${fileTabs.active.name}` }) : undefined} />
+                )}
+              </div>
+            </div>
+
+            {/* explorer — a standard right-docked, hidable SidePanel */}
+            {explorerOpen && (
+            <SidePanel title="Explorer" icon={<FilesIcon size={18} />} storeKey="files-explorer-w" fillHeight onClose={() => setExplorerOpen(false)}>
+            <div className="flex h-full flex-col">
+              <div className="flex flex-col gap-2 border-b border-outline/40 p-m">
+                <SearchField inputRef={searchRef} value={grep} onChange={setGrep} size="sm"
+                  placeholder="Search contents…  ⌘F" name="workspace-grep" ariaLabel="Search file contents" />
+                {/* Content search replaces the whole explorer body with hits, and said nothing about
+                    how many. `showResults` is the surface's own threshold (>= 2 chars), so a
+                    one-character query does not announce a count for a search that has not run.
+                    🪤 The announced noun must be the VISIBLE noun: the counter below says
+                    "N matches" and the zero state says "No matches.", so announcing "lines" gave a
+                    screen-reader user different vocabulary for the same screen. "matches" breaks
+                    both ResultAnnouncement defaults ("No matching matches", "1 matche"), which is
+                    what `empty`/`singular` exist for — not a reason to announce a different word.
+                    🪤 And the CAVEAT is part of that vocabulary: the counter now says "first 500
+                    matches" when the server capped the search, so announcing a flat "500 matches"
+                    would leave the screen-reader user the only one still told it had finished. */}
+                <ResultAnnouncement count={results.length} noun="matches" singular="match" empty="No matches" active={showResults} partial={searchCapped} />
+                {showResults && (
+                  <input value={include} onChange={(e) => setInclude(e.target.value)} placeholder="include glob e.g. *.py"
+                    name="workspace-grep-include" aria-label="Restrict search to files matching glob"
+                    className="h-7 w-full rounded-md bg-surface-high px-2.5 text-[0.75rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+                )}
+                {!showResults && (
+                  <>
+                    {/* full-width path bar on its own row */}
+                    <PathBar value={activeRoot} onNavigate={setDir} />
+                    {/* actions on a separate row below */}
+                    <div className="flex items-center gap-0.5">
+                      <RailBtn icon={FilePlus2} label="New file" onClick={() => { setCreating('file'); setNewName('') }} />
+                      <RailBtn icon={FolderPlus} label="New folder" onClick={() => { setCreating('dir'); setNewName('') }} />
+                      <RailBtn icon={RefreshCw} label="Refresh" onClick={refresh} />
+                    </div>
+                  </>
+                )}
+                {(branch || searchEngine) && (
+                  <div className="flex items-center gap-2 text-on-surface-low text-[0.75rem]">
+                    {showResults
+                      ? <span className="inline-flex items-center gap-1">
+                          {searchBusy
+                            ? 'searching…'
+                            /* `of="more"` rather than a total: the cap makes rg STOP, so nothing
+                               ever counted the rest and a denominator here would be invented. */
+                            : <PartialCount shown={results.length} of={searchCapped ? 'more' : results.length} noun="matches" singular="match" />}
+                          {searchEngine === 'rg' && <span>· ripgrep</span>}
+                          {searchEngine === 'python' && (
+                            <span data-type="caption">
+                              · python fallback: substring matching, not regex · ignores .gitignore · approximate globs
+                            </span>
+                          )}
+                          {searchCapped && !searchBusy && <span>· narrow the search to see the rest</span>}
+                        </span>
+                      : branch && <span className="inline-flex items-center gap-1"><GitBranch size={11} /> {branch}</span>}
+                  </div>
+                )}
+              </div>
+
+              {fileErr && (
+                <InlineError className="mx-m mt-2" onDismiss={() => setFileErr(null)}>{fileErr}</InlineError>
+              )}
+              {uploadRows.length > 0 && (
+                <div className="mx-m mt-2 flex flex-col gap-1 rounded-lg bg-surface-container/60 px-3 py-2">
+                  {uploadRows.map((u) => (
+                    <div key={u.name} className="flex items-center gap-2.5 text-[0.75rem] text-on-surface-var">
+                      <Loader2 size={13} className="shrink-0 animate-spin text-primary" />
+                      <span className="max-w-[40%] shrink-0 truncate" title={u.name}>{u.name}</span>
+                      <Meter size="thin" className="min-w-0 flex-1" label={`Uploading ${u.name}`} pct={u.pct} />
+                      <span className="shrink-0 tabular-nums text-on-surface-low">{u.pct}%</span>
+                      <button type="button" aria-label="Cancel upload"
+                        className="shrink-0 rounded p-0.5 text-on-surface-low hover:text-danger"
+                        onClick={() => uploadAbortRef.current?.abort()}>
+                        <X size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="min-h-0 flex-1 overflow-y-auto py-1"
+                onDragOver={!showResults && activeRoot ? (e) => { e.preventDefault(); setRootDrop(true) } : undefined}
+                onDragLeave={() => setRootDrop(false)}
+                onDrop={!showResults && activeRoot ? (e) => {
+                  e.preventDefault(); setRootDrop(false)
+                  const files = Array.from(e.dataTransfer.files)
+                  if (files.length) onUpload(activeRoot, files)
+                } : undefined}
+                style={rootDrop ? { boxShadow: 'inset 0 0 0 2px var(--color-primary)' } : undefined}>
+                {creating && (
+                  <div className="flex items-center gap-1.5 px-m py-1.5">
+                    {creating === 'dir' ? <FolderPlus size={14} className="text-primary" /> : <FilePlus2 size={14} className="text-primary" />}
+                    {/* No Field here — an inline create row with only a decorative icon beside it, so
+                        the accessible name must be explicit. It tracks the MODE: "New folder name" and
+                        "New file name" are different questions, and the icon that distinguishes them is
+                        aria-hidden by default. A placeholder is not an accessible name. */}
+                    <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') submitCreate(); if (e.key === 'Escape') { setCreating(null); setNewName('') } }}
+                      onBlur={submitCreate} placeholder={creating === 'dir' ? 'folder name' : 'file name'}
+                      aria-label={creating === 'dir' ? 'New folder name' : 'New file name'}
+                      className="h-7 flex-1 rounded-md bg-surface-high px-2 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+                  </div>
+                )}
+                {showResults
+                  ? <SearchResults results={results} busy={searchBusy} error={searchErr} onOpen={(m) => openByPath(m.file)} />
+                  : activeRoot
+                    ? <FileTree key={`${activeRoot}:${nonce}`} dirs={dirs} rootPath={activeRoot} activePath={fileTabs.activePath || null}
+                        gitStatuses={statuses} onOpenFile={fileTabs.open} artifactPaths={artifactPaths}
+                        onRename={onRename} onDelete={onDelete} onUpload={(entry, files) => onUpload(entry.path, files)} />
+                    : <Loading what="the file" />}
+              </div>
+            </div>
+            </SidePanel>
+            )}
+      </div>
+      )}
+
+      {artModal && (
+        <Modal title="Save as artifact" icon={<Box size={18} className="text-primary" />} onClose={() => setArtModal(null)}>
+          <div className="flex flex-col gap-m p-l" style={{ minWidth: 360 }}>
+            <p className="text-on-surface-low text-[0.8125rem]">Creates a versioned artifact that live-points at <span className="font-mono">{baseName(artModal.entry.path)}</span>. Re-saving bumps it instead of duplicating.</p>
+            <TextInput value={artModal.name} onChange={(v) => setArtModal((m) => m && { ...m, name: v })} placeholder="Artifact name" autoFocus />
+            <div className="flex justify-end gap-s">
+              <Button variant="ghost" size="sm" onClick={() => setArtModal(null)}>Cancel</Button>
+              <Button size="sm" onClick={confirmArtifact}>Save artifact</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+function SearchResults({ results, busy, error, onOpen }: { results: ContentMatch[]; busy: boolean; error?: unknown; onOpen: (m: ContentMatch) => void }) {
+  if (busy && results.length === 0) return <div className="flex items-center justify-center py-8"><Loader2 size={18} className="animate-spin text-on-surface-low" /></div>
+  // "No matches." is a statement about the files. A rejected search has not looked at them, so it
+  // says what actually happened instead — same distinction the list surfaces draw with `LoadError`.
+  if (error && results.length === 0) {
+    return (
+      <div role="alert" className="px-m py-s text-danger text-[0.8125rem]">
+        Search failed{(error as Error)?.message ? `: ${(error as Error).message}` : '.'}
+      </div>
+    )
+  }
+  if (results.length === 0) return <div className="px-m py-s text-on-surface-low text-[0.8125rem]">No matches.</div>
+  return (
+    <div className="flex flex-col">
+      {results.map((m, i) => (
+        <button key={i} onClick={() => onOpen(m)} type="button" className="flex w-full flex-col items-start gap-0.5 rounded-md px-m py-1.5 text-left transition-colors hover:bg-surface-high">
+          <span className="flex items-center gap-1 text-on-surface text-[0.8125rem] font-mono"><CornerDownRight size={11} className="text-on-surface-low" /> {baseName(m.file)}<span className="text-on-surface-low">:{m.line}</span></span>
+          <span className="w-full truncate font-mono text-on-surface-low text-[0.75rem]">{m.preview}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function RailBtn({ icon: Icon, label, active, onClick }: { icon: typeof Search; label: string; active?: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} type="button" title={label} aria-label={label}
+      className="inline-flex size-8 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-surface-high"
+      style={{ color: active ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }}><Icon size={15} /></button>
+  )
+}
+
+function guessKind(name: string): string {
+  const ext = name.toLowerCase().split('.').pop() || ''
+  if (ext === 'html' || ext === 'htm') return 'html'
+  if (ext === 'svg') return 'svg'
+  if (ext === 'json') return 'json'
+  if (['md', 'markdown', 'mdx', 'txt'].includes(ext)) return 'markdown'
+  return 'text'
+}

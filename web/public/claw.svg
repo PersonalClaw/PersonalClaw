@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="PersonalClaw">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#c85a48"/>
+      <stop offset="0.45" stop-color="#ff6b5b"/>
+      <stop offset="0.75" stop-color="#ff9a7a"/>
+      <stop offset="1" stop-color="#ffb454"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#g)" d="M256 16C106 76 46 226 46 226c0 45 60 90 90 90 90 0 180-195 135-285l-15-15zm45 15c30 60 0 135 0 135 120 30 120 180 75 330 75-75 90-150 90-210 0-90-15-225-165-255z"/>
+</svg>

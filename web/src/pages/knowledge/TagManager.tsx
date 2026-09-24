@@ -1,0 +1,243 @@
+import { useEffect, useMemo, useState } from 'react'
+import { ChevronRight, GitMerge, Loader2, Pencil, Tag as TagIcon, Trash2 } from 'lucide-react'
+import { api, ApiError, type KnowledgeTag } from '../../lib/api'
+import { notify } from '../../app/appSdk'
+import { confirmDelete, confirmDestructive, promptInput } from '../../ui/dialog'
+import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
+import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
+import { QuietButton } from '../../ui/QuietButton'
+import { fvs } from '../../design/fontWeight'
+
+/** Tag management (KNOWLEDGE-LIBRARY S2, T2.2).
+ *
+ *  Tags are rows with a real parent/child hierarchy, so this is the surface where the
+ *  taxonomy is actually curated: rename, re-parent, merge, delete — with live usage
+ *  counts scoped to the non-archived library.
+ *
+ *  Rendered as a flat, indented list rather than a collapsible tree. The hierarchy is
+ *  one level deep in practice and the whole point of this screen is to SEE the shape,
+ *  so hiding branches behind disclosure triangles would work against it. Every mutation
+ *  re-seeds from the server's returned tree instead of patching local state, because a
+ *  rename can move a child, a merge can re-parent one, and a delete re-parents to root
+ *  — guessing those locally is how a management UI drifts from its own data. */
+export function TagManager({ onChanged }: { onChanged?: () => void }) {
+  const [tags, setTags] = useState<KnowledgeTag[] | null>(null)
+  const [busy, setBusy] = useState<number | null>(null)
+  const [note, setNote] = useState('')
+
+  // #532: the tree read used to resolve its rejection into `[]`, and the empty branch then said
+  // "No tags yet — tag a saved item and it appears here", pitching a first step to a user whose
+  // taxonomy was merely unreachable. Load failure and an empty taxonomy are different answers.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+  const [reloadKey, setReloadKey] = useState(0)
+
+  useEffect(() => {
+    let alive = true
+    api.knowledgeTagTree()
+      .then((t) => { if (alive) setTags(t) })
+      .catch((e) => { if (alive) setLoadErr(e) })
+    return () => { alive = false }
+  }, [reloadKey])
+
+  /** Apply a mutation, then adopt the server's tree as the new truth. */
+  const run = async (
+    id: number,
+    label: string,
+    fn: () => Promise<{ tags?: KnowledgeTag[] } | void>,
+  ) => {
+    setBusy(id); setNote('')
+    try {
+      const r = await fn()
+      const next = r && 'tags' in r && r.tags ? r.tags : await api.knowledgeTagTree()
+      setTags(next)
+      setNote(label)
+      onChanged?.()   // item rows show tags, so the library list is now stale
+    } catch (e) {
+      // 🔴 THIS MATCHED ON PROSE, AND THE BACKEND BENT TO MAKE IT WORK. It tested
+      // `msg.includes('tag_cycle')`, so `handlers/knowledge.py` had to set `message` to the CODE for
+      // the match to fire — which meant the fallback branch rendered
+      // `Couldn't update the tag: tag_name_taken:archive`, a machine token shown to a person. And the
+      // two good sentences lived here AND (once fixed) in the handler, so one fact had two homes.
+      // `lib/api.hasApiCode` exists for exactly this and its docstring states the rule: match on the
+      // code, never on the message, because the message is human copy that gets reworded.
+      //
+      // Nothing here BEHAVES differently per code — it only shows a sentence — so the whole branch
+      // collapses: the gateway composes the wording (one source) and this renders it. The fallback is
+      // for a non-`ApiError` rejection, which has no envelope to have composed one.
+      notify(e instanceof ApiError ? e.message : "Couldn't update the tag.", 'error')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // Roots first, each followed by its children. One pass, name-ordered within a level.
+  const ordered = useMemo(() => {
+    if (!tags) return []
+    const roots = tags.filter((t) => t.parent_id === null)
+    const kids = (pid: number) => tags.filter((t) => t.parent_id === pid)
+    const out: { tag: KnowledgeTag; depth: number }[] = []
+    for (const root of roots) {
+      out.push({ tag: root, depth: 0 })
+      for (const kid of kids(root.id)) out.push({ tag: kid, depth: 1 })
+    }
+    // A tag whose parent was itself nested deeper than one level would otherwise
+    // vanish from this list — append any stragglers rather than hide them.
+    for (const t of tags) if (!out.some((o) => o.tag.id === t.id)) out.push({ tag: t, depth: 1 })
+    return out
+  }, [tags])
+
+  // Error BEFORE the skeleton: a rejection leaves `tags` at `null`, which the loading test also
+  // matches, so the order is what makes this branch reachable at all.
+  if (loadErr !== null) {
+    return <LoadError what="tags" error={loadErr} onRetry={() => { setLoadErr(null); setReloadKey((k) => k + 1) }} />
+  }
+  if (tags === null) return <ListSkeleton what="tags" />
+  if (!tags.length) {
+    return (
+      <EmptyState icon={TagIcon} title="No tags yet"
+        hint="Tag a saved item and it appears here, where you can rename, nest, or merge it." />
+    )
+  }
+
+  const rename = (t: KnowledgeTag) => run(t.id, `Renamed “${t.name}”`, async () => {
+    const name = await promptInput({
+      title: `Rename “${t.name}”`, label: 'Tag name', initial: t.name,
+    })
+    if (!name || name === t.name) return
+    return api.renameKnowledgeTag(t.id, { name })
+  })
+
+  const reparent = (t: KnowledgeTag, parentId: number | null) =>
+    run(t.id, parentId === null ? `“${t.name}” is now top-level` : `Moved “${t.name}”`,
+      () => api.renameKnowledgeTag(t.id, { parent_id: parentId }))
+
+  // Merge asks the same way `remove` does, four lines below, and for a stronger reason: it
+  // rewrites every item carrying `t` and then DELETES `t` from the taxonomy, so it does strictly
+  // more than Delete. The blast radius is spelled out from the same `usage_count` and children
+  // that Delete's prompt uses, because a merge does not read as destructive from its verb.
+  const merge = (t: KnowledgeTag, into: KnowledgeTag) =>
+    run(t.id, `Merged “${t.name}” into “${into.name}”`, async () => {
+      const kids = tags.filter((x) => x.parent_id === t.id)
+      const ok = await confirmDestructive(
+        `Merge “${t.name}” into “${into.name}”?`,
+        [
+          t.usage_count
+            ? `This retags ${t.usage_count} item${t.usage_count === 1 ? '' : 's'} as “${into.name}”.`
+            : `“${t.name}” is on no items.`,
+          ` The tag “${t.name}” is then deleted from the taxonomy.`,
+          kids.length
+            ? ` Its ${kids.length} nested tag${kids.length === 1 ? '' : 's'} become top-level rather than being deleted.`
+            : '',
+          ' This cannot be undone.',
+        ].join(''),
+        { confirmLabel: 'Merge' },
+      )
+      if (!ok) return
+      await api.mergeKnowledgeTag(t.id, into.id)
+    })
+
+  const remove = (t: KnowledgeTag) => run(t.id, `Deleted “${t.name}”`, async () => {
+    const kids = tags.filter((x) => x.parent_id === t.id)
+    const ok = await confirmDelete('tag', t.name, {
+      body: [
+        t.usage_count
+          ? `This removes the tag from ${t.usage_count} item${t.usage_count === 1 ? '' : 's'}. The items themselves are untouched.`
+          : 'This tag is on no items.',
+        kids.length
+          ? ` Its ${kids.length} nested tag${kids.length === 1 ? '' : 's'} become top-level rather than being deleted.`
+          : '',
+      ].join(''),
+    })
+    if (!ok) return
+    await api.deleteKnowledgeTag(t.id)
+  })
+
+  return (
+    <div className="flex flex-col gap-xs">
+      {/* 🔑 ALWAYS MOUNTED, EMPTY AT REST. Rename / nest / make-top-level / merge / delete give no
+          other confirmation — the row simply re-renders — so this line is the whole success surface
+          (WCAG 4.1.3). It used to be `{note && <div role="status">…}`, i.e. a region created at the
+          same moment its content appeared, which this app has already ruled unreliable in three
+          places: `settingsUI`'s `SavedToast` ("A live region created at the same moment its content
+          appears is not reliably observed"), `ResultAnnouncement`, and `AudioRecorder`, whose own
+          rail asserts the always-mounted shape. Measured here before the change: zero `role=status`
+          nodes in this panel at rest.
+          The visible half stays exactly as it was and is now `aria-hidden`, because the region above
+          already carries the sentence — SavedToast's second load-bearing detail, for the same reason:
+          leaving both in the tree announces the confirmation twice. */}
+      <span role="status" aria-live="polite" className="sr-only">{note}</span>
+      {note && (
+        <div aria-hidden="true" data-type="body-s" className="pb-xs text-on-surface-var">{note}</div>
+      )}
+      {ordered.map(({ tag, depth }) => {
+        const others = tags.filter((x) => x.id !== tag.id)
+        const menu: ContextMenuItem[] = [
+          { icon: <Pencil size={15} />, label: 'Rename', onSelect: () => rename(tag) },
+          ...(tag.parent_id !== null
+            ? [{ icon: <TagIcon size={15} />, label: 'Make top-level', onSelect: () => reparent(tag, null) }]
+            : []),
+          // Only tags that aren't already this tag's own descendants are offered as
+          // parents; the server rejects a cycle regardless, but offering an option that
+          // can only fail is a worse surface than not offering it.
+          ...others
+            .filter((o) => o.parent_id !== tag.id && o.id !== tag.parent_id)
+            .slice(0, 8)
+            .map((o) => ({
+              icon: <ChevronRight size={15} />,
+              label: `Nest under ${o.name}`,
+              onSelect: () => reparent(tag, o.id),
+            })),
+          ...others.slice(0, 8).map((o) => ({
+            icon: <GitMerge size={15} />,
+            label: `Merge into ${o.name}`,
+            onSelect: () => merge(tag, o),
+          })),
+          { icon: <Trash2 size={15} />, label: 'Delete', danger: true, onSelect: () => remove(tag) },
+        ]
+        return (
+          <ContextMenu key={tag.id} items={menu}>
+            <div className="group flex items-center gap-s rounded-lg bg-surface-container px-m py-s"
+              style={{ marginLeft: depth * 20 }}>
+              {depth > 0 && <ChevronRight size={12} className="shrink-0 text-on-surface-low" aria-hidden />}
+              <TagIcon size={14} className="shrink-0 text-on-surface-low" aria-hidden />
+              {/* 🪤 `truncate` HIDES DATA WITH NO WAY BACK. Measured at 390px: this taxonomy's longest
+                  tag needs 252px and gets 187, so `operational-runbooks-and-checklists` renders as
+                  `operational-runbooks-and-che…` and a sighted user has no route to the rest — the DOM
+                  text is complete, so assistive tech was the only reader getting the whole name. At
+                  1440px nothing truncates (1041px available), which is why a desktop-only sweep sees
+                  nothing here. `title` is what the six other truncating labels in this app use. */}
+              <span data-type="body-m" className="min-w-0 flex-1 truncate text-on-surface" style={fvs(500)} title={tag.name}>
+                {tag.name}
+              </span>
+              <span data-type="caption" className="shrink-0 text-on-surface-low">
+                {tag.usage_count === 0
+                  ? 'unused'
+                  : `${tag.usage_count} item${tag.usage_count === 1 ? '' : 's'}`}
+              </span>
+              {busy === tag.id
+                ? <Loader2 size={13} className="shrink-0 animate-spin text-on-surface-low" />
+                : (
+                  <span className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                    <QuietButton onClick={() => rename(tag)} title={`Rename ${tag.name}`}>
+                      <Pencil size={12} /> Rename
+                    </QuietButton>
+                  </span>
+                )}
+            </div>
+          </ContextMenu>
+        )
+      })}
+      <p data-type="caption" className="pt-xs text-on-surface-low">
+        {/* This is the ONLY place the app tells anyone how to reach nest/merge/delete — six surfaces
+            wrap rows in `ContextMenu` and this is the one with a visible hint. It named the pointer
+            gesture alone, while `ui/motion/ContextMenu` has carried a keyboard route since the cycle
+            that recorded "THE MENU WAS POINTER-ONLY" above its handler. Verified on this surface: Tab
+            lands on a row's Rename button and Shift+F10 there opens the same menu, all items present.
+            So a keyboard user could already do this and had been told they could not. */}
+        Right-click a tag to nest, merge, or delete it, or Tab to one and press Shift+F10 for
+        the same menu. An unused tag is kept — it stays part of your taxonomy even when nothing
+        carries it right now.
+      </p>
+    </div>
+  )
+}

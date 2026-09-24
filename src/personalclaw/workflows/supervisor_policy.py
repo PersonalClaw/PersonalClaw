@@ -1,0 +1,867 @@
+"""``SupervisorPolicy`` — a loop's convergence policy, declared (PP-14) and WIRED (PP-15).
+
+A loop is not a second engine. **A loop is a graph shape plus a supervisor policy.** The
+shape already exists (`loop` node kind, `LoopMode`, `foreach` with `max_concurrency`); the
+POLICY had no home, which is why it got implemented twice with each side missing what the
+other had — `loop/` carries the marginal-value band and reproduce-before-ship, while
+`workflows/` carries the pre-tier, the proof precondition, the actor matrix and the
+five-rung escalation ladder. This module is the ONE declaration those two halves converge
+on: it reuses the types that already exist (`RubricCriterion` and `clamp_marginal` from
+`judge_contract`, `Rung`/`FailureClass` from `loop_middleware`, `StepConfig` from
+`loop.tick`, `Attention` from `autonomy`, `ScopeMode` from `scope`) rather than minting a
+parallel vocabulary.
+
+WIRED — this module now has a production caller.
+===============================================
+It used to parse and validate while nothing in the engine read a ``SupervisorPolicy``, and it
+said so. PP-15 was named as the wiring owner and is that caller:
+``RunController._supervisor_policy`` parses a loop node's ``supervisor:`` block, and
+:func:`tick_config` turns it into the ``TickConfig`` that ``loop.tick.evaluate`` — the ONE
+convergence core, now shared by the workflow ``loop`` node and the loop kinds — reads. The
+thresholds a template declares here are the thresholds the engine applies; the per-kind Python
+that supplied them twice (``loop_middleware.check_middleware``) is deleted.
+
+The honesty-marker convention (`WF2LOO-12`) is what tracked that transition: **a control with
+no caller must SAY it has no caller** — and must stop saying it once it has one.
+``HAS_ZERO_PRODUCTION_CALLERS`` is now ``False``, and
+``tests/test_workflows_validator_supervisor.py`` rails the claim against reality in BOTH drift
+directions, so it can never quietly disagree with the code:
+
+* if the last production caller disappears while this marker still claims one, the rail goes
+  RED (the module became inert again without saying so); and
+* if the marker claims zero while a caller exists, the rail goes RED (the old lie).
+
+A "production caller" is code outside this module and outside ``tests/`` that CONSTRUCTS a
+``SupervisorPolicy`` or invokes :func:`parse_supervisor_policy` — i.e. code that wires the
+policy into runtime behaviour. The authoring-time validator in ``workflows/validator.py``
+consults the closed field set below to emit ``WF_SUPERVISOR_*`` codes; consulting the
+contract is not invoking the policy, so it is not a caller.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field, fields, replace
+from typing import TYPE_CHECKING, Any
+
+from personalclaw.guardrails.policy import HEADLESS, SafetyProfile
+from personalclaw.guardrails.registries import path_glob
+from personalclaw.loop.tick import StepConfig, TickConfig
+from personalclaw.workflows.autonomy import Attention, Mode
+from personalclaw.workflows.judge_contract import (
+    MARGINAL_MIN,
+    SCORE_MAX,
+    RubricCriterion,
+    clamp_marginal,
+)
+from personalclaw.workflows.loop_middleware import (
+    DEFAULT_LADDER,
+    FailureClass,
+    Rung,
+    _resolve_ladder,
+)
+from personalclaw.workflows.scope import ScopeMode
+
+if TYPE_CHECKING:
+    from personalclaw.guardrails.ceiling import Ceiling
+
+logger = logging.getLogger(__name__)
+
+#: The honesty marker (`WF2LOO-12`). ``False`` since PP-15 wired the policy into
+#: ``RunController``. The rail asserts this claim matches reality in both directions, so the
+#: constant can never quietly disagree with the code.
+HAS_ZERO_PRODUCTION_CALLERS = False
+
+#: Named in the docstring and here so the wiring owner is discoverable from code, not only prose.
+WIRING_OWNER = "PP-15"
+
+
+# ── The closed field set — the contract ──
+#
+# Missing/blank fields parse to a sane default (tolerant reads); an UNKNOWN field is a typed
+# ``WF_SUPERVISOR_UNKNOWN_FIELD`` at authoring time. The closed set IS the contract, so it is
+# the single source of truth the validator imports rather than a second copy.
+POLICY_FIELDS: frozenset[str] = frozenset(
+    {
+        "rubric",
+        "escalation_ladder",
+        "failure_mutations",
+        "gates",
+        "marginal_value_band",
+        "judge_model_tier",
+        "reproduce_before_ship",
+        "write_scope",
+        "budget",
+        "hitl_posture",
+        # PP-16 (the general-kind bridgehead): the done-ness half became DECLARABLE. It was
+        # deliberately absent here through seam 3 — see :class:`ConvergenceSpec` below for why
+        # the KIND table remains the loop watchdog's source and what this field adds beside it.
+        "convergence",
+    }
+)
+
+#: Judge model tiers — the SAME vocabulary the LLM-kind ``model_tier`` lint uses
+#: (``WF_BAD_MODEL_TIER``). Reused, not re-minted.
+SUPERVISOR_MODEL_TIERS: frozenset[str] = frozenset({"reasoning", "standard", "fast"})
+
+#: Valid enum VALUES, derived from the reused enums so the validator never restates them.
+LADDER_RUNG_VALUES: frozenset[str] = frozenset(r.value for r in Rung)
+FAILURE_CLASS_VALUES: frozenset[str] = frozenset(c.value for c in FailureClass)
+HITL_POSTURE_VALUES: frozenset[str] = frozenset(a.value for a in Attention)
+SCOPE_MODE_VALUES: frozenset[str] = frozenset({ScopeMode.WARN, ScopeMode.REJECT})
+
+#: The default marginal-value band, seeded from the ``balanced`` granularity preset's
+#: ``marginal_threshold`` of 2.0. A band is (floor, target): a cycle below the floor is not
+#: worth continuing; at/above the target it may stop.
+DEFAULT_MARGINAL_FLOOR = MARGINAL_MIN
+DEFAULT_MARGINAL_TARGET = 2.0
+
+#: Default judge model tier — matches the workflow ``model_tier`` default.
+DEFAULT_MODEL_TIER = "standard"
+
+
+@dataclass(frozen=True)
+class WriteScope:
+    """A declared write scope: the allowed paths plus what to do on an escape.
+
+    Composes ``scope.ScopeMode`` — the enforcement mechanism (`scope.allowed_write_paths`,
+    `scope.diff`) already exists; this only DECLARES the intent a wired supervisor would feed it.
+    """
+
+    allowed_paths: tuple[str, ...] = ()
+    mode: str = ScopeMode.WARN
+
+
+@dataclass(frozen=True)
+class BreakerLimits:
+    """Knob 8 — the per-run circuit-breaker limits (``workflows.resilience``).
+
+    Mirrors ``resilience.DEFAULT_ERROR_STREAK`` / ``DEFAULT_IDENTICAL_STREAK`` so the
+    consolidated declaration reproduces today's breaker posture byte-for-byte; ``0`` on
+    a cap field means "not enforced" (the resilience default: ``max_iterations`` /
+    ``max_tokens`` trip only when a node declares them ``> 0``).
+    """
+
+    error_streak: int = 3
+    identical_streak: int = 2
+    max_iterations: int = 0
+    max_tokens: int = 0
+
+
+# ── PP-16 seam 3: the loop supervisor's done-ness decision, DECLARED ──
+#
+# The five loop kinds used to answer "is this loop done?" in pluggable Python: a
+# ``LoopKindStrategy.is_done_signal`` per kind, plus two satellite hooks (``has_done_check``,
+# ``budget_stop_genuine``) the watchdog reached for with ``getattr``. Measured, those five
+# implementations used exactly FOUR mechanisms between them — and two of the five were a bare
+# ``return None``. So the pluggability bought nothing a declaration could not carry, while making
+# the supervisor's rule un-inspectable: you could not read "what completes a monitor goal?" off
+# anything, you had to read five modules.
+#
+# The vocabulary below is that closed set of four. It is a vocabulary, NOT a fifth verdict dialect:
+# a done-signal names WHICH MECHANISM produces the signal, where `judge_contract.JudgeVerdict`
+# carries WHAT the judge decided. The evaluator (`loop.supervisor`) is the one place that maps a
+# mechanism to a call, so a kind can no longer smuggle in a mechanism of its own.
+
+#: The kind's own multi-cycle orchestration hook owns done-ness this cycle — there is no
+#: point-in-time signal to read (`code`, `design`, and any kind with no registered strategy).
+DONE_ORCHESTRATED = "orchestrated"
+#: The loop NEVER self-completes; only a user Stop (or its budget) ends it (`monitor` goals).
+DONE_NEVER = "never"
+#: The supervisor RUNS a declared command and reads its exit code (`general`, verifiable goals).
+DONE_VERIFY_COMMAND = "verify_command"
+#: A separate judge subagent scores the latest cycle; the deterministic granularity dial decides
+#: returns-exhaustion (open-ended goals, deep research).
+DONE_JUDGE_ASSESSMENT = "judge_assessment"
+
+#: The closed set. `loop.supervisor.done_signal` raises on anything outside it, so a typo in the
+#: table below is a failure rather than a silently-deferring loop.
+DONE_SIGNALS: frozenset[str] = frozenset(
+    {DONE_ORCHESTRATED, DONE_NEVER, DONE_VERIFY_COMMAND, DONE_JUDGE_ASSESSMENT}
+)
+
+
+@dataclass(frozen=True)
+class ConvergenceSpec:
+    """How ONE loop kind (or kind variant) converges — the declaration that replaced the
+    per-kind ``is_done_signal`` plugin.
+
+    Every field is a fact the old Python read out of ``loop.kind_config`` anyway; naming the KEY
+    rather than reading it here is what keeps this a declaration instead of a second engine.
+    """
+
+    #: One of the ``DONE_*`` mechanisms above.
+    signal: str = DONE_ORCHESTRATED
+    #: The ``kind_config`` key holding the command a ``DONE_VERIFY_COMMAND`` loop runs, and the
+    #: ground-truth command a ``DONE_JUDGE_ASSESSMENT`` loop hands its judge. "" = none.
+    command_key: str = ""
+    #: The ``kind_config`` key holding the criteria list that, when it names MORE THAN ONE
+    #: criterion, makes a passing command necessary-but-not-sufficient — a second judge must
+    #: confirm every criterion is met. "" = the command IS the whole goal.
+    criteria_key: str = ""
+    #: The document deliverable a ``DONE_JUDGE_ASSESSMENT`` judge may read as ground truth when
+    #: the loop declares no explicit ``primary_deliverable``. "" = transcript-only.
+    ground_truth_deliverable: str = ""
+    #: Whether reaching the cycle budget is a CLEAN completion (a monitor's watch window) rather
+    #: than the error-flavoured "stopped before the goal was met".
+    budget_stop_is_genuine: bool = False
+    #: Whether the stall signal applies. A monitor goal's quiet cycle is a valid no-op.
+    stagnation_enabled: bool = True
+    #: Whether the point-in-time check EXISTS only when ``command_key`` is configured. True for a
+    #: kind that defers to budget by design, so a ``None`` signal must not raise
+    #: "done-ness check unavailable" on a loop that never had one.
+    done_check_optional: bool = False
+
+
+#: The closed field set of a ``supervisor.convergence`` block, closed for the same reason
+#: :data:`POLICY_FIELDS` is: an author's typo must surface as a named authoring error rather than
+#: as a key that parses to a default and quietly changes how the loop completes. DERIVED from the
+#: dataclass, so a new field cannot be added above and left unaccepted by the validator.
+CONVERGENCE_FIELDS: frozenset[str] = frozenset(f.name for f in fields(ConvergenceSpec))
+
+
+@dataclass(frozen=True)
+class SupervisorPolicy:
+    """The full convergence policy a loop node declares — parsed, not yet wired.
+
+    Every field reuses a type that already lives in the tree. The declaration's only new
+    idea is putting all ten in ONE place, so PP-15 has a single object to read instead of the
+    per-kind Python that supplies these thresholds twice today.
+    """
+
+    #: What "good" means — the machine-checkable rubric (``judge_contract.RubricCriterion``).
+    rubric: tuple[RubricCriterion, ...] = ()
+    #: The escalation ladder, in order (``loop_middleware.Rung``). Always SURFACE-terminal.
+    escalation_ladder: tuple[Rung, ...] = DEFAULT_LADDER
+    #: FailureClass value → the corrective instruction a ``classified_retry`` injects.
+    failure_mutations: dict[str, str] = field(default_factory=dict)
+    #: Dwell/metric convergence gates (``loop.tick.StepConfig``).
+    gates: StepConfig = field(default_factory=StepConfig)
+    #: The diminishing-returns band (floor, target) on the 0-5 ``marginal_value`` scale.
+    marginal_value_band: tuple[float, float] = (DEFAULT_MARGINAL_FLOOR, DEFAULT_MARGINAL_TARGET)
+    #: Which model tier judges this loop (reasoning|standard|fast).
+    judge_model_tier: str = DEFAULT_MODEL_TIER
+    #: Whether a completed cycle must be independently reproduced before it ships
+    #: (``loop.instrument.reproduce_confirm``).
+    reproduce_before_ship: bool = False
+    #: The filesystem write scope this loop may touch.
+    write_scope: WriteScope = field(default_factory=WriteScope)
+    #: Hard cycle budget; ``0`` = uncapped (``loop.tick.TickConfig.max_cycles`` semantics).
+    budget_max_cycles: int = 0
+    #: Whether the loop needs a person present (``autonomy.Attention``). This one field is
+    #: where three of the fourteen knobs converge: per-node ``require_hitl`` (knob 3), the
+    #: per-stage ``confirmation`` posture (knob 5) and loop ``attended`` (knob 11) all reduce
+    #: to "is a human in this loop?".
+    hitl_posture: Attention = Attention.AFK
+    # ── AG-13: the autonomy knobs the loop declaration did not yet hold ──
+    #
+    # These make ``SupervisorPolicy`` the ONE object that answers "how much freedom does this
+    # run have" — the same object PP-14 declares, now carrying the guardrails half too, so a
+    # run's supervisor policy and its autonomy ceiling are one declaration, not two.
+    #: Knob 14 — the run's ``SafetyProfile`` (approval, tool grants, egress, scan, token/dollar
+    #: budget, write-path allow/deny plane). Subsuming the profile is what unifies the two
+    #: declarations; the SAME type every dispatch seam already reads, so nothing about
+    #: ``SafetyProfile`` or its callers changes. Defaults to the safe unattended posture,
+    #: which is what a loop's ``attended=False`` default resolves to today.
+    autonomy: SafetyProfile = field(default_factory=lambda: HEADLESS)
+    #: Knob 2 — cap fan-out to one in-flight work item (``runtime_hints.execution``).
+    single_active_feature: bool = False
+    #: Knob 6 — the minimum autonomy ``Mode`` a plan may run at, the floor neither the planner
+    #: nor the user may quietly go below (``workflows.autonomy`` risk floor / earned trust).
+    autonomy_mode_floor: Mode = Mode.FRAME_ONLY
+    #: Knob 8 — the per-run circuit-breaker limits.
+    resilience: BreakerLimits = field(default_factory=BreakerLimits)
+    #: Knob 10 — how long an earned loop-trust grant survives (``config.loader.LoopsConfig``).
+    trust_ttl_secs: int = 86_400
+    #: Knob 13 — the idle-stall cutoff for a loop cycle (``loop.loop.Loop``).
+    idle_secs: int = 120
+    # ── PP-16 seam 3: the done-ness half ──
+    #
+    #: HOW this loop's done-ness is produced, read by ``loop.supervisor`` — the ONE evaluator.
+    #:
+    #: TWO sources fill it, for two different execution paths, and that split is deliberate
+    #: (PP-16, the general-kind bridgehead):
+    #:
+    #: * the LOOP path — :func:`policy_for_kind` sets it from the declared
+    #:   :data:`KIND_CONVERGENCE` table. Seam 3 chose a table over template JSON because the
+    #:   loop watchdog resolves a policy on EVERY poll, so a template read makes a missing file
+    #:   silently remove a loop's supervisor. A declared table cannot go missing. That reason is
+    #:   unchanged and the table stays the loop path's source.
+    #: * the RUN path — :func:`parse_supervisor_policy` reads a ``loop`` node's
+    #:   ``supervisor.convergence`` block. Here the template is the RIGHT home and carries no such
+    #:   risk: ``RunController`` already resolves the spec once per run by design, so there is no
+    #:   per-poll read to lose. This is what lets a kind run as a ``WorkflowRun`` at all — without
+    #:   it a ported kind's done-ness would have to stay behind in Python.
+    #:
+    #: While both paths exist the two must agree, and they are railed equal per ported kind by
+    #: ``tests/test_pp16_general_kind_as_run.py`` rather than trusted to stay in step. The table
+    #: is retired WITH the loop path at the end of the port, not before it.
+    convergence: ConvergenceSpec = field(default_factory=ConvergenceSpec)
+
+
+def _parse_rubric(raw: Any) -> tuple[RubricCriterion, ...]:
+    """Reuse ``RubricCriterion``; a malformed entry is dropped, never fatal."""
+    if not isinstance(raw, list):
+        return ()
+    out: list[RubricCriterion] = []
+    for item in raw:
+        if isinstance(item, dict) and item.get("criterion"):
+            try:
+                out.append(
+                    RubricCriterion(
+                        criterion=str(item["criterion"]),
+                        target_score=int(item.get("target_score", SCORE_MAX) or SCORE_MAX),
+                        weight=float(item.get("weight", 1.0) or 1.0),
+                    )
+                )
+            except (TypeError, ValueError):
+                logger.debug("dropping malformed rubric criterion %r", item)
+    return tuple(out)
+
+
+def _parse_failure_mutations(raw: Any) -> dict[str, str]:
+    """Keep only ``FailureClass → str`` entries; an unknown class is dropped (the validator
+    flags it at authoring time)."""
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(k): str(v)
+        for k, v in raw.items()
+        if str(k) in FAILURE_CLASS_VALUES and isinstance(v, str)
+    }
+
+
+def _parse_gates(raw: Any) -> StepConfig:
+    """Reuse ``loop.tick.StepConfig``; each field defaults, none raises."""
+    if not isinstance(raw, dict):
+        return StepConfig()
+
+    def _num(key: str, default: float | None) -> float | None:
+        value = raw.get(key)
+        return float(value) if isinstance(value, (int, float)) else default
+
+    dwell = _num("min_dwell_secs", 0.0) or 0.0
+    findings = raw.get("min_findings")
+    return StepConfig(
+        min_dwell_secs=dwell,
+        min_findings=int(findings) if isinstance(findings, (int, float)) else 0,
+        metric_pass=_num("metric_pass", None),
+        metric_hold=_num("metric_hold", None),
+    )
+
+
+def _parse_band(raw: Any) -> tuple[float, float]:
+    """A (floor, target) pair on the reused 0-5 ``clamp_marginal`` scale."""
+    floor, target = DEFAULT_MARGINAL_FLOOR, DEFAULT_MARGINAL_TARGET
+    if isinstance(raw, dict):
+        if "floor" in raw:
+            floor = clamp_marginal(raw.get("floor"))
+        if "target" in raw:
+            target = clamp_marginal(raw.get("target"))
+    elif isinstance(raw, (list, tuple)) and len(raw) == 2:
+        floor, target = clamp_marginal(raw[0]), clamp_marginal(raw[1])
+    # A band whose floor exceeds its target is nonsense; clamp it back to a point rather than
+    # crash — the validator is the place to complain, the parser only ever produces a usable band.
+    return (min(floor, target), max(floor, target))
+
+
+def _parse_write_scope(raw: Any) -> WriteScope:
+    if not isinstance(raw, dict):
+        return WriteScope()
+    paths_raw = raw.get("paths")
+    paths = tuple(str(p) for p in paths_raw if p) if isinstance(paths_raw, list) else ()
+    mode = raw.get("mode")
+    mode = str(mode) if str(mode) in SCOPE_MODE_VALUES else ScopeMode.WARN
+    return WriteScope(allowed_paths=paths, mode=mode)
+
+
+def _parse_budget(raw: Any) -> int:
+    if isinstance(raw, dict):
+        raw = raw.get("max_cycles")
+    if isinstance(raw, (int, float)) and raw >= 0:
+        return int(raw)
+    return 0
+
+
+def parse_supervisor_policy(raw: Any) -> SupervisorPolicy:
+    """Parse a loop node's ``supervisor`` config into a :class:`SupervisorPolicy`.
+
+    Lenient by design (`WF2-R12` / the ``hints_from_dict`` pattern): missing or blank fields
+    become sane defaults and a malformed value NEVER raises — an author's typo should run with
+    the strict defaults, not fail to start. UNKNOWN top-level fields are ignored here; the
+    closed-set contract is enforced by the authoring-time validator, which can report every
+    problem at once instead of one-error-per-turn.
+
+    Deliberately inert: PP-15 is the only intended caller (see the module docstring).
+    """
+    if not isinstance(raw, dict):
+        return SupervisorPolicy()
+
+    tier = raw.get("judge_model_tier")
+    tier = str(tier) if str(tier) in SUPERVISOR_MODEL_TIERS else DEFAULT_MODEL_TIER
+
+    hitl_raw = raw.get("hitl_posture")
+    try:
+        hitl = Attention(str(hitl_raw)) if hitl_raw is not None else Attention.AFK
+    except ValueError:
+        hitl = Attention.AFK
+
+    return SupervisorPolicy(
+        rubric=_parse_rubric(raw.get("rubric")),
+        escalation_ladder=_resolve_ladder({"ladder": raw.get("escalation_ladder")}),
+        failure_mutations=_parse_failure_mutations(raw.get("failure_mutations")),
+        gates=_parse_gates(raw.get("gates")),
+        marginal_value_band=_parse_band(raw.get("marginal_value_band")),
+        judge_model_tier=tier,
+        reproduce_before_ship=bool(raw.get("reproduce_before_ship")),
+        write_scope=_parse_write_scope(raw.get("write_scope")),
+        budget_max_cycles=_parse_budget(raw.get("budget")),
+        hitl_posture=hitl,
+        convergence=_parse_convergence(raw.get("convergence")),
+    )
+
+
+def _parse_convergence(raw: Any) -> ConvergenceSpec:
+    """Parse a ``supervisor.convergence`` block into a :class:`ConvergenceSpec` (PP-16).
+
+    Tolerant on the same terms as every parser above it — a malformed block never raises, and an
+    absent one yields the default spec, whose ``ORCHESTRATED`` signal means "no point-in-time
+    check". That default matters: it is exactly what a template declaring nothing got before this
+    field was parseable, so adding the field changed no existing template's behaviour.
+
+    An UNKNOWN ``signal`` falls back to the default rather than being carried through. Carrying it
+    would push the typo down to ``loop.supervisor.done_signal``, which raises on anything outside
+    :data:`DONE_SIGNALS` — turning an authoring mistake into a runtime failure one layer away from
+    where it was made. The authoring-time validator is what reports it, with the spelling in hand.
+    """
+    if not isinstance(raw, dict):
+        return ConvergenceSpec()
+
+    signal = str(raw.get("signal") or DONE_ORCHESTRATED)
+    if signal not in DONE_SIGNALS:
+        logger.debug("unknown convergence signal %r; using %r", signal, DONE_ORCHESTRATED)
+        signal = DONE_ORCHESTRATED
+
+    defaults = ConvergenceSpec()
+
+    def _flag(key: str) -> bool:
+        """A missing flag keeps the dataclass default — which is not always ``False``
+        (``stagnation_enabled`` defaults True), so this cannot be a bare ``bool(raw.get(...))``.
+        """
+        return getattr(defaults, key) if raw.get(key) is None else bool(raw.get(key))
+
+    return ConvergenceSpec(
+        signal=signal,
+        command_key=str(raw.get("command_key") or ""),
+        criteria_key=str(raw.get("criteria_key") or ""),
+        ground_truth_deliverable=str(raw.get("ground_truth_deliverable") or ""),
+        budget_stop_is_genuine=_flag("budget_stop_is_genuine"),
+        stagnation_enabled=_flag("stagnation_enabled"),
+        done_check_optional=_flag("done_check_optional"),
+    )
+
+
+# ── AG-13: the fourteen-knob → policy-field map, and its composition ──
+#
+# "How much freedom does this run have?" used to be answered in fourteen places with no
+# composition rule. The table below is the WHOLE consolidation claim made checkable: each of
+# the fourteen knobs names the ONE :class:`SupervisorPolicy` field it now lives on. Several
+# knobs share a field — that IS the consolidation (three HITL knobs collapse onto
+# ``hitl_posture``; the profile and the gate posture onto ``autonomy``). ``tests/
+# test_ag13_autonomy_policy.py`` is the behaviour-preservation matrix: for a matrix of shipped
+# templates × bundled loop kinds it asserts the field each knob maps to carries that knob's
+# CURRENT value, so this is a consolidation and not a behaviour change. Changing a ``field``
+# below (or the builder that fills it) reds that matrix, naming the knob.
+
+
+@dataclass(frozen=True)
+class KnobMapping:
+    """One of the fourteen autonomy knobs and the policy field it consolidates onto."""
+
+    knob: str  #: the knob, verbatim from AG-13's list of fourteen
+    home: str  #: where it is declared today (``module:symbol``)
+    field_path: str  #: the dotted path into a :class:`SupervisorPolicy` it maps onto
+
+
+#: The load-bearing artifact: fourteen rows, one per knob. A row per knob even where two
+#: knobs share a field, because the point is that *reading any one of the fourteen* now means
+#: reading one policy field.
+POLICY_KNOB_MAP: tuple[KnobMapping, ...] = (
+    KnobMapping("RunBudget", "workflows.models:RunBudget", "autonomy.budget.max_tokens"),
+    KnobMapping(
+        "runtime_hints.execution.single_active_feature",
+        "workflows.execution_hints:ExecutionHints",
+        "single_active_feature",
+    ),
+    KnobMapping("require_hitl", "workflows.autonomy:compile_require_hitl", "hitl_posture"),
+    KnobMapping("gate_policy auto-approval", "workflows.gate_policy:decide", "autonomy.approval"),
+    KnobMapping(
+        "confirmation matrix + per-stage mute",
+        "workflows.autonomy:confirmation_policy / workflows.confirmation:MUTABLE_TYPES",
+        "hitl_posture",
+    ),
+    KnobMapping(
+        "autonomy risk registry / floors / earned trust",
+        "workflows.autonomy:offer_autonomy",
+        "autonomy_mode_floor",
+    ),
+    KnobMapping(
+        "allowed_write_paths", "workflows.scope:allowed_write_paths", "write_scope.allowed_paths"
+    ),
+    KnobMapping("resilience breaker config", "workflows.resilience:check_breaker", "resilience"),
+    KnobMapping(
+        "escalation_cfg.ladder", "workflows.loop_middleware:DEFAULT_LADDER", "escalation_ladder"
+    ),
+    KnobMapping(
+        "loop trust_ttl_secs", "config.loader:LoopsConfig.trust_ttl_secs", "trust_ttl_secs"
+    ),
+    KnobMapping("loop attended", "loop.loop:Loop.attended", "hitl_posture"),
+    KnobMapping("max_cycles", "loop.loop:Loop.max_cycles", "budget_max_cycles"),
+    KnobMapping("idle_secs", "loop.loop:Loop.idle_secs", "idle_secs"),
+    KnobMapping("SafetyProfile", "guardrails.policy:SafetyProfile", "autonomy"),
+)
+
+
+def resolve_field(policy: SupervisorPolicy, field_path: str) -> Any:
+    """Read a dotted ``field_path`` (e.g. ``autonomy.budget.max_tokens``) off a policy.
+
+    The matrix test reads every mapped field through here, so a ``field_path`` that names
+    nothing raises ``AttributeError`` at the test rather than silently mapping a knob to a
+    field that does not exist.
+    """
+    obj: Any = policy
+    for part in field_path.split("."):
+        obj = getattr(obj, part)
+    return obj
+
+
+def _field_default(cls: type, name: str) -> Any:
+    """The declared default of a dataclass field, read without constructing the class
+    (``loop.loop.Loop`` and friends take required args, so ``Loop()`` is not an option)."""
+    for f in fields(cls):
+        if f.name == name:
+            return f.default
+    raise AttributeError(f"{cls.__name__} has no field {name!r}")
+
+
+def consolidate(
+    *,
+    profile: SafetyProfile | None = None,
+    max_cycles: int = 0,
+    idle_secs: int = 120,
+    trust_ttl_secs: int = 86_400,
+    attended: bool = False,
+    require_hitl: bool = False,
+    single_active_feature: bool = False,
+    mode_floor: Mode = Mode.FRAME_ONLY,
+    escalation_ladder: tuple[Rung, ...] = DEFAULT_LADDER,
+    write_scope: WriteScope | None = None,
+    resilience: BreakerLimits | None = None,
+) -> SupervisorPolicy:
+    """Route the fourteen knobs' current homes into ONE :class:`SupervisorPolicy` (AG-13).
+
+    Still deliberately inert: nothing in the engine calls this, and it constructs no policy
+    a runtime seam reads — PP-15 (loop convergence) and AG-11 (profile/trust enforcement)
+    are the wiring owners named in the module docstring. It exists so the consolidation is
+    a real, exercised mapping rather than a claim: the behaviour-preservation matrix drives
+    it for the shipped population and proves each field equals today's value knob-by-knob.
+
+    ``attended`` (loop) and ``require_hitl`` (node) both collapse into ``hitl_posture`` —
+    either one meaning "a human is in this loop" resolves ``HITL``.
+    """
+    return SupervisorPolicy(
+        autonomy=profile if profile is not None else HEADLESS,
+        budget_max_cycles=max_cycles,
+        idle_secs=idle_secs,
+        trust_ttl_secs=trust_ttl_secs,
+        hitl_posture=Attention.HITL if (attended or require_hitl) else Attention.AFK,
+        single_active_feature=single_active_feature,
+        autonomy_mode_floor=mode_floor,
+        escalation_ladder=escalation_ladder,
+        write_scope=write_scope if write_scope is not None else WriteScope(),
+        resilience=resilience if resilience is not None else BreakerLimits(),
+    )
+
+
+def compose(ceiling: "Ceiling", policy: SupervisorPolicy) -> SupervisorPolicy:
+    """Compose the consolidated policy against the operator CEILING, tightest-wins.
+
+    The guardrails half (approval, tool grants, egress, scan, token/dollar budget, write-path
+    plane) is narrowed by the SAME ``Ceiling ∩ Profile`` model every dispatch seam already
+    uses (:func:`guardrails.ceiling.resolve`) — no second composition model is invented here.
+    The loop-convergence knobs (cycles, idle, ladder, breaker, WIP, trust TTL) are
+    run-declaration bounds the operator ceiling does not govern, so they pass through
+    unchanged. A profile can only ever NARROW: there is no path in ``resolve`` by which a
+    profile hands a run more reach than the ceiling allows, which is the property that makes
+    widening — the dangerous direction — impossible.
+    """
+    from personalclaw.guardrails.ceiling import resolve
+
+    return replace(policy, autonomy=resolve(ceiling, policy.autonomy))
+
+
+def write_scope_allows(policy: SupervisorPolicy, path: str, *, workspace: str = "") -> bool:
+    """Whether ``path`` is inside the policy's declared write scope (knob 7).
+
+    Matched by the §5 path matcher (:func:`guardrails.registries.path_glob`) — the matcher
+    that NEVER runs a PATTERN through ``normpath``. This is the rule the atom lifted verbatim:
+    ``normpath`` collapses ``/a/**/../b`` to ``/a/b``, silently widening an allow to a path
+    the author never granted. An empty scope is unconfined (today's deny-only posture, where a
+    node writes anywhere the denylist does not refuse).
+    """
+    allowed = policy.write_scope.allowed_paths
+    if not allowed:
+        return True
+    patterns = (*allowed, workspace) if workspace else allowed
+    return any(path_glob(path, pattern) for pattern in patterns if pattern)
+
+
+def tick_config(policy: SupervisorPolicy, *, steps: tuple[StepConfig, ...] = ()) -> TickConfig:
+    """The convergence config :func:`loop.tick.evaluate` reads, DERIVED from the policy (PP-15).
+
+    This is the wiring that makes the declaration load-bearing. PP-14 landed
+    ``SupervisorPolicy`` as "parsed, not yet wired" — the thresholds it declares were also
+    hard-coded in the per-kind Python that actually decided. Now they are read from here and
+    nowhere else, so changing a template's ladder or its dwell gate changes what the engine
+    does.
+
+    Only fields the policy genuinely DECLARES are mapped. The fingerprint / hypothesis /
+    no-progress windows and the per-rung attempt cap keep their module defaults because
+    ``SupervisorPolicy`` has no field for them: inventing a mapping (``resilience
+    .identical_streak`` is the nearest, and it counts identical OUTPUT, not identical CALLS)
+    would silently change a threshold under the guise of consolidating one.
+
+    ``steps`` wins over ``policy.gates`` when supplied — a stepwise loop's per-phase configs
+    come from its execution plan, and the policy's single ``gates`` is the loop-level default
+    for a loop that declares no phases.
+    """
+    if steps:
+        resolved = steps
+    else:
+        gates = policy.gates
+        if gates.metric_pass is None and gates.metric_hold is None:
+            # The marginal-value band IS a metric gate, expressed on the 0-5 judge scale:
+            # "below the floor is not worth continuing; at/above the target it may stop".
+            # Read only when `gates` declares no gate of its own, so one loop never carries
+            # two metric thresholds that could disagree.
+            floor, target = policy.marginal_value_band
+            gates = replace(gates, metric_hold=float(floor), metric_pass=float(target))
+        resolved = (gates,)
+    return TickConfig(
+        steps=resolved,
+        max_cycles=max(0, int(policy.budget_max_cycles or 0)),
+        ladder=policy.escalation_ladder or DEFAULT_LADDER,
+        failure_mutations=dict(policy.failure_mutations),
+    )
+
+
+# ── PP-16 seam 3: the five kinds' declared convergence, as DATA ──
+#
+# `loop_aliases.KIND_TO_TEMPLATE` already resolves every kind to a bundled template — the
+# NOUN-level half of the atom's "the five kinds are bundled templates plus policies" clause. This
+# table is the POLICY half, and it is deliberately here rather than inside each bundled template's
+# `supervisor:` block: measured, `deep-research` and `code-project` ship NO `loop` node at all
+# (their graphs are a `branch`/`sequence` and a `foreach` respectively), so two of the five kinds
+# would have had nowhere to declare and the seam would have shipped three-fifths done. A template
+# JSON is also a per-poll disk read whose absence would silently remove a loop's supervisor; a
+# declared table cannot go missing.
+#
+# Keyed `kind` or `kind:goal_type`, because goal-type IS the variant axis the old Python branched
+# on. Flat and greppable on purpose: "what completes a monitor goal?" is now one line.
+
+#: The kinds whose convergence varies by ``kind_config['goal_type']``.
+_VARIANT_KINDS: frozenset[str] = frozenset({"goal", "research"})
+
+#: The goal type the old ``GoalKind.is_done_signal`` fell through to for an unknown value.
+_DEFAULT_GOAL_TYPE = "open_ended"
+
+#: One row per (kind, variant). Every value is the behaviour the deleted plugin had — see
+#: ``tests/test_pp16_supervisor_policy_dispatch.py``, which drives the real watchdog poll for each
+#: of the five kinds and asserts the mechanism this table names is the one that runs.
+KIND_CONVERGENCE: dict[str, ConvergenceSpec] = {
+    # code + design own done-ness through their per-cycle orchestration hook (advance the SDLC
+    # stage and run its gate / advance the design step), so there is no point-in-time signal.
+    "code": ConvergenceSpec(signal=DONE_ORCHESTRATED),
+    "design": ConvergenceSpec(signal=DONE_ORCHESTRATED),
+    # general: a deterministic check IF the user configured one, else deferring to budget BY
+    # DESIGN — which is why `done_check_optional` exists (a None here is normal, not degraded).
+    "general": ConvergenceSpec(
+        signal=DONE_VERIFY_COMMAND,
+        command_key="verify_command",
+        done_check_optional=True,
+    ),
+    # goal/verifiable: the command decides, EXCEPT that a command can point at a subset of a
+    # multi-sub-goal goal (observed live: goal b7abd778 completed after phase 1/3), so >1 sub-goal
+    # makes a passing command necessary-but-not-sufficient.
+    "goal:verifiable": ConvergenceSpec(
+        signal=DONE_VERIFY_COMMAND, command_key="verify_command", criteria_key="sub_goals"
+    ),
+    "goal:open_ended": ConvergenceSpec(
+        signal=DONE_JUDGE_ASSESSMENT,
+        command_key="verify_command",
+        ground_truth_deliverable="REPORT.md",
+    ),
+    "goal:monitor": ConvergenceSpec(
+        signal=DONE_NEVER, budget_stop_is_genuine=True, stagnation_enabled=False
+    ),
+    # research is always open-ended in practice (its default_kind_config pins goal_type), but the
+    # deleted Python inherited GoalKind's full goal_type branch, so all three variants are declared
+    # — dropping the two unreachable ones would be a behaviour change disguised as tidying.
+    "research:verifiable": ConvergenceSpec(
+        signal=DONE_VERIFY_COMMAND, command_key="verify_command", criteria_key="sub_goals"
+    ),
+    "research:open_ended": ConvergenceSpec(
+        signal=DONE_JUDGE_ASSESSMENT,
+        command_key="verify_command",
+        ground_truth_deliverable="RESEARCH.md",
+    ),
+    # DISCOVERY, preserved verbatim rather than tidied: a research MONITOR loop stagnates where a
+    # goal monitor does not. `budget_stop_genuine` lived on GoalKind and read only `goal_type`
+    # (so research inherited it), while the watchdog's `_stagnation_disabled` required
+    # `loop.kind == "goal"` AND monitor. Two hooks, two different keys, one concept. The table
+    # makes the inconsistency visible instead of spreading it over two modules; converging it is a
+    # behaviour change and therefore not this seam's call.
+    "research:monitor": ConvergenceSpec(
+        signal=DONE_NEVER, budget_stop_is_genuine=True, stagnation_enabled=True
+    ),
+}
+
+
+def convergence_key(kind: str, kind_config: Any = None) -> str:
+    """The :data:`KIND_CONVERGENCE` key for a loop, i.e. its kind plus its variant axis.
+
+    An unknown ``goal_type`` resolves to ``open_ended`` because that is what the deleted
+    ``GoalKind.is_done_signal`` did — it tested ``verifiable`` and ``monitor`` explicitly and fell
+    through to the open-ended assessment for everything else.
+    """
+    normalized = str(kind or "").strip().lower()
+    if normalized not in _VARIANT_KINDS:
+        return normalized
+    raw = kind_config if isinstance(kind_config, dict) else {}
+    goal_type = str(raw.get("goal_type", _DEFAULT_GOAL_TYPE) or _DEFAULT_GOAL_TYPE)
+    if f"{normalized}:{goal_type}" not in KIND_CONVERGENCE:
+        goal_type = _DEFAULT_GOAL_TYPE
+    return f"{normalized}:{goal_type}"
+
+
+def policy_for_kind(kind: str, kind_config: Any = None) -> SupervisorPolicy:
+    """The :class:`SupervisorPolicy` a loop of ``kind`` runs under (PP-16 seam 3).
+
+    This is the call that replaced ``kinds.get(loop.kind)`` for every convergence decision the
+    loop watchdog makes. A kind with no row — an unregistered kind, which the watchdog used to
+    handle with ``strat is None`` — gets the default policy, whose ``ORCHESTRATED`` signal means
+    "no point-in-time check": exactly the "publish nothing, complete nothing" behaviour that
+    branch had.
+    """
+    spec = KIND_CONVERGENCE.get(convergence_key(kind, kind_config))
+    return SupervisorPolicy() if spec is None else SupervisorPolicy(convergence=spec)
+
+
+# ── PP-16 seam 4d: the sparse per-run overlay (OWNER RULING 2) ──
+#
+# `policy_for_kind` is a pure function of the KIND, and that is correct for the declared
+# defaults — but `attended`, `autopilot`, `max_cycles`, `idle_secs` and `success_criteria`
+# are per-INSTANCE, user-settable knobs (the loop side's `_EDITABLE_SPEC_COLS`, read live at
+# ~12 sites). A template is SHARED across runs, so it structurally cannot hold a per-instance
+# setting: putting `max_cycles` on a template would make one user's edit change every future
+# run of that kind. RULED: the declared table above stays the DEFAULT source, the run persists
+# ONLY its overrides (`WorkflowRun.policy_overrides`), and the policy is computed once, from
+# kind-defaults + run-overrides — "one admission core with N policies" survives the change.
+# The overlay is naturally sparse: a run that overrides nothing persists nothing.
+#
+# Each applier translates ONE override key onto the policy field the field map already names
+# (`loop_run_map`'s five re-homed rows), reusing the value-level translations `consolidate`
+# established rather than minting new ones.
+
+
+def _apply_attended(policy: SupervisorPolicy, value: Any) -> SupervisorPolicy:
+    # Knob 11: `attended` meaning "a human is in this loop" resolves HITL (see `consolidate`).
+    return replace(policy, hitl_posture=Attention.HITL if value else Attention.AFK)
+
+
+def _apply_autopilot(policy: SupervisorPolicy, value: Any) -> SupervisorPolicy:
+    # System-drives-phases vs user-queues IS an approval posture, which is what the
+    # `SafetyProfile` half of the policy expresses (AG-13 knob 4/14).
+    posture = "auto" if value else "ask"
+    return replace(policy, autonomy=policy.autonomy.with_overrides(approval=posture))
+
+
+def _apply_max_cycles(policy: SupervisorPolicy, value: Any) -> SupervisorPolicy:
+    # Same `0 = uncapped` semantics as `loop.loop:Loop.max_cycles` (knob 12).
+    return replace(policy, budget_max_cycles=max(0, int(value)))
+
+
+def _apply_idle_secs(policy: SupervisorPolicy, value: Any) -> SupervisorPolicy:
+    return replace(policy, idle_secs=max(0, int(value)))
+
+
+def _apply_success_criteria(policy: SupervisorPolicy, value: Any) -> SupervisorPolicy:
+    # The human-authored one-line definition of done becomes the machine-checkable rubric's
+    # single criterion; an emptied override clears the rubric back to "no declared criteria".
+    text = str(value or "").strip()
+    rubric = (RubricCriterion(criterion=text),) if text else ()
+    return replace(policy, rubric=rubric)
+
+
+#: Override key → the function that applies it. The dict IS the closed set: deriving
+#: :data:`OVERRIDABLE_POLICY_KEYS` from it means the contract and the mechanism cannot drift.
+_OVERRIDE_APPLIERS: dict[str, Any] = {
+    "attended": _apply_attended,
+    "autopilot": _apply_autopilot,
+    "max_cycles": _apply_max_cycles,
+    "idle_secs": _apply_idle_secs,
+    "success_criteria": _apply_success_criteria,
+}
+
+#: The five ruled per-instance knobs — the ONLY keys a run's overlay may carry. The write
+#: seam (`workflows.store.set_policy_overrides`) refuses anything else loudly; the read side
+#: below ignores anything else quietly. That asymmetry is the design (see both docstrings).
+OVERRIDABLE_POLICY_KEYS: frozenset[str] = frozenset(_OVERRIDE_APPLIERS)
+
+
+def apply_policy_overrides(
+    policy: SupervisorPolicy, overrides: dict[str, Any] | None
+) -> SupervisorPolicy:
+    """Apply a run's sparse overlay to a resolved policy — the tolerant READ side.
+
+    An unrecognized key is ignored with a debug log, NEVER a crash: a downgraded core
+    reading a run written by a newer one (whose overlay may carry keys this engine has never
+    heard of) must not die on it — the same tolerant-reader rule every persisted shape in
+    `models.py` follows (WF2-R12). A malformed VALUE on a recognized key is skipped the same
+    way, because by the time a row is being read there is nobody left to refuse it to; the
+    strict half of the contract lives at the write seam (`store.set_policy_overrides`).
+
+    An empty (or absent) overlay returns ``policy`` unchanged — the same object, so the
+    sparse common case costs nothing.
+    """
+    if not overrides:
+        return policy
+    for key, value in overrides.items():
+        applier = _OVERRIDE_APPLIERS.get(key)
+        if applier is None:
+            logger.debug("ignoring unrecognized policy override %r (written by a newer core?)", key)
+            continue
+        try:
+            policy = applier(policy, value)
+        except (TypeError, ValueError):
+            logger.debug("ignoring malformed policy override %s=%r", key, value)
+    return policy
+
+
+def policy_for_run(
+    kind: str, kind_config: Any = None, overrides: dict[str, Any] | None = None
+) -> SupervisorPolicy:
+    """The policy ONE run runs under: kind defaults + that run's sparse overrides.
+
+    :func:`policy_for_kind` stays the pure declared-default source (what seam 3 bought);
+    this composes the run's persisted overlay on top, so the policy is still computed once
+    and in one place. A run with an empty overlay resolves to EXACTLY the kind's policy.
+
+    Production-caller status, stated per the WF2LOO-12 convention: the kind-keyed loop path
+    still resolves through `policy_for_kind` (`loop/watchdog.py`, untouched by this seam),
+    so THIS composition has no kind-keyed production caller until the loop-as-run unification
+    (seam 4g) hands runs a kind. The overlay mechanism itself is production-wired today:
+    `RunController._supervisor_policy` applies the same `apply_policy_overrides` to the
+    template-declared policy of every workflow run.
+    """
+    return apply_policy_overrides(policy_for_kind(kind, kind_config), overrides)

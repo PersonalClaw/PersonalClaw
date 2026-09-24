@@ -1,0 +1,189 @@
+{
+  "name": "ollama-models",
+  "version": "0.1.0",
+  "displayName": "Ollama",
+  "description": "OpenAI-compatible LLM and embedding provider via Ollama. Connect to local or remote Ollama instances for chat and embedding.",
+  "icon": "Server",
+  "author": "PersonalClaw",
+  "tags": [
+    "model",
+    "llm",
+    "embedding",
+    "bundled"
+  ],
+  "provider": {
+    "type": "model",
+    "implementation": "provider:create_provider",
+    "multiInstance": true,
+    "capabilities": [
+      "chat",
+      "embedding"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "x-meta": {
+            "label": "Ollama Endpoint",
+            "help": "Base URL of the Ollama API server."
+          }
+        },
+        "default_model": {
+          "type": "string",
+          "default": "",
+          "x-meta": {
+            "label": "Default Model",
+            "help": "Model to use when no specific model is requested. Leave empty to use the first available."
+          }
+        },
+        "embedding_model": {
+          "type": "string",
+          "default": "",
+          "x-meta": {
+            "label": "Embedding Model",
+            "help": "Ollama model to use for embedding operations. Leave empty to use sentence-transformers instead."
+          }
+        },
+        "timeout_secs": {
+          "type": "integer",
+          "default": 120,
+          "x-meta": {
+            "label": "Request Timeout",
+            "help": "Maximum seconds to wait for a response from Ollama.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "context_window": {
+          "type": "integer",
+          "minimum": 1,
+          "x-meta": {
+            "label": "Served Context Window",
+            "help": "Tokens this endpoint actually serves (Ollama's num_ctx), used to size the context gauge and trigger compaction. Leave blank to detect it from the running model.",
+            "placeholder": "auto-detected",
+            "tags": [
+              "advanced"
+            ]
+          }
+        }
+      },
+      "required": [
+        "endpoint"
+      ]
+    }
+  },
+  "modelCatalog": {
+    "note": "Curated Ollama models with approximate disk size + minimum system RAM to run comfortably (q4 quantization). Vendor data — the generic recommendation engine reads min_ram_gb to filter by detected hardware. Sizes/requirements are guidance, not guarantees.",
+    "pullKind": "ollama",
+    "models": [
+      {
+        "id": "llama3.2:1b",
+        "label": "Llama 3.2 1B",
+        "capability": "chat",
+        "size_gb": 1.3,
+        "min_ram_gb": 4,
+        "description": "Tiny, fast — runs on almost anything."
+      },
+      {
+        "id": "llama3.2:3b",
+        "label": "Llama 3.2 3B",
+        "capability": "chat",
+        "size_gb": 2.0,
+        "min_ram_gb": 8,
+        "description": "Small general-purpose chat."
+      },
+      {
+        "id": "qwen2.5:7b",
+        "label": "Qwen 2.5 7B",
+        "capability": "chat",
+        "size_gb": 4.7,
+        "min_ram_gb": 16,
+        "description": "Strong all-round 7B chat."
+      },
+      {
+        "id": "llama3.1:8b",
+        "label": "Llama 3.1 8B",
+        "capability": "chat",
+        "size_gb": 4.7,
+        "min_ram_gb": 16,
+        "description": "Capable general chat, tool-use."
+      },
+      {
+        "id": "gemma2:9b",
+        "label": "Gemma 2 9B",
+        "capability": "chat",
+        "size_gb": 5.4,
+        "min_ram_gb": 16,
+        "description": "Google Gemma 2, quality mid-size."
+      },
+      {
+        "id": "qwen2.5:14b",
+        "label": "Qwen 2.5 14B",
+        "capability": "chat",
+        "size_gb": 9.0,
+        "min_ram_gb": 32,
+        "description": "Higher quality, needs headroom."
+      },
+      {
+        "id": "llama3.3:70b",
+        "label": "Llama 3.3 70B",
+        "capability": "chat",
+        "size_gb": 43.0,
+        "min_ram_gb": 64,
+        "description": "Frontier-class local, workstation-only."
+      },
+      {
+        "id": "qwen2.5-coder:7b",
+        "label": "Qwen 2.5 Coder 7B",
+        "capability": "code",
+        "size_gb": 4.7,
+        "min_ram_gb": 16,
+        "description": "Code-tuned 7B."
+      },
+      {
+        "id": "qwen2.5-coder:32b",
+        "label": "Qwen 2.5 Coder 32B",
+        "capability": "code",
+        "size_gb": 20.0,
+        "min_ram_gb": 48,
+        "description": "Strong local coding model."
+      },
+      {
+        "id": "deepseek-r1:7b",
+        "label": "DeepSeek-R1 7B",
+        "capability": "reasoning",
+        "size_gb": 4.7,
+        "min_ram_gb": 16,
+        "description": "Reasoning-distilled 7B."
+      },
+      {
+        "id": "llava:7b",
+        "label": "LLaVA 7B",
+        "capability": "vision",
+        "size_gb": 4.7,
+        "min_ram_gb": 16,
+        "description": "Vision+language (image understanding)."
+      },
+      {
+        "id": "nomic-embed-text",
+        "label": "Nomic Embed Text",
+        "capability": "embedding",
+        "size_gb": 0.3,
+        "min_ram_gb": 4,
+        "description": "Fast text embeddings."
+      },
+      {
+        "id": "mxbai-embed-large",
+        "label": "mxbai Embed Large",
+        "capability": "embedding",
+        "size_gb": 0.7,
+        "min_ram_gb": 8,
+        "description": "Higher-quality embeddings."
+      }
+    ]
+  },
+  "native": true
+}

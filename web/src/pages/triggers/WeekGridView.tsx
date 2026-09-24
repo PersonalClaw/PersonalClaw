@@ -1,0 +1,291 @@
+import { useMemo, useState } from 'react'
+import { CalendarDays, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react'
+import { fvs } from '../../design/fontWeight'
+import { EmptyState, LoadError } from '../../ui/ListScaffold'
+import { Button } from '../../ui/Button'
+import { useQuery } from '../../lib/data'
+import { api, type WeekProjection } from '../../lib/api'
+import { buildWeekGrid, cellLabel, visibleHours, weekSummary, startOfDay, weekEnd, type CellState, type WeekCell } from './weekGrid'
+
+/** The Week tab — a 7×24 grid of every enabled clock trigger's fires (AUTO-A3 — S81).
+ *
+ *  `GET /api/triggers/week` shipped in S70 with ZERO frontend consumers; this is the half AUTO-A3
+ *  names alongside it ("+ the Automations Week tab (7×24 grid, shaded quiet bands, click-through)").
+ *
+ *  Read-only by contract. Every cell is a projection from the recurrence a trigger already carries,
+ *  so there is nothing here to save — clicking a cell opens the trigger it belongs to, which is the
+ *  "click-through to the trigger row" the criterion asks for.
+ *
+ *  **Suppressed fires are SHOWN, shaded, never hidden.** The server annotates rather than filters,
+ *  and the view keeps that: a grid that omitted suppressed slots would display a schedule the user
+ *  does not have, and the reason someone opens this view is to find out why an automation did not
+ *  run when they expected it.
+ */
+
+/** Cell colours by state. Suppression reasons are visually DISTINCT, not one generic "off" shade:
+ *  a quiet-window fire is deferred while a skip-date fire is cancelled, and a user deciding what to
+ *  change needs to tell those apart at a glance. */
+const CELL_TONE: Record<CellState, { bg: string; fg: string }> = {
+  empty: { bg: 'transparent', fg: 'var(--color-on-surface-low)' },
+  fires: { bg: 'color-mix(in srgb, var(--color-primary) 68%, transparent)', fg: 'var(--color-on-primary)' },
+  // Warn-toned and dimmed: suppressed by a time-of-day rule, may still catch up.
+  quiet: { bg: 'color-mix(in srgb, var(--color-warn) 26%, transparent)', fg: 'var(--color-on-surface-var)' },
+  // Struck: the whole day is excluded and never catches up, so it reads as cancelled.
+  skipped: { bg: 'color-mix(in srgb, var(--color-on-surface-low) 20%, transparent)', fg: 'var(--color-on-surface-low)' },
+  mixed: { bg: 'color-mix(in srgb, var(--color-primary) 34%, transparent)', fg: 'var(--color-on-surface)' },
+}
+
+export function WeekGridView({ onOpenTrigger }: { onOpenTrigger?: (triggerId: string) => void }) {
+  // Week offset in days from today. Kept in component state rather than the URL: the grid is a
+  // glance surface, and a deep-linked "week of" is a different feature (the trigger itself is the
+  // addressable thing, and clicking a cell routes to it).
+  const [offset, setOffset] = useState(0)
+
+  const start = useMemo(() => {
+    const d = startOfDay(new Date())
+    d.setDate(d.getDate() + offset * 7)
+    return d
+  }, [offset])
+
+  // Keyed by the week so paging fetches rather than reusing the previous week's cells. persist:false
+  // — a projection is only true relative to `now`, so a cached week restored after a hard reload
+  // would show a forecast that has already partly happened.
+  //
+  // 🔴 `error` AND `refresh` ARE BOUND, and the reason is that `week === undefined` was doing
+  // two incompatible jobs. It meant BOTH "the read is still in flight" and "the read failed",
+  // so a rejected `/api/triggers/week` left the header on `Projecting…` permanently while the
+  // `grid.totalFires === 0` branch below — gated on the read having LANDED — fell through to
+  // the else and drew the full 7×24 table from `buildWeekGrid([], start)`. Measured with the
+  // endpoint forced to reject: 168 empty `<td>`s, a legend advertising four cell states that
+  // can never appear, `role="alert"` nowhere and no retry (#498).
+  //
+  // The fetcher never swallowed anything — there is no `.catch` — so the rejection did reach
+  // the hook; only the call site declined to read it. This is the pattern `TriggersListPage`
+  // in this same directory already ships (`loadFailed` → a retryable `LoadError`, pinned by
+  // `triggersLoadError.test.tsx`), so the fix is adoption, not invention.
+  const { data: week, error: weekErr, refresh: refreshWeek } = useQuery<WeekProjection>(
+    `triggers:week:${start.toISOString().slice(0, 10)}`,
+    () => api.triggersWeek(localIso(start), 7, localIso(weekEnd(start))),
+    { persist: false },
+  )
+  // The ONE condition that separates the three states `week === undefined` used to collapse.
+  const loadFailed = week === undefined && Boolean(weekErr)
+
+  const grid = useMemo(() => buildWeekGrid(week?.occurrences ?? [], start), [week, start])
+  const hours = useMemo(() => visibleHours(grid), [grid])
+  const cellAt = useMemo(() => {
+    const m = new Map<string, WeekCell>()
+    for (const c of grid.cells) m.set(`${c.day}:${c.hour}`, c)
+    return m
+  }, [grid])
+
+  // The viewer's zone vs the server's. Shown only when they DIFFER: a caption that always says
+  // "times shown in your timezone" is noise, while one that appears exactly when the host is
+  // elsewhere is the warning that makes an off-by-hours grid legible.
+  const viewerTz = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const zoneCaptionText = week ? zoneCaption(viewerTz, week.server_tz) : ''
+
+  return (
+    <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+      <div className="mb-m flex flex-wrap items-center justify-between gap-s">
+        <div className="min-w-0">
+          <div className="flex items-center gap-s">
+            <span data-type="title-s" className="text-on-surface">{weekLabel(grid.days)}</span>
+            {offset !== 0 && <Button size="sm" variant="ghost" onClick={() => setOffset(0)}>Today</Button>}
+          </div>
+          <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">
+            {/* `Projecting…` is now claimed ONLY by a read that is genuinely in flight. On a
+                failure the summary says nothing here and the LoadError below carries the news —
+                a header that keeps projecting above an error would contradict it. */}
+            {loadFailed ? '' : week === undefined ? 'Projecting…' : weekSummary(grid)}
+            {zoneCaptionText && <span> · {zoneCaptionText}</span>}
+          </div>
+        </div>
+        <div className="flex items-center gap-xs">
+          {/* 🪤 These were `aria-label="…"`, and `Button` never forwarded it: TypeScript does not check a
+              HYPHENATED JSX attribute against a component's props type, so the name was dropped in
+              silence and axe reported `button-name` [critical] on both. The prop is `ariaLabel`. */}
+          <Button size="sm" variant="ghost" ariaLabel="Previous week" onClick={() => setOffset((o) => o - 1)}><ChevronLeft size={15} /></Button>
+          <Button size="sm" variant="ghost" ariaLabel="Next week" onClick={() => setOffset((o) => o + 1)}><ChevronRight size={15} /></Button>
+        </div>
+      </div>
+
+      {/* The cap is REPORTED, never silent. A trigger that fires every minute is capped at 200
+          occurrences, and a partial week rendered without saying so reads as an accurate forecast. */}
+      {week && week.truncated.length > 0 && (
+        <div className="mb-m flex items-start gap-s rounded-lg bg-surface-high p-s text-[0.8125rem] text-on-surface-var">
+          <AlertTriangle size={15} style={{ color: 'var(--color-warn)' }} className="mt-0.5 shrink-0" />
+          <span>
+            {week.truncated.length} trigger{week.truncated.length === 1 ? '' : 's'} fire too often to plot in full
+            — this week is partial for {week.truncated.join(', ')}.
+          </span>
+        </div>
+      )}
+
+      {loadFailed ? (
+        // Ordered FIRST so a failure can never fall through to the grid. `what="week"` reads as
+        // "Couldn't load your week"; the retry re-runs this week's key, not the whole page, so
+        // paging back to a week that loaded is unaffected.
+        <LoadError what="week" error={weekErr} onRetry={refreshWeek} />
+      ) : week !== undefined && grid.totalFires === 0 ? (
+        <EmptyState
+          icon={CalendarDays}
+          title="No fires this week"
+          hint="Only enabled schedules with a fire inside this week are plotted — interval, cron and one-shot alike. A disabled trigger has no fires, and a one-shot that already fired, or is set beyond this week, has none left to show."
+        />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full border-separate" style={{ borderSpacing: '2px' }}>
+            <caption className="sr-only">
+              Scheduled trigger fires by day and hour. Shaded cells are suppressed by a quiet window or a skip date.
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col" className="w-12 text-right text-on-surface-low text-[0.75rem]" style={fvs(500)}>
+                  <span className="sr-only">Hour</span>
+                </th>
+                {grid.days.map((d, i) => (
+                  <th key={i} scope="col" className="px-1 pb-1 text-center text-[0.75rem] text-on-surface-var" style={fvs(500)}>
+                    <div>{d.toLocaleDateString(undefined, { weekday: 'short' })}</div>
+                    <div className="text-on-surface-low">{d.getDate()}</div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {hours.map((hour) => (
+                <tr key={hour}>
+                  <th scope="row" className="pr-1 text-right align-middle text-on-surface-low text-[0.75rem] tabular-nums" style={fvs(400)}>
+                    {String(hour).padStart(2, '0')}
+                  </th>
+                  {grid.days.map((day, di) => {
+                    const cell = cellAt.get(`${di}:${hour}`)
+                    if (!cell) return <td key={di} />
+                    const tone = CELL_TONE[cell.state]
+                    const label = cellLabel(cell, day)
+                    const clickable = cell.count > 0 && Boolean(onOpenTrigger)
+                    // The cell is a `td`, not a control. Two reasons, and the design ratchet
+                    // (`primitiveAdoption.test.ts`) is what made me check: a heat grid of 168 raw
+                    // button elements is new bespoke chrome, and the `Button` primitive is a
+                    // sheen-animated pill with no `aria-label` — wrong shape for a 24px heat cell, and
+                    // 168 of them would animate on every hover. The interactive affordance lives on
+                    // the cell's `onClick` + keyboard handler with an explicit role, so the semantics
+                    // are still a button where it matters (name, role, focus) without minting chrome.
+                    //
+                    // NB the scanner is a regex over source text, so even a literal button tag inside
+                    // a COMMENT counts against the baseline. Prose says "button element" for that
+                    // reason, not to be coy.
+                    const open = () => {
+                      // A cell holding several triggers opens the first. The alternative is a
+                      // disambiguation popover on a glance surface, and the tooltip names them all.
+                      const id = cell.triggerIds[0] ?? ''
+                      if (id && onOpenTrigger) onOpenTrigger(id)
+                    }
+                    return (
+                      <td
+                        key={di}
+                        // Only a cell with fires is a control. An empty cell keeps no role and no tab
+                        // stop: tabbing through 168 empty cells to reach the one interesting hour is
+                        // the accessibility failure that would make this grid unusable by keyboard.
+                        role={clickable ? 'button' : undefined}
+                        tabIndex={clickable ? 0 : undefined}
+                        aria-label={label}
+                        title={label}
+                        onClick={clickable ? open : undefined}
+                        onKeyDown={
+                          clickable
+                            ? (e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault()
+                                  open()
+                                }
+                              }
+                            : undefined
+                        }
+                        data-type="caption"
+                        className="h-6 rounded text-center tabular-nums transition-colors"
+                        style={{
+                          background: tone.bg,
+                          color: tone.fg,
+                          cursor: clickable ? 'pointer' : 'default',
+                          // The struck look for a skip date: the count stays readable, and the strike
+                          // says "cancelled" without relying on colour alone (WCAG — colour is never
+                          // the only channel).
+                          textDecoration: cell.state === 'skipped' ? 'line-through' : undefined,
+                          border:
+                            cell.count === 0 ? '1px solid var(--color-outline-variant)' : '1px solid transparent',
+                        }}
+                      >
+                        {cell.count > 0 ? cell.count : ''}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <Legend />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** The colour key. Not decoration: three of the five cell states mean "this will not run", and a
+ *  grid whose shading is unexplained makes the user assume their schedule is broken. */
+function Legend() {
+  const items: Array<{ state: CellState; label: string }> = [
+    { state: 'fires', label: 'Will run' },
+    { state: 'mixed', label: 'Partly suppressed' },
+    { state: 'quiet', label: 'Quiet hours' },
+    { state: 'skipped', label: 'Skip date' },
+  ]
+  return (
+    <div className="mt-m flex flex-wrap items-center gap-m text-on-surface-low text-[0.75rem]">
+      {items.map((it) => (
+        <span key={it.state} className="inline-flex items-center gap-1.5">
+          <span
+            className="inline-block size-3 rounded"
+            style={{
+              background: CELL_TONE[it.state].bg,
+              border: '1px solid transparent',
+              textDecoration: it.state === 'skipped' ? 'line-through' : undefined,
+            }}
+          />
+          {it.label}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/** An offset-qualified browser-local ISO datetime, which is what the endpoint expects.
+ *
+ *  Keep the wall-clock date the grid draws, but name its offset so the gateway process zone cannot
+ *  reinterpret it. Each bound computes its own offset because a drawn week may cross DST. */
+export function localIso(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const offsetMinutes = -d.getTimezoneOffset()
+  const offsetSign = offsetMinutes >= 0 ? '+' : '-'
+  const offsetHours = Math.floor(Math.abs(offsetMinutes) / 60)
+  const offsetRemainder = Math.abs(offsetMinutes) % 60
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:00` +
+    `${offsetSign}${pad(offsetHours)}:${pad(offsetRemainder)}`
+  )
+}
+
+export function zoneCaption(windowZone: string, projectionZone: string): string {
+  if (!windowZone || !projectionZone || windowZone === projectionZone) return ''
+  return `window: ${windowZone} · projection: ${projectionZone}`
+}
+
+function weekLabel(days: Date[]): string {
+  if (days.length === 0) return ''
+  const a = days[0], b = days[days.length - 1]
+  const sameMonth = a.getMonth() === b.getMonth()
+  const fmt = (d: Date, withMonth: boolean) =>
+    d.toLocaleDateString(undefined, withMonth ? { month: 'short', day: 'numeric' } : { day: 'numeric' })
+  return `${fmt(a, true)} – ${fmt(b, !sameMonth)}`
+}

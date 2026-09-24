@@ -1,0 +1,149 @@
+# Build context is the repo root:
+#   docker build -f deploy/docker/Dockerfile.backend .
+
+# ── Base image (single pull, reused across stages) ──────────────────────────
+ARG PYTHON_IMAGE=mirror.gcr.io/library/python:3.13-slim
+FROM ${PYTHON_IMAGE} AS base
+
+# ── Stage 1: install dependencies only (cached until pyproject.toml changes) ─
+FROM base AS deps
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv /opt/venv && \
+    /opt/venv/bin/pip install --upgrade pip wheel
+
+# Install only third-party dependencies (not the package itself) using a stub
+# package so the dependency layer stays cached across source changes.
+COPY pyproject.toml setup.py ./
+RUN mkdir -p src/personalclaw && \
+    echo '__version__ = "0.1.0"' > src/personalclaw/__init__.py && \
+    /opt/venv/bin/pip install --no-cache-dir \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        ".[slack,eval,httpx,anthropic,openai,embeddings,stt,tts,mcp]" && \
+    /opt/venv/bin/pip uninstall -y personalclaw && \
+    rm -rf src/ build/ *.egg-info
+
+# ── Stage 1b: build the SPA ──────────────────────────────────────────────────
+# The gateway serves its dashboard from the INSTALLED package's static/dist, and
+# setup.py's BuildWithWeb grafts web/dist in during `pip install` — but only if
+# web/dist is present in the build tree. It never was here: .dockerignore excludes
+# it as a host build artifact and nothing built it in-image, so this image answered
+# /api/healthz 200 while serving NO dashboard (DIST-15). Bundling it is what makes
+# the single-container `docker run` in README.md reach a usable dashboard, and what
+# makes docs/guides/containers.md's "the gateway image bundles the wheel (with the
+# prebuilt dashboard)" true.
+#
+# Byte-identical to Dockerfile.web's builder stage on purpose: one SPA build recipe,
+# two images. Keep them in step — see the workspace-install and heap notes there.
+FROM mirror.gcr.io/library/node:20-alpine AS web
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+COPY web/package.json web/
+
+# Both COPYs below exist because `npm ci` and `npm run build` reach OUTSIDE `web/`,
+# and without them this stage cannot be built at all — see #3362, which found the
+# same two holes in Dockerfile.web by building it rather than pulling it.
+#
+# `package.json` declares `postinstall: sh scripts/install_git_hooks.sh`, so `npm ci`
+# invokes it and dies with `exit code 2` on the missing file. The script already exits
+# 0 in a build context (`.git` is dockerignored), so copying it is the fix rather than
+# `--ignore-scripts`, which would also suppress the dependency postinstalls the SPA
+# build needs (esbuild's).
+COPY scripts/install_git_hooks.sh scripts/
+
+RUN npm ci --workspace=web --prefer-offline
+
+# `web/src/lib/scanFindings.ts:1` imports '../../../src/personalclaw/scan_rule_gloss.json',
+# which resolves to /app/src/personalclaw/… from WORKDIR /app — so without it `tsc --noEmit`
+# fails TS2307 and `npm run build` never reaches vite.
+COPY src/personalclaw/scan_rule_gloss.json src/personalclaw/
+
+COPY web/ web/
+
+RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build --workspace=web
+
+# ── Stage 2: install package with full source ───────────────────────────────
+FROM deps AS builder
+
+COPY src/ ./src/
+COPY pyproject.toml setup.py ./
+# At the FIRST path setup.py's BuildWithWeb._find_web_dist looks in (<root>/web/dist),
+# and before the install below — build_py copies it into the installed package as
+# personalclaw/static/dist, which is where frontend.py resolves the SPA from.
+COPY --from=web /app/web/dist ./web/dist
+RUN rm -rf build/ *.egg-info && \
+    /opt/venv/bin/pip install --no-cache-dir --no-deps --no-build-isolation .
+
+# ── Stage 3: test ────────────────────────────────────────────────────────────
+FROM builder AS test
+
+RUN /opt/venv/bin/pip install --no-cache-dir \
+        black isort flake8 mypy pytest pytest-asyncio hypothesis
+
+COPY tests/ ./tests/
+
+RUN /opt/venv/bin/python -m black --check src/personalclaw tests && \
+    /opt/venv/bin/python -m isort --check-only src/personalclaw tests && \
+    /opt/venv/bin/python -m flake8 src/personalclaw tests && \
+    /opt/venv/bin/python -m mypy src/personalclaw || true && \
+    /opt/venv/bin/python -m pytest
+
+# ── Stage 4: runtime ─────────────────────────────────────────────────────────
+FROM base AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        tini \
+        curl \
+        ffmpeg \
+        git \
+        nodejs \
+        npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Bundle the public ACP agent adapters + their underlying CLIs so the
+# acp:claude-code / acp:codex providers work out-of-box (no per-host `npm i -g`,
+# no cold `npx` fetch on first spawn). These are the canonical @agentclientprotocol
+# adapters (the renamed home of the former @zed-industries/* adapters; both build
+# on @agentclientprotocol/sdk). Private/enterprise ACP runtimes are intentionally
+# NOT bundled (they ship only where their own toolchain is present). `|| true`
+# keeps the image build resilient to a transient registry blip (the bundle's npx
+# fallback still covers a missing adapter at runtime).
+RUN npm install -g --no-fund --no-audit \
+        @agentclientprotocol/claude-agent-acp \
+        @agentclientprotocol/codex-acp \
+        @anthropic-ai/claude-code \
+        @openai/codex \
+    && npm cache clean --force || true
+
+RUN groupadd --gid 10001 personalclaw && \
+    useradd --uid 10001 --gid 10001 --create-home --shell /bin/false personalclaw
+
+COPY --from=builder /opt/venv /opt/venv
+
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PERSONALCLAW_HOME=/data \
+    PERSONALCLAW_PORT=10000 \
+    PERSONALCLAW_INSTALL_KIND=container
+
+RUN mkdir -p /data && chown personalclaw:personalclaw /data
+VOLUME ["/data"]
+
+USER personalclaw
+WORKDIR /data
+
+EXPOSE 10000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:10000/api/healthz || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["personalclaw", "gateway"]

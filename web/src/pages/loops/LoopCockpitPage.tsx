@@ -1,0 +1,1422 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
+import { AnimatePresence, motion } from 'framer-motion'
+import {
+  ArrowLeft, Pause, Play, Square, X, Check, MessageSquarePlus,
+  Play as Start, Trash2, HelpCircle, Search, ChevronRight, CornerDownRight,
+  Maximize2, PanelRight, ScrollText, Download, FileText, Bot, Cpu, BarChart3, ExternalLink, ListChecks, Link2, AlertTriangle, Copy,
+  FolderKanban, FolderOpen, Clock, ShieldCheck, DollarSign, Sparkles,
+} from 'lucide-react'
+import { TopBar } from '../../ui/TopBar'
+import { IconButton } from '../../ui/IconButton'
+import { SquareIconButton } from '../../ui/SquareIconButton'
+import { TextLink } from '../../ui/TextLink'
+import { Eyebrow } from '../../ui/Eyebrow'
+import { InlineLoadError } from '../../ui/ListScaffold'
+import { Button } from '../../ui/Button'
+import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
+import { QuietButton } from '../../ui/QuietButton'
+import { InvestigateButton } from '../../ui/InvestigateButton'
+import { Spark } from '../../ui/Spark'
+import { Markdown } from '../../ui/Markdown'
+import { SidePanel } from '../../ui/SidePanel'
+import { Modal } from '../../ui/Modal'
+import { thinkingGlow } from '../../design/gradients'
+import { spring, physics, messageEnter } from '../../design/motion'
+import { ContentSurface } from '../../ui/content/ContentSurface'
+import { resolveContentType } from '../../ui/content/contentTypes'
+import { api, ApiError, type GoalLoop, type LoopFinding, type LoopNudge, type LoopVerdict, type Artifact, type TaskItem, type LoopSpend } from '../../lib/api'
+import { reportActionFailure } from '../../app/reportingWrite'
+import { loopSpendPill, loopSpendTitle } from '../../lib/runCost'
+import { peekQuery, writeQuery } from '../../lib/data'
+import { downloadText, safeFilename } from '../../lib/download'
+import { useRunStream } from './useRunStream'
+import { loopToGoalLoop } from './goalAdapter'
+import { RunPhaseTrail } from './RunPhaseTrail'
+import { foldReducer, emptyRunFlags, type RunFlags } from './runFold'
+import { activePhaseIndex, phaseMinCycles, phaseForCycle } from './loopPhases'
+import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
+import { belongsToLoop } from '../workflows/containerKey'
+import { type SkillUsed, skillsUsedLabel, skillsUsedTitle } from '../chat/chatTypes'
+import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
+import { SURFACE_WIDTHS } from '../../app/appearance'
+import { accentChip } from '../../design/accent'
+import { tabListKeys } from '../../lib/tabListKeys'
+import { loopStatusLabel, effectiveLoopStatus, shownCycle, ACTIVE_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES } from '../../lib/loopStatus'
+import { notify } from '../../app/appSdk'
+import { copyText } from '../../app/clipboard'
+
+/** Decode the `?sel=` Details-rail drill-down ref. */
+function parseSel(raw?: string): { kind: 'log' } | { kind: 'roi' } | { kind: 'cycle'; cycle: number } | null {
+  if (!raw) return null
+  if (raw === 'log') return { kind: 'log' }
+  if (raw === 'roi') return { kind: 'roi' }
+  if (raw.startsWith('cycle-')) { const n = Number(raw.slice(6)); if (!Number.isNaN(n)) return { kind: 'cycle', cycle: n } }
+  return null
+}
+
+
+// Friendly labels for the metadata pills — the API stores raw tokens
+// (open_ended, balanced, …) but the UI should never surface the underscore form.
+const GOAL_TYPE_LABEL: Record<string, string> = { verifiable: 'Verifiable', open_ended: 'Open-ended', monitor: 'Monitor' }
+const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s)
+
+// The granularity dial → marginal-value threshold (mirrors loops/granularity.py).
+// 'forever' has no threshold (never self-stops on value).
+const DIAL_THRESHOLD: Record<string, number | null> = {
+  quick: 3.0, balanced: 2.0, exhaustive: 1.0, forever: null,
+}
+
+
+/** The signature ROI graph (§10.3): the judge's marginal-value per cycle as a
+ *  bar chart — one labeled column per cycle, a 0–5 y-axis, and a dashed line at
+ *  the granularity threshold. Bars below the line (diminishing returns) are
+ *  muted; a run of them is what trips the auto-stop. Open-ended loops only. */
+/** One ROI bar: its true cycle number + the judge's marginal value. */
+interface RoiPoint { cycle: number; score: number }
+
+function RoiRail({ points, granularity }: { points: RoiPoint[]; granularity: string }) {
+  if (!points.length) return null
+  const threshold = DIAL_THRESHOLD[granularity] ?? null
+  const max = 5
+  const H = 96  // chart body height (px)
+  const recent = points.slice(-40)
+  return (
+    <div className="flex gap-s">
+      {/* y-axis ticks */}
+      <div data-type="caption" className="relative w-5 shrink-0 text-on-surface-low tabular-nums" style={{ height: H }}>
+        <span className="absolute right-0 -translate-y-1/2" style={{ top: 0 }}>5</span>
+        <span className="absolute right-0 -translate-y-1/2" style={{ top: H / 2 }}>2.5</span>
+        <span className="absolute right-0 -translate-y-1/2" style={{ top: H }}>0</span>
+      </div>
+      {/* plot area */}
+      <div className="relative flex-1 min-w-0">
+        <div className="relative" style={{ height: H }}>
+          {/* threshold reference line */}
+          {threshold != null && (
+            <div className="absolute left-0 right-0 border-t border-dashed" title={`Stop threshold (${granularity})`}
+              style={{ top: H * (1 - threshold / max), borderColor: 'color-mix(in srgb, var(--color-primary) 55%, transparent)' }}>
+              <span data-type="caption" className="absolute right-0 -top-3.5 tabular-nums text-primary">thr {threshold.toFixed(0)}</span>
+            </div>
+          )}
+          {/* bars — one column per scored cycle, labeled by its true cycle #.
+              Each bar is keyed by its cycle so a score update SPRINGS the height
+              in place (gentle settle) instead of re-mounting — the sanctioned
+              "spring on the value" for a low-frequency (per-cycle) data series. */}
+          <div className="absolute inset-0 flex items-end gap-[3px]">
+            {recent.map((p) => {
+              const below = threshold != null && p.score < threshold
+              return (
+                <motion.div key={p.cycle} className="flex-1 min-w-[5px] rounded-t-[2px]" title={`cycle ${p.cycle}: ${p.score.toFixed(1)}`}
+                  initial={false}
+                  animate={{ height: `${Math.max(3, (p.score / max) * 100)}%`, opacity: below ? 0.45 : 1 }}
+                  transition={physics.fluid}
+                  style={{ background: below ? 'var(--color-on-surface-low)' : 'var(--color-primary)' }} />
+              )
+            })}
+          </div>
+        </div>
+        {/* x-axis cycle labels (thinned when many) */}
+        <div className="flex gap-[3px] mt-1">
+          {recent.map((p, i) => {
+            const show = recent.length <= 16 || i === 0 || i === recent.length - 1 || p.cycle % 5 === 0
+            return <span key={p.cycle} data-type="caption" className="flex-1 min-w-[5px] text-center text-on-surface-low tabular-nums">{show ? p.cycle : ''}</span>
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** Strip a verbose model id to its readable tail (e.g.
+ *  "Bedrock:global.anthropic.claude-opus-4-8" → "claude-opus-4-8"). */
+function shortModel(m: string): string {
+  const afterColon = m.includes(':') ? m.split(':').pop()! : m
+  const parts = afterColon.split('.')
+  return (parts.pop() || afterColon).replace(/\[.*\]$/, '')
+}
+
+/** The role-phased execution plan as a left-to-right pill trail — the single
+ *  shared renderer used by both the PROMPT card and the header status line so
+ *  they stay byte-identical. Each phase pill shows: a full green fill once the
+ *  phase is DONE (execution moved past it, or the loop completed); one green
+ *  check per completed cycle in the phase; and — on the active phase while
+ *  running — an animating spinner for the in-flight cycle. Upcoming phases are
+ *  name-only. `compact` trims padding/arrows for the dense header. */
+/** A compact metadata pill for the prompt card header. */
+function MetaPill({ icon, text, tone, title }: { icon?: React.ReactNode; text: string; tone?: 'primary'; title?: string }) {
+  return (
+    <span title={title}
+      data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-2 h-5 max-w-[14rem] truncate"
+      style={tone === 'primary'
+        ? accentChip
+        : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>
+      {icon}<span className="truncate">{text}</span>
+    </span>
+  )
+}
+
+function fmt(sec: number): string {
+  if (!sec || sec < 1) return '0s'
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60)
+  if (h) return `${h}h ${m}m`
+  return m ? `${m}m ${s}s` : `${s}s`
+}
+
+/** Coerce a worker-authored finding field to a renderable string. Workers
+ *  sometimes emit an object/array where a string is expected (e.g. summary as a
+ *  map of PR-ids → notes); rendering that object directly crashes React (#31).
+ *  This flattens any shape to safe display text. */
+function asText(v: unknown): string {
+  if (v == null) return ''
+  if (typeof v === 'string') return v
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+  if (Array.isArray(v)) return v.map(asText).filter(Boolean).join(', ')
+  if (typeof v === 'object') {
+    return Object.entries(v as Record<string, unknown>)
+      .map(([k, val]) => `${k}: ${asText(val)}`).join(' · ')
+  }
+  return String(v)
+}
+
+export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenTask, onOpenProject, query, setQuery }: { id: string; onBack: () => void; onDeleted?: () => void; onOpenArtifact?: (slug: string) => void; onOpenTask?: (taskId: string) => void; onOpenProject?: (projectId: string) => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
+  const q = query
+  const sq = setQuery
+  const [c, setC] = useState<GoalLoop | null>(null)
+  const [notFound, setNotFound] = useState(false)
+  // What this loop cost (MRT-3). Held OUTSIDE `c` deliberately: `spend` rides the loop DETAIL
+  // response only, and the SSE snapshot is `store.get_redacted` without it — so folding it into
+  // `c` would make the figure vanish the moment the first lifecycle event re-derived `c` from a
+  // snapshot. Its own state means SSE cannot clobber it and the 30s poll refreshes it.
+  const [spend, setSpend] = useState<LoopSpend | null>(null)
+  const [report, setReport] = useState('')
+  const [log, setLog] = useState('')
+  // Outputs: the loop's artifacts (the general outcome channel) + linked Tasks.
+  const [artifacts, setArtifacts] = useState<Artifact[]>([])
+  const [tasks, setTasks] = useState<TaskItem[]>([])
+  // Right rail + its drill-down are URL-backed (?details=1, ?sel=log|roi|cycle-N)
+  // so a refresh / shared link reopens the same Details view.
+  const railOpen = q.details === '1'
+  const setRailOpen = (v: boolean) => sq(v ? { details: '1' } : { details: null, sel: null })
+  const selected = parseSel(q.sel)
+  const setSelected = (s: { kind: 'log' } | { kind: 'roi' } | { kind: 'cycle'; cycle: number } | null) =>
+    sq({ sel: !s ? null : s.kind === 'cycle' ? `cycle-${s.cycle}` : s.kind })
+  // View surfaces are URL-backed (push, Back closes; refresh/deep-link reopens):
+  // ?nudge=1 (the nudge drawer), ?report=1 (report modal), ?prompt=1 (prompt-card
+  // expander). The nudge COMPOSE DRAFT (nudgeText) stays local — a composer draft has
+  // no shareable meaning (canonical §3), so only the drawer's open-state is in the URL.
+  const [nudgeOpen, setNudgeOpen] = useQueryFlag(q, sq, 'nudge')
+  const [reportOpen, setReportOpen] = useQueryFlag(q, sq, 'report')
+  const [promptOpen, setPromptOpen] = useQueryFlag(q, sq, 'prompt')
+  const [nudgeText, setNudgeText] = useState('')
+  const [nudgeSending, setNudgeSending] = useState(false)
+  const [nudgeError, setNudgeError] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  // Stop is terminal (no resume from 'stopped' — see ACTION_SOURCE_STATES), so it
+  // gets the same two-click arm as delete rather than firing on a stray click.
+  const [confirmStop, setConfirmStop] = useState(false)
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
+  // Set by Escape so commitRename (fired by the unmount blur) skips the save.
+  const cancelRename = useRef(false)
+  // Guards the double commitRename (Enter → unmount → onBlur) from a redundant PUT.
+  const renameInFlight = useRef(false)
+  // The done-ness judge failed on a recent cycle (G3) — surfaced so the user
+  // knows quality assessment is degraded, not silently never-completing.
+  // Transient lifecycle flags folded through the SHARED, unit-tested foldReducer
+  // (P16) — one place computes judge-degraded/gate/stall from lifecycle events, so
+  // this cockpit can't drift from the reducer's contract.
+  const [runFlags, setRunFlags] = useState<RunFlags>(emptyRunFlags)
+  const judgeDegraded = runFlags.judgeDegraded
+  const [linkCopied, setLinkCopied] = useState(false)
+  // The containing Project's name — for a clickable pill linking back to the Project,
+  // mirroring the Code cockpit (C397). Resolve project_id (explicit user scope) OR
+  // tasks_project_id (the auto-provisioned backing project a project-less loop gets):
+  // a loop launched without choosing a project still lives under a project via
+  // tasks_project_id, so the chip must show it — gating on project_id alone hid it.
+  const [projName, setProjName] = useState('')
+  const projId = c?.project_id || c?.tasks_project_id || ''
+  useEffect(() => {
+    if (!projId) { setProjName(''); return }
+    let alive = true
+    api.project(projId).then((pr) => { if (alive) setProjName(pr.name) }).catch(() => {})
+    return () => { alive = false }
+  }, [projId])
+  const [statusText, setStatusText] = useState('')
+  const [activity, setActivity] = useState<{ kind: string; label: string; detail?: string }[]>([])
+  const [now, setNow] = useState(() => 0) // seconds; ticks while active
+  // The hidden worker session key the engine broadcasts chat_status/tool_call
+  // under (loops.manager.session_key) — NO 'dashboard:' prefix. The old value
+  // had one, so worker events never matched and the live activity stream was
+  // always empty.
+  //
+  // Matched via `belongsToLoop` rather than a raw `===`, which is the R10c
+  // coexistence fix: once a loop runs as a workflow template its worker streams
+  // under a run-scoped colon key (`run:<id>` / `workflow:run:<id>`), and a strict
+  // equality against `loop-<id>` matches none of them — the SILENT event-drop this
+  // closes. The helper still matches the legacy `loop-<id>` worker key exactly.
+
+  // Initial load + a SLOW fallback poll. Live updates ride the per-loop SSE
+  // (useLoopStream below) per the realtime doctrine; the slow poll only
+  // backstops a dropped stream — it's not the primary update path anymore.
+  const loadReport = useRef<() => void>(() => {})
+  const everLoaded = useRef(false)
+  useEffect(() => {
+    let alive = true
+    everLoaded.current = false
+    const loadOutputs = () => {
+      api.uLoopReport(id).then((rep) => { if (alive && rep) { setReport(rep.report || ''); setLog(rep.log || '') } }).catch(() => {})
+      // Outcomes: every artifact tagged for this loop.
+      api.artifacts({ tag: `loop:${id}` }).then((a) => { if (alive) setArtifacts(a) }).catch(() => {})
+    }
+    // Linked Tasks live in the loop's own task-list (under the "Goal Loops"
+    // project), NOT under project=<loop id> — so fetch them by the authoritative
+    // linked_task_ids the loop stores, not a project filter (which returned none).
+    const loadTasks = (ids: string[]) => {
+      if (!ids.length) { setTasks([]); return }
+      Promise.all(ids.map((tid) => api.task(tid).catch(() => null)))
+        .then((ts) => { if (alive) setTasks(ts.filter(Boolean) as TaskItem[]) }).catch(() => {})
+    }
+    let t = 0
+    const TERMINAL = ['complete', 'stopped', 'failed']
+    const load = async () => {
+      // A 404 and a dropped connection both used to collapse into `null`, which is why the
+      // post-load branch below could only treat a null as a blip: it had no way to tell "this
+      // loop is gone" from "the network hiccuped". Only a 404 is authoritative.
+      let gone = false
+      const raw = await api.uLoop(id).catch((e) => {
+        if (e instanceof ApiError && e.status === 404) gone = true
+        return null
+      })
+      const gl = raw ? loopToGoalLoop(raw) : null
+      if (!alive) return
+      if (gl) {
+        everLoaded.current = true; setC(gl); setNotFound(false); writeQuery(`loop:${id}`, gl); loadOutputs(); loadTasks(gl.linked_task_ids ?? [])
+        setSpend(raw?.spend ?? null)
+        // A TERMINAL loop never changes again — stop the 30s fallback poll so a finished
+        // cockpit tab doesn't spam GET /api/loops/<id> forever. SSE still delivers the
+        // (rare) post-terminal event; reopening / an action re-pulls fresh. Mirrors the
+        // Code cockpit gating its poll off non-running. (Pre-launch + active keep polling
+        // — those legitimately transition.)
+        if (t && TERMINAL.includes(gl.status)) { clearInterval(t); t = 0 }
+      }
+      // Gone, or never there. A 404 is authoritative at ANY point — a loop deleted in another
+      // tab (or from the Loops list, or a project's linked-work row) reaches this branch even
+      // though it loaded fine a minute ago, which is the case this cockpit used to render
+      // forever. A null WITHOUT a 404 after a successful load is still just a poll blip and is
+      // still ignored, because SSE keeps `c` live.
+      else if (gone || !everLoaded.current) {
+        setNotFound(true)
+        // The loop is permanently gone (never loaded → deleted/bad id). Stop the
+        // fallback poll so a stale cockpit tab doesn't spam GET /api/loops/<id>
+        // → 404 every 30s forever.
+        if (t) { clearInterval(t); t = 0 }
+      }
+    }
+    loadReport.current = loadOutputs
+    load()
+    t = window.setInterval(load, 30_000)  // fallback only; SSE drives live
+    return () => { alive = false; if (t) clearInterval(t) }
+  }, [id])
+
+  // 🔑 THE READER `runFlags.deleted` NEVER HAD. `foldReducer` has set it on the `deleted`
+  // lifecycle event since it was written, and no component ever looked — so a loop deleted in
+  // another tab left this cockpit rendering it indefinitely. A written-and-never-read control
+  // flag is #370's shape exactly; the fold was already correct, the wire was missing.
+  //
+  // This is the FAST path: SSE delivers `deleted` immediately, while the 30s fallback poll's
+  // 404 (handled above) is the backstop for a tab whose stream is down. Both land on the same
+  // `notFound` state the component already renders, so there is one gone-state, not two.
+  useEffect(() => {
+    if (runFlags.deleted) setNotFound(true)
+  }, [runFlags.deleted])
+
+  // Instant-paint seed: re-opening a loop should show its last snapshot
+  // immediately instead of a cold spinner. This PEEKS the shared cache (which
+  // load() above warms via writeQuery) — a synchronous read, NO fetch — so the
+  // first paint is instant on a same-session re-nav while load() revalidates. We
+  // deliberately do NOT use useQuery here: it always fires its own fetch,
+  // which duplicated load()'s GET /api/loops/<id> on every mount (3 identical
+  // mount requests → now 1 authoritative + SSE). In-memory only: a hard reload
+  // has an empty cache, so load()'s fetch owns the first paint then (correct —
+  // never a stale cross-reload snapshot).
+  useEffect(() => {
+    if (c === null) {
+      const seed = peekQuery<GoalLoop>(`loop:${id}`)
+      if (seed) setC(seed)
+    }
+  }, [id, c])
+
+  // Per-loop SSE: snapshot keeps `c` live; any lifecycle event refetches the
+  // report/findings (which the stream signals but doesn't carry in full).
+  // Don't open (or keep) the per-loop SSE once the loop is confirmed gone —
+  // EventSource would auto-retry a 404 /stream forever on a stale tab.
+  const { connected } = useRunStream(id, !notFound, {
+    onSnapshot: (l) => setC(loopToGoalLoop(l)),
+    onLifecycle: (event, data) => {
+      // Fold each lifecycle event through the shared reducer (judge_error → degraded,
+      // cycle_verdict → clears it, + gate/stall for kinds that emit them). One tested
+      // contract instead of a per-cockpit switch.
+      setRunFlags((f) => foldReducer(f, event, data))
+      loadReport.current()
+    },
+  })
+
+  // 1s clock for live elapsed labels (only while a loop is active)
+  useEffect(() => {
+    setNow(Date.now() / 1000)
+    if (!c || !ACTIVE_LOOP_STATUSES.has(c.status)) return
+    const t = window.setInterval(() => setNow(Date.now() / 1000), 1000)
+    return () => clearInterval(t)
+  }, [c?.status])
+
+  // Disarm the delete confirmation if the user doesn't follow through quickly.
+  // (Must run unconditionally — above the not-found/loading early return.)
+  useEffect(() => {
+    if (!confirmDelete) return
+    const t = window.setTimeout(() => setConfirmDelete(false), 4000)
+    return () => clearTimeout(t)
+  }, [confirmDelete])
+  useEffect(() => {
+    if (!confirmStop) return
+    const t = window.setTimeout(() => setConfirmStop(false), 4000)
+    return () => clearTimeout(t)
+  }, [confirmStop])
+
+  // ── "used N skills" (LEARNING-VISIBILITY T2.1) ───────────────────────────────
+  // The cockpit's live stream carries `chat_status` / `tool_call` / `activity_event` and
+  // nothing else, so the turn's skill allocation is NOT reachable from it — and the atom
+  // forbids adding a channel to carry it. It rides the worker's assistant-message `meta`
+  // instead, read through the EXISTING `GET /api/chat/sessions/{key}` (a REST read, not a
+  // new WS/SSE channel). The worker is a real registered session (`get_or_create_session`
+  // in loops/manager), so its key resolves while the gateway holds it; a 404 after a
+  // restart simply leaves the chip off, which is the honest answer for a run whose
+  // transcript is gone.
+  //
+  // Re-read on `total_cycles` because a loop allocates skills EVERY cycle: keyed on the
+  // session alone, the chip would freeze on cycle 1's allocation for the whole run.
+  // Must sit ABOVE the not-found/loading early return, like the two effects before it.
+  const [skillsUsed, setSkillsUsed] = useState<SkillUsed[]>([])
+  const workerKey = c?.session_key ?? ''
+  const cyclesSeen = c?.total_cycles ?? 0
+  useEffect(() => {
+    if (!workerKey) { setSkillsUsed([]); return }
+    let alive = true
+    api.chatSessionDetail(workerKey).then((d) => {
+      if (!alive) return
+      // The LAST assistant message that carried an allocation — i.e. the most recent cycle
+      // that loaded a skill. Deliberately not merged across cycles: the chip answers "what
+      // fed the latest turn", and a union would claim one cycle used skills another did.
+      let last: SkillUsed[] = []
+      for (const m of d.messages || []) {
+        if (m.role !== 'assistant') continue
+        const s = m.meta?.skills_used
+        if (Array.isArray(s) && s.length) last = s
+      }
+      setSkillsUsed(last)
+    }).catch(() => { if (alive) setSkillsUsed([]) })
+    return () => { alive = false }
+  }, [workerKey, cyclesSeen])
+
+  const onWs = useCallback((m: WsMessage) => {
+    if (!belongsToLoop(m.data?.session as string | undefined, id)) return
+    if (m.type === 'chat_status') { const s = String(m.data.status ?? ''); setStatusText(s); setActivity((a) => [...a, { kind: 'status', label: s }].slice(-40)) }
+    else if (m.type === 'tool_call') setActivity((a) => [...a, { kind: 'tool', label: String(m.data.tool ?? 'tool'), detail: String(m.data.purpose ?? m.data.input_preview ?? '') }].slice(-40))
+    // The runner broadcasts turn milestones (session created, context injected,
+    // "Thinking…") as activity_event — the main progress signal for native runs
+    // that interleave long thinking gaps between tool calls. Surface them so a
+    // working cycle reads as alive, not a frozen "working" with an empty stream.
+    else if (m.type === 'activity_event') {
+      const text = String(m.data.text ?? '')
+      if (text) {
+        if (String(m.data.kind ?? '') === 'status') setStatusText(text)
+        setActivity((a) => [...a, { kind: 'status', label: text }].slice(-40))
+      }
+    }
+  }, [id])
+  useChatSocket(onWs)
+
+  // 🔴 GONE OUTRANKS A STALE SNAPSHOT. This screen used to be nested inside `if (!c)`, so it was
+  // reachable ONLY for a loop that never loaded — the one case #558 is *not* about. A loop that
+  // loaded fine and was then deleted set `notFound` and kept rendering itself, which made every
+  // upstream signal (the folded `deleted` event, the poll's 404, an action's 404) unobservable no
+  // matter how correctly it was wired. `notFound` is terminal, so it is checked FIRST.
+  if (notFound) return (
+    <div className="flex h-full flex-col items-center justify-center gap-m px-l text-center">
+      <div className="text-on-surface text-[1.0625rem]" style={fvs(500)}>Loop not found</div>
+      <p data-type="body-s" className="max-w-md text-on-surface-low">This loop doesn’t exist — it may have been deleted, or the link is out of date.</p>
+      <Button size="sm" onClick={onBack}><ArrowLeft size={15} /> Back to loops</Button>
+    </div>
+  )
+  if (!c) return <div className="flex h-full items-center justify-center text-on-surface-low">Loading…</div>
+  const active = ACTIVE_LOOP_STATUSES.has(c.status)
+  const running = c.status === 'running'
+  const findings = [...(c.findings ?? [])].sort((a, b) => b.cycle - a.cycle)
+  // The judge's third-party verdict per cycle (open-ended loops only). A cycle can
+  // carry MORE THAN ONE verdict — e.g. a real scored verdict plus a final/degraded
+  // one whose marginal_value/quality_score are null. Prefer the SCORED verdict so
+  // the rail shows the real number (and the renderers never see null scores).
+  const verdictByCycle = new Map<number, LoopVerdict>()
+  for (const v of c.verdicts ?? []) {
+    if (typeof v.cycle !== 'number') continue
+    const prev = verdictByCycle.get(v.cycle)
+    const scored = typeof v.marginal_value === 'number'
+    const prevScored = typeof prev?.marginal_value === 'number'
+    // Keep the first scored verdict; only overwrite an unscored one (or fill an empty slot).
+    if (prev == null || (scored && !prevScored)) verdictByCycle.set(v.cycle, v)
+  }
+  // ROI bars keyed to their TRUE cycle number. The judge is best-effort, so a
+  // cycle whose judge failed has no verdict — the flat marginal_scores array
+  // can't express that gap and would mislabel every later bar. Prefer the
+  // cycle-keyed verdicts; fall back to positional scores only when no verdict
+  // carries a marginal_value (older loops).
+  const roiPoints: RoiPoint[] = (c.verdicts ?? []).some((v) => typeof v.marginal_value === 'number')
+    ? (c.verdicts ?? [])
+        .filter((v) => typeof v.cycle === 'number' && typeof v.marginal_value === 'number')
+        .map((v) => ({ cycle: v.cycle as number, score: v.marginal_value as number }))
+        .sort((a, b) => a.cycle - b.cycle)
+    : (c.marginal_scores ?? []).map((s, i) => ({ cycle: i + 1, score: s }))
+  const { byCycle, pending } = groupNudges(c.nudges ?? [])
+  const W = SURFACE_WIDTHS.loopCockpit
+
+  // ── time math ──
+  const cycleTs = (c.findings ?? []).map((f) => f.ts).filter((t): t is number => typeof t === 'number').sort((a, b) => a - b)
+  // total loop elapsed = running time banked from prior stretches + the current
+  // running stretch (only while actually running). Excludes paused intervals,
+  // and survives the started_at reset on each resume. Single source: the store
+  // backfills elapsed_seconds for any pre-accounting loop, so there's no legacy
+  // raw-span fallback here.
+  const banked = c.elapsed_seconds ?? 0
+  const curStretch = running && c.started_at ? Math.max(0, now - c.started_at) : 0
+  const totalElapsed = banked + curStretch
+  // current cycle elapsed: since the last finding landed (or since start for cycle 1)
+  const lastTs = cycleTs.at(-1) ?? c.started_at ?? now
+  const curCycleElapsed = active ? Math.max(0, now - lastTs) : 0
+
+  async function act(a: 'start' | 'pause' | 'resume' | 'stop') {
+    // 🪤 This used to be `.catch(() => null)`, so every failure was invisible: on a deleted loop
+    // the buttons stayed live and each click did nothing, with no way to learn why. The sibling
+    // Design cockpit already routes its actions through the reporting helpers for exactly this
+    // reason — `reportActionFailure` is the form for a call whose RESULT the caller needs.
+    const next = await api.uLoopAction(id, a).catch((e) => {
+      if (e instanceof ApiError && e.status === 404) setNotFound(true)
+      reportActionFailure(`${a} this loop`)(e)
+      return null
+    })
+    if (next) setC(loopToGoalLoop(next))
+  }
+  async function sendNudge() {
+    const t = nudgeText.trim(); if (!t || nudgeSending) return
+    setNudgeSending(true); setNudgeError(false)
+    try {
+      await api.uLoopNudge(id, t)
+      // Only clear + close on success — a failed nudge keeps the text so the
+      // user can retry instead of silently losing their guidance.
+      setNudgeText(''); setNudgeOpen(false)
+    } catch {
+      setNudgeError(true)
+    } finally {
+      setNudgeSending(false)
+    }
+  }
+  // Delete is destructive + irreversible (drops findings, deliverable, history),
+  // so require a confirming second click instead of firing on the first.
+  async function del() {
+    if (!confirmDelete) { setConfirmDelete(true); return }
+    // Same as the design cockpit: navigating back on a FAILED delete tells the user it worked. Report
+    // and stay, with the button still armed for a retry.
+    try { await api.deleteULoop(id) }
+    catch (e) { notify(`Couldn't delete this loop: ${String((e as Error)?.message || e)}`, 'error'); return }
+    onDeleted ? onDeleted() : onBack()
+  }
+  function copyLink() {
+    const url = `${location.origin}/#/loops/${id}`
+    void copyText(url, 'the link').then((ok) => { if (ok) { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 1500) } })
+  }
+  // Rename works in ANY state (the name is metadata; the rest of the spec freezes
+  // once running). updateLoop with a name-only body routes to the rename path.
+  function startRename() { cancelRename.current = false; setTitleDraft(c?.name || ''); setEditingTitle(true) }
+  function abortRename() { cancelRename.current = true; setEditingTitle(false) }
+  async function commitRename() {
+    setEditingTitle(false)
+    // Escape sets this so the blur that fires as the input unmounts doesn't
+    // save the very edit the user just tried to discard.
+    if (cancelRename.current) { cancelRename.current = false; return }
+    // Enter sets editingTitle=false → the input unmounts → onBlur fires commitRename
+    // AGAIN. The 2nd call still sees the old c.name (setC is post-await), so the
+    // name-unchanged guard misses it → a redundant PUT + double SSE. Guard re-entry.
+    if (renameInFlight.current) return
+    const name = titleDraft.trim()
+    if (!name || name === (c?.name || '')) return
+    renameInFlight.current = true
+    try {
+      const updated = await api.updateULoop(id, { name }).catch(() => null)
+      if (updated) setC(loopToGoalLoop(updated))
+    } finally { renameInFlight.current = false }
+  }
+
+  // Role-phased plan (planner/quorum): the phase the upcoming/current cycle is
+  // in, so the cockpit can show "Phase 2/4 · news" and highlight it in the list.
+  const execPlan = (c.execution_plan ?? []) as Record<string, unknown>[]
+  const activePhase = execPlan.length ? activePhaseIndex(c.total_cycles, execPlan) : -1
+
+  // Header status line (status dot/spinner + cycle + elapsed + rubric score).
+  const statusLine = (
+    <span data-type="body-s" className="inline-flex items-center gap-s text-on-surface-var truncate">
+      {running ? (
+        <span className="relative inline-flex items-center justify-center size-4">
+          <motion.span aria-hidden className="absolute inset-[-7px] rounded-pill" style={{ background: thinkingGlow() }}
+            animate={{ opacity: [0.4, 0.9, 0.4] }} transition={{ duration: 3.2, ease: 'easeInOut', repeat: Infinity }} />
+          <Spark size={13} />
+        </span>
+      ) : (
+        <span className="size-1.5 rounded-pill" style={{ background: c.status === 'failed' ? 'var(--color-danger)' : c.status === 'complete' ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
+      )}
+      {running ? (statusText || 'Working') : loopStatusLabel(effectiveLoopStatus(c.status, c.stop_reason))}
+      {/* FEED liveness, distinct from the LOOP's status beside it. A running loop whose stream has
+          dropped keeps saying "Working" while nothing arrives — indistinguishable from a loop that is
+          simply thinking. Same dot-plus-WORD form `settings/DiagnosticsPanel` ships and
+          `workflows/WorkflowRunDetail` adopted, so the vocabulary is not re-invented and the colour only
+          confirms the word. Shown only while `running`: a finished loop has no stream to be connected to. */}
+      {running && (
+        <span className="inline-flex shrink-0 items-center gap-1 text-on-surface-low">
+          <span className="inline-block size-1.5 rounded-pill"
+            style={{ background: connected ? 'var(--color-ok)' : 'var(--color-on-surface-low)' }} />
+          {connected ? 'Streaming' : 'Connecting…'}
+        </span>
+      )}
+    </span>
+  )
+
+  // ── Dedicated status bar (item 14) — a full-width row BELOW the header carrying
+  // the live execution status: phase trail (or cycle counter), elapsed, the
+  // containing project + bound workspace, and the run metadata pills hoisted out
+  // of the prompt card. The title sub-line keeps only the status dot + label; this
+  // bar is the single place to read "where the loop is right now". ──
+  const wsDir = (c as { workspace_dir?: string }).workspace_dir || ''
+  const cycleLabel = (() => {
+    const shown = shownCycle(c.status, c.total_cycles)
+    return c.max_cycles === 0 ? `cycle ${shown} · ongoing` : `cycle ${shown}/${c.max_cycles}`
+  })()
+  const statusBar = (
+    <div className="shrink-0 flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-outline-variant/30 px-2xl py-1.5"
+      style={{ background: 'var(--color-surface-container)' }}>
+      {/* progress — phase trail for planned loops, else the cycle counter */}
+      {execPlan.length > 0
+        ? <RunPhaseTrail plan={execPlan} activePhase={activePhase} active={active} complete={c.status === 'complete'} findings={findings} compact />
+        : <span data-type="caption" className="text-on-surface-var tabular-nums">{cycleLabel}</span>}
+      {c.started_at != null && <MetaPill icon={<Clock size={11} />} text={fmt(totalElapsed)} title="Elapsed (running time)" />}
+      {/* What this loop cost (MRT-3). Rendered only once the detail response has arrived — a
+          money pill that appears as "~$0.0000" while loading would read as "this was free",
+          and zero cannot distinguish free-and-local from not-yet-known. Planning spend is in
+          the VISIBLE text, not just the tooltip, because it is money the headline figure
+          deliberately excludes: the planner runs as its own session outside the worker prefix
+          this figure sums. `loopSpendTitle` states the rest — turn count, and the FLOOR caveat
+          when some model had no price row. */}
+      {spend !== null && <MetaPill icon={<DollarSign size={11} />} text={loopSpendPill(spend)} title={loopSpendTitle(spend)} />}
+      {/* What CAPABILITY fed the latest cycle (T2.1) — a peer of the cost and elapsed pills,
+          in the same `MetaPill` idiom so the run's facts read as one row. Names on hover;
+          `skillsUsedTitle` marks a `reduced` skill, which loaded a summary rather than a body.
+          Absent when the run loaded no skill — never a "used 0 skills" that would read as a
+          measured zero rather than the unmeasured turn it is. */}
+      {skillsUsed.length > 0 && <MetaPill icon={<Sparkles size={11} />} text={skillsUsedLabel(skillsUsed)} title={skillsUsedTitle(skillsUsed)} />}
+      <span className="flex-1" />
+      {/* scope: containing project (clickable) + bound workspace */}
+      {projId && projName && (onOpenProject
+        ? <button type="button" onClick={() => onOpenProject(projId)} title={`Project: ${projName} — open`}
+            data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-2 h-5 max-w-[14rem] hover:brightness-110"
+            style={accentChip}>
+            <FolderKanban size={11} className="shrink-0" /><span className="truncate">{projName}</span>
+          </button>
+        : <MetaPill icon={<FolderKanban size={11} />} text={projName} tone="primary" title="Project" />)}
+      {wsDir && <MetaPill icon={<FolderOpen size={11} />} text={wsDir.split('/').pop() || wsDir} title={`Workspace: ${wsDir}`} />}
+      <MetaPill icon={<Bot size={11} />} text={c.agent || 'default'} title="Worker agent" />
+      {c.model && <MetaPill icon={<Cpu size={11} />} text={shortModel(c.model)} title={c.model} />}
+      <MetaPill text={c.attended ? 'Attended' : 'Unattended'} title="Mode" />
+      {(c as { kind?: string }).kind === 'goal' && <>
+        <MetaPill text={GOAL_TYPE_LABEL[c.goal_type] ?? c.goal_type} tone="primary" title="Goal type" />
+        <MetaPill text={cap(c.granularity)} title="Granularity" />
+      </>}
+    </div>
+  )
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* Header — back + generated title + status + action buttons. The Details
+          rail toggle stays on the right (kept where it was per design). The rail
+          docks BELOW this bar, so keep the corner padding (the shell corner still
+          floats over the header — without this the actions slide under it). */}
+      <TopBar
+        keepCornerPadding
+        left={
+          <div className="flex items-center gap-s min-w-0">
+            <IconButton icon={ArrowLeft} label="Back to loops" size={40} onClick={onBack} />
+            <div className="min-w-0 flex flex-col">
+              {editingTitle ? (
+                <input autoFocus aria-label="Rename this loop" value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}
+                  onBlur={commitRename} onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); else if (e.key === 'Escape') abortRename() }}
+                  data-type="body-m" className="min-w-[16rem] h-7 rounded-md bg-surface-high px-2 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+              ) : (
+                <button type="button" onClick={startRename} title="Rename loop"
+                  data-type="title-m" className="truncate text-on-surface leading-tight text-left hover:text-on-surface-var" style={fvs(600)}>
+                  {c.name || c.goal}
+                </button>
+              )}
+              {statusLine}
+            </div>
+            {/* copy a shareable link to this loop — next to the title, like chat. */}
+            <IconButton icon={linkCopied ? Check : Link2} label={linkCopied ? 'Link copied' : 'Copy loop link'} size={32} onClick={copyLink} />
+          </div>
+        }
+        right={
+          // 4-tier cluster: run-controls are primary (last to shed labels), Details is
+          // a default toggle, Delete is low-priority danger so the cluster's own
+          // overflow menu absorbs it first as the header tightens. Header tenet:
+          // the side-panel opener (Details) is the RIGHTMOST control; Delete sits
+          // LEFTMOST of the right-edge group; everything else in between.
+          //
+          // The four run-controls ask LOOP_ACTION_SOURCE_STATUSES — the mirror of the guard the
+          // action route enforces — so this header cannot offer a press that answers 409, nor
+          // withhold one the backend accepts. It did both: Start was gated on `ready` alone while
+          // the backend also accepts a loop still in `review` (the sibling design cockpit offered
+          // it, so the same loop had a Start button on one page and none here), and Resume's
+          // hand-written list was missing `blocked`, stranding a blocked loop.
+          //
+          // Stop asks the map rather than the `active` flag below it. The two agree today (the
+          // mirror's `stop` row IS the active set, by reference) — but `active` is a BUCKET this
+          // file also uses for Nudge, Delete and the live clock, and reading a lifecycle gate off
+          // a bucket is how these guards drifted in the first place.
+          <HeaderActions className="max-w-[60vw]">
+            {!active && <HeaderControl icon={Trash2} label={confirmDelete ? 'Confirm delete?' : 'Delete'} danger priority="low" onClick={del} />}
+            {LOOP_ACTION_SOURCE_STATUSES.start.has(c.status) && <HeaderControl icon={Start} label="Start" variant="primary" priority="primary" onClick={() => act('start')} />}
+            {LOOP_ACTION_SOURCE_STATUSES.pause.has(c.status) && <HeaderControl icon={Pause} label="Pause" variant="secondary" priority="primary" onClick={() => act('pause')} />}
+            {LOOP_ACTION_SOURCE_STATUSES.resume.has(c.status) && <HeaderControl icon={Play} label="Resume" variant="primary" priority="primary" onClick={() => act('resume')} />}
+            {LOOP_ACTION_SOURCE_STATUSES.stop.has(c.status) && <HeaderControl icon={Square} label={confirmStop ? 'Stop for good?' : 'Stop'} variant={confirmStop ? 'danger' : 'secondary'} onClick={() => { if (!confirmStop) { setConfirmStop(true); return } setConfirmStop(false); act('stop') }} />}
+            {/* `ariaExpanded`, not `active`: this reveals the inline nudge composer below (a
+                height 0 → auto region with a textarea), so the state a screen-reader user needs is
+                "content appeared", not "a mode is on". Its sibling Details is the opposite case. */}
+            {active && <HeaderControl icon={MessageSquarePlus} label="Nudge" variant="secondary" ariaExpanded={nudgeOpen} onClick={() => setNudgeOpen(!nudgeOpen)} />}
+            <HeaderControl icon={PanelRight} label="Details" active={railOpen} onClick={() => { setRailOpen(!railOpen); setSelected(null) }} />
+          </HeaderActions>
+        }
+      />
+
+      {/* Dedicated execution status bar (item 14) — directly below the header. */}
+      {statusBar}
+
+      <div className="flex-1 min-h-0 flex">
+       {/* main column (body); narrows when the Details rail opens */}
+       <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
+        <div className="shrink-0 px-2xl pt-m pb-m flex flex-col gap-m" style={{ marginInline: 'auto', width: '100%', maxWidth: W }}>
+          {/* Prompt bar (item 14) — a second, expandable status bar: COLLAPSED shows
+              the first line of the prompt; EXPANDED reveals the full goal markdown +
+              sub-goals. Run metadata now lives in the status bar above, so this row is
+              purely the prompt. */}
+          <div className="rounded-lg bg-surface-container/60 px-l py-m">
+            <button type="button" onClick={() => setPromptOpen(!promptOpen)} aria-expanded={promptOpen} className="flex items-center gap-s text-left w-full min-w-0">
+              <ChevronRight size={14} className={`shrink-0 text-on-surface-low transition-transform ${promptOpen ? 'rotate-90' : ''}`} />
+              <Eyebrow as="span" className="shrink-0">Prompt</Eyebrow>
+              {/* first line of the prompt, shown only while collapsed */}
+              {!promptOpen && (
+                <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface-var">
+                  {(c.goal || '').split('\n').map((l) => l.trim()).find(Boolean) || '—'}
+                </span>
+              )}
+            </button>
+            {promptOpen && <div className="mt-2" />}
+            {promptOpen
+              ? <div data-type="body-m" className="max-h-[40vh] overflow-y-auto text-on-surface">
+                  <Markdown>{c.goal}</Markdown>
+                  {c.success_criteria && <p data-type="body-s" className="mt-2 text-on-surface-low"><span className="text-on-surface-var">Done when:</span> {c.success_criteria}</p>}
+                  {/* Sub-goals live inside the expanded prompt — they're part of
+                      how the goal is decomposed, not a separate concern. */}
+                  {c.sub_goals.length > 0 && (
+                    <div className="mt-l">
+                      <Eyebrow className="mb-1.5">Sub-goals · {c.sub_goals.length}</Eyebrow>
+                      <ul className="flex flex-col gap-1.5">
+                        {c.sub_goals.map((s, i) => (
+                          <li key={i} data-type="body-s" className="flex items-start gap-s text-on-surface-var">
+                            <span className="mt-1.5 size-1 shrink-0 rounded-pill bg-primary" />{asText(s)}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {/* Multi-agent roster — the personas driving the loop. Hidden on
+                      the cockpit before this; surfaced so the configuration stays
+                      visible once the loop is running, mirroring the Plan Review. */}
+                  {c.execution === 'multi_agent' && (c.roster?.length ?? 0) > 0 && (
+                    <div className="mt-l">
+                      <Eyebrow className="mb-1.5">
+                        Roster · {c.roster!.length}{c.strategy_id ? ` · ${cap(c.strategy_id.replace(/_/g, ' '))}` : ''}
+                      </Eyebrow>
+                      <div className="flex flex-col gap-1.5">
+                        {c.roster!.map((m, i) => (
+                          <div key={i} className="flex flex-col gap-0.5 rounded-lg bg-surface-container px-m py-2">
+                            <span data-type="label-s" className="text-on-surface" style={fvs(550)}>{m.role}</span>
+                            {m.persona && <span data-type="body-s" className="text-on-surface-var">{m.persona}</span>}
+                            {m.role_hint && <span data-type="caption" className="text-on-surface-low mt-0.5">↳ {m.role_hint}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              : <div data-type="body-s" className="pl-[22px] text-on-surface-var line-clamp-2 break-words"><Markdown>{c.goal}</Markdown></div>}
+          </div>
+
+          {c.error_message && (() => {
+            // A COMPLETE loop's note is informational (the non-genuine budget stop:
+            // "cycle budget reached" — an expected end, NOT an error), so render it
+            // neutral. failed/stagnant/etc. are real problems → danger treatment.
+            const info = c.status === 'complete'
+            const tone = info ? 'var(--color-on-surface-low)' : 'var(--color-danger)'
+            const Icon = info ? FileText : AlertTriangle
+            return (
+            <motion.div variants={messageEnter} initial="initial" animate="animate" data-type="body-s" className="rounded-md px-m py-2.5" style={{ background: `color-mix(in srgb, ${tone} 12%, transparent)`, color: tone }}>
+              <div className="flex items-center gap-1.5 mb-1" style={fvs(500)}>
+                <Icon size={14} className="shrink-0" /> {c.status === 'failed' ? 'This loop stopped on an error' : info ? 'Completed on its cycle budget' : 'Last cycle hit an error'}
+              </div>
+              <p className="break-words opacity-90">{c.error_message}</p>
+              {/* The hint follows the BUTTON, not a third hand-written list: this banner only
+                  renders with an `error_message`, and every status that can resume from one
+                  deserves to be told how. It used to name failed/stagnant only, so a `blocked`
+                  loop — which the backend has always accepted a resume from — got the Resume
+                  control with no explanation of what to do first. */}
+              {LOOP_ACTION_SOURCE_STATUSES.resume.has(c.status) && <p className="mt-1.5 opacity-75">Fix the underlying cause, then <span style={fvs(500)}>Resume</span> to continue from where it left off.</p>}
+            </motion.div>
+          )})()}
+          {judgeDegraded && running && (
+            <div data-type="body-s" className="rounded-md px-m py-2 flex items-center gap-2" style={{ background: 'color-mix(in srgb, var(--color-warning) 12%, transparent)', color: 'var(--color-warning)' }}>
+              <AlertTriangle size={14} className="shrink-0" /> Done-ness check was unavailable on a recent cycle — the loop keeps running on its cycle budget. It’ll resume quality assessment automatically.
+            </div>
+          )}
+          {c.status === 'needs_input' && c.pending_question && (
+            <div data-type="body-s" className="rounded-md px-m py-2.5" style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
+              <div className="flex items-center gap-1.5 text-info mb-1" style={fvs(500)}><HelpCircle size={14} /> The agent needs your input</div>
+              <div className="text-on-surface">{c.pending_question}</div>
+              {/* Offer the answer inline — the question IS the call to action, so
+                  open the nudge composer right here instead of just naming it. */}
+              {!nudgeOpen && (
+                <Button size="sm" className="mt-2" onClick={() => setNudgeOpen(true)}>
+                  <MessageSquarePlus size={14} /> Answer & resume
+                </Button>
+              )}
+            </div>
+          )}
+
+          <AnimatePresence>
+            {nudgeOpen && (
+              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+                <div className="rounded-lg bg-surface-container p-m">
+                  <textarea autoFocus value={nudgeText} onChange={(e) => { setNudgeText(e.target.value); if (nudgeError) setNudgeError(false) }}
+                    onKeyDown={(e) => {
+                      // ⌘/Ctrl+Enter sends (matches every other composer); Esc cancels.
+                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendNudge() }
+                      else if (e.key === 'Escape') { e.preventDefault(); setNudgeOpen(false); setNudgeText(''); setNudgeError(false) }
+                    }}
+                    placeholder="Guide the next cycle — focus an angle, or answer the agent's question."
+                    // 🔑 `outline-none` with no replacement on either the control or its container.
+                    // `autoFocus` hides half the defect — focus ARRIVES here on open — but Tab to
+                    // Cancel/Send and Shift+Tab back and there was no indicator, which is the state a
+                    // keyboard user actually spends time in.
+                    // 🪤 Element ring, not container ring, for the same reason as the session-peek
+                    // composer: this container also holds the error line and the button row, so
+                    // `focus-within` would light the whole box when Send takes focus.
+                    data-type="body-s" className="w-full bg-transparent outline-none focus:ring-2 focus:ring-inset focus:ring-primary text-on-surface placeholder:text-on-surface-low min-h-[60px] resize-y" />
+                  {nudgeError && (
+                    <p role="alert" data-type="body-s" className="mt-1" style={{ color: 'var(--color-error)' }}>Couldn’t send the nudge — your text is kept, try again.</p>
+                  )}
+                  <div className="flex items-center justify-end gap-s mt-2">
+                    <span data-type="caption" className="mr-auto text-on-surface-low">⌘↵ to send · Esc to cancel</span>
+                    <Button variant="ghost" size="sm" onClick={() => { setNudgeOpen(false); setNudgeText(''); setNudgeError(false) }}>Cancel</Button>
+                    <Button size="sm" onClick={sendNudge} disabled={!nudgeText.trim() || nudgeSending}
+                      disabledReason={!nudgeText.trim() ? 'Write a nudge first' : undefined}>{nudgeSending ? 'Sending…' : 'Send nudge'}</Button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* ── body: shell-like — the page/sections don't scroll; only the Outputs
+            panel's inner content does. Outputs fills the remaining height and
+            scrolls internally. Progress signal lives in the header status line +
+            the Details rail's per-cycle ROI, not a standalone hero. ── */}
+        <div className="flex-1 min-h-0 px-2xl pb-2xl flex flex-col gap-l" style={{ marginInline: 'auto', width: '100%', maxWidth: W }}>
+          {/* Outputs — artifact-driven, the general outcome channel. Shows every
+              artifact the loop produced (a report, N reports, an insight, a check
+              summary) + the linked Tasks + the raw log. Fills remaining height;
+              its inner content scrolls. */}
+          <OutputsPanel
+            loop={c} artifacts={artifacts} tasks={tasks} report={report} active={active}
+            onOpenArtifact={onOpenArtifact}
+            onOpenTask={onOpenTask}
+            onExpandReport={() => setReportOpen(true)}
+            onDownloadReport={() => downloadText(`${safeFilename(c.name || c.goal, c.id)}-deliverable.md`, report, 'text/markdown;charset=utf-8')}
+          />
+        </div>
+       </div>
+
+       {/* ── Details rail: primary list (Findings Log + cycles) → detail in-place ── */}
+       <AnimatePresence>
+         {railOpen && (
+           <SidePanel
+             key="details"
+             storeKey="loop-rail-w"
+             fillHeight
+             icon={selected
+               ? <SquareIconButton icon={ArrowLeft} iconSize={16} label="Back to list" onClick={() => setSelected(null)} />
+               : <PanelRight size={18} />}
+             title={selected == null ? 'Details' : selected.kind === 'log' ? 'Findings Log' : selected.kind === 'roi' ? 'Returns per cycle' : `Cycle ${selected.cycle}`}
+             onClose={() => { setRailOpen(false); setSelected(null) }}
+           >
+             {selected == null ? (
+               // ── primary list: Findings Log first, then cycles (newest first) ──
+               <div className="flex flex-col gap-1">
+                 <RailRow
+                   icon={<ScrollText size={15} />}
+                   label="Findings Log"
+                   hint={`${findings.length} ${findings.length === 1 ? 'cycle' : 'cycles'}`}
+                   onClick={() => setSelected({ kind: 'log' })}
+                 />
+                 {c.goal_type === 'open_ended' && (c.marginal_scores?.length ?? 0) > 0 && (
+                   <RailRow
+                     icon={<BarChart3 size={15} />}
+                     label="Returns per cycle"
+                     hint={`▲${c.marginal_scores!.at(-1)!.toFixed(1)}`}
+                     onClick={() => setSelected({ kind: 'roi' })}
+                   />
+                 )}
+                 {pending.length > 0 && (
+                   <div data-type="body-s" className="rounded-lg px-m py-2" style={{ background: 'color-mix(in srgb, var(--color-info) 8%, transparent)', border: '1px dashed color-mix(in srgb, var(--color-info) 30%, transparent)' }}>
+                     <Eyebrow tone="info" className="flex items-center gap-1.5 mb-1"><MessageSquarePlus size={12} /> nudge queued — applies next cycle</Eyebrow>
+                     {pending.map((n, i) => <p key={i} className="text-on-surface-var">{n.text}</p>)}
+                   </div>
+                 )}
+                 {(() => {
+                   const cycleNode = (f: LoopFinding, idx: number) => {
+                     const sorted = cycleTs
+                     const ti = sorted.indexOf(f.ts ?? -1)
+                     const prev = ti > 0 ? sorted[ti - 1] : c.started_at ?? undefined
+                     const dur = f.ts != null && prev != null ? f.ts - prev : undefined
+                     return <CycleNode key={f.cycle} f={f} verdict={verdictByCycle.get(f.cycle)} dur={dur} hasNudge={!!byCycle.get(f.cycle)?.length} onClick={() => setSelected({ kind: 'cycle', cycle: f.cycle })} delay={idx * 0.02} />
+                   }
+                   // The in-progress cycle indicator (pulsing for running). For a
+                   // plan it renders INSIDE the active phase group (not as a
+                   // separate box); for a flat loop it sits above the cycle list.
+                   const liveCycle = active ? (
+                     <div className="rounded-lg bg-surface-container px-m py-2">
+                       <div className="flex items-center gap-s">
+                         <span className="relative inline-flex items-center justify-center size-5 shrink-0">
+                           {running && <motion.span aria-hidden className="absolute inset-[-6px] rounded-pill" style={{ background: thinkingGlow() }} animate={{ opacity: [0.3, 0.7, 0.3] }} transition={{ duration: 3, repeat: Infinity }} />}
+                           <span className={running ? '' : 'text-on-surface-low'}><Spark size={13} /></span>
+                         </span>
+                         <span data-type="label-s" className="flex-1 truncate text-on-surface" style={fvs(500)}>Cycle {c.total_cycles + 1} · {running ? (statusText || 'working') : loopStatusLabel(effectiveLoopStatus(c.status, c.stop_reason)).toLowerCase()}</span>
+                         {running && <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums">{fmt(curCycleElapsed)}</span>}
+                       </div>
+                       {running && activity.length > 0 && <LiveSubsteps activity={activity} />}
+                     </div>
+                   ) : null
+                   // No plan → flat list (legacy): live cycle on top, then findings.
+                   if (execPlan.length === 0) {
+                     // Distinguish "genuinely nothing ran" from "cycles ran but this
+                     // loop carries no per-cycle findings" (older loops persisted
+                     // total_cycles + marginal_scores but not finding objects) — else a
+                     // completed 3-cycle loop misleadingly reads "No cycles completed yet"
+                     // while its header, Change Log, and ROI graph all show 3 cycles.
+                     const emptyNote = findings.length === 0 && !active
+                       ? (c.total_cycles > 0
+                           ? `${c.total_cycles} ${c.total_cycles === 1 ? 'cycle' : 'cycles'} ran — no per-cycle detail recorded for this loop.`
+                           : 'No cycles completed yet.')
+                       : null
+                     return (<>
+                       {liveCycle}
+                       {emptyNote && <p data-type="body-s" className="text-on-surface-low px-m py-1">{emptyNote}</p>}
+                       {findings.map((f, idx) => cycleNode(f, idx))}
+                     </>)
+                   }
+                   // With a plan → one group per phase, REVERSE-chronological (the
+                   // latest/active phase first). Cycles always show under their
+                   // phase; only the phase detail is behind expansion. The live
+                   // in-progress cycle renders inside the active phase group.
+                   return execPlan.map((_ph, pi) => pi).reverse().map((pi) => (
+                     <PhaseGroup key={pi} phase={execPlan[pi]} index={pi} active={pi === activePhase}
+                       minCycles={phaseMinCycles(execPlan[pi])}
+                       cycles={findings.filter((f) => phaseForCycle(f.cycle, execPlan) === pi)}
+                       renderCycle={cycleNode} liveCycle={pi === activePhase ? liveCycle : null} />
+                   ))
+                 })()}
+               </div>
+             ) : (
+               // ── drilled-in detail: full rail height (Back returns to list) ──
+               selected.kind === 'roi'
+                 ? (<div className="flex flex-col gap-m">
+                     <p data-type="body-s" className="text-on-surface-var">The judge's marginal value per cycle, against your <span className="text-on-surface">{c.granularity}</span> stop threshold. A run of bars below the line is what trips the auto-stop.</p>
+                     <div className="rounded-lg bg-surface-container px-m py-l">
+                       <RoiRail points={roiPoints} granularity={c.granularity} />
+                     </div>
+                   </div>)
+                 : selected.kind === 'log'
+                 ? (log
+                   ? (<div className="flex flex-col gap-m">
+                       <div className="flex justify-end">
+                         <QuietButton onClick={() => downloadText(`${safeFilename(c.name || c.goal, c.id)}-findings.md`, log, 'text/markdown;charset=utf-8')}><Download size={13} /> Download</QuietButton>
+                       </div>
+                       <Markdown>{log}</Markdown>
+                     </div>)
+                   : <p data-type="body-s" className="text-on-surface-low">No findings logged yet — the cumulative trail appears here as cycles complete.</p>)
+                 : (() => {
+                     const f = findings.find((x) => x.cycle === selected.cycle)
+                     if (!f) return <p data-type="body-s" className="text-on-surface-low">Cycle not found.</p>
+                     return (<>
+                       {/* Investigate (plan 60): "what happened on this cycle?" —
+                           the finding, its judge verdict, and any nudge, in run context. */}
+                       <div className="mb-s flex justify-end">
+                         <InvestigateButton kind="loop_cycle" id={`${c.id}:${f.cycle}`}
+                           backLink={`#/loops/${c.id}`} size={28} />
+                       </div>
+                       <CycleDetail f={f} verdict={verdictByCycle.get(f.cycle)} nudges={byCycle.get(f.cycle) ?? []} activity={running && c.total_cycles === f.cycle ? activity : []} />
+                     </>)
+                   })()
+             )}
+           </SidePanel>
+         )}
+       </AnimatePresence>
+      </div>
+
+      {/* report — expand to a full reading modal */}
+      <AnimatePresence>
+        {reportOpen && (
+          <Modal title="Report" icon={<Spark size={18} animated={false} />} onClose={() => setReportOpen(false)}>
+            <Markdown>{report}</Markdown>
+          </Modal>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+/** Outputs — the loop's outcomes in a tabbed shell (the general outcome channel).
+ *  Each output entity gets its own tab: every artifact the worker saved, the
+ *  canonical deliverable doc (when the goal type has one), and the linked Tasks.
+ *  The tab strip + per-tab actions (download/expand) live in a FIXED header so
+ *  they stay visible while the tab's content scrolls below. */
+type OutputTab =
+  | { id: string; kind: 'artifact'; label: string; artifact: Artifact }
+  | { id: 'deliverable'; kind: 'deliverable'; label: string }
+  | { id: 'tasks'; kind: 'tasks'; label: string }
+
+function OutputsPanel({ loop, artifacts, tasks, report, active, onOpenArtifact, onOpenTask, onExpandReport, onDownloadReport }: {
+  loop: GoalLoop; artifacts: Artifact[]; tasks: TaskItem[]; report: string; active: boolean
+  onOpenArtifact?: (slug: string) => void
+  onOpenTask?: (taskId: string) => void
+  onExpandReport: () => void; onDownloadReport: () => void
+}) {
+  // The engine auto-saves the canonical deliverable as a `*-deliverable`
+  // artifact AND it's served as the dedicated Deliverable tab — same content.
+  // When the Deliverable tab is present, drop that duplicate artifact so the
+  // document isn't shown twice in the strip.
+  const artifactTabs = (report ? artifacts.filter((a) => !a.slug.endsWith('-deliverable')) : artifacts)
+    .map((a): OutputTab => ({ id: `a:${a.slug}`, kind: 'artifact', label: a.name, artifact: a }))
+  // Deliverable FIRST — it's the loop's canonical output, so it's the default tab
+  // (landing on a sibling findings-report artifact buried the main result). Then
+  // other artifacts, then Tasks.
+  const tabs: OutputTab[] = [
+    ...(report ? [{ id: 'deliverable', kind: 'deliverable', label: 'Deliverable' } as OutputTab] : []),
+    ...artifactTabs,
+    ...(tasks.length ? [{ id: 'tasks', kind: 'tasks', label: `Tasks · ${tasks.length}` } as OutputTab] : []),
+  ]
+  const [activeId, setActiveId] = useState<string>('')
+  const [copiedReport, setCopiedReport] = useState(false)
+  const copyReport = () => {
+    void copyText(report, 'the report').then((ok) => { if (ok) { setCopiedReport(true); setTimeout(() => setCopiedReport(false), 1500) } })
+  }
+  // Keep the active tab valid as outputs stream in (default to the first).
+  const current = tabs.find((t) => t.id === activeId) ?? tabs[0]
+  useEffect(() => {
+    if (tabs.length && !tabs.some((t) => t.id === activeId)) setActiveId(tabs[0].id)
+  }, [tabs.map((t) => t.id).join(','), activeId])
+
+  return (
+    // Shell-like: the panel fills the body's remaining height. The tab strip +
+    // actions are a FIXED header; only the active tab's content scrolls.
+    <div className="flex-1 min-h-0 rounded-xl bg-surface-container/50 flex flex-col overflow-hidden">
+      <div className="shrink-0 px-l pt-m flex items-center gap-l border-b border-outline-variant/40">
+        {tabs.length > 0 ? (
+          <>
+            {/* tab strip — contiguous tabs sitting ON the bottom border, the
+                active one carrying a primary underline (reads as real tabs) */}
+            {/* These already announced `role="tab"` + `aria-selected`, but with no owning
+                `role="tablist"` — which axe reports as `aria-required-parent` (critical) — and
+                every tab was its own tab stop instead of the one-stop-plus-arrows a tablist
+                promises. Same contract as the terminal strips and `#/chat`'s activity panel. */}
+            <div role="tablist" aria-label="Loop views" onKeyDown={tabListKeys((i) => setActiveId(tabs[i].id))}
+              className="flex-1 min-w-0 flex items-end gap-1 overflow-x-auto -mb-px">
+              {tabs.map((t) => {
+                const on = current?.id === t.id
+                const Icon = t.kind === 'tasks' ? ListChecks : t.kind === 'deliverable' ? Spark : FileText
+                return (
+                  <button key={t.id} type="button" onClick={() => setActiveId(t.id)} role="tab" aria-selected={on}
+                    tabIndex={on ? 0 : -1}
+                    data-type="body-s" className={`shrink-0 inline-flex items-center gap-1.5 px-m h-9 max-w-[14rem] border-b-2 transition-colors ${on ? 'border-primary text-on-surface' : 'border-transparent text-on-surface-low hover:text-on-surface-var'}`}
+                    style={on ? fvs(600) : undefined}
+                    title={t.label}>
+                    <Icon size={13} className="shrink-0" /><span className="truncate">{t.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+            {/* per-tab actions — pinned in the header so they survive scroll */}
+            {current?.kind === 'deliverable' && (
+              <div className="shrink-0 flex items-center gap-1">
+                <IconButton icon={copiedReport ? Check : Copy} label={copiedReport ? 'Copied' : 'Copy deliverable'} size={28} onClick={copyReport} />
+                <IconButton icon={Download} label="Download deliverable" size={28} onClick={onDownloadReport} />
+                <IconButton icon={Maximize2} label="Expand deliverable" size={28} onClick={onExpandReport} />
+              </div>
+            )}
+            {current?.kind === 'artifact' && onOpenArtifact && (
+              <IconButton icon={ExternalLink} label="Open in Artifacts" size={28} onClick={() => onOpenArtifact(current.artifact.slug)} />
+            )}
+          </>
+        ) : (
+          <Eyebrow as="span" className="h-9 inline-flex items-center">Outputs</Eyebrow>
+        )}
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-y-auto px-l py-l">
+        {!current ? (
+          <p data-type="body-s" className="text-on-surface-low">
+            {active
+              ? (loop.goal_type === 'verifiable'
+                  ? 'This goal produces a passing check, not a document — outcomes will appear as the worker saves them.'
+                  : (loop.total_cycles > 0
+                      ? 'No outputs saved yet — they’ll appear here as the loop produces them.'
+                      : 'Working on the first cycle… outputs appear here as the loop produces them.'))
+              : 'No outputs yet.'}
+          </p>
+        ) : current.kind === 'deliverable' ? (
+          <DeliverableDoc report={report} loop={loop} />
+        ) : current.kind === 'tasks' ? (
+          <div className="flex flex-col gap-1.5">
+            {tasks.map((t) => {
+              const done = t.status === 'done'
+              const box = (
+                <span className="shrink-0 inline-flex size-4 items-center justify-center rounded-sm border" style={{ borderColor: done ? 'var(--color-ok)' : 'var(--color-outline-variant)', background: done ? 'var(--color-ok)' : 'transparent' }}>{done && <Check size={11} className="text-on-primary" />}</span>
+              )
+              const label = <span className={`flex-1 min-w-0 truncate ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{t.title}</span>
+              const status = <span data-type="caption" className="shrink-0 text-on-surface-low">{t.status}</span>
+              // When a task-open handler is wired, each row is a button that
+              // deep-links to that task on the Tasks page (read its detail, edit,
+              // see deps) — parity with the artifact tab's "Open" affordance.
+              return onOpenTask ? (
+                <button key={t.id} type="button" onClick={() => onOpenTask(t.id)}
+                  data-type="body-s" className="group flex w-full items-center gap-s rounded-md px-2 py-1 -mx-2 text-left hover:bg-surface-high transition-colors"
+                  title="Open task">
+                  {box}{label}{status}
+                  <ChevronRight size={14} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" />
+                </button>
+              ) : (
+                <div key={t.id} data-type="body-s" className="flex items-center gap-s">
+                  {box}{label}{status}
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <ArtifactTab artifact={current.artifact} onOpen={onOpenArtifact} loopId={loop.id} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** A document reading surface: an elevated, padded "page" so long-form output
+ *  reads as a finished document sitting on the panel rather than raw markdown
+ *  flush against the container. Optional eyebrow line carries source metadata. */
+function DocSurface({ eyebrow, children }: { eyebrow?: React.ReactNode; children: string }) {
+  return (
+    <div className="rounded-xl bg-surface px-2xl py-xl ring-1 ring-outline-variant/30" style={{ boxShadow: 'var(--shadow-composer)' }}>
+      {eyebrow && <Eyebrow className="mb-l flex items-center gap-s border-b border-outline-variant/30 pb-m">{eyebrow}</Eyebrow>}
+      <Markdown>{children}</Markdown>
+    </div>
+  )
+}
+
+/** The canonical deliverable, rendered as a document page. */
+function DeliverableDoc({ report, loop }: { report: string; loop: GoalLoop }) {
+  // The goal_type suffix applies only to the goal kind (general/design have none —
+  // the adapter defaults it, which would dangle a spurious "· Open-ended" on them).
+  const isGoal = (loop as { kind?: string }).kind === 'goal'
+  return (
+    <DocSurface eyebrow={<><span className="text-primary inline-flex"><Spark size={12} /></span> Deliverable{isGoal ? ` · ${GOAL_TYPE_LABEL[loop.goal_type] ?? loop.goal_type}` : ''}</>}>
+      {report}
+    </DocSurface>
+  )
+}
+
+/** One artifact's tab body: its metadata + a live render of its content (fetched
+ *  on demand), as a document page with a click-through to the full Artifacts page. */
+function ArtifactTab({ artifact, onOpen, loopId }: { artifact: Artifact; onOpen?: (slug: string) => void
+  /** The owning loop — an element-anchored correction on ITS deliverable belongs in
+   *  the loop's guidance channel (`guidance.txt`, via the steer endpoint), not in a
+   *  fresh chat: the worker that produced this artifact is the thing that must
+   *  regenerate it. This is AS-3's design-loop dispatch target. */
+  loopId?: string }) {
+  const [content, setContent] = useState<string | null>(artifact.content ?? null)
+  // 🔴 A FAILED ARTIFACT READ IS NOT AN ARTIFACT WITH NO CONTENT (#532). This used to
+  // `.catch(() => setContent(''))`, and `content == null` is the LOADING sentinel — so a failed
+  // fetch fell into the blank-content branch below and printed "This artifact has no inline
+  // content", a claim about the artifact made because the read failed. `content` now HOLDS at
+  // `null`, so the error branch must precede the `null` test.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+  useEffect(() => {
+    if (content != null) return
+    let alive = true
+    api.artifact(artifact.slug)
+      .then((full) => { if (alive) { setLoadErr(null); setContent(full.content ?? '') } })
+      .catch((e) => { if (alive) { setLoadErr(e); setContent(null) } })
+    return () => { alive = false }
+  }, [artifact.slug])
+  const ctype = useMemo(() => resolveContentType({ kind: artifact.kind }), [artifact.kind])
+
+  const eyebrow = (
+    <>
+      <FileText size={12} className="text-primary" />
+      {/* size/weight inherit from the surrounding Eyebrow's caption role */}
+      <span className="normal-case tracking-normal">{artifact.kind}{artifact.version > 1 ? ` · v${artifact.version}` : ''}</span>
+      {onOpen && <TextLink onClick={() => onOpen(artifact.slug)} icon={ExternalLink} iconPosition="trailing" iconSize={12} className="ml-auto normal-case tracking-normal">Open in Artifacts</TextLink>}
+    </>
+  )
+  // `DocSurface` renders its children as markdown (`children: string`), so the alert gets the
+  // same surface shell directly rather than being stringified through it.
+  if (loadErr) return (
+    <div className="rounded-xl bg-surface px-2xl py-xl ring-1 ring-outline-variant/30" style={{ boxShadow: 'var(--shadow-composer)' }}>
+      <Eyebrow className="mb-l flex items-center gap-s border-b border-outline-variant/30 pb-m">{eyebrow}</Eyebrow>
+      <InlineLoadError what="this artifact" error={loadErr} />
+    </div>
+  )
+  if (content == null) return <DocSurface eyebrow={eyebrow}>{'Loading…'}</DocSurface>
+  if (!content.trim()) return (
+    <DocSurface eyebrow={eyebrow}>{'_This artifact has no inline content — open it in Artifacts to view._'}</DocSurface>
+  )
+  // markdown → the deliberate prose reading surface; everything else → the shared
+  // render engine (read-only), so HTML/SVG/React/json render exactly as on the
+  // Artifacts page (same sanitizer, same sandbox) — no parallel kind dispatch here.
+  if (ctype.id === 'markdown' || ctype.id === 'text') return <DocSurface eyebrow={eyebrow}>{content}</DocSurface>
+  return (
+    <div className="rounded-xl overflow-hidden bg-surface ring-1 ring-outline-variant/30" style={{ boxShadow: 'var(--shadow-composer)' }}>
+      <Eyebrow className="flex items-center gap-s bg-surface px-l py-2 border-b border-outline-variant/30">{eyebrow}</Eyebrow>
+      <div className="h-[60vh]">
+        <ContentSurface type={ctype} content={content} title={artifact.name} docId={artifact.slug} readOnly
+          iterate={loopId ? { slug: artifact.slug, correction: async (directive) => { await api.uLoopNudge(loopId, directive) } } : undefined} />
+      </div>
+    </div>
+  )
+}
+
+function LiveSubsteps({ activity }: { activity: { kind: string; label: string; detail?: string }[] }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="mt-1.5 pl-7">
+      <button onClick={() => setOpen((v) => !v)} aria-expanded={open} data-type="caption" className="flex items-center gap-1.5 text-on-surface-low hover:text-on-surface">
+        <Search size={12} /> {activity.length} steps <ChevronRight size={12} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
+      </button>
+      {open && (
+        <ul className="mt-1 flex flex-col gap-1">
+          {activity.slice(-12).map((e, i) => (
+            <li key={i} data-type="caption" className="flex items-start gap-s text-on-surface-low">
+              <span className="mt-1.5 size-1 shrink-0 rounded-pill" style={{ background: e.kind === 'tool' ? 'var(--color-secondary)' : 'var(--color-on-surface-low)' }} />
+              <span className="truncate">{e.label}{e.detail ? ` · ${e.detail}` : ''}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+/** A row in the Details rail primary list — drills into its detail on click. */
+function RailRow({ icon, label, hint, onClick }: {
+  icon: React.ReactNode; label: string; hint?: string; onClick: () => void
+}) {
+  return (
+    <button type="button" onClick={onClick}
+      className="group w-full text-left rounded-lg px-m py-2.5 flex items-center gap-s hover:bg-surface-high transition-colors">
+      <span className="shrink-0 text-primary">{icon}</span>
+      <span data-type="label-s" className="flex-1 truncate text-on-surface" style={fvs(500)}>{label}</span>
+      {hint && <span data-type="caption" className="shrink-0 text-on-surface-low">{hint}</span>}
+      <ChevronRight size={15} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" />
+    </button>
+  )
+}
+
+/** A planned-phase group in the Details rail: a header (number/role/active/cycle
+ *  count) with that phase's cycles ALWAYS shown beneath (newest first), and the
+ *  live in-progress cycle for the active phase. Expanding the header reveals the
+ *  phase DETAIL only — target, exit, agent, skills, workflows. Auto-expanded for
+ *  the active phase. */
+function PhaseGroup({ phase, index, active, minCycles, cycles, renderCycle, liveCycle }: {
+  phase: Record<string, unknown>; index: number; active: boolean; minCycles: number
+  cycles: LoopFinding[]; renderCycle: (f: LoopFinding, idx: number) => React.ReactNode
+  liveCycle?: React.ReactNode
+}) {
+  const [open, setOpen] = useState(active)
+  const role = String(phase.role || '').trim()
+  const target = String(phase.target || '').trim()
+  const exit = String(phase.phase_exit || '').trim()
+  const agent = String(phase.agent_name || '').trim()
+  const skills = (phase.skill_ids as string[]) || []
+  const wfs = (phase.workflow_ids as string[]) || []
+  // Cycles newest-first within the phase (mirrors the latest-first phase order).
+  const orderedCycles = [...cycles].reverse()
+  return (
+    <div className={`rounded-lg ${active ? 'ring-1 ring-primary' : ''}`} style={{ background: 'color-mix(in srgb, var(--color-surface-container) 55%, transparent)' }}>
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full flex items-center gap-s px-m py-2 text-left">
+        <ChevronRight size={13} className={`shrink-0 text-on-surface-low transition-transform ${open ? 'rotate-90' : ''}`} />
+        <span data-type="caption" className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill bg-surface-high text-on-surface-low tabular-nums">{index + 1}</span>
+        {/* role + the agent definition backing it this phase (always visible). */}
+        <span className="flex-1 min-w-0 flex flex-col">
+          <span data-type="label-s" className="truncate text-on-surface" style={fvs(550)}>{role || `Phase ${index + 1}`}</span>
+          <span data-type="caption" className="truncate text-on-surface-low">{agent ? <><Bot size={9} className="inline -mt-0.5 mr-0.5" />{agent}</> : 'default worker'}</span>
+        </span>
+        {active && <Eyebrow as="span" tone="primary" className="shrink-0 self-start">● active</Eyebrow>}
+        {/* Count: "done/min" while still inside the minimum; once the phase has
+            met (or exceeded) its minimum, show just the cycle count so it never
+            reads as a broken fraction like "4/1". */}
+        <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums" title={`${cycles.length} cycle${cycles.length !== 1 ? 's' : ''} run · minimum ${minCycles}`}>
+          {cycles.length >= minCycles ? `${cycles.length} ${cycles.length === 1 ? 'cycle' : 'cycles'}` : `${cycles.length}/${minCycles}`}
+        </span>
+      </button>
+      {/* phase DETAIL — only behind expansion */}
+      {open && (
+        <div className="px-m pb-2 pl-[42px] flex flex-col gap-1">
+          {target && <span data-type="body-s" className="text-on-surface-var">{target}</span>}
+          {exit && <span data-type="caption" className="text-on-surface-low">↳ advances when: {exit}</span>}
+          {/* agent shows in the header; here we detail the loaded capabilities. */}
+          {(skills.length || wfs.length) ? (
+            <div data-type="caption" className="flex flex-wrap items-center gap-1 mt-0.5">
+              {skills.map((s) => <span key={s} className="inline-flex items-center rounded-pill px-1.5 h-5 bg-surface-high text-on-surface-low" title="Skill loaded this phase">{s}</span>)}
+              {wfs.map((w) => <span key={w} className="inline-flex items-center rounded-pill px-1.5 h-5 bg-surface-high text-on-surface-low" title="Workflow loaded this phase">{w}</span>)}
+            </div>
+          ) : <span data-type="caption" className="text-on-surface-low">baseline capabilities only</span>}
+        </div>
+      )}
+      {/* cycles ALWAYS shown under the phase (live first, then newest→oldest) */}
+      <div className="px-m pb-2 flex flex-col gap-1">
+        {liveCycle}
+        {orderedCycles.map((f, i) => renderCycle(f, i))}
+        {!liveCycle && orderedCycles.length === 0 && <p data-type="caption" className="text-on-surface-low">Not started.</p>}
+      </div>
+    </div>
+  )
+}
+
+function CycleNode({ f, verdict, dur, hasNudge, onClick, delay }: { f: LoopFinding; verdict?: LoopVerdict; dur?: number; hasNudge: boolean; onClick: () => void; delay: number }) {
+  return (
+    <motion.button initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialFast, delay }} onClick={onClick}
+      className="group w-full text-left rounded-lg bg-surface-container px-m py-m hover:bg-surface-high transition-colors">
+      <div className="flex items-center gap-s">
+        <span data-type="caption" className="shrink-0 inline-flex items-center justify-center size-5 rounded-pill tabular-nums" style={{ background: 'color-mix(in srgb, var(--color-primary) 20%, transparent)', color: 'var(--color-on-surface)' }}>{f.cycle}</span>
+        <span data-type="label-s" className="flex-1 truncate text-on-surface" style={fvs(500)}>{asText(f.key_insight) || asText(f.summary) || `Cycle ${f.cycle}`}</span>
+        {hasNudge && <MessageSquarePlus size={13} className="text-info shrink-0" />}
+        {typeof verdict?.marginal_value === 'number' && <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums" title="judge's marginal value (return this cycle)">▲{verdict.marginal_value.toFixed(1)}</span>}
+        <ChevronRight size={15} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" />
+      </div>
+      {dur != null && dur > 0 && <div data-type="caption" className="mt-1 pl-7 text-on-surface-low tabular-nums">took {fmt(dur)}</div>}
+    </motion.button>
+  )
+}
+
+/** Body content for one cycle — rendered inside the reusable SidePanel (docked
+ *  or full-width). Lists the cycle's actual evidence + the judge's third-party
+ *  verdict (never a worker self-verdict). */
+function CycleDetail({ f, verdict, nudges, activity }: { f: LoopFinding; verdict?: LoopVerdict; nudges: LoopNudge[]; activity: { kind: string; label: string; detail?: string }[] }) {
+  return (
+    <div className="flex flex-col gap-l">
+      <div className="flex flex-wrap gap-s">
+        {typeof verdict?.marginal_value === 'number' && typeof verdict?.quality_score === 'number' && <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${verdict.done ? 'var(--color-ok)' : 'var(--color-primary)'} 18%, transparent)`, color: verdict.done ? 'var(--color-ok)' : 'var(--color-primary)' }}>{verdict.done ? <Check size={13} /> : null} judge ▲{verdict.marginal_value.toFixed(1)} · ★{verdict.quality_score.toFixed(1)}</span>}
+        {verdict?.adversarial && <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 bg-surface-high text-on-surface-var" title="A second, skeptical judge independently cross-checked this verdict (adversarial review)."><ShieldCheck size={13} className="text-on-surface-low" /> cross-checked</span>}
+        {f.metric && typeof f.metric.value === 'number' && <span data-type="body-s" className="inline-flex items-center rounded-pill px-m h-7 bg-surface-high text-on-surface-var">{asText(f.metric.name) || 'metric'}: {f.metric.value}</span>}
+        {typeof f.new_findings_count === 'number' && <span data-type="body-s" className="inline-flex items-center rounded-pill px-m h-7 bg-surface-high text-on-surface-var">{f.new_findings_count} new this cycle</span>}
+      </div>
+      {f.key_insight && <Section label="Key insight"><p data-type="body-m" className="text-on-surface leading-relaxed">{asText(f.key_insight)}</p></Section>}
+      {f.summary && <Section label="Summary"><p data-type="body-s" className="text-on-surface-var leading-relaxed">{asText(f.summary)}</p></Section>}
+      {f.evidence && <Section label="Evidence"><p data-type="body-s" className="text-on-surface-var leading-relaxed whitespace-pre-wrap">{asText(f.evidence)}</p></Section>}
+      {f.files_touched?.length ? (
+        <Section label="Files written">
+          <div className="flex flex-col gap-1.5">
+            {f.files_touched.map((s, i) => (
+              <div key={`f${i}`} data-type="body-s" className="flex items-start gap-s text-on-surface">
+                <FileText size={13} className="text-on-surface-low shrink-0 mt-0.5" />
+                <span data-type="caption" className="font-mono break-words">{asText(s)}</span>
+              </div>
+            ))}
+          </div>
+        </Section>
+      ) : null}
+      {(verdict?.done_reason || verdict?.evidence_refs?.length) ? (
+        <Section label="Judge verdict">
+          {verdict.done_reason ? <p data-type="body-s" className="text-on-surface-var">{asText(verdict.done_reason)}{typeof verdict.band_used === 'number' && <span className="text-on-surface-low"> · returns band {verdict.band_used.toFixed(1)}</span>}</p> : null}
+          {/* Ground truth the SUPERVISOR observed itself — ran the verify command, read the
+              named deliverable — rather than the worker's account of its own work. Absent on a
+              transcript-only cycle and on verdicts stored before WF2LOO-16, hence the guard. */}
+          {verdict.evidence_refs?.length ? (
+            <div className="mt-1.5 flex flex-col gap-1">
+              <span data-type="caption" className="text-on-surface-low">Observed independently</span>
+              {verdict.evidence_refs.map((ref, i) => <span key={i} data-type="body-s" className="flex items-start gap-s text-on-surface"><Check size={13} className="text-ok shrink-0 mt-0.5" /><span data-type="caption" className="font-mono break-words">{asText(ref)}</span></span>)}
+            </div>
+          ) : null}
+        </Section>
+      ) : null}
+      {(f.sources_checked?.length || f.sources_empty?.length) ? (
+        <Section label="Sources">
+          <div className="flex flex-col gap-1.5">
+            {f.sources_checked?.map((s, i) => <div key={`c${i}`} data-type="body-s" className="flex items-start gap-s text-on-surface"><Check size={13} className="text-ok shrink-0 mt-0.5" /><span data-type="caption" className="font-mono break-words">{asText(s)}</span></div>)}
+            {f.sources_empty?.map((s, i) => <div key={`e${i}`} data-type="body-s" className="flex items-start gap-s text-on-surface-low"><X size={13} className="shrink-0 mt-0.5" /><span data-type="caption" className="font-mono break-words">{asText(s)} <span className="opacity-60">(empty)</span></span></div>)}
+          </div>
+        </Section>
+      ) : null}
+      {nudges.length > 0 && (
+        <Section label={`Nudges applied (${nudges.length})`}>
+          <div className="flex flex-col gap-s">
+            {nudges.map((n, i) => (
+              <div key={i} className="flex gap-s">
+                <CornerDownRight size={14} className="text-info shrink-0 mt-1" />
+                <div className="flex-1 rounded-md px-m py-2" style={{ background: 'color-mix(in srgb, var(--color-info) 8%, transparent)' }}>
+                  <Eyebrow tone="info" className="mb-1">sent cycle {n.sent_at_cycle} · applied cycle {n.applied_cycle}</Eyebrow>
+                  <p data-type="body-s" className="text-on-surface leading-relaxed whitespace-pre-wrap">{n.text}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+      {activity.length > 0 && (
+        <Section label="Live activity">
+          <div className="flex flex-col gap-1.5">
+            {activity.slice(-20).map((e, i) => (
+              <div key={i} data-type="body-s" className="flex items-start gap-s">
+                <span className="mt-1.5 size-1 shrink-0 rounded-pill" style={{ background: e.kind === 'tool' ? 'var(--color-secondary)' : 'var(--color-on-surface-low)' }} />
+                <span className="text-on-surface-var"><span className="text-on-surface">{e.label}</span>{e.detail ? ` · ${e.detail}` : ''}</span>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+    </div>
+  )
+}
+
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div><Eyebrow className="mb-1.5">{label}</Eyebrow>{children}</div>
+}
+
+function groupNudges(nudges: LoopNudge[]) {
+  const byCycle = new Map<number, LoopNudge[]>(); const pending: LoopNudge[] = []
+  for (const n of nudges) {
+    if (n.applied_cycle == null) pending.push(n)
+    else { const arr = byCycle.get(n.applied_cycle) ?? []; arr.push(n); byCycle.set(n.applied_cycle, arr) }
+  }
+  return { byCycle, pending }
+}

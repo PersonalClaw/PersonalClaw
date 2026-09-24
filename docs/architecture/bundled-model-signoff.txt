@@ -1,0 +1,67 @@
+# The bundled default chat model — licence sign-off record and size budget.
+#
+# OU-14 (ONBOARDING-UX). PersonalClaw's zero-config promise is that a fresh install reaches a
+# working first chat turn with NO provider bound, NO API key and NO Ollama reachable. Keeping
+# that promise means REDISTRIBUTING a model weight inside the wheel and the container image,
+# and redistribution is a licence act: whatever ships here, this project is handing to every
+# installer under its own name.
+#
+# THIS FILE IS THE FORM, NOT THE DECISION. It is deliberately EMPTY of a bundle today. Which
+# model ships, and the sign-off on its licence, are the owner's (Chairman C9) — an agent must
+# not pick a model, must not add a real model's licence as if the call were made, and must not
+# vendor a weight. What IS built is the pair of admission rails that read this file:
+#
+#   * the LICENCE ALLOWLIST rail — `personalclaw.bundled_model.licence_decision`. An explicit
+#     allowlist of permitted licence identifiers, DEFAULT-DENY for anything unlisted, and a
+#     refusal that NAMES the licence it refused. It does not "skip" a model it cannot clear.
+#   * the SIZE-BUDGET gate — `personalclaw.bundled_model.size_decision`, run against a BUILT
+#     wheel by `scripts/verify_wheel.py`. An artifact over the declared budget is refused and
+#     the refusal names the measured size AND the budget. A zero measurement is refused too:
+#     a size gate whose green means "nobody measured" is not a gate.
+#
+# `tests/test_bundled_model_gate.py` holds both rails' teeth, including the known-false
+# licence controls (Gemma Terms, Llama community, LFM, CC-BY-NC, OpenRAIL, research-only) that
+# MUST be refused, and `scripts/ou14_zero_config_drive.py` drives the end-to-end promise on a
+# throwaway home.
+#
+# ── WHAT AN OWNER FILLS IN ───────────────────────────────────────────────────────────────────
+#
+# Uncomment and complete ALL SIX keys below. A partial record is REFUSED, not ignored — an
+# incomplete sign-off that read as "no bundle" would let a weight ship with no recorded terms.
+# Adding a weight to the wheel WITHOUT completing this record is also refused: the gate scans
+# the built wheel for weight-shaped members and reds on one nothing here declares.
+#
+#   model_id           the exact upstream model id, as published (e.g. `<org>/<name>`).
+#   licence            the SPDX identifier, exactly. `Apache-2.0` and `MIT` are the only
+#                      permitted values (Chairman C9). There is NO fuzzy matching: prose such
+#                      as "Apache License 2.0" is refused, because a matcher loose enough to
+#                      accept prose is loose enough to accept "Gemma Terms (Apache-2.0-style)".
+#   licence_url        a link to the licence text for THIS model, as published.
+#   artifact           the weight's path INSIDE the wheel, e.g.
+#                      `personalclaw/<dir>/<file>.gguf`. The gate locates this member in the
+#                      built wheel; a record naming a member the wheel does not carry is
+#                      refused.
+#   sha256             the hex sha256 of that member's bytes. This is what chains the sign-off
+#                      to the artifact: a wheel whose weight digest differs from the signed-off
+#                      digest is refused, so the record cannot describe a model that is not
+#                      there.
+#   size_budget_bytes  the documented ceiling, in BYTES, as a plain integer (`_` separators
+#                      allowed). Bytes and not "488 MiB" on purpose — a unit-bearing ceiling is
+#                      where MB-vs-MiB ambiguity enters the one number the gate enforces.
+#
+# Format: one `key: value` per line. `#` starts a comment. Unknown keys are refused.
+#
+# model_id: <org>/<model>
+# licence: Apache-2.0
+# licence_url: https://.../LICENSE
+# artifact: personalclaw/<dir>/<weight>.gguf
+# sha256: <64 hex chars>
+# size_budget_bytes: <integer bytes>
+#
+# ── STATE ────────────────────────────────────────────────────────────────────────────────────
+#
+# NO BUNDLE IS SIGNED OFF. The gate therefore reports `no-bundle` and says so out loud rather
+# than printing a bare OK, and the zero-config first chat turn is UNMET: a first turn on a
+# fresh home still raises `ERR_MODEL_UNRESOLVED` and the dashboard shows the calm
+# `NoModelSetupState` (OU-12). That is the honest reading of this file being empty, and it
+# flips the moment the six keys above are filled in.

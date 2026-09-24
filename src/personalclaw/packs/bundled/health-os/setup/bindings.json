@@ -1,0 +1,4 @@
+[
+  {"key": "journal_folder", "kind": "folder", "label": "Folder for your health journal", "required": true},
+  {"key": "reminder_time", "kind": "text", "label": "Time of day for reminders (HH:MM)", "required": false}
+]

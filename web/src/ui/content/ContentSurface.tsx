@@ -1,0 +1,416 @@
+import { lazy, Suspense, useEffect, useId, useImperativeHandle, useRef, useState, forwardRef, createElement, type ReactNode } from 'react'
+import { motion } from 'framer-motion'
+import { Save, RotateCcw, Eye, Code2, Columns2, WrapText, Copy, Check, Loader2, FileWarning, Download, type LucideIcon } from 'lucide-react'
+import { spring } from '../../design/motion'
+import { SquareIconButton } from '../SquareIconButton'
+import { Centered } from '../Centered'
+import { useMode } from '../../app/theme'
+import { CommentLayer } from '../../pages/files/comments/CommentLayer'
+import type { CommentTarget } from './commentTarget'
+import { type ContentType, isEditable, isCommentable } from './contentTypes'
+import type { IterationTarget } from '../widget/useArtifactIteration'
+import { copyText } from '../../app/clipboard'
+
+const MonacoEditor = lazy(() => import('@monaco-editor/react'))
+
+export interface ContentSurfaceHandle { save: () => void }
+
+/** A host-supplied edit-mode action beside Save — e.g. an artifact's "Snapshot"
+ *  (save as a new immutable version). Receives the live draft; the surface keeps
+ *  ownership of edit/draft state, the host just decides what a variant persist
+ *  means. Rendered only when the surface is editable. */
+export interface ContentAction {
+  icon: LucideIcon
+  label: string
+  title?: string
+  /** Highlighted (primary tone) vs ghost. */
+  primary?: boolean
+  run: (draft: string) => void | Promise<void>
+}
+
+interface ContentSurfaceProps {
+  /** The resolved content type — declares preview/edit/security/commentable. */
+  type: ContentType
+  /** The current source content (string for all text/markup types). */
+  content: string
+  /** Display title (header + iframe title + comment doc label). */
+  title: string
+  /** Document id for the comment layer (artifact slug or file path). */
+  docId: string
+  /** Real file/source path (drives some renderers + comment file-attach). */
+  path?: string
+  /** Read-only: no edit affordances regardless of the type's edit capability
+   *  (historical artifact version, truncated file). */
+  readOnly?: boolean
+  /** Persist an edit. Omit to make the surface preview-only even for an
+   *  editable type (e.g. a chat inline render). Returns when the save settles. */
+  onSave?: (draft: string) => void | Promise<void>
+  /** Comment routing target — when set AND the type is commentable, the
+   *  selection→comment layer is enabled and routes here. */
+  commentTarget?: CommentTarget
+  /** Compact host (narrow chat side panel): icon-only toolbar. */
+  compact?: boolean
+  /** Initial view. Defaults to 'preview' when previewable, else 'edit'. */
+  initialView?: 'preview' | 'edit' | 'split'
+  /** Host-owned per-id draft cache so an unsaved edit survives unmount
+   *  (multi-tab hosts mount only the active tab). `warned` carries the
+   *  concurrent-edit flag so a remount can re-raise it (the watch that sets it
+   *  doesn't run while unmounted). */
+  draftStore?: Map<string, { draft: string; base: string; warned?: boolean }>
+  /** The content was truncated (large file head only) → read-only, no save. */
+  truncated?: boolean
+  /** Extra edit-mode persist actions beside Save (e.g. artifact "Snapshot"). */
+  actions?: ContentAction[]
+  /** Notified whenever the dirty (unsaved-edit) state flips — a multi-tab host
+   *  uses it to mark the tab. */
+  onDirtyChange?: (dirty: boolean) => void
+  /** Notified on every draft edit with the live draft + dirty — lets a file host
+   *  compare it against incoming disk content to raise a concurrent-edit warning. */
+  onDraftChange?: (draft: string, dirty: boolean) => void
+  /** A CUSTOM editor (`type.edit.render`) saved, with the version the server cut.
+   *
+   *  Distinct from `onSave`, and necessarily so: `onSave` persists the string draft, while a
+   *  custom editor owns its own persistence and posts a parsed MODEL. So the host learns nothing
+   *  from `onSave` about a document save, and its own version/event summary stayed on the
+   *  pre-save number until a reload. Omit it and a custom editor saves exactly as before. */
+  onDocumentSaved?: (version: number) => void
+  /** A gate run before persisting (return false to abort) — the file host uses it
+   *  for the "file changed on disk, overwrite anyway?" confirm. */
+  confirmSave?: () => boolean | Promise<boolean>
+  /** Monaco language override. The registry's `edit.language` is a static default;
+   *  a file host that knows the real per-extension language (via monacoLang) passes
+   *  it here so a `.py`/`.go`/`.rs` opens with correct highlighting. */
+  language?: string
+  /** Host chrome at the START of the toolbar (filename, size, badges). */
+  headerLeft?: ReactNode
+  /** Host actions just before Revert/Save (download, save-as-artifact). Always
+   *  shown (not edit-gated). */
+  headerExtras?: ReactNode
+  /** A banner rendered under the toolbar (e.g. concurrent-edit warning, save error). */
+  banner?: ReactNode
+  /** Renderer-driven ITERATION on this document — EDITMODE tweak controls and
+   *  click-annotation corrections (AMBIENT-SURFACES §3+§4). Distinct from `onSave`:
+   *  `onSave` persists the DRAFT the editor holds, while iteration's persist takes a
+   *  whole next source the RENDERER produced from the live frame, and cuts a version.
+   *  Omit it and every renderer paints exactly what it painted before. */
+  iterate?: IterationTarget
+}
+
+/** The ONE type-aware render/edit surface. Resolves a `ContentType` to its
+ *  declared preview + edit renderers and owns the edit↔preview↔split toggle,
+ *  dirty/draft state, the comment layer, and proportional scroll-sync — lifted
+ *  from the former FileViewer (the best of the three dispatchers) and generalized
+ *  so artifacts, files, and chat embeds all inherit the same affordances.
+ *
+ *  Edit and preview are composed siblings under one shell + shared state, NOT a
+ *  forced single abstraction (Monaco and an iframe share nothing internally). */
+export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfaceProps>(function ContentSurface(
+  { type, content, title, docId, path, readOnly, onSave, commentTarget, compact = false, initialView, draftStore, truncated, actions,
+    onDirtyChange, onDraftChange, onDocumentSaved, confirmSave, language, headerLeft, headerExtras, banner, iterate }, ref,
+) {
+  const { mode } = useMode()
+  const previewScrollRef = useRef<HTMLDivElement | null>(null)
+  const editorRef = useRef<any>(null)
+  const splitPreviewRef = useRef<HTMLDivElement | null>(null)
+  const syncingRef = useRef<'editor' | 'preview' | null>(null)
+  // The baseline the current draft was seeded from — lets a content change tell
+  // "disk moved under an unedited view" (follow it) from "user is editing" (keep).
+  const draftBaseRef = useRef(content)
+
+  // A type may bring its OWN editor (DOCUMENT-FIDELITY-EDITOR §C4). It replaces Monaco
+  // and owns its own persistence, because what it edits is not the string draft — so it
+  // makes a type editable WITHOUT an `onSave`, and it suppresses every affordance that
+  // acts on that draft (`draftEditable` below). Handing a custom editor the surface's
+  // Save would post the string draft to the host's text-save path: for a binary document
+  // whose `content` is only a raw-URL ref, that is a save that destroys the body.
+  const CustomEditor = type.edit?.render
+  const custom = !!CustomEditor && !readOnly && !truncated
+  const editable = isEditable(type) && !readOnly && !truncated && (!!onSave || custom)
+  const draftEditable = editable && !custom
+  const previewable = !!type.preview
+  const splittable = draftEditable && previewable && !!type.edit?.split
+
+  // Seed draft from the host cache (survives tab-switch unmount) else from content.
+  const [draft, setDraft] = useState(() => draftStore?.get(docId)?.draft ?? content)
+  const [saving, setSaving] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [view, setView] = useState<'preview' | 'edit' | 'split'>(
+    initialView ?? (previewable ? 'preview' : 'edit'),
+  )
+  const [wrap, setWrap] = useState<boolean>(() => {
+    try { return localStorage.getItem('editor-wrap') !== 'off' } catch { return true }
+  })
+  useEffect(() => { try { localStorage.setItem('editor-wrap', wrap ? 'on' : 'off') } catch { /* quota */ } }, [wrap])
+
+  // Reconcile draft against incoming props. Two cases, kept distinct:
+  //  - DOC IDENTITY change (new artifact version / file / tab): full re-seed from
+  //    the host draft cache, else the content — any prior draft was the old doc's.
+  //  - same doc, BASELINE moved (a live file-watch refresh rewrote `content`):
+  //    follow disk only if the user isn't mid-edit; otherwise preserve their
+  //    unsaved draft so a background rewrite can't silently clobber it.
+  const docIdRef = useRef(docId)
+  useEffect(() => {
+    if (docIdRef.current !== docId) {
+      docIdRef.current = docId
+      setDraft(draftStore?.get(docId)?.draft ?? content)
+      setView((v) => (previewable ? v : 'edit'))
+    } else {
+      setDraft((d) => (d === draftBaseRef.current ? content : d))
+    }
+    draftBaseRef.current = content
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docId, content])
+
+  const dirty = draftEditable && draft !== content
+  // A custom editor's unsaved state is ITS state, so it reports it rather than being
+  // derived from a draft it does not use. Folded into one flag so the toolbar dot and the
+  // host's tab marker read the same thing whichever editor is mounted.
+  const [customDirty, setCustomDirty] = useState(false)
+  const anyDirty = dirty || customDirty
+  useEffect(() => { onDirtyChange?.(anyDirty) }, [anyDirty, onDirtyChange])
+  useEffect(() => { onDraftChange?.(draft, dirty) }, [draft, dirty, onDraftChange])
+  // Mirror the unsaved draft into the host cache so it survives unmount; clear when clean.
+  useEffect(() => {
+    if (!draftStore) return
+    if (dirty) draftStore.set(docId, { draft, base: content })
+    else draftStore.delete(docId)
+  }, [draftStore, docId, draft, content, dirty])
+
+  const save = async () => {
+    if (!dirty || saving || !onSave) return
+    if (confirmSave && !(await confirmSave())) return
+    setSaving(true)
+    try { await onSave(draft) }
+    finally { setSaving(false) }
+  }
+  useImperativeHandle(ref, () => ({ save }))
+
+  const runAction = async (action: ContentAction) => {
+    if (saving) return
+    setSaving(true)
+    try { await action.run(draft) }
+    finally { setSaving(false) }
+  }
+
+  const copy = async () => { if (await copyText(draft, 'the document')) { setCopied(true); setTimeout(() => setCopied(false), 1500) } }
+
+  const [exportOpen, setExportOpen] = useState(false)
+  // The export menu's click-away scrim is a MOUSE-only exit; Escape closes it for the keyboard,
+  // scoped to the open state so it does not swallow Escape for the rest of the app.
+  useEffect(() => {
+    if (!exportOpen) return
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setExportOpen(false) } }
+    document.addEventListener('keydown', onEsc)
+    return () => document.removeEventListener('keydown', onEsc)
+  }, [exportOpen])
+  const exports = type.exports ?? []
+
+  const commentsOn = !!commentTarget && isCommentable(type)
+  // Per-surface layoutId so the view-toggle's sliding pill can't fly between two
+  // ContentSurfaces mounted at once (e.g. two chat embeds).
+  const viewToggleId = `content-view-${useId()}`
+
+  const PreviewEl = type.preview?.render
+  function renderPreview() {
+    if (!PreviewEl) return null
+    return createElement(PreviewEl, { content: draft, mode, title, path, streaming: false, iterate })
+  }
+
+  function renderEditor(split = false) {
+    if (CustomEditor && custom) {
+      return createElement(CustomEditor, {
+        slug: docId, title, mode, readOnly,
+        onDirty: setCustomDirty,
+        onSaved: onDocumentSaved,
+      })
+    }
+    return (
+      <Suspense fallback={<Centered><Loader2 size={18} className="animate-spin text-on-surface-low" /></Centered>}>
+        <MonacoEditor height="100%" path={path} language={language || type.edit?.language || 'plaintext'} value={draft}
+          onChange={(v) => setDraft(v ?? '')} theme={mode === 'light' ? 'light' : 'vs-dark'}
+          onMount={split ? (ed: any) => { editorRef.current = ed; ed?.onDidScrollChange?.(syncFromEditor) } : undefined}
+          options={{
+            // Monaco's editing surface DOES carry a name by default — but the same one everywhere:
+            // measured as "Editor content" on both of our mounts. So every open file, and every
+            // gist, announced identically, and a screen-reader user moving between two editors got
+            // no signal about which document they had landed in. `ariaLabel` is Monaco's own option
+            // (IEditorOptions.ariaLabel); naming it from the document makes the announcement
+            // specific. `title` is required here, so no fallback branch is needed.
+            ariaLabel: `${title} — editor`,
+            readOnly: !draftEditable, fontSize: 13, minimap: { enabled: view !== 'split' }, scrollBeyondLastLine: false, wordWrap: wrap ? 'on' : 'off', lineNumbers: 'on', automaticLayout: true, padding: { top: 10, bottom: 10 }, tabSize: 2, renderWhitespace: 'selection' }} />
+      </Suspense>
+    )
+  }
+
+  // Bidirectional proportional scroll-sync for split view (latched against echo).
+  function syncFromEditor() {
+    if (syncingRef.current === 'preview') { syncingRef.current = null; return }
+    const ed = editorRef.current, pv = splitPreviewRef.current
+    if (!ed || !pv) return
+    const edMax = ed.getScrollHeight() - ed.getLayoutInfo().height
+    if (edMax <= 0) return
+    syncingRef.current = 'editor'
+    pv.scrollTop = (ed.getScrollTop() / edMax) * (pv.scrollHeight - pv.clientHeight)
+    requestAnimationFrame(() => { if (syncingRef.current === 'editor') syncingRef.current = null })
+  }
+  function syncFromPreview() {
+    if (syncingRef.current === 'editor') { syncingRef.current = null; return }
+    const ed = editorRef.current, pv = splitPreviewRef.current
+    if (!ed || !pv) return
+    const pvMax = pv.scrollHeight - pv.clientHeight
+    if (pvMax <= 0) return
+    syncingRef.current = 'preview'
+    ed.setScrollTop((pv.scrollTop / pvMax) * (ed.getScrollHeight() - ed.getLayoutInfo().height))
+    requestAnimationFrame(() => { if (syncingRef.current === 'preview') syncingRef.current = null })
+  }
+
+  // The toolbar shows if there's anything to put in it.
+  const showToolbar = splittable || editable || previewable || !!headerLeft || !!headerExtras || exports.length > 0
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* toolbar — host chrome (left) + view toggle + edit/host actions (right) */}
+      {/* `flex-wrap` unconditionally, not `compact ? 'flex-wrap' : ''`. Wrapping was already
+          understood to be the right behaviour here — it was just gated on DENSITY when the thing
+          that actually decides it is AVAILABLE SPACE, which is what flex-wrap reads natively. A
+          non-compact host at a phone width therefore had a toolbar that could not give: measured
+          on the artifact viewer at 390px, #root was 411px wide with no scrollable ancestor, so
+          21px were CLIPPED and the last action ("Snapshot") was unreachable. Wrapping costs
+          nothing when the row already fits, so every wide layout is byte-identical. */}
+      {showToolbar && (
+        <div className="flex flex-wrap items-center gap-s border-b border-outline/40 px-m py-1.5">
+          {headerLeft}
+          {truncated && <span data-type="caption" className="shrink-0 rounded px-1.5 py-0.5 text-on-surface-low" style={{ background: 'var(--color-surface-high)' }} title="Only the first part of this large file was loaded — read-only so a save can't truncate the rest.">truncated · read-only</span>}
+          {anyDirty && <span className="size-1.5 shrink-0 rounded-full" style={{ background: 'var(--color-primary)' }} title="Unsaved changes" />}
+          {/* This cluster wraps too, and both halves are needed: it is 399px wide on its own at a
+              390px viewport, so letting only the OUTER row wrap would drop it onto a line it still
+              could not fit. `justify-end` keeps every wrapped line flush right, matching where
+              `ml-auto` puts it on one line. */}
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
+            {/* view toggle — shown for any editable+previewable type so there's
+                always a way into edit mode; Split only when the type supports it */}
+            {editable && previewable && (
+              <div className="mr-1 inline-flex rounded-pill bg-surface-container p-0.5">
+                <ToggleBtn icon={Eye} label="Preview" on={view === 'preview'} onClick={() => setView('preview')} compact={compact} indicatorId={viewToggleId} />
+                {splittable && <ToggleBtn icon={Columns2} label="Split" on={view === 'split'} onClick={() => setView('split')} compact={compact} indicatorId={viewToggleId} />}
+                <ToggleBtn icon={Code2} label="Edit" on={view === 'edit'} onClick={() => setView('edit')} compact={compact} indicatorId={viewToggleId} />
+              </div>
+            )}
+            {view !== 'preview' && draftEditable && (
+              <>
+                <SquareIconButton icon={WrapText} label="Toggle word wrap" on={wrap} iconSize={13} onClick={() => setWrap((w) => !w)} />
+                <SquareIconButton icon={copied ? Check : Copy} label="Copy contents" iconSize={13} onClick={copy} />
+              </>
+            )}
+            {headerExtras}
+            {exports.length > 0 && (
+              <div className="relative">
+                {/* `ariaExpanded`, not `on`: this opens the export menu below rather than turning a
+                    setting on, and the primitive suppresses `aria-pressed` when it is given — a
+                    control that claims both states claims one of them wrongly. Its sibling
+                    "Toggle word wrap" is the opposite case and correctly uses `on={wrap}`. */}
+                <SquareIconButton icon={Download} label="Export" iconSize={13}
+                  ariaExpanded={exportOpen} onClick={() => setExportOpen((v) => !v)} />
+                {exportOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setExportOpen(false)} />
+                    <div className="absolute right-0 z-50 mt-1 min-w-[10rem] overflow-hidden rounded-md border border-outline-variant/50 bg-surface shadow-lg">
+                      {exports.map((ex) => (
+                        <button key={ex.id} type="button"
+                          onClick={() => { setExportOpen(false); void ex.run(draft, title) }}
+                          data-type="caption"
+                          className="block w-full px-3 py-1.5 text-left text-on-surface hover:bg-surface-high">{ex.label}</button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+            {draftEditable && (
+              <>
+                <button onClick={() => setDraft(content)} disabled={!dirty} type="button"
+                  className="inline-flex size-7 items-center justify-center rounded-md text-on-surface-low hover:bg-surface-high hover:text-on-surface disabled:opacity-40" title="Revert unsaved changes"><RotateCcw size={13} /></button>
+                {/* aria-busy: these are raw <button>s, not the Button primitive, so they do not
+                    inherit its loading→aria-busy wiring. The spinner below is the only
+                    in-flight signal and it is decorative, so without this a save announces
+                    nothing while it runs. */}
+                {/* `saving` stays NATIVE — an in-flight save must not be re-clickable. `!dirty` is a
+                    state the user can fix, so it keeps the tab stop and says so; Button does the
+                    same thing via `disabledReason`. Both dimming selectors, because
+                    `disabled:opacity-40` cannot match an `aria-disabled` element. */}
+                <button onClick={dirty ? save : undefined} disabled={saving} type="button"
+                  aria-busy={saving || undefined} aria-disabled={(!dirty && !saving) || undefined}
+                  data-type="caption"
+                  className="inline-flex items-center gap-1 rounded-md px-2.5 h-7 disabled:opacity-40 aria-disabled:opacity-40"
+                  style={{ background: dirty ? 'var(--color-primary)' : 'var(--color-surface-high)', color: dirty ? 'var(--color-on-primary)' : 'var(--color-on-surface-low)' }}
+                  title={dirty ? 'Save (⌘S)' : 'Save (⌘S) — no changes to save'}>
+                  {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} {!compact && 'Save'}
+                </button>
+                {actions?.map((a) => (
+                  <button key={a.label} onClick={() => runAction(a)} disabled={saving} type="button" aria-busy={saving || undefined}
+                    data-type="caption"
+                    className="inline-flex items-center gap-1 rounded-md px-2.5 h-7 disabled:opacity-40"
+                    style={a.primary ? { background: 'var(--color-primary)', color: 'var(--color-on-primary)' } : { color: 'var(--color-on-surface-low)' }}
+                    title={a.title || a.label}>
+                    {saving ? <Loader2 size={13} className="animate-spin" /> : <a.icon size={13} />} {!compact && a.label}
+                  </button>
+                ))}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {banner}
+
+      {/* body */}
+      <div className="min-h-0 flex-1 overflow-hidden">
+        {view === 'preview' && previewable ? (
+          // Rendered markdown has no focusable content of its own, so without a tab stop a
+          // keyboard user cannot scroll the preview at all: measured 790px of 1-artifact
+          // content hidden below the fold (WCAG 2.1.1; axe scrollable-region-focusable,
+          // serious). Same resolution as the kanban columns, the shell denylist, the inbox
+          // procedure and the diagnostics log.
+          <div ref={previewScrollRef} tabIndex={0} role="group" aria-label={`${title || 'Document'} preview`}
+            className="relative h-full overflow-auto">
+            {renderPreview()}
+            {commentsOn && (
+              <CommentLayer scrollRef={previewScrollRef} docId={docId} docLabel={title} docPath={path}
+                content={draft} onSubmit={(message, docPaths) => commentTarget!.submit({ message, docPaths })} />
+            )}
+          </div>
+        ) : view === 'split' && previewable ? (
+          <div className="grid h-full grid-cols-1 lg:grid-cols-2">
+            <div className="min-h-0 border-b border-outline/40 lg:border-b-0 lg:border-r">{renderEditor(true)}</div>
+            {/* Same defect in the SPLIT view — its own scroller, equally unreachable. The
+                editor half is a CodeMirror textbox and owns its own tab stop already. */}
+            <div ref={splitPreviewRef} onScroll={syncFromPreview} tabIndex={0} role="group"
+              aria-label={`${title || 'Document'} preview`}
+              className="min-h-0 overflow-auto">{renderPreview()}</div>
+          </div>
+        ) : (
+          <div className="h-full">{renderEditor()}</div>
+        )}
+      </div>
+    </div>
+  )
+})
+
+function ToggleBtn({ icon: Icon, label, on, onClick, compact, indicatorId }: { icon: typeof Eye; label: string; on: boolean; onClick: () => void; compact?: boolean; indicatorId: string }) {
+  return (
+    <button onClick={onClick} type="button" title={compact ? label : undefined} aria-label={label}
+      data-type="caption"
+      className={`relative inline-flex items-center gap-1 rounded-pill h-6 transition-colors ${compact ? 'px-2' : 'px-2.5'}`}
+      style={{ color: on ? 'var(--color-on-surface)' : 'var(--color-on-surface-low)' }}>
+      {/* liquid active pill — slides between Preview/Split/Edit via layoutId (the
+          Segmented pattern) instead of the highlight blink-jumping. */}
+      {on && <motion.span layoutId={indicatorId} transition={spring.spatialFast}
+        className="absolute inset-0 rounded-pill" style={{ background: 'var(--color-surface-highest)' }} />}
+      <Icon size={12} className="relative" /> {!compact && <span className="relative">{label}</span>}
+    </button>
+  )
+}
+
+// FileWarning is imported for parity with the donor shell's error affordances,
+// re-exported so callers that compose their own error states can reuse it.
+export { FileWarning }

@@ -1,0 +1,440 @@
+import { useEffect, useState } from 'react'
+import { rowSubject } from '../../lib/rowSubject'
+import { FieldError } from '../../ui/forms'
+import { InlineError } from '../../ui/InlineError'
+import { readableErrText } from '../../lib/errText'
+import { unavailableWhen } from '../../ui/unavailable'
+import { fvs } from '../../design/fontWeight'
+import { Pencil, Trash2, Check, X, ExternalLink, Lock, CornerDownRight, Send, AlertTriangle, FolderKanban } from 'lucide-react'
+import { Button } from '../../ui/Button'
+import { IconButton } from '../../ui/IconButton'
+import { FormFooter } from '../../ui/FormFooter'
+import { TextLink } from '../../ui/TextLink'
+import { Meter } from '../../ui/Meter'
+import { InvestigateButton } from '../../ui/InvestigateButton'
+import { Markdown } from '../../ui/Markdown'
+import { confirm, confirmDelete } from '../../ui/dialog'
+import { api, type TaskItem, type TaskComment, type TaskNote } from '../../lib/api'
+import { statusMeta, priorityMeta, dueMeta, relTime, isExitComplete, exitDoneCount, blockKindMeta } from './taskMeta'
+import { prereqIds } from './dag'
+import { TaskForm, toDraft, draftToPayload, type TaskDraft } from './TaskForm'
+import { accentChip } from '../../design/accent'
+import { reportingWrite } from '../../app/reportingWrite'
+
+/** Body for the task SidePanel. Owns the view↔edit toggle (edit reuses the same
+ *  panel, per the directive) and the comment thread. Project-provider tasks are
+ *  read-only: Edit/Delete are hidden and a managed-by note shows instead. */
+export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onEditingChange, allTasks = [], onOpenTask }: {
+  task: TaskItem
+  onSaved: (t: TaskItem) => void
+  onDeleted: () => void
+  editing: boolean
+  onEditingChange: (v: boolean) => void
+  allTasks?: TaskItem[]
+  onOpenTask?: (id: string) => void
+}) {
+  const readOnly = task.provider === 'project'
+  // Edit mode is owned by the URL (?edit=1), threaded in fully controlled;
+  // project-provider tasks are read-only and can never enter the edit form.
+  const editing = editingProp && !readOnly
+  const setEditing = onEditingChange
+  const [draft, setDraft] = useState<TaskDraft>(() => toDraft(task))
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+
+  useEffect(() => { setDraft(toDraft(task)) }, [task.id]) // reset when switching tasks
+
+  async function save() {
+    if (!draft.title.trim()) { setErr('Title is required'); return }
+    setSaving(true); setErr('')
+    try {
+      const updated = await api.updateTask(task.id, draftToPayload(draft))
+      onSaved(updated); setEditing(false)
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') } finally { setSaving(false) }
+  }
+  // Reverse dependencies, hoisted: the "Blocks" section below renders them and the delete dialog
+  // states them, and two copies of one filter is how a count starts disagreeing with a list.
+  const dependents = allTasks.filter((t) => prereqIds(t).includes(task.id))
+
+  async function del() {
+    // 🔴 THIS DIALOG NAMED NOTHING AND WARNED ABOUT NOTHING REAL. "Delete this task?" plus "This
+    // cannot be undone." was the only destructive dialog in the app whose subject appears in neither
+    // its title nor its body — the seven other hand-rolled ones all interpolate theirs — and its body
+    // described irreversibility while omitting the effect a user cannot see.
+    //
+    // 🔑 THE EFFECT IS VERIFIED AGAINST THE BACKEND, not guessed: `tasks/native.py`'s `delete_task`
+    // drops every dependency edge pointing at this task and then re-runs
+    // `reconcile.reconcile_blocked_status` for each former dependent — so deleting a prerequisite
+    // silently unblocks whatever was waiting on it. `dependents` is the same set the Blocks section
+    // shows, so the sentence can only appear when it is true.
+    //
+    // 🔑 AND IT NOW CLAIMS THE COMMENTS, because the backend now takes them. `delete_task` used to
+    // unlink only `<id>.json` and leave `_comments_<id>.json` orphaned on disk (#554); it unlinks the
+    // sidecar too, so the thread is user-authored content this dialog is about to destroy — exactly
+    // the shape the knowledge dialog already counts for its highlights. COUNTED, not asserted in the
+    // abstract, so the sentence can only appear when there is something to lose: `comment_count` is
+    // the same derived field the row badge shows, stamped by the provider on read.
+    const unblocks = dependents.length > 0
+      ? ` ${dependents.length} task${dependents.length === 1 ? '' : 's'} waiting on it ${dependents.length === 1 ? 'becomes' : 'become'} unblocked.`
+      : ''
+    const comments = task.comment_count ?? 0
+    const withComments = comments > 0
+      ? ` Its ${comments} comment${comments === 1 ? '' : 's'} ${comments === 1 ? 'goes' : 'go'} with it.`
+      : ''
+    if (!(await confirm({
+      title: `Delete "${task.title}"?`,
+      body: `This cannot be undone.${unblocks}${withComments}`,
+      danger: true,
+      confirmLabel: 'Delete',
+    }))) return
+    try { await api.deleteTask(task.id, task.provider); onDeleted() } catch { setErr('Delete failed') }
+  }
+
+  // Inline (view-mode) toggles for exit criteria + action-plan items — tick things
+  // off as you go without entering full Edit mode. Optimistic via onSaved.
+  async function toggleExit(idx: number) {
+    if (readOnly) return
+    const next = (task.exit_criteria ?? []).map((c, i) => {
+      if (i !== idx) return c
+      const done = isExitComplete(c)
+      return { ...c, met: !done, status: !done ? 'complete' : 'incomplete' as const }
+    })
+    setErr('')
+    try { onSaved(await api.updateTask(task.id, { exit_criteria: next })) }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not update exit criteria') }
+  }
+  async function toggleStep(idx: number) {
+    if (readOnly) return
+    const next = (task.action_plan ?? []).map((a, i) => i === idx ? { ...a, completed: !a.completed } : a)
+    setErr('')
+    try { onSaved(await api.updateTask(task.id, { action_plan: next })) }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not update action plan') }
+  }
+
+  if (editing) {
+    return (
+      <div className="flex flex-col gap-l">
+        <TaskForm draft={draft} onChange={setDraft} compact allTasks={allTasks} />
+        {err && <FieldError>{err}</FieldError>}
+        <FormFooter>
+          <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(task)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
+          <Button size="sm" onClick={save} loading={saving} disabled={saving || !draft.title.trim()}
+            disabledReason={!draft.title.trim() ? 'Enter a task title first' : undefined}><Check size={15} /> Save</Button>
+        </FormFooter>
+      </div>
+    )
+  }
+
+  const sm = statusMeta(task.status)
+  const pm = priorityMeta(task.priority)
+  const due = dueMeta(task.due)
+  const exit = task.exit_criteria ?? []
+  const exitDone = exitDoneCount(exit)
+  // Only meaningful while the task IS blocked — a stale kind on a reopened task would otherwise
+  // keep explaining a block that no longer exists.
+  const blockKind = task.status === 'blocked' ? blockKindMeta(task.blocked_reason_kind) : null
+
+  return (
+    <div className="flex flex-col gap-l">
+      {/* action row */}
+      <div className="flex items-center gap-s">
+        {readOnly ? (
+          <span data-type="body-s" className="inline-flex items-center gap-1.5 text-on-surface-low"><Lock size={13} /> Managed by project — read-only</span>
+        ) : (
+          <>
+            <Button size="sm" variant="secondary" onClick={() => setEditing(true)}><Pencil size={14} /> Edit</Button>
+            <Button size="sm" variant="ghost" onClick={del}><Trash2 size={14} /> Delete</Button>
+          </>
+        )}
+        {task.url && <TextLink href={task.url} external icon={ExternalLink} size="sm" className="ml-auto">Open</TextLink>}
+        {/* Investigate (plan 60): opens a chat carrying the criteria, plan, notes,
+            and the derived reason this task is blocked. */}
+        <span className={task.url ? '' : 'ml-auto'}>
+          <InvestigateButton kind="task" id={task.id} backLink="#/tasks" />
+        </span>
+      </div>
+
+      {err && <FieldError>{err}</FieldError>}
+
+      {/* chips */}
+      <div className="flex flex-wrap gap-s">
+        <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${sm.tone} 18%, transparent)`, color: sm.tone }}><sm.icon size={13} /> {sm.label}</span>
+        <span data-type="body-s" className="inline-flex items-center rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${pm.tone} 16%, transparent)`, color: pm.tone }}>{pm.label}</span>
+        {task.project && <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={accentChip}><FolderKanban size={13} /> {task.project}</span>}
+        {task.assignee && <span data-type="body-s" className="inline-flex items-center rounded-pill px-m h-7 bg-surface-high text-on-surface-var">@{task.assignee}</span>}
+        {due && <span data-type="body-s" className="inline-flex items-center rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${due.tone} 14%, transparent)`, color: due.tone }}>{due.label}</span>}
+      </div>
+
+      {(task.labels?.length ?? 0) > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {task.labels!.map((l) => <span key={l} data-type="caption" className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var">{l}</span>)}
+        </div>
+      )}
+
+      {/* The blocked panel was gated on `block_reason.is_blocked`, which is derived PURELY from
+          unfinished prerequisites. A MANUAL block has none — so it reported `is_blocked: false`
+          with an empty `message`, this panel rendered nothing, and the task showed status "Blocked"
+          with no explanation on any surface. Measured on a real store: 2 blocked tasks, one `auto`
+          (explained itself) and one `manual` (explained nowhere).
+
+          So the gate is now "is this task blocked", with `blocked_reason_kind` supplying the reason.
+          The kind matters because the two behave differently: `auto` clears itself when its
+          prerequisite finishes; `manual` is skipped by the reconciler entirely and waits for a
+          person. `block_reason` remains the source for WHICH tasks are being waited on. */}
+      {(blockKind || task.block_reason?.is_blocked) && (
+        <div data-type="body-s" className="rounded-md px-m py-2" style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)' }}>
+          <div className="flex items-center gap-1.5 text-warn mb-1" style={fvs(500)}>
+            <AlertTriangle size={14} /> {blockKind?.label ?? 'Blocked'}
+          </div>
+          {/* Prerequisite titles when there are any; otherwise the kind's hint, which is the only
+              thing that can explain a manual block. Never the old bare "Waiting on " with an empty
+              list after it. */}
+          <div className="text-on-surface">
+            {task.block_reason?.message
+              || (task.block_reason?.blocking_task_titles?.length
+                ? `Waiting on ${task.block_reason.blocking_task_titles.join(', ')}`
+                : blockKind?.hint)}
+          </div>
+        </div>
+      )}
+
+      {task.description && <SectionLabel label="Description"><Markdown>{task.description}</Markdown></SectionLabel>}
+
+      {exit.length > 0 && (
+        <SectionLabel label={`Exit criteria · ${exitDone}/${exit.length}`}>
+          {/* 🔑 THE LAST PIXEL-NEUTRAL MEMBER OF THE METER FAMILY. The `ui/Meter` adoption pass took
+              seven of eleven hand-rolled determinate bars and deferred four as pixel-moving — but its
+              own author recorded that the reason was FALSE for this one: `mb-2 h-1.5 rounded-pill
+              bg-surface-high overflow-hidden` is `Meter`'s default track EXACTLY, and `mb-2` is now
+              expressible through the `className` that pass added. So this is a one-line adoption, not
+              a redesign, and it is the reason `Meter` took a `className` at all.
+              What it buys: the bar had no `role`, no name and no `aria-valuenow`, so a screen-reader
+              user got nothing from it while the heading beside it said "Exit criteria · 2/5". The
+              remaining three (ModelsPanel's 6px `bg-surface-container`, genui's 8px, and RunProgress,
+              whose only conveyance is fill width plus a `title` on a non-interactive div) genuinely
+              move pixels or need a shape decision, and stay the owner's call. */}
+          <Meter label="Exit criteria" pct={exit.length ? (exitDone / exit.length) * 100 : 0}
+            tone="var(--color-ok)" className="mb-2" />
+          <ul className="flex flex-col gap-1">
+            {exit.map((e, i) => { const m = isExitComplete(e); return <li key={i} data-type="body-s" className="flex items-start gap-s">
+              {/* 🔴 A 16px TICK IN A 4px-GAPPED STACK. Found by the first audit of this surface that had
+                  data: `tasks-detail` is `needsData` and the harness pinned a task id that 404s against
+                  the shipped fixture, so every prior sweep measured an empty panel. Re-pointed at a real
+                  task, axe reported `target-size` [serious] on all three of these — the button was
+                  `size-4` (16×16) against SC 2.5.8's 24px, and the undersized-target SPACING exception
+                  cannot rescue it either, because the `<ul>` is `gap-1` so the 24px circles intersect.
+                  The button is now the 24px TARGET and the 16px painted square moved to an inner span.
+                  🪤 NOT `-my-*` to keep the row's height, which is the idiom `Toggle` uses and the one I
+                  reached for first. It is wrong HERE: these targets are stacked 4px apart, so reclaiming
+                  the vertical would make consecutive 24px boxes OVERLAP — a click landing on whichever is
+                  painted on top, which is worse than a small target. A vertical stack has to spend the
+                  height (measured: the list grew 66.5px → 80px). `-mx-1` reclaims only the horizontal,
+                  which is safe because the neighbour to the right is TEXT, and it is what keeps the row
+                  byte-identical across: without it the square shifted right 4px and the tick-to-text gap
+                  loosened from 8px to 12px. `mt-0.5` goes too — the square is centred in a 24px box now,
+                  so the button carries the alignment the margin used to. */}
+              <button type="button" disabled={readOnly} onClick={() => toggleExit(i)} aria-label={m ? 'Mark criterion incomplete' : 'Mark criterion complete'}
+                className="group -mx-1 shrink-0 inline-flex size-6 items-center justify-center disabled:cursor-default">
+                {/* The hover ring stays on the PAINTED square, not on the 24px box — a ring drawn on the
+                    hit area would be a 24px halo where there used to be a 16px one. `group-disabled`
+                    keeps the read-only case ringless, which is what `enabled:` did before. */}
+                <span className="inline-flex size-4 items-center justify-center rounded-sm transition-shadow group-hover:ring-2 group-hover:ring-ok/40 group-disabled:ring-0" style={{ background: m ? 'var(--color-ok)' : 'var(--color-surface-high)' }}>{m && <Check size={11} className="text-white" />}</span>
+              </button>
+              <span className={m ? 'text-on-surface-low line-through' : 'text-on-surface'}>{e.description}</span></li> })}
+          </ul>
+        </SectionLabel>
+      )}
+
+      {(task.action_plan?.length ?? 0) > 0 && (
+        <SectionLabel label="Action plan">
+          <ol className="flex flex-col gap-1">
+            {task.action_plan!.map((a, i) => <li key={i} data-type="body-s" className="flex items-start gap-s">
+              {/* Same fix as the criterion tick above, same reasoning: this numbered step marker was
+                  `size-5` (20×20) against the 24px floor. axe does NOT flag it — the steps list is
+                  `gap-1.5`, so the spacing exception rescues it — but 20px is still under the floor, and
+                  leaving it at 20 beside a criterion tick now at 24 would put two target sizes in one
+                  panel. The 24px box is the target, the 20px pill stays the paint. */}
+              <button type="button" disabled={readOnly} onClick={() => toggleStep(i)} aria-label={a.completed ? 'Mark step incomplete' : 'Mark step done'}
+                className="group -mx-0.5 shrink-0 inline-flex size-6 items-center justify-center disabled:cursor-default">
+                <span className="inline-flex size-5 items-center justify-center rounded-pill tabular-nums transition-shadow group-hover:ring-2 group-hover:ring-primary group-disabled:ring-0" data-type="caption"
+                  style={{ background: a.completed ? 'var(--color-ok)' : 'color-mix(in srgb, var(--color-primary) 18%, transparent)' }}>{a.completed ? <Check size={11} className="text-white" /> : i + 1}</span>
+              </button>
+              <span className={a.completed ? 'text-on-surface-low line-through' : 'text-on-surface'}>{a.content ?? a.description}</span></li>)}
+          </ol>
+        </SectionLabel>
+      )}
+
+      {prereqIds(task).length > 0 && (() => {
+        const prereqs = prereqIds(task)
+        return (
+        <SectionLabel label={`Depends on · ${prereqs.length}`}>
+          <div className="flex flex-col gap-1.5">
+            {prereqs.map((d) => {
+              const dep = allTasks.find((t) => t.id === d)
+              const dsm = statusMeta(dep?.status)
+              const done = dep && (dep.status === 'done' || dep.status === 'cancelled')
+              return (
+                <button key={d} type="button" disabled={!dep || !onOpenTask} onClick={() => dep && onOpenTask?.(d)}
+                  className="flex items-center gap-s rounded-md bg-surface-container px-2 py-1.5 text-left enabled:hover:bg-surface-high transition-colors disabled:cursor-default">
+                  <dsm.icon size={14} className="shrink-0" style={{ color: dsm.tone }} />
+                  <span data-type="body-s" className={`flex-1 truncate ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{dep?.title ?? d}</span>
+                  {dep && !done && <span data-type="caption" className="shrink-0 text-on-surface-low">{dsm.label}</span>}
+                </button>
+              )
+            })}
+            {task.block_reason?.is_blocked && (
+              <div data-type="caption" className="flex items-center gap-1.5 text-warn mt-0.5"><AlertTriangle size={12} /> {task.block_reason.message || 'Has unfinished prerequisites'}</div>
+            )}
+          </div>
+        </SectionLabel>
+        )
+      })()}
+
+      {(() => {
+        // Reverse dependencies: tasks that have THIS task as a BLOCKS prerequisite — i.e. what
+        // completing this task will unblock. Hoisted to component scope (see `del`), which states the
+        // same set when you delete the task instead of completing it.
+        if (dependents.length === 0) return null
+        return (
+          <SectionLabel label={`Blocks · ${dependents.length}`}>
+            <div className="flex flex-col gap-1.5">
+              {dependents.map((dep) => {
+                const dsm = statusMeta(dep.status)
+                const done = dep.status === 'done' || dep.status === 'cancelled'
+                return (
+                  <button key={dep.id} type="button" disabled={!onOpenTask} onClick={() => onOpenTask?.(dep.id)}
+                    className="flex items-center gap-s rounded-md bg-surface-container px-2 py-1.5 text-left enabled:hover:bg-surface-high transition-colors disabled:cursor-default">
+                    <dsm.icon size={14} className="shrink-0" style={{ color: dsm.tone }} />
+                    <span data-type="body-s" className={`flex-1 truncate ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{dep.title}</span>
+                    {!done && <span data-type="caption" className="shrink-0 text-on-surface-low">{dsm.label}</span>}
+                  </button>
+                )
+              })}
+            </div>
+          </SectionLabel>
+        )
+      })()}
+
+      <NoteChannel label="Notes" notes={task.notes} />
+      <NoteChannel label="Research notes" notes={task.research_notes} />
+      <NoteChannel label="Execution notes" notes={task.execution_notes} />
+
+      {task.agent_instructions_template && (
+        <SectionLabel label="Agent instructions">
+          <pre data-type="body-s" className="rounded-md bg-surface-container px-m py-2 text-on-surface-var font-mono whitespace-pre-wrap">{task.agent_instructions_template}</pre>
+        </SectionLabel>
+      )}
+
+      <Comments taskId={task.id} provider={task.provider} />
+
+      <div data-type="caption" className="text-on-surface-low">
+        {task.created_at && <>Created {relTime(task.created_at)}</>}{task.updated_at && task.updated_at !== task.created_at && <> · updated {relTime(task.updated_at)}</>}
+      </div>
+    </div>
+  )
+}
+
+/** One of the task's three note channels (general / research / execution). Each
+ *  note shows its content + a relative timestamp; hidden when the channel is empty. */
+function NoteChannel({ label, notes }: { label: string; notes?: TaskNote[] }) {
+  const items = (notes ?? []).filter((n) => (n.content ?? '').trim())
+  if (items.length === 0) return null
+  return (
+    <SectionLabel label={`${label} · ${items.length}`}>
+      <ul className="flex flex-col gap-1.5">
+        {items.map((n, i) => (
+          <li key={i} className="rounded-md bg-surface-container px-m py-2">
+            <p data-type="body-s" className="text-on-surface whitespace-pre-wrap">{n.content}</p>
+            {(n.timestamp || n.created_at) && (
+              <div data-type="caption" className="mt-0.5 text-on-surface-low">{relTime(n.timestamp || n.created_at)}</div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </SectionLabel>
+  )
+}
+
+function SectionLabel({ label, right, children }: { label: string; right?: React.ReactNode; children: React.ReactNode }) {
+  return <div><div className="mb-1.5 flex items-center gap-s"><span data-type="caption" className="text-on-surface-low uppercase tracking-wide">{label}</span>{right}</div>{children}</div>
+}
+
+function Comments({ taskId, provider }: { taskId: string; provider?: string }) {
+  const [comments, setComments] = useState<TaskComment[] | null>(null)
+  const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  // 🔴 A failed READ used to be folded into `setComments([])`, so an unreachable gateway or a 500
+  // rendered as "this task has no comments" — a thread the user had written into looked empty, and
+  // nothing on screen said otherwise. The send path already reports through `reportingWrite`; this
+  // is the same honesty for the read, through the shared list primitive so it also offers a retry.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+
+  const load = () =>
+    api.taskComments(taskId, provider)
+      .then((c) => { setComments(c); setLoadErr(null) })
+      .catch((e) => { setLoadErr(e); setComments(null) })
+  useEffect(() => { load() }, [taskId])
+
+  async function send() {
+    const body = draft.trim(); if (!body) return
+    setSending(true)
+    // The draft is cleared and the thread refetched ONLY on success. Clearing it on a failure
+    // would destroy the text the user typed while telling them nothing about why it vanished.
+    try {
+      if (!(await reportingWrite('post this comment', () => api.addTaskComment(taskId, body, provider)))) return
+      setDraft('')
+      await load()
+    } finally { setSending(false) }
+  }
+
+  // A comment has no edit path, so removal is the only way to take back a wrong one.
+  // 🪤 `body` is threaded in because the comment IS in scope at the call site — `remove(c.id)` is
+  // called from inside `comments.map`, so the text was one argument away while the dialog asked about
+  // "this comment". A comment has no edit path, so the dialog is the only chance to check you are
+  // deleting the right one, and on a long thread "this comment" identifies nothing.
+  async function remove(commentId: string, body: string) {
+    if (!(await confirmDelete('comment', rowSubject([body], 40)))) return
+    // Gated: a comment that failed to delete is still in the list, so refetching re-renders the
+    // same thread and reads as "nothing happened, twice".
+    if (!(await reportingWrite('delete this comment', () => api.deleteTaskComment(taskId, commentId, provider)))) return
+    await load()
+  }
+
+  return (
+    <SectionLabel label={`Comments${comments?.length ? ` · ${comments.length}` : ''}`}>
+      <div className="flex flex-col gap-s">
+        {/* `InlineError`, not `LoadError`: this is a section inside a side panel, and the centred
+            empty-state treatment is wrong at that scale — but the retry it offers is the thing the
+            reader needs, which is exactly the case InlineError's `onRetry` documents. */}
+        {!!loadErr && (
+          <InlineError icon onRetry={load}>
+            Couldn't load the comments: {readableErrText(loadErr) || 'the server didn’t respond.'}
+          </InlineError>
+        )}
+        {comments?.map((c) => (
+          <div key={c.id} className="group flex gap-s">
+            <CornerDownRight size={14} className="text-on-surface-low shrink-0 mt-1" />
+            <div className="flex-1 rounded-md bg-surface-container px-m py-2">
+              <div data-type="caption" className="flex items-center gap-s text-on-surface-low mb-0.5">
+                <span className="text-on-surface-var">{c.author || 'you'}</span>
+                <span>{relTime(c.created_at)}</span>
+                <IconButton icon={Trash2} label="Delete comment" onClick={() => remove(c.id, c.body)} size={24} iconSize={13}
+                  tone="danger"
+                  className="ml-auto opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" />
+              </div>
+              <p data-type="body-s" className="text-on-surface whitespace-pre-wrap">{c.body}</p>
+            </div>
+          </div>
+        ))}
+        <div className="flex items-end gap-s">
+          <textarea value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Add a comment…" rows={1}
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send() } }}
+            data-type="body-s" className="flex-1 rounded-md bg-surface-container px-m py-2 text-on-surface placeholder:text-on-surface-low outline-none resize-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+          {/* Icon-only send, one per comment composer — a constant name is correct. */}
+          <button type="button" aria-label="Post comment" onClick={send}
+            {...unavailableWhen(!draft.trim(), 'Write a comment first', { busy: sending })} className="shrink-0 inline-flex size-9 items-center justify-center rounded-pill bg-primary text-on-primary disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"><Send size={15} /></button>
+        </div>
+      </div>
+    </SectionLabel>
+  )
+}

@@ -1,0 +1,110 @@
+{
+  "name": "create-task-action",
+  "version": "1.0.0",
+  "displayName": "Create Task Hook",
+  "description": "File a task (via the task provider) when an agent's lifecycle event fires \u2014 e.g. open a follow-up on Error or Stop. A native action, no shell-out. Attach to an agent to activate.",
+  "icon": "ListPlus",
+  "author": "PersonalClaw",
+  "tags": [
+    "action",
+    "bundled",
+    "native"
+  ],
+  "provider": {
+    "type": "action",
+    "entity": "task",
+    "implementation": "personalclaw.action_providers.create_task_provider:create_provider",
+    "capabilities": [
+      "execute"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "required": [
+        "title_template"
+      ],
+      "properties": {
+        "title_template": {
+          "type": "string",
+          "x-meta": {
+            "label": "Task Title",
+            "help": "Title for the created task. Supports $EVENT, $CONTEXT, and $<payload-key>."
+          }
+        },
+        "body_template": {
+          "type": "string",
+          "x-meta": {
+            "label": "Description",
+            "help": "Optional task description. Supports the same placeholders."
+          }
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "default": "medium",
+          "x-meta": {
+            "label": "Priority"
+          }
+        },
+        "project": {
+          "type": "string",
+          "x-meta": {
+            "label": "Project",
+            "help": "Optional project to file the task under.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "provider": {
+          "type": "string",
+          "default": "native",
+          "x-meta": {
+            "label": "Task Provider",
+            "help": "Which task provider to create in (default native).",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "assignee": {
+          "type": "string",
+          "x-meta": {
+            "label": "Assignee",
+            "help": "Optional assignee for the created task.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "due": {
+          "type": "string",
+          "x-meta": {
+            "label": "Due Date",
+            "help": "Optional due date (ISO 8601, e.g. 2026-07-31).",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "x-meta": {
+            "label": "Labels",
+            "help": "Optional labels to tag the created task with.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "native": true
+}

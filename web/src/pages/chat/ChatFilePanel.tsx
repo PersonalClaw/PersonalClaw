@@ -1,0 +1,162 @@
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { fvs } from '../../design/fontWeight'
+import { createPortal } from 'react-dom'
+import { motion } from 'framer-motion'
+import { X, Maximize2, Minimize2, Box } from 'lucide-react'
+import { IconButton } from '../../ui/IconButton'
+import { useFocusTrap } from '../../ui/useFocusTrap'
+import { useResizablePanel } from '../../ui/useResizablePanel'
+import { Modal } from '../../ui/Modal'
+import { Button } from '../../ui/Button'
+import { TextInput } from '../../ui/forms'
+import { spring } from '../../design/motion'
+import { api, type FsEntry } from '../../lib/api'
+import { notify } from '../../app/appSdk'
+import { FileViewer, type FileViewerHandle } from '../files/browse/FileViewer'
+import { baseName } from '../files/fileMeta'
+import type { CommentTarget } from '../../ui/content/commentTarget'
+
+const MIN_W = 360, MAX_W = 900, DEFAULT_W = 480
+
+/** Right-docked, resizable, full-featured single-file editor for chat — the SAME
+ *  `FileViewer` the Files page uses (Monaco edit + save, dirty/revert, word-wrap,
+ *  copy, preview/split/edit, image/pdf/csv/json/html previews, save-as-artifact,
+ *  download, live file-watch), minus the multi-tab strip. Opened by clicking an
+ *  inline file reference in a chat response. Three modes: docked (drag the left
+ *  edge to resize), expanded (full-viewport overlay), close. ⌘S saves. */
+/** The expanded panel's full-viewport surface, extracted ONLY so the focus trap works.
+ *
+ *  This panel is opaque (`bg-surface`) over a still-mounted chat, so without containment Tab walks
+ *  out of the expanded file view and onto composer and message controls the user cannot see — focus
+ *  on invisible content. Escape already collapses back (see the key handler above), so the trap has a
+ *  documented exit and does not strand anyone.
+ *
+ *  🪤 IT HAS TO BE A SEPARATE COMPONENT. `useFocusTrap`'s effect reads `ref.current` once on mount;
+ *  put it on `ChatFilePanel` itself and it would run when the PANEL opens — collapsed, with the ref
+ *  unattached — and never re-run when `expanded` flips. That is a silently inert trap, which is
+ *  exactly how `app/CommandPalette.tsx` shipped one. Mounting with the overlay is what makes it real.
+ *
+ *  🔑 This mode is a VIEW STATE that happens to cover live content, not a dialog: no scrim, no
+ *  backdrop click, and it deliberately does NOT claim a dialog role (`primitiveAdoption` holds
+ *  page-level ad-hoc dialogs at 0 — `ui/Modal` is canonical). Containment is owed by what it covers,
+ *  not by what it declares. */
+function ExpandedOverlay({ children }: { children: ReactNode }) {
+  const trapRef = useFocusTrap<HTMLDivElement>()
+  return (
+    // `--z-content` IS 50, so this is a spelling migration with a byte-identical computed value: a
+    // full-screen content panel is precisely what tokens.css names the content ceiling.
+    <motion.div ref={trapRef} className="fixed inset-0 z-[var(--z-content)] flex flex-col bg-surface"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={spring.effects}>
+      {children}
+    </motion.div>
+  )
+}
+
+export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; onClose: () => void; commentTarget?: CommentTarget }) {
+  // Width + drag/keyboard handlers from the shared window-splitter primitive, same as
+  // ui/SidePanel. Key round-trips exactly: it persists at `${key}-w`, and this panel's
+  // key is already `chat-file-w`, so `'chat-file'` reconstructs it — no saved width reset.
+  // Collapse is opt-out (the panel is opened/closed by ChatPage and separately expanded to
+  // full-screen; it is never "collapsed"), so no `-collapsed` key is written.
+  // 🔑 `fitWidth`, not `width`, for anything rendered. `MAX_W` is 900 and this panel's width
+  // persists, so a user who drags it wide on a large monitor and then split-screens to 720px had
+  // BOTH its Expand and Close buttons clipped past the viewport edge — and the app sets
+  // `overflow: hidden` on the shell, so there is no horizontal scrollbar to reach them. Only
+  // Escape still closed it, which left pointer users with no way out at all.
+  //
+  // The clamp is `useResizablePanel`'s, the same one `SidePanel` has always had; this panel is the
+  // identical right-docked shape and simply never got it. `aria-valuenow` deliberately keeps the
+  // STORED `width` — that is the user's choice, and it is restored when the window widens again.
+  const { width, fitWidth: dockW, onHandleDown, onHandleKey, min, max } = useResizablePanel(
+    'chat-file', { def: DEFAULT_W, min: MIN_W, max: MAX_W, side: 'right' })
+  const [expanded, setExpanded] = useState(false)
+  const [artModal, setArtModal] = useState<{ entry: FsEntry; content: string; name: string } | null>(null)
+  const viewerRef = useRef<FileViewerHandle>(null)
+  const entry: FsEntry = { name: baseName(path), path, is_dir: false }
+
+  // ⌘S saves the open file; Esc collapses an expanded panel, else closes.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); viewerRef.current?.save() }
+      else if (e.key === 'Escape') { if (expanded) setExpanded(false); else onClose() }
+    }
+    window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey)
+  }, [expanded, onClose])
+
+  const saveAsArtifact = (e: FsEntry, content: string) => setArtModal({ entry: e, content, name: baseName(e.path) })
+  const confirmArtifact = async () => {
+    if (!artModal || !artModal.name.trim()) return
+    try {
+      await api.createArtifact({ name: artModal.name.trim(), content: artModal.content, source: 'manual', source_path: artModal.entry.path, kind: guessKind(artModal.entry.name) })
+      setArtModal(null)
+    } catch (e) { notify(`Could not save artifact: ${(e as Error).message}`, 'error') }
+  }
+
+  // a dedicated chrome row owns the panel frame (full path + expand/close) so the
+  // FileViewer's own compact action bar sits cleanly below it — no overlap, no
+  // crowding. The path is shown here (truncated, with the basename emphasized).
+  const dir = path.replace(/\/+$/, '').replace(/\/[^/]*$/, '')
+  const chrome = (
+    <div className="flex items-center gap-2 border-b border-outline-variant/40 px-m py-1.5">
+      <span data-type="caption" className="min-w-0 flex-1 truncate text-on-surface-low" title={path}>
+        {dir && <span className="opacity-60">{dir}/</span>}
+        <span className="text-on-surface" style={fvs(500)}>{baseName(path)}</span>
+      </span>
+      <div className="flex shrink-0 items-center gap-0.5">
+        <IconButton icon={expanded ? Minimize2 : Maximize2} label={expanded ? 'Collapse to panel' : 'Expand to full width'} size={28} onClick={() => setExpanded((v) => !v)} />
+        <IconButton icon={X} label="Close (Esc)" size={28} onClick={onClose} />
+      </div>
+    </div>
+  )
+
+  const body = (
+    <div className="flex h-full flex-col">
+      {chrome}
+      <div className="min-h-0 flex-1">
+        <FileViewer ref={viewerRef} entry={entry} compact={!expanded} onSaved={() => {}} onSaveAsArtifact={saveAsArtifact} commentTarget={commentTarget} />
+      </div>
+      {artModal && (
+        <Modal title="Save as artifact" icon={<Box size={18} className="text-primary" />} onClose={() => setArtModal(null)}>
+          <div className="flex flex-col gap-m p-l" style={{ minWidth: 360 }}>
+            <p data-type="body-s" className="text-on-surface-low">Creates a versioned artifact that live-points at <span className="font-mono">{baseName(artModal.entry.path)}</span>. Re-saving bumps it instead of duplicating.</p>
+            <TextInput value={artModal.name} onChange={(v) => setArtModal((m) => m && { ...m, name: v })} placeholder="Artifact name" autoFocus />
+            <div className="flex justify-end gap-s">
+              <Button variant="ghost" size="sm" onClick={() => setArtModal(null)}>Cancel</Button>
+              <Button size="sm" onClick={confirmArtifact}>Save artifact</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+
+  if (expanded) {
+    // full-viewport overlay, portaled to <body> (an animated/transformed ancestor
+    // would otherwise become the containing block for position:fixed).
+    return createPortal(<ExpandedOverlay>{body}</ExpandedOverlay>, document.body)
+  }
+
+  return (
+    <motion.div className="relative shrink-0 overflow-hidden border-l border-outline-variant/40 bg-surface"
+      initial={{ width: 0, opacity: 0 }} animate={{ width: dockW, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={spring.spatialDefault}>
+      {/* left-edge resize handle — WAI-ARIA window-splitter: focusable, arrow-key operable,
+          reports its width. Right-docked, so dragging/ArrowLeft grows it (side: 'right'). */}
+      <div onPointerDown={onHandleDown} onKeyDown={onHandleKey} role="separator" aria-orientation="vertical"
+        tabIndex={0} aria-label="Resize file panel — arrow keys to resize"
+        aria-valuenow={Math.round(width)} aria-valuemin={min} aria-valuemax={max}
+        className="absolute left-0 top-0 bottom-0 z-20 w-1.5 cursor-ew-resize outline-none group">
+        <span className="absolute left-0 top-0 bottom-0 w-px bg-outline-variant/40 group-hover:bg-primary group-focus-visible:bg-primary transition-colors" />
+      </div>
+      <div className="h-full" style={{ width: dockW }}>{body}</div>
+    </motion.div>
+  )
+}
+
+function guessKind(name: string): string {
+  const ext = name.toLowerCase().split('.').pop() || ''
+  if (ext === 'html' || ext === 'htm') return 'html'
+  if (ext === 'svg') return 'svg'
+  if (ext === 'json') return 'json'
+  if (['md', 'markdown', 'mdx', 'txt'].includes(ext)) return 'markdown'
+  return 'text'
+}

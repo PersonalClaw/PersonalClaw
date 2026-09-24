@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "name": "infra-ops",
+  "version": "1.0.0",
+  "displayName": "Infra Ops",
+  "description": "Review infrastructure-as-code changes honestly: plan counts before commentary, the destroy/replace list first, and a drift audit that names the attribute behind every divergence.",
+  "author": "PersonalClaw",
+  "license": "MIT",
+  "pclaw_requires": ">=0.1",
+  "components": [
+    {"kind": "skill", "id": "infra-plan-review", "path": "skills/infra-plan-review/SKILL.md", "depends_on": []},
+    {"kind": "skill", "id": "infra-drift-audit", "path": "skills/infra-drift-audit/SKILL.md", "depends_on": []},
+    {"kind": "agent", "id": "infra-reviewer", "path": "agents/infra-reviewer.md", "depends_on": ["skill:infra-plan-review", "skill:infra-drift-audit"]},
+    {"kind": "template", "id": "infra-change-review", "path": "templates/infra-change-review.json", "depends_on": ["agent:infra-reviewer", "skill:infra-plan-review", "skill:infra-drift-audit"]}
+  ],
+  "requirements": [],
+  "pack_owned": ["skills/infra-*", "templates/infra-*", "agents/infra-*"],
+  "fingerprints": [
+    {
+      "label": "Terraform project",
+      "globs": ["*.tf", "*.tfvars"],
+      "signals": ["terraform {", "provider \""],
+      "confidence": 0.9
+    },
+    {
+      "label": "OpenTofu project",
+      "globs": ["*.tofu"],
+      "signals": ["terraform {"],
+      "confidence": 0.8
+    }
+  ]
+}

@@ -1,0 +1,532 @@
+import { useState } from 'react'
+import { SCAN_FINDINGS_SHOWN, hiddenFindingsNote, ruleGloss } from '../../lib/scanFindings'
+import { trustTierLabel } from '../../lib/trustTier'
+import { ShieldAlert, ShieldCheck, ShieldQuestion, BadgeCheck, AlertTriangle, Terminal, CalendarClock, Bot, Globe, LayoutDashboard, Copy, Check } from 'lucide-react'
+import { Button } from '../../ui/Button'
+import { Modal } from '../../ui/Modal'
+import { SquareIconButton } from '../../ui/SquareIconButton'
+import type { AppSummary, AppInstallResult, AppCronSummary, AppScanReport, AppCatalogEntry } from '../../lib/api'
+import { terminalRefusalReason, type GuardedResult } from '../../lib/useGuardedInstall'
+import { copyText } from '../../app/clipboard'
+
+/** The APP INSTALL-CONSENT surface — everything a user is shown BEFORE an app is
+ *  installed, and the override they must click if the supply-chain scanner objects.
+ *
+ *  It lives in its own module because it now has two call sites: the Store
+ *  (`AppsSection`) and the first-run essential-apps step
+ *  (`app/onboarding/EssentialsStep`). Installing from onboarding must disclose exactly
+ *  what installing from the Store discloses — same bullets, same advisory rows, same
+ *  "Install anyway" — so both import these components rather than each rendering its
+ *  own idea of consent. Splitting it out also keeps `AppsSection` lazily loaded: a
+ *  static import of the whole Store page from the onboarding flow would have pulled the
+ *  Store into the first-load bundle.
+ *
+ *  Nothing here installs anything. Every component is presentation over data the
+ *  catalog already returned, or over a scan verdict the install endpoint returned; the
+ *  caller owns the request. */
+
+/** Close a server-composed clause so a following sentence reads as a separate one. Backend error
+ *  strings are composed without terminal punctuation (they are API fields, not prose), so any surface
+ *  that appends its own sentence to one has to supply the boundary itself. */
+const sentence = (s: string) => (/[.!?…]$/.test(s.trim()) ? s.trim() : `${s.trim()}.`)
+
+/** SH-3: the artifact-signature row. Shown on the SAME surface as the scan verdict,
+ *  because provenance and content are two different questions a user consents over and
+ *  a UI that shows only one invites "it scanned clean" to be read as "it's from who it
+ *  says". `invalid` is a refusal the user cannot override, so it renders as danger, not
+ *  as a warning to click through. `unsigned` is stated plainly rather than hidden —
+ *  community apps are unsigned by design and that is the honest, non-alarming default. */
+function SignatureRow({ signature, verdict, tier }: {
+  signature: NonNullable<AppScanReport['signature']>
+  /** The scan verdict on the SAME report. The unsigned note has to know it: on a
+   *  `dangerous` verdict there is no install to reassure anyone about, and the sentence
+   *  that reassured them sat five lines above "This app is blocked". */
+  verdict: string
+  /** The trust tier the install gate computed for these exact bytes (`ScanReport.tier`).
+   *  Spelled through `trustTierLabel`, which is the SAME map the Tools page badge reads —
+   *  #2627: this row disclosed "community tier" while the Tools page then called the very
+   *  same bundle `built-in`, and two hardcoded literals is how that happens. */
+  tier?: string
+}) {
+  const s = signature.state
+  const blocked = verdict === 'dangerous'
+  const tone = s === 'invalid' ? 'text-danger' : s === 'signed' ? 'text-ok' : 'text-on-surface-low'
+  const Icon = s === 'invalid' ? ShieldAlert : s === 'signed' ? BadgeCheck : ShieldQuestion
+  const label =
+    s === 'signed' ? `Signed by ${signature.signer || 'a trusted key'}`
+      : s === 'invalid' ? 'Invalid signature — install refused'
+        : `Unsigned — ${trustTierLabel(tier)}`
+  return (
+    <div className="mt-2 flex flex-col gap-1">
+      <div className={`flex items-center gap-2 ${tone}`} data-type="body-m">
+        <Icon size={16} /> {label}
+      </div>
+      {s === 'invalid' && signature.reason && (
+        <div data-type="body-s" className="text-danger">{signature.reason}</div>
+      )}
+      {/* The second sentence is about what the MISSING SIGNATURE does or does not stop, so
+          it has to agree with the verdict it sits beside. Unconditional, it told the user
+          "It still installs" a few lines above "This app is blocked — dangerous content
+          cannot be installed": one screen asserting both that the app installs and that it
+          cannot. On a refusal the honest version of the same point is that being unsigned
+          is not why — the scan is — and neither fact reopens the install. */}
+      {s === 'unsigned' && (
+        <div data-type="body-s" className="text-on-surface-low">
+          No maintainer signature, so PersonalClaw can't confirm who published this.{' '}
+          {blocked
+            ? 'That is not why this install was refused — the security scan is, and it cannot be overridden.'
+            : 'It still installs — the security scan above is what gates it.'}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function ScanReport({ scan }: { scan: NonNullable<AppInstallResult['scan']> }) {
+  const v = scan.verdict
+  const tone = v === 'dangerous' ? 'text-danger' : v === 'warning' ? 'text-warn' : 'text-ok'
+  const Icon = v === 'clean' ? ShieldCheck : v === 'dangerous' ? ShieldAlert : AlertTriangle
+  return (
+    <div className="rounded-md border border-outline-variant bg-surface-high p-m">
+      <div className={`flex items-center gap-2 ${tone}`} data-type="body-m"><Icon size={16} /> Security scan: {v}
+        {scan.findings.length > 0 && ` · ${scan.findings.length} finding${scan.findings.length === 1 ? '' : 's'}`}
+      </div>
+      {scan.signature && <SignatureRow signature={scan.signature} verdict={v} tier={scan.tier} />}
+      {scan.findings.length > 0 && (
+        <ul className="mt-2 flex flex-col gap-1">
+          {/* rule (severity) — path: evidence, then what the rule MEANS. The first line is
+              the scanner's own vocabulary and the evidence is the real argv; neither tells a
+              non-expert what the app can do to their machine, which is the only question they
+              can actually answer. The gloss is a second line rather than an inline clause so
+              the technical row stays greppable/comparable against the scanner's output. */}
+          {scan.findings.slice(0, SCAN_FINDINGS_SHOWN).map((f, i) => (
+            <li key={i} data-type="body-s" className="text-on-surface-low">
+              <span className="text-on-surface">{f.rule}</span> ({f.severity})
+              {f.path ? ` — ${f.path}` : ''}{f.evidence ? `: ${f.evidence}` : ''}
+              {ruleGloss(f.rule) && (
+                <span className="block text-on-surface-var">{ruleGloss(f.rule)}</span>
+              )}
+            </li>
+          ))}
+          {/* The list stops at the cap; without this the eight shown read as all of them, on the
+              one screen whose entire job is an informed yes/no. */}
+          {hiddenFindingsNote(scan.findings.length) && (
+            <li data-type="body-s" className="text-on-surface-low italic">
+              {hiddenFindingsNote(scan.findings.length)}
+            </li>
+          )}
+        </ul>
+      )}
+      {v === 'dangerous' && <div data-type="body-s" className="mt-2 text-danger">This app is blocked — dangerous content cannot be installed.</div>}
+    </div>
+  )
+}
+
+// ── Consent modal — shown when a one-click (card / source-list) install hits an
+// overridable WARNING (or a terminal dangerous) verdict, so the scanner findings
+// and the "Install anyway" action are reachable without re-typing the source. */
+// Exported so the onboarding essential-apps step consents through THIS surface rather
+// than a second, quieter one: a warning verdict must show the same scanner findings and
+// demand the same explicit "Install anyway" wherever the install was initiated.
+//
+// 🔑 THE GRANTS ARE PART OF CONSENT, AND THIS MODAL OWNS THEM NOW. The module header
+// promised every install path discloses the same thing, and two of four callers broke it:
+// the Store CARD's Install and Manage Sources → Install rendered this modal with the scan
+// report only, so the fastest path to an install disclosed the scanner's findings and never
+// what the app is permitted to do or what it will run unattended. The other two disclosed
+// them on the panel BEHIND this modal — which this modal covers at the moment the user
+// clicks "Install anyway". So the bullets moved inside: the disclosure is now on the same
+// screen as the button that acts on it, for every caller, by construction.
+//
+// 🪤 `permissions` and `crons` are REQUIRED props, not optional ones — that is the whole
+// mechanism. A comment asking four callers to remember is what failed here; a required
+// prop makes forgetting a type error. Pass `undefined` when the grants genuinely are not
+// known yet (a registry pointer's manifest is not fetched until install) and the modal says
+// so out loud, which is a different and honest disclosure — never silence. Derive that
+// `undefined` with `consentPermissions` — a catalog row can never be trusted to express it,
+// because the wire ships `permissions: {}` for BOTH cases.
+
+/** The grants to disclose for *entry*, or `undefined` when they are NOT KNOWN YET.
+ *
+ *  🔑 The catalog's `permissions` alone cannot answer this, and reading it as if it could
+ *  is the bug this closes. `CatalogEntry.to_dict` is `asdict`, so **every** row ships a
+ *  `permissions` object — `{}` both for a scanned manifest that declares nothing and for
+ *  a registry POINTER whose manifest is not fetched until install. `{}` is truthy in JS,
+ *  so the modal's `permissions ? … : …` guard took the pointer down the known branch and
+ *  asserted "None — this app is granted no gateway capability" about an app nobody had
+ *  read. `consentKnown` is the one authority for the distinction (it is False only at the
+ *  pointer builder), and this helper is the single place the four consent call sites
+ *  consult it, so the two cases cannot diverge per caller again. */
+export function consentPermissions(
+  entry: Pick<AppCatalogEntry, 'permissions' | 'consentKnown'> | undefined,
+): AppSummary['permissions'] | undefined {
+  if (!entry?.consentKnown) return undefined
+  return entry.permissions ?? {}
+}
+
+/** What browser code this app ships (#492) — the consent fact the permission block
+ *  cannot state, because an app's UI bundle is imported into THIS page and the `api`
+ *  allowlist bounds its backend and its SDK client, not its page code
+ *  (`docs/security/limitations.md` §4).
+ *
+ *  🔑 ONE reading for both wires. The pre-install `AppCatalogEntry` and the installed
+ *  `AppSummary` carry the same two field names for it, so this accepts either and the
+ *  Store card, the install modal, onboarding and the installed-app panel cannot answer
+ *  the question differently — the mistake `consentPermissions` exists to prevent, one
+ *  field along. The two facts stay SEPARATE because a components module is the broader
+ *  one: the shell loads it for an enabled app with no page visit at all.
+ *
+ *  `undefined` in, `undefined` out — and the row then renders nothing. A registry
+ *  POINTER ships `hasUI: false` for the same reason it ships `permissions: {}` (its
+ *  manifest is not read until install), and "no browser code" is a CLAIM, not a
+ *  default, so it must not be made about an app nobody has read. Nothing needs to
+ *  re-check `consentKnown` here: this rides inside `PermissionList`, which every caller
+ *  already gates on the same flag through {@link consentPermissions}. */
+export function consentHostUi(
+  a: Pick<AppCatalogEntry, 'hasUI' | 'uiComponents'> | undefined,
+): { page: boolean; components: boolean } | undefined {
+  if (!a) return undefined
+  return { page: Boolean(a.hasUI), components: Boolean(a.uiComponents) }
+}
+
+export function ConsentModal({ label, result, busy, permissions, hostUi, crons, onConfirm, onClose }: {
+  label: string; result: GuardedResult; busy: boolean
+  permissions: AppSummary['permissions'] | undefined
+  /** #492 — what browser code the app ships, from {@link consentHostUi}. */
+  hostUi: { page: boolean; components: boolean } | undefined
+  crons: AppCronSummary[] | undefined
+  onConfirm: () => void; onClose: () => void
+}) {
+  // P21: a client-install directive — the app installs on the user's local machine,
+  // not this server. Show the copy-paste one-liner instead of the scanner consent UI.
+  if (result.clientInstall) {
+    return (
+      <Modal title={`Install ${label}`} icon={<Terminal size={18} />} onClose={onClose}>
+        <div className="flex flex-col gap-m p-l" style={{ minWidth: 460 }}>
+          {/* Two sentences, so they have to READ as two. The server's reason arrives WITHOUT terminal
+              punctuation (`app_manager` composes "'<name>' installs on your local machine, not this
+              server"), and this line appends an instruction to it — which rendered as
+              "…not this server Run this in your terminal:". Only the hard-coded fallback ends in a
+              period, so the seam is invisible in code review and shows up only on the real path.
+              Normalizing here rather than adding a period server-side: the same string is an API
+              error field with other consumers, and a sentence boundary is this surface's concern. */}
+          <p data-type="body-s" className="text-on-surface-low">
+            {sentence(result.error || 'This app installs on your local machine, not this server.')} Run this in your terminal:
+          </p>
+          {result.clientInstall.shell && <ClientInstallCommand label="Install command" cmd={result.clientInstall.shell} />}
+          {result.clientInstall.postInstall && <ClientInstallCommand label="Then" cmd={result.clientInstall.postInstall} />}
+          <p data-type="label-s" className="text-on-surface-low">
+            The command runs on your machine, outside PersonalClaw's security scanner — review it before running.
+          </p>
+          <div className="flex justify-end gap-2 pt-s">
+            <Button variant="ghost" onClick={onClose}>Done</Button>
+          </div>
+        </div>
+      </Modal>
+    )
+  }
+  // A terminal refusal (dangerous content OR an invalid signature) explains itself and
+  // offers no override; anything else here is a consentable warning.
+  const refusal = terminalRefusalReason(result)
+  return (
+    <Modal title={`Install ${label}`} icon={<ShieldAlert size={18} />} onClose={onClose}>
+      <div className="flex flex-col gap-m p-l" style={{ minWidth: 420 }}>
+        <p data-type="body-s" className="text-on-surface-low">
+          {refusal
+            || 'The security scanner raised warnings. Review the findings — you can install anyway if you trust the source.'}
+        </p>
+        {result.scan && <ScanReport scan={result.scan} />}
+        {/* What the app is GRANTED and what it will RUN, beside the scanner's verdict on its
+            CONTENT. Three different questions; a screen answering only the third lets "the
+            scan found two warnings" stand in for "and it may also read your credentials
+            store on a schedule". Rendered on a refusal too: a user is owed the reason the
+            platform said no, and the grants are why the findings matter. */}
+        {permissions
+          ? <PermissionList perms={permissions} hostUi={hostUi} />
+          : (
+            <div data-type="body-s" className="text-on-surface-low">
+              PersonalClaw could not read this app's declared permissions before installing —
+              its manifest is fetched as part of the install. Open the app in the Store to see
+              them, or review them on its page once installed.
+            </div>
+          )}
+        {(crons ?? []).length > 0 && <CronConsentList crons={crons!} />}
+        <div className="flex justify-end gap-2 pt-s">
+          {/* A terminal refusal leaves NOTHING to cancel — the install was already refused server-side,
+              so this button only dismisses. "Cancel" claims the user is abandoning a pending action and
+              invites the reading that the app might otherwise still install. `Done` is the verb this
+              file already uses for its one dismiss-only footer (the client-install branch above), and
+              the two other dismiss-only modals in the app (`chat/SessionSkillsReview`,
+              `ChatPage`) — so this converges, it does not invent. When the verdict IS consentable the
+              footer keeps "Cancel", because there a real pending action ("Install anyway") is being
+              abandoned. `AppsSection`'s install/update modals keep "Cancel" for the same reason: they
+              always render a commit button (disabled, with the refusal as its `disabledReason`), so
+              they are never dismiss-only. */}
+          <Button variant="ghost" onClick={onClose}>{refusal ? 'Done' : 'Cancel'}</Button>
+          {!refusal && (
+            <Button variant="primary" loading={busy} onClick={onConfirm}><ShieldAlert size={16} /> Install anyway
+            </Button>
+          )}
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+/** A monospace command row with a copy button — for the P21 client-install one-liner. */
+function ClientInstallCommand({ label, cmd }: { label: string; cmd: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => { if (await copyText(cmd, 'the command')) { setCopied(true); setTimeout(() => setCopied(false), 1500) } }
+  return (
+    <div>
+      <div data-type="label-s" className="mb-1 text-on-surface-low uppercase tracking-wide">{label}</div>
+      <div className="flex items-center gap-2 rounded-lg bg-surface-container px-3 py-2">
+        <code className="min-w-0 flex-1 overflow-x-auto whitespace-pre font-mono text-[0.75rem] text-on-surface">{cmd}</code>
+        <SquareIconButton label="Copy command" title={copied ? 'Copied' : 'Copy'} onClick={copy} className="shrink-0">
+          {copied ? <Check size={14} /> : <Copy size={14} />}
+        </SquareIconButton>
+      </div>
+    </div>
+  )
+}
+
+// APE-12. One `appMessaging` entry, in the words a user can act on. The grammar is
+// `apps/permissions.py::_matches_any`, so this MUST mirror it: a trailing `*` is a
+// name PREFIX, not a literal app, and a bare `*` matches every name. Rendering
+// `mail-*` as though an app called "mail-*" existed would understate the grant — it
+// covers every current AND future app under that prefix. (`_matches_any`'s third
+// branch also treats an exact entry as a `/`-path prefix; app names are kebab-case
+// with no `/`, so that branch cannot widen an app target and is not claimed here.)
+function describeMessagingTarget(pattern: string): string {
+  if (pattern === '*') return 'any installed app'
+  if (pattern.endsWith('*')) return `any app whose name starts with “${pattern.slice(0, -1)}”`
+  return pattern
+}
+
+// EI-12 D2. The bullets are the permissions the gateway ENFORCES server-side, and
+// `network` is deliberately not among them: an app's provider code is imported
+// in-process by the gateway, so there is no per-app egress chokepoint to enforce at
+// (docs/security/limitations.md §2). Listing it beside storage/cron/agent — which are
+// enforced — would read as a grant the platform polices, and OMITTING it when the app
+// declares `network: false` would read as a block. Both are false, so it gets its own
+// advisory row, rendered either way.
+//
+// APE-12. `appMessaging` is the OPPOSITE case and belongs in the enforced bullets: the
+// broker (`POST /api/apps/message`) is the only app-to-app path and refuses an
+// undeclared target 403 + SEL (apps/messaging.py). It used to render nowhere at all —
+// `AppPermissionsWire` never declared the field — so install consent never said which
+// other apps an app may talk to. Declaring nothing is disclosed too (the caption
+// below the bullets): deny-by-default is the real behaviour, and silence would repeat
+// the mistake D2 found for `network`.
+//
+// THREE network states, not two. The row read `not declared` for a manifest carrying an
+// explicit `"network": false`, collapsing a STATEMENT by the author into silence — and it
+// is the statement a user most wants: "this app says it does not go out to the internet".
+// `undefined` (the key absent) is the only honest "not declared"; the server now emits
+// `false` for a declining app (`Permissions.to_dict` keeps the key when the manifest
+// mentioned it) so the two cases can read differently here.
+function networkClaim(network: boolean | undefined): string {
+  if (network === undefined) return 'not declared'
+  return network ? 'declared' : 'declared as denied'
+}
+
+// #492. The bullets and the network row are both about the app's BACKEND reach. An app
+// that ships a UI also gets a second kind of authority the manifest has no field for: its
+// bundle is fetched and `import()`-ed into this very page (`appSdk.loadContributedModule`
+// — no iframe, sharing the host React instance), so its page code holds the host DOM, the
+// owner's session cookie and authenticated same-origin `/api/*` reach. The gateway cannot
+// scope that: `app_permission_middleware` acts on requests carrying an app identity, and a
+// bare `fetch` from app UI carries none, so it arrives as the owner.
+//
+// That makes the consent screen's silence the actual defect (#492): it showed declared
+// permissions, and the thing it showed was not the thing that bounds the UI. Same fix as
+// EI-12 D2 made for `network` — its own advisory row, stated either way, because absence
+// would otherwise read as "the platform confines it". Rendered ONLY when the caller
+// supplies the fact: an omitted `hostUi` leaves the row out rather than asserting "no
+// browser code" about an app nobody has read. `consentHostUiRendered.test.ts` is the rail
+// that keeps every production call site supplying it.
+function HostPageRow({ hostUi }: { hostUi: { page: boolean; components: boolean } }) {
+  const runs = hostUi.page || hostUi.components
+  return (
+    <div className="mt-2 flex gap-2 rounded-md border border-outline-variant bg-surface-high p-m">
+      <LayoutDashboard size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-on-surface-low" />
+      <div data-type="body-s" className="text-on-surface-low">
+        <span className="text-on-surface">Runs in this dashboard page: {runs ? 'yes' : 'no'}</span>
+        {runs ? (
+          <>
+            {' — advisory only. PersonalClaw loads this app\'s interface into the dashboard itself, '}
+            so its browser code has the same page, the same session and the same /api access you
+            do. The permissions above bound its backend and its SDK calls, not its page code.
+            {hostUi.components && ' Its component module loads as soon as the app is enabled, without you opening its page.'}
+          </>
+        ) : (
+          ' — this app ships no browser code, so nothing of it runs in the dashboard.'
+        )}
+      </div>
+    </div>
+  )
+}
+
+export function PermissionList({ perms, hostUi }: {
+  perms: AppSummary['permissions']
+  /** #492 — what browser code the app ships, from {@link consentHostUi}. */
+  hostUi?: { page: boolean; components: boolean }
+}) {
+  const rows: string[] = []
+  if (perms.api?.length) rows.push(`API: ${perms.api.join(', ')}`)
+  if (perms.events?.length) rows.push(`Events: ${perms.events.join(', ')}`)
+  if (perms.mcpTools?.length) rows.push(`MCP tools: ${perms.mcpTools.join(', ')}`)
+  if (perms.memory) rows.push(`Memory: ${perms.memory}`)
+  if (perms.storage) rows.push('Storage')
+  if (perms.cron) rows.push('Scheduled jobs')
+  if (perms.agent) rows.push('Run background agents')
+  const messaging = perms.appMessaging ?? []
+  if (messaging.length) {
+    rows.push(`App messaging: ${messaging.map(describeMessagingTarget).join(', ')}`)
+  }
+  // APE-10. Consented cross-app READ-ONLY file sharing belongs in the enforced bullets:
+  // a read is mounted only where storage is granted (backend_runtime) and only when the
+  // consumer names the sharer AND the sharer opted in with `storageShared` (double-
+  // declaration). Same target grammar as `appMessaging`, so it is described the same way
+  // (a trailing `*` is a name prefix). `storageShared` (this app exposing its OWN data)
+  // is disclosed too — it is what lets other apps read this one.
+  if (perms.storageShared) rows.push('Shares its data with apps you grant read access')
+  const sharedReads = perms.storageRead ?? []
+  if (sharedReads.length) {
+    rows.push(`Reads other apps' data (read-only): ${sharedReads.map(describeMessagingTarget).join(', ')}`)
+  }
+  // DC-2. Native desktop capabilities belong in the ENFORCED bullets: the gateway
+  // mediates every app→shell call and refuses an undeclared capability 403 + SEL
+  // (handlers/desktop.py). Unlike `appMessaging` there is no wildcard to explain —
+  // the vocabulary is closed and each entry is an exact capability — so the names are
+  // rendered as-is, humanized.
+  const desktopCaps = perms.desktop ?? []
+  if (desktopCaps.length) {
+    rows.push(`Desktop capabilities: ${desktopCaps.map((c) => c.replace(/_/g, ' ')).join(', ')}`)
+  }
+  // INU-7. Raising a proposal into your inbox is an enforced grant, not a courtesy:
+  // `POST /api/inbox/proposals` 403s any kind not declared here and refuses a callback
+  // into another app, with a SEL row either way. Each entry is named by its LABEL (what
+  // the row will say) rather than its slug — the consent surface should read like the
+  // thing the user will be asked to approve.
+  const proposalKinds = perms.proposals ?? []
+  if (proposalKinds.length) {
+    rows.push(
+      `Can ask you to approve: ${proposalKinds.map((p) => p.label || p.kind_suffix).join(', ')}`,
+    )
+  }
+  // APE-2. `eventSubscriptions` is an ENFORCED grant as of APE-2 and belongs in the
+  // bullets: `apps/app_events.emit` is the only path a platform event reaches an app by,
+  // and it consults `can_receive_platform_event` per app per event (deny by default, exact
+  // name). It was in the pending block under APE-1, when no registry existed; leaving it
+  // there now would understate a real capability — the D2 defect inverted, and just as
+  // wrong, because the user would weigh a live grant as disclosure-only.
+  const declaredEvents = perms.eventSubscriptions ?? []
+  if (declaredEvents.length) {
+    rows.push(`Receive platform events: ${declaredEvents.join(', ')}`)
+  }
+  // APE-3 shipped the host, so this JOINS the enforced bullets — the move APE-2 already made
+  // for `eventSubscriptions`. `apps/permissions.can_run_background_tasks()` is now consulted
+  // by `apps/worker_runtime`, which refuses to spawn or revive a worker without the grant, so
+  // the declaration denies as well as declares. Leaving it in a "declared, not yet in effect"
+  // box would now UNDERSTATE what the gateway does — the mirror image of the D2 defect that
+  // kept it out of the bullets while no host existed.
+  if (perms.backgroundTasks) rows.push('Run a long-lived background worker')
+  return (
+    <div>
+      <div data-type="label-m" className="mb-1 text-on-surface">Permissions the gateway enforces</div>
+      {rows.length === 0 ? <div data-type="body-s" className="text-on-surface-low">None — this app is granted no gateway capability.</div> : (
+        <ul className="flex flex-col gap-1">
+          {rows.map((r, i) => <li key={i} data-type="body-s" className="text-on-surface-low">• {r}</li>)}
+        </ul>
+      )}
+      {messaging.length === 0 && (
+        <div data-type="body-s" className="mt-1 text-on-surface-low">
+          App messaging: none — it declared no target, and the gateway broker is the only
+          way one app can reach another, so it can message no other app.
+        </div>
+      )}
+      {/* DC-2. Same reasoning as the messaging caption above: deny-by-default is the
+          real behaviour, and staying silent about it would let absence read as
+          "unrestricted" rather than "no native reach at all". */}
+      {desktopCaps.length === 0 && (
+        <div data-type="body-s" className="mt-1 text-on-surface-low">
+          Desktop capabilities: none — it declared no native capability, and the gateway
+          mediates every app→desktop call, so it can reach nothing native on this machine.
+        </div>
+      )}
+      <div className="mt-2 flex gap-2 rounded-md border border-outline-variant bg-surface-high p-m">
+        <Globe size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-on-surface-low" />
+        <div data-type="body-s" className="text-on-surface-low">
+          <span className="text-on-surface">Network access: {networkClaim(perms.network)}</span>
+          {' — advisory only. PersonalClaw does not confine an app\'s outbound traffic: this app\'s '}
+          code can reach the network either way. The declaration is disclosure, not containment.
+        </div>
+      </div>
+      {hostUi && <HostPageRow hostUi={hostUi} />}
+    </div>
+  )
+}
+
+// P29: the recurring jobs an app declares, shown pre-install. Each is an agent run on
+// a schedule — we surface the cadence + which agent + the prompt so the user sees what
+// will run unattended before granting the `cron` permission.
+//
+// 🔑 A CRONTAB LINE IS NOT A DISCLOSURE. This returned `cron_expr` verbatim, so the one
+// screen whose job is saying what will run unattended said `23 * * * *`. The words come
+// from the server (`catalog._humanized_cadence` → `schedule.format_schedule` →
+// cron-descriptor), the SAME formatter the Schedule page reads, rather than a second
+// hand-rolled parser here that would drift from it. The raw expression is not discarded —
+// it stays on the row as its `title` (see `cadenceTitle`), so a reader who wants the
+// exact expression still has it.
+function fmtCadence(c: AppCronSummary): string {
+  if (c.cron_expr) return c.cadence || c.cron_expr
+  const s = c.every ?? 0
+  if (!s) return 'on a schedule'
+  if (s % 86400 === 0) { const d = s / 86400; return `every ${d === 1 ? 'day' : `${d} days`}` }
+  if (s % 3600 === 0) { const h = s / 3600; return `every ${h === 1 ? 'hour' : `${h} hours`}` }
+  if (s % 60 === 0) { const m = s / 60; return `every ${m === 1 ? 'minute' : `${m} minutes`}` }
+  return `every ${s}s`
+}
+
+/** The exact crontab expression, as a hover title on the humanised cadence — kept so
+ *  humanising loses nothing. `undefined` when the row already shows the expression itself
+ *  (the server could not describe it), because a tooltip repeating the visible text is
+ *  noise, and for the `every` form, which has no expression. */
+function cadenceTitle(c: AppCronSummary): string | undefined {
+  if (!c.cron_expr || !c.cadence) return undefined
+  return `cron: ${c.cron_expr}`
+}
+
+export function CronConsentList({ crons }: { crons: AppCronSummary[] }) {
+  return (
+    <div>
+      <div data-type="label-m" className="mb-1 flex items-center gap-1.5 text-on-surface">
+        <CalendarClock size={14} /> Scheduled jobs
+      </div>
+      <div data-type="body-s" className="mb-2 text-on-surface-low">
+        This app runs {crons.length === 1 ? 'a background agent' : `${crons.length} background agents`} on a schedule once installed.
+      </div>
+      <ul className="flex flex-col gap-1.5">
+        {crons.map((c, i) => (
+          <li key={c.name || i} className="rounded-md border border-outline-variant bg-surface-high p-m">
+            <div className="flex items-center justify-between gap-2">
+              <span data-type="body-s" className="text-on-surface">{c.name || 'job'}</span>
+              <span data-type="label-s" className="shrink-0 text-on-surface-low" title={cadenceTitle(c)}>{fmtCadence(c)}</span>
+            </div>
+            {(c.agent || c.message) && (
+              <div className="mt-1 flex items-start gap-1.5 text-on-surface-low" data-type="label-s">
+                <Bot size={12} className="mt-0.5 shrink-0" />
+                <span className="min-w-0">
+                  {c.agent && <span className="text-on-surface-var">{c.agent}</span>}
+                  {c.agent && c.message && ' — '}
+                  {c.message && <span className="line-clamp-2">{c.message}</span>}
+                </span>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}

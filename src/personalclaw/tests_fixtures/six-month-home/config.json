@@ -1,0 +1,201 @@
+{
+  "meta": {
+    "lastTouchedVersion": "0.1.3",
+    "lastTouchedAt": "2026-07-14T09:32:11+00:00"
+  },
+  "agent": {
+    "approval_mode": "auto",
+    "provider": "native",
+    "sandbox": "auto",
+    "yolo": false,
+    "acp_concurrent_sessions": false,
+    "bot_name": "",
+    "orchestrator_skill": false,
+    "max_subagents": 3,
+    "spawn_min_memory_gb": 4.0,
+    "subagent_max_turns": 100,
+    "subagent_timeout_secs": 1800,
+    "subagent_cwd_allowed_roots": [
+      "~/workspace",
+      "~/workplace"
+    ],
+    "log_level": "WARNING",
+    "soft_stop_budget_secs": 10.0
+  },
+  "session": {
+    "timeout_secs": 3600,
+    "autocompact_pct": 90.0,
+    "pool_size": 0,
+    "pool_agent": "",
+    "pool_ttl_secs": 1800,
+    "auto_archive_days": 30
+  },
+  "memory": {
+    "semantic_confidence_threshold": 0.8,
+    "episodic_dedup_threshold": 0.88,
+    "episodic_max_results": 8,
+    "episodic_max_count": 10000,
+    "semantic_keys": [],
+    "l1_manifest": true,
+    "active_recall": true,
+    "proactive_commitments": false,
+    "proactive_commitments_max_per_day": 3,
+    "active_recall_timeout_ms": 1500,
+    "auto_promote_enabled": true,
+    "auto_promote_every_n": 10,
+    "auto_promote_max_per_run": 5,
+    "history_idle_hours": 3.0,
+    "history_max_days": 365,
+    "migrated": false,
+    "vault_enabled": false,
+    "vault_path": "memory-vault",
+    "graph_enabled": true,
+    "push_context": false,
+    "push_min_confidence": 0.7
+  },
+  "dashboard": {
+    "url": "",
+    "public_url": "",
+    "trusted_proxies": [],
+    "restore_sessions": false,
+    "restore_window_minutes": 30,
+    "user_name": "",
+    "username": "",
+    "merge_queued_messages": false,
+    "auto_tag_sessions": true,
+    "mcp_probe_timeout_secs": 15,
+    "widget_density": "more",
+    "send_on_enter": true,
+    "show_timestamps": false,
+    "show_thinking_inline": false,
+    "simplified_tool_names": false,
+    "followup_chips": true,
+    "stream_reveal": "smooth",
+    "confirm_close_session": false,
+    "auto_open_browser": true,
+    "update_dev_mode": false,
+    "terminal": {
+      "enabled": true
+    }
+  },
+  "legibility": {
+    "discover_tips": true,
+    "context_adapters": false
+  },
+  "hooks": {},
+  "agents": {},
+  "default_agent": "",
+  "memory_stores": {},
+  "inbox": {
+    "enabled": false,
+    "user_id": "",
+    "watched_channels": [],
+    "poll_interval_seconds": 60,
+    "style_rules": [],
+    "test_mode": false,
+    "engagement_ranking_enabled": false,
+    "engagement_half_life_days": 0.0
+  },
+  "tools": {
+    "projection_rules": [],
+    "bg_compress_enabled": true,
+    "bg_compress_idle_days": 7.0,
+    "groups_enabled": false,
+    "group_defaults": {}
+  },
+  "feedback": {
+    "enabled": true,
+    "retire_threshold": 0.4,
+    "min_n": 5,
+    "window_days": 90
+  },
+  "inbound": {
+    "mcp": {
+      "enabled": false,
+      "allow_remote": false
+    },
+    "public_url": ""
+  },
+  "agents_routing": {
+    "enabled": true,
+    "min_confidence": 0.62,
+    "cooldown_hours": 24.0
+  },
+  "loops": {
+    "max_cycles_hard_cap": 100,
+    "default_idle_secs": 120,
+    "trust_ttl_secs": 86400
+  },
+  "skills": {
+    "max_triggered": 3,
+    "auto_create_from_sessions": false,
+    "auto_refine_on_deviation": false,
+    "auto_min_tool_calls": 5,
+    "auto_similarity_threshold": 0.85,
+    "progressive_disclosure_threshold": 2
+  },
+  "workflows": {
+    "enabled": true,
+    "match_threshold": 0.62
+  },
+  "learning": {
+    "enabled": true,
+    "min_tool_calls": 4,
+    "correction_heuristic": true,
+    "surface_chip": true,
+    "skill_ladder": true
+  },
+  "security": {
+    "denied_commands": [],
+    "egress": {
+      "allow_hosts": [],
+      "deny_hosts": [],
+      "allow_private": false
+    },
+    "autonomy_denylist": []
+  },
+  "auth": {
+    "login_enabled": false,
+    "session_ttl": "30d",
+    "require_totp": false,
+    "lockout_threshold": 5,
+    "lockout_window": "15m"
+  },
+  "guardrails": {
+    "budgets": {
+      "max_tokens_per_run": 0,
+      "max_tokens_per_day": 0,
+      "max_dollars_per_day": 0.0
+    },
+    "breaker": {
+      "failure_threshold": 5,
+      "recovery_secs": 30.0
+    },
+    "scan_mode": "redact"
+  },
+  "resilience": {
+    "doctor_enabled": true,
+    "degraded_indicator": true,
+    "mid_turn_policy": "queue",
+    "cancel_replace_min_interval_secs": 2.0,
+    "remediation": {
+      "enabled": true,
+      "target_score": 90,
+      "max_cost_usd": 1.0,
+      "idle_minutes_healthy": 60,
+      "tick_minutes_degraded": 5
+    }
+  },
+  "timezone": "America/Los_Angeles",
+  "auto_update": true,
+  "snapshot_dir": "",
+  "durability": {
+    "auto_backup": true,
+    "keep_daily": 14,
+    "keep_weekly": 8,
+    "keep_monthly": 12,
+    "restore_drills": true
+  },
+  "observe_max_messages": 250,
+  "observe_ttl_hours": 96
+}

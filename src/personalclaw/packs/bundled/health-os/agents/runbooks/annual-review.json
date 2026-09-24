@@ -1,0 +1,5 @@
+{
+  "name": "Annual health review",
+  "description": "Assemble the year's log and the outstanding checkup list before an annual visit.",
+  "roster": ["health-companion"]
+}

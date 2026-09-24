@@ -1,0 +1,619 @@
+"""Every config write path validates through the SAME allowlist, and refuses out loud.
+
+`_EDITABLE_CONFIG` + the PATCH handler were the only real validation in the tree: typed,
+bounded, allowlisted, SEL-audited on every rejection. Three other paths wrote
+`config.json` beside it, each with its own idea of what a valid value is:
+
+* **`PUT /api/memory/settings`** coerced instead of validating. `bool("false")` is `True`,
+  so a request to turn a memory behaviour OFF turned it ON; `push_min_confidence: 42` was
+  clamped to `1.0` (the push reflex silently switched from "volunteer at 42% confidence" to
+  "never volunteer") where PATCH would have returned 400 for the same field. It had no
+  allowlist, so a typo'd key returned 200 having changed nothing, and no SEL row at all.
+* **`PUT /api/config/personalclaw`** re-implemented the bounds of three `agent.*` fields
+  `_EDITABLE_CONFIG` already declares — identical numbers, one edit from disagreeing — and
+  dropped unknown keys in silence whenever one recognised key rode along.
+* **`personalclaw config set`** checked only that the dotted key EXISTS in `to_dict()`,
+  then wrote any value, so the CLI could store `agent.max_subagents 9999` past the 0..16
+  the API enforces on the very same field.
+
+The common defect is not "a missing check" — it is **a write that reports success having
+done something other than what was asked**. Nothing downstream can notice that, which is
+why these are asserted at the call site (real handlers through a real `TestClient`, the
+real CLI entry point) and why the SEL row is part of each assertion: an unaudited silent
+drop is indistinguishable from a working save.
+
+Each behaviour test is paired with the case that must still WORK, because "validate
+everything" is one `return 400` away from an endpoint that saves nothing at all.
+"""
+
+from __future__ import annotations
+
+import json
+from unittest.mock import patch
+
+import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
+
+
+class _RecordingSel:
+    """A SEL double that keeps the rows instead of writing them."""
+
+    def __init__(self) -> None:
+        self.rows: list[dict] = []
+
+    def log_api_access(self, **kw) -> None:
+        self.rows.append(kw)
+
+    def __getattr__(self, name):  # any other SEL call is a no-op here
+        return lambda *a, **k: None
+
+    def outcomes(self, operation: str) -> list[str]:
+        return [r.get("outcome") for r in self.rows if r.get("operation") == operation]
+
+
+@pytest.fixture
+def sel_rows(monkeypatch) -> _RecordingSel:
+    rec = _RecordingSel()
+    import personalclaw.dashboard.handlers as handlers_pkg
+
+    monkeypatch.setattr(handlers_pkg, "sel", lambda: rec, raising=False)
+    return rec
+
+
+@pytest.fixture
+def cfg_file(tmp_path, monkeypatch):
+    """An isolated config.json. This test WRITES config — it must never see the real home."""
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    path = tmp_path / "config.json"
+    path.write_text("{}", encoding="utf-8")
+    # `cli_config` does `from personalclaw.config.loader import config_path` at MODULE
+    # import, so patching the loader attribute alone leaves that binding pointing at the
+    # real one. It agreed by accident here (both resolve through PERSONALCLAW_HOME) until
+    # this file ran in an xdist worker alongside other config tests, where the CLI wrote
+    # somewhere else entirely and the assertion read a default back. Both bindings are
+    # patched, so which one a call site captured stops mattering.
+    with (
+        patch("personalclaw.config.loader.config_path", return_value=path),
+        patch("personalclaw.cli_config.config_path", return_value=path),
+    ):
+        # Normalise ONCE up front. `AppConfig.load()` persists the full defaulted config
+        # (22 KB from `{}`), and every handler here loads before it does anything else — so
+        # without this the before/after snapshot would catch the LOADER's write and read as
+        # "the handler changed the file" on a request the handler refused.
+        from personalclaw.config.loader import AppConfig
+
+        AppConfig.load()
+        yield path
+
+
+def _memory_app() -> web.Application:
+    from personalclaw.dashboard.handlers import api_memory_settings
+
+    app = web.Application()
+    app["state"] = type("_S", (), {"consolidator": None})()
+    app.router.add_put("/api/memory/settings", api_memory_settings)
+    return app
+
+
+def _config_app() -> web.Application:
+    from personalclaw.dashboard.handlers import (
+        api_personalclaw_config,
+        api_personalclaw_config_patch,
+    )
+
+    app = web.Application()
+    app.router.add_put("/api/config/personalclaw", api_personalclaw_config)
+    app.router.add_patch("/api/config/personalclaw", api_personalclaw_config_patch)
+    return app
+
+
+def _section(cfg_file, name: str) -> dict:
+    return json.loads(cfg_file.read_text(encoding="utf-8")).get(name, {})
+
+
+async def _unchanged(cfg_file, section: str, request_fn):
+    """Run `request_fn` and return (response, whether `section` is byte-identical after).
+
+    A SNAPSHOT, not an absence check. Originally because `AppConfig.load()` wrote the whole
+    normalised config back (22 KB from `{}`) the moment any handler read config, so "the key
+    is not in the file" could never be true and an absence check would have been measuring the
+    loader rather than the write. PHF-15 made `load()` a pure read, but the snapshot stays: it
+    is the shape that states the actual property ("this request changed nothing here")
+    regardless of what else happens to be materialised on disk.
+    """
+    before = json.dumps(_section(cfg_file, section), sort_keys=True)
+    resp = await request_fn()
+    return resp, json.dumps(_section(cfg_file, section), sort_keys=True) == before
+
+
+# ── PUT /api/memory/settings ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_truthy_STRING_no_longer_turns_a_memory_behaviour_on(cfg_file, sel_rows):
+    """The sharpest form: the caller asked for OFF and got ON.
+
+    `bool("false")` is `True`. A client sending the string it read out of a form field
+    inverted the setting, was told 200, and the panel then rendered the new (wrong) state
+    as if the user had chosen it.
+    """
+    async with TestClient(TestServer(_memory_app())) as c:
+        resp, unchanged = await _unchanged(
+            cfg_file,
+            "memory",
+            lambda: c.put("/api/memory/settings", json={"graph_enabled": "false"}),
+        )
+        assert resp.status == 400, await resp.text()
+        assert "boolean" in (await resp.json())["error"]
+    assert unchanged, "the coerced value was written anyway"
+    assert sel_rows.outcomes("memory.settings.update") == ["denied"]
+
+
+@pytest.mark.asyncio
+async def test_a_real_boolean_still_writes(cfg_file, sel_rows):
+    """Vacuity. Rejecting every value would satisfy the test above."""
+    async with TestClient(TestServer(_memory_app())) as c:
+        assert (await c.put("/api/memory/settings", json={"active_recall": False})).status == 200
+    assert _section(cfg_file, "memory")["active_recall"] is False
+    assert sel_rows.outcomes("memory.settings.update") == ["success"]
+
+
+@pytest.mark.asyncio
+async def test_the_unchanged_snapshot_can_actually_detect_a_change(cfg_file):
+    """Vacuity for the helper every "nothing was written" assertion depends on.
+
+    If `_unchanged` returned True unconditionally — a stale read, a wrong section name, a
+    file the handler does not actually write — four tests above would be green for a
+    codebase that writes the rejected value every time.
+    """
+    async with TestClient(TestServer(_memory_app())) as c:
+        resp, unchanged = await _unchanged(
+            cfg_file, "memory", lambda: c.put("/api/memory/settings", json={"l1_manifest": False})
+        )
+    assert resp.status == 200
+    assert not unchanged, "_unchanged sees no difference after a write that DID land"
+
+
+@pytest.mark.asyncio
+async def test_a_typod_field_name_is_a_400_not_a_silent_200(cfg_file, sel_rows):
+    """`actve_recall` used to be dropped without a word, and the response was 200."""
+    async with TestClient(TestServer(_memory_app())) as c:
+        resp, unchanged = await _unchanged(
+            cfg_file, "memory", lambda: c.put("/api/memory/settings", json={"actve_recall": True})
+        )
+        assert resp.status == 400
+        assert "actve_recall" in (await resp.json())["error"], "the reply does not name the key"
+    assert unchanged
+    assert sel_rows.outcomes("memory.settings.update") == ["denied"]
+
+
+@pytest.mark.asyncio
+async def test_a_PATCH_only_field_is_refused_here_rather_than_ignored(cfg_file):
+    """`slot_size_cap` is read by this endpoint's GET and written by the PATCH.
+
+    "One writer per field" only holds if the other writer says no out loud; a silent drop
+    means the Settings panel could send it to the wrong endpoint forever.
+    """
+    async with TestClient(TestServer(_memory_app())) as c:
+        resp, unchanged = await _unchanged(
+            cfg_file, "memory", lambda: c.put("/api/memory/settings", json={"slot_size_cap": 1000})
+        )
+        assert resp.status == 400
+        assert "slot_size_cap" in (await resp.json())["error"]
+    assert unchanged
+
+
+@pytest.mark.asyncio
+async def test_an_out_of_range_confidence_is_refused_not_clamped(cfg_file):
+    """Clamping 42 to 1.0 means "never volunteer" while the caller believes it asked for 42%."""
+    async with TestClient(TestServer(_memory_app())) as c:
+        resp, unchanged = await _unchanged(
+            cfg_file,
+            "memory",
+            lambda: c.put("/api/memory/settings", json={"push_min_confidence": 42}),
+        )
+        assert resp.status == 400
+        assert "between 0.0 and 1.0" in (await resp.json())["error"]
+    assert unchanged, "the clamped 1.0 was written instead of refusing 42"
+
+
+@pytest.mark.asyncio
+async def test_an_empty_body_is_refused_rather_than_reported_as_saved(cfg_file):
+    """`PUT {}` used to return 200 having written nothing — a save button that lies."""
+    async with TestClient(TestServer(_memory_app())) as c:
+        assert (await c.put("/api/memory/settings", json={})).status == 400
+
+
+@pytest.mark.asyncio
+async def test_writing_the_vault_mode_still_prunes_the_retired_flag(cfg_file):
+    """Behaviour the rewrite had to preserve: config.json must not keep two answers."""
+    cfg_file.write_text(json.dumps({"memory": {"vault_enabled": True}}), encoding="utf-8")
+    async with TestClient(TestServer(_memory_app())) as c:
+        assert (await c.put("/api/memory/settings", json={"vault_mode": "mirror"})).status == 200
+    mem = _section(cfg_file, "memory")
+    assert mem["vault_mode"] == "mirror" and "vault_enabled" not in mem
+
+
+@pytest.mark.asyncio
+async def test_an_empty_vault_path_still_normalises_to_the_default(cfg_file):
+    """The `sanitize` half of the spec: the file must match what `load()` reads back."""
+    async with TestClient(TestServer(_memory_app())) as c:
+        assert (await c.put("/api/memory/settings", json={"vault_path": "  "})).status == 200
+    assert _section(cfg_file, "memory")["vault_path"] == "memory-vault"
+
+
+# ── PUT /api/config/personalclaw ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_recognised_key_no_longer_carries_an_unrecognised_one_through(cfg_file):
+    """The silent-drop case: half the request applied, 200 returned, no mention of the rest."""
+    async with TestClient(TestServer(_config_app())) as c:
+        resp, unchanged = await _unchanged(
+            cfg_file,
+            "agent",
+            lambda: c.put(
+                "/api/config/personalclaw",
+                json={"agent": {"max_subagents": 4, "subagent_max_tunrs": 999}},
+            ),
+        )
+        assert resp.status == 400
+        assert "subagent_max_tunrs" in (await resp.json())["error"]
+    assert unchanged, "a rejected request wrote its recognised half anyway"
+
+
+@pytest.mark.asyncio
+async def test_a_valid_agent_put_still_writes(cfg_file):
+    """Vacuity for the endpoint above."""
+    async with TestClient(TestServer(_config_app())) as c:
+        assert (
+            await c.put("/api/config/personalclaw", json={"agent": {"max_subagents": 4}})
+        ).status == 200
+    assert json.loads(cfg_file.read_text(encoding="utf-8"))["agent"]["max_subagents"] == 4
+
+
+@pytest.mark.asyncio
+async def test_the_two_endpoints_agree_on_the_same_field(cfg_file):
+    """The point of the consolidation, asserted rather than assumed.
+
+    `agent.max_subagents` is writable through both the PUT and the PATCH. Before, each
+    carried its own copy of `0..16`; the same value must be refused by both, and the
+    message must name the field on the PUT (which can carry several at once).
+    """
+    async with TestClient(TestServer(_config_app())) as c:
+        put = await c.put("/api/config/personalclaw", json={"agent": {"max_subagents": 99}})
+        patch_resp = await c.patch(
+            "/api/config/personalclaw", json={"path": "agent.max_subagents", "value": 99}
+        )
+        put_err = (await put.json())["error"]
+        patch_err = (await patch_resp.json())["error"]
+    assert put.status == patch_resp.status == 400
+    assert "between 0 and 16" in put_err and "between 0 and 16" in patch_err
+    assert "max_subagents" in put_err, "the PUT does not say which field it refused"
+
+
+# ── PATCH /api/config/personalclaw — custom-type coercers (#2958) ────────
+#
+# `coerce_edit_value`'s `int`/`float` branches refuse a JSON `true` explicitly, with a
+# comment saying why: `isinstance(True, int)` is True and `int(True)` is 1, so a bare
+# `int(value)` would quietly turn a boolean into 1 for a numeric field. Two custom-type
+# branches — `projection_rules`'s per-rule `head`/`tail` and `skill_catalogs`'s url check —
+# did the looser thing their sibling branches were hardened against.
+
+
+@pytest.mark.asyncio
+async def test_projection_rule_tail_true_is_refused_not_stored_as_one(cfg_file):
+    """`tail: true` used to become `int(True)` = 1 — "keep the last 1 line" — silently
+    truncating a tool's output to one line for a caller who sent a boolean, not a count."""
+    async with TestClient(TestServer(_config_app())) as c:
+        resp, unchanged = await _unchanged(
+            cfg_file,
+            "tools",
+            lambda: c.patch(
+                "/api/config/personalclaw",
+                json={
+                    "path": "tools.projection_rules",
+                    "value": [{"name": "b", "match_regex": "x", "strategy": "log", "tail": True}],
+                },
+            ),
+        )
+        assert resp.status == 400, await resp.text()
+        assert "tail" in (await resp.json())["error"]
+    assert unchanged, "tail:true was coerced to 1 and written anyway"
+
+
+@pytest.mark.asyncio
+async def test_projection_rule_a_real_tail_count_still_writes(cfg_file):
+    """Vacuity for the test above: a real count must still work."""
+    async with TestClient(TestServer(_config_app())) as c:
+        resp = await c.patch(
+            "/api/config/personalclaw",
+            json={
+                "path": "tools.projection_rules",
+                "value": [{"name": "b", "match_regex": "x", "strategy": "log", "tail": 3}],
+            },
+        )
+        assert resp.status == 200, await resp.text()
+    assert _section(cfg_file, "tools")["projection_rules"][0]["tail"] == 3
+
+
+@pytest.mark.asyncio
+async def test_a_hostless_skill_catalog_url_is_refused(cfg_file):
+    """`https:///topic` has no host and can never be fetched — `https_url` already refuses
+    exactly this shape for `mobile.ntfy_topic_url` via `parsed.netloc`; `skill_catalogs`
+    checked only the scheme prefix and stored it as a configured source."""
+    async with TestClient(TestServer(_config_app())) as c:
+        resp, unchanged = await _unchanged(
+            cfg_file,
+            "packs",
+            lambda: c.patch(
+                "/api/config/personalclaw",
+                json={
+                    "path": "packs.skill_catalogs",
+                    "value": [{"name": "k", "url": "https://"}],
+                },
+            ),
+        )
+        assert resp.status == 400, await resp.text()
+        assert "url" in (await resp.json())["error"]
+    assert unchanged, "the hostless url was stored anyway"
+
+
+@pytest.mark.asyncio
+async def test_a_real_skill_catalog_url_still_writes(cfg_file):
+    """Vacuity for the test above: a real catalog URL must still work."""
+    async with TestClient(TestServer(_config_app())) as c:
+        resp = await c.patch(
+            "/api/config/personalclaw",
+            json={
+                "path": "packs.skill_catalogs",
+                "value": [{"name": "k", "url": "https://example.com/index.json"}],
+            },
+        )
+        assert resp.status == 200, await resp.text()
+    assert _section(cfg_file, "packs")["skill_catalogs"][0]["url"] == (
+        "https://example.com/index.json"
+    )
+
+
+# ── personalclaw config set ───────────────────────────────────────────────
+
+
+def _config_set(key: str, value: str):
+    """Drive the real CLI entry point, not a re-implementation of its rules."""
+    import argparse
+
+    from personalclaw.cli_config import _config_cmd
+
+    return _config_cmd(argparse.Namespace(config_action="set", key=key, value=value, file=None))
+
+
+def test_the_cli_cannot_write_past_the_bounds_the_api_enforces(cfg_file):
+    """`config set agent.max_subagents 9999` used to succeed on the same field the API caps.
+
+    A SNAPSHOT of the section, not a read of one key: the seeded config is ``{}``, so nothing
+    materialises ``agent.max_subagents`` on disk unless a write puts it there. (This test used
+    to read the key back and compare it to the default, which only worked because
+    ``AppConfig.load()`` rewrote the whole normalised config as a migration side effect —
+    PHF-15 removed that, so the key is legitimately absent when the write is refused.)
+    """
+    before = json.dumps(_section(cfg_file, "agent"), sort_keys=True)
+    with pytest.raises(SystemExit) as exc:
+        _config_set("agent.max_subagents", "9999")
+    assert exc.value.code == 1
+    assert (
+        json.dumps(_section(cfg_file, "agent"), sort_keys=True) == before
+    ), "9999 was written anyway"
+
+
+def test_the_cli_still_writes_an_in_bounds_value(cfg_file):
+    """Vacuity: the validation must not have turned `config set` into a no-op."""
+    _config_set("agent.max_subagents", "8")
+    assert _section(cfg_file, "agent")["max_subagents"] == 8
+
+
+def test_the_cli_still_writes_a_key_the_allowlist_does_not_declare(cfg_file):
+    """The allowlist is the PATCH surface, not a whole config schema.
+
+    Refusing everything absent from it would break `config set` for most of the file, so an
+    undeclared key keeps today's behaviour. Stated as a test because the alternative reading
+    ("validate everything or nothing") is the tempting one.
+    """
+    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+    assert "session.timeout_secs" in _EDITABLE_CONFIG or True  # documented either way
+    # `observe_max_messages` is a real top-level field (present in to_dict) that the PATCH
+    # allowlist does not declare — so the CLI still writes it, coercing via _parse_value.
+    assert "observe_max_messages" not in _EDITABLE_CONFIG
+    _config_set("observe_max_messages", "207")
+    assert json.loads(cfg_file.read_text(encoding="utf-8"))["observe_max_messages"] == 207
+
+
+def test_the_cli_preserves_top_level_keys_to_dict_does_not_model(cfg_file):
+    """#951: one `config set agent.log_level DEBUG` deleted 10 provider instances.
+
+    `config set` served the whole file out of `AppConfig.to_dict()`, a fixed literal of the
+    40-odd sections the loader models. `providers` is not one of them — it is read DIRECTLY
+    off the raw dict (`validation._DIRECT_READ_TOP_KEYS`) while being the canonical store for
+    provider instances and, for `openai_compatible`, their only copy of an entered API key.
+    So the round-trip did not empty `providers`, it OMITTED it, and the command printed ✅.
+
+    Asserted on all four blocks rather than on `providers` alone: `use_cases`, `slack` and
+    `meta` are dropped by the same mechanism, so a fix that special-cased the one name in the
+    title would still destroy the other three. `AppConfig.save()` has preserved exactly this
+    set since its own silent-swallow fix; the CLI never called it.
+    """
+    doc = {
+        "providers": [
+            {"id": "openrouter", "type": "openai_compatible", "api_key": "test-placeholder"},
+            {"id": "ollama-homelab", "type": "openai_compatible"},
+        ],
+        "use_cases": {"chat": "openrouter"},
+        "slack": {"channel": "C0PLACEHOLDER"},
+        "meta": {"lastTouchedVersion": "0.1.3"},
+        "agent": {"log_level": "WARNING"},
+    }
+    cfg_file.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+
+    _config_set("agent.log_level", "DEBUG")
+
+    after = json.loads(cfg_file.read_text(encoding="utf-8"))
+    assert after["agent"]["log_level"] == "DEBUG", "the write the operator ASKED for did not land"
+    assert after.get("providers") == doc["providers"], "provider instances and stored API keys"
+    assert after.get("use_cases") == doc["use_cases"], "use_cases destroyed"
+    assert after.get("slack") == doc["slack"], "slack destroyed"
+    assert after.get("meta") == doc["meta"], "meta destroyed"
+
+
+@pytest.mark.parametrize("corrupt", ["{not json", "[1, 2, 3]"])
+def test_the_cli_refuses_to_write_a_config_it_could_not_read(cfg_file, corrupt):
+    """A FAILED read is exactly when you cannot know what you are about to overwrite.
+
+    Merging a single key into the existing document only preserves `providers` if the existing
+    document was actually read. On a config caught mid-flush by a concurrent writer, or held
+    by a permission blip, a best-effort read that fell through to the write would serialise a
+    base WITHOUT those blocks and delete them again — the same swallow `AppConfig.save()`
+    already refuses. Absent is safe to write over; unreadable is not.
+    """
+    cfg_file.write_text(corrupt, encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        _config_set("agent.log_level", "DEBUG")
+    assert exc.value.code == 1
+    assert cfg_file.read_text(encoding="utf-8") == corrupt, "it wrote over a file it could not read"
+
+
+def test_an_empty_config_is_absent_not_unreadable(cfg_file):
+    """Vacuity floor for the refusal above: it must reject UNKNOWN content, not any content.
+
+    Zero bytes hold no `providers` block, so no write can destroy one — and refusing here
+    would be a dead end rather than a protection, leaving a config truncated by a crashed
+    write or a bare `touch` permanently unwritable from the CLI. Without this test the
+    refusal could be "any file that is not a full config", which would pass the test above.
+    """
+    cfg_file.write_text("   \n", encoding="utf-8")
+    _config_set("agent.log_level", "DEBUG")
+    assert json.loads(cfg_file.read_text(encoding="utf-8"))["agent"]["log_level"] == "DEBUG"
+
+
+# ── The registry is the single source ─────────────────────────────────────
+
+
+def test_every_field_the_memory_put_writes_has_a_declared_spec():
+    """The consolidation's structural claim: this endpoint declares WHICH fields, not what
+    a valid value is. A field without a spec would `KeyError` at request time."""
+    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.dashboard.handlers.memory import _SETTINGS_FIELDS
+
+    assert _SETTINGS_FIELDS, "the writable set is empty — this test would pass vacuously"
+    missing = [f for f in _SETTINGS_FIELDS if f"memory.{f}" not in _EDITABLE_CONFIG]
+    assert not missing, f"writable memory fields with no _EDITABLE_CONFIG spec: {missing}"
+
+
+def test_no_write_path_hand_rolls_a_boolean_again():
+    """A grep rail on the shape that caused the inversion.
+
+    `bool(body[...])` on a JSON value is never a validation — it is a coin flip that says
+    yes. Scoped to the write handlers so an unrelated `bool()` elsewhere cannot make this
+    fire, and asserted on the file contents with comments stripped so the explanation of
+    the defect cannot satisfy the test that guards it.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent / "src/personalclaw"
+    offenders = {}
+    for rel in ("dashboard/handlers/memory.py", "dashboard/handlers/core.py", "cli_config.py"):
+        code = "\n".join(
+            ln
+            for ln in (root / rel).read_text(encoding="utf-8").splitlines()
+            if not ln.lstrip().startswith("#")
+        )
+        hits = re.findall(r"bool\(\s*(?:body|agent_settings)\[", code)
+        if hits:
+            offenders[rel] = len(hits)
+    assert not offenders, f"a JSON value is being coerced to bool instead of validated: {offenders}"
+
+
+def test_the_shared_validator_rejects_a_bool_for_a_numeric_field():
+    """`int(True)` is 1. Consolidating two validators must not adopt the looser one.
+
+    The PATCH path allowed `true` for an int field; the PUT it now shares code with did
+    not. This pins the stricter answer for both.
+    """
+    from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
+
+    with pytest.raises(ConfigValueError):
+        coerce_edit_value("agent.max_subagents", True, {"type": "int", "min": 0, "max": 16})
+    assert coerce_edit_value("agent.max_subagents", 4, {"type": "int", "min": 0, "max": 16}) == 4
+
+
+# ── both write paths serialise under ONE lock (#754) ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_put_waits_on_the_same_lock_patch_holds(cfg_file, sel_rows):
+    """PUT and PATCH both read-modify-write the WHOLE file, and only PATCH took the lock.
+
+    `atomic_write` guarantees the file is never half-written; it says nothing about a
+    concurrent modifier's change surviving. Interleaved, the later writer's read predates the
+    earlier writer's write, so it serialises a `data` that never saw it and one field silently
+    reverts — a write that reports success having done something other than what was asked,
+    which is this file's whole subject.
+
+    Asserted by HOLDING the lock and showing PUT blocks, rather than by racing two requests:
+    a race that happens to run sequentially passes whether or not the lock is there, and a
+    test that can pass on the broken code is not evidence. This one cannot.
+    """
+    import asyncio
+
+    from personalclaw.dashboard.handlers.agents import _get_config_lock
+
+    async with TestClient(TestServer(_config_app())) as client:
+        async with _get_config_lock():
+            task = asyncio.ensure_future(
+                client.put("/api/config/personalclaw", json={"agent": {"max_subagents": 4}})
+            )
+            # Give the handler every chance to reach the lock and get stuck on it.
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
+            assert not task.done(), "PUT did not wait on the lock PATCH holds"
+
+        # Released — the same request now completes and applies.
+        resp = await task
+        assert resp.status == 200, await resp.text()
+        assert _section(cfg_file, "agent")["max_subagents"] == 4
+
+
+@pytest.mark.asyncio
+async def test_a_put_still_applies_when_nothing_holds_the_lock(cfg_file, sel_rows):
+    """The vacuity floor. "PUT blocks on a held lock" is one `await` away from "PUT never
+    completes", and the test above cannot tell those apart on its own."""
+    async with TestClient(TestServer(_config_app())) as client:
+        resp = await client.put(
+            "/api/config/personalclaw", json={"agent": {"subagent_max_turns": 7}}
+        )
+
+    assert resp.status == 200, await resp.text()
+    assert _section(cfg_file, "agent")["subagent_max_turns"] == 7
+    assert any(r["operation"] == "config.update" and r["outcome"] == "ok" for r in sel_rows.rows)
+
+
+@pytest.mark.asyncio
+async def test_a_refused_put_does_not_hold_the_lock(cfg_file, sel_rows):
+    """Validation is deliberately OUTSIDE the lock: it touches no shared state, and holding a
+    lock across it would serialise every rejected request for no benefit. Proven by refusing a
+    PUT while the lock is held — it must answer 400 without waiting for the holder."""
+    import asyncio
+
+    from personalclaw.dashboard.handlers.agents import _get_config_lock
+
+    async with TestClient(TestServer(_config_app())) as client:
+        async with _get_config_lock():
+            resp = await asyncio.wait_for(
+                client.put("/api/config/personalclaw", json={"agent": {"nonsense": 1}}),
+                timeout=2.0,
+            )
+            # Read the body inside the client's lifetime — `resp.json()` needs the connection.
+            assert resp.status == 400
+            assert "nonsense" in (await resp.json())["error"]

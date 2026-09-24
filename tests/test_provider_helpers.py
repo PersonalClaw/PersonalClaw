@@ -1,0 +1,253 @@
+"""Branded/generic provider apps (sdk.provider_helpers) — the shared wiring behind
+the openai-/anthropic-compatible provider apps and every branded preset.
+
+Guards two bugs found during the provider-integrity validation sweep:
+  1. ``api_key`` (+ other routing/credential fields) leaked from an entry's
+     ``options`` into ``extra_options`` → the SDK's stream()/create() ("unexpected
+     keyword argument 'api_key'"). Only genuine model-call params may pass through.
+  2. ``test_connection`` for an Anthropic-wire provider reported "No models
+     available" for a perfectly good key (the Anthropic protocol has no /v1/models
+     endpoint). It must probe a real completion instead.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+import types
+
+import pytest
+
+import personalclaw.sdk.model  # noqa: F401 — ensure package import order
+from personalclaw.llm import branded_specs
+from personalclaw.llm.capabilities import Capability
+from personalclaw.llm.registry import ProviderEntry
+from personalclaw.sdk.provider_helpers import (
+    BrandedCatalog,
+    BrandedProviderSpec,
+    register_branded_app,
+)
+
+
+class _FakeAsyncAnthropic:
+    """Stand-in for ``anthropic.AsyncAnthropic`` so provider construction never
+    builds a real HTTP/SSL client. Records the resolved api_key/base_url, which is
+    exactly what the credential-routing tests assert on (``prov._client.api_key``)."""
+
+    def __init__(self, *, api_key: str, base_url: str | None = None) -> None:
+        self.api_key = api_key
+        self.base_url = base_url
+        self.messages = types.SimpleNamespace()
+
+    async def close(self) -> None:  # pragma: no cover - lifecycle no-op
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _fake_anthropic(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inject a fake ``anthropic`` module for every test in this file.
+
+    These are UNIT tests of credential/option wiring — they must not construct a
+    real ``anthropic.AsyncAnthropic``, whose eager httpx/SSL-context setup fails on
+    runners without a configured trust store (macOS + uv's python-build-standalone →
+    ``X509: NO_CERTIFICATE_OR_CRL_FOUND``). ``AnthropicProvider`` lazy-imports
+    ``anthropic`` inside ``__init__``, so swapping the module in ``sys.modules``
+    replaces the client cleanly."""
+    fake = types.ModuleType("anthropic")
+    fake.AsyncAnthropic = _FakeAsyncAnthropic  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "anthropic", fake)
+
+
+def _run(coro):
+    return asyncio.new_event_loop().run_until_complete(coro)
+
+
+def _spec(protocol: str = "anthropic") -> BrandedProviderSpec:
+    return BrandedProviderSpec(
+        type=f"test_{protocol}",
+        protocol=protocol,
+        default_base_url="https://example.invalid",
+        api_key_env="",
+        default_model="test-model",
+        capabilities=frozenset({Capability.CHAT, Capability.STREAMING}),
+    )
+
+
+def test_factory_strips_credential_and_routing_fields_from_extra_options():
+    spec = _spec("anthropic")
+    factory, _, _ = register_branded_app(spec)
+    entry = ProviderEntry(
+        name="T",
+        type=spec.type,
+        model="test-model",
+        options={
+            "api_key": "secret",
+            "endpoint": "https://x",
+            "base_url": "https://x",
+            "model": "test-model",
+            "temperature": 0.5,
+            "top_p": 0.9,
+        },
+    )
+    prov = factory(entry=entry)
+    extra = getattr(prov, "_extra_options", {})
+    # Credential/routing fields must NOT reach the SDK call kwargs.
+    assert "api_key" not in extra and "endpoint" not in extra and "base_url" not in extra
+    assert "model" not in extra
+    # Genuine model-call params survive.
+    assert extra.get("temperature") == 0.5 and extra.get("top_p") == 0.9
+
+
+def test_factory_uses_per_instance_key_over_env(monkeypatch):
+    """A config entry's own options.api_key MUST win over the spec's api_key_env —
+    otherwise a ZAI/Alibaba instance sends a global ANTHROPIC_API_KEY/OPENAI_API_KEY
+    meant for a DIFFERENT provider → 'token expired or incorrect' 401."""
+    spec = BrandedProviderSpec(
+        type="test_perinstance",
+        protocol="anthropic",
+        default_base_url="https://x",
+        api_key_env="SOME_GLOBAL_KEY",
+        default_model="m",
+        capabilities=frozenset({Capability.CHAT}),
+    )
+    factory, _, _ = register_branded_app(spec)
+    monkeypatch.setenv("SOME_GLOBAL_KEY", "GLOBAL-WRONG-KEY")
+    entry = ProviderEntry(
+        name="ZAIlike",
+        type=spec.type,
+        model="m",
+        options={"api_key": "PER-INSTANCE-RIGHT-KEY", "endpoint": "https://z"},
+    )
+    prov = factory(entry=entry)
+    # the provider must carry the per-instance key, NOT the env key
+    assert prov._client.api_key == "PER-INSTANCE-RIGHT-KEY"  # noqa: SLF001
+
+
+def test_factory_falls_back_to_env_key_when_no_options_key(monkeypatch):
+    spec = BrandedProviderSpec(
+        type="test_envfallback",
+        protocol="anthropic",
+        default_base_url="https://x",
+        api_key_env="MY_ENV_KEY",
+        default_model="m",
+        capabilities=frozenset({Capability.CHAT}),
+    )
+    factory, _, _ = register_branded_app(spec)
+    monkeypatch.setenv("MY_ENV_KEY", "ENV-KEY-USED")
+    entry = ProviderEntry(
+        name="EnvOnly", type=spec.type, model="m", options={"endpoint": "https://z"}
+    )
+    prov = factory(entry=entry)
+    assert prov._client.api_key == "ENV-KEY-USED"  # noqa: SLF001
+
+
+def test_anthropic_test_connection_probes_completion(monkeypatch):
+    """An Anthropic-wire provider with no models list must NOT report 'No models
+    available' — it probes a completion. An auth-looking error → not ok; a
+    model/validation error → ok (the key authenticated)."""
+    spec = _spec("anthropic")
+
+    # Auth failure → ok False.
+    async def _auth_fail(*a, **k):
+        raise RuntimeError("401 authentication_error: invalid x-api-key")
+        yield  # pragma: no cover
+
+    cat = BrandedCatalog(spec, endpoint="https://x", api_key="k")
+    import personalclaw.llm.anthropic as anth
+
+    monkeypatch.setattr(anth.AnthropicProvider, "complete", lambda self, *a, **k: _auth_fail())
+    res = _run(cat.test_connection())
+    assert res.ok is False and "auth" in (res.detail or "").lower()
+
+    # Model-not-found → ok True (credentials authenticated, model is the issue).
+    async def _model_bad(*a, **k):
+        raise RuntimeError("not_found_error: model: nope")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(anth.AnthropicProvider, "complete", lambda self, *a, **k: _model_bad())
+    res = _run(cat.test_connection())
+    assert res.ok is True
+
+
+def test_anthropic_test_connection_no_key_is_not_ok():
+    spec = _spec("anthropic")
+    cat = BrandedCatalog(spec, endpoint="https://x", api_key="")
+    res = _run(cat.test_connection())
+    assert res.ok is False and "key" in (res.detail or "").lower()
+
+
+# ── The pricing map (MRT-2): optional, and it ROUND-TRIPS ────────────────────────────────
+
+
+def test_spec_pricing_defaults_empty_and_round_trips():
+    """A spec that declares no prices must serialize/deserialize to the same (empty) map — an
+    absent declaration stays absent rather than becoming a zero-priced (free) model."""
+    spec = _spec("groq")
+    assert spec.pricing == {}
+    assert BrandedProviderSpec.from_dict(spec.to_dict()) == spec
+
+
+def test_spec_pricing_round_trips_through_json():
+    """to_dict/from_dict parity over EVERY field, JSON-serialized in between — the round-trip
+    discipline that catches a field added to the dataclass but not to the serializer."""
+    import json
+
+    from personalclaw.llm.prompt_cache import PromptCache
+
+    spec = BrandedProviderSpec(
+        type="acme",
+        protocol="anthropic",
+        default_base_url="https://api.acme.test",
+        api_key_env="ACME_API_KEY",
+        default_model="acme-large",
+        max_tokens=8192,
+        capabilities=frozenset({Capability.CHAT, Capability.VISION}),
+        fallback_models=({"id": "acme-large", "name": "Acme Large"},),
+        notes="acme: openai-compatible endpoint.",
+        prompt_cache=PromptCache.AUTOMATIC,
+        pricing={
+            "acme-large": {"in_per_mtok": 3.0, "out_per_mtok": 15.0},
+            "acme-small-*": {"in_per_mtok": 0.25, "out_per_mtok": 1.25},
+        },
+    )
+
+    restored = BrandedProviderSpec.from_dict(json.loads(json.dumps(spec.to_dict())))
+
+    assert restored == spec
+    assert restored.pricing["acme-large"] == {"in_per_mtok": 3.0, "out_per_mtok": 15.0}
+    assert restored.to_dict() == spec.to_dict()
+
+
+def test_spec_with_pricing_is_still_hashable():
+    """The spec is frozen and used as a value; a dict field must not break ``hash()``."""
+    spec = BrandedProviderSpec(type="acme", pricing={"m": {"in_per_mtok": 1.0}})
+    assert hash(spec) == hash(BrandedProviderSpec(type="acme"))
+    assert {spec}  # usable in a set
+
+
+def test_registered_spec_and_spec_pricing_resolve_a_named_instance(monkeypatch):
+    """``spec_pricing`` answers for the provider TYPE and for a user-named instance of it, and
+    returns an empty map (never a rate) for an unknown provider."""
+    spec = BrandedProviderSpec(type="acme", pricing={"acme-large": {"in_per_mtok": 3.0}})
+    monkeypatch.setattr(branded_specs, "_REGISTERED_SPECS", {"acme": spec})
+
+    assert branded_specs.registered_spec("acme") is spec
+    assert branded_specs.registered_spec("acme-work") is spec  # named instance of the type
+    assert branded_specs.registered_spec("unknown") is None
+    assert branded_specs.spec_pricing("acme") == {"acme-large": {"in_per_mtok": 3.0}}
+    assert branded_specs.spec_pricing("unknown") == {}
+
+
+def test_register_branded_app_records_the_spec_for_core_lookup():
+    """The registration side effect is what makes app-declared pricing visible to
+    routing/rates.py — with no app→core push and no core→app import."""
+    spec = BrandedProviderSpec(
+        type="acme-pricing-probe", pricing={"acme-large": {"in_per_mtok": 2.0, "out_per_mtok": 4.0}}
+    )
+    try:
+        register_branded_app(spec)
+        assert branded_specs.spec_pricing("acme-pricing-probe") == {
+            "acme-large": {"in_per_mtok": 2.0, "out_per_mtok": 4.0}
+        }
+    finally:
+        branded_specs._REGISTERED_SPECS.pop("acme-pricing-probe", None)

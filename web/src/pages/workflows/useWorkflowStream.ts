@@ -1,0 +1,137 @@
+import { useEffect, useRef, useState } from 'react'
+import { api, type WorkflowRunDetailData } from '../../lib/api'
+
+// The COMPLETE set of events the per-run workflow SSE can emit after the initial
+// `workflow_snapshot`. EventSource silently DROPS event types with no registered
+// listener, so any omission here is a live update that never arrives — the same drift
+// the loop hooks warned about, which is why this list is one exported union rather than
+// per-component listeners.
+//
+// Sources (keep in sync with their `_publish(...)` sites):
+//   • controller.py — workflow_run_update, workflow_node_started, workflow_node_done,
+//     workflow_attention, workflow_needs_input, workflow_gate_resolved,
+//     workflow_gate_revised, workflow_spec_updated, workflow_mutation_rejected,
+//     workflow_forked
+//   • service.py blocking mode — workflow_progress (periodic node-state ticks)
+//
+// A component that doesn't care about a given event simply no-ops in its switch; that is
+// harmless. Missing one from this list is not.
+export const WORKFLOW_LIFECYCLE = [
+  'workflow_run_update',
+  'workflow_node_started',
+  'workflow_node_done',
+  'workflow_attention',
+  'workflow_needs_input',
+  'workflow_gate_resolved',
+  'workflow_gate_revised',
+  'workflow_spec_updated',
+  'workflow_mutation_rejected',
+  'workflow_forked',
+  'workflow_progress',
+  // TASKS-SOPS §7 (S61e): the task-projection events. Registered here because EventSource
+  // SILENTLY DROPS an event type nobody listened for — a member missing from this list is not a
+  // component that ignores the event, it is an event the frontend never receives, with no error
+  // anywhere to say so. Each is backed by a real emitter (`RunController._publish`) and a ledger
+  // kind of the same name, so a consumer can fold the live stream and reconstruct from history
+  // without learning two vocabularies.
+  'workflow_task_materialized',
+  'workflow_confirmation_pending',
+  'workflow_confirmation_resolved',
+  'workflow_task_verified',
+  'workflow_cascade_blocked',
+  // LOOPS-EVOLUTION R14: a mid-run steer consumed at the iteration boundary. Registered for the
+  // same reason as the task events above — an unregistered type is silently dropped by EventSource
+  // — and backed by `RunController._consume_steering`'s `_publish` + the `steering` ledger kind.
+  'workflow_steering_consumed',
+  // PP-15: the loop's convergence decision — which rung the escalation ladder took, a replan, or
+  // a recoverable wait. Registered for the same reason as everything above it: an unregistered
+  // type is silently dropped by EventSource, so a run that quietly switched to a fresh session
+  // would look to the user exactly like a run that was doing nothing. Backed by
+  // `RunController._converge_loop`'s `_publish` and by the persisted decision log on the run row.
+  'workflow_loop_converged',
+] as const
+
+export type WorkflowLifecycleEvent = (typeof WORKFLOW_LIFECYCLE)[number]
+
+// The coalesced frame (WF2-R11 batch-5). The backend batches one tick's per-node chatter
+// into ONE frame so a 20-node fan-out is one write and one render instead of twenty. It is
+// NOT a lifecycle event — it is an envelope AROUND them, so it gets its own listener that
+// unwraps and replays the members in order. Every member keeps its own event envelope, so
+// the fold sees exactly the sequence it would have seen unbatched.
+export const WORKFLOW_BATCH_EVENT = 'workflow_batch'
+
+interface BatchMember { event: string; payload: unknown }
+
+/** Unwrap a batch frame into its ordered members, dropping anything malformed.
+ *
+ *  Exported for the fold tests: batching is a transport concern, and the property worth
+ *  pinning is that unwrapping a batch yields the same event sequence the FE would have
+ *  received as individual frames. */
+export function unwrapBatch(data: unknown): Array<{ event: WorkflowLifecycleEvent; data: unknown }> {
+  const raw = (data as { events?: unknown })?.events
+  if (!Array.isArray(raw)) return []
+  const known = new Set<string>(WORKFLOW_LIFECYCLE)
+  return raw
+    .filter((m): m is BatchMember => !!m && typeof (m as BatchMember).event === 'string')
+    // An unrecognized member is dropped rather than passed through as an unknown event:
+    // the fold's switch would ignore it anyway, and a cast would lie about the type.
+    .filter((m) => known.has(m.event))
+    .map((m) => ({ event: m.event as WorkflowLifecycleEvent, data: m.payload }))
+}
+
+/** Subscribe to one run's SSE (`/api/workflows/runs/{id}/events`).
+ *
+ *  Snapshot-then-subscribe: the backend writes the full status BEFORE the stream opens,
+ *  so `onSnapshot` fires first and the view never renders an empty run that looks stalled.
+ *  A terminal run's stream closes right after that snapshot — there are no further events
+ *  to wait for, and holding the connection would leak one per finished run.
+ *
+ *  Handlers are held in a ref so a re-render with new closures does not tear down and
+ *  re-establish the connection (which would drop events during the gap). */
+export function useWorkflowStream(
+  runId: string | null,
+  enabled: boolean,
+  handlers: {
+    onSnapshot: (run: WorkflowRunDetailData) => void
+    onLifecycle: (event: WorkflowLifecycleEvent, data: unknown) => void
+  },
+) {
+  const ref = useRef(handlers)
+  ref.current = handlers
+  // Is the FEED alive? EventSource retries forever, so `onerror` is not a failure — it is the
+  // transport telling us it is between attempts. Without surfacing that, a dead stream and a quiet
+  // one look identical: the run just stops updating and nothing says why.
+  const [connected, setConnected] = useState(false)
+
+  useEffect(() => {
+    setConnected(false)
+    if (!enabled || !runId) return
+    let es: EventSource | null = null
+    try { es = new EventSource(api.workflowRunStreamUrl(runId)) } catch { return }
+
+    es.addEventListener('workflow_snapshot', (e) => {
+      try { ref.current.onSnapshot(JSON.parse((e as MessageEvent).data) as WorkflowRunDetailData) } catch { /* malformed */ }
+    })
+    for (const ev of WORKFLOW_LIFECYCLE) {
+      es.addEventListener(ev, (e) => {
+        let data: unknown = null
+        try { data = JSON.parse((e as MessageEvent).data) } catch { /* may be empty */ }
+        ref.current.onLifecycle(ev, data)
+      })
+    }
+    // The coalesced frame: replayed member-by-member in order, so a consumer's fold is
+    // identical whether the transport batched or not.
+    es.addEventListener(WORKFLOW_BATCH_EVENT, (e) => {
+      let data: unknown = null
+      try { data = JSON.parse((e as MessageEvent).data) } catch { return }
+      for (const m of unwrapBatch(data)) ref.current.onLifecycle(m.event, m.data)
+    })
+    es.onopen = () => setConnected(true)
+    // Still transient — the browser reconnects on its own. We only record that the feed is
+    // currently down so the view can say so; we never close or resubscribe here.
+    es.onerror = () => setConnected(false)
+    return () => { es?.close(); setConnected(false) }
+  }, [runId, enabled])
+
+  return { connected }
+}

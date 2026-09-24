@@ -1,0 +1,137 @@
+import { useId, useState } from 'react'
+import { motion } from 'framer-motion'
+import { RotateCcw } from 'lucide-react'
+import type { ColorToken, ScalarToken, SelectToken } from '../design/tokenRegistry'
+import { useAppearance } from '../app/appearance'
+import { useMode } from '../app/theme'
+import { spring, physics } from '../design/motion'
+
+/** Shared reset control — the RotateCcw icon spins a full turn on click (a literal
+ *  "rewind to default" microinteraction), consistent across all token rows.
+ *
+ *  🪤 TWENTY OF THESE RENDER ON `#/settings/design`, which makes both of its defects worse rather than
+ *  rarer:
+ *
+ *   • **15×24 measured** — the button WAS the glyph, so it failed SC 2.5.8 on width. It sits in a
+ *     `gap-m` flex row, so the spacing exception cannot rescue it either. `size-6` with `-mx-1` gives a
+ *     24px hit box and hands the extra width back, keeping the glyph where it was (the invariant from
+ *     cycle 116: grow the hit box, leave the paint alone).
+ *   • **`title="Reset"` ×20** — a non-null name can still be ambiguous. Every row's reset announced the
+ *     same word, so a screen-reader user heard "Reset" twenty times with no way to tell which token they
+ *     were about to revert. The row already knows: `Reset <token label>`.
+ */
+function ResetButton({ onReset, label }: { onReset: () => void; label: string }) {
+  const [spins, setSpins] = useState(0)
+  return (
+    <button onClick={() => { onReset(); setSpins((n) => n - 1) }} title={`Reset ${label}`}
+      className="grid size-6 -mx-1 place-items-center text-on-surface-low hover:text-on-surface transition-colors">
+      <motion.span className="inline-grid place-items-center" animate={{ rotate: spins * 360 }} transition={physics.playful}>
+        <RotateCcw size={15} strokeWidth={2} />
+      </motion.span>
+    </button>
+  )
+}
+
+/** A single color token row: swatch + hex for the CURRENT mode (dark/light),
+ *  plus a reset. Editing applies live. */
+export function ColorControl({ token }: { token: ColorToken }) {
+  const { colorValue, setColor, resetToken } = useAppearance()
+  const { mode } = useMode()
+  const val = colorValue(token, mode)
+  return (
+    <div className="flex items-center gap-m py-2">
+      <label className="flex items-center gap-s cursor-pointer">
+        <span
+          className="size-7 rounded-sm border border-outline-variant overflow-hidden relative"
+          style={{ background: val }}
+        >
+          <input
+            type="color"
+            value={val}
+            onChange={(e) => setColor(token.varName, mode, e.target.value)}
+            className="absolute inset-0 opacity-0 cursor-pointer"
+            aria-label={`${token.label} color`}
+          />
+        </span>
+      </label>
+      <span data-type="body-s" className="flex-1 text-on-surface">{token.label}</span>
+      <input
+        value={val}
+        onChange={(e) => { const v = e.target.value; if (/^#[0-9a-fA-F]{6}$/.test(v)) setColor(token.varName, mode, v) }}
+        data-type="body-s"
+        className="w-[88px] bg-surface-high rounded-md px-s py-1 text-on-surface-var font-mono outline-none focus:ring-1 focus:ring-primary"
+        spellCheck={false}
+      />
+      <ResetButton label={token.label} onReset={() => resetToken(token.varName)} />
+    </div>
+  )
+}
+
+/** A select token row: label + segmented options + reset. */
+export function SelectControl({ token }: { token: SelectToken }) {
+  const { selectValue, setSelect, resetToken } = useAppearance()
+  const val = selectValue(token)
+  const indicatorId = `tokensel-${useId()}`
+  return (
+    <div className="flex items-center gap-m py-2">
+      <span data-type="body-s" className="flex-1 min-w-0 text-on-surface">{token.label}</span>
+      {/* the pill group hugs its content (was flex-1 → the tinted track stretched
+          across the whole row); label takes the slack, group sits right, pills fit. */}
+      <div className="flex shrink-0 flex-wrap justify-end gap-1 rounded-2xl bg-surface-high p-1">
+        {token.options.map((opt) => {
+          const on = opt === val
+          return (
+            <button
+              key={opt}
+              onClick={() => setSelect(token.varName, opt)}
+              // Two halves of the same defect, both read out of the AX tree: the pill announced as
+              // "dm-sans, button" — the bare VALUE, with no hint that it belongs to Font family — and
+              // the chosen one announced identically to the rest, its selection being a coral fill.
+              // `bento`'s SegToggle already solves both this way, one screen over.
+              aria-label={`${token.label}: ${opt}`}
+              aria-pressed={on}
+              data-type="body-s"
+              className={`relative rounded-pill px-m h-7 capitalize transition-colors ${on ? 'text-on-primary' : 'text-on-surface-var hover:text-on-surface'}`}
+            >
+              {/* liquid active pill — slides between options via layoutId instead of
+                  the primary fill jumping instantly from one option to another. */}
+              {on && <motion.span layoutId={indicatorId} transition={spring.spatialFast} className="absolute inset-0 rounded-pill bg-primary" />}
+              <span className="relative">{opt}</span>
+            </button>
+          )
+        })}
+      </div>
+      <ResetButton label={token.label} onReset={() => resetToken(token.varName)} />
+    </div>
+  )
+}
+
+/** A scalar token row: label + value + slider + reset. */
+export function ScalarControl({ token }: { token: ScalarToken }) {
+  const { scalarValue, setScalar, resetToken } = useAppearance()
+  const val = scalarValue(token)
+  // Format by the token's declared unit: px/% round to an integer; a specific
+  // unit (s, °, …) is appended to a 1-decimal value; a UNITLESS token is a
+  // multiplier, shown as "1.00×".
+  const u = token.unit ?? ''
+  const display = u === 'px' || u === '%'
+    ? `${Math.round(val)}${u}`
+    : u
+      ? `${val.toFixed(1)}${u}`
+      : `${val.toFixed(2)}×`
+  return (
+    <div className="flex items-center gap-m py-2">
+      <span data-type="body-s" className="flex-1 text-on-surface">{token.label}</span>
+      <span data-type="body-s" className="w-[56px] text-right text-on-surface-low font-mono tabular-nums">{display}</span>
+      <input
+        type="range"
+        min={token.min} max={token.max} step={token.step}
+        value={val}
+        onChange={(e) => setScalar(token.varName, Number(e.target.value))}
+        className="w-[180px] accent-primary"
+        aria-label={token.label}
+      />
+      <ResetButton label={token.label} onReset={() => resetToken(token.varName)} />
+    </div>
+  )
+}

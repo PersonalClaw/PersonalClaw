@@ -1,0 +1,1150 @@
+"""HTTP handlers for /api/projects and /api/task-lists (the Project → TaskList
+levels of the task hierarchy)."""
+
+import asyncio
+import logging
+import time
+from pathlib import Path
+from typing import Any
+
+from aiohttp import web
+
+from personalclaw.http_download import attachment_disposition
+from personalclaw.request_validation import (
+    MISSING,
+    json_object_body,
+    optional_string,
+    require_string,
+    string_field,
+)
+from personalclaw.safety_flags import confirm_granted
+from personalclaw.security import is_sensitive_path, is_system_path
+from personalclaw.tasks.hierarchy import HierarchyStore
+from personalclaw.workflows import containers, leases
+from personalclaw.workflows import store as run_store
+
+logger = logging.getLogger(__name__)
+
+#: TTL for a Work-board claim taken through the claim route. A claim is advisory-but-
+#: recorded and short by design: long enough for a single co-tenant to pick up a leaf,
+#: short enough that a crashed holder frees it without an admin step.
+_CLAIM_TTL_SECS = 300
+
+# The body keys a caller may write through the PUT routes. An ALLOWLIST, not a denylist:
+# these handlers used to splat the raw body into the store as ``**body``, so every field
+# ever added to Project/TaskList became writable the moment it existed, and a denylist
+# would have to be edited in lockstep with the model to stay correct. An allowlist fails
+# closed instead. Both sets are the fields the matching ``HierarchyStore.update_*`` method
+# actually reads, minus the ones no client should name: ``id`` (identity — the URL path
+# carries it), ``is_builtin`` (a delete-protection flag recomputed from the project name),
+# and ``created_at``/``updated_at`` (store-owned; ``update_*`` stamps them itself).
+_PROJECT_UPDATABLE = frozenset(
+    {
+        "name",
+        "name_locked",
+        "status",
+        "brief",
+        "workspace_dir",
+        "agent_instructions_template",
+    }
+)
+_TASK_LIST_UPDATABLE = frozenset({"name", "project_id", "agent_instructions_template"})
+
+
+#: Update-door string fields, split by whether BLANK is a legal value.
+#:
+#: The split is the whole content of the fix and it is not cosmetic. ``name`` must clear
+#: the same non-blank bar its create door sets (#456/#2992); the rest are bindings a
+#: caller may legitimately CLEAR by sending ``""`` — an empty ``workspace_dir`` means "the
+#: project's context dir becomes the workspace", and an empty ``project_id`` on a task-list
+#: PUT means "do not move it". Validating those as non-blank would refuse a documented
+#: operation, which is how a validation pass turns into a regression.
+_PROJECT_NON_BLANK = ("name",)
+_PROJECT_NULLABLE = ("brief", "workspace_dir")
+_TASK_LIST_NON_BLANK = ("name",)
+_TASK_LIST_NULLABLE = ("project_id",)
+#: Free text: type-checked but never stripped, because leading/trailing whitespace in a
+#: prompt template is the author's. Before this it was stored with NO coercion at all, so
+#: a dict round-tripped into `project.json` as a nested object where every reader expects
+#: a string (#456).
+_TEMPLATE_FIELD = "agent_instructions_template"
+
+
+def _revalidate_strings(body: dict, non_blank: tuple[str, ...], nullable: tuple[str, ...]) -> None:
+    """Re-ask the create door's string rules for every field the caller actually SENT.
+
+    The asymmetry this closes ran backwards from the usual shape (#456): the POST 500'd on
+    a non-string scalar while the PUT ``str()``-coerced it and persisted the result, so the
+    update door was the DAMAGING half — it did not reject a bad type, it *invented* a
+    plausible-looking value (``null`` → the four-character name ``None``, a dict → Python's
+    repr ``{'a': 1}``). A field the caller omitted is left alone, so a PUT stays a partial
+    write.
+
+    Mutates *body* in place with the validated value, so the store never re-strips.
+    """
+    for field in non_blank:
+        value = optional_string(body, field)
+        if value is not MISSING:
+            body[field] = value
+    for field in nullable:
+        if field in body:
+            body[field] = string_field(body, field)
+    if _TEMPLATE_FIELD in body:
+        body[_TEMPLATE_FIELD] = string_field(body, _TEMPLATE_FIELD, strip=False)
+
+
+def _store() -> HierarchyStore:
+    return HierarchyStore()
+
+
+def _unwritable_field(body: dict, allowed: frozenset[str]) -> str | None:
+    """The first key in *body* outside *allowed*, or None when every key is writable.
+
+    A rejected key is REPORTED, never dropped: silently ignoring it answers 200 for a
+    write that did not happen, so the caller reasonably believes its change landed.
+    Screening here is also what keeps a key that collides with the store method's own
+    parameters (``self``, ``project_id``, ``list_id``) from reaching the ``**fields``
+    splat, where it surfaced as a TypeError and a bare 500 with nothing for the caller.
+    """
+    for key in body:
+        if key not in allowed:
+            return key
+    return None
+
+
+def _workspace_refusal(workspace_dir: str) -> web.Response | None:
+    """A 403 when *workspace_dir* names a credential dir or an OS system tree, else None.
+
+    A bound workspace becomes the cwd for an UNSANDBOXED worker that reads, writes and
+    runs commands there, and a chat session opened under the project inherits the path —
+    so it needs the gate the terminal endpoint already applies before spawning a PTY
+    (``dashboard/handlers/terminal.py``), on the same two security helpers. Without it
+    this route stored verbatim (200) exactly what that route refuses (403) for the
+    identical path. Callers pass the already-stripped value the store would persist, so
+    surrounding whitespace cannot carry a sensitive path past the check.
+    """
+    if not workspace_dir:
+        return None  # clearing the binding — the project's context dir becomes the workspace
+    if is_sensitive_path(workspace_dir) or is_system_path(workspace_dir):
+        return web.json_response(
+            {"error": "Workspace directory points to a system or sensitive location."},
+            status=403,
+        )
+    return None
+
+
+def _project_payload(store: HierarchyStore, project, *, list_counts: dict | None = None) -> dict:
+    """Serialize a project for the API, enriched with its context dir path + a
+    task-list count. ``list_counts`` lets the list endpoint pass a precomputed
+    {project_id: count} map so it isn't recomputed per project."""
+    d = project.to_dict()
+    d["context_dir"] = str(store.context_dir(project.id))
+    if list_counts is None:
+        d["task_list_count"] = len(store.list_task_lists(project_id=project.id))
+    else:
+        d["task_list_count"] = list_counts.get(project.id, 0)
+    return d
+
+
+# ── Projects ──
+
+
+async def api_projects_list(request: web.Request) -> web.Response:
+    """GET /api/projects"""
+    store = _store()
+    projects = store.list_projects()
+    # Precompute task-list counts once (one pass over all lists) for the UI.
+    counts: dict[str, int] = {}
+    for tl in store.list_task_lists():
+        counts[tl.project_id] = counts.get(tl.project_id, 0) + 1
+    out = [_project_payload(store, p, list_counts=counts) for p in projects]
+    return web.json_response({"projects": out})
+
+
+async def api_projects_create(request: web.Request) -> web.Response:
+    """POST /api/projects"""
+    body = await json_object_body(request)
+    name = require_string(body, "name")
+    store = _store()
+    workspace_dir = string_field(body, "workspace_dir")
+    refusal = _workspace_refusal(workspace_dir)
+    if refusal is not None:
+        return refusal
+    try:
+        project = store.create_project(
+            name=name,
+            agent_instructions_template=string_field(
+                body, "agent_instructions_template", strip=False
+            ),
+            brief=string_field(body, "brief"),
+            workspace_dir=workspace_dir,
+            # A name the user typed at creation is explicit → lock it (same as a rename),
+            # so it isn't mislabeled "Auto-named" and isn't auto-renamed by the LLM. The
+            # loop's auto-backing-project path (tasks_link.ensure_project) omits this, so
+            # those stay correctly auto-named.
+            name_locked=bool(body.get("name_locked", False)),
+        )
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    payload = _project_payload(store, project)
+    payload["pack_proposals"] = _fingerprint_proposals(project)
+    return web.json_response(payload, status=201)
+
+
+def _fingerprint_proposals(project: Any) -> list[dict[str, Any]]:
+    """The AGENT-PACKS §7 propose-only pack cards for a just-created project.
+
+    ONE of the two places a fingerprint scan may run (the other is the on-demand
+    ``GET /api/packs/proposals``); §7 forbids a background loop, and
+    :func:`packs.fingerprint.scan_project` enforces that by refusing any other ``reason``.
+
+    The scan writes nothing and is fail-soft: a project must be created even if pack discovery
+    breaks, so any failure logs and returns no proposals. ``with_inspect=False`` keeps creation
+    latency independent of how many packs matched — the card in the pack store fetches the full
+    §3.1 report from the on-demand route when the user actually looks at it.
+    """
+    from personalclaw.packs.fingerprint import SCAN_REASON_CREATE, scan_project
+
+    try:
+        return [
+            p.to_dict()
+            for p in scan_project(project, reason=SCAN_REASON_CREATE, with_inspect=False)
+        ]
+    except Exception:  # noqa: BLE001 - pack discovery must never fail project creation
+        logger.warning("fingerprint scan failed for a new project", exc_info=True)
+        return []
+
+
+async def api_projects_get(request: web.Request) -> web.Response:
+    """GET /api/projects/{project_id}"""
+    store = _store()
+    project = store.get_project(request.match_info["project_id"])
+    if not project:
+        return web.json_response({"error": "not found"}, status=404)
+    return web.json_response(_project_payload(store, project))
+
+
+async def api_projects_linked(request: web.Request) -> web.Response:
+    """GET /api/projects/{project_id}/linked — the work units scoped under this
+    project: Goal Loops (loop.project_id) + Code projects (code.tasks_project_id).
+    Read-only summaries (id/name/status) so the Projects detail page can show the
+    integration — everything the user does on one effort, in one place.
+
+    Also carries the project's ARTIFACTS and its run-written KNOWLEDGE (WORK-CONTAINERS
+    §1.6) — the two "what did work on this project leave behind" surfaces."""
+    pid = request.match_info["project_id"]
+    if _store().get_project(pid) is None:
+        return web.json_response({"error": "not found"}, status=404)
+
+    loops: list[dict] = []
+    code: list[dict] = []
+    try:
+        from personalclaw.loop import store as loop_store
+
+        for lp in loop_store.list_all():
+            if pid not in (lp.project_id, lp.tasks_project_id):
+                continue
+            # error_message lets the FE distinguish a genuine 'complete' from a
+            # budget-exhausted finish (→ "Ended early"), matching the list + cockpit.
+            row = {
+                "id": lp.id,
+                "name": lp.name or lp.task[:60],
+                "status": lp.status,
+                "kind": lp.kind,
+                "error_message": lp.error_message or None,
+            }
+            (code if lp.kind == "code" else loops).append(row)
+    except Exception:
+        pass
+
+    artifacts: list[dict] = []
+    try:
+        from personalclaw.artifacts.registry import get_provider
+
+        prov = get_provider()
+        if prov is not None:
+            # Two linkage generations coexist (#639). New artifacts carry project_id
+            # (artifact_save stamps the turn's bound Project). But the loop
+            # deliverable convention predates that stamp: those artifacts carry a
+            # `loop:<id>` tag and an EMPTY project_id — and they are exactly the
+            # artifacts a project's inventory exists to show (the deliverables of
+            # its loops). Match both in ONE list() pass: project_id, or a loop tag
+            # naming a loop this handler just resolved as ours.
+            own_ids = {row["id"] for row in loops} | {row["id"] for row in code}
+            own_tags = {f"loop:{i}" for i in own_ids}
+            seen: set[str] = set()
+            for a in prov.list():
+                if a.project_id != pid and not (own_tags & set(a.tags)):
+                    continue
+                if a.slug in seen:
+                    continue
+                seen.add(a.slug)
+                artifacts.append({"slug": a.slug, "name": a.name, "kind": a.kind})
+    except Exception:
+        pass
+
+    # Run-written KNOWLEDGE scoped to this project (WORK-CONTAINERS §1.6): items a run in
+    # this project persisted, plus other projects' items whose `sharing_policy` is `shared`
+    # (carrying `source_project` so the view can say where they came from). Another project's
+    # PRIVATE items never appear — that filter is the whole point of the policy field.
+    # Best-effort, like every other section here: no knowledge store, no section.
+    knowledge: list[dict] = []
+    try:
+        from personalclaw.knowledge import project_scope
+        from personalclaw.knowledge.store import KnowledgeStore, knowledge_db_path
+
+        knowledge = project_scope.project_items(
+            KnowledgeStore(db_path=str(knowledge_db_path())), project_id=pid, limit=25
+        )
+    except Exception:
+        pass
+
+    # Project-bound CHATS (manual sessions scoped to this project) — the vision frames
+    # chats as first-class project work ("launch a new loop OR chat about it"), so the
+    # detail page can list + resume them, not just loops. Worker sessions (loop-*) are
+    # excluded — they already surface as loops above. Best-effort.
+    chats: list[dict] = []
+    try:
+        state = request.app["state"]
+        for s in state._sessions.values():
+            if getattr(s, "project_id", "") != pid:
+                continue
+            if str(getattr(s, "_app", "") or ""):
+                continue  # worker session (loop/code/campaign) — listed as a loop, not a chat
+            chats.append(
+                {
+                    "key": s.key,
+                    "title": getattr(s, "title", "") or s.key,
+                    "running": bool(getattr(s, "running", False)),
+                }
+            )
+    except Exception:
+        pass
+
+    return web.json_response(
+        {
+            "loops": loops,
+            "code": code,
+            "artifacts": artifacts,
+            "chats": chats,
+            "knowledge": knowledge,
+        }
+    )
+
+
+# ── Work board (WORK-CONTAINERS §1/§5.2/§6.1) ──
+
+
+#: loop.status → the board's own vocabulary. A run and a legacy loop answer the same
+#: question on one board, so both project onto `BoardState` here rather than each surface
+#: inventing a mapping. An unmapped status degrades to WORKING (visible, not hidden) —
+#: never DONE, which would drop live work off the board.
+_LOOP_STATE = {
+    "running": containers.BoardState.WORKING,
+    "intake": containers.BoardState.WORKING,
+    "planning": containers.BoardState.WORKING,
+    "review": containers.BoardState.REVIEW,
+    "ready": containers.BoardState.QUEUED,
+    "paused": containers.BoardState.SUSPENDED,
+    "blocked": containers.BoardState.NEEDS_INPUT,
+    "stagnant": containers.BoardState.NEEDS_INPUT,
+    "needs_input": containers.BoardState.NEEDS_INPUT,
+    "complete": containers.BoardState.DONE,
+    "stopped": containers.BoardState.DONE,
+    "failed": containers.BoardState.DONE,
+}
+
+#: task.status → the board's vocabulary. Same contract as `_LOOP_STATE`.
+_TASK_STATE = {
+    "in_progress": containers.BoardState.WORKING,
+    "blocked": containers.BoardState.NEEDS_INPUT,
+    "done": containers.BoardState.DONE,
+    "cancelled": containers.BoardState.DONE,
+    "skipped": containers.BoardState.DONE,
+    "open": containers.BoardState.QUEUED,
+}
+
+
+def _as_board_row(d: dict) -> containers.BoardRow:
+    """Rebuild a `BoardRow` from its dict form, for the flatten→group pass.
+
+    `collect_sections` hands back plain dicts (one source, one section, isolated), so the
+    board grouping re-lifts the OK rows into `BoardRow` to reuse `group_board`'s ordering
+    and attention arithmetic rather than duplicating it per surface.
+    """
+    claim_raw = d.get("claim")
+    claim = None
+    if isinstance(claim_raw, dict):
+        claim = containers.Claim(
+            holder=str(claim_raw.get("holder", "") or ""),
+            expires_at=float(claim_raw.get("expires_at", 0.0) or 0.0),
+            taken_at=float(claim_raw.get("taken_at", 0.0) or 0.0),
+            renewals=int(claim_raw.get("renewals", 0) or 0),
+        )
+    try:
+        state = containers.BoardState(str(d.get("state", "") or ""))
+    except ValueError:
+        state = containers.BoardState.WORKING
+    return containers.BoardRow(
+        run_id=str(d.get("run_id", "") or ""),
+        title=str(d.get("title", "") or ""),
+        state=state,
+        origin=str(d.get("origin", "") or ""),
+        project_id=str(d.get("project_id", "") or ""),
+        claim=claim,
+        collapsed=bool(d.get("collapsed", False)),
+        attention=bool(d.get("attention", False)),
+        resumable=bool(d.get("resumable", False)),
+    )
+
+
+def _run_rows(pid: str, now: float) -> list[dict]:
+    """WF2 runs bound to this project, as board-row dicts with their live claim."""
+    runs, _ = run_store.list_runs(project_id=pid, limit=500)
+    return [
+        containers.board_row(r, claim_record=leases.read_claim(r.id), now=now).to_dict()
+        for r in runs
+    ]
+
+
+def _loop_rows(pid: str) -> list[dict]:
+    """Legacy Goal/Code loops under this project, adapted to the board-row shape.
+
+    Loops predate the run engine and have their own store; they are still work the user
+    is running, so they share the board. Origin `manual` (a user launched them) so they
+    are never collapsed as machine noise.
+    """
+    from personalclaw.loop import store as loop_store
+
+    rows: list[dict] = []
+    for lp in loop_store.list_for_project(pid):
+        state = _LOOP_STATE.get(str(lp.status), containers.BoardState.WORKING)
+        rows.append(
+            containers.BoardRow(
+                run_id=lp.id,
+                title=lp.name or (lp.task or "")[:60] or "(unnamed loop)",
+                state=state,
+                origin="manual",
+                project_id=pid,
+                resumable=state is containers.BoardState.SUSPENDED,
+                attention=state is containers.BoardState.NEEDS_INPUT,
+            ).to_dict()
+        )
+    return rows
+
+
+def _task_rows(tasks: list, pid: str) -> list[dict]:
+    """Standalone tasks under this project, adapted to the board-row shape.
+
+    A task bound to a run (`workflow_binding`) is already surfaced by the run source, so it
+    is skipped here — two rows for one unit of work is a board that double-counts.
+    """
+    rows: list[dict] = []
+    for t in tasks:
+        if getattr(t, "workflow_binding", None) is not None:
+            continue
+        status = getattr(getattr(t, "status", None), "value", "") or ""
+        state = _TASK_STATE.get(status, containers.BoardState.QUEUED)
+        rows.append(
+            containers.BoardRow(
+                run_id=getattr(t, "id", "") or "",
+                title=getattr(t, "title", "") or "(untitled task)",
+                state=state,
+                origin="task",
+                project_id=pid,
+                attention=state is containers.BoardState.NEEDS_INPUT,
+            ).to_dict()
+        )
+    return rows
+
+
+async def api_projects_work(request: web.Request) -> web.Response:
+    """GET /api/projects/{project_id}/work — the state-grouped Work board.
+
+    One board over three heterogeneous sources — WF2 runs, legacy loops, standalone
+    tasks — each collected under its own try/except so a slow or broken source degrades
+    ONE section rather than the whole first paint (`containers.collect_sections`). OK
+    sections' rows are flattened and grouped by `containers.group_board`, which pins
+    needs-input first and drops expired claims, so the board is truthful across a gateway
+    kill. `completeness` tells the client a partially-failed board apart from a complete
+    one; `sections` carries the per-source status the FE renders as a skeleton/degraded
+    note.
+    """
+    store = _store()
+    pid = request.match_info["project_id"]
+    project = store.get_project(pid)
+    if project is None:
+        return web.json_response({"error": "not found"}, status=404)
+    now = time.time()
+
+    # Tasks are keyed by project NAME and read through an ASYNC provider, so they are
+    # fetched HERE (in its own guard) and handed to `collect_sections` as a pre-fetched
+    # list — a prefetch failure re-raises inside the source callable so that section still
+    # records `status: "error"` rather than silently emptying.
+    task_error: Exception | None = None
+    tasks: list = []
+    try:
+        from personalclaw.tasks import registry as task_registry
+
+        tasks, _ = await task_registry.collect_tasks(project=project.name)
+    except Exception as exc:  # noqa: BLE001 — recorded as the tasks section's failure
+        task_error = exc
+
+    def _tasks_source() -> list[dict]:
+        if task_error is not None:
+            raise task_error
+        return _task_rows(tasks, pid)
+
+    sources = {
+        "runs": lambda: _run_rows(pid, now),
+        "loops": lambda: _loop_rows(pid),
+        "tasks": _tasks_source,
+    }
+    sections, completeness = containers.collect_sections(sources, now=now)
+
+    ok_rows: list[containers.BoardRow] = []
+    for section in sections:
+        if section.get("status") == "ok":
+            ok_rows.extend(_as_board_row(d) for d in section.get("items") or [])
+    board = containers.group_board(ok_rows)
+
+    return web.json_response(
+        {
+            "board": board,
+            "sections": sections,
+            "completeness": completeness.value,
+            "attention": containers.attention_count(ok_rows),
+            "loadedAt": now,
+        }
+    )
+
+
+async def _claim_body(request: web.Request) -> tuple[str, str]:
+    """The `{target_id, holder}` a claim/release POST must carry.
+
+    No longer a body reader: it reads through :func:`json_object_body` and asks
+    :func:`require_string` for each field, so its three hand-rolled refusals (one
+    ``invalid_json`` envelope, two bare ``{"error": str}`` bodies that no envelope rail
+    covers) collapse into the shared ones and the `tuple | Response` return — which every
+    caller had to `isinstance`-check — becomes a plain tuple.
+
+    ``target_id`` and ``holder`` are refused SEPARATELY rather than by the old
+    ``not target_id or not holder``, because "target_id and holder are required" does not
+    tell a caller which of the two it got wrong.
+    """
+    body = await json_object_body(request)
+    return require_string(body, "target_id"), require_string(body, "holder")
+
+
+async def api_projects_work_claim(request: web.Request) -> web.Response:
+    """POST /api/projects/{project_id}/work/claim — take a TTL'd claim on one board row.
+
+    Delegates to the flock-guarded `leases.acquire_claim`. A refusal (someone else holds
+    it, or the flock is contended) is a normal 200 outcome the board renders, not an error
+    — `granted:false` with the reason, so the caller can show why.
+    """
+    if _store().get_project(request.match_info["project_id"]) is None:
+        return web.json_response({"error": "not found"}, status=404)
+    target_id, holder = await _claim_body(request)
+    granted, reason = leases.acquire_claim(target_id, holder, ttl=_CLAIM_TTL_SECS)
+    return web.json_response(
+        {
+            "granted": granted is not None,
+            "claim": granted.to_dict() if granted else None,
+            "reason": reason,
+        }
+    )
+
+
+async def api_projects_work_release(request: web.Request) -> web.Response:
+    """POST /api/projects/{project_id}/work/release — release a claim you hold.
+
+    Only the holder may release; a foreign claim is returned unchanged with the reason.
+    """
+    if _store().get_project(request.match_info["project_id"]) is None:
+        return web.json_response({"error": "not found"}, status=404)
+    target_id, holder = await _claim_body(request)
+    remaining, reason = leases.release_claim(target_id, holder)
+    return web.json_response(
+        {
+            "released": remaining is None and not reason,
+            "claim": remaining.to_dict() if remaining else None,
+            "reason": reason,
+        }
+    )
+
+
+async def api_projects_update(request: web.Request) -> web.Response:
+    """PUT /api/projects/{project_id}"""
+    body = await json_object_body(request)
+    rejected = _unwritable_field(body, _PROJECT_UPDATABLE)
+    if rejected is not None:
+        return web.json_response({"error": f"'{rejected}' is not an updatable field"}, status=400)
+    # The create door's rule, re-asked on every string field the caller actually sent
+    # (#456). MISSING = omitted = leave it alone, so a PUT stays a partial write.
+    _revalidate_strings(body, _PROJECT_NON_BLANK, _PROJECT_NULLABLE)
+    if "workspace_dir" in body:
+        refusal = _workspace_refusal(string_field(body, "workspace_dir"))
+        if refusal is not None:
+            return refusal
+    store = _store()
+    try:
+        project = store.update_project(request.match_info["project_id"], **body)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    if not project:
+        return web.json_response({"error": "not found"}, status=404)
+    return web.json_response(_project_payload(store, project))
+
+
+def _bound_work_counts(pid: str) -> tuple[int, int]:
+    """(loops, code) count still bound to this project — so deleting it doesn't
+    silently orphan live work (and yank its worktrees out from under git)."""
+    loops = code = 0
+    try:
+        from personalclaw.loop import store as loop_store
+
+        for lp in loop_store.list_all():
+            if pid not in (lp.project_id, lp.tasks_project_id):
+                continue
+            if lp.kind == "code":
+                code += 1
+            else:
+                loops += 1
+    except Exception:
+        pass
+    return loops, code
+
+
+def _bound_chat_sessions(state, pid: str) -> list:
+    """The live project-bound CHAT sessions for a project (manual sessions with
+    project_id==pid and no _app — worker/loop sessions are excluded; they're counted
+    as loops). Returns the session objects so the caller can count them for the
+    delete-guard AND unbind them on force-delete. Best-effort; [] on any failure."""
+    out: list = []
+    try:
+        for s in (getattr(state, "_sessions", {}) or {}).values():
+            if getattr(s, "project_id", "") != pid:
+                continue
+            if str(getattr(s, "_app", "") or ""):
+                continue  # worker/loop/campaign session — surfaced as a loop, not a chat
+            out.append(s)
+    except Exception:
+        logger.debug("bound-chat scan failed for %s", pid, exc_info=True)
+    return out
+
+
+def _unbind_bound_chats(state, pid: str) -> int:
+    """Detach project-bound chats from a project being force-deleted: clear their
+    project_id so they don't dangle (preamble/context-dir grant would resolve a gone
+    project). Chats are the USER'S conversations — we unbind, never delete them."""
+    n = 0
+    for s in _bound_chat_sessions(state, pid):
+        try:
+            s.project_id = ""
+            n += 1
+        except Exception:
+            logger.debug("unbind chat %s failed", getattr(s, "key", "?"), exc_info=True)
+    return n
+
+
+async def _teardown_bound_loops(pid: str) -> None:
+    """Tear down every loop scoped under a project being force-deleted: stop the worker
+    + clean its git worktrees/branches + delete the loop row. Without this, force-delete
+    rmtree'd the project dir but left bound loops orphaned — workers still running, their
+    tasks_project_id pointing at a deleted project, and `.worktrees/`/`pclaw/task-*`
+    branches littering the user's repo (the exact harm the 409 guard warns about, done
+    anyway on force). Best-effort per loop; never raises."""
+    try:
+        from personalclaw.loop import manager as loop_manager
+        from personalclaw.loop import store as loop_store
+        from personalclaw.triggers.nudge import get_instance
+
+        svc = get_instance()
+        bound = [
+            lp.id for lp in loop_store.list_all() if pid in (lp.project_id, lp.tasks_project_id)
+        ]
+        for lid in bound:
+            try:
+                if svc is not None:
+                    await loop_manager.teardown_for_delete(svc, lid)
+                loop_store.delete(lid)
+            except Exception:
+                logger.debug("force-delete: teardown of bound loop %s failed", lid, exc_info=True)
+    except Exception:
+        logger.debug("force-delete: bound-loop teardown sweep failed for %s", pid, exc_info=True)
+
+
+async def api_projects_delete(request: web.Request) -> web.Response:
+    """DELETE /api/projects/{project_id}[?force=true]
+
+    Refuses (409) to delete a project that still has bound Goal Loops / Code
+    projects — deleting would orphan that live work and rmtree its worktrees out
+    from under git. The caller confirms + retries with ?force=true to delete anyway."""
+    pid = request.match_info["project_id"]
+    state = request.app.get("state")  # may be absent in task-only test apps → no chats
+    force = request.query.get("force") in ("1", "true", "yes")
+    if not force:
+        loops, code = _bound_work_counts(pid)
+        chats = len(_bound_chat_sessions(state, pid))
+        if loops or code or chats:
+            # Chats are first-class project work (surfaced in /linked), so deleting a
+            # project with active project-bound chats must warn too — else they silently
+            # dangle (project_id → a gone project; preamble/context-dir grant break).
+            return web.json_response(
+                {
+                    "error": "project has bound work",
+                    "loops": loops,
+                    "code": code,
+                    "chats": chats,
+                },
+                status=409,
+            )
+    else:
+        # Force-delete: tear down the bound loops FIRST (stop workers + clean worktrees +
+        # delete rows) so they aren't orphaned, then UNBIND the project-bound chats (clear
+        # their project_id) — chats are the user's conversations, detached not destroyed.
+        await _teardown_bound_loops(pid)
+        _unbind_bound_chats(state, pid)
+    # Cascade the project's TASKS before the project + its lists are dropped. `delete_project`
+    # removes the task LISTS (and tombstones them) but the task rows live in the native task
+    # provider, keyed by task_list_id — so without this they'd survive pointing at dead list ids
+    # with a blanked project label, unreachable from every scoped view (#457). Resolve by project
+    # NAME (the provider's stable key) BEFORE delete_project, because the derive-label lookup the
+    # provider uses to answer `project=` reads the very lists we're about to unlink. Tasks are
+    # project content, not live work needing a teardown handshake (that's loops); a per-task failure
+    # is logged but never blocks the delete, matching the loop-teardown sweep above.
+    # The delete loop itself is shared with the task-list door below (`_cascade_delete_tasks`),
+    # so the two cascades are ONE mechanism rather than two that happen to agree; only the
+    # question "which tasks are doomed" differs, and each door answers it from the key it can
+    # still resolve at that moment.
+    _proj = _store().get_project(pid)
+    if _proj is not None:
+        try:
+            from personalclaw.tasks import registry as task_registry
+
+            doomed, _ = await task_registry.collect_tasks(project=_proj.name)
+            await _cascade_delete_tasks([t.id for t in doomed])
+        except Exception:
+            logger.debug("delete-project: task cascade sweep failed for %s", pid, exc_info=True)
+    try:
+        deleted = _store().delete_project(pid)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    if not deleted:
+        return web.json_response({"error": "not found"}, status=404)
+    return web.json_response({"ok": True})
+
+
+# ── Task lists ──
+
+
+async def _task_list_task_counts() -> dict[str, int] | None:
+    """``{task_list_id: task count}`` from ONE aggregation, or ``None`` when it cannot be computed.
+
+    ``None`` rather than an empty map is the load-bearing part. The project hub renders the count
+    badge only when the field IS a number, so omitting it hides the badge — whereas a ``0`` would
+    assert "this list is empty", which is the fabricate-a-value mistake rather than a missing
+    reading. Counting is best-effort decoration on an endpoint whose real job is the lists
+    themselves, so a provider failure must not fail the request.
+
+    One aggregation, not one per list: the six existing call sites of ``list_all_tasks`` each pass
+    a single ``task_list_id``, and doing that per row would re-scan every provider N times.
+    Inherits that helper's ceiling of 500 tasks per provider, the same ceiling those callers live
+    with.
+    """
+    try:
+        from personalclaw.tasks import registry
+
+        tasks, _ = await registry.list_all_tasks(limit=100_000)
+    except Exception:
+        logger.warning("task-list counts unavailable; omitting the field", exc_info=True)
+        return None
+    counts: dict[str, int] = {}
+    for t in tasks:
+        key = getattr(t, "task_list_id", "") or ""
+        if key:
+            counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _task_list_payload(tl, counts: dict[str, int] | None) -> dict:
+    """Serialize a task list, enriched with ``task_count`` when it is known.
+
+    The hub's badge has read ``task_count`` since the initial public commit while NO endpoint ever
+    emitted it, so it could never render (#514) — the sibling project row does the same thing
+    correctly with ``task_list_count``. This is the missing emitter, not a new field.
+    """
+    d = tl.to_dict()
+    if counts is not None:
+        d["task_count"] = counts.get(tl.id, 0)
+    return d
+
+
+async def api_task_lists_list(request: web.Request) -> web.Response:
+    """GET /api/task-lists?project_id=…"""
+    project_id = request.query.get("project_id")
+    lists = _store().list_task_lists(project_id=project_id)
+    counts = await _task_list_task_counts()
+    return web.json_response({"task_lists": [_task_list_payload(tl, counts) for tl in lists]})
+
+
+async def api_task_lists_create(request: web.Request) -> web.Response:
+    """POST /api/task-lists"""
+    body = await json_object_body(request)
+    try:
+        tl = _store().create_task_list(
+            name=require_string(body, "name"),
+            project_id=string_field(body, "project_id"),
+            project_name=string_field(body, "project_name"),
+            repeatable=bool(body.get("repeatable", False)),
+            agent_instructions_template=string_field(
+                body, "agent_instructions_template", strip=False
+            ),
+        )
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    return web.json_response(tl.to_dict(), status=201)
+
+
+async def api_task_lists_get(request: web.Request) -> web.Response:
+    """GET /api/task-lists/{list_id}"""
+    tl = _store().get_task_list(request.match_info["list_id"])
+    if not tl:
+        return web.json_response({"error": "not found"}, status=404)
+    return web.json_response(tl.to_dict())
+
+
+async def api_task_lists_update(request: web.Request) -> web.Response:
+    """PUT /api/task-lists/{list_id}"""
+    body = await json_object_body(request)
+    rejected = _unwritable_field(body, _TASK_LIST_UPDATABLE)
+    if rejected is not None:
+        return web.json_response({"error": f"'{rejected}' is not an updatable field"}, status=400)
+    _revalidate_strings(body, _TASK_LIST_NON_BLANK, _TASK_LIST_NULLABLE)
+    try:
+        tl = _store().update_task_list(request.match_info["list_id"], **body)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    if not tl:
+        return web.json_response({"error": "not found"}, status=404)
+    return web.json_response(tl.to_dict())
+
+
+async def api_task_lists_delete(request: web.Request) -> web.Response:
+    """DELETE /api/task-lists/{list_id}
+
+    Cascades the list's TASKS, the way ``api_projects_delete`` above already does and for
+    the identical reason: the task rows live in the native provider keyed by
+    ``task_list_id``, so a bare ``delete_task_list`` left them pointing at a dead list id
+    with their derived ``project`` label blanked — the #457 orphan condition through the
+    sibling door (#2976). The orphan then outlived the project delete too, because that
+    cascade resolves doomed tasks by project NAME and this door had already blanked it.
+
+    Resolved by ``task_list_id`` (the live FK) rather than by label, and BEFORE the list row
+    goes: tasks are project content, not live work needing a teardown handshake (that is
+    loops), so there is no 409/force arm here — a per-task failure is logged and never
+    blocks the delete, matching the project cascade exactly.
+    """
+    list_id = request.match_info["list_id"]
+    doomed = await _tasks_in_list(list_id)
+    if not _store().delete_task_list(list_id):
+        return web.json_response({"error": "not found"}, status=404)
+    return web.json_response({"ok": True, "deleted_tasks": await _cascade_delete_tasks(doomed)})
+
+
+async def _tasks_in_list(list_id: str) -> list[str]:
+    """The ids of the tasks a list owns. Never raises: a cascade that cannot enumerate must
+    not block the delete, exactly as the project cascade's sweep does not."""
+    try:
+        from personalclaw.tasks import registry as task_registry
+
+        tasks, _ = await task_registry.collect_tasks(task_list_id=list_id)
+        return [t.id for t in tasks]
+    except Exception:
+        logger.debug("delete-task-list: task sweep failed for %s", list_id, exc_info=True)
+        return []
+
+
+async def _cascade_delete_tasks(task_ids: list[str]) -> int:
+    """Delete each task, counting what went. Per-task failures are logged, never fatal."""
+    from personalclaw.tasks import registry as task_registry
+
+    gone = 0
+    for tid in task_ids:
+        try:
+            if await task_registry.delete_task(tid):
+                gone += 1
+        except Exception:
+            logger.debug("delete-task-list: task %s cascade delete failed", tid, exc_info=True)
+    return gone
+
+
+async def api_task_lists_reset(request: web.Request) -> web.Response:
+    """POST /api/task-lists/{list_id}/reset — reset a Repeatable-project list so it can be run
+    AGAIN: every task returns to its not-yet-run state. Which fields that clears, and which are
+    deliberately preserved, is stated once in `task_reset_payload` — enumerating them here is
+    what let the list drift from the code (the docstring named three fields, the handler wrote
+    those same three, and `action_plan`'s per-step flags were in neither). Only allowed for
+    lists under the Repeatable project, and only when every task is terminal.
+
+    ``confirm: true`` is required. The two other guards here are about whether the reset is
+    LEGAL (a Repeatable list, all tasks terminal), not about whether it was INTENDED, and this
+    is the only path that empties ``execution_notes`` — the record of what was actually done on
+    each task. Clearing that is unrecoverable and has no undo, so intent has to be stated. It is
+    the same bar ``merge_items`` sets in the knowledge handlers for the same reason.
+
+    A task a workflow run still owns (`managed(t)`) is deferred field-wise, not skipped or
+    refused: `ENGINE_OWNED_FIELDS` stays with the run (the same reason `_RESET_PRESERVED` already
+    holds back `done_criterion` and `workflow_binding`), while the user-owned reset — execution
+    notes, blocked reason, and the item-wise plan/criteria flags — still applies. A whole-reset
+    refusal would make one filed-in managed task permanently block the list, and a silent skip
+    would drop the one thing only this route does: emptying that task's `execution_notes`.
+    """
+    from personalclaw.tasks import registry
+    from personalclaw.tasks.models import REPEATABLE_PROJECT, TaskStatus, task_reset_payload
+    from personalclaw.workflows.materialize import ENGINE_OWNED_FIELDS, managed
+
+    body = await json_object_body(request)
+    if not confirm_granted(body):
+        return web.json_response(
+            {
+                "error": {
+                    "code": "confirm_required",
+                    "message": (
+                        "reset clears execution notes and un-completes every exit criterion "
+                        "— pass confirm: true"
+                    ),
+                }
+            },
+            status=400,
+        )
+    store = _store()
+    list_id = request.match_info["list_id"]
+    tl = store.get_task_list(list_id)
+    if not tl:
+        return web.json_response({"error": "not found"}, status=404)
+    project = store.get_project(tl.project_id)
+    if not project or project.name != REPEATABLE_PROJECT:
+        return web.json_response(
+            {"error": "only task lists under the Repeatable project can be reset"}, status=400
+        )
+    tasks, _ = await registry.collect_tasks(task_list_id=list_id)
+    non_terminal = [t for t in tasks if t.status not in (TaskStatus.DONE, TaskStatus.CANCELLED)]
+    if non_terminal:
+        return web.json_response(
+            {"error": "all tasks must be complete before the list can be reset"}, status=400
+        )
+    reset_ids = []
+    partially_reset_ids = []
+    for t in tasks:
+        payload = task_reset_payload(t)
+        if managed(t):
+            for field in ENGINE_OWNED_FIELDS:
+                payload.pop(field, None)
+            partially_reset_ids.append(t.id)
+        await registry.update_task(t.id, **payload)
+        reset_ids.append(t.id)
+    return web.json_response(
+        {
+            "ok": True,
+            "reset_task_ids": reset_ids,
+            "partially_reset_task_ids": partially_reset_ids,
+        }
+    )
+
+
+async def api_projects_export(request: web.Request) -> web.Response:
+    """GET /api/projects/{project_id}/export — download one project as a manifest ZIP.
+
+    Serves the ARCHIVE, not a JSON summary: the point of the format is that the bytes travel to
+    another machine. The plan's skip list and expected-credential names ride back in response
+    HEADERS, because a user who is handed a file has no other way to learn that three credentials
+    must be re-entered on the far side — and the values themselves are, by design, not in the file.
+
+    `?passphrase=` encrypts client-side (AES-GCM). Optional and off by default: an encrypted archive
+    is unreadable without the passphrase the user chose, which is a real way to lose a project.
+    """
+    from personalclaw.artifacts import registry as artifact_registry
+    from personalclaw.config.loader import config_dir
+    from personalclaw.workflows import project_archive as pa
+    from personalclaw.workflows import store as wf_store
+
+    pid = request.match_info["project_id"]
+    store = _store()
+    project = store.get_project(pid)
+    if project is None:
+        return web.json_response({"error": "not found"}, status=404)
+
+    passphrase = request.query.get("passphrase", "")
+    if passphrase and not pa.encryption_available():
+        return web.json_response(
+            {"error": "encryption needs the optional `cryptography` extra"}, status=400
+        )
+
+    artifacts: list[dict] = []
+    try:
+        provider = artifact_registry.get_provider()
+        if provider is not None:
+            artifacts = [a.to_dict() for a in provider.list(project_id=pid)]
+    except Exception:  # noqa: BLE001 — an export must not fail because one store is unreadable
+        logger.warning("project export: artifact metadata unavailable for %s", pid)
+
+    runs: list[dict] = []
+    try:
+        rows, _total = wf_store.list_runs(project_id=pid, limit=1000)
+        runs = [r.to_dict() for r in rows]
+    except Exception:  # noqa: BLE001
+        logger.warning("project export: run digests unavailable for %s", pid)
+
+    project_root = config_dir() / "projects" / pid
+    try:
+        raw, plan = await asyncio.to_thread(
+            pa.export_project_archive,
+            pid,
+            project_root=project_root,
+            project_name=project.name,
+            artifacts=artifacts,
+            runs=runs,
+            passphrase=passphrase,
+        )
+    except pa.ArchiveRefused as exc:
+        return web.json_response({"error": str(exc), "reason": exc.reason}, status=400)
+
+    filename = pa.archive_filename(project.name, pid, encrypted=bool(passphrase))
+    return web.Response(
+        body=raw,
+        content_type="application/zip",
+        headers={
+            "Content-Disposition": attachment_disposition(filename),
+            "Content-Length": str(len(raw)),
+            # The two decisions a user must act on, in headers a download can carry.
+            "X-PersonalClaw-Entities": str(len(plan.entries)),
+            "X-PersonalClaw-Skipped": str(len(plan.skipped)),
+            "X-PersonalClaw-Secrets-Expected": ",".join(sorted(plan.secrets_present)),
+        },
+    )
+
+
+async def api_projects_import(request: web.Request) -> web.Response:
+    """POST /api/projects/import — import a project archive (multipart `file`).
+
+    `?preview=1` plans without writing, which is the honest default for an archive that came from
+    somewhere else: the user sees what will be accepted, what is refused and under which name it
+    will land BEFORE anything touches the home.
+
+    A name collision takes an `imported-N` slot; the existing project is the one thing an import
+    must not damage.
+    """
+    from personalclaw.config.loader import config_dir
+    from personalclaw.workflows import project_archive as pa
+
+    upload, err = await _read_project_upload(request)
+    if err is not None:
+        return err
+    assert upload is not None
+
+    preview = request.query.get("preview", "") in ("1", "true", "yes")
+    passphrase = request.query.get("passphrase", "")
+    store = _store()
+    existing = [p.name for p in store.list_projects()]
+
+    try:
+        plan, archive = await asyncio.to_thread(
+            pa.read_archive_plan, upload, existing_names=existing, passphrase=passphrase
+        )
+    except pa.ArchiveRefused as exc:
+        return web.json_response({"error": str(exc), "reason": exc.reason}, status=400)
+    except pa.EncryptionUnavailable as exc:
+        return web.json_response(
+            {"error": str(exc), "reason": "encryption_unavailable"}, status=400
+        )
+    finally:
+        upload.unlink(missing_ok=True)
+
+    payload = plan.to_dict()
+    payload["summary"] = _import_summary(plan)
+    if preview:
+        payload["preview"] = True
+        return web.json_response(payload)
+
+    if not plan.ok:
+        return web.json_response(
+            {**payload, "error": "the archive contributed nothing importable"}, status=400
+        )
+
+    created = store.create_project(plan.project_name)
+    project_root = config_dir() / "projects" / created.id
+    written = await asyncio.to_thread(pa.commit_import, plan, archive, project_root=project_root)
+    payload.update({"preview": False, "project_id": created.id, "written": written})
+    return web.json_response(payload, status=201)
+
+
+def _import_summary(plan) -> str:
+    from personalclaw.workflows.project_export import import_summary
+
+    return import_summary(plan)
+
+
+async def _read_project_upload(request: web.Request):
+    """Read a multipart `file` field into a unique temp file.
+
+    Mirrors `dashboard.handlers.portability._read_upload_file`'s shape rather than sharing it: that
+    one lives in the dashboard package and importing it here would put a handler module's private
+    helper on the tasks package's import path.
+    """
+    import tempfile
+
+    from aiohttp.multipart import BodyPartReader
+
+    ctype = request.headers.get("Content-Type", "")
+    if not ctype.lower().startswith("multipart/"):
+        return None, web.json_response(
+            {"error": "multipart/form-data with a 'file' field is required"}, status=400
+        )
+    try:
+        reader = await request.multipart()
+    except (ValueError, AssertionError, RuntimeError) as exc:
+        return None, web.json_response(
+            {"error": f"failed to parse multipart body: {exc}"}, status=400
+        )
+    part = await reader.next()
+    if part is None or not isinstance(part, BodyPartReader) or part.name != "file":
+        return None, web.json_response({"error": "file field required"}, status=400)
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    try:
+        while True:
+            chunk = await part.read_chunk(65536)
+            if not chunk:
+                break
+            tmp.write(chunk)
+        tmp.close()
+        return Path(tmp.name), None
+    except Exception:
+        tmp.close()
+        Path(tmp.name).unlink(missing_ok=True)
+        raise
+
+
+def register_hierarchy_routes(app: web.Application) -> None:
+    """Register /api/projects/* and /api/task-lists/* routes."""
+    # Static sub-paths BEFORE the dynamic /{project_id} matcher, else `import` reads as an id.
+    app.router.add_post("/api/projects/import", api_projects_import)
+    app.router.add_get("/api/projects", api_projects_list)
+    app.router.add_post("/api/projects", api_projects_create)
+    app.router.add_get("/api/projects/{project_id}", api_projects_get)
+    app.router.add_get("/api/projects/{project_id}/export", api_projects_export)
+    app.router.add_get("/api/projects/{project_id}/linked", api_projects_linked)
+    app.router.add_get("/api/projects/{project_id}/work", api_projects_work)
+    app.router.add_post("/api/projects/{project_id}/work/claim", api_projects_work_claim)
+    app.router.add_post("/api/projects/{project_id}/work/release", api_projects_work_release)
+    app.router.add_put("/api/projects/{project_id}", api_projects_update)
+    app.router.add_delete("/api/projects/{project_id}", api_projects_delete)
+
+    app.router.add_post("/api/task-lists/{list_id}/reset", api_task_lists_reset)
+    app.router.add_get("/api/task-lists", api_task_lists_list)
+    app.router.add_post("/api/task-lists", api_task_lists_create)
+    app.router.add_get("/api/task-lists/{list_id}", api_task_lists_get)
+    app.router.add_put("/api/task-lists/{list_id}", api_task_lists_update)
+    app.router.add_delete("/api/task-lists/{list_id}", api_task_lists_delete)

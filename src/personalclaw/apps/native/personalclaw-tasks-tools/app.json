@@ -1,0 +1,20 @@
+{
+  "name": "personalclaw-tasks-tools",
+  "version": "1.0.0",
+  "displayName": "Tasks Tools",
+  "description": "Operate the Tasks entity \u2014 create/list/get/update/search tasks, list ready tasks, and create projects and task lists.",
+  "icon": "ListTodo",
+  "author": "PersonalClaw",
+  "tags": [
+    "tool",
+    "bundled"
+  ],
+  "provider": {
+    "type": "tool",
+    "implementation": "personalclaw.agents.native.builtin_tools:create_tasks_tools_provider",
+    "capabilities": [
+      "task"
+    ]
+  },
+  "native": true
+}

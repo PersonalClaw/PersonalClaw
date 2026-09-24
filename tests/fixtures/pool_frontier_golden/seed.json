@@ -1,0 +1,20 @@
+{
+  "note": "PP-13 equivalence seed. The INPUT to both the retired `pool.frontier` (whose output is `ready.jsonl`) and the unified core's `admission.ready`. One file so the two sides cannot drift: a re-stated seed is a second implementation of the fixture.",
+  "now": 1700000000.0,
+  "board_holder": "work-board",
+  "lease_ttl_secs": 900,
+  "candidates": [
+    {"task_id": "t-critical",       "title": "ship the release",      "priority": "critical", "unblocked": true,  "blocks_count": 0, "overdue": false, "updated_at": 1699999900.0, "leased_by": ""},
+    {"task_id": "t-high-blocking",  "title": "unblock four others",   "priority": "high",     "unblocked": true,  "blocks_count": 4, "overdue": false, "updated_at": 1699999800.0, "leased_by": ""},
+    {"task_id": "t-medium-overdue", "title": "overdue medium",        "priority": "medium",   "unblocked": true,  "blocks_count": 0, "overdue": true,  "updated_at": 1699999950.0, "leased_by": ""},
+    {"task_id": "t-low-many",       "title": "low but blocks eight",  "priority": "low",      "unblocked": true,  "blocks_count": 8, "overdue": false, "updated_at": 1699999990.0, "leased_by": ""},
+    {"task_id": "t-trivial",        "title": "trivial chore",         "priority": "trivial",  "unblocked": true,  "blocks_count": 0, "overdue": false, "updated_at": 1699999995.0, "leased_by": ""},
+    {"task_id": "t-unknown-prio",   "title": "priority typo",         "priority": "urgent",   "unblocked": true,  "blocks_count": 0, "overdue": false, "updated_at": 1699999993.0, "leased_by": ""},
+    {"task_id": "t-blocked-urgent", "title": "blocked but critical",  "priority": "critical", "unblocked": false, "blocks_count": 2, "overdue": true,  "updated_at": 1699999999.0, "leased_by": ""},
+    {"task_id": "t-blocked-plain",  "title": "blocked and dull",      "priority": "medium",   "unblocked": false, "blocks_count": 0, "overdue": false, "updated_at": 1699999700.0, "leased_by": ""},
+    {"task_id": "t-leased-other",   "title": "held by another",       "priority": "critical", "unblocked": true,  "blocks_count": 0, "overdue": true,  "updated_at": 1699999999.0, "leased_by": "session-other"},
+    {"task_id": "t-leased-self",    "title": "held by the asker",     "priority": "high",     "unblocked": true,  "blocks_count": 0, "overdue": false, "updated_at": 1699999998.0, "leased_by": "session-self"},
+    {"task_id": "t-tie-a",          "title": "tie on score and time", "priority": "medium",   "unblocked": true,  "blocks_count": 0, "overdue": false, "updated_at": 1699999700.0, "leased_by": ""},
+    {"task_id": "t-tie-b",          "title": "tie on score and time", "priority": "medium",   "unblocked": true,  "blocks_count": 0, "overdue": false, "updated_at": 1699999700.0, "leased_by": ""}
+  ]
+}

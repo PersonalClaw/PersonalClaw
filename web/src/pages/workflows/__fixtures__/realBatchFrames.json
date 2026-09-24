@@ -1,0 +1,428 @@
+{
+  "snapshot": {
+    "run_id": "c34448ec",
+    "workflow": "fanout-probe",
+    "status": "running",
+    "spec_version": 1,
+    "error": "",
+    "attention": null,
+    "tokens": 0,
+    "elapsed_secs": 0.0,
+    "nodes": [
+      {
+        "instance_path": "root.body#0",
+        "node_id": "item",
+        "state": "pending"
+      },
+      {
+        "instance_path": "root.body#1",
+        "node_id": "item",
+        "state": "pending"
+      },
+      {
+        "instance_path": "root.body#10",
+        "node_id": "item",
+        "state": "pending"
+      },
+      {
+        "instance_path": "root.body#11",
+        "node_id": "item",
+        "state": "pending"
+      },
+      {
+        "instance_path": "root.body#2",
+        "node_id": "item",
+        "state": "pending"
+      },
+      {
+        "instance_path": "root.body#3",
+        "node_id": "item",
+        "state": "pending"
+      },
+      {
+        "instance_path": "root.body#4",
+        "node_id": "item",
+        "state": "pending"
+      },
+      {
+        "instance_path": "root.body#5",
+        "node_id": "item",
+        "state": "pending"
+      },
+      {
+        "instance_path": "root.body#6",
+        "node_id": "item",
+        "state": "pending"
+      },
+      {
+        "instance_path": "root.body#7",
+        "node_id": "item",
+        "state": "pending"
+      },
+      {
+        "instance_path": "root.body#8",
+        "node_id": "item",
+        "state": "pending"
+      },
+      {
+        "instance_path": "root.body#9",
+        "node_id": "item",
+        "state": "pending"
+      }
+    ]
+  },
+  "frames": [
+    {
+      "event": "workflow_run_update",
+      "data": {
+        "run_id": "c34448ec",
+        "event_id": "c34448ec-evt-1",
+        "seq": 1,
+        "epoch": 0,
+        "status": "running"
+      }
+    },
+    {
+      "event": "workflow_batch",
+      "data": {
+        "events": [
+          {
+            "event": "workflow_node_started",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-2",
+              "seq": 2,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#0",
+              "node_epoch": 0
+            }
+          },
+          {
+            "event": "workflow_node_started",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-3",
+              "seq": 3,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#1",
+              "node_epoch": 0
+            }
+          },
+          {
+            "event": "workflow_node_started",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-4",
+              "seq": 4,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#10",
+              "node_epoch": 0
+            }
+          },
+          {
+            "event": "workflow_node_started",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-5",
+              "seq": 5,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#11",
+              "node_epoch": 0
+            }
+          },
+          {
+            "event": "workflow_node_started",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-6",
+              "seq": 6,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#2",
+              "node_epoch": 0
+            }
+          },
+          {
+            "event": "workflow_node_started",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-7",
+              "seq": 7,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#3",
+              "node_epoch": 0
+            }
+          },
+          {
+            "event": "workflow_node_started",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-8",
+              "seq": 8,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#4",
+              "node_epoch": 0
+            }
+          },
+          {
+            "event": "workflow_node_started",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-9",
+              "seq": 9,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#5",
+              "node_epoch": 0
+            }
+          },
+          {
+            "event": "workflow_node_started",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-10",
+              "seq": 10,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#6",
+              "node_epoch": 0
+            }
+          },
+          {
+            "event": "workflow_node_started",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-11",
+              "seq": 11,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#7",
+              "node_epoch": 0
+            }
+          },
+          {
+            "event": "workflow_node_started",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-12",
+              "seq": 12,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#8",
+              "node_epoch": 0
+            }
+          },
+          {
+            "event": "workflow_node_started",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-13",
+              "seq": 13,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#9",
+              "node_epoch": 0
+            }
+          },
+          {
+            "event": "workflow_node_done",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-14",
+              "seq": 14,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#0",
+              "status": "done",
+              "node_epoch": 0,
+              "degraded_reason": "",
+              "output_preview": "item 1"
+            }
+          },
+          {
+            "event": "workflow_node_done",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-15",
+              "seq": 15,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#1",
+              "status": "done",
+              "node_epoch": 0,
+              "degraded_reason": "",
+              "output_preview": "item 2"
+            }
+          },
+          {
+            "event": "workflow_node_done",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-16",
+              "seq": 16,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#10",
+              "status": "done",
+              "node_epoch": 0,
+              "degraded_reason": "",
+              "output_preview": "item 11"
+            }
+          },
+          {
+            "event": "workflow_node_done",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-17",
+              "seq": 17,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#11",
+              "status": "done",
+              "node_epoch": 0,
+              "degraded_reason": "",
+              "output_preview": "item 12"
+            }
+          },
+          {
+            "event": "workflow_node_done",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-18",
+              "seq": 18,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#2",
+              "status": "done",
+              "node_epoch": 0,
+              "degraded_reason": "",
+              "output_preview": "item 3"
+            }
+          },
+          {
+            "event": "workflow_node_done",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-19",
+              "seq": 19,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#3",
+              "status": "done",
+              "node_epoch": 0,
+              "degraded_reason": "",
+              "output_preview": "item 4"
+            }
+          },
+          {
+            "event": "workflow_node_done",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-20",
+              "seq": 20,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#4",
+              "status": "done",
+              "node_epoch": 0,
+              "degraded_reason": "",
+              "output_preview": "item 5"
+            }
+          },
+          {
+            "event": "workflow_node_done",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-21",
+              "seq": 21,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#5",
+              "status": "done",
+              "node_epoch": 0,
+              "degraded_reason": "",
+              "output_preview": "item 6"
+            }
+          },
+          {
+            "event": "workflow_node_done",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-22",
+              "seq": 22,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#6",
+              "status": "done",
+              "node_epoch": 0,
+              "degraded_reason": "",
+              "output_preview": "item 7"
+            }
+          },
+          {
+            "event": "workflow_node_done",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-23",
+              "seq": 23,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#7",
+              "status": "done",
+              "node_epoch": 0,
+              "degraded_reason": "",
+              "output_preview": "item 8"
+            }
+          },
+          {
+            "event": "workflow_node_done",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-24",
+              "seq": 24,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#8",
+              "status": "done",
+              "node_epoch": 0,
+              "degraded_reason": "",
+              "output_preview": "item 9"
+            }
+          },
+          {
+            "event": "workflow_node_done",
+            "payload": {
+              "run_id": "c34448ec",
+              "event_id": "c34448ec-evt-25",
+              "seq": 25,
+              "epoch": 0,
+              "node_id": "item",
+              "instance_path": "root.body#9",
+              "status": "done",
+              "node_epoch": 0,
+              "degraded_reason": "",
+              "output_preview": "item 10"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "event": "workflow_run_update",
+      "data": {
+        "run_id": "c34448ec",
+        "event_id": "c34448ec-evt-26",
+        "seq": 26,
+        "epoch": 0,
+        "status": "complete",
+        "error": ""
+      }
+    }
+  ]
+}

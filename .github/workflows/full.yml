@@ -1,0 +1,639 @@
+# Full verification — push to main + nightly cron. The broader matrix + coverage +
+# supply-chain audit that the ≤10-min PR gate (ci.yml) deliberately omits.
+# Jobs are the stable ids per CI-RELEASE-ENGINEERING C1: matrix · audit · coverage.
+# Plus security-corpus (SH-5), install-smoke — the served `curl | sh` front door, whose
+# absence deploy/website/install.sh's header had been advertising as present — and
+# registry-verdicts, which keeps the community registry's pre-install scan verdicts filled
+# while the workflows that would own that job are staged in a repo GitHub never runs them from.
+name: Full
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 7 * * *"  # nightly 07:00 UTC
+  workflow_dispatch: {}
+
+# ── main's verification must not be cancelled by the next merge (#2946) ───────────────────────
+# `cancel-in-progress: true` here meant every merge KILLED the verification run of the commit
+# before it. MEASURED 2026-09-18 from the Actions API over this workflow's last 400 runs on main:
+# 324 cancelled · 46 failure · 29 success — 81% cancelled. Of the last 40: 38 cancelled, 1
+# failure, 1 still queued, ZERO success. The last main run that completed successfully was
+# #1215 at 2026-09-17T15:40Z, so the branch every release ships from had gone ~20 hours with no
+# completed verification, and nothing said so — a cancelled run carries no `conclusion` a reader
+# treats as red, so the gap is invisible to everything that reads a conclusion. The README badge
+# (`full.yml?branch=main`, pointed here by #212) was rendering that as "cancelled".
+#
+# `false` makes this group QUEUE rather than cancel. An in-flight verification of main now always
+# runs to completion, so a merge can no longer erase the answer it was computing.
+#
+# 🪤 WHY NOT A PER-SHA GROUP, which is the obvious way to verify EVERY commit and is wrong here.
+# It removes the cap: at today's cadence (main moved 6 times in two hours) it fans a 24-leg
+# matrix out per merge, and the runner concurrency this repo actually has is what made ci.yml's
+# duplicate runs the binding constraint on merge rate in the first place (#2595). GitHub holds at
+# most ONE pending run per concurrency group, so `false` bounds the cost at roughly today's
+# level: one in flight, one waiting.
+#
+# 🪤 WHAT THIS DOES NOT PROMISE. Not every commit on main gets its own completed run. Under a
+# fast cadence an intermediate commit is superseded while still QUEUED — no job ever starts, so
+# nothing in flight is thrown away and no red is manufactured (see the `matrix` gate below for
+# the other half of that). The promise is narrower and is the one "main is verified" needs:
+# main's HEAD converges on a COMPLETED run, and no running verification is ever killed. Naming
+# which of a batch of merges broke something is bisect's job, not this workflow's.
+#
+# ── the SCHEDULED verification needs its own lane, or queueing starves it (measured) ──────────
+# 🪤 QUEUEING PROTECTS WHATEVER IS ALREADY RUNNING, WHICH UNDER A FAST CADENCE IS NEVER THE
+# NIGHTLY. Re-measured 2026-09-18T14:00Z over the last 150 runs on main: 9 success · 16 failure ·
+# 124 cancelled, and a completed run takes 40-59 min (median ~55) while main merged every ~6-11
+# min across the last 40. That ratio is the whole problem: with one in-flight and one pending
+# slot, the pending slot is replaced every ~10 min but only frees every ~55, so the push lane
+# cannot converge — of the last 40 runs, 37 cancelled, 2 failed, 1 queued, ZERO green.
+#
+# Sharing one group made the nightly a casualty of that. `schedule` resolves `github.ref` to
+# `refs/heads/main`, so the cron run queued behind the merge stream and was superseded by the
+# next push before it ever started. It is the ONE run whose whole purpose is to verify main
+# independently of the merge cadence, and it had a ~10-min window to win a slot the pushes hold
+# for ~55. So it is keyed on `github.event_name` here: `push` keeps its own serialized lane, and
+# `schedule`/`workflow_dispatch` get a lane no merge can evict.
+#
+# This does not remove the cap the per-SHA note above rejects — it raises it from one in flight
+# to at most two, and only while the nightly is actually running. That is the price of having any
+# guaranteed completed verification of main at all, and it is why `main` gets a green to read.
+concurrency:
+  group: full-${{ github.ref }}-${{ github.event_name == 'push' && 'push' || 'scheduled' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  matrix-shard:
+    # Python {3.12, 3.13} × OS {ubuntu, macos} on x86_64, plus two arm64 runners
+    # (PLATFORM-REACH A1.3). The arm pair is added via `include` — one job each on
+    # the newest supported Python — rather than crossing arm into the full grid:
+    # A1.3 scopes arm to the non-PR path "for budget", so two extra legs prove the
+    # arch while four would double this workflow's arm cost for no new signal.
+    #
+    # ── Sharded 4 ways, same mechanism as ci.yml's `test-shard` ───────────────────────────────
+    # Each leg is also split into N=4 disjoint shards (pytest-split `--splits/--group`), so every
+    # leg runs ~1/4 of the suite. Beyond wall-clock, this directly attacks #2720: the macOS
+    # runners OOM-killed the full-suite step mid-run and truncated the log, and a quarter-suite
+    # shard has a proportionally smaller peak RSS and log. The stable `matrix` id (CI-RELEASE-
+    # ENGINEERING C1) is preserved by the aggregation gate job below. This is the main/nightly
+    # path (not the PR gate), so the extra jobs cost budget only off the critical path.
+    #
+    # The arm `include` legs carry an explicit `shard` each (GitHub adds an include entry that
+    # omits a base-matrix key as a job with that key UNSET — which would pass `--group` an empty
+    # value — so the arm legs are enumerated per shard rather than left to inherit).
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+        os: [ubuntu-latest, macos-latest]
+        shard: [1, 2, 3, 4]
+        include:
+          # linux arm64 + macOS Apple-silicon. macos-14 is the arm64 image
+          # (macos-latest is arm64 too, but pinning keeps the arch explicit here).
+          - { python: "3.13", os: ubuntu-24.04-arm, shard: 1 }
+          - { python: "3.13", os: ubuntu-24.04-arm, shard: 2 }
+          - { python: "3.13", os: ubuntu-24.04-arm, shard: 3 }
+          - { python: "3.13", os: ubuntu-24.04-arm, shard: 4 }
+          - { python: "3.13", os: macos-14, shard: 1 }
+          - { python: "3.13", os: macos-14, shard: 2 }
+          - { python: "3.13", os: macos-14, shard: 3 }
+          - { python: "3.13", os: macos-14, shard: 4 }
+    runs-on: ${{ matrix.os }}
+    # ── Every job here carries a timeout (#3318) ─────────────────────────────────────────────
+    # `cancel-in-progress: false` above is deliberate (#2946), so a hung job does not just waste
+    # its own slot — it HOLDS the serialized `push` lane, and every later merge queues behind it
+    # until GitHub's 360-min default fires. So the bound belongs on the JOB, not on the group:
+    # `false` keeps main's verification uncancellable, and these caps keep one wedged job from
+    # starving the lane.
+    #
+    # Each cap must clear the job's OWN measured runtime, and the two jobs are not comparable:
+    # `matrix-shard` runs a quarter of the suite per leg, while `coverage` runs all of it in one
+    # process under `--cov` with no xdist split, so coverage is the long pole. MEASURED 2026-09-22
+    # (#3326): coverage's only green run took 47.5 min, and it was separately observed wedged past
+    # 55 min on run 35689470217 — so 40 was below its floor and killed every push to main. Its cap
+    # is 70 (~47% headroom over 47.5); this shard cap stays at 45 for the smaller job.
+    timeout-minutes: 45
+    # No PERSONALCLAW_HOME — the suite runs under the no-global-home contract; a global
+    # value defeats the Path.home()/default-.personalclaw tests (see ci.yml test job).
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Set up Python ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }}
+      - name: Install (locked)
+        run: uv sync --locked --extra dev --python ${{ matrix.python }}
+      # Same reason as ci.yml's `test` job: EI-6's SC5 real-daemon leg is skipif-gated on a
+      # tmux binary and no stock runner image ships one, so it had been skipping on all six
+      # cells here. Installed per-OS rather than apt-only because this matrix spans macOS too;
+      # the already-present branch keeps the step a no-op if an image ever starts shipping it.
+      - name: Install tmux (EI-6 durable sessions — real-daemon test leg)
+        run: |
+          if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
+          case "$RUNNER_OS" in
+            Linux) sudo apt-get update -qq &&
+                   sudo apt-get install -y --no-install-recommends tmux ;;
+            macOS) brew install tmux ;;
+            *) echo "no tmux installer known for RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
+          esac
+          tmux -V
+      - name: pytest (shard ${{ matrix.shard }} of 4)
+        # The frontend URL-doctrine + config round-trip tests are part of this suite;
+        # named here for legibility in the job summary.
+        # #2720: the memory-limited macOS runners OOM-killed this step mid-suite — a
+        # varying silent truncation (PASSED stream, then no summary, no assertion, no
+        # traceback). The levers, none of which weakens a test:
+        #   --no-cov  — coverage is measured once by the dedicated `coverage` job; the
+        #               --cov payload (from addopts) is pure redundant memory here.
+        #   -n 2 on macOS — cap xdist workers so peak RSS stays under the runner ceiling.
+        #               ubuntu keeps -n auto from addopts.
+        #   --splits/--group — each leg now runs ~1/4 of the suite, so peak RSS AND log
+        #               size shrink proportionally (the direct cause of the truncation).
+        #               `least_duration` splits evenly by count until a `.test_durations`
+        #               is committed. -q keeps the per-shard log small.
+        #   --junitxml — WHICH test failed, machine-readably (see the upload step below). The
+        #               same #2720 truncation that eats the console summary is exactly why the
+        #               answer must survive outside the log.
+        # This leg proves cross-platform correctness, not coverage or raw speed.
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            uv run pytest --no-cov -n 2 -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-matrix.xml
+          else
+            uv run pytest --no-cov -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-matrix.xml
+          fi
+      # Same argument as ci.yml's `test-shard` upload step: a red must name the failing case
+      # without a log read or a blind re-run. This grid is 24 legs, so the artifact NAME carries
+      # python × os × shard — artifact names are unique per run, and a fixed one would let 24
+      # uploads collide down to whichever finished last. The on-disk filename can stay generic:
+      # every leg is its own runner.
+      - name: Upload JUnit results (py${{ matrix.python }} · ${{ matrix.os }} · shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-matrix-${{ matrix.python }}-${{ matrix.os }}-shard${{ matrix.shard }}
+          path: reports/junit-matrix.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+  matrix:
+    # ── Aggregation gate carrying the stable `matrix` id (CI-RELEASE-ENGINEERING C1) ───────────
+    # Green only when every sharded matrix leg passed; a failed leg reports RED rather than
+    # skipped, because `fail-fast: false` above means a shard failure never cancels the run.
+    # Needs no checkout or toolchain — it only reads the matrix result.
+    #
+    # 🪤 `!cancelled()`, NOT `always()` — #2946. `always()` runs a job even when the RUN was
+    # cancelled, and the step below then turned `result == 'cancelled'` into `exit 1`, publishing
+    # a `matrix` FAILURE from a run nobody was waiting for an answer from. That is a verdict
+    # manufactured out of the absence of one, and it lands on the same commit as the real answer
+    # because check-runs key on the SHA. Under `!cancelled()` a cancelled run reports NO `matrix`
+    # verdict at all, which is the honest statement: nothing was measured.
+    needs: [matrix-shard]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every matrix shard passed
+        run: |
+          result='${{ needs.matrix-shard.result }}'
+          # Reachable only when a LEG was cancelled while the run itself lived on. That is an
+          # unanswered question on a live run, so it is red — the doctrine install-smoke's legs
+          # already state: an inconclusive run must cost a red, never arrive as a green check.
+          if [ "$result" = "cancelled" ]; then
+            echo "::error title=matrix shards unproven::a matrix leg was cancelled while this run" \
+                 "was still live, so this platform grid measured nothing. Re-run."
+            exit 1
+          fi
+          if [ "$result" != "success" ]; then
+            echo "::error title=matrix shards failed::the sharded matrix result was '$result'" \
+                 "(expected 'success'). Open the red 'matrix-shard (...)' leg(s) above."
+            exit 1
+          fi
+          echo "all matrix shards passed"
+
+  audit:
+    # Report-only supply-chain scan — visibility, not a merge gate (soul guardrail:
+    # substrate not bureaucracy). Dependabot (S4) drives the actual update PRs.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: pip-audit
+        # Install into a uv-managed venv, not `--system`: the runner's /usr is
+        # PEP-668 externally-managed and uv refuses `--system` there (the whole step
+        # then errored out under `bash -e` before pip-audit ever ran, silently
+        # disabling the scan). Report-only, so a finding never gates (|| true).
+        run: |
+          uv venv --python 3.12 .venv-audit
+          uv pip install --python .venv-audit/bin/python -e . pip-audit
+          .venv-audit/bin/python -m pip_audit || true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - name: npm audit (root workspace)
+        run: npm ci && npm audit || true
+
+  security-corpus:
+    # SH-5 — the adversarial scanner corpus (five attack classes + the
+    # scanned-bytes==installed-bytes race invariant + the red-on-weakness meta-test).
+    # Its own job, not a line in the matrix, so a corpus regression is legible on its
+    # own; `-n 0` keeps the integrity-race output readable. Published methodology:
+    # docs/security/scanner-testing.md.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # No PERSONALCLAW_HOME — see the matrix job. The corpus writes only to tmp_path.
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: pytest (adversarial scanner corpus)
+        run: >
+          uv run pytest -n 0 --no-cov
+          --junitxml=reports/junit-security-corpus.xml
+          tests/security
+          tests/test_supply_chain_scanner.py
+          tests/test_supply_chain_gates.py
+      # Same argument as ci.yml's `test-shard` upload step.
+      - name: Upload JUnit results (security corpus)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-security-corpus
+          path: reports/junit-security-corpus.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+  coverage:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    # Above the job's own 47.5-min measured green runtime — see the cap rationale on matrix-shard.
+    timeout-minutes: 70
+    # No PERSONALCLAW_HOME — see the matrix job / ci.yml test job.
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: pytest with coverage XML
+        run: uv run pytest --cov=personalclaw --cov-report=xml --junitxml=reports/junit-coverage.xml
+      # Its OWN upload step, deliberately not folded into "Upload coverage artifacts" below:
+      # that one is `success()`-gated by default (a broken run has no meaningful coverage
+      # number), and the whole point of the JUnit report is that it survives the red. Same
+      # argument as ci.yml's `test-shard` upload step.
+      - name: Upload JUnit results (coverage run)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-coverage
+          path: reports/junit-coverage.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Coverage badge (self-owned shields JSON — no third-party service)
+        run: |
+          uv run python - <<'PY'
+          import json, xml.etree.ElementTree as ET
+          rate = float(ET.parse("coverage.xml").getroot().get("line-rate", "0")) * 100
+          color = "brightgreen" if rate >= 85 else "green" if rate >= 70 else "yellow" if rate >= 50 else "red"
+          json.dump({"schemaVersion": 1, "label": "coverage",
+                     "message": f"{rate:.0f}%", "color": color},
+                    open("coverage-badge.json", "w"))
+          print(f"coverage {rate:.1f}%")
+          PY
+      - name: Publish coverage badge
+        if: github.ref == 'refs/heads/main'
+        env:
+          BADGE_BRANCH: badges
+        run: |
+          set -euo pipefail
+          published_badge="$(mktemp)"
+          if git fetch --quiet --no-tags origin "refs/heads/${BADGE_BRANCH}" 2>/dev/null &&
+             git show "FETCH_HEAD:coverage-badge.json" >"$published_badge" 2>/dev/null &&
+             cmp -s coverage-badge.json "$published_badge"; then
+            echo "coverage badge is unchanged"
+            exit 0
+          fi
+
+          blob="$(git hash-object -w coverage-badge.json)"
+          tree="$(printf '100644 blob %s\tcoverage-badge.json\n' "$blob" | git mktree)"
+          commit="$(
+            printf '%s\n' 'chore(ci): update coverage badge' |
+              git -c user.name='github-actions[bot]' \
+                  -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+                  commit-tree "$tree"
+          )"
+          git push --force origin "${commit}:refs/heads/${BADGE_BRANCH}"
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: |
+            coverage.xml
+            coverage-badge.json
+          if-no-files-found: warn
+
+  install-smoke:
+    # ── The front door, finally EXECUTED ────────────────────────────────────────────────────
+    # `curl -fsSL https://personalclaw.dev/install | sh` is the first thing a new user runs, and
+    # until now NOTHING in CI ran it. `deploy/website/install.sh`'s own header claimed this job
+    # already existed ("plan 33 full.yml runs it in a bare ubuntu container weekly"). It did not:
+    # measured 2026-09-06, this workflow had four jobs — matrix, audit, security-corpus,
+    # coverage — and grepping .github/workflows/ for `website/install`, `install.sh` or
+    # `personalclaw.dev/install` returned nothing. The ninth absent-vs-declared-false in this
+    # repo, and the cheapest kind to write: a claim of coverage costs one comment line.
+    #
+    # WHY BOTH THE SERVED BYTES AND THE STAGED FILE, as separate legs:
+    #   · SERVED is what users actually get. It is the only leg that can catch a bad wheel on
+    #     PyPI, `uv tool install` regressing, or the site serving the wrong file — none of which
+    #     live in this repo, and all of which break the front door.
+    #   · STAGED is the file we edit. Served-only coverage would let a broken edit sit green
+    #     until someone hand-applied it to the website repo, which is the same blind spot in a
+    #     new costume — test-what-we-lint is exactly how the one-line drift below survived
+    #     three weeks.
+    #   Split so the red NAMES the owner: staged red = we broke the installer; served red = the
+    #   site mirror or PyPI regressed; drift red = the mirror was never re-applied.
+    #
+    # WHY NOT THE PR GATE. Both legs reach personalclaw.dev, astral.sh and PyPI. A ≤10-min merge
+    # gate that fails when someone else's CDN hiccups trains people to re-run red checks, which
+    # is worse than no check. The half that CAN gate every PR is offline and does:
+    # tests/test_website_installer.py pins sha256(install.sh) to install.sh.sha256, so editing
+    # the installer without updating the pin reds in `lint`/`test` at lint speed. Network here,
+    # forcing function there.
+    #
+    # EVERY LEG IS `!cancelled()`, not fail-fast: "the installer is broken" and "the mirror
+    # drifted" are different pages for different people, and one must not mask the other.
+    #
+    # KNOWN RED ON LANDING: the served bytes are three weeks stale (site `public/install` still
+    # says setup configures "your name + first model provider"; core corrected that in 72e43db3b
+    # / #1642 because setup collects neither). The drift leg is SUPPOSED to be red until the
+    # website-repo mirror is re-applied. That red is the rail working, not the rail failing.
+    runs-on: ubuntu-latest
+    # A bare image, deliberately: the one-liner's whole promise is that it works on a machine
+    # with nothing on it. A GitHub runner has python, uv-adjacent tooling and a warm PATH, so
+    # running there would prove something easier than what we ship.
+    container: ubuntu:latest
+    # Two `uv tool install`s plus a uv bootstrap. 20 covers a cold PyPI; it must not sit on a
+    # runner for the default 360 when a host is black-holing packets.
+    timeout-minutes: 20
+    steps:
+      # ubuntu:latest ships neither curl nor CA roots — installing them IS part of asserting the
+      # bare-machine claim. A failure here is an infrastructure red before any installer ran, and
+      # is legible as such because it is its own step.
+      - name: bare-container prerequisites (curl · CA roots · diff)
+        run: |
+          set -eu
+          apt-get update -qq
+          apt-get install -y --no-install-recommends ca-certificates curl diffutils
+      - uses: actions/checkout@v7
+      # ── Leg 1: the staged file, which is the one we can fix ─────────────────────────────────
+      # UV_TOOL_DIR / UV_TOOL_BIN_DIR are redirected into RUNNER_TEMP for two reasons: the smoke
+      # must not install over whatever else the job has, and the two legs must not silently
+      # satisfy each other — a shared tool dir would let leg 2 pass by finding leg 1's binary.
+      # Distinct dirs per leg is what makes the second leg a real second measurement.
+      #
+      # UV_TOOL_BIN_DIR goes on PATH BEFORE the installer runs so the script's own
+      # `have personalclaw` / offer_setup tail is exercised rather than skipped — with no TTY,
+      # `[ -t 0 ]` is false, so it must print the non-interactive line and exit 0, never hang.
+      - name: smoke — the STAGED installer (deploy/website/install.sh)
+        if: ${{ !cancelled() }}
+        run: |
+          set -eu
+          UV_TOOL_DIR="$RUNNER_TEMP/uv-tools-staged"
+          UV_TOOL_BIN_DIR="$RUNNER_TEMP/uv-bin-staged"
+          export UV_TOOL_DIR UV_TOOL_BIN_DIR
+          mkdir -p "$UV_TOOL_DIR" "$UV_TOOL_BIN_DIR"
+          PATH="$UV_TOOL_BIN_DIR:$PATH"; export PATH
+          sh deploy/website/install.sh
+          # Installing proves a wheel downloaded. Running it proves the front door opens.
+          personalclaw --version
+      # ── Leg 2: the actual one-liner, verbatim, as a user pastes it ──────────────────────────
+      # Written as the documented `curl … | sh` pipeline on purpose: piping into sh is the thing
+      # being asserted (no TTY on stdin, a partial transfer must install nothing). Running the
+      # downloaded file as an argument instead would test a path no user takes.
+      #
+      # `set -o pipefail` is why a 404 or a TLS failure cannot pass: without it the pipeline's
+      # status is sh's, and sh happily exits 0 having executed an empty or truncated body — a
+      # green check for having installed nothing. That is the exact shape of failure this job
+      # exists to end, so it must not be reintroduced by the job itself.
+      - name: smoke — the SERVED one-liner (https://personalclaw.dev/install)
+        if: ${{ !cancelled() }}
+        run: |
+          set -eu
+          set -o pipefail
+          UV_TOOL_DIR="$RUNNER_TEMP/uv-tools-served"
+          UV_TOOL_BIN_DIR="$RUNNER_TEMP/uv-bin-served"
+          export UV_TOOL_DIR UV_TOOL_BIN_DIR
+          mkdir -p "$UV_TOOL_DIR" "$UV_TOOL_BIN_DIR"
+          PATH="$UV_TOOL_BIN_DIR:$PATH"; export PATH
+          if ! curl -fsSL --retry 3 --retry-delay 5 --max-time 120 \
+                 https://personalclaw.dev/install | sh; then
+            echo "::error title=install one-liner unproven::unproven — the served one-liner did" \
+                 "not complete. If personalclaw.dev or PyPI is unreachable this run proved" \
+                 "NOTHING; it is red rather than green because an unanswered question is not a" \
+                 "passing answer. Re-run once reachability is confirmed."
+            exit 1
+          fi
+          personalclaw --version
+      # ── Leg 3: the drift check this job was really written for ──────────────────────────────
+      # MEASURED 2026-09-06 — the defect in full: staged d7a852c1… said setup configures
+      # "your workspace directory + timezone"; the site mirror and the served bytes both said
+      # "your name + first model provider" (8e06a1fd…, identical to each other). Core is
+      # authoritative: site public/install has exactly ONE commit (e21bdee, 2026-07-21, the
+      # original hand-apply) while core corrected the line in 72e43db3b (#1642), whose message
+      # says setup "collects neither, and cannot". So personalclaw.dev spent three weeks telling
+      # newcomers to run a command that would do neither advertised thing.
+      #
+      # The sync path is a HUMAN COPY (deploy/website/README.md §1) — not broken code, no code at
+      # all. An unenforced instruction drifts the moment one side is edited, so this leg is the
+      # enforcement, and it is LAST so its red cannot mask a functional break above it.
+      #
+      # A FETCH FAILURE IS `unproven`, NOT A PASS. Skipping, warning, or `continue-on-error` here
+      # would reproduce the defect the whole job answers: this repo has read absence as a
+      # negative eight times, most recently a tmux-gated test class that never ran once and whose
+      # skip was counted as a pass. An inconclusive run must cost a red.
+      - name: drift — served bytes must equal the staged file
+        if: ${{ !cancelled() }}
+        run: |
+          set -eu
+          served="$RUNNER_TEMP/served-install.sh"
+          if ! curl -fsSL --retry 3 --retry-delay 5 --max-time 60 \
+                 -o "$served" https://personalclaw.dev/install; then
+            echo "::error title=install drift unproven::unproven — could not fetch" \
+                 "https://personalclaw.dev/install, so whether the mirror has drifted is" \
+                 "UNKNOWN. Reported red deliberately: an unanswered question must not arrive" \
+                 "as a green check."
+            exit 1
+          fi
+          if [ ! -s "$served" ]; then
+            echo "::error title=install drift unproven::unproven — /install returned 0 bytes." \
+                 "Nothing was compared."
+            exit 1
+          fi
+          served_sum=$(sha256sum "$served" | cut -d' ' -f1)
+          staged_sum=$(sha256sum deploy/website/install.sh | cut -d' ' -f1)
+          pinned_sum=$(cut -d' ' -f1 < deploy/website/install.sh.sha256)
+          echo "served=$served_sum"
+          echo "staged=$staged_sum"
+          echo "pinned=$pinned_sum"
+          # staged-vs-pinned is already gated offline in tests/test_website_installer.py. Repeated
+          # here so this leg's verdict does not depend on another job having run.
+          if [ "$staged_sum" != "$pinned_sum" ]; then
+            echo "::error title=install pin stale::deploy/website/install.sh.sha256 does not" \
+                 "match install.sh. Update the pin in the same change as the script."
+            exit 1
+          fi
+          if [ "$served_sum" != "$pinned_sum" ]; then
+            echo "::error title=install one-liner drift::the bytes served at" \
+                 "https://personalclaw.dev/install are NOT the bytes staged here. Users are" \
+                 "running something this repo does not lint or test. Re-apply" \
+                 "deploy/website/install.sh to the website repo's public/install (see" \
+                 "deploy/website/README.md §1) and re-run."
+            diff -u deploy/website/install.sh "$served" || true
+            exit 1
+          fi
+          echo "served bytes are identical to the staged installer ($served_sum)"
+
+  registry-verdicts:
+    # ── The pre-install trust surface, actually EXERCISED ──────────────────────────────────
+    # `staged-repos/registry/app-registry.json` is the community registry's data tier, and its
+    # `last_validated` / `last_scan_verdict` fields are CI-OWNED by construction: a listing PR
+    # leaves them out, and whatever it does supply is overwritten from the run that actually
+    # happened (validate_registry.py's CI_OWNED_FIELDS).
+    #
+    # MEASURED 2026-09-07 on 7d45e6c04 — the defect in full: FOUR listings, and not one carrying
+    # either field. The stamper (`staged-repos/registry/validate_registry.py --write`) exists and works;
+    # nothing called it. The three workflows that would
+    # are staged at staged-repos/registry/.github/workflows/, and GitHub runs workflows only
+    # from .github/workflows/ at the repo ROOT, so inside this repo they are files and not jobs
+    # (`git grep validate_registry -- .github Makefile` returned nothing). The consequence is not
+    # cosmetic: personalclaw.dev/registry rendered four "No scan on record" cards from all-empty
+    # data, so a surface whose entire job is to show a scan verdict before you install had never
+    # once been exercised against a real one.
+    #
+    # WHY HERE AND NOT ON THE PR GATE. Every listing costs a `git ls-remote`, a shallow clone and
+    # a scanner pass over a third-party repository — four today, more as the registry grows. A
+    # ≤10-min merge gate that reds when someone else's forge hiccups trains people to re-run red
+    # checks, which is worse than no check. The half that CAN gate every PR is offline and does:
+    # tests/test_registry_validation.py's shipped-listing floor reds the moment a listing loses
+    # its verdict, at lint speed. Network here, forcing function there — the same split, and for
+    # the same reason, as install-smoke above.
+    #
+    # WHY THIS REPO'S CORE AND NOT staged-repos/registry/requirements.txt's PIN. The pin exists so the
+    # published registry's own CI cannot have its rule set change under it. Here the question is
+    # the opposite one — does the shipped data still say what core's scanner says TODAY — so the
+    # answer must come from this checkout.
+    #
+    # WHEN ET-9 LANDS (github.com/PersonalClaw/registry, owner-only, #2490) the three staged
+    # workflows move to that repo's root and take this over. Deleting this job is then the
+    # cleanup step, not a regression.
+    #
+    # AN UNREACHABLE REPO IS `unproven`, NOT A PASS. The validator exits 1 when it cannot reach a
+    # listing, and this job reds with it. Same doctrine as install-smoke's drift leg: "we could
+    # not check" must never arrive as "we checked and it was fine".
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # No PERSONALCLAW_HOME — see the matrix job. Nothing here writes under a home.
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      # Measured into a COPY, never over the committed file: this job's verdict is "does the
+      # committed data still match reality", and stamping the real file first would answer that
+      # question with its own output. The markdown goes to the step summary so the per-listing
+      # verdict table is readable without opening the log.
+      - name: measure — validate every shipped listing and stamp a copy
+        run: |
+          set -eu
+          cp staged-repos/registry/app-registry.json "$RUNNER_TEMP/measured.json"
+          uv run python staged-repos/registry/validate_registry.py \
+            "$RUNNER_TEMP/measured.json" --write \
+            --markdown "$GITHUB_STEP_SUMMARY" \
+            --report "$RUNNER_TEMP/report.json"
+      - name: compare — no listing may have lost or outlived its verdict
+        env:
+          MEASURED: ${{ runner.temp }}/measured.json
+        run: |
+          uv run python - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+
+          committed = json.loads(Path("staged-repos/registry/app-registry.json").read_text("utf-8"))
+          measured = json.loads(Path(os.environ["MEASURED"]).read_text("utf-8"))
+          rows = {r["name"]: r for r in committed["apps"]}
+          fresh = {r["name"]: r for r in measured["apps"]}
+
+          problems = []
+          # ANTI-VACUITY, and it is the first check on purpose: every loop below is green over
+          # an empty registry, so an index that lost its listings would pass this job while
+          # proving nothing at all.
+          if not rows:
+              problems.append(
+                  "the shipped app-registry.json lists NOTHING — every check below would pass "
+                  "vacuously over it"
+              )
+          for name, row in sorted(rows.items()):
+              want = fresh.get(name, {}).get("last_scan_verdict")
+              got = row.get("last_scan_verdict")
+              if got is None:
+                  problems.append(
+                      f"{name}: carries no 'last_scan_verdict'. The pre-install surface renders "
+                      f"that as \"No scan on record\", which is what an UNSCANNED listing looks "
+                      f"like — this one measured {want!r}."
+                  )
+              elif want is not None and got != want:
+                  problems.append(
+                      f"{name}: committed verdict {got!r} but this run measured {want!r}. The "
+                      f"published verdict is stale."
+                  )
+              if not row.get("last_validated"):
+                  problems.append(f"{name}: carries no 'last_validated' date.")
+
+          if problems:
+              for problem in problems:
+                  print(f"::error title=registry verdict::{problem}")
+              print(
+                  "Re-stamp with: python staged-repos/registry/validate_registry.py "
+                  "staged-repos/registry/app-registry.json --write   (then commit the result)",
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+          print(f"{len(rows)} shipped listing(s), each carrying the verdict this run measured")
+          PY

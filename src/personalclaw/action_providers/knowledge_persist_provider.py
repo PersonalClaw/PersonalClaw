@@ -1,0 +1,1296 @@
+"""``knowledge-persist`` action provider — write to the knowledge store from a workflow.
+
+A synthesis workflow's whole point is to leave something behind. Without this provider the
+only way to do that is a `stage` — a subagent session spawned to call a tool that writes a
+row — which costs a model call and a lane slot for work the engine has already resolved.
+
+So this is a **zero-token** node, and it is where session 34's semantics become behaviour:
+
+**Idempotent by construction.** The logical key and content hash are derived from what is
+being written, so a retried, resumed or rewound persist recomputes the same identity and
+becomes a no-op returning the existing id. None of those three paths needs to know the
+others exist — which is what makes a nightly synthesis loop safe to re-run.
+
+**A budget overrun is a RETURNED failure, not an exception.** The engine's retry semantics
+can act on `{success: false, error: "over budget by N — condense and retry"}`; an exception
+just kills the node and loses the work. Same for a missing citation on a synthesized kind.
+
+**Duplicate content reinforces.** Re-persisting the same claim appends a mention and
+re-aggregates confidence rather than inserting a second article, so corroboration
+strengthens what is stored instead of cluttering it.
+
+**Enrichment is fire-and-forget.** The row is written synchronously; embedding and entity
+extraction ride the existing ingest queue. A synthesis stage should not wait on an embedder
+that may not even be configured.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+import time
+import uuid
+from dataclasses import dataclass, field
+from typing import Any
+
+from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
+from personalclaw.knowledge import project_scope
+from personalclaw.knowledge.semantics import (
+    Claim,
+    Mention,
+    check_persist,
+    decide_write,
+    max_mentions_per_claim,
+)
+
+logger = logging.getLogger(__name__)
+
+#: `item_type` routes the INGESTION graph and is a separate axis from `kind`. A knowledge
+#: item written by a workflow is a note unless the caller says otherwise — the taxonomy that
+#: matters for retrieval is `kind`.
+DEFAULT_ITEM_TYPE = "note"
+
+
+def _default_ttl() -> str:
+    """`knowledge.default_ttl`, the fallback expiry for a write that asks for none. Its
+    FIRST reader (#1783).
+
+    The field shipped with a user-facing `_meta` label promising "optional default expiry
+    for newly persisted items", and the mechanism behind it was already complete:
+    `semantics.ttl_to_expiry` turns `30d` into an absolute `expires_at`, and
+    `check_persist` applies it whenever a `ttl` arrives. What was missing is the only
+    thing that made the label true — the per-action read here passed the action's own
+    `ttl` and nothing else, so a store configured to expire knowledge after a month
+    expired nothing unless every individual write repeated the value.
+
+    Returns "" (no expiry) when config is unreadable, which is both the field's default
+    and the safe direction: expiry demotes an item in retrieval, and inventing one from a
+    failed config read would demote knowledge the owner never asked to age out.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return str(getattr(AppConfig.load().knowledge, "default_ttl", "") or "").strip()
+    except Exception:
+        logger.debug("knowledge default_ttl unreadable — persisting without expiry", exc_info=True)
+        return ""
+
+
+@dataclass
+class ConflictPass:
+    """One persist-time conflict pass: what was proven, and what is left to judge.
+
+    Two fields because §3.2's two tiers consume different halves. `conflicts` is the free
+    deterministic tier's proof. `candidates` is the remainder — stored neighbours near enough to
+    be worth a metered opinion but not separable without one. A reader given only `conflicts`
+    cannot tell "nothing is nearby" from "nothing was provable", and those warrant opposite
+    next actions.
+    """
+
+    conflicts: list[dict]
+    candidates: list[dict]
+
+
+class KnowledgePersistActionProvider(ActionProvider):
+    """Persist a knowledge item. Zero tokens, idempotent, error-as-return.
+
+    ``action_config`` shape::
+
+        {
+            "title": "Cold start latency",   # required; half the logical identity
+            "content": "…",                  # required; the body
+            "kind": "fact",                  # optional; the typed taxonomy (default fact)
+            "summary": "…",                  # optional; one line, for retrieval
+            "tags": ["perf"],                # optional
+            "claims": [{...}],               # optional; structured claims
+            # The numbered sources the writing stage was shown, from `| source_refs`. The
+            # provider PARSES the `[n]` markers out of `content` (and `summary`) and derives
+            # `citations` from the ones that resolved — which is how a stored item can answer
+            # "which source supports this sentence" rather than only "what was retrieved".
+            "citation_sources": [{"marker": 1, "item_id": "a1f…"}],
+            "citations": ["1:a1f…"],         # legacy/manual path only; ignored when
+                                             # `citation_sources` is present
+            "unsourced": false,              # explicit opt-out of the citation rule
+            "source_ref": "…",               # auto-filled from the run when absent
+            "read_when": ["…"],              # optional retrieval triggers (KNOW-R12)
+            "ttl": "30d",                    # optional; becomes an absolute expires_at
+            "mode": "upsert",                # create|upsert|append_evidence
+            "sharing_policy": "private"      # optional; private|shared (§1.6, default private)
+        }
+    """
+
+    @property
+    def name(self) -> str:
+        return "knowledge-persist"
+
+    @property
+    def display_name(self) -> str:
+        return "Persist Knowledge"
+
+    async def execute(
+        self,
+        action_config: dict[str, Any],
+        ctx: ActionContext,
+        timeout: int = 30,
+    ) -> ActionResult:
+        started = time.monotonic()
+        cfg = action_config or {}
+
+        title = str(cfg.get("title", "") or "").strip()
+        content = cfg.get("content")
+        if content is None:
+            # `is None`, not falsy: an empty body is legitimate for a `probe` or a stub
+            # overview, and treating "" as missing would silently skip that write.
+            return ActionResult(
+                success=False,
+                error="knowledge-persist is missing 'content' — bind it to a node's output",
+            )
+        body = content if isinstance(content, str) else _stringify(content)
+        summary = str(cfg.get("summary", "") or "")
+
+        # BEFORE the check, because the check now asks what the text actually cited, and before
+        # the write, because the text that gets stored is the resolved one — a marker that
+        # points at nothing must never reach a reader.
+        cited = _resolve_citations(cfg, body=body, summary=summary)
+        body, summary = cited.content, cited.summary
+
+        claims_raw = cfg.get("claims") or []
+        check = check_persist(
+            kind=str(cfg.get("kind", "fact") or "fact"),
+            title=title,
+            content=body,
+            summary=summary,
+            claims=[c for c in claims_raw if isinstance(c, dict)],
+            citations=cited.stored,
+            marker_citations=cited.records,
+            unsourced=bool(cfg.get("unsourced")),
+            # `or _default_ttl()`: the action's own `ttl` wins, and a write that names none
+            # inherits `knowledge.default_ttl`. An explicit `expires_at` still beats both —
+            # `check_persist` prefers the absolute value, so a caller that computed its own
+            # expiry is not overridden by the store-wide default.
+            ttl=str(cfg.get("ttl", "") or "") or _default_ttl(),
+            expires_at=str(cfg.get("expires_at", "") or ""),
+        )
+        if not check.ok:
+            # Returned, never raised: the engine can retry a condense-and-shorten, and the
+            # error text is written to be actionable by the model that will read it.
+            return ActionResult(success=False, error=check.error)
+
+        try:
+            store = _open_store()
+        except Exception as exc:  # pragma: no cover — environmental
+            return ActionResult(success=False, error=f"knowledge store unavailable: {exc}")
+
+        mode = str(cfg.get("mode", "upsert") or "upsert")
+        existing_id, existing_hash, existing_meta = _lookup(store, check.logical_key)
+        decision = decide_write(
+            logical_key=check.logical_key,
+            content_hash=check.content_hash,
+            existing_id=existing_id,
+            existing_hash=existing_hash,
+            mode=mode,
+        )
+
+        if decision.action == "noop":
+            return ActionResult(
+                success=True,
+                stdout=json.dumps(
+                    {
+                        "item_id": decision.item_id,
+                        "logical_key": check.logical_key,
+                        "created": False,
+                        "mentions_appended": 0,
+                        "citation_warnings": cited.warnings,
+                        "reason": decision.reason,
+                    }
+                ),
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+
+        source_ref = str(cfg.get("source_ref", "") or _run_source_ref(ctx))
+        metadata = dict(existing_meta)
+        metadata.update(_scope_metadata(cfg, ctx, existing=existing_meta))
+        # The tag files the item under its OWNING project — read back by the project brief
+        # (`session_brief.load_items`) and the project Knowledge view. Derived from the owner
+        # in metadata, not from this run's project: an item project A produced and project B
+        # merely reinforced must stay filed under A, or "private to its project" would leak
+        # every time a second container touched it.
+        scope_tags = project_scope.scope_tags(str(metadata.get(project_scope.PROJECT_ID_KEY, "")))
+        appended = 0
+
+        conflicts: list[dict] = []
+        conflict_candidates: list[dict] = []
+        if claims_raw:
+            incoming_claims = [c for c in claims_raw if isinstance(c, dict)]
+            # Conflict check BEFORE the merge, against what is stored NEARBY (§3.2). At ingest,
+            # not at query: by the time a contradiction surfaces during retrieval, something has
+            # already cited one side of it, and unwinding that means finding everything
+            # downstream. This tier is deterministic and costs nothing per write.
+            conflict_pass = _detect_conflicts(
+                store,
+                incoming_claims,
+                item_id=decision.item_id,
+                source_ref=source_ref,
+                # The item id this write will land on. The claim's own `source_ref` is RUN
+                # provenance ("workflow:node:n1"), NOT a row id — measured, using it made
+                # `edges_from_conflicts` build an edge whose source was not an item, so the
+                # foreign key silently wrote nothing while the conflict record looked fine. The
+                # two surfaces then disagreed about whether the store knew about the conflict.
+                edge_source=decision.item_id or "",
+            )
+            conflicts = conflict_pass.conflicts
+            conflict_candidates = conflict_pass.candidates
+            merged, appended = _merge_claims(
+                existing=metadata.get("claims") or [],
+                incoming=incoming_claims,
+                source_ref=source_ref,
+            )
+            metadata["claims"] = merged
+            if conflicts:
+                # Recorded ON the item, and BOTH claims kept. Silently picking a winner is how a
+                # store becomes confidently wrong: the discarded claim was evidence, and its
+                # absence is unrecoverable.
+                metadata["conflicts"] = conflicts
+
+        if decision.action == "reinforce":
+            # Same content, `append_evidence`: record the corroboration and leave the body
+            # alone. Rewriting an identical body would bump `updated_at` and make a
+            # freshness check think the article had changed.
+            _write_metadata(store, decision.item_id, metadata, source_ref=source_ref)
+            # Reinforce leaves the body alone but must still file the item under its project:
+            # an item created before this run existed is otherwise invisible to the container
+            # that just corroborated it. Idempotent (`INSERT OR IGNORE`).
+            _write_tags(store, decision.item_id, scope_tags)
+            return ActionResult(
+                success=True,
+                stdout=json.dumps(
+                    {
+                        "item_id": decision.item_id,
+                        "logical_key": check.logical_key,
+                        "created": False,
+                        "mentions_appended": appended,
+                        "conflicts": conflicts,
+                        "conflict_candidates": conflict_candidates,
+                        "citation_warnings": cited.warnings,
+                        "reason": decision.reason,
+                        # Pushed on reinforce too: `sharing_policy` is the one field a later
+                        # write may CHANGE, so this is exactly where an item gets PROMOTED from
+                        # private to shared. Skipping the push here would make the promotion
+                        # local-only and the item would never reach the team store it was just
+                        # marked for.
+                        "shared_to": await _push_shared(
+                            item_id=decision.item_id,
+                            title=title,
+                            content=body,
+                            metadata=metadata,
+                        ),
+                    }
+                ),
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+
+        # `lineage` carries a consolidation pass's `parent_ids` / `reflection_count` /
+        # `compression_ratio`. A NAMED key rather than an open `metadata` passthrough: an open
+        # dict would let any caller overwrite `claims` or `logical_key`, and a caller that
+        # silently clobbered the claim ledger would be indistinguishable from one that never
+        # wrote it. (Measured: passing `metadata=` was silently DROPPED here, so the whole
+        # lineage the consolidation pass depends on never reached the row.)
+        raw_lineage = cfg.get("lineage")
+        if isinstance(raw_lineage, dict):
+            for key in (
+                "parent_ids",
+                "reflection_count",
+                "consolidated",
+                "compression_ratio",
+                "source_count",
+            ):
+                if key in raw_lineage:
+                    metadata[key] = raw_lineage[key]
+
+        for key in ("read_when", "citations", "source", "extraction"):
+            if cfg.get(key):
+                metadata[key] = cfg[key]
+        if cited.records is not None:
+            # The marker path OWNS `citations`: the list is what the prose actually cited, not
+            # what the config listed. Assigned even when empty, so a rewrite that dropped every
+            # marker cannot keep the previous write's citations standing behind it.
+            metadata["citations"] = list(cited.stored)
+
+        item_id = decision.item_id or uuid.uuid4().hex[:12]
+        try:
+            _upsert_item(
+                store,
+                item_id=item_id,
+                title=title,
+                content=body,
+                summary=summary,
+                kind=check.normalized_kind,
+                logical_key=check.logical_key,
+                content_hash=check.content_hash,
+                expires_at=check.expires_at,
+                metadata=metadata,
+                tags=[*(str(t) for t in (cfg.get("tags") or [])), *scope_tags],
+                creating=decision.action == "create",
+            )
+        except Exception as exc:
+            return ActionResult(success=False, error=f"knowledge write failed: {exc}")
+
+        if conflicts:
+            # NOW the row exists, so the edges can satisfy the foreign key. Targets come from the
+            # conflict records rather than being recomputed — recomputing could find a different
+            # neighbour set and produce edges that do not match the recorded conflicts.
+            _write_conflict_edges(store, conflicts, source_item=item_id)
+        # Also after the row exists: the per-marker rows hang off it.
+        _write_item_citations(store, item_id, cited.records or [])
+        _enqueue_enrichment(item_id)
+        return ActionResult(
+            success=True,
+            stdout=json.dumps(
+                {
+                    "item_id": item_id,
+                    "logical_key": check.logical_key,
+                    "created": decision.action == "create",
+                    "mentions_appended": appended,
+                    "conflicts": conflicts,
+                    "conflict_candidates": conflict_candidates,
+                    "citation_warnings": cited.warnings,
+                    "reason": decision.reason,
+                    "shared_to": await _push_shared(
+                        item_id=item_id, title=title, content=body, metadata=metadata
+                    ),
+                }
+            ),
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+
+
+# ── citations ──
+
+
+@dataclass
+class _CitationWiring:
+    """What the marker pass derived: the text that may be STORED, and the citations it earned.
+
+    `records is None` means no marker pass ran at all — the caller passed a hand-written
+    `citations` list, or nothing. That is a different state from "a pass ran and resolved
+    nothing", and `check_persist` treats them differently, so they must not collapse into one
+    empty list here.
+    """
+
+    content: str
+    summary: str
+    stored: list[str] = field(default_factory=list)
+    records: list[Any] | None = None
+    warnings: list[str] = field(default_factory=list)
+
+
+def _resolve_citations(cfg: dict[str, Any], *, body: str, summary: str) -> _CitationWiring:
+    """Derive citations by PARSING the item's own prose against the sources it was shown.
+
+    The retrieved set is not a citation. A template that stores every item it recalled has
+    recorded what was retrieved, and "which source supports this sentence" stays unanswerable —
+    which was the state of the synthesis template before this: the stage was asked to cite as
+    `[n]` and nothing on the write path ever read an `[n]`.
+
+    So `citation_sources` (the numbered refs the stage was shown) is what turns the model's
+    markers into records. Markers that name no registered source are DROPPED from the stored
+    text rather than kept: a dangling `[7]` in a stored article is a promise of provenance the
+    store cannot keep, and the reader has no way to tell it from a good one.
+    """
+    raw_sources = cfg.get("citation_sources")
+    if not raw_sources:
+        # The legacy/manual path, unchanged: a hand-written list, taken at face value. No pass
+        # ran, so `records` stays None and the check falls back to its presence rule.
+        declared = [str(c) for c in (cfg.get("citations") or [])]
+        return _CitationWiring(content=body, summary=summary, stored=declared)
+
+    import personalclaw.knowledge.citations as kcit
+
+    sources = _coerce_source_refs(raw_sources)
+    resolved = kcit.resolve(body, sources)
+    records = list(resolved.citations)
+    warnings = list(resolved.warnings)
+    new_summary = summary
+    if summary and kcit.parse_markers(summary):
+        # The summary is resolved too when it carries markers — it is the field retrieval shows
+        # first, so a dangling marker there is the one a reader actually hits.
+        resolved_summary = kcit.resolve(summary, sources)
+        new_summary = resolved_summary.text
+        warnings.extend(resolved_summary.warnings)
+        seen = {int(getattr(c, "marker", 0)) for c in records}
+        for extra in resolved_summary.citations:
+            if int(getattr(extra, "marker", 0)) not in seen:
+                records.append(extra)
+        records.sort(key=lambda c: int(getattr(c, "marker", 0)))
+    return _CitationWiring(
+        content=resolved.text,
+        summary=new_summary,
+        stored=list(kcit.persist_form(records)),
+        records=records,
+        warnings=warnings,
+    )
+
+
+def _coerce_source_refs(raw: Any) -> list[Any]:
+    """`citation_sources` as a binding delivers it — dicts, because a binding value is JSON by
+    the time it reaches an action config, not the `SourceRef` objects the pipe started with."""
+    import personalclaw.knowledge.citations as kcit
+
+    refs: list[Any] = []
+    for entry in raw if isinstance(raw, list) else [raw]:
+        if not isinstance(entry, dict):
+            # Already a SourceRef (an in-process caller). Passed through untouched.
+            refs.append(entry)
+            continue
+        try:
+            marker = int(entry.get("marker") or 0)
+            chunk_index = int(entry.get("chunk_index", -1) or -1)
+        except (TypeError, ValueError):
+            continue
+        item_id = str(entry.get("item_id") or "").strip()
+        if marker <= 0 or not item_id:
+            # A ref with no marker or no item cannot answer "which source". Dropped here so the
+            # marker naming it resolves to NOTHING and warns, rather than to a blank item id
+            # that would read as a real citation on retrieval.
+            continue
+        refs.append(
+            kcit.SourceRef(
+                marker=marker,
+                item_id=item_id,
+                chunk_index=chunk_index,
+                excerpt=str(entry.get("excerpt") or ""),
+            )
+        )
+    return refs
+
+
+def _write_item_citations(store, item_id: str, records: list[Any]) -> None:
+    """Hand the resolved per-marker citations to the store, if this store keeps them.
+
+    Guarded by `callable`, not called bare: the per-marker table belongs to the citations
+    module, and an `AttributeError` here would fail a write whose row and compact `citations`
+    list already landed correctly — losing the article to report a missing side table.
+    """
+    if not records:
+        return
+    setter = getattr(store, "set_item_citations", None)
+    if not callable(setter):
+        logger.debug("knowledge store keeps no per-marker citations — skipped for %s", item_id)
+        return
+    try:
+        setter(item_id, records)
+    except Exception:
+        logger.warning(
+            "per-marker citations not stored for %s — the compact list still is",
+            item_id,
+            exc_info=True,
+        )
+
+
+# ── store access ──
+
+
+def _open_store():
+    """Open the ONE global knowledge store.
+
+    Knowledge has no partitions by design: a fact learned in one workspace is still true in
+    another, and partitioning would mean the same article re-derived per directory.
+    """
+    from personalclaw.knowledge.store import KnowledgeStore, knowledge_db_path
+
+    # Through `knowledge_db_path`, never a locally composed path. Measured live: composing it here
+    # produced `<home>/knowledge/knowledge.db` while the dashboard reads
+    # `<home>/workspace/knowledge/knowledge.db`, so workflow-persisted knowledge landed in a
+    # second database the UI could never see — with no error on either side.
+    return KnowledgeStore(db_path=str(knowledge_db_path()))
+
+
+def _lookup(store, logical_key: str) -> tuple[str, str, dict[str, Any]]:
+    """Lookup-before-write. Returns (id, content_hash, file_metadata).
+
+    This is the query the logical-key index exists for — it runs on every persist.
+    """
+    if not logical_key:
+        return "", "", {}
+    try:
+        rows = list(
+            store.db.execute(
+                "SELECT id, content_hash, file_metadata FROM items WHERE logical_key = ? LIMIT 1",
+                (logical_key,),
+            )
+        )
+    except Exception:
+        logger.debug("knowledge lookup failed", exc_info=True)
+        return "", "", {}
+    if not rows:
+        return "", "", {}
+    row = rows[0]
+    try:
+        meta = json.loads(row["file_metadata"] or "{}")
+    except (TypeError, ValueError):
+        meta = {}
+    return str(row["id"]), str(row["content_hash"] or ""), meta if isinstance(meta, dict) else {}
+
+
+def _upsert_item(
+    store,
+    *,
+    item_id: str,
+    title: str,
+    content: str,
+    summary: str,
+    kind: str,
+    logical_key: str,
+    content_hash: str,
+    expires_at: str,
+    metadata: dict[str, Any],
+    tags: list[str],
+    creating: bool,
+) -> None:
+    """Write the row. `created_at` is preserved on update — an article's birthday does not
+    change because it was edited."""
+    now = _now()
+    blob = json.dumps(metadata, ensure_ascii=False)
+    # BEFORE the write: what the FTS index currently holds for this row.
+    prior = None if creating else _fts_snapshot(store, item_id)
+    if creating:
+        store.db.execute(
+            "INSERT INTO items (id, item_type, title, content, summary, created_at, updated_at, "
+            "kind, logical_key, content_hash, expires_at, last_verified, file_metadata) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                item_id,
+                DEFAULT_ITEM_TYPE,
+                title,
+                content,
+                summary,
+                now,
+                now,
+                kind,
+                logical_key,
+                content_hash,
+                expires_at,
+                now,
+                blob,
+            ),
+        )
+    else:
+        store.db.execute(
+            "UPDATE items SET title=?, content=?, summary=?, updated_at=?, kind=?, "
+            "logical_key=?, content_hash=?, expires_at=?, last_verified=?, file_metadata=? "
+            "WHERE id=?",
+            (
+                title,
+                content,
+                summary,
+                now,
+                kind,
+                logical_key,
+                content_hash,
+                expires_at,
+                now,
+                blob,
+                item_id,
+            ),
+        )
+    store.db.commit()
+    _write_tags(store, item_id, tags)
+    _sync_fts(store, item_id, title=title, content=content, creating=creating, prior=prior)
+
+
+def _write_tags(store, item_id: str, tags: list[str]) -> int:
+    """Attach tags through the store's own tag tables. Returns how many attached.
+
+    Both tables have NOT NULL timestamp columns (`tags.created_at`, `item_tags.added_at`) —
+    omitting them made every insert fail, and the broad `except` below swallowed it so
+    cleanly that a measurement run showed `tags: []` with no error anywhere. Best-effort is
+    right here (a tag that will not attach must not lose the article it described) but it
+    has to be best-effort about something that WORKS, so the count is returned and logged at
+    WARNING rather than debug.
+    """
+    if not tags:
+        return 0
+    attached = 0
+    now = _now()
+    try:
+        for tag in tags:
+            name = tag.strip().lower()
+            if not name:
+                continue
+            store.db.execute(
+                "INSERT OR IGNORE INTO tags (name, created_at) VALUES (?, ?)", (name, now)
+            )
+            row = list(store.db.execute("SELECT id FROM tags WHERE name = ?", (name,)))
+            if row:
+                store.db.execute(
+                    "INSERT OR IGNORE INTO item_tags (item_id, tag_id, source, added_at) "
+                    "VALUES (?, ?, 'workflow', ?)",
+                    (item_id, row[0]["id"], now),
+                )
+                attached += 1
+        store.db.commit()
+    except Exception:
+        logger.warning("knowledge tag write failed for %s", item_id, exc_info=True)
+    if tags and not attached:
+        logger.warning("knowledge item %s: none of %d tag(s) attached", item_id, len(tags))
+    return attached
+
+
+def _fts_snapshot(store, item_id: str) -> tuple[int, str, str, str] | None:
+    """The values currently INDEXED for this item, read before the row is rewritten.
+
+    This has to happen first: `items_fts_src` is a VIEW over the live row, so reading it
+    after the UPDATE returns the NEW content — and a delete keyed on the new values removes
+    nothing, leaving the old terms searchable forever. Measured: "aardvark" still matched
+    after the body had been replaced by "buffalo".
+    """
+    try:
+        rows = list(
+            store.db.execute(
+                "SELECT rowid, title, content, tags FROM items_fts_src WHERE rowid = "
+                "(SELECT rowid FROM items WHERE id = ?)",
+                (item_id,),
+            )
+        )
+    except Exception:
+        return None
+    if not rows:
+        return None
+    row = rows[0]
+    return (
+        int(row["rowid"]),
+        str(row["title"] or ""),
+        str(row["content"] or ""),
+        str(row["tags"] or ""),
+    )
+
+
+def _sync_fts(
+    store,
+    item_id: str,
+    *,
+    title: str,
+    content: str,
+    creating: bool,
+    prior: tuple[int, str, str, str] | None = None,
+) -> None:
+    """Keep `items_fts` in step with a direct SQL write.
+
+    `items_fts` is an EXTERNAL-CONTENT fts5 index over a view, and it has NO triggers — so a
+    row inserted with plain SQL is simply not searchable. Measured: every retrieve fell
+    through to `substring_fallback` until this existed, which looks identical in the output
+    to a working search and would have made the whole retrieval tier quietly useless.
+
+    Delete-then-insert, following the store's own manual sync sites. Rebuilding is
+    deliberately NOT used: the store's own docstring records that `'rebuild'` against a stale
+    content target WIPES THE INDEX AND REPORTS SUCCESS.
+    """
+    try:
+        row = list(store.db.execute("SELECT rowid FROM items WHERE id = ?", (item_id,)))
+        if not row:
+            return
+        rowid = row[0][0]
+        tags_row = list(
+            store.db.execute(
+                "SELECT COALESCE(group_concat(t.name, ' '), '') FROM item_tags it "
+                "JOIN tags t ON t.id = it.tag_id WHERE it.item_id = ?",
+                (item_id,),
+            )
+        )
+        tag_text = str(tags_row[0][0] or "") if tags_row else ""
+        if not creating and prior is not None:
+            # Delete with the values the index actually HOLDS — captured before the row was
+            # rewritten. fts5 external-content deletes are keyed on the column values, so a
+            # delete with the new content is a no-op that silently leaves the old terms
+            # searchable.
+            store.db.execute(
+                "INSERT INTO items_fts (items_fts, rowid, title, content, tags) "
+                "VALUES ('delete', ?, ?, ?, ?)",
+                (prior[0], prior[1], prior[2], prior[3]),
+            )
+        store.db.execute(
+            "INSERT INTO items_fts (rowid, title, content, tags) VALUES (?, ?, ?, ?)",
+            (rowid, title, content, tag_text),
+        )
+        store.db.commit()
+    except Exception:
+        logger.warning(
+            "knowledge FTS sync failed for %s — it will not be searchable", item_id, exc_info=True
+        )
+
+
+def _write_metadata(store, item_id: str, metadata: dict[str, Any], *, source_ref: str) -> None:
+    """Update only the metadata blob and `last_verified` — used by the reinforce path.
+
+    Deliberately does NOT touch `updated_at`: the body did not change, and bumping it would
+    make a freshness check believe the article had been rewritten.
+    """
+    try:
+        store.db.execute(
+            "UPDATE items SET file_metadata=?, last_verified=? WHERE id=?",
+            (json.dumps(metadata, ensure_ascii=False), _now(), item_id),
+        )
+        store.db.commit()
+    except Exception:
+        logger.debug("knowledge metadata write failed", exc_info=True)
+
+
+def _detect_conflicts(
+    store, incoming: list[dict], *, item_id: str, source_ref: str, edge_source: str = ""
+) -> ConflictPass:
+    """Deterministic conflicts between arriving claims and stored ones, plus their edges.
+
+    Neighbours come from the hybrid retriever rather than a recency window, because "the claims
+    most likely to disagree with this one" is a similarity question and recency is a proxy that
+    misses an old contradicted fact entirely — which is the case that matters most, since it has
+    had the longest time to be cited.
+
+    Returns the settled conflicts AND the neighbours the deterministic tier could not settle.
+    Both, because they answer different questions and the model tier only has a job because of
+    the second one: a caller handed only `conflicts` can tell a reader what was already proven,
+    but it cannot ask anything about the rest, and "the rest" is precisely what §3.2's fast-model
+    pass exists to judge.
+
+    Best-effort by design: a conflict pass that failed a WRITE would mean losing the knowledge
+    rather than losing the annotation, and the annotation is the cheaper thing to lose.
+    """
+    try:
+        from personalclaw.knowledge import contradiction
+
+        claims = [
+            contradiction.Claim.from_dict({**c, "source_ref": c.get("source_ref") or source_ref})
+            for c in incoming
+        ]
+        existing = _neighbour_claims(store, claims, exclude=item_id)
+        if not existing:
+            return ConflictPass([], [])
+        found = contradiction.find_conflicts(claims, existing)
+        candidates = _unsettled_candidates(claims, existing, settled=found)
+        if not found:
+            # No edges to write, but the candidate set is the whole point of still returning:
+            # "nothing proven deterministically" is the common case AND the case the model tier
+            # is for. Returning early here is what made the judge's input unconditionally empty.
+            return ConflictPass([], candidates)
+        # Edges are deferred when the row does not exist yet: a CREATE has no id until the insert,
+        # and an edge written against a missing row is refused by the foreign key. The caller
+        # writes them after the upsert.
+        if edge_source:
+            _write_edges(store, contradiction.edges_from_conflicts(found), source_item=edge_source)
+        return ConflictPass([c.to_dict() for c in found], candidates)
+    except Exception:
+        logger.warning("conflict detection failed — the write proceeds", exc_info=True)
+        return ConflictPass([], [])
+
+
+#: Bound on the neighbour scan for the ingest pass, mirroring `_claim_bearing_ids`. Recency
+#: order for the same reason: a contradiction with something saved last week is more actionable
+#: than one with a two-year-old note, and the cap keeps cost independent of store size.
+_INGEST_NEIGHBOUR_LIMIT = 40
+
+
+def _insight_statements(store, item_id: str) -> list[str]:
+    """An item's `insights.key_points`, the ingest path's only claim-shaped output.
+
+    `insights` is its own column (not `file_metadata`), so this is a separate read from
+    `_stored_claims` — and the two are complementary, not alternatives: the agent path writes
+    `file_metadata.claims` and the ingest path writes `insights.key_points`, so a conflict
+    between a UI-saved note and an agent-persisted claim needs both sides read.
+    """
+    try:
+        row = store.db.execute("SELECT insights FROM items WHERE id = ?", (item_id,)).fetchone()
+    except Exception:
+        return []
+    if not row or not row["insights"]:
+        return []
+    try:
+        insights = json.loads(row["insights"])
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(insights, dict):
+        return []
+    points = insights.get("key_points")
+    if not isinstance(points, list):
+        return []
+    return [s.strip() for s in points if isinstance(s, str) and s.strip()]
+
+
+def _ingest_neighbour_claims(store, *, exclude: str) -> list:
+    """Stored claims to judge an ingesting item against — from BOTH writers.
+
+    Recently-updated items that carry either `file_metadata.claims` (the agent path) or
+    `insights.key_points` (the ingest path). A LIKE prefilter, newest first, bounded.
+    """
+    from personalclaw.knowledge import contradiction
+
+    try:
+        rows = store.db.execute(
+            "SELECT id FROM items WHERE is_archived = 0 AND id != ? "
+            "AND (file_metadata LIKE '%\"claims\"%' OR insights LIKE '%\"key_points\"%') "
+            "ORDER BY updated_at DESC LIMIT ?",
+            (exclude or "", _INGEST_NEIGHBOUR_LIMIT),
+        ).fetchall()
+    except Exception:
+        logger.debug("ingest neighbour scan failed", exc_info=True)
+        return []
+
+    out: list = []
+    for row in rows:
+        neighbour = str(row["id"])
+        statements = [str(c.get("statement", "") or "") for c in _stored_claims(store, neighbour)]
+        statements.extend(_insight_statements(store, neighbour))
+        for statement in statements:
+            if not statement.strip():
+                continue
+            out.append(
+                contradiction.Claim.from_dict({"statement": statement, "source_ref": neighbour})
+            )
+            if len(out) >= contradiction.MAX_CONFLICT_CANDIDATES:
+                return out[: contradiction.MAX_CONFLICT_CANDIDATES]
+    return out
+
+
+def run_ingest_conflict_pass(store, item_id: str) -> list[dict]:
+    """§3.2's deterministic conflict pass for the INGEST pipeline. Returns what it recorded.
+
+    🔴 **Why this exists.** Contradiction detection was reachable from exactly one place —
+    `KnowledgePersistActionProvider`, i.e. only items an AGENT persisted with structured claims.
+    Everything a user saves through the dashboard (`POST /api/knowledge/items`, every connector,
+    every bookmark) went through the enrichment pipeline instead, which never called it. So the
+    Knowledge **Conflicts** tab could not populate from normal use at all: it reads
+    `file_metadata.conflicts`, and no ingest route ever wrote that key (#329). Its empty state
+    read as "you have no contradictions" when the truth was "contradictions from this path are
+    never looked for". `create_item`'s own comment states the intended contract — "contradictions
+    are flagged at ingest and both claims kept" — and UI ingest is ingest.
+
+    **One seam, two callers, so they cannot drift.** This shares `find_conflicts`, the conflict
+    record shape and `_write_conflict_edges` with the provider path rather than reimplementing
+    them; the ONLY thing it does differently is where the claims come from, because the two paths
+    genuinely differ there (see :func:`_insight_statements`).
+
+    **It does NOT write `file_metadata.claims`.** A `key_points` bullet is a summary line, not a
+    phenomenon-level claim with mentions and a validity window — `semantics.Claim`'s own contract.
+    Promoting bullets into that slot would put a different kind of thing in a typed field, and
+    change the digest `updates.py` compares a proposal against. Conflicts are recorded; claims
+    are left to the writers that own them.
+
+    Best-effort, like the provider's pass: a conflict pass that failed the ENRICHMENT would lose
+    the knowledge rather than the annotation, and the annotation is the cheaper thing to lose.
+    """
+    from personalclaw.knowledge import contradiction
+
+    try:
+        statements = _insight_statements(store, item_id)
+        if not statements:
+            return []
+        incoming = [
+            contradiction.Claim.from_dict({"statement": s, "source_ref": item_id})
+            for s in statements
+        ]
+        existing = _ingest_neighbour_claims(store, exclude=item_id)
+        if not existing:
+            return []
+        found = contradiction.find_conflicts(incoming, existing)
+        if not found:
+            return []
+        conflicts = [c.to_dict() for c in found]
+        row = store.db.execute(
+            "SELECT file_metadata FROM items WHERE id = ?", (item_id,)
+        ).fetchone()
+        if not row:
+            return []
+        try:
+            metadata = json.loads(row["file_metadata"] or "{}")
+        except (TypeError, ValueError):
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        # BOTH claims kept — only the disagreement is recorded. Silently picking a winner is how
+        # a store becomes confidently wrong; the losing claim was evidence.
+        metadata["conflicts"] = conflicts
+        store.db.execute(
+            "UPDATE items SET file_metadata=? WHERE id=?",
+            (json.dumps(metadata, ensure_ascii=False), item_id),
+        )
+        store.db.commit()
+        # `updated_at` is deliberately NOT bumped: the body did not change, and a freshness
+        # check must not read an annotation as a rewrite.
+        _write_conflict_edges(store, conflicts, source_item=item_id)
+        logger.info("ingest conflict pass recorded %d conflict(s) for %s", len(conflicts), item_id)
+        return conflicts
+    except Exception:
+        logger.warning("ingest conflict pass failed — enrichment proceeds", exc_info=True)
+        return []
+
+
+def _unsettled_candidates(incoming: list, existing: list, *, settled: list) -> list[dict]:
+    """The stored neighbours a model tier would have to judge, ranked, minus the settled ones.
+
+    `contradiction.shortlist` is the built-and-tested ranker (§3.2); this is its production
+    caller. Already-settled neighbours are removed because the prompt that consumes this tells
+    the model not to re-litigate the deterministic tier's findings — leaving them in would
+    spend the one metered call re-deciding what a free pass already proved.
+
+    Keyed on `(right_item, statement)` rather than on statement alone: two items can legitimately
+    store the same sentence, and collapsing them would drop a real candidate whose item id is the
+    only thing that makes the model's `right_item` answer resolvable.
+    """
+    from personalclaw.knowledge import contradiction
+
+    settled_keys = {(c.right_item, _norm_claim(c.right_claim)) for c in settled}
+    out: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for claim in incoming:
+        for candidate in contradiction.shortlist(claim, existing):
+            key = (candidate.source_ref, _norm_claim(candidate.statement))
+            if key in settled_keys or key in seen:
+                continue
+            seen.add(key)
+            out.append({"item_id": candidate.source_ref, "statement": candidate.statement})
+            if len(out) >= contradiction.MAX_CONFLICT_CANDIDATES:
+                return out
+    return out
+
+
+def _norm_claim(statement: str) -> str:
+    return " ".join((statement or "").split()).casefold()
+
+
+def _neighbour_claims(store, incoming: list, *, exclude: str) -> list:
+    """Claims on items semantically near the incoming ones.
+
+    Capped, and the SAME item is excluded: an item's own stored claims are what the merge path
+    reconciles, and reporting them here would flag every update as a conflict with itself.
+    """
+    from personalclaw.knowledge import contradiction
+
+    queries = [c.statement for c in incoming if c.statement][:3]
+    if not queries:
+        return []
+
+    # Two sources, and BOTH are needed. FTS is precise but only sees title/content/tags — a
+    # claim lives in `file_metadata`, so an FTS search for claim words finds nothing unless the
+    # claim happens to echo the item's title. The claim-bearing scan is the reliable half.
+    candidate_ids: list[str] = []
+    seen_items: set[str] = set()
+    for query in queries:
+        for row in _search_rows(store, query):
+            item_id = str(row.get("id", "") or "")
+            if item_id and item_id != exclude and item_id not in seen_items:
+                seen_items.add(item_id)
+                candidate_ids.append(item_id)
+    for item_id in _claim_bearing_ids(store, exclude=exclude):
+        if item_id not in seen_items:
+            seen_items.add(item_id)
+            candidate_ids.append(item_id)
+
+    out: list = []
+    for item_id in candidate_ids:
+        for raw in _stored_claims(store, item_id):
+            claim = contradiction.Claim.from_dict({**raw, "source_ref": item_id})
+            if claim.statement:
+                out.append(claim)
+        if len(out) >= contradiction.MAX_CONFLICT_CANDIDATES:
+            return out[: contradiction.MAX_CONFLICT_CANDIDATES]
+    return out
+
+
+def _claim_bearing_ids(store, *, exclude: str, limit: int = 40) -> list[str]:
+    """Recently-updated items that carry claims at all.
+
+    A LIKE prefilter, newest first, bounded. This is the half of the candidate set that actually
+    works: conflicts are between CLAIMS, and claims are not in the search index, so an
+    FTS-only neighbour set silently returns nothing for any item whose title does not repeat its
+    own claim text. Recency is the right order here because a contradiction with something
+    written last week is more actionable than one with a two-year-old note, and the cap keeps
+    the marginal cost independent of store size.
+    """
+    try:
+        return [
+            str(r["id"])
+            for r in store.db.execute(
+                "SELECT id FROM items WHERE is_archived = 0 AND id != ? "
+                "AND file_metadata LIKE '%\"claims\"%' ORDER BY updated_at DESC LIMIT ?",
+                (exclude or "", max(1, limit)),
+            )
+        ]
+    except Exception:
+        logger.debug("claim-bearing scan failed", exc_info=True)
+        return []
+
+
+def _search_rows(store, query: str) -> list[dict]:
+    try:
+        return [
+            dict(r)
+            for r in store.db.execute(
+                "SELECT i.id FROM items_fts f JOIN items i ON i.rowid = f.rowid "
+                "WHERE items_fts MATCH ? AND i.is_archived = 0 LIMIT 10",
+                (_fts_safe(query),),
+            )
+        ]
+    except Exception:
+        logger.debug("neighbour search failed", exc_info=True)
+        return []
+
+
+def _fts_safe(query: str) -> str:
+    """An FTS5 MATCH expression from arbitrary claim text.
+
+    A claim is prose, and prose contains FTS5 operators — an unquoted `4.2s (measured)` is a
+    syntax error, and the broad except above would swallow it into "no neighbours", which reads
+    exactly like "no conflicts". So the terms are extracted and OR-ed explicitly.
+    """
+    terms = re.findall(r"[A-Za-z0-9]{3,}", query or "")
+    return " OR ".join(terms[:12]) if terms else '""'
+
+
+def _stored_claims(store, item_id: str) -> list[dict]:
+    try:
+        rows = list(store.db.execute("SELECT file_metadata FROM items WHERE id = ?", (item_id,)))
+    except Exception:
+        return []
+    if not rows:
+        return []
+    try:
+        meta = json.loads(rows[0]["file_metadata"] or "{}")
+    except (TypeError, ValueError):
+        return []
+    claims = meta.get("claims") if isinstance(meta, dict) else None
+    return [c for c in claims if isinstance(c, dict)] if isinstance(claims, list) else []
+
+
+def _relation_for(conflict: dict) -> str:
+    """The typed verb this conflict implies — not always `contradicts`.
+
+    `RELATION_VERBS` has five entries but only `contradicts` was ever written, which threw away
+    a distinction the conflict already carried: `prefer` names which side the source-precedence
+    ladder favours (`user > compiled > timeline > external`). A conflict whose NEW side wins is
+    not two claims disagreeing as equals — it is the newer claim **superseding** the older one,
+    and a graph query for "what replaced this?" cannot recover that from a `contradicts` edge.
+
+    So: the incoming side winning ⇒ `supersedes`; anything else — the stored side winning, or a
+    ladder that honestly cannot decide between two same-tier sources — stays `contradicts`,
+    because asserting supersession in the reader's face when we do not know it would manufacture
+    authority out of arrival order. (`derived_from`/`depends_on`/`part_of` are structural
+    relations the conflict tier cannot observe; the model tier proposes those.)
+    """
+    return "supersedes" if str(conflict.get("prefer", "") or "") == "left" else "contradicts"
+
+
+def _write_conflict_edges(store, conflicts: list[dict], *, source_item: str) -> int:
+    """Typed edges for already-recorded conflicts, once the source row exists.
+
+    `left` is the incoming claim throughout the conflict tier, so `prefer == "left"` means the
+    claim being persisted is the one the ladder favours.
+
+    `provenance` is unconditionally `extracted`: every row reaching here was recorded by
+    `find_conflicts`, which proves a conflict with no model call.
+    """
+    from personalclaw.knowledge import contradiction
+
+    edges = [
+        contradiction.Edge(
+            source=source_item,
+            target=str(c.get("right_item", "") or ""),
+            relation=_relation_for(c),
+            confidence=float(c.get("confidence", 1.0) or 1.0),
+            provenance="extracted",
+            justification=str(c.get("detail", "") or ""),
+        )
+        for c in conflicts
+    ]
+    return _write_edges(store, [e for e in edges if e.valid], source_item=source_item)
+
+
+def _write_edges(store, edges: list, *, source_item: str) -> int:
+    """Persist typed relations. Upsert on `(source, target, relation)` per the table's own key.
+
+    Best-effort with a returned count and a WARNING log, not a silent pass: an edge that failed
+    to write leaves the conflict recorded on the item but invisible to any graph query, and the
+    two surfaces then disagree about whether the store has a known contradiction.
+    """
+    written = 0
+    now = _now()
+    for edge in edges:
+        target = edge.target or ""
+        if not (source_item and target) or source_item == target:
+            continue
+        try:
+            store.db.execute(
+                "INSERT OR REPLACE INTO item_relations (source_item_id, target_item_id, "
+                "relation_type, confidence, provenance, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (source_item, target, edge.relation, edge.confidence, edge.provenance, now),
+            )
+            written += 1
+        except Exception:
+            logger.warning(
+                "could not write %s edge %s -> %s",
+                edge.relation,
+                source_item,
+                target,
+                exc_info=True,
+            )
+    if written:
+        try:
+            store.db.commit()
+        except Exception:
+            logger.warning("could not commit item_relations", exc_info=True)
+            return 0
+    return written
+
+
+def _merge_claims(
+    *, existing: list, incoming: list[dict], source_ref: str
+) -> tuple[list[dict], int]:
+    """Merge incoming claims into stored ones, appending mentions.
+
+    A claim already present gains a mention from this source and re-aggregates its
+    confidence; a new one is added. Returns (merged, mentions_appended).
+
+    `knowledge.max_mentions_per_claim` is read ONCE here and handed to every `add_mention`
+    below — this is the knob's production call site. Once per merge rather than once per claim
+    because a persist can carry dozens of claims and `AppConfig.load()` re-reads config.json;
+    a per-claim read would also let the ceiling change mid-merge.
+    """
+    max_mentions = max_mentions_per_claim()
+    by_id: dict[str, Claim] = {}
+    for raw in existing or []:
+        claim = Claim.from_dict(raw)
+        if claim:
+            by_id[claim.id] = claim
+
+    appended = 0
+    for raw in incoming:
+        claim = Claim.from_dict(raw)
+        if claim is None:
+            continue
+        found = by_id.get(claim.id)
+        if found is None:
+            # First sighting: seed a mention from this source so support_count starts at 1
+            # rather than 0 — a claim nobody is recorded as having said reads as unsourced.
+            # Uncapped deliberately: a fresh claim holds no mentions, so the ceiling cannot
+            # bind here, and passing it would make a cap of 0 from an unreadable config able
+            # to create the unsourced claim this seeding exists to prevent.
+            claim.add_mention(Mention(source_ref=source_ref, confidence=claim.confidence, quote=""))
+            by_id[claim.id] = claim
+            appended += 1
+            continue
+        if found.add_mention(
+            Mention(source_ref=source_ref, confidence=claim.confidence, quote=""),
+            max_mentions=max_mentions,
+        ):
+            appended += 1
+    return [c.to_dict() for c in by_id.values()], appended
+
+
+def _enqueue_enrichment(item_id: str) -> None:
+    """Hand the item to the existing ingest queue. Fire-and-forget.
+
+    A synthesis stage must not wait on an embedder that may not even be configured, and an
+    enrichment failure must not lose a write that already succeeded.
+    """
+    try:
+        from personalclaw.knowledge.ingest import enqueue_item  # type: ignore[attr-defined]
+
+        enqueue_item(item_id)
+    except Exception:
+        logger.debug("knowledge enrichment enqueue unavailable for %s", item_id, exc_info=True)
+
+
+def _scope_metadata(
+    cfg: dict[str, Any], ctx: ActionContext, *, existing: dict[str, Any]
+) -> dict[str, str]:
+    """Container scope for this write (WORK-CONTAINERS §1.6), or `{}` outside a run.
+
+    Ownership is FIRST-WRITER-WINS: `project_id` / `run_id` describe who produced the item,
+    so a later run in a different project re-persisting the same content records its
+    corroboration (mentions, `source_ref`) without moving the item into its own container.
+
+    `sharing_policy` is the one field a later write may CHANGE, and only when it says so
+    explicitly — that is how an item gets promoted from private to shared. An absent
+    declaration never silently widens visibility.
+    """
+    payload = getattr(ctx, "payload", None) or {}
+    scope = project_scope.write_scope(
+        project_id=str(payload.get("project_id", "") or ""),
+        run_id=str(payload.get("run_id", "") or ""),
+        requested_policy=cfg.get("sharing_policy"),
+    )
+    if not scope:
+        return {}
+    out: dict[str, str] = {}
+    for key in (project_scope.PROJECT_ID_KEY, project_scope.RUN_ID_KEY):
+        value = existing.get(key) or scope.get(key)
+        if value:
+            out[key] = str(value)
+    declared = str(cfg.get("sharing_policy", "") or "").strip()
+    policy_key = project_scope.SHARING_POLICY_KEY
+    if declared or not existing.get(policy_key):
+        out[policy_key] = scope[policy_key]
+    else:
+        out[policy_key] = str(existing[policy_key])
+    return out
+
+
+async def _push_shared(
+    *, item_id: str, title: str, content: str, metadata: dict[str, Any]
+) -> list[str]:
+    """Offer a just-written item to the team store when its policy says ``shared`` (TSE2-4).
+
+    The write has already committed, so this is the OUTBOUND half of §1.6's
+    ``sharing_policy`` and nothing more: the local item is the record, the push is a
+    courtesy. Returns the provider names that accepted — reported in the action's stdout so
+    a run can SEE the item left the machine rather than assuming a declared policy did
+    something. ``[]`` for a private item (the common case) and for an install with no
+    provider registered, which is every solo install.
+
+    The gate lives in ``sharing.push_shared_item``, not here: this call site must not be able
+    to disagree with the project view about what "shared" means.
+    """
+    from personalclaw.knowledge import sharing
+    from personalclaw.knowledge_providers.base import KnowledgeItem
+
+    try:
+        return await sharing.push_shared_item(
+            KnowledgeItem(id=item_id, title=title, content=content, metadata=dict(metadata))
+        )
+    except Exception:  # noqa: BLE001 — never fail a committed write on an outbound courtesy
+        logger.debug("shared knowledge push failed for %s", item_id, exc_info=True)
+        return []
+
+
+def _run_source_ref(ctx: ActionContext) -> str:
+    """Provenance the caller did not have to remember.
+
+    Read from `ctx.payload`, which is where the engine puts node identity — `ActionContext`
+    itself carries only `event`/`context`/`payload`, so reading attributes off it (as an
+    earlier version of this did) silently produced "workflow:unknown" for every item.
+
+    The run id is absent by design at this seam: `dispatch_action` does not receive the run.
+    A node-scoped ref still attributes the write to a specific template node, which is what
+    makes two sources distinguishable for mention counting.
+    """
+    payload = getattr(ctx, "payload", None) or {}
+    run_id = str(payload.get("run_id", "") or "")
+    node_id = str(payload.get("node_id", "") or "")
+    if run_id and node_id:
+        return f"workflow:{run_id}:{node_id}"
+    if node_id:
+        return f"workflow:node:{node_id}"
+    return "workflow:unattributed"
+
+
+def _now() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _stringify(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, indent=2, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return str(value)

@@ -1,0 +1,287 @@
+import { useEffect, useMemo, useState } from 'react'
+import { withWeight } from '../../design/fontWeight'
+import { Check } from 'lucide-react'
+import type { SavedAgent } from '../../lib/api'
+import { api } from '../../lib/api'
+import { useActiveChatModelOptions } from '../../lib/agents'
+import { Combobox } from '../../ui/Combobox'
+import { Field, TextInput, TextArea, Segmented, FieldError } from '../../ui/forms'
+import { Toggle } from '../../ui/Toggle'
+import { confirm } from '../../ui/dialog'
+import { APPROVAL_MODES } from './agentMeta'
+
+export interface AgentDraft {
+  name: string; description: string; model: string; system_prompt: string; voice: string
+  /** Plainer PROSE (PT-7) — distinct from `voice` (WHO the agent is). */
+  natural_voice: boolean
+  approval_mode: string; skills: string[]; tools: string[]; triggers: string[]
+  default_dir: string; memory_store: string
+  // Agent routing (AGENT-ROUTING) — suggest-first specialist routing metadata.
+  specialty: string; route_hints: string
+}
+
+export function emptyDraft(): AgentDraft {
+  return { name: '', description: '', model: '', system_prompt: '', voice: '', natural_voice: false, approval_mode: '', skills: [], tools: [], triggers: [], default_dir: '', memory_store: '', specialty: '', route_hints: '' }
+}
+export function toDraft(a: SavedAgent): AgentDraft {
+  return {
+    name: a.name, description: a.description ?? '', model: a.model ?? '', system_prompt: a.system_prompt ?? '', voice: a.voice ?? '',
+    natural_voice: !!a.natural_voice,
+    approval_mode: a.approval_mode ?? '', skills: a.skills ?? [], tools: a.tools ?? [], triggers: a.triggers ?? [],
+    default_dir: a.default_dir ?? '', memory_store: a.memory_store ?? '',
+    specialty: a.specialty ?? '', route_hints: a.route_hints ?? '',
+  }
+}
+/** Build the create/update payload from the draft.
+ *
+ *  🔴 IT EMITS NEITHER `provider` NOR `source`, AND THOSE OMISSIONS ARE THE POINT. This function is
+ *  shared by `AgentCreatePage` and by `AgentDetail`'s in-panel EDIT, and it used to state
+ *  `provider: 'native'` and `source: 'personalclaw'` unconditionally — describing two fields the form
+ *  has no control for. `PUT /api/agents/{name}` applies each one whenever its key is present
+ *  (`handlers/agents.py`: `if "provider" in body: agent.provider = ...`, and the same for `source`), so
+ *  editing one word of an agent's description rewrote both:
+ *
+ *   · `provider` — declared `default=""` with *"Empty inherits the global agent.provider default"*
+ *     (`loader.py`'s `AgentProfile`), resolved at `loader.py:4325` as `provider or config.agent.provider`.
+ *     So an `acp:<cli>` agent silently became native, and an agent that was *following* the global
+ *     default got quietly PINNED to native. The second half needs no ACP setup to hit: it is every
+ *     profile whose provider was never explicitly set.
+ *   · `source` — *"Agent origin: personalclaw, marketplace, or builtin"*. A marketplace-installed agent
+ *     recorded itself as hand-authored after one edit. Nothing gates behaviour on it today, so this half
+ *     falsifies provenance rather than breaking function; the sibling prompts surface already tints by
+ *     `source === 'marketplace'` (`promptMeta.ts`), so it is a latent break too.
+ *
+ *  🪤 AND THE LEFTOVER `provider_agent` IS NOT INERT — IT IS WORSE THAN THE PROVIDER LOSS. `PUT` writes
+ *  only the keys it is sent, and this payload never mentioned `provider_agent`/`acp_mode`, so the old
+ *  clobber left a half-migrated profile: `provider: 'native'` with an ACP modeId still in
+ *  `provider_agent`. `chat_runner.py` then passes `agent=provider_agent or session.agent` into the
+ *  native bridge, where `provider_bridge.py` does `cfg.agents.get(agent)` — a name that matches no
+ *  profile. So the agent's voice, system prompt, model, tools, skills AND triggers are all silently
+ *  dropped for the turn, and the turn labels itself with the stale modeId. Preserving all three
+ *  together is the only coherent state; that is what omitting them achieves.
+ *
+ *  🔑 REACHABLE WITHOUT TOUCHING A FILE OR AN API. `lib/agents.ts`'s `ensureBindableAgentName()` POSTs
+ *  `provider: <the acp runtime id>` to materialize a bindable profile, and its callers are two ordinary
+ *  Settings comboboxes — Agent defaults → Default agent, and Chat → Warm pool agent. Picking a
+ *  discovered ACP agent there writes an `acp:<cli>` profile into `cfg.agents`; the Agents page lists it
+ *  as a fully-editable row (`agentsData` applies no provider filter) with a chip reading "Native".
+ *
+ *  Nothing warned about either loss. `AgentDetail`'s chip was the literal string 'Native' for every
+ *  non-reserved agent and never consulted the `providerMeta(agent.provider)` it imports, so an ACP
+ *  profile read "Native" *before* the edit made it true. That chip now names the real provider.
+ *
+ *  This is issue 689's shape exactly, and its fix is the precedent followed here. There, renaming a
+ *  notification trigger replaced its action, because `ScheduleForm.draftToPayload` described an action
+ *  the form could not edit; `renameKeepsItsAction.test.ts` records the verdict — *"The server was never
+ *  at fault… the fix is to stop describing an action the form cannot edit."* Same server contract
+ *  (partial update by key presence), same cure: a form with no control for a field sends no such field.
+ *
+ *  🪤 SO THE CREATE PATH STATES BOTH ITSELF, and `AgentCreatePage` does. Dropping `provider` without
+ *  that is the mirror defect rather than a smaller one: `POST /api/agents` reads
+ *  `body.get("provider", "")`, and empty means inherit — so on an instance whose global default is an
+ *  ACP CLI, the native-agent builder would quietly produce ACP agents. (`source` differs: its create
+ *  default already *is* `"personalclaw"`, so stating it there is for symmetry, not to hold behaviour.) */
+export function draftToPayload(d: AgentDraft): Record<string, unknown> {
+  // NB: there is no `workflows` binding on an agent. A workflow scopes itself to
+  // an agent at THEIR creation (scope='agent', scope_ref=<agent>), not from the
+  // agent side — eligibility is resolved by that scope_ref match at surfacing.
+  return {
+    name: d.name.trim().replace(/^-+|-+$/g, ''), description: d.description.trim(), model: d.model,
+    system_prompt: d.system_prompt, voice: d.voice, natural_voice: d.natural_voice, approval_mode: d.approval_mode,
+    skills: d.skills, tools: d.tools, triggers: d.triggers,
+    default_dir: d.default_dir.trim(), memory_store: d.memory_store.trim(),
+    specialty: d.specialty.trim(), route_hints: d.route_hints.trim(),
+  }
+}
+
+/** The native-agent builder. ACP agents are owned + invoked by their runtime
+ *  and aren't authored here — so this is native-only: model, system prompt, and
+ *  the PClaw capability bindings (skills / tools / triggers).
+ *
+ *  NB: workflows are NOT bound from here — a workflow scopes itself to an agent
+ *  at the workflow's own creation, so the agent side has no workflow picker. */
+export function AgentForm({ draft, onChange, nameLocked, compact }: { draft: AgentDraft; onChange: (d: AgentDraft) => void; nameLocked?: boolean; compact?: boolean }) {
+  const set = <K extends keyof AgentDraft>(k: K, v: AgentDraft[K]) => onChange({ ...draft, [k]: v })
+  // Constrain to ACTIVE chat models so an agent can't pin a model that isn't
+  // bound (which would go stale when the active set changes). 'Auto' = inherit.
+  const { options: modelOptions, error: modelErr } = useActiveChatModelOptions()
+
+  // capability catalogs
+  const [skills, setSkills] = useState<CheckOption[]>([])
+  const [tools, setTools] = useState<CheckOption[]>([])
+  const [lifecycleTriggers, setLifecycleTriggers] = useState<CheckOption[]>([])
+  useEffect(() => {
+    api.skills().then((s) => setSkills(s.map((x) => ({ value: x.key ?? x.name, label: x.name, hint: x.description })))).catch(() => {})
+    api.tools().then((t) => setTools(t.map((x) => ({ value: x.name, label: x.name, hint: x.provider, risk: x.risk_level })))).catch(() => {})
+    api.hooks().then((h) => setLifecycleTriggers(h.map((x) => ({ value: x.id, label: x.name, hint: x.event })))).catch(() => {})
+  }, [])
+
+  const modelOpts = useMemo(() => [{ value: '', label: 'Auto — provider default' }, ...modelOptions], [modelOptions])
+
+  return (
+    <div className={`flex flex-col ${compact ? 'gap-l' : 'gap-xl'}`}>
+      <Field label="Name"
+        hint={nameLocked
+          ? 'Names are fixed after creation — a rename would orphan every reference to this agent.'
+          : 'Lowercase, hyphenated — e.g. research-assistant'}>
+        {/* The lock is the PRIMITIVE's, not a no-op handler: the field used to discard
+            writes inside onChange while looking pixel-identical to the editable field
+            below it — focusable, no aria cue, keystrokes silently thrown away. */}
+        <TextInput required value={draft.name}
+          onChange={(v) => set('name', v.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-+/g, ''))}
+          placeholder="research-assistant" autoFocus={!nameLocked}
+          disabled={nameLocked} disabledReason="Names are fixed after creation" />
+      </Field>
+      <Field label="Description"><TextInput value={draft.description} onChange={(v) => set('description', v)} placeholder="One line: what this agent is for" /></Field>
+
+      <Field label="Model" hint="The model this agent runs on. Auto uses the provider default.">
+        <Combobox options={modelOpts} value={draft.model} onChange={(v) => set('model', v)} placeholder="Auto — provider default" emptyText="No models" />
+        {modelErr ? <FieldError className="mt-1">Couldn't load your active chat models — {(modelErr as Error)?.message || 'the server did not respond'}. Only Auto is safe to pick until this loads.</FieldError> : null}
+      </Field>
+
+      <Field label="System prompt" hint="The agent's standing instructions — WHAT it does (operating rules).">
+        <TextArea value={draft.system_prompt} onChange={(v) => set('system_prompt', v)} rows={compact ? 5 : 8} placeholder="You are a focused research assistant. …" />
+      </Field>
+      <Field label="Voice" hint="WHO it is — tone, opinions, bluntness, persona. Kept separate from the rules and injected high-priority so personality survives long prompts.">
+        <TextArea value={draft.voice} onChange={(v) => set('voice', v)} rows={compact ? 3 : 4} placeholder="Blunt and witty. Has strong opinions and states them. No hedging or filler." />
+      </Field>
+      {/* Natural voice (PT-7) — the PER-AGENT scope, so the preference travels with this
+          agent into every conversation that binds it. A conversation can override it for
+          itself from the composer; doing so never edits this value. */}
+      <Field label="Natural voice" hint="Ask for plainer PROSE — answer first, no filler openers, no summary close, the shortest accurate word. A named set of patterns to avoid, not a persona: it never changes a fact, a caveat or a refusal. Any chat can override this for itself from the composer.">
+        <Toggle on={draft.natural_voice} onChange={(v) => set('natural_voice', v)} label="Natural voice" />
+      </Field>
+
+      <Field label="Approval mode" hint="How tool calls are approved during this agent's runs.">
+        <Segmented options={APPROVAL_MODES.map((m) => ({ key: m.key || 'default', label: m.label }))} value={draft.approval_mode || 'default'} onChange={(v) => set('approval_mode', v === 'default' ? '' : v)} />
+      </Field>
+
+      <CheckList label="Skills" hint="Skills surfaced to this agent." options={skills} value={draft.skills} onChange={(v) => set('skills', v)} />
+      <CheckList label="Tools" hint="Tools this agent may call. None selected = all available tools." options={tools} value={draft.tools} onChange={(v) => set('tools', v)} />
+      <CheckList label="Triggers" hint="Lifecycle triggers that fire for this agent (the agent-scoped allow-list)." options={lifecycleTriggers} value={draft.triggers} onChange={(v) => set('triggers', v)} />
+
+      <Field label="Specialty" hint="One line: what this agent is the specialist for. Enables a 'route to this agent?' suggestion in default-agent chats. Leave empty to never suggest it.">
+        <TextInput value={draft.specialty} onChange={(v) => set('specialty', v)} placeholder="e.g. Postgres performance + query optimization" />
+      </Field>
+      <Field label="Routing hints" hint="Comma-separated example utterances that should route here (e.g. 'optimize this query, why is my db slow, add an index').">
+        <TextArea value={draft.route_hints} onChange={(v) => set('route_hints', v)} rows={compact ? 2 : 3} placeholder="optimize this query, why is my db slow, add an index" />
+      </Field>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-l">
+        <Field label="Default directory" hint="Optional working dir for this agent."><TextInput value={draft.default_dir} onChange={(v) => set('default_dir', v)} placeholder="/abs/path (optional)" /></Field>
+        <Field label="Memory store" hint="Optional named memory namespace."><TextInput value={draft.memory_store} onChange={(v) => set('memory_store', v)} placeholder="(default)" /></Field>
+      </div>
+    </div>
+  )
+}
+
+/** A multiselect-driven checkbox list — every option is a toggleable row (no
+ *  dropdown). Searchable when the list is long; shows a selected-count + select-
+ *  all/clear. */
+interface CheckOption { value: string; label: string; hint?: string; risk?: 'safe' | 'caution' | 'destructive' }
+
+function CheckList({ label, hint, options, value, onChange }: {
+  label: string; hint?: string; options: CheckOption[]; value: string[]; onChange: (v: string[]) => void
+}) {
+  const [q, setQ] = useState('')
+  const selected = new Set(value)
+  const n = q.trim().toLowerCase()
+  const filtered = n ? options.filter((o) => `${o.label} ${o.hint ?? ''}`.toLowerCase().includes(n)) : options
+
+  /** Toggle one binding, asking first when the option being ADDED is destructive (#506).
+   *
+   *  A tick here is a STANDING capability grant: every future run of this agent may invoke the
+   *  tool, with no per-call prompt beyond the agent's own approval mode. That makes it the
+   *  longest-lived of the three grants in this cluster, and it cost exactly one click — the same
+   *  click as `artifact_list` — while `risk` was rendered beside it as a tag and read by nothing.
+   *
+   *  ONE direction only. Adding a destructive capability asks; removing one does not. A
+   *  confirmation on the withdrawal of a permission protects nothing and discourages the edit
+   *  that shrinks the blast radius.
+   *
+   *  Keyed on the OPTION's declared risk rather than on this list's label, so the Skills and
+   *  Triggers pickers (whose options carry no risk) are untouched, and a future risk-carrying
+   *  catalogue inherits the gate instead of needing a second copy of it. Destructive only,
+   *  matching `POST /api/tools/invoke` — 26 caution tools are ordinary agent equipment. */
+  async function toggle(o: CheckOption) {
+    if (selected.has(o.value)) { onChange(value.filter((x) => x !== o.value)); return }
+    if (o.risk === 'destructive') {
+      const ok = await confirm({
+        title: `Let this agent call ${o.label}?`,
+        body: `${o.label} is classified destructive — it can delete data or run arbitrary commands. This grant applies to every run of this agent, not just one call.`,
+        danger: true,
+        confirmLabel: `Grant ${o.label}`,
+      })
+      if (!ok) return
+    }
+    onChange([...value, o.value])
+  }
+
+  return (
+    <Field label={`${label}${value.length ? ` · ${value.length}` : ''}`} hint={hint}>
+      <div className="rounded-md bg-surface-container">
+        {options.length > 8 && (
+          <div className="border-b border-outline-variant/30 p-2">
+            <TextInput value={q} onChange={setQ} placeholder={`Search ${label.toLowerCase()}…`} size="sm" surface="base" ariaLabel={`Search ${label.toLowerCase()}`} />
+          </div>
+        )}
+        {options.length === 0 ? (
+          <div className="px-m py-3 text-on-surface-low text-[0.8125rem]">No {label.toLowerCase()} available.</div>
+        ) : (
+          <>
+            {/* 🔴 A checklist whose ticks were only a coral square: `on` painted the box and nothing
+                told assistive tech the row was checked. The group takes the picker's own `label`, so
+                a row announces which list it belongs to (tools vs skills vs workflows). */}
+            <div role="group" aria-label={label} className="max-h-56 overflow-y-auto p-1">
+              {filtered.length === 0 ? <div className="px-2 py-2 text-on-surface-low text-[0.8125rem]">No matches.</div> : filtered.map((o) => {
+                const on = selected.has(o.value)
+                return (
+                  <button key={o.value} type="button" aria-pressed={on} onClick={() => { void toggle(o) }}
+                    className="flex w-full items-center gap-s rounded-md px-2 py-1.5 text-left hover:bg-surface-high transition-colors">
+                    <span className="shrink-0 inline-flex size-4 items-center justify-center rounded-sm border transition-colors" style={{ borderColor: on ? 'var(--color-primary)' : 'var(--color-outline-variant)', background: on ? 'var(--color-primary)' : 'transparent' }}>
+                      {on && <Check size={12} className="text-on-primary" />}
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      {/* Both texts take a `title` because both `truncate`. The HINT is the measured
+                          one: at 390px on `#/agents/new` it clips to **310px of up to 2977px** across
+                          14 rows — the same skill descriptions `#/skills` clips, reached through a
+                          different surface. The LABEL was not clipped with this data, but it is the
+                          same element idiom one line up, and leaving it bare would mean a row whose
+                          subtitle recovers and whose title does not. */}
+                      <span className="flex items-center gap-1.5">
+                        <span className="truncate text-on-surface text-[0.8125rem]" title={o.label}>{o.label}</span>
+                        <RiskTag risk={o.risk} />
+                      </span>
+                      {o.hint && <span className="block truncate text-on-surface-low text-[0.75rem]" title={o.hint}>{o.hint}</span>}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+            {value.length > 0 && (
+              <div className="border-t border-outline-variant/30 px-2 py-1.5 flex items-center justify-between text-[0.75rem]">
+                <span className="text-on-surface-low">{value.length} selected</span>
+                <button type="button" onClick={() => onChange([])} className="text-on-surface-low hover:text-on-surface">Clear</button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </Field>
+  )
+}
+
+/** Risk indicator on a tool option in the agent's tool picker (tool risk
+ *  taxonomy). Surfaces which tools are caution/destructive so a capability grant
+ *  is security-informed. SAFE is the norm → no tag (matches the Tools-page badge). */
+function RiskTag({ risk }: { risk?: 'safe' | 'caution' | 'destructive' }) {
+  if (!risk || risk === 'safe') return null
+  const color = risk === 'destructive' ? 'var(--color-danger)' : 'var(--color-warn)'
+  const label = risk === 'destructive' ? 'Destructive' : 'Caution'
+  return (
+    <span className="shrink-0 rounded-pill px-1.5 py-0.5 text-[0.75rem]" title={`Risk: ${label}`}
+      style={withWeight({ background: `color-mix(in srgb, ${color} 16%, transparent)`, color }, 600)}>
+      {label}
+    </span>
+  )
+}

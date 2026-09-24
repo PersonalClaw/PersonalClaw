@@ -1,0 +1,45 @@
+/* PersonalClaw typography — self-hosted variable faces (all OFL/Apache, bundled).
+   DEFAULT: DM Sans (warm, rounded) — off Google Sans. Inter (neutral) + JetBrains
+   Mono (code) are selectable in Appearance. Google Sans faces retained as a legacy
+   option. The NE signature — fractional variable weights — is preserved per face. */
+@font-face {
+  font-family: "DM Sans";
+  font-style: normal;
+  font-weight: 100 1000;
+  font-display: swap;
+  src: url("/fonts/dm-sans.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono.woff2") format("woff2");
+}
+
+/* Legacy option (selectable, not default). */
+@font-face {
+  font-family: "Google Sans Flex";
+  font-style: normal;
+  font-weight: 1 1000;
+  font-stretch: 25% 151%;
+  font-display: swap;
+  src: url("/fonts/google-sans-flex.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Google Sans Code";
+  font-style: normal;
+  font-weight: 300 800;
+  font-display: swap;
+  src: url("/fonts/google-sans-code.woff2") format("woff2");
+}

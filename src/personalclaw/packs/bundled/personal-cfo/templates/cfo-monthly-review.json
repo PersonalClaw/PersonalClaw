@@ -1,0 +1,46 @@
+{
+  "name": "cfo-monthly-review",
+  "description": "Close the month: collect statements, review against the budget, and write the summary.",
+  "source": "pack",
+  "provenance": "user",
+  "version": 1,
+  "tags": ["finance", "monthly"],
+  "inputs": {
+    "month": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "help": "Which month to close (YYYY-MM). Empty closes the previous full month."
+    }
+  },
+  "metadata": {
+    "risk": "low",
+    "capabilities": ["read"],
+    "keywords": ["budget", "close the month", "spending review"],
+    "when_not_to_use": "not for tax filing — that is the quarterly-close runbook"
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "close_the_month",
+    "children": [
+      {
+        "kind": "stage",
+        "id": "collect",
+        "config": {
+          "agent": "cfo",
+          "skills": ["cfo-statement-fetch"],
+          "prompt": "Collect and normalise the statements for {{inputs.month}} (empty = the previous full month). Report the row count per source file and name anything you could not parse."
+        }
+      },
+      {
+        "kind": "stage",
+        "id": "review",
+        "config": {
+          "agent": "cfo",
+          "skills": ["cfo-budget-review"],
+          "prompt": "Using {{nodes.collect.output}}, review the month against the three-month median. State the unclassified share first, then the three largest deltas and what drove them."
+        }
+      }
+    ]
+  }
+}

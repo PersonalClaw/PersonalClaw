@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      A restrictive CSP on a document that already has no remote references, because this window
+      holds the connect IPC and a switcher that could load remote content would be a way to put
+      attacker HTML next to it. `default-src 'none'` plus a style/script allowance for this file's
+      own inline block; no `connect-src`, so this page cannot talk to a network at all.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'"
+    />
+    <title>Gateways</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #0f1117; color: #e2e8f0; font-size: 13px; padding: 18px 20px 20px;
+      }
+      h1 { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; margin-bottom: 4px; }
+      .sub { color: #94a3b8; font-size: 12px; margin-bottom: 16px; line-height: 1.5; }
+      .banner {
+        border: 1px solid #7c4a11; background: #24170a; border-radius: 8px;
+        padding: 10px 12px; margin-bottom: 14px; color: #fbbf24; line-height: 1.45;
+      }
+      .banner.bad { border-color: #7f1d1d; background: #1f1010; color: #fca5a5; }
+      ul { list-style: none; }
+      li.row {
+        display: flex; align-items: center; gap: 10px;
+        border: 1px solid #232936; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+        background: #151a24;
+      }
+      li.row.active { border-color: #f97316; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: #475569; }
+      .dot.ok { background: #22c55e; } .dot.warn { background: #f59e0b; }
+      .dot.act { background: #f97316; } .dot.bad { background: #ef4444; }
+      .meta { flex: 1 1 auto; min-width: 0; }
+      .name { font-weight: 600; display: flex; align-items: center; gap: 7px; }
+      .badge {
+        font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+        border: 1px solid #334155; color: #94a3b8; border-radius: 4px; padding: 1px 5px;
+      }
+      .badge.on { border-color: #f97316; color: #f97316; }
+      .url { color: #94a3b8; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .status { color: #94a3b8; font-size: 11.5px; margin-top: 2px; }
+      button {
+        border: 1px solid #334155; background: #1e293b; color: #cbd5e1;
+        border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; font-weight: 600;
+      }
+      button:hover:enabled { background: #334155; }
+      button:disabled { opacity: .45; cursor: default; }
+      button.primary { background: #f97316; border-color: #f97316; color: #fff; }
+      button.primary:hover:enabled { background: #ea580c; }
+      button.quiet { background: transparent; border-color: transparent; color: #94a3b8; }
+      button.quiet:hover:enabled { color: #fca5a5; background: transparent; }
+      hr { border: none; border-top: 1px solid #232936; margin: 16px 0 14px; }
+      label { display: block; color: #94a3b8; font-size: 11.5px; margin-bottom: 5px; }
+      input {
+        width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #334155;
+        background: #0b0f16; color: #e2e8f0; font-size: 13px; outline: none;
+      }
+      input:focus { border-color: #f97316; }
+      .actions { display: flex; gap: 8px; margin-top: 10px; }
+      .actions .spacer { flex: 1 1 auto; }
+      .panel {
+        border: 1px solid #232936; border-radius: 8px; padding: 11px 12px; margin-top: 11px;
+        background: #151a24; line-height: 1.5;
+      }
+      .panel dt { color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+      .panel dd { margin-bottom: 7px; word-break: break-all; }
+      .panel .warn { color: #fbbf24; }
+      .panel .err { color: #fca5a5; }
+      .empty { color: #64748b; padding: 12px 0 4px; }
+    </style>
+  </head>
+  <body>
+    <h1>Gateways</h1>
+    <p class="sub">
+      This app runs its own gateway on this computer by default. You can also connect it to a
+      gateway you have paired with — on your network, or through your own tunnel.
+    </p>
+
+    <div id="banners"></div>
+    <ul id="rows"></ul>
+    <p id="empty" class="empty" hidden>No gateways paired yet.</p>
+
+    <hr />
+
+    <label for="input">Pairing link, or your gateway's address</label>
+    <input id="input" placeholder="http://claw.local:10000/pair?code=…" autocomplete="off" spellcheck="false" />
+    <div class="actions">
+      <button id="check" class="primary">Check address</button>
+      <span class="spacer"></span>
+      <button id="refresh">Re-check all</button>
+    </div>
+    <div id="result"></div>
+
+    <script>
+      // Every value that reaches the DOM goes through textContent. Nothing on this page is built
+      // by string concatenation, because a label or a URL in the registry is the one thing here
+      // that a tampered file could control.
+      const el = (tag, cls, text) => {
+        const n = document.createElement(tag);
+        if (cls) n.className = cls;
+        if (text !== undefined) n.textContent = String(text);
+        return n;
+      };
+      const byId = (id) => document.getElementById(id);
+      let plan = null;
+
+      function renderBanners(list) {
+        const host = byId('banners');
+        host.replaceChildren();
+        for (const w of list || []) {
+          const b = el('div', w.code === 'store_permissions' || w.code === 'store_unparseable' ? 'banner bad' : 'banner');
+          b.textContent = String(w.message || w.code || '');
+          host.appendChild(b);
+        }
+      }
+
+      function renderRows(data) {
+        const host = byId('rows');
+        host.replaceChildren();
+        byId('empty').hidden = (data.rows || []).length > 0;
+        for (const row of data.rows || []) {
+          const li = el('li', row.active ? 'row active' : 'row');
+          li.appendChild(el('span', 'dot ' + row.statusTone));
+
+          const meta = el('div', 'meta');
+          const name = el('div', 'name');
+          name.appendChild(el('span', null, row.label));
+          if (row.active) name.appendChild(el('span', 'badge on', 'active'));
+          name.appendChild(el('span', 'badge', row.kind === 'local' ? 'this computer' : 'paired'));
+          meta.appendChild(name);
+          meta.appendChild(el('div', 'url', row.missingUrl ? 'no address recorded' : row.url));
+          const status = row.version ? row.statusText + ' · v' + row.version : row.statusText;
+          meta.appendChild(el('div', 'status', status));
+          li.appendChild(meta);
+
+          if (!row.active) {
+            const go = el('button', null, 'Switch');
+            go.addEventListener('click', async () => {
+              go.disabled = true;
+              const res = await window.pclawConnect.switchTo(row.id);
+              if (!res || !res.ok) {
+                go.disabled = false;
+                renderBanners([{ code: 'switch_failed', message: (res && res.message) || 'That gateway could not be opened.' }]);
+              }
+            });
+            li.appendChild(go);
+          }
+          if (row.removable) {
+            const drop = el('button', 'quiet', 'Forget');
+            drop.addEventListener('click', async () => {
+              drop.disabled = true;
+              await window.pclawConnect.forget(row.id);
+              load();
+            });
+            li.appendChild(drop);
+          }
+          host.appendChild(li);
+        }
+      }
+
+      function renderPlan(res) {
+        const host = byId('result');
+        host.replaceChildren();
+        plan = null;
+        if (!res) return;
+        const panel = el('div', 'panel');
+        if (!res.ok) {
+          panel.appendChild(el('div', 'err', res.message || res.code || 'That address cannot be used.'));
+          host.appendChild(panel);
+          return;
+        }
+        plan = res;
+        const dl = el('dl');
+        const put = (k, v, cls) => { dl.appendChild(el('dt', null, k)); dl.appendChild(el('dd', cls, v)); };
+        put('Connecting to', res.origin);
+        put('Network', res.trust === 'loopback' ? 'This computer' : res.trust === 'private' ? 'Your local network or tailnet' : 'The public internet, over TLS');
+        if ((res.addresses || []).length) put('Resolves to', res.addresses.join(', '));
+        if (res.schemeAssumed) put('Note', 'No scheme was typed, so http:// was assumed.', 'warn');
+        if (res.pairingCode) put('Pairing code', 'Present — the gateway’s own pairing page will redeem it.');
+        if (res.policy && res.policy.warning) put('Before you continue', res.policy.warning, 'warn');
+        panel.appendChild(dl);
+
+        const nameWrap = el('div');
+        nameWrap.appendChild(el('label', null, 'Name for this gateway (optional)'));
+        const nameInput = el('input');
+        nameInput.id = 'label';
+        // A PLACEHOLDER, not a value. Leaving it blank means "let the gateway name itself" (the
+        // shell adopts `companion.instance_name` once the page loads, falling back to this host);
+        // typing something means "this is my name for it", which nothing overwrites. Pre-filling
+        // the value would make those two intentions indistinguishable.
+        nameInput.placeholder = res.host || '';
+        nameWrap.appendChild(nameInput);
+        panel.appendChild(nameWrap);
+
+        const actions = el('div', 'actions');
+        const go = el('button', 'primary', res.policy && res.policy.requiresConfirmation ? 'I confirm — connect' : 'Connect');
+        go.addEventListener('click', async () => {
+          go.disabled = true;
+          const out = await window.pclawConnect.confirm(byId('input').value, nameInput.value);
+          if (!out || !out.ok) {
+            go.disabled = false;
+            renderBanners([{ code: 'connect_failed', message: (out && out.message) || 'That gateway could not be opened.' }]);
+          }
+        });
+        actions.appendChild(go);
+        panel.appendChild(actions);
+        host.appendChild(panel);
+      }
+
+      async function load() {
+        const data = await window.pclawConnect.list();
+        renderBanners(data.warnings);
+        renderRows(data);
+      }
+
+      byId('check').addEventListener('click', async () => {
+        renderPlan(await window.pclawConnect.prepare(byId('input').value));
+      });
+      byId('input').addEventListener('keydown', async (e) => {
+        if (e.key === 'Enter') renderPlan(await window.pclawConnect.prepare(byId('input').value));
+        if (e.key === 'Escape') window.close();
+      });
+      byId('refresh').addEventListener('click', async () => {
+        byId('refresh').disabled = true;
+        await window.pclawConnect.refresh();
+        byId('refresh').disabled = false;
+        load();
+      });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.close(); });
+      load();
+    </script>
+  </body>
+</html>

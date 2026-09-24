@@ -1,0 +1,37 @@
+{
+  "name": "native-vector-memory",
+  "version": "1.0.0",
+  "displayName": "Vector Memory",
+  "description": "Native in-process vector memory (SQLite + FAISS) for semantic search over agent memory. Runs locally, no external service; embeddings come from the active embedding model.",
+  "icon": "Brain",
+  "author": "PersonalClaw",
+  "tags": [
+    "memory",
+    "bundled"
+  ],
+  "provider": {
+    "type": "memory",
+    "implementation": "personalclaw.memory_providers.registry:create_default_provider",
+    "capabilities": [
+      "semantic_search",
+      "episodic",
+      "preferences"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "properties": {
+        "confidence_threshold": {
+          "type": "number",
+          "default": 0.8,
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "x-meta": {
+            "label": "Confidence Threshold",
+            "help": "Minimum similarity score for semantic recall."
+          }
+        }
+      }
+    }
+  },
+  "native": true
+}

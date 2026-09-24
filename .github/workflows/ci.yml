@@ -1,0 +1,996 @@
+# CI — PR + feature-branch push. Fast verification gate (≤10-min budget).
+# Jobs are the stable ids other roadmap plans reference (CI-RELEASE-ENGINEERING C1):
+# lint · test · web · rails · harness · client. Heavier matrix/coverage/audit live in full.yml (main + nightly).
+#
+# The three browser-driven jobs (e2e-a11y · e2e-walkthrough · e2e-pwa) take a `needs:` on the
+# cheap `changes` job, so a diff that cannot reach a rendered pixel does not pay for a Chromium
+# — see that job's header for the measurements and for why its verdict defaults to TRUE.
+#
+# TWO SIBLING WORKFLOWS EXIST BECAUSE THIS ONE CANNOT TALK TO A FORK PR.
+#   dco.yml          pull_request_target — so sign-off is checked without a maintainer first
+#                    approving the run, which is exactly when sign-off tends to be missing.
+#   pr-feedback.yml  workflow_run — posts this workflow's lint remediation into the PR. A
+#                    `pull_request` run from a fork gets a READ-ONLY token whatever its
+#                    `permissions:` asks for, so CI cannot comment on a fork PR itself.
+#
+# Fork PRs from accounts that are not brand new to GitHub run without approval
+# (repo setting `fork-pr-contributor-approval: first_time_contributors_new_to_github`).
+# An account created days ago is still gated, so dco.yml + pr-feedback.yml are what a
+# brand-new contributor hears from first.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]  # main runs full.yml; feature branches run this
+
+# One in-flight run per BRANCH, across BOTH triggers this file enables — a new push cancels
+# the superseded run, AND a `pull_request` run cancels the duplicate `push` run sitting on the
+# same head.
+#
+# 🪤 WHY NOT `github.ref`, which this keyed on until #2595. Under `pull_request` that is
+# `refs/pull/<n>/merge`; under `push` it is `refs/heads/<branch>`. Two different strings → two
+# different groups → the two triggers never deduped, and every non-fork PR ran the entire
+# matrix TWICE, concurrently, on the identical head SHA. Measured 2026-09-07 from the Actions
+# API: 8 live branches, 16 CI runs, 9 jobs each — ~72 jobs in flight to answer 8 PRs' worth of
+# questions, with runner concurrency in the 4–6 range and `test` at ~45 min. That made this the
+# binding constraint on merge rate. The comment here used to claim "no wasted runner time",
+# which was true per-trigger and false as the claim it was making.
+#
+# 🪤 AND WHY NOT THE HEAD SHA, which is the obvious fix and is wrong. Keying on the SHA does
+# dedupe the two triggers, but it puts every commit in its OWN group, so pushing three times
+# leaves three live runs instead of cancelling the two superseded ones. That trades this bug for
+# the exact waste the guardrail exists to prevent. The branch is the only key that does both
+# jobs at once.
+#
+# The head REPO qualifies the key so that two forks which each push a branch named `patch-1` do
+# not cancel one another. For a same-repo PR it equals `github.repository`, and `github.head_ref`
+# equals `github.ref_name` — which is precisely what makes the `pull_request` and `push` keys
+# collide. That collision IS the dedupe.
+concurrency:
+  group: ci-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    # ── The browser gates' admission decision (#3110) ─────────────────────────────────────────
+    # `e2e-a11y`, `e2e-walkthrough` and `e2e-pwa` each boot a real gateway, build the SPA and
+    # drive a real Chromium. MEASURED 2026-09-19 over the last 14 CONCLUDED runs of this
+    # workflow: `e2e-a11y` took 19.9-29.4 min (median 21.9) and was the run's TAIL in 10 of 14,
+    # so it added a median 6.4 and up to 14.0 min to time-to-ripe — and it has neither a path
+    # filter nor a `needs:`, so it paid that on every PR. Over 60 recent merged PRs, 22 touched
+    # no `web/` file at all.
+    #
+    # This job answers one question — can the diff reach a rendered pixel or the harness boot —
+    # and the three jobs below take a `needs:` on it. It is ~20s: a depth-1 checkout plus one
+    # API call, no uv and no npm. That 20s sits in front of jobs that measured 0.1-33.3 min of
+    # runner QUEUE wait in the same sample, so it is noise against what it saves.
+    #
+    # 🪤 THE VERDICT DEFAULTS TO TRUE, AND `scripts/ci_touches_frontend.py` IS AN IGNORE-LIST,
+    # NOT A TRIGGER-LIST. "Run when `web/**` changes" is the same function inverted and fails in
+    # the dangerous direction: a new top-level directory or a renamed asset root silently stops
+    # paying the gate and nothing reports it. Default-deny means forgetting to update that file
+    # costs wasted minutes, never a missed regression. The reasons per entry are in its
+    # docstring; `tests/test_ci_e2e_path_gate.py` rails both the classifier and this wiring.
+    #
+    # 🪤 `src/personalclaw/**` IS NOT IGNORABLE, which is the biggest possible saving and is
+    # unsound. web/playwright.config.ts's header states the dependency: without the gateway the
+    # SPA "renders the ONBOARDING screen for every route… axe then reports a clean tree for 96
+    # surfaces it never actually visited." Sixteen of eighteen routes in web/e2e/routes.ts are
+    # `needsData: true`. A backend diff can change scanned DOM, so a backend diff pays.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read   # `pulls/{n}/files` below. READ only, and a fork PR's token is
+                            # read-only regardless — both calls are GETs, so that is enough.
+    outputs:
+      frontend: ${{ steps.verdict.outputs.frontend }}
+    steps:
+      # Depth 1 deliberately: the classifier reads a path LIST, never history, so the
+      # `fetch-depth: 0` the `harness` job needs would be pure latency in front of three jobs.
+      - uses: actions/checkout@v7
+      - name: enumerate the changed paths, and decide
+        id: verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+          # NOT `set -e`: a failed enumeration must fall through to the empty-file case, which
+          # the classifier reads as "unknown diff → run the gates". Exiting non-zero here would
+          # red a PR over an API hiccup; exiting zero with no paths would be worse still, since
+          # it would skip. Falling through to `frontend=true` is the only safe third option.
+          : > /tmp/changed.txt
+          if [ -n "${PR_NUMBER:-}" ]; then
+            # Every `pull_request` run, fork included — the payload carries the number, so the
+            # read-only fork token never has to resolve it.
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+              --jq '.[].filename' > /tmp/changed.txt || : > /tmp/changed.txt
+          else
+            # A `push` run on a feature branch. Compared against the DEFAULT branch rather than
+            # `github.event.before`, which is all-zeros on a branch's first push and would
+            # enumerate nothing — the fail-open case, but reached on a routine event instead of
+            # a broken one, so the gate would never fire for anybody's first push.
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/main...${HEAD_SHA}" \
+              --jq '.files[].filename' > /tmp/changed.txt || : > /tmp/changed.txt
+          fi
+          echo "enumerated $(wc -l < /tmp/changed.txt) changed path(s)"
+          # stdout carries `frontend=<bool>`; stderr carries the human verdict table, which goes
+          # to the run summary so the decision is readable without opening the log.
+          #
+          # 🪤 THE VERDICT IS VALIDATED BEFORE IT IS PUBLISHED, and that is the whole safety
+          # argument for this step. Appending the script's stdout straight to $GITHUB_OUTPUT
+          # looks equivalent and fails in the silent direction: if the interpreter is missing or
+          # the script raises, NO `frontend` key is written, `needs.changes.outputs.frontend`
+          # resolves to the EMPTY STRING, `== 'true'` is false, and all three browser gates skip
+          # on a green run. A crashed classifier would disable the gates it exists to schedule.
+          # So anything that is not exactly one of the two legal answers becomes `true`.
+          verdict=$(python3 scripts/ci_touches_frontend.py \
+                      < /tmp/changed.txt 2>> "$GITHUB_STEP_SUMMARY") || verdict=""
+          case "$verdict" in
+            frontend=true|frontend=false) ;;
+            *)
+              echo "::warning title=e2e gate inconclusive::the classifier produced" \
+                   "'${verdict:-no output}' instead of frontend=true|false, so the browser gates" \
+                   "RUN. An unanswered question must not arrive as a skipped job."
+              verdict="frontend=true"
+              ;;
+          esac
+          echo "verdict: $verdict"
+          printf '%s\n' "$verdict" >> "$GITHUB_OUTPUT"
+
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read   # NOT pull-requests: write — a fork PR is handed a read-only token
+                       # regardless, so asking for write here only looked like it worked.
+                       # The remediation comment is posted by pr-feedback.yml instead.
+      pull-requests: read   # #2595: a `push` run has no PR in its payload, so the feedback
+                            # relay's PR number is looked up by head branch. READ only — the
+                            # line above still holds, and the fork path never reaches the
+                            # lookup because a fork PR's payload already carries the number.
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      # `harness/` is repo-inner dev infra beside src/ (SELF-VERIFICATION). `make lint`
+      # lints it under the same tools as core; CI used to skip it, so a harness-only
+      # lint break went green here and red for a local contributor. Same scope as the
+      # Makefile now (black/isort/flake8 over src+tests+harness, mypy over src+harness).
+      #
+      # Every tool runs even when an earlier one fails, and its output is captured, so
+      # the failure comment below names every violation at once. Otherwise a contributor
+      # fixes black, pushes, and only then discovers flake8.
+      - name: lint (black --check · isort --check · flake8 · mypy)
+        id: lint
+        run: |
+          status=0
+          : > /tmp/lint-out.txt
+          run_tool() {
+            label=$1
+            shift
+            if out=$("$@" 2>&1); then
+              printf '%s\n' "$out"
+            else
+              status=1
+              printf '%s\n' "$out"
+              { echo "**$label**"; echo '```'; printf '%s\n' "$out"; echo '```'; } >> /tmp/lint-out.txt
+            fi
+          }
+          run_tool "black --check" uv run black --check src/personalclaw tests harness
+          run_tool "isort --check-only" uv run isort --check-only src/personalclaw tests harness
+          run_tool "flake8" uv run flake8 src/personalclaw tests harness
+          run_tool "mypy" uv run mypy src/personalclaw harness
+          # The bundled-app tree is excluded from the pass above and checked one bundle per
+          # mypy run here — see scripts/lint_bundled_apps.py for why (two bundles ship a
+          # module named `provider.py`, which aborts a single combined run).
+          run_tool "mypy (bundled apps)" uv run python scripts/lint_bundled_apps.py
+          if [ "$status" -ne 0 ]; then
+            {
+              echo "violations<<LINTEOF"
+              cat /tmp/lint-out.txt
+              echo "LINTEOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+          exit "$status"
+      # Hand the violations to pr-feedback.yml instead of commenting from here.
+      #
+      # WHY THIS CANNOT COMMENT ITSELF. A `pull_request` run from a FORK gets a read-only
+      # GITHUB_TOKEN no matter what `permissions:` above asks for, so the github-script step
+      # that used to live here could never post on a fork PR. Measured across every fork PR
+      # this repo has had (#678, #680, #1210, #1211): zero `lint-help` comments, ever. The
+      # contributors who most need the remediation were the only ones structurally unable to
+      # receive it, and the job still went red, so the failure looked like a normal lint red.
+      #
+      # An artifact crosses that boundary. `pr-feedback.yml` runs on `workflow_run` in the
+      # BASE repo's context, where the token really is write-capable, and posts from there.
+      # Resolve the PR number WITHOUT keying on the event name — #2595.
+      #
+      # Since the concurrency group above collapsed the `pull_request` and `push` runs for a
+      # branch into ONE group, one of the two cancels the other, and which of them survives is
+      # NOT contractual. While the two steps below were gated on
+      # `github.event_name == 'pull_request'`, a push-survivor produced a red `lint` with the
+      # remediation posted NOWHERE: no artifact is uploaded, and pr-feedback.yml reads the PR
+      # number out of that artifact's pr.txt, so it correctly posts nothing. That would have
+      # traded a throughput bug for a silence bug — the worse of the two — so the dedupe above
+      # is only safe together with this step.
+      #
+      # An empty answer is legitimate (a branch pushed before its PR exists) and must not fail
+      # the step; the two steps below simply do not run, which is the same outcome as today.
+      - name: Resolve the PR number for the feedback relay
+        id: prnum
+        if: failure() && steps.lint.outputs.violations != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          HEAD_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          set -eu
+          if [ -n "${EVENT_PR:-}" ]; then
+            # `pull_request`, including every fork PR — the payload already carries it, so the
+            # read-only fork token never has to make the API call below.
+            number="$EVENT_PR"
+          else
+            number=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/pulls?state=open&head=${GITHUB_REPOSITORY%%/*}:${HEAD_BRANCH}" \
+              --jq '.[0].number // empty' 2>/dev/null || true)
+          fi
+          printf 'number=%s\n' "${number:-}" >> "$GITHUB_OUTPUT"
+          echo "feedback relay target: PR ${number:-<none — nothing will be posted>}"
+      - name: Hand the violations to the feedback workflow
+        if: failure() && steps.lint.outputs.violations != '' && steps.prnum.outputs.number != ''
+        # 🪤 `env:`, NOT `${{ }}` inside `run:`. A `${{ }}` expression is pasted into the shell
+        # script as TEXT before bash sees it, so the violations — which contain ``` fences —
+        # had their backticks read as command substitution. Measured: the artifact came out
+        # 54 bytes holding only the `**black**`/`**flake8**` headers, every actual violation
+        # executed as a command and replaced by its empty output. It is also an injection
+        # hole, since lint output echoes paths and source lines from the PR. Through `env:`
+        # the runner sets the value directly and `"$VIOLATIONS"` expands without re-parsing.
+        env:
+          VIOLATIONS: ${{ steps.lint.outputs.violations }}
+          PR_NUMBER: ${{ steps.prnum.outputs.number }}
+        run: |
+          mkdir -p /tmp/lint-feedback
+          printf '%s' "$VIOLATIONS" > /tmp/lint-feedback/violations.md
+          # `workflow_run` payloads carry an EMPTY `pull_requests` array for fork PRs, so the
+          # relay cannot look the number up — it has to be carried across in the artifact.
+          printf '%s' "$PR_NUMBER" > /tmp/lint-feedback/pr.txt
+          wc -c /tmp/lint-feedback/violations.md /tmp/lint-feedback/pr.txt
+      - name: Upload lint feedback
+        if: failure() && steps.lint.outputs.violations != '' && steps.prnum.outputs.number != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: lint-feedback
+          path: /tmp/lint-feedback/
+          retention-days: 3
+      # ── The install one-liner's linters, which the file has claimed since it landed ────────
+      # `deploy/website/install.sh` is what `curl -fsSL https://personalclaw.dev/install | sh`
+      # runs on a stranger's machine, and its header advertised "shellcheck-clean" plus a weekly
+      # container smoke. MEASURED 2026-09-06: no workflow mentioned the file at all — grepping
+      # .github/workflows/ for `website/install`, `install.sh` or `personalclaw.dev/install`
+      # returned nothing, and full.yml's four jobs (matrix/audit/security-corpus/coverage)
+      # touched none of it. The advertised coverage was the only artifact of itself.
+      #
+      # `!cancelled()` rather than the default success(): the lint step above ends in
+      # `exit "$status"`, so a black violation would otherwise SKIP this and the shell break
+      # would surface only on the next push — the same argument that step's own comment makes
+      # for running every tool before reporting.
+      #
+      # The tools are INSTALLED here, not assumed. Absent is not unavailable: this repo spent a
+      # month reading a skipped tmux-gated test class as a pass, so a runner image that drops
+      # shellcheck must red HERE rather than turn the cases below into quiet skips — which is
+      # precisely what PERSONALCLAW_REQUIRE_INSTALL_PROOF converts a missing linter into.
+      #
+      # This job carries the lever because it is the only one where both linters are guaranteed.
+      # The same module also rides `test` (leverless, so a laptop without dash gets a skip
+      # instead of a hostile red).
+      - name: install one-liner — shellcheck · sh -n · dash -n · offline contract
+        if: ${{ !cancelled() }}
+        env:
+          PERSONALCLAW_REQUIRE_INSTALL_PROOF: "1"
+        run: |
+          set -eu
+          for tool in shellcheck dash; do
+            command -v "$tool" >/dev/null 2>&1 || {
+              sudo apt-get update -qq
+              sudo apt-get install -y --no-install-recommends "$tool"
+            }
+          done
+          shellcheck --version | head -2
+          sh -n deploy/website/install.sh
+          dash -n deploy/website/install.sh
+          shellcheck -s sh deploy/website/install.sh
+          # -n0: the truncation sweep is ~170 tiny `sh` invocations; xdist buys nothing.
+          # --junitxml: every pytest step in this repo writes one — see `test-shard`'s
+          # "Upload JUnit results" step for why.
+          uv run pytest tests/test_website_installer.py -n0 --no-cov --junitxml=reports/junit-lint-installer.xml
+      - name: Upload JUnit results (installer sweep)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-lint-installer
+          path: reports/junit-lint-installer.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+  test-shard:
+    # ── Sharded pytest — the throughput fix (#2720) ───────────────────────────────────────────
+    # The single `test` job ran the whole ~40-min suite serially and was the binding constraint
+    # on merge rate. It is split into N=4 DISJOINT shards (pytest-split `--splits/--group`) that
+    # run in PARALLEL, so each PR's tests finish in ~1/N the wall-clock and each shard's log is
+    # ~1/N the size (which also mitigates the #2720 log-truncation class). The `test` job below
+    # is the AGGREGATION GATE: it keeps the STABLE `test` id — the branch-protection required
+    # check and the id roadmap plans reference (CI-RELEASE-ENGINEERING C1) — and goes green only
+    # when every shard passed.
+    #
+    # Coverage is deliberately NOT measured on the shards: it stays owned by full.yml's dedicated
+    # `coverage` job. Each shard runs `--no-cov` (its addopts `--cov` payload is pure redundant
+    # memory here — the same #2720 lever full.yml's matrix already uses).
+    #
+    # pytest-split partitions the collected items completely and disjointly; `least_duration`
+    # balances by a committed `.test_durations` when present and degrades to an even by-count
+    # split when it is not (this repo commits none yet — measured clean: 31 359 tests → 4 groups
+    # with zero overlap and zero gaps). Commit a `.test_durations` later for duration-balanced
+    # shards; nothing in this workflow changes.
+    runs-on: ubuntu-latest
+    strategy:
+      # fail-fast:false so one red shard does not cancel the others — you want every failing
+      # shard's report in one push, not a fix-push-rediscover loop (same reason full.yml's matrix
+      # sets it). N is exactly the `shard` list below: extend it to re-shard, nothing else moves.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      # NOTE: do NOT set PERSONALCLAW_HOME here. The suite runs under the documented
+      # no-global-home contract (CONTRIBUTING: destructive tests isolate via per-test
+      # config_dir/tmp_path, NOT a global override) — several tests assert the DEFAULT
+      # ~/.personalclaw resolution or patch Path.home(), and config_dir() gives
+      # PERSONALCLAW_HOME precedence over Path.home(), so a global value defeats those
+      # patches and reds them. The runner's $HOME is already ephemeral.
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      # EI-6's SC5 real-daemon leg (tests/test_ei6_durable_spawn.py::TestSC5RealTmux) is
+      # skipif-gated on a tmux binary, and NO stock runner image ships one — checked against
+      # the Ubuntu-24.04 and macOS-15-arm64 runner-image manifests: zero mentions each. So the
+      # one leg that proves a durable worker really outlives the gateway against the real
+      # server had been skipping silently on every run since it landed, and the roadmap
+      # recorded that skip as a MACHINE CEILING ("closes via a machine with tmux").
+      #
+      # It was never a ceiling, only an unasked question: apt has tmux and it installs in
+      # seconds. Absent is not unavailable — a skip is the absence of an answer, not a
+      # negative one, and reading it as a negative kept a shipped mechanism unproven.
+      #
+      # `tmux -V` runs in the SAME step deliberately: an install that fails must red the job
+      # HERE, not reappear downstream as a skip in a count nobody reads.
+      - name: Install tmux (EI-6 durable sessions — real-daemon test leg)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends tmux
+          tmux -V
+      - name: pytest (shard ${{ matrix.shard }} of 4 — xdist within the shard, no coverage)
+        # --no-cov: coverage is measured once by full.yml's `coverage` job; the addopts `--cov`
+        #   payload is redundant memory here (#2720). full.yml's matrix already runs this way.
+        # -q: with the addopts `--verbose` this nets to NORMAL verbosity — a progress summary,
+        #   not one line per test — so each shard's log stays small (the #2720 truncation class).
+        # --splits/--group select this shard's disjoint slice; xdist (`-n auto`, from addopts)
+        #   then parallelises it across the runner's cores. `least_duration` splits evenly by
+        #   count until a `.test_durations` is committed (see the job header).
+        # --junitxml: WHICH test failed, machine-readably — see the upload step below.
+        run: uv run pytest --no-cov -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-test-shard-${{ matrix.shard }}.xml
+      # ── Why a red run must still publish this ────────────────────────────────────────────
+      # MEASURED: a failing `test` produced exactly one legible signal — the annotation
+      # "Process completed with exit code 1". Nothing named the case, so classifying
+      # flake-vs-genuine meant either reading the whole shard log (minutes of scrollback, and
+      # the #2720 truncation can eat the summary outright) or a blind ~40-minute re-run. That
+      # tax was paid once per red, by a human, forever.
+      #
+      # The JUnit XML is a few hundred KB and names every failure with its node id and
+      # traceback, so `gh run download --name junit-test-shard-N` answers "which test" in
+      # seconds. `if: always()` is the whole point: the default `success()` would publish the
+      # report only on the runs that need it least. `-q` keeps the console log small; the XML
+      # is where the detail lives now, so the two levers no longer trade off.
+      #
+      # `name` carries the shard index because artifact names must be unique within a run —
+      # a fixed name would make the four shards collide and only one would survive.
+      - name: Upload JUnit results (shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-test-shard-${{ matrix.shard }}
+          path: reports/junit-test-shard-${{ matrix.shard }}.xml
+          # A step that dies before pytest writes anything (a `uv sync` failure, a cancelled
+          # run) must not turn into a second, misleading red on the upload itself.
+          if-no-files-found: ignore
+          retention-days: 7
+      # ── The one red the JUnit XML structurally cannot explain ─────────────────────────────
+      # The real-home rail (tests/conftest.py::pytest_sessionfinish) fails a run by setting
+      # `session.exitstatus` — no testcase fails, so the XML above reads `failures=0` and the
+      # shard surfaces as a bare "process completed with exit code 1" naming nothing. MEASURED:
+      # that signature cost three shifts of guessing on one PR, because the offending paths
+      # existed only on STDOUT, where the #2720 truncation class can eat them (#3386).
+      # A SEPARATE artifact rather than a second path on the step above: `path:` there has to
+      # stay a same-line scalar, which is the form tests/test_ci_junit_artifacts.py parses.
+      - name: Upload real-home rail report (shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: real-home-rail-shard-${{ matrix.shard }}
+          path: reports/real-home-rail.txt
+          if-no-files-found: ignore
+          retention-days: 7
+
+  test:
+    # ── Aggregation gate for the sharded suite above ──────────────────────────────────────────
+    # This job carries the STABLE `test` id (the branch-protection required-check name and the id
+    # roadmap plans reference). It goes green only when EVERY shard succeeded, and a FAILING shard
+    # still reports RED here rather than skipped — `fail-fast: false` above means a shard failure
+    # never cancels the run, so `!cancelled()` is satisfied and this job runs. It needs no
+    # checkout or toolchain: it only reads the matrix's aggregate result.
+    #
+    # ── 🪤 `!cancelled()`, NOT `always()`. THE RED NO TEST PRODUCED (#2946) ────────────────────
+    # `always()` runs a job even when the RUN ITSELF was cancelled, and the step below then turned
+    # `result == 'cancelled'` into `exit 1`. The concurrency group above deliberately collapses
+    # this branch's `pull_request` and `push` runs, so ONE of the two is always cancelled — and
+    # the cancelled one was publishing a `test` FAILURE. Check-runs key on the SHA, not the run,
+    # so that red landed on the exact commit whose surviving run went green.
+    #
+    # MEASURED 2026-09-18 on `9801cf068`: the cancelled `push` run 35338585659
+    # had all TWELVE of its other jobs `cancelled` and `test` → `failure`, while the surviving
+    # `pull_request` run 35338682195 had `test` → `success`. Both check-runs sit on that one SHA.
+    # Every open PR therefore carried a red `test` no test produced, `mergeStateStatus` was
+    # permanently `UNSTABLE`, and every merge decision began by re-deriving which red was real.
+    #
+    # A cancelled run measured NOTHING, so the honest report is no `test` verdict at all — which
+    # is what `!cancelled()` produces (the job is SKIPPED, not failed). What it costs: the loser
+    # leaves a `test` check-run with conclusion `skipped` beside the winner's `success`. That is
+    # not a failing check, so it no longer makes the PR unstable. The `:289` warning this comment
+    # replaced — that a *skipped* required check wedges the PR — does not bite: `main` currently
+    # has ZERO required status checks, and when several check-runs share a name GitHub reads the
+    # most recent, which is the winner (measured above: the survivor's `test` started 11:36:16Z,
+    # the loser's 11:15:00Z — the loser is always the earlier one, since it is cancelled BY the
+    # arrival of the other). Re-check this if `test` is ever made a required check.
+    needs: [test-shard]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: every test shard passed
+        run: |
+          result='${{ needs.test-shard.result }}'
+          # Reachable only when a SHARD was cancelled while this run itself lived on — the job
+          # above is skipped outright when the run is cancelled. A missing answer on a live run
+          # is red, never green: same doctrine as full.yml's install-smoke legs.
+          if [ "$result" = "cancelled" ]; then
+            echo "::error title=test shards unproven::a test shard was cancelled while this run" \
+                 "was still live, so the suite measured nothing. This is NOT the superseded-run" \
+                 "case (that skips this job entirely) — re-run and, if it repeats, look for a" \
+                 "runner the shard is losing rather than a failing test."
+            exit 1
+          fi
+          if [ "$result" != "success" ]; then
+            echo "::error title=test shards failed::the sharded test matrix result was '$result'" \
+                 "(expected 'success'). Open the red 'test-shard (N)' job(s) above, or download the" \
+                 "JUnit report — \`gh run download <run-id> --name junit-test-shard-N\` — to see WHICH" \
+                 "tests failed without reading the log. If that report names NO failing test" \
+                 "(failures=0), the shard exited nonzero without a test failing: read" \
+                 "\`--name real-home-rail-shard-N\`, which carries the real-home rail's verdict and the" \
+                 "paths it objected to (#3386)."
+            exit 1
+          fi
+          echo "all 4 test shards passed"
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      # npm runs from the REPO ROOT (single-root workspace lockfile — npm/cli#4828);
+      # never `cd web && npm ci`. typecheck + vitest + build all run against the web workspace.
+      - name: npm ci (root)
+        run: npm ci
+      - name: typecheck
+        run: npm run typecheck:web
+      - name: test (vitest)
+        # Includes the design-system consistency rails (plan DESIGN-SYSTEM-CONSISTENCY,
+        # C1/T3.4): tokenLint.test.ts (token-lint-strict — no raw hex/px outside the
+        # shrinking allowlist) + primitiveAdoption.test.ts (bespoke-chrome ratchet:
+        # raw <button>/<input>/dialog counts may only shrink) + inertUtilities.test.ts
+        # (a text-*/bg-*/border-* class must compile to real CSS — a name with no
+        # token emits NOTHING and styles silently vanish). A new hardcoded value, a
+        # new bespoke element, or a new inert utility turns this step — and CI — red.
+        # (The axe-per-route a11y rail lives in web/e2e/ and runs in the `e2e-a11y` job below —
+        # the harness auth-seed it was waiting for is web/e2e/auth.setup.ts. It is a separate job
+        # because the harness boots a real gateway, so it needs the Python toolchain too.)
+        run: npm run test:web
+      - name: test (desktop, node --test)
+        # desktop/ is the OTHER member of this single root workspace, so the `npm ci`
+        # above already installed it — this step costs ~0.2s and needs no extra runner.
+        # 366 cases / 77 suites over the pure shell-side modules (capabilities, pushToTalk,
+        # context-menu, find-bin, and CA-8's gatewayUrl / endpointRegistry / connectMode /
+        # connectDialog) plus packaging.test.js, which asserts electron-builder's `build.files`
+        # still lists every local require() in main.js AND every sibling file loaded by
+        # `path.join(__dirname, …)` — a stale entry there ships a dmg that crashes on launch, or a
+        # switcher window that loads nothing. Two legs here open real sockets on loopback: the
+        # reconnect leg kills a listener and rebinds it, and the store leg writes real files into a
+        # temp dir.
+        #
+        # `bridgeLoads.test.js` is the one case that is NOT source text (#3348). Tier 1 executes
+        # `preload.js` in Node under a `require` shaped like the sandboxed renderer's, so "the
+        # preload throws at load" and "the preload reaches for a module the sandbox withholds" —
+        # the two mutations that left the old suite at 359 pass / 0 fail over a DEAD bridge — red
+        # here, headless, on this runner. Tier 2 confirms that model against a real Electron
+        # renderer and SKIPS on this job, by design and out loud: `npm ci` does not run electron's
+        # download lifecycle script, so there is no binary, and Linux would want a display besides.
+        # Tier 2 is a local/maintainer rail; tier 1 is the one that guards CI.
+        run: npm run test:desktop
+      - name: test (mobile, node --test)
+        # mobile/ is the THIRD member of this single root workspace (the Capacitor shell that
+        # wraps the served `#/companion` route — MOBILE-COMPANION `MC-7`), so the `npm ci`
+        # above already installed it. 24 cases over the shell's pure modules: which URL the
+        # WebView is handed, the private-network navigation rail, and safe-area insets actually
+        # landing on an element. The NATIVE builds are deliberately not here — they need Xcode
+        # and the Android SDK, so they are a maintainer step documented in mobile/README.md.
+        run: npm run test:mobile
+      - name: build (tsc + vite)
+        run: npm run build
+      # Render smoke: mount the BUILT bundle in headless Chromium and assert it
+      # actually renders. typecheck/vitest/build all stayed green through the
+      # v0.1.0 dual-React blank-dashboard regression — nothing above this line
+      # ever loads the artifact in a browser; this step is what would have
+      # caught it. Same script as the local pre-push gate (scripts/run_prepush.sh).
+      - name: install chromium (render smoke)
+        run: npx playwright install --with-deps chromium
+      - name: render smoke (built SPA mounts in a real browser)
+        run: npm run smoke:render
+
+  e2e-pwa:
+    # ── The service-worker cache rail, finally EXECUTED ──────────────────────────────────────────
+    # `web/e2e/pwa.spec.ts` is the PROOF for MOBILE-COMPANION T3.1's security clause: a service
+    # worker that caches an authenticated `/api` response is a data leak (a later visitor, or the
+    # same browser after logout, gets the previous session's approvals off disk). `swPolicy.test.ts`
+    # asserts the policy's return values and its call sites; neither can show what a browser
+    # actually does. This spec installs the real worker against the real `dist/`, takes the origin
+    # offline by SHUTTING THE SERVER DOWN, and observes that a navigation still renders the shell
+    # while `fetch('/api/ping')` fails — the contrast is the proof.
+    #
+    # It ran in NO workflow. Wired here rather than folded into `e2e-a11y` so a11y and the security
+    # proof fail independently: one job covering both means a red tells you "the frontend is broken"
+    # instead of which contract broke.
+    #
+    # Platform-neutral by construction — zero snapshot assertions, and it serves its own build on a
+    # private port (PW_PWA_PORT, default 10944) independent of the config's `webServer`. Measured
+    # locally before wiring: 3 passed in 48s. `visual.spec.ts` is deliberately NOT here; its 40
+    # baselines are all `-darwin`, so a Linux runner has nothing to compare against
+    # (tests/test_e2e_specs_are_executed.py declares that exemption and retires it automatically).
+    #
+    # Gated on `changes` (#3110): this spec builds and serves the SPA, so a diff that cannot
+    # reach a rendered pixel cannot reach it either. See that job's header for why the verdict
+    # defaults to TRUE and why `src/personalclaw/**` is not ignorable.
+    needs: [changes]
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      # The config's `webServer` starts `../.venv/bin/personalclaw`, so the gateway must import
+      # even though this spec serves `dist/` itself.
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828).
+      - name: npm ci (root)
+        run: npm ci
+      - name: install chromium
+        run: npx playwright install --with-deps chromium
+      - name: service worker never caches /api (web/e2e/pwa.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/pwa.spec.ts --project=chromium
+      - name: upload the traces
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pwa-traces
+          path: web/test-results/
+          if-no-files-found: ignore
+
+  e2e-a11y:
+    # ── The axe-per-route rail, finally EXECUTED ─────────────────────────────────────────────────
+    # `web/e2e/a11y.spec.ts` scans every nav route and every settings panel with axe-core (both
+    # themes) plus five surfaces that only exist after an interaction, and fails on any
+    # serious/critical WCAG 2 AA violation. It has been in the tree, complete and passing, while
+    # running in NO automated gate: the `web` job's own comment said it "mounts here once the
+    # harness auth-seed lands", and that seed landed — `web/e2e/auth.setup.ts` performs the
+    # gateway's real token handshake and exports a storageState the specs reuse.
+    #
+    # The harness is self-contained: playwright's `webServer` boots an ISOLATED gateway
+    # (PERSONALCLAW_HOME under $TMPDIR, never a real home) and captures its token from the
+    # PERSONALCLAW_READY line, then builds and previews the SPA against it. So this job needs both
+    # toolchains and nothing else. Measured locally before wiring: 107 passed, 4 skipped
+    # (the two peek docks have no rows to open in a fresh home), ~60s per theme.
+    #
+    # Auth stays ON — no PERSONALCLAW_AUTH_MODE=none, which would swap the csrf middleware for the
+    # dev one and make every finding describe a user who does not exist.
+    #
+    # ── 🪤 WHAT THIS JOB IS *NOT* ANY MORE, AND WHY THAT WAS THE REAL COST (#3110) ──────────────
+    # MEASURED 2026-09-19 on green run 35421244889, per step: the axe sweep this job is NAMED for
+    # took 5.6 min, and `walkthrough.spec.ts` — a different contract entirely — took 11.9 of the
+    # job's 21.4. So 56% of the tail that every PR waited on was not the a11y rail. Splitting
+    # walkthrough into its own `e2e-walkthrough` job below takes ~8 min off the e2e critical path
+    # for EVERY PR, web-touching ones included, and removes ZERO coverage: the same spec, the same
+    # assertions, on its own runner in parallel.
+    #
+    # That split is also what this job's own comments already argued for twice and never did.
+    # `e2e-pwa`: "one job covering both means a red tells you 'the frontend is broken' instead of
+    # which contract broke." `browse-live`: "steps are sequential and fail-fast, so a browse step
+    # appended to `e2e-pwa` would only run when the service-worker spec passed." Both applied here
+    # verbatim — walkthrough ran only when the axe sweep passed, and its red was titled "e2e-a11y".
+    # The step comment it replaced claimed "a separate STEP so a failure names which property
+    # broke"; a step cannot do that, only a job can.
+    #
+    # Gated on `changes` (#3110) — see that job's header.
+    needs: [changes]
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      # The harness starts `../.venv/bin/personalclaw`, so the gateway must be importable.
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828).
+      - name: npm ci (root)
+        run: npm ci
+      - name: install chromium
+        run: npx playwright install --with-deps chromium
+      # `--reporter=github,json` because the step below has to READ the result: a green
+      # playwright exit says the job ran, not that anything was measured.
+      - name: axe per route, both themes (web/e2e/a11y.spec.ts)
+        working-directory: web
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: a11y-report.json
+        run: npx playwright test e2e/a11y.spec.ts --project=chromium --reporter=github,json
+      # A SKIP reads exactly like a PASS in a green job, and this job's whole claim is a
+      # COUNT ("every authenticated route"). So the count is asserted against the manifest
+      # rather than trusted: zero route-level skips, and scans == declared routes × themes.
+      # Without this, emptying a route list in web/e2e/routes.ts would shrink the gate's
+      # coverage to nothing and still show a green check.
+      - name: every authenticated route was actually SCANNED (not skipped)
+        working-directory: web
+        run: node e2e/assert-no-route-skips.mjs a11y-report.json
+      # The two non-axe detectors (mouse-only click targets, clipped focus rings) sweep every
+      # route in the Tier-1/2 loop above, and both return `[]` on a healthy tree — which is
+      # what the tree is. So a selector that rotted into a no-op would read exactly like a
+      # pass, forever. This spec is the anti-vacuity probe: it plants each defect shape in a
+      # live page and asserts the detector still recognises it. It belongs in THIS job because
+      # it needs the same authenticated harness the axe sweep does, and nothing more.
+      - name: non-axe a11y detectors still recognise their defects (web/e2e/nonAxeA11yChecks.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/nonAxeA11yChecks.spec.ts --project=chromium
+      # The app-AUTHORED half of the same coverage. `app/e2e-ui-fixture` is in NON_NAV_ROUTES, so
+      # the axe sweep and both detectors already visit it — but a clean fixture makes "swept" and
+      # "never swept" the same output, and a failed fixture install degrades into the shell's
+      # already-covered 404 branch. This asserts the app's own bundle actually mounted and its
+      # control takes focus, which is what makes those green results mean something.
+      - name: app-authored DOM is really mounted and swept (web/e2e/appSurface.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/appSurface.spec.ts --project=chromium
+      # PHF-7's clause: the browser gate completes a real chat turn OFFLINE, with no
+      # provider credential anywhere in the environment, against the scripted fixture
+      # provider. A separate step because this one proves a different property from the
+      # two above — not "is the page accessible" but "does the app still work at all
+      # without a vendor". `make test-e2e` picks up every spec automatically, but CI
+      # names them explicitly, so a spec not listed here runs nowhere: declared and
+      # never executed is the failure class this repo's rails exist to catch.
+      - name: offline scripted chat turn (web/e2e/chat.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/chat.spec.ts --project=chromium
+      # SSM-11/SSM-10's clauses — the rail renders in-session, stays fixed while the transcript
+      # scrolls, a mark jump scrolls it, and the coarse-pointer form collapses to one control. All
+      # four are LAYOUT or NAVIGATION properties of a ~4k-line `ChatPage` that jsdom cannot mount
+      # and could not measure if it did, so the honest home is this job and not vitest. It belongs
+      # in THIS job rather than its own because it needs exactly the harness the steps above
+      # already stand up (isolated gateway + auth handshake + previewed SPA) and nothing more, and
+      # it asserts no screenshot, so it is platform-neutral on a Linux runner.
+      - name: Session Map in the transcript (web/e2e/sessionMap.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/sessionMap.spec.ts --project=chromium
+      # FIRST RUN'S GEOMETRY — the one class of defect no gate in `web/` could see. jsdom computes no
+      # layout, so every `clientHeight` is 0 and every rect is zeros there: the onboarding screen
+      # shipped with its `<h1>` at -247px and its "go back to step 1" button at -141px — unreachable at
+      # every viewport, `scrollTop` clamped at 0 — while every frontend rail was
+      # green, and `design/onboardingScrollable.test.tsx` can only assert the two CSS shapes we
+      # already know about. This spec asserts the PROPERTY — everything the user must reach lies
+      # inside the scroller's reachable range — at four viewports, plus the keyboard legs (focus
+      # survives a step change; every visible control is in the tab ring). It also publishes the
+      # measured offsets into `web/test-results/`, which the upload step below already collects.
+      #
+      # THIS JOB rather than its own: it needs exactly the harness the steps above stand up (isolated
+      # gateway + auth handshake + previewed SPA) and nothing more, it asserts no screenshot, and it
+      # is ~45s. Listed explicitly because CI names specs one by one — a spec not named here runs
+      # nowhere, which is the failure class these rails exist to catch.
+      - name: first run is reachable at every viewport (web/e2e/onboardingGeometry.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/onboardingGeometry.spec.ts --project=chromium
+      - name: upload the axe reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: axe-violations
+          path: web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  e2e-walkthrough:
+    # ── DSC-11's OTHER half, lifted off the a11y job's critical path (#3110) ─────────────────────
+    # `web/e2e/walkthrough.spec.ts` asserts the three properties axe cannot express: whether a
+    # focus stop is VISIBLE (axe checks name/role, not "was the user told"), what a user with
+    # prefers-reduced-motion actually gets, and whether the page pans sideways on a phone.
+    #
+    # WHY IT IS ITS OWN JOB, measured rather than asserted. On green run 35421244889 it was step
+    # 12 of `e2e-a11y` and took 11.9 min of that job's 21.4 — 56% of the tail every PR waited on,
+    # for a contract that is not a11y. As a step it also inherited both defects this file's other
+    # comments name: it ran ONLY when the axe sweep passed (steps are sequential and fail-fast),
+    # and its failure was titled `e2e-a11y`, so a broken keyboard path read as "the a11y job is
+    # red". Its own step comment claimed a separate step made "a failure name which property
+    # broke" — that is what a separate JOB does.
+    #
+    # It needs the identical harness to `e2e-a11y` (isolated gateway + built SPA + chromium), so
+    # this is the same setup verbatim, running in PARALLEL: it adds a runner and ~1 min of setup,
+    # and removes ~8 min from the e2e critical path of every PR that pays it. No assertion, route,
+    # ruleset or budget changes — the spec is untouched.
+    #
+    # Gated on `changes` (#3110) — see that job's header for why the verdict defaults to TRUE.
+    needs: [changes]
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      # The harness starts `../.venv/bin/personalclaw`, so the gateway must be importable.
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828).
+      - name: npm ci (root)
+        run: npm ci
+      - name: install chromium
+        run: npx playwright install --with-deps chromium
+      - name: V3 walkthrough — keyboard / reduced-motion / phone (web/e2e/walkthrough.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/walkthrough.spec.ts --project=chromium
+      - name: upload the traces
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: walkthrough-traces
+          path: web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  browse-live:
+    # ── BA-2's BEHAVIOURAL proof, finally EXECUTED on the merge gate ─────────────────────────────
+    # Two of BROWSE-AUTOMATION `BA-2`'s `done_when` clauses can only be proven by a real browser:
+    # the injected safety script making a page's `fetch()` / `media.play()` / `navigator.bluetooth`
+    # throw or return blocked, and a client-side redirect being re-evaluated per
+    # `Page.frameNavigated`. tests/test_browse_safety_script.py (layer 2) and
+    # tests/test_browse_cdp_live.py drive a real Chromium over raw CDP to assert them.
+    #
+    # The `test` job installs NO browser, so on the one machine that gates every merge those cases
+    # `pytest.skip` — MEASURED: 20 of them, and a skip is reported as a pass. The clauses were
+    # proven only on a developer laptop that happened to have a Chromium, and nothing would have
+    # noticed if they broke. That is the false green this job closes.
+    #
+    # WHY ITS OWN JOB rather than a step on `web` / `e2e-pwa` / `e2e-a11y` (the three legs that
+    # already install chromium):
+    #   · Steps are sequential and fail-fast, so a browse step appended to `e2e-pwa` would only run
+    #     when the service-worker spec passed. Making this proof's EXECUTION conditional on an
+    #     unrelated frontend contract is the same defect in a new costume.
+    #   · A red here names the contract ("the browse safety script / redirect re-eval broke")
+    #     instead of "the frontend job is red" — the argument `e2e-pwa`'s own comment makes.
+    #   · Not folded into `test` either: that job is the longest on the critical path, and the
+    #     no-node route to a browser (`--extra js-render`) would put `playwright` INTO the tested
+    #     environment, where the suite's own js-render capability probes can see it.
+    # It reuses `e2e-pwa`'s install pattern verbatim, and runs in parallel, so it adds a runner
+    # rather than wall-clock. Measured locally: 30 cases, 0 skips, 38s.
+    runs-on: ubuntu-latest
+    # A wedged Chromium must not hold a runner for the default 360 minutes. The suite's own
+    # launch waits cap at 30s each and pytest's addopts cap a case at 120s, so 15 is slack.
+    timeout-minutes: 15
+    env:
+      # THE lever, and the reason this job cannot pass by proving nothing. Without it a missing,
+      # renamed or unlaunchable browser makes browse_chrome.missing() skip; with it, that same
+      # state FAILS. So "the browser install broke" and "the guard broke" both go red here, and
+      # neither can arrive as a green check. Set ONLY here: a contributor with no Chromium still
+      # gets a skip, because failing on a laptop would take the whole suite down over an
+      # environment. tests/test_browse_live_legs_run_in_ci.py rails this line's continued
+      # existence — deleting it would restore the silent skip and nothing else would notice.
+      PERSONALCLAW_REQUIRE_BROWSE_PROOF: "1"
+      # Same reason as the `test` job: no PERSONALCLAW_HOME (the no-global-home contract), and
+      # app backends are not part of what these three modules assert.
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828). Node is here for
+      # ONE reason: the lock-pinned playwright CLI is what downloads the browser. The suite itself
+      # speaks raw CDP and imports no playwright, in either language — which is also why the
+      # browser must come from the same pin the other three chromium jobs use, rather than a
+      # floating `uvx playwright`: two Chromium revisions in one repo is a difference nobody would
+      # think to look for when a behavioural assertion starts disagreeing.
+      - name: npm ci (root)
+        run: npm ci
+      - name: install chromium
+        run: npx playwright install --with-deps chromium
+      # `-n0`: the live fixture is module-scoped and launches a browser, so xdist would launch one
+      # per worker for no gain over 38 seconds. The three modules are named explicitly rather than
+      # globbed — a glob that matches nothing exits clean, and "the proof ran" is a claim about
+      # specific files. test_browse_live_legs_run_in_ci.py asserts this line names every module
+      # that imports browse_chrome, and that each path it names exists.
+      - name: BA-2 behavioural proof in a REAL browser (safety script · redirect re-eval)
+        run: uv run pytest tests/test_browse_safety_script.py tests/test_browse_cdp_live.py tests/test_browse_behavioural_proof_is_reachable.py -n0 --junitxml=reports/junit-browse-live.xml
+      # Same argument as `test-shard`'s upload step. It bites hardest here: this leg's whole
+      # purpose is that a missing browser must RED instead of skip, and "exit code 1" cannot
+      # tell a broken safety-script assertion apart from an unlaunchable Chromium. The XML can.
+      - name: Upload JUnit results (browse-live)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-browse-live
+          path: reports/junit-browse-live.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+  rails:
+    # Cheap anti-regression rails: the machine-checked invariants roadmap plans add.
+    # Today: provider-boundary residue sweep (present on main).
+    runs-on: ubuntu-latest
+    # No PERSONALCLAW_HOME (see the test job) — the residue sweep is a static
+    # import-boundary check and the suite runs under the no-global-home contract.
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      # -n0 forces serial (these rails are tiny) while keeping the pyproject
+      # addopts intact — `-p no:xdist` would break because addopts injects
+      # -n/--dist, which pytest then can't parse with the xdist plugin disabled.
+      - name: provider-boundary residue sweep (plan 32)
+        run: uv run pytest tests/test_provider_boundary_residue.py -n0 --junitxml=reports/junit-rails.xml
+      # ── The gate AGGREGATE, finally executed ────────────────────────────────────────────────
+      # `make gates` (scripts/gate_report.py) is the one surface that reports all six ratchets
+      # together — config-baseline, inert-surface, docs-lint, and the three structural gates. It
+      # ran in NO workflow: every gate reached CI only through its own pytest counterpart, so a
+      # green build never showed the table an operator actually reads, and a gate with no pytest
+      # twin reached CI not at all.
+      #
+      # Run as the script rather than `make gates` so the failure names the gate instead of
+      # "make: *** [gates] Error 1", and placed in `rails` because that job is already the home
+      # for machine-checked invariants. It imports only `scripts/*` + stdlib, so it needs no
+      # PERSONALCLAW_HOME — consistent with this job's no-global-home contract.
+      - name: gate aggregate (make gates)
+        run: uv run python scripts/gate_report.py
+      # Same argument as `test-shard`'s upload step. Placed after the aggregate so a red gate
+      # still publishes the residue sweep's report (`always()`, not `success()`).
+      - name: Upload JUnit results (rails)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-rails
+          path: reports/junit-rails.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+  harness:
+    # Self-verification gate (SELF-VERIFICATION SV-7): the repo-inner harness/ package
+    # validates its own spec set and runs the static boundary scanner over this change.
+    # `validate` shape-checks every spec + resolves references (dangling test node-ids,
+    # unknown profiles/scanner-checks) — a spec regression reds here. `scan --diff` runs
+    # the boundary scanner over the PR's changed lines and fails on any ERROR finding
+    # (WARNINGs stay advisory). The harness/ unit tests themselves ride the `test` job
+    # (they live under tests/, which is on pytest's testpaths).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # scan --diff bases on the merge-base with origin/main; fetch full history
+          # so that ref resolves (it falls back to main / HEAD~1, but the true base
+          # is what makes the diff scoped rather than whole-tree).
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: harness validate (spec shape + reference resolution)
+        run: uv run python -m harness validate
+      - name: harness scan (static boundary scanner over the diff)
+        run: uv run python -m harness scan --diff
+
+  client:
+    # personalclaw-client (packages/personalclaw-client-py) is versioned + published
+    # independently (release.yml → PyPI env release-client). It has its own deps
+    # (aiohttp, py3.9+) and is NOT part of the core uv workspace, so it gets its own
+    # job: build the wheel and run its test suite so a break is caught pre-merge
+    # (plan 34 T2.3). No PERSONALCLAW_HOME — the runner's $HOME is ephemeral, so the
+    # data-dir test resolves ~/.personalclaw as intended.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Build the client (proves packaging metadata is valid)
+        # `uv build` runs the build backend in its own isolated env — no
+        # `pip install --system` against the runner's PEP-668 /usr (which errors).
+        run: |
+          uv python install 3.12
+          uv build packages/personalclaw-client-py --out-dir dist-client
+      - name: Test the client (its own deps)
+        run: |
+          uv venv .venv-client
+          uv pip install --python .venv-client "packages/personalclaw-client-py[dev]"
+          .venv-client/bin/python -m pytest packages/personalclaw-client-py/tests --junitxml=reports/junit-client.xml
+      # Same argument as `test-shard`'s upload step.
+      - name: Upload JUnit results (client)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-client
+          path: reports/junit-client.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # dco: moved to its own workflow (.github/workflows/dco.yml). It needs
+  # `pull_request_target` so a first-time contributor's PR is checked without a
+  # maintainer approving the run first — this workflow's `pull_request` trigger is
+  # held pending for new contributors, which is exactly when sign-off is missing.

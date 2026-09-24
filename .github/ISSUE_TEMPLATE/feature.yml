@@ -1,0 +1,38 @@
+name: Feature request
+description: Suggest a capability or improvement.
+labels: ["needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature ideas are welcome. Note that the **roadmap is maintainer-owned**
+        — this issue is the intake path (issue → Discussions → the maintainer
+        files/updates a plan). See [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md#the-model).
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that PersonalClaw doesn't support (or makes hard) today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed direction
+      description: How you imagine it working. Rough is fine — this is a starting point, not a spec.
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing workarounds, or other approaches you weighed.
+    validations:
+      required: false
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: "This is a core-platform capability (not a vendor integration — those are apps in PersonalClawApps)."
+          required: false

@@ -1,0 +1,220 @@
+import { useEffect, useState } from 'react'
+import { ThumbsUp, ThumbsDown, BellOff, RotateCcw } from 'lucide-react'
+import { api, type FeedbackProducerRow } from '../../lib/api'
+import { notify } from '../../app/appSdk'
+import { useQuery, invalidateKeys } from '../../lib/data'
+import { Button } from '../../ui/Button'
+import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
+import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow } from './settingsUI'
+
+/** Per-producer feedback accuracy (FEEDBACK-SIGNAL plan 58) — honest counts only.
+ *
+ *  Every row is a JUDGMENT SOURCE (a bound prompt, a loop judge kind, a workflow's
+ *  surfacing, a routing pair, an app producer) with its rolling ups/downs. Below
+ *  min-N the row shows "collecting" and no number (nothing is shown before the
+ *  sample means anything). A `suppressed` source stopped surfacing — which only happens for
+ *  kinds with a surfacing gate (today `skill_synthesis` alone, see
+ *  `feedback.ENFORCED_SUPPRESSION_KINDS`); every other kind below the threshold reads
+ *  "retire proposed", because it keeps surfacing and only earns a proposal. Snooze pauses
+ *  the check 30 days; Clear un-suppresses after you've edited the source.
+ *  Rich "is it learning?" analytics belong to LEARNING-VISIBILITY — this is the
+ *  raw table. */
+export function FeedbackPanel() {
+  // 🔴 THIS SWALLOWED ITS REJECTION AND THE TABLE SPOKE FOR THE SERVER (#532). A failed
+  // /api/feedback/producers resolved to `null`, `rows` fell to `[]`, and the panel printed "No
+  // feedback yet — 👍/👎 appear on inbox classifications, drafted replies, digests, and loop
+  // findings" to a user whose every verdict was recorded and unreadable. The sentence is a
+  // teaching prompt: it tells someone who HAS been marking things to go start marking things.
+  const { data, status, error: loadErr, refresh } = useQuery(
+    'settings:feedback-producers',
+    () => api.feedbackProducers(),
+    { persist: false },
+  )
+  const [busy, setBusy] = useState('')
+
+  const act = async (fn: () => Promise<unknown>, tag: string) => {
+    setBusy(tag)
+    try { await fn(); invalidateKeys('settings:feedback-producers'); refresh() }
+    catch { /* the table re-reads; a failed action leaves it unchanged */ }
+    finally { setBusy('') }
+  }
+
+  const rows = data?.producers ?? []
+
+  return (
+    <div>
+      <PanelHeader title="AI feedback"
+        hint="Every 👍/👎 you leave on an AI judgment (inbox triage, drafts, digests, loop findings) is attributed to the source that produced it — the bound prompt, judge, or rule. A source that keeps being wrong asks to be reviewed; where that kind of source has a surfacing gate (today, skills) it also stops surfacing. Everything here is deterministic counting; nothing leaves this machine." />
+
+      <Section title="Judgment sources"
+        hint={data ? `Rolling ${data.window_days}-day window · accuracy shown after ${data.min_n} verdicts. History restarts when you rebind a prompt (a new prompt is a new source).` : undefined}>
+        {/* Three states, not two — and the middle one is the half that makes de-swallowing real:
+            with the fallback gone `data` is undefined for the failed AND the loading case, so the
+            error branch has to come first or it is unreachable, and the skeleton has to exist or a
+            cold read renders the empty state for a second and calls it an answer. */}
+        {status === 'error' ? (
+          <LoadError what="judgment sources" error={loadErr} onRetry={refresh} />
+        ) : !data ? (
+          <ListSkeleton rows={3} what="judgment sources" />
+        ) : rows.length === 0 ? (
+          <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-3 text-on-surface-low">
+            No feedback yet — 👍/👎 appear on inbox classifications, drafted replies, digests, loop findings, and synthesized skills. Verdicts collect here per judgment source.
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1">
+            {rows.map((r) => <ProducerRow key={`${r.producer_kind}:${r.producer_id}`} row={r} busy={busy} act={act} />)}
+          </div>
+        )}
+      </Section>
+
+      <FeedbackTuningSection />
+    </div>
+  )
+}
+
+/** The four `feedback.*` config knobs (issue #752).
+ *
+ *  They were on the PATCH allowlist, in the dataclass with `_meta` help, and read by `feedback.py`
+ *  — `enabled` gates the thumbs entirely — but nothing in `web/` wrote them, so turning feedback off
+ *  or retuning retirement meant a raw `PATCH /api/config/personalclaw` or a hand edit of
+ *  `config.json`. They live HERE rather than in a panel of their own because this is the panel that
+ *  already owns the mechanism: the section above quotes `window_days` and `min_n` in its own hint.
+ *
+ *  🪤 ITS OWN READ, and its own failure branch — a DIFFERENT endpoint from the producers table
+ *  above, so the two fail independently and each has to say so for itself. A CONTROL rendered from
+ *  a swallowed read claims a saved value nobody saved, and every control here PATCHes on change, so
+ *  a user "correcting" a switch that never loaded writes the opposite of what they believe is
+ *  stored.
+ *
+ *  🔑 This note used to add that the table above "swallows its rejection on purpose (an unreadable
+ *  table shows its empty state)". That was the defect, not a design — an empty state IS a claim, and
+ *  #532 ruled the whole class. The table now has the same three branches this section does. */
+function FeedbackTuningSection() {
+  const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
+  const { data, error: loadErr, refresh } = useQuery('settings:feedback', () =>
+    api.personalclawConfig().then((c) => (c.feedback ?? {}) as Record<string, unknown>),
+    { persist: true },
+  )
+  useEffect(() => { if (data) setCfg(data) }, [data])
+
+  const patch = (key: string, value: unknown, onSaved?: () => void, label?: string) => {
+    const prev = (cfg ?? {})[key]
+    setCfg((c) => ({ ...c, [key]: value }))
+    api.patchConfig(`feedback.${key}`, value).then(() => {
+      onSaved?.()
+      // The section above prints `window_days` and `min_n` in its hint, off a separate endpoint —
+      // re-read it so the two cannot disagree one click after a save.
+      invalidateKeys('settings:feedback-producers')
+    }).catch((e) => {
+      setCfg((c) => ({ ...c, [key]: prev }))
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+
+  return (
+    <Section title="Tuning" hint="When a source has enough verdicts to judge, how far back they count, and how bad it has to get before PersonalClaw asks you to retire it.">
+      {!data && loadErr
+        ? <LoadError what="feedback settings" error={loadErr} onRetry={refresh} />
+        : !cfg
+          ? <FormSkeleton sections={1} what="feedback settings" />
+          : (
+            <RowGroup>
+              <ToggleRow label="Collect feedback" cfg={cfg} field="enabled" patch={patch}
+                hint="Show 👍/👎 on AI judgment outputs and track per-source accuracy. Off means the thumbs never render, so nothing new is attributed — verdicts already recorded are kept." />
+              <NumberRow label="Minimum verdicts" cfg={cfg} field="min_n" min={3} max={50} patch={patch}
+                hint="How many verdicts a source needs before its accuracy is shown or acted on. Below this the row reads “collecting” and no number is shown." />
+              <NumberRow label="Attribution window (days)" cfg={cfg} field="window_days" min={7} max={365} patch={patch}
+                hint="How far back verdicts count toward a source's rolling accuracy. Older verdicts stop counting rather than being deleted." />
+              <NumberRow label="Retire threshold" cfg={cfg} field="retire_threshold" min={0.1} max={0.9} step={0.05} patch={patch}
+                hint="Accuracy below which a source (with enough verdicts) earns a “retire this rule?” proposal — and stops surfacing where that kind of source has a surfacing gate. 0.4 means “wrong more than 6 times in 10”." />
+            </RowGroup>
+          )}
+    </Section>
+  )
+}
+
+function ProducerRow({ row, busy, act }: {
+  row: FeedbackProducerRow
+  busy: string
+  act: (fn: () => Promise<unknown>, tag: string) => void
+}) {
+  const key = `${row.producer_kind}:${row.producer_id}`
+  const producer = { producer_kind: row.producer_kind, producer_id: row.producer_id }
+  return (
+    // 🔴 THE SUPPRESSED ROW LOST ITS OWN IDENTITY AT 390px — the row that matters most. Every chip
+    //    on the right is `shrink-0`, and a suppressed producer has one more of them (accuracy +
+    //    "suppressed" + Snooze + Clear), so the identity block — `min-w-0 flex-1`, i.e. free to
+    //    collapse to zero — was squeezed out and its text painted UNDERNEATH the pills. Measured at
+    //    390×844: the "prompt 3 6" line occupied x 36–78 while the "33%" pill occupied x 48–88 and
+    //    sat on top of it, and `task-inbox-classify` was not readable at all. The healthy sibling row
+    //    (one chip fewer) rendered correctly, which is what made it look fine at a glance.
+    //    `ux-audit --viewport phone` reported it as a 3.93:1 contrast failure "via: sibling" against
+    //    `rgb(86,51,50)` — the danger pill's own tint. That number is not a colour bug: measured
+    //    against the real backdrop the ink is 5.93:1 and passes AA. The audit was reporting the
+    //    OVERLAP, correctly, in the only vocabulary it has.
+    //    Same shape as the projection-rule rows: a `flex-1` box with permission to reach zero beside
+    //    siblings that cannot shrink. Fix is the same — let the row wrap, and give the block a floor.
+    <div className="flex flex-wrap items-center gap-3 rounded-lg bg-surface-container px-3 py-2.5">
+      <div className="min-w-40 flex-1">
+        <div data-type="body-s" className="truncate font-mono text-on-surface">{row.producer_id}</div>
+        <div data-type="caption" className="mt-0.5 flex items-center gap-2 text-on-surface-low">
+          <span>{row.producer_kind}</span>
+          {/* 🔴 A 10px GLYPH WAS THE ONLY THING SAYING WHICH COUNT IS WHICH. Measured on the live
+              row: the accessible text was "task-inbox-classify prompt 3 6 33% suppressed" — two bare
+              integers, and reading them the wrong way round inverts the meaning of the whole panel
+              ("was this source right?" becomes "was it wrong?"). Lucide renders a bare `<svg>` with
+              no name, so nothing carried the distinction.
+              `role="img"` + a label is this repo's declared form for exactly that case — see
+              `ModelsPanel`'s breaker dot ("the dot is the ONLY carrier of the state, no text
+              equivalent") and `UsagePanel`'s bar row. The wording follows `ui/FeedbackThumbs`, the
+              interactive twin of these same two icons ("Mark accurate" / "Mark wrong"), so the
+              summary and the control that produces it speak one vocabulary. */}
+          <span role="img" aria-label={`${row.ups} marked accurate`}
+            className="inline-flex items-center gap-1"><ThumbsUp size={10} /> {row.ups}</span>
+          <span role="img" aria-label={`${row.downs} marked wrong`}
+            className="inline-flex items-center gap-1"><ThumbsDown size={10} /> {row.downs}</span>
+        </div>
+      </div>
+      {row.collecting ? (
+        <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low">collecting · {row.n} of few</span>
+      ) : (
+        <span data-type="caption" className="shrink-0 rounded-pill px-2 py-0.5 tabular-nums"
+          style={(row.accuracy ?? 0) >= 0.7
+            ? { background: 'color-mix(in srgb, var(--color-ok) 14%, transparent)', color: 'var(--color-ok)' }
+            : (row.accuracy ?? 0) >= 0.4
+              ? { background: 'color-mix(in srgb, var(--color-warning) 14%, transparent)', color: 'var(--color-warning)' }
+              : { background: 'color-mix(in srgb, var(--color-danger) 14%, transparent)', color: 'var(--color-danger)' }}>
+          {Math.round((row.accuracy ?? 0) * 100)}%
+        </span>
+      )}
+      {row.suppressed && (
+        <span data-type="caption" className="shrink-0 rounded-pill px-2 py-0.5"
+          style={{ background: 'color-mix(in srgb, var(--color-danger) 14%, transparent)', color: 'var(--color-danger)' }}
+          title="Stopped surfacing — accuracy fell below the retire threshold.">suppressed</span>
+      )}
+      {/* Below the threshold, but this producer kind has no surfacing gate, so nothing withholds it
+          — it keeps being injected and only earns a retire proposal. This row used to render the
+          "suppressed" pill above, titled "Stopped surfacing", for exactly these producers: five of
+          the six kinds. Saying "retire proposed" is both true and the actionable half. */}
+      {row.proposal_only && (
+        <span data-type="caption" className="shrink-0 rounded-pill px-2 py-0.5"
+          style={{ background: 'color-mix(in srgb, var(--color-warning) 14%, transparent)', color: 'var(--color-warning)' }}
+          title="Below the retire threshold. This kind of source has no surfacing gate, so it still runs — you get a retire proposal to act on.">retire proposed</span>
+      )}
+      {!row.collecting && (
+        <div className="flex shrink-0 items-center gap-1">
+          <Button size="xs" variant="ghost" loading={busy === key}
+            onClick={() => act(() => api.feedbackSnooze(producer), key)}>
+            <BellOff size={12} /> Snooze
+          </Button>
+          {row.suppressed && (
+            <Button size="xs" variant="ghost" loading={busy === key}
+              onClick={() => act(() => api.feedbackClear(producer), key)}>
+              <RotateCcw size={12} /> Clear
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}

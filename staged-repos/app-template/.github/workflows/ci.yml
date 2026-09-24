@@ -1,0 +1,162 @@
+# CI — inherited from the PersonalClaw apps repo (PersonalClawApps/.github/workflows/ci.yml),
+# adapted for a repo that is ONE app at its root rather than many app subdirectories.
+# The four jobs and their semantics are unchanged: manifest-validate · tests · boundary ·
+# dco (PR-only). The only divergence is the path each job looks at — `app.json` and `*.py`
+# at the root instead of `*/app.json` and `*/*.py`. Keep them in sync: this template exists
+# to prove scaffold output passes the apps-repo checks as generated.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Core is installed from main until PyPI has a release; switch to a pinned
+  # "personalclaw==<version>" then. Mirrors the apps repo's CORE_SPEC.
+  CORE_SPEC: "personalclaw @ git+https://github.com/PersonalClaw/PersonalClaw@main"
+
+jobs:
+  manifest-validate:
+    # app.json parses against core's own manifest parser (the real contract), not a
+    # hand-rolled schema, and round-trips stably — so a manifest core would reject
+    # fails here rather than at install time on someone's machine.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install core (for personalclaw.apps.manifest)
+        # A uv-managed venv, not `--system`: the runner's /usr is PEP-668
+        # externally-managed and uv refuses `--system` there.
+        run: |
+          uv venv --python 3.12 .venv
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
+          uv pip install --python "$PWD/.venv/bin/python" "$CORE_SPEC"
+      - name: Validate app.json
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          from personalclaw.apps.manifest import AppManifest
+          mf = pathlib.Path("app.json")
+          if not mf.is_file():
+              print("app.json is missing from the repo root"); sys.exit(1)
+          try:
+              m = AppManifest.from_dict(json.loads(mf.read_text()))
+              errors = m.validate()
+              assert not errors, errors
+              # round-trip must be stable (the parity contract apps rely on)
+              assert AppManifest.from_dict(m.to_dict()).to_dict() == m.to_dict()
+          except Exception as e:  # noqa: BLE001
+              print(f"{mf}: {type(e).__name__}: {e}"); sys.exit(1)
+          print(f"OK: {m.name} v{m.version} is a valid manifest")
+          PY
+
+  tests:
+    # The bundle's test_*.py, with core installed but NO vendor SDKs — an app that needs
+    # a vendor SDK stubs it into sys.modules; a test importing a real one fails here.
+    runs-on: ubuntu-latest
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install core + pytest
+        run: |
+          uv venv --python 3.12 .venv
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
+          uv pip install --python "$PWD/.venv/bin/python" "$CORE_SPEC" pytest pytest-asyncio
+      - name: Install this app's declared pythonDependencies, then run its tests
+        # Declared deps are what the platform installs at real app-install time, so CI
+        # installs exactly those and nothing else.
+        run: |
+          deps=$(python -c "import json; d=json.load(open('app.json')); print(' '.join((d.get('dependencies') or {}).get('pythonDependencies') or []))")
+          [ -n "$deps" ] && uv pip install $deps
+          python -m pytest . -q
+
+  boundary:
+    # SDK-only import lint: an installed app may import core ONLY via personalclaw.sdk.* —
+    # never a deep internal. Mirrors core's tests/test_apps_import_boundary.py.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Pure-stdlib ast lint — no core install needed.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Lint app imports (personalclaw.sdk.* only)
+        run: |
+          python - <<'PY'
+          import ast, pathlib, sys
+          violations = {}
+          for f in sorted(pathlib.Path(".").rglob("*.py")):
+              if "__pycache__" in f.parts or f.name.startswith("test_"):
+                  continue
+              tree = ast.parse(f.read_text(encoding="utf-8"), filename=str(f))
+              bad = []
+              def check(mod):
+                  if mod and mod.startswith("personalclaw"):
+                      parts = mod.split(".")
+                      if not (len(parts) >= 2 and parts[1] == "sdk"):
+                          bad.append(mod)
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.Import):
+                      for a in node.names:
+                          check(a.name)
+                  elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                      check(node.module)
+              if bad:
+                  violations[str(f)] = sorted(set(bad))
+          if violations:
+              for f, mods in sorted(violations.items()):
+                  print(f"  {f}: {mods}")
+              print("\nApps must import core only via personalclaw.sdk.* — promote the "
+                    "needed symbol to an sdk submodule instead of reaching around it.")
+              sys.exit(1)
+          print("OK: all app imports go through personalclaw.sdk.*")
+          PY
+
+  dco:
+    # Every commit in a PR carries a Signed-off-by trailer (`git commit -s`), same
+    # provenance rule as core and the apps repo. Pure-git check, PR-only.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Verify DCO sign-off on every commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=0
+          for sha in $(git rev-list "$BASE_SHA".."$HEAD_SHA"); do
+            email="$(git show -s --format='%ae' "$sha")"
+            # A bot can't sign off, and dependency bumps are provenance-clear. Per-COMMIT,
+            # so a maintainer fix pushed onto a dependabot branch is still checked.
+            case "$email" in
+              *dependabot*@users.noreply.github.com) continue ;;
+            esac
+            author="$(git show -s --format='%an <%ae>' "$sha")"
+            if ! git show -s --format='%(trailers:key=Signed-off-by,valueonly)' "$sha" | grep -qF "$author"; then
+              echo "::error::commit $sha is missing a matching 'Signed-off-by: $author' trailer — run: git commit -s (or git rebase --signoff)"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] && echo "DCO: all commits signed off."
+          exit "$missing"

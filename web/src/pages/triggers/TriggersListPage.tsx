@@ -1,0 +1,477 @@
+import { useEffect, useMemo, useState } from 'react'
+import { fvs } from '../../design/fontWeight'
+import { Plus, Zap, Clock, Pencil, CalendarDays, Users, ShieldOff, Trash2 } from 'lucide-react'
+import { TopBar } from '../../ui/TopBar'
+import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
+import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
+import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
+import { PresetEmptyState } from '../../ui/PresetEmptyState'
+import { Button } from '../../ui/Button'
+import { TRIGGER_PRESETS } from './triggerPresets'
+import { SidePanel } from '../../ui/SidePanel'
+import { ListControls } from '../../ui/ListControls'
+import { Segmented } from '../../ui/Segmented'
+import { WeekGridView } from './WeekGridView'
+import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
+import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
+import { confirmDelete } from '../../ui/dialog'
+import { reportingWrite } from '../../app/reportingWrite'
+import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryState'
+import { useQuery, invalidateKeys } from '../../lib/data'
+import { api, type ActionProvider } from '../../lib/api'
+import { ScheduleDetail } from '../schedule/ScheduleDetail'
+import { LifecycleDetail } from './LifecycleDetail'
+import { StoreTriggerDetail } from './StoreTriggerDetail'
+import { scheduleToTrigger, hookToTrigger, storeToTrigger, eventToTrigger, eventPatternMeta, relPast, useTriggerVariables, eventIsDormant, eventIsAgentScoped, type Trigger } from './triggerMeta'
+import { RungChip } from '../../ui/RungChip'
+import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
+import { triggerStatusMeta, explainsCause, relFuture } from '../schedule/scheduleMeta'
+import { PageTitle } from '../../ui/PageTitle'
+import { BUSY_REASON } from '../../ui/unavailable'
+import { Eyebrow } from '../../ui/Eyebrow'
+
+// One chip per kind `GET /api/triggers` can return: schedule · lifecycle · event · store.
+// `Data events` was missing, so an event trigger — creatable from this page's own form — had no
+// chip AND was absent from every count.
+// The plural wording is deliberate and differs from `TRIGGER_KINDS`' singular labels: these name
+// a CATEGORY OF ROWS you are filtering to, not the kind of the one thing you are creating. Every
+// filter is the PLURAL of its kind — Schedules, Lifecycle events, Data events, Automations — so
+// `lifecycle` reads "Lifecycle events" (the plural of the canonical "Lifecycle event" kind, parallel
+// to "Data events"), not the singular "Lifecycle" that broke the row's own convention.
+const FILTERS: Array<{ key: string; label: string }> = [
+  { key: 'all', label: 'All' },
+  { key: 'schedule', label: 'Schedules' },
+  { key: 'lifecycle', label: 'Lifecycle events' },
+  { key: 'event', label: 'Data events' },
+  { key: 'store', label: 'Automations' },
+]
+
+// 🔴 The local `statusDot` was DELETED (S164). It handled four values and defaulted the rest to a
+// neutral grey circle — and for a store trigger this page fed it `t.health`, whose vocabulary is
+// `ok | degraded | parked | failing`. Measured: `degraded`, `parked` and `failing` ALL rendered as
+// the same grey circle, so a FAILING automation was pixel-identical to a parked (self-healing) one
+// on the single page a user manages automations from. Second instance of S163's defect shape in a
+// second local copy, which is why the vocabulary has one mapper per language: `statusMeta` for run
+// outcomes, `triggerHealthMeta` for health + lifecycle state.
+//
+// 🔴 AND THEN THE CALL SITE BECAME THE COPY (issue 496). Deleting the local mapper left a per-kind
+// TERNARY choosing between them, so each new kind picked a vocabulary again — and measured on a live
+// gateway, both directions were wrong at once: the `event` branch picked the run-outcome mapper for a
+// row with no run outcome (a PARKED event trigger rendered "never run", with the reason on the wire
+// and unread), while the `schedule` branch reached around `triggerMeta`'s never-run guard by passing
+// the raw wire pair, so **6 of 11 schedule rows** — five of them the SYSTEM triggers every fresh home
+// registers — drew an ok-GREEN tick beside the word "never".
+//
+// One row, one call: `triggerStatusMeta(t)`. The converters put each fact in the field named for its
+// vocabulary and `scheduleMeta` owns the precedence, so a fifth kind cannot re-open this.
+
+/** Unified Triggers list — schedule + lifecycle triggers in one view, with a
+ *  type filter. Detail opens the right inspector per kind (ScheduleDetail reused
+ *  verbatim; LifecycleDetail for lifecycle triggers). Backed by the unified
+ *  /api/triggers facade (api.schedules()/api.hooks() project it per kind). */
+export function TriggersListPage({ onCreate, query, setQuery }: {
+  /** Opens the create flow. With a preset id, the flow opens SEEDED from that preset. */
+  onCreate: (presetId?: string) => void
+} & Pick<RouteProps, 'query' | 'setQuery'>) {
+  const [filter, setFilter] = useQueryParam(query, setQuery, 'filter', 'all', { replace: true })
+  const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
+  const [openIdRaw, setOpenId] = useQueryParam(query, setQuery, 'open', '')
+  const openId = openIdRaw || null
+  const [editing, setEditing] = useEditFlag(query, setQuery)
+  // List | Week (AUTO-A3). URL-addressable, unlike the run-detail toggle: a week grid is something
+  // you send someone ("look at Thursday"), and the section is already query-state driven.
+  const [view, setView] = useQueryParam(query, setQuery, 'view', 'list', { replace: true })
+
+  // Schedules carry live next-run/running state → persist:false (instant in-app
+  // revisit, but never stale across a hard reload). Hooks + action providers are
+  // lifecycle config that rarely changes → persist:true so they survive a reload.
+  const { data: schedules, error: schedulesErr, refresh: refreshSchedules } = useQuery('triggers:schedules', () => api.schedules().then((d) => d.jobs), { persist: false })
+  const { data: hooks, error: hooksErr, refresh: refreshHooks } = useQuery('triggers:hooks', () => api.hooks(), { persist: true })
+  // Issue 610: the badge reads each event's fire path from the server catalog (module-cached).
+  const catalog = useTriggerVariables()
+  // Store triggers (file/web_watch/idle/…) carry live enabled/health state → persist:false, like
+  // schedules: instant in-app revisit but never stale across a hard reload.
+  const { data: stores, error: storesErr, refresh: refreshStores } = useQuery('triggers:store', () => api.storeTriggers(), { persist: false })
+  // Data-event triggers (EIAT). `GET /api/triggers` serves FOUR kinds — schedule, lifecycle,
+  // event, store — and this page fetched only three, so an event trigger created through the
+  // create form (`trigger_type: 'event'`) existed, fired, and was never listed anywhere. It
+  // carries live enabled/fire-count state → persist:false, like schedules and stores.
+  const { data: events, error: eventsErr, refresh: refreshEvents } = useQuery('triggers:events', () => api.eventTriggers(), { persist: false })
+  const { data: providers = [] } = useQuery('triggers:action-providers', () => api.actionProviders().catch(() => [] as ActionProvider[]), { persist: true })
+  // How much each row's action may do UNATTENDED (AUTONOMY-GUARDRAILS §6.1). The ladder is
+  // keyed on the action-provider name — the same identity the backend dispatch seams hold —
+  // so this page annotates a row without knowing anything about action types. A failed read
+  // leaves `ladder` null and the rows simply carry no chip: the Settings ladder panel is the
+  // surface that OWNS this data and reports the failure, and substituting a rung here would
+  // be a fabricated claim about what an automation may do on its own.
+  const { ladder } = useAutonomyLadder()
+  const rungByProvider = useMemo(() => providerRungIndex(ladder), [ladder])
+
+  const loadSchedules = () => { invalidateKeys('triggers:schedules'); refreshSchedules() }
+  const loadHooks = () => { invalidateKeys('triggers:hooks'); refreshHooks() }
+  const loadStores = () => { invalidateKeys('triggers:store'); refreshStores() }
+  const loadEvents = () => { invalidateKeys('triggers:events'); refreshEvents() }
+  useEffect(() => {
+    const t = window.setInterval(refreshSchedules, 10000)  // keep schedule next-run/running fresh
+    return () => clearInterval(t)
+  }, [refreshSchedules])
+
+  const triggers = useMemo<Trigger[] | null>(() => {
+    if (schedules === undefined || hooks === undefined || stores === undefined || events === undefined) return null
+    // Every kind needs its converter: the wire carries no `whenLabel`/`whenIcon`/`actionLabel`,
+    // so a raw row would render `undefined` for the icon the list draws per row.
+    const all = [...schedules.map(scheduleToTrigger), ...hooks.map(hookToTrigger), ...stores.map(storeToTrigger), ...events.map(eventToTrigger)]
+    const n = q.trim().toLowerCase()
+    return all
+      .filter((t) => filter === 'all' || t.kind === filter)
+      .filter((t) => !n || `${t.name} ${t.whenLabel} ${t.actionLabel}`.toLowerCase().includes(n))
+  }, [schedules, hooks, stores, events, filter, q])
+
+  const open = useMemo(() => triggers?.find((t) => t.id === openId) ?? null, [triggers, openId])
+
+  const counts = useMemo(() => {
+    const s = schedules?.length ?? 0, h = hooks?.length ?? 0, st = stores?.length ?? 0, e = events?.length ?? 0
+    return { all: s + h + st + e, schedule: s, lifecycle: h, store: st, event: e }
+  }, [schedules, hooks, stores, events])
+
+  // 🔴 A FAILED FETCH USED TO READ AS "No triggers". Each list source `.catch(() => [])`'d its
+  // rejection, so a gateway that was down rendered the newcomer empty state — the exact conflation
+  // `LoadError` exists to end (its docstring: "A failed fetch and a genuinely empty collection are
+  // different facts"). The catches are gone; a rejection now reaches the hook's `error`. This flag is
+  // true only when NOTHING has composed yet (so we are not hiding a good cached list) and a source
+  // actually failed — a partial success still renders, because a working schedule list should not be
+  // hidden because the event feed hiccuped.
+  const loadFailed = triggers === null &&
+    !!(schedulesErr || hooksErr || storesErr || eventsErr)
+
+  return (
+    <WorkbenchLayout
+      topBar={
+        <TopBar
+          keepCornerPadding
+          left={<PageTitle>Triggers</PageTitle>}
+          right={
+            /* `() => onCreate()`, NOT `onCreate` — the blank path must pass NO preset id.
+               `HeaderControl.onClick` is typed `() => void`, and a `(presetId?: string) => void`
+               is assignable to it, so tsc accepts the bare reference while React still hands the
+               handler its click event. That event landed in `presetId` and rode into the URL:
+               clicking this button produced
+               `#/triggers/new?kind=schedule&preset=%5Bobject%20Object%5D`. The preset lookup is
+               tolerant, so no field was corrupted — the damage was to the URL this page's own
+               contract says is shareable and reload-survivable. */
+            <HeaderActions><HeaderControl icon={Plus} label="New trigger" variant="primary" priority="primary" onClick={() => onCreate()} /></HeaderActions>
+          }
+        />
+      }
+      controls={(triggers === null || counts.all > 0)
+        ? <ListControls
+            results={{ count: (triggers ?? []).length, noun: 'triggers', active: !!q.trim() || filter !== 'all' }}
+            // Search and the type filter belong to the LIST. The week grid plots every enabled clock
+            // trigger by construction, so a search box over it would be a control that changes
+            // nothing — worse than an absent one.
+            search={view === 'list' ? { value: q, onChange: setQ, placeholder: 'Search triggers', label: 'Search triggers' } : undefined}
+          >
+            <Segmented
+              ariaLabel="Triggers view"
+              size="sm"
+              value={view}
+              onChange={setView}
+              options={[{ key: 'list', label: 'List', icon: Zap }, { key: 'week', label: 'Week', icon: CalendarDays }]}
+            />
+            {view === 'list' && <FilterMenu sections={[{
+              title: 'Type',
+              value: filter,
+              defaultKey: 'all',
+              onChange: setFilter,
+              options: FILTERS.map((f) => ({ key: f.key, label: f.label, count: counts[f.key as keyof typeof counts] })),
+            } satisfies FilterSectionDef]} />}
+          </ListControls>
+        : undefined}
+      panel={
+        open && (
+          <SidePanel key={open.id} fillHeight storeKey="trigger-panel-w" icon={<open.whenIcon size={18} style={{ color: open.whenTone }} />} title={open.name} onClose={() => setQuery({ open: null, edit: null })}>
+            {open.kind === 'schedule' && open.schedule
+              ? <ScheduleDetail job={open.schedule} editing={editing} onEditingChange={setEditing} onSaved={loadSchedules} onChanged={loadSchedules} onDeleted={() => { setOpenId(""); loadSchedules() }} />
+              : open.kind === 'store' && open.store
+              ? <StoreTriggerDetail trigger={open.store} onChanged={loadStores} onDeleted={() => { setOpenId(""); loadStores() }} />
+              : open.kind === 'event' && open.event
+              // A data-event trigger has no editor yet (recreate to change its pattern), but
+              // Delete works: the backend DELETE branch has existed since EIAT and the panel is
+              // where destructive actions live on this page (see the menuItems comment below).
+              ? <EventTriggerSummary t={open} onDeleted={() => { setOpenId(""); loadEvents() }} />
+              : open.hook
+              ? <LifecycleDetail hook={open.hook} providers={providers} editing={editing} onEditingChange={setEditing} onSaved={loadHooks} onDeleted={() => { setOpenId(""); loadHooks() }} />
+              : null}
+          </SidePanel>
+        )
+      }
+    >
+      {view === 'week' ? (
+        // Click-through routes into the SAME side panel the list opens (`?open=<id>`), so a cell and
+        // a row lead to one inspector rather than two surfaces that drift apart.
+        <WeekGridView onOpenTrigger={(id) => setQuery({ open: id, edit: null, view: 'list' })} />
+      ) : (
+      <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+        {loadFailed ? (
+          <LoadError what="triggers" error={schedulesErr || hooksErr || storesErr || eventsErr}
+            onRetry={() => { loadSchedules(); refreshHooks(); loadStores(); invalidateKeys('triggers:events'); }} />
+        ) : triggers === null ? <ListSkeleton rows={6} what="triggers" /> : triggers.length === 0 ? (
+              !q && filter === 'all' ? (
+                // GENUINELY EMPTY — the one moment a newcomer has no model of what a trigger is.
+                // A blank create form here opens on the full ontology (four trigger kinds, ~15
+                // lifecycle events, every action provider), so the empty state offers finished
+                // presets that SEED that same form instead. The expert blank path is untouched:
+                // it is still the top bar's "New trigger", and it is repeated under the grid.
+                <PresetEmptyState
+                  title="No triggers"
+                  // No em dash in this hint on purpose: at the centered 520px measure it wrapped
+                  // onto the second line, so the line began with punctuation and read as a new
+                  // sentence. `text-balance` was tried and measurably changed nothing (the break
+                  // was already near-balanced) — the copy was the defect, not the wrapping.
+                  hint="A trigger runs an action when something happens. Each of these opens the create form already filled in, ready for you to review and save."
+                  presets={TRIGGER_PRESETS}
+                  onPick={(prefill) => onCreate(prefill.id)}
+                  footer={
+                    <Button variant="ghost" size="sm" onClick={() => onCreate()}>
+                      <Plus size={15} /> Start from scratch
+                    </Button>
+                  }
+                />
+              ) : (
+              // The hint names the control the user actually touched. One line for "try a
+              // different filter" was wrong whenever the search box was the thing narrowing
+              // the list, which is the common case: it pointed at a filter they never set.
+              // No presets in this branch: the list is merely FILTERED, so offering a starter
+              // answers a question this user did not ask (the `emptyStateNoMatch` contract).
+              <EmptyState
+                icon={Zap}
+                title="No matching triggers"
+                hint={
+                  q && filter !== 'all' ? 'Try a different search or filter.' :
+                  q ? 'Try a different search term.' :
+                  'Try a different filter.'
+                }
+              />
+              )
+            ) : (
+              <div className="flex flex-col gap-s">
+                {triggers.map((t, i) => {
+                  // ONE call for every kind. The per-kind ternary that used to live here was the
+                  // defect: each branch chose a MAPPER, so adding a kind meant picking a vocabulary
+                  // again — and the event branch picked the run-outcome mapper for a row that has no
+                  // run outcome, rendering a PARKED event trigger as "never run". The converters now
+                  // put each fact in its own field and `triggerStatusMeta` owns the precedence.
+                  const sd = triggerStatusMeta(t)
+                  // The cause, shown only where it is still true — see `explainsCause`: the backend
+                  // never clears `last_error_summary` on recovery, so a healthy row still carries the
+                  // old reason and printing it would report a fixed fault.
+                  const reason = explainsCause(sd) ? t.lastError : ''
+                  // Right-click / long-press → the scoped actions this list performs on
+                  // a row (open the inspector, or open it straight into edit mode). Both
+                  // route through the same `setQuery` the row's click uses — destructive
+                  // + enable/disable live inside the opened detail panel, not here.
+                  // A FOREIGN row gets 'Open' and nothing else (TEAM-SHARED-ENTITIES §2.2 —
+                  // TSE-4). It is somebody else's automation: this harness will not arm or fire it,
+                  // so offering Edit would be offering to change a row whose owner's machine — not
+                  // this one — decides what it does. Open still works: the row is informational,
+                  // and informational means readable.
+                  // An EVENT row gets no Edit either: its inspector has no editor (recreate to
+                  // change the pattern), so the item silently acted as a second Open — an
+                  // affordance that lies about what it does.
+                  const menuItems: ContextMenuItem[] = [
+                    { icon: <Zap size={15} />, label: 'Open', onSelect: () => setQuery({ open: t.id, edit: null }) },
+                    ...(t.readOnly || t.kind === 'event' ? [] : [{ icon: <Pencil size={15} />, label: 'Edit', onSelect: () => setQuery({ open: t.id, edit: '1' }) }]),
+                  ]
+                  return (
+                    <ContextMenu key={t.id} items={menuItems}>
+                    <ListRow index={i} accent={t.enabled ? t.whenTone : undefined} onClick={() => setQuery({ open: t.id, edit: null })} label={t.name}>
+                      <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${t.whenTone} 16%, transparent)` }}><t.whenIcon size={19} style={{ color: t.whenTone }} /></span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-s">
+                          <span className={`truncate text-[0.9375rem] ${t.enabled ? 'text-on-surface' : 'text-on-surface-var'}`} style={fvs(500)}>{t.name}</span>
+                          {!t.enabled && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· disabled</span>}
+                          {t.kind === 'schedule' && t.schedule?.is_running && <span className="shrink-0 inline-flex items-center gap-1 text-primary text-[0.75rem]"><span className="relative flex size-1.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-pill bg-primary opacity-60" /><span className="relative inline-flex size-1.5 rounded-pill bg-primary" /></span>running</span>}
+                          {/* G40: a BLOCKING hook that no agent binds still fires — on the
+                              informational path, whose results are discarded — so its run count
+                              climbs while the write it exists to stop lands anyway. Measured: 3
+                              fires, file written. The dim "· dormant" it used to share with every
+                              other unbound event cannot carry that, and the run count argues
+                              against it, so an inert safety control gets warn ink and the word
+                              "enforcing" the user was looking for. Non-blocking events keep
+                              "· dormant": accurate for them, and crying wolf on 14 of the 15
+                              would train the eye to skip the one that matters. */}
+                          {/* Issue 610: `used_by` is "which agents reference this", NOT "does it
+                              fire" — 7 of the 15 events fire GLOBALLY, agent references irrelevant
+                              (a MemoryWrite hook badged by used_by delivered its notification
+                              while reading "dormant"). So the badge reads the event's FIRE PATH
+                              from the server catalog: "dormant" is reserved for eventIsDormant's
+                              real meaning (an event nothing fires), agent-scoped events with no
+                              referencing agent say exactly that, and an unreferenced GLOBAL event
+                              gets no badge — it fires regardless. Catalog still loading / older
+                              backend → no claim at all (a wrong badge is the bug, silence is not). */}
+                          {t.kind === 'lifecycle' && t.enforcement === 'not_enforcing'
+                            ? <span className="shrink-0 inline-flex items-center gap-1 text-warn text-[0.75rem]"><ShieldOff size={11} /> not enforcing</span>
+                            : t.kind === 'lifecycle' && eventIsDormant(catalog, t.hook?.event)
+                              ? <span data-type="caption" className="shrink-0 text-on-surface-low">· dormant</span>
+                              : t.kind === 'lifecycle' && t.usedBy.length === 0 && eventIsAgentScoped(catalog, t.hook?.event) && <span data-type="caption" className="shrink-0 text-on-surface-low">· no agent references this</span>}
+                          {t.broken && t.broken.length > 0 && <span className="shrink-0 text-danger text-[0.75rem]">· needs attention</span>}
+                          {/* The row's WARNING-severity issues, which reached no surface at all
+                              before issue 531 — the store computed them on every load and the wire
+                              projection dropped them. Rendered ONLY when there is no error: a row
+                              already flagged "needs attention" in red does not need a second,
+                              milder verdict beside it. `title` carries the messages — the badge is
+                              the signal, the text is the diagnosis. Warn-toned, not danger, because
+                              the trigger RUNS as authored; this is an advisory, not a fault. */}
+                          {(!t.broken || t.broken.length === 0) && t.warnings && t.warnings.length > 0
+                            && <span data-type="caption" className="shrink-0 text-warn" title={t.warnings.join('\n')}>· check schedule</span>}
+                          {t.kind === 'store' && t.storeKind && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· {t.storeKind}</span>}
+                          {/* The AUTHOR chip §2.2 asks for. Shown only for a foreign row — a chip
+                              on every row would be noise on the single-user install that is the
+                              norm, and the useful signal here is "this one is not mine". */}
+                          {t.readOnly && <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 py-px text-on-surface-var text-[0.75rem]"><Users size={11} /> {t.author || 'shared'}</span>}
+                        </div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
+                          <span className="inline-flex items-center gap-1" style={{ color: t.whenTone }}><t.whenIcon size={11} /> {t.whenLabel}</span>
+                          <span className="inline-flex items-center gap-1"><t.actionIcon size={11} /> {t.actionLabel}</span>
+                          {t.kind === 'schedule' && t.enabled && t.schedule?.next_run_ts && <span className="inline-flex items-center gap-1"><Clock size={11} /> {relFuture(t.schedule.next_run_ts)}</span>}
+                          {/* The rung chip: what this automation may do on its own, and why.
+                              Placed beside the action label because that is the thing being
+                              governed — the action, not the schedule that fires it. Absent for
+                              an action no declaration claims (it keeps its pre-ladder
+                              behaviour) and while the ladder is still loading. */}
+                          {t.actionProvider && rungByProvider.get(t.actionProvider) && (
+                            <RungChip type={rungByProvider.get(t.actionProvider)!} ladder={ladder} />
+                          )}
+                          {t.kind === 'lifecycle' && t.runCount != null && <span>ran {t.runCount}×</span>}
+                          {/* An event trigger has no clock, so `fired N×` is its one live number. */}
+                          {t.kind === 'event' && t.runCount != null && <span>fired {t.runCount}×</span>}
+                          {/* 🔴 THE CAUSE, which this row never showed (issue 496). `last_error` has
+                              been on the wire for all three store-backed kinds and the LIST — the one
+                              page a user manages automations from — read none of them. The issue was
+                              filed because a digest reaped for blowing an 1800-second deadline said
+                              "Reaped after 1811s (exceeded 1800s deadline)" on the wire and nothing
+                              at all on screen; that reaper hang went unexplained for cycles purely
+                              because the evidence was fetched and dropped.
+                              Neutral ink, not danger: the DOT carries the alarm, and a second red
+                              thing on the row would compete with it. Truncated with the full text in
+                              the title — a 200-character reason must not reflow the list. */}
+                          {reason && (
+                            <span data-type="caption" className="min-w-0 max-w-full truncate text-on-surface-low" title={reason}>{reason}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="hidden sm:flex shrink-0 items-center gap-1.5 text-on-surface-low text-[0.75rem]">
+                        <sd.icon size={13} style={{ color: sd.tone }} />
+                        {/* 🔴 THE WORD, not just the tone. After the dot stopped collapsing four
+                            states into one grey circle, three of them were still distinguished only
+                            by hue + glyph — which fails WCAG 1.4.1 and asks the user to learn a
+                            colour key. The label is the same string the mapper already computed.
+                            Suppressed for "never run", where the timestamp beside it says it. */}
+                        {sd.label && sd.label !== 'never run' && (
+                          <span data-type="caption" style={{ color: sd.tone }}>{sd.label}</span>
+                        )}
+                        {/* 🔴 "never" is a CLAIM, so it is only made when it is true. A store or event
+                            row carries no last-run timestamp on the wire, so this cell printed
+                            "never" for an automation with `run_count: 9` — the exact confusion this
+                            issue is about, in the text beside the dot. `hasRun` is the honest
+                            discriminator: no timestamp AND no fires is "never"; no timestamp with
+                            fires recorded says nothing rather than something false. */}
+                        <span>{t.lastRunTs ? relPast(t.lastRunTs) : t.hasRun ? '' : 'never'}</span>
+                      </div>
+                    </ListRow>
+                    </ContextMenu>
+                  )
+                })}
+              </div>
+            )}
+      </div>
+      )}
+    </WorkbenchLayout>
+  )
+}
+
+/** Read-only inspector for a data-event trigger. Mirrors `StoreTriggerDetail`'s section rhythm
+ *  (uppercase caption over a value) so the two inspectors read as one family; it stays local
+ *  rather than exporting that file's private `Section` for a single caller.
+ *
+ *  Shows only the matcher the row's pattern actually reads — `eventPatternMeta().matcher` names
+ *  it, and the other glob fields are inert for that pattern, so rendering them would claim a
+ *  constraint that is not applied. */
+export function EventTriggerSummary({ t, onDeleted }: { t: Trigger; onDeleted: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const pm = eventPatternMeta(t.eventPattern)
+  // 🔴 THE LIFECYCLE, which this inspector had no row for (issue 496). `_serialize_event` sends
+  // `state`/`health`/`last_error` and its docstring says why: *"a row that shows only
+  // `enabled: true` while never firing is the 'backend truth, frontend silence' shape — the panel
+  // needs the state AND the reason to say anything true."* This panel showed neither, so an event
+  // trigger PARKED because the app that owns its event was uninstalled read as a working one.
+  // Rendered through the same mapper the list and the store panel use, not a fourth vocabulary.
+  const lc = triggerStatusMeta(t)
+  const rows: Array<[string, string]> = [
+    ['Fires on', pm.label],
+    ...(pm.matcher ? [[pm.matcherLabel, t.eventMatcher || 'anything'] as [string, string]] : []),
+    ['Then', t.actionLabel],
+    ['Fired', t.runCount != null ? `${t.runCount}×` : '—'],
+  ]
+  // Same shape as StoreTriggerDetail.remove(): confirm → reportingWrite (failure becomes a
+  // toast and returns false) → onDeleted closes the panel and reloads the event list. The
+  // default "This cannot be undone." body is accurate here — an event trigger keeps no run
+  // history, so deletion removes exactly the trigger.
+  async function remove() {
+    if (!(await confirmDelete('data-event trigger', t.name))) return
+    setBusy(true)
+    try {
+      if (!(await reportingWrite(`delete ${t.name}`, () => api.deleteEventTrigger(t.rawId)))) return
+      onDeleted()
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="flex flex-col gap-l p-l">
+      <p className="text-on-surface-var text-[0.8125rem]">{pm.desc}</p>
+      {/* Status first, because it decides whether anything else on this panel matters: a parked
+          trigger's pattern and action are what it WOULD do, not what it does.
+          The eyebrow is the `Eyebrow` primitive, not the older raw-size-plus-uppercase-tracking
+          shape the sibling panels still carry: DESIGN.md §3/§6's Weight-First rule bans
+          uppercase-with-tracking, and both design ratchets (`eyebrowWeightRole`, `typeScaleRatchet`)
+          count SOURCE TEXT — so even naming the old class literal in a comment trips them. */}
+      <div>
+        <Eyebrow className="mb-xs">Status</Eyebrow>
+        <div className="flex items-center gap-1.5">
+          <lc.icon size={13} style={{ color: lc.tone }} />
+          <span data-type="body-m" className="text-on-surface">
+            {lc.label === 'parked'
+              ? 'Parked — the source this listens to went away; it resumes if it returns'
+              : lc.label && lc.label !== 'never run' ? lc.label
+              : t.enabled ? 'Listening' : 'Paused — it will not fire until re-enabled'}
+          </span>
+        </div>
+        {explainsCause(lc) && t.lastError && (
+          <div data-type="caption" className="mt-0.5 font-mono text-on-surface-low break-all">{t.lastError}</div>
+        )}
+      </div>
+      {rows.map(([label, value]) => (
+        <div key={label}>
+          <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</div>
+          <div data-type="body-m" className="text-on-surface break-words">{value}</div>
+        </div>
+      ))}
+      <p className="text-on-surface-low text-[0.8125rem]">
+        Editing a data-event trigger isn’t available here yet — recreate it to change its pattern.
+      </p>
+      {/* No action row for a foreign row, same reasoning as StoreTriggerDetail: Delete is a
+          write to somebody else's automation. Inert today (events carry no attribution on the
+          wire yet) but the gate is the family invariant, not a per-panel choice. */}
+      {!t.readOnly && (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <div className="flex-1" />
+          <Button variant="ghost" size="sm" onClick={remove} disabled={busy} disabledReason={BUSY_REASON} className="text-danger">
+            <Trash2 size={14} /> Delete
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+}
+

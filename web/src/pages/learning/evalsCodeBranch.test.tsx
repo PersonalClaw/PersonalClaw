@@ -1,0 +1,324 @@
+import { describe, expect, it, afterEach, vi } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { api, ApiError, hasApiCode } from '../../lib/api'
+import { errEnvelope, errText } from '../../lib/errText'
+import { JudgeBenchPanel } from './JudgeBenchPanel'
+import { StudiesPanel } from './StudiesPanel'
+import { RetrievalBenchPanel } from './RetrievalBenchPanel'
+import { AblationPanel } from './AblationPanel'
+import { BenchmarkPanel } from './BenchmarkPanel'
+import { FieldMetricsPanel } from './FieldMetricsPanel'
+
+// ── The typed error code the funnel was throwing away, and the six branches that waited ──────
+//
+// `lib/errText.ts` parsed `{"error": {"code", "message"}}` and kept only the sentence. `ApiError`
+// carried only `.status`. So four learning panels matched their code against the human copy
+// (`error.message.includes('evals_disabled')`) — and no message ever contains its own code.
+//
+// DRIVEN on a real gateway (`--seed demo-home`, port 10784, viewport 1440×1000 and 390×844),
+// `#/learning`, with the four `/api/evals/*` responses read off the wire:
+//
+//   evals.enabled = false  → all four answer 404 `evals_disabled`
+//     BEFORE  4 × red role="alert" "Couldn't load your judge benchmark / studies / retrieval
+//             benchmark / ablation report", each with a Retry that cannot ever succeed
+//     AFTER   4 × "The eval substrate is off, so no <x> can run — turn on Evals enabled in
+//             Settings → Evaluations." — one link to `#/settings/evals`, no Retry
+//
+//   evals.enabled = true, nothing run yet → 404 `judge_bench_absent` / `retrieval_absent` /
+//   `ablation_absent` (studies answers 200 `{"studies": []}`)
+//     BEFORE  3 × the same red "Couldn't load your …" + dead Retry
+//     AFTER   3 × the panel's own run command as guidance
+//
+// 🪤 THE FIXTURE IS THE DEFECT. Every existing test for these branches passed by rejecting with
+// `new Error('ablation_absent')` — a "message" that IS the code, which nothing on the wire ever
+// sends. `includes()` matched the test's own invention. So every body below is verbatim from
+// `curl`, and each case asserts the vacuity floor: the message does NOT contain the code, so the
+// old prose predicate is proven to have been false for exactly these responses.
+//
+// 🔑 AND THE ONE COPY THAT EXISTED FOR THIS STATE WAS WRONG. `AblationPanel`'s `evals_disabled`
+// branch said "Turn on `evals.enabled` in Settings" and linked `#/settings`. `evals.enabled` was
+// in `_EDITABLE_CONFIG` but on no settings surface — the link led to a page with no such control.
+// Being unreachable is what kept that invisible.
+//
+// 🔁 AND THAT IS WHY ONE ASSERTION HERE INVERTED. This file shipped with a rail forbidding a
+// Settings link, whose stated reason was that `#/settings` had no evals control — measured, and
+// true at the time. `#/settings/evals` now exists (`pages/settings/EvalsPanel.tsx`, the five
+// allowlisted `evals.*` keys), so the rail's premise is gone and it now enforces the OPPOSITE
+// property in the same spirit: the link must be DEEP (`#/settings/evals`, never the bare
+// 34-card hub), and there must still be exactly ONE instruction — so the CLI command it used to
+// print is now asserted ABSENT. The invariant that never moved: this state hands the user exactly
+// one place to go, and that place has the control.
+
+/** Verbatim `curl http://127.0.0.1:10784/api/evals/…` bodies. Do not paraphrase these. */
+const WIRE = {
+  judge_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish benchmark results."}}',
+  studies_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish study results."}}',
+  retrieval_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish retrieval ablation reports."}}',
+  ablation_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish ablation reports."}}',
+  benchmark_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish benchmark reports."}}',
+  field_metrics_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish field metrics."}}',
+  judge_absent: '{"error": {"code": "judge_bench_absent", "message": "No judge benchmark has run yet. Run `personalclaw judge-bench` to produce one."}}',
+  retrieval_absent: '{"error": {"code": "retrieval_absent", "message": "No retrieval benchmark has run yet. Run `personalclaw retrieval-eval` to score both stores."}}',
+  ablation_absent: '{"error": {"code": "ablation_absent", "message": "No ablation has run yet. Register a component in `evals/ablation_registry.json` and run `personalclaw ablation --force`."}}',
+} as const
+
+const res = (body: string, status = 404) =>
+  new Response(body, { status, headers: { 'Content-Type': 'application/json' } })
+
+describe('errEnvelope keeps BOTH halves of the platform envelope', () => {
+  it('lifts the code off every real /api/evals body', async () => {
+    for (const [name, body] of Object.entries(WIRE)) {
+      const { code, message } = await errEnvelope(res(body))
+      expect(code, `${name} must carry a code`).toMatch(/^[a-z][a-z0-9_]*$/)
+      // THE VACUITY FLOOR, and the whole defect: the sentence never contains the code, so
+      // `message.includes(code)` — what all four panels used — was false for every response.
+      expect(message.includes(code), `${name}: prose must not contain its own code`).toBe(false)
+    }
+  })
+
+  it('leaves the human sentence byte-identical to errText', async () => {
+    // This ADDS a field. Nothing a user reads, or a screen reader speaks, may move.
+    for (const body of Object.values(WIRE)) {
+      const { message } = await errEnvelope(res(body))
+      expect(message).toBe(await errText(res(body)))
+    }
+    // Including every shape `errText.test.ts` pins, so the funnel's other rules are untouched.
+    for (const [body, want] of [
+      ['{"error": "name is required"}', 'name is required'],
+      ['{"detail": "theme store is read-only"}', 'theme store is read-only'],
+      ['{"error": {"code": "x"}}', 'HTTP 404'],
+      ['{"error": {"code": 7}}', 'HTTP 404'],
+      ['', 'HTTP 404'],
+    ] as const) {
+      expect(await errEnvelope(res(body)).then((e) => e.message)).toBe(want)
+      expect(await errText(res(body))).toBe(want)
+    }
+  })
+
+  it('still lifts a code even when the message is unusable', async () => {
+    // A code-only envelope is not a sentence for a user (the status stands), but it IS a fact
+    // for a caller. Dropping it here would resurrect the bug for any route that stops writing
+    // a message.
+    const { code, message } = await errEnvelope(res('{"error": {"code": "evals_disabled"}}'))
+    expect(code).toBe('evals_disabled')
+    expect(message).toBe('HTTP 404')
+  })
+
+  it('reports no code for the 239 bare-string sites', async () => {
+    expect((await errEnvelope(res('{"error": "disk full"}'))).code).toBe('')
+    expect((await errEnvelope(res('nginx is down', 502))).code).toBe('')
+  })
+})
+
+describe('the api client hands the code to its callers', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('populates ApiError.code from the envelope, through the real request helper', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => res(WIRE.judge_disabled)))
+    const err = await api.judgeBench().then(() => null, (e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).code).toBe('evals_disabled')
+    expect((err as ApiError).status).toBe(404)
+    // `.message` is the contract 200+ `catch(e => e.message)` call sites depend on.
+    expect((err as ApiError).message)
+      .toBe('The eval substrate is off. Turn on `evals.enabled` to publish benchmark results.')
+  })
+
+  it('populates it on the DELETE helper too, which throws its own ApiError', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => res('{"error": {"code": "pack_not_installed", "message": "No such installed pack."}}')))
+    const err = await api.deleteSnippet('x').then(() => null, (e: unknown) => e)
+    expect(hasApiCode(err, 'pack_not_installed')).toBe(true)
+  })
+
+  it('leaves .code empty rather than guessing when the body carries none', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => res('{"error": "the gateway sentence"}', 500)))
+    const err = await api.judgeBench().then(() => null, (e: unknown) => e)
+    expect((err as ApiError).code).toBe('')
+    // And `hasApiCode` must not treat "" as a wildcard.
+    expect(hasApiCode(err, 'evals_disabled')).toBe(false)
+  })
+
+  it('hasApiCode refuses a bare Error and a look-alike message', () => {
+    expect(hasApiCode(new Error('evals_disabled'), 'evals_disabled')).toBe(false)
+    expect(hasApiCode(new ApiError('evals_disabled', 404), 'evals_disabled')).toBe(false)
+    expect(hasApiCode(new ApiError('off', 404, 'evals_disabled'), 'evals_disabled')).toBe(true)
+    expect(hasApiCode(undefined, 'evals_disabled')).toBe(false)
+  })
+})
+
+/** Build the rejection the panel really receives: the wire body, through the real funnel. */
+async function wireError(body: string): Promise<ApiError> {
+  const { message, code } = await errEnvelope(res(body))
+  return new ApiError(message, 404, code)
+}
+
+describe('every eval panel says "the substrate is off" — and says it alike', () => {
+  // 🪤 THIS LIST WAS FOUR, AND THE FIFTH PANEL DRIFTED FOR EXACTLY THAT REASON. `BenchmarkPanel`
+  // appeared NOWHERE in this file, so when the shared `EvalsOff` sentence was introduced — and its
+  // docstring recorded the dotted-path/hub-link version as fixed-and-wrong — this panel kept all three
+  // defects: `<code>evals.enabled</code>`, a link to the 34-card `#/settings` hub, and a link whose
+  // accessible name was just "Settings". An enumerated census cannot catch a member nobody enumerated,
+  // so `every panel handling evals_disabled renders EvalsOff` below DERIVES the population from source.
+  const CASES = [
+    { name: 'judge tiers', body: WIRE.judge_disabled, what: 'judge benchmark', el: (e: unknown) => <JudgeBenchPanel bench={undefined} error={e} onRetry={() => {}} /> },
+    { name: 'template studies', body: WIRE.studies_disabled, what: 'study', el: (e: unknown) => <StudiesPanel studies={undefined} error={e} onRetry={() => {}} /> },
+    { name: 'retrieval', body: WIRE.retrieval_disabled, what: 'retrieval benchmark', el: (e: unknown) => <RetrievalBenchPanel bench={undefined} error={e} onRetry={() => {}} /> },
+    { name: 'ablation', body: WIRE.ablation_disabled, what: 'ablation', el: (e: unknown) => <AblationPanel view={undefined} error={e} onRetry={() => {}} /> },
+    { name: 'skill-impact benchmark', body: WIRE.benchmark_disabled, what: 'benchmark', el: (e: unknown) => <BenchmarkPanel view={undefined} error={e} onRetry={() => {}} /> },
+    { name: 'lab vs field', body: WIRE.field_metrics_disabled, what: 'lab-vs-field table', el: (e: unknown) => <FieldMetricsPanel rows={undefined} error={e} onRetry={() => {}} /> },
+  ] as const
+
+  for (const c of CASES) {
+    it(`${c.name}: guidance, one instruction, and no Retry`, async () => {
+      render(c.el(await wireError(c.body)))
+      expect(screen.getByText(new RegExp(`no ${c.what} can run`))).toBeTruthy()
+      // ONE instruction, and it is the control's own `_meta` label — not the dotted config path,
+      // which appears nowhere on the destination page.
+      expect(screen.getByRole('link', { name: 'Evals enabled in Settings → Evaluations' })).toBeTruthy()
+      expect(screen.queryByText(/personalclaw config set/), 'two ways to flip one switch is not guidance').toBeNull()
+      // A switch that is off does not flip because the fetch is repeated.
+      expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull()
+      // Nor is this a failure: `LoadError`'s role="alert" would announce a decided answer as
+      // unrequested bad news.
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(screen.queryByText(/Couldn't load your/)).toBeNull()
+    })
+  }
+
+  it('and the list above is the WHOLE population — every panel handling evals_disabled renders EvalsOff', () => {
+    // The derived half. Enumerating panels is what let `BenchmarkPanel` drift, so this asks the source
+    // a mechanical question instead: any file that branches on `evals_disabled` must render `EvalsOff`,
+    // and must not hand-roll the sentence's telltales.
+    const HERE = import.meta.dirname
+    const files = readdirSync(HERE).filter((n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
+    const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    const handlers: string[] = []
+    const offenders: string[] = []
+    for (const n of files) {
+      if (n === 'EvalsOff.tsx') continue
+      const src = strip(readFileSync(join(HERE, n), 'utf8'))
+      if (!/hasApiCode\(error, 'evals_disabled'\)/.test(src)) continue
+      handlers.push(n)
+      if (!/<EvalsOff\b/.test(src)) offenders.push(`${n}: branches on evals_disabled without rendering <EvalsOff>`)
+      // The three telltales of the hand-rolled version, each named in EvalsOff's docstring.
+      if (/<code[^>]*>\s*evals\.enabled/.test(src)) offenders.push(`${n}: prints the dotted config path`)
+      if (/href="#\/settings"/.test(src)) offenders.push(`${n}: links the 34-card hub, not #/settings/evals`)
+    }
+    // Vacuity floor: if the scan finds no handlers, every check above passed over nothing.
+    expect(handlers.length, 'no panel branches on evals_disabled — the scan is wrong').toBeGreaterThanOrEqual(5)
+    expect(handlers.length, 'a panel handles evals_disabled but is not in CASES above').toBe(CASES.length)
+    expect(
+      offenders,
+      'EvalsOff owns this sentence — its docstring records why the dotted path and the hub link are ' +
+        'wrong:\n  ' + offenders.join('\n  '),
+    ).toEqual([])
+  })
+
+  it('sends the user to the SUBPAGE that has the control, never the bare hub', async () => {
+    // 🔁 INVERTED, deliberately — see the header. The dead-end version of this copy linked
+    // `#/settings`, a 34-card bento with no evals card on it; the fix then was to drop the link,
+    // and the fix now is to make it deep. Both halves are asserted because the bare hub is the
+    // regression: `SettingsHome` renders only `SETTINGS_WIDGETS`, so a user dropped there has to
+    // find the right card among 34 before they can reach the switch this sentence names.
+    for (const c of CASES) {
+      const { unmount } = render(c.el(await wireError(c.body)))
+      const link = document.querySelector('a[href="#/settings/evals"]')
+      expect(link, `${c.name} must link the evals subpage`).not.toBeNull()
+      expect(document.querySelector('a[href="#/settings"]'), 'the bare hub is the dead end').toBeNull()
+      // Exactly one instruction: two links in a four-panel column is four choices nobody wants.
+      expect(document.querySelectorAll('a').length, `${c.name}: one instruction`).toBe(1)
+      unmount()
+    }
+  })
+
+  it('keeps its LABELLED section, so the panel does not vanish from the page', async () => {
+    // Asked of the accessibility tree rather than of the copy: the section must still exist and
+    // its `aria-labelledby` must still resolve to a name. `LoadError` replaces the whole section
+    // — including the heading — so before this a user scanning #/learning could not tell which
+    // four things had failed apart from the sentence inside each red block.
+    for (const [c, id] of [
+      [CASES[0], 'judge-bench-heading'], [CASES[1], 'studies-heading'],
+      [CASES[2], 'retrieval-bench-heading'], [CASES[3], 'ablation-heading'],
+    ] as const) {
+      const { unmount } = render(c.el(await wireError(c.body)))
+      expect(document.querySelector(`section[aria-labelledby="${id}"]`), `${c.name} keeps its section`).not.toBeNull()
+      expect(document.getElementById(id)?.textContent?.trim(), `${c.name} keeps its name`).toBeTruthy()
+      unmount()
+    }
+  })
+})
+
+describe('and the "nothing has run yet" branches, which were inert for the same reason', () => {
+  it('judge tiers names its run command', async () => {
+    render(<JudgeBenchPanel bench={undefined} error={await wireError(WIRE.judge_absent)} onRetry={() => {}} />)
+    expect(screen.getByText('personalclaw judge-bench')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull()
+  })
+
+  it('retrieval names its run command AND still offers the label card', async () => {
+    render(<RetrievalBenchPanel bench={undefined} error={await wireError(WIRE.retrieval_absent)} onRetry={() => {}} />)
+    expect(screen.getByText('personalclaw retrieval-eval')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull()
+  })
+
+  it('ablation points at the registry — the place the OFF state must not mention', async () => {
+    render(<AblationPanel view={undefined} error={await wireError(WIRE.ablation_absent)} onRetry={() => {}} />)
+    expect(screen.getByText('evals/ablation_registry.json')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull()
+  })
+
+  it('the OFF state does not leak any of those three next steps', async () => {
+    const { unmount } = render(<AblationPanel view={undefined} error={await wireError(WIRE.ablation_disabled)} onRetry={() => {}} />)
+    expect(screen.queryByText(/ablation_registry/)).toBeNull()
+    unmount()
+    render(<JudgeBenchPanel bench={undefined} error={await wireError(WIRE.judge_disabled)} onRetry={() => {}} />)
+    expect(screen.queryByText(/personalclaw judge-bench/)).toBeNull()
+  })
+})
+
+describe('a real failure is still a failure', () => {
+  const GENERIC = new ApiError('The benchmark artifacts could not be read.', 500, 'judge_bench_unreadable')
+
+  it('an unrecognised code renders LoadError, with the Retry that belongs there', () => {
+    render(<JudgeBenchPanel bench={undefined} error={GENERIC} onRetry={() => {}} />)
+    expect(screen.getByRole('alert')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Retry/ })).toBeTruthy()
+    expect(screen.getByText(/Couldn't load your judge benchmark/)).toBeTruthy()
+    // The confusion the panels exist to refuse: a broken read reading as an empty one.
+    expect(screen.queryByText(/personalclaw judge-bench/)).toBeNull()
+    expect(screen.queryByText(/substrate is off/)).toBeNull()
+  })
+
+  it('a codeless network blip does too', () => {
+    render(<AblationPanel view={undefined} error={new Error('Failed to fetch')} onRetry={() => {}} />)
+    expect(screen.getByRole('alert')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Retry/ })).toBeTruthy()
+  })
+
+  it('an EMPTY study register is a 200, not this branch', () => {
+    // 🪤 `study_absent` used to be OR'd into `StudiesPanel`'s predicate. `api_evals_studies`
+    // cannot return it — it belongs to `/api/evals/studies/{id}` — so that arm was unreachable
+    // twice over. The empty register arrives as `{"studies": []}` and renders the register's own
+    // empty state, which must NOT be what the OFF state says.
+    render(<StudiesPanel studies={[]} error={undefined} onRetry={() => {}} />)
+    expect(screen.getByText(/No study has been registered/)).toBeTruthy()
+    expect(screen.queryByText(/substrate is off/)).toBeNull()
+  })
+})
+
+describe('one owner for the predicate', () => {
+  it('no panel re-derives a code from prose', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const dir = join(process.cwd(), 'src', 'pages', 'learning')
+    const offenders = readdirSync(dir)
+      .filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f))
+      .filter((f) => /\.message\b[^\n]*\.includes\(|includes\(['"](?:evals_disabled|[a-z_]+_absent)['"]\)/
+        .test(readFileSync(join(dir, f), 'utf8')))
+    // It was FOUR files with a private copy of the same wrong predicate. `hasApiCode` is the
+    // one home; a fifth copy would reintroduce the bug in a place a fix would not reach.
+    expect(offenders, 'match on ApiError.code via hasApiCode, never on the message').toEqual([])
+  })
+})

@@ -1,0 +1,197 @@
+import { useEffect } from 'react'
+import {
+  Palette, Plug, Bell, Cpu, Shield, ShieldAlert, Database, User, MessageSquare, Bot, Inbox,
+  FolderSync, ScrollText, Archive, AudioLines, DownloadCloud, FileText, ChevronRight, Search, Blocks, Activity, Scissors, Compass, Stethoscope, ThumbsUp,
+  HardDriveDownload, Coins, Route, LayoutDashboard, Rss, Package, Smartphone, MonitorSmartphone, Plug2, FileType2,
+  FlaskConical, KeyRound, MessageCircle, Workflow, RefreshCcw,
+} from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+import { TopBar } from '../../ui/TopBar'
+import { IconButton } from '../../ui/IconButton'
+import { ArrowLeft } from 'lucide-react'
+import { DesignPanel } from './DesignPanel'
+import { AccountPanel } from './AccountPanel'
+import { NotificationsPanel } from './NotificationsPanel'
+import { MemoryPanel } from './MemoryPanel'
+import { SecurityPanel } from './SecurityPanel'
+import { SecretsPanel } from './SecretsPanel'
+import { ProvidersPanel } from './ProvidersPanel'
+import { ModelsPanel } from './ModelsPanel'
+import { SearchPanel } from './SearchPanel'
+import { PromptsPanel } from './PromptsPanel'
+import { AgentDefaultsPanel } from './AgentDefaultsPanel'
+import { ChatPanel } from './ChatPanel'
+import { InboxSettingsPanel } from './InboxSettingsPanel'
+import { DocumentsPanel } from './DocumentsPanel'
+import { AuditPanel } from './AuditPanel'
+import { ArchivePanel } from './ArchivePanel'
+import { PortabilityPanel } from './PortabilityPanel'
+import { DurabilityPanel } from './DurabilityPanel'
+import { VoicePanel } from './VoicePanel'
+import { UpdatesPanel } from './UpdatesPanel'
+import { DiagnosticsPanel } from './DiagnosticsPanel'
+import { FeedbackPanel } from './FeedbackPanel'
+import { UsagePanel } from './UsagePanel'
+import { RoutingPanel } from './RoutingPanel'
+import { ProjectionRulesPanel } from './ProjectionRulesPanel'
+import { LegibilityPanel } from './LegibilityPanel'
+import { EvalsPanel } from './EvalsPanel'
+import { AmbientPanel } from './AmbientPanel'
+import { WorkflowsPanel } from './WorkflowsPanel'
+import { LoopsPanel } from './LoopsPanel'
+import { CompanionPanel } from './CompanionPanel'
+import { DevicesPanel } from './DevicesPanel'
+import { SenderTrustPanel } from './SenderTrustPanel'
+import { SourcesPanel } from './SourcesPanel'
+import { PacksPanel } from './PacksPanel'
+import { ExternalAccessPanel } from './ExternalAccessPanel'
+import { GuardrailsPanel } from './GuardrailsPanel'
+import { DoctorPanel } from './DoctorPanel'
+import { AppsPanel } from './AppsPanel'
+import { SettingsHome } from './SettingsHome'
+import type { RouteProps } from '../../app/useQueryState'
+import { fvs } from '../../design/fontWeight'
+import { PageTitle } from '../../ui/PageTitle'
+
+// A subpage panel's render context: `go` navigates between subpages, `navigate` is
+// the raw router (for cross-section links), and `query`/`setQuery` let a panel put
+// its OWN nested state (which tab, which provider is expanded) in the URL — so
+// #/settings/memory?tab=audit and an expanded provider survive refresh + Back.
+interface PanelCtx {
+  go: (id: string) => void
+  navigate?: RouteProps['navigate']
+  query: RouteProps['query']
+  setQuery: RouteProps['setQuery']
+}
+
+// Each subpage: id + label + icon (for the breadcrumb) + its panel renderer. The
+// home page (bento grid of widgets) is the default; a subpage opens on
+// #/settings/<id> with a Settings › <Label> breadcrumb header (no left-nav).
+interface SubPage { id: string; label: string; icon: LucideIcon; render: (ctx: PanelCtx) => React.ReactNode }
+
+const SUBPAGES: SubPage[] = [
+  { id: 'account', label: 'Account', icon: User, render: () => <AccountPanel /> },
+  { id: 'design', label: 'Design', icon: Palette, render: () => <DesignPanel /> },
+  { id: 'chat', label: 'Chat', icon: MessageSquare, render: () => <ChatPanel /> },
+  { id: 'providers', label: 'Providers', icon: Plug, render: (c) => <ProvidersPanel query={c.query} setQuery={c.setQuery} /> },
+  { id: 'models', label: 'Models', icon: Cpu, render: () => <ModelsPanel /> },
+  { id: 'search', label: 'Search', icon: Search, render: () => <SearchPanel /> },
+  { id: 'prompts', label: 'Prompts', icon: FileText, render: () => <PromptsPanel /> },
+  { id: 'memory', label: 'Memory', icon: Database, render: (c) => <MemoryPanel query={c.query} setQuery={c.setQuery} /> },
+  // Grouped with Prompts/Models rather than under System: a study measures a prompt template
+  // against another one, and its judge is a model — the things this page is about are the things
+  // those two pages configure. Its RESULTS live on `#/learning`; this page is only the five knobs
+  // that decide whether they can be produced at all.
+  { id: 'evals', label: 'Evaluations', icon: FlaskConical, render: () => <EvalsPanel /> },
+  { id: 'agent', label: 'Agent defaults', icon: Bot, render: () => <AgentDefaultsPanel /> },
+  { id: 'voice', label: 'Speech & Transcription', icon: AudioLines, render: (c) => <VoicePanel go={c.go} query={c.query} /> },
+  { id: 'apps', label: 'Apps', icon: Blocks, render: (c) => <AppsPanel navigate={c.navigate} /> },
+  { id: 'inbox', label: 'Inbox', icon: Inbox, render: () => <InboxSettingsPanel /> },
+  // Beside Apps/Inbox in Workspace, not in Chat: the flag it owns governs the ARTIFACT
+  // surface (an office document opened from the library), not anything about a session.
+  { id: 'documents', label: 'Documents', icon: FileType2, render: () => <DocumentsPanel /> },
+  { id: 'notifications', label: 'Notifications', icon: Bell, render: () => <NotificationsPanel /> },
+  { id: 'security', label: 'Security', icon: Shield, render: () => <SecurityPanel /> },
+  // Beside Security, not inside it: Security is about ENFORCEMENT posture (what is denied, what is
+  // redacted), and this is the inventory of credentials the instance holds. A user asking "what
+  // tokens does this thing have" is asking a different question from "what does it block", and
+  // burying a per-secret list inside the enforcement page would make the inventory unfindable.
+  { id: 'secrets', label: 'Secrets', icon: KeyRound, render: () => <SecretsPanel /> },
+  // Next to Security on purpose: "what is paired to my gateway, and can I cut it off" is a
+  // security question. This is the ONE device registry — `companion` above is the LAN/PWA
+  // transport settings, not a list of devices.
+  { id: 'devices', label: 'Devices', icon: MonitorSmartphone, render: () => <DevicesPanel /> },
+  // Beside Devices on purpose: both answer "who can reach me, and can I cut them off". Devices
+  // is what holds a session to this gateway; this is who may talk to the agent through a
+  // messaging channel. The allowlist was writable from two places and readable from none
+  // before EA-7 — an access-control list you cannot enumerate is one you cannot audit.
+  { id: 'sender-trust', label: 'Sender trust', icon: MessageCircle, render: () => <SenderTrustPanel /> },
+  { id: 'guardrails', label: 'Guardrails', icon: ShieldAlert, render: () => <GuardrailsPanel /> },
+  // Beside Guardrails on purpose: "what can reach in, and can I cut it off" is the same
+  // question Guardrails asks about what can act. EXTERNAL-ACCESS §1.5.
+  { id: 'external-access', label: 'External access', icon: Plug2, render: () => <ExternalAccessPanel /> },
+  { id: 'audit', label: 'Audit log', icon: ScrollText, render: () => <AuditPanel /> },
+  { id: 'doctor', label: 'Doctor', icon: Stethoscope, render: () => <DoctorPanel /> },
+  { id: 'diagnostics', label: 'Diagnostics', icon: Activity, render: () => <DiagnosticsPanel /> },
+  { id: 'tool-output', label: 'Tool output', icon: Scissors, render: () => <ProjectionRulesPanel /> },
+  { id: 'feedback', label: 'AI feedback', icon: ThumbsUp, render: () => <FeedbackPanel /> },
+  { id: 'usage', label: 'Usage', icon: Coins, render: (c) => <UsagePanel query={c.query} setQuery={c.setQuery} /> },
+  { id: 'routing', label: 'Routing & Efficiency', icon: Route, render: (c) => <RoutingPanel query={c.query} setQuery={c.setQuery} /> },
+  { id: 'legibility', label: 'Legibility', icon: Compass, render: () => <LegibilityPanel /> },
+  // Beside Ambient surfaces in Workspace: both are about what the workspace DOES on its own.
+  // Their runs/definitions live on `#/workflows` and `#/loops`; these are the engine settings
+  // those surfaces run under, and every field on both was PATCH-editable with no control
+  // anywhere in `web/` before this (issues #2801, #752's siblings).
+  { id: 'workflows', label: 'Workflows', icon: Workflow, render: () => <WorkflowsPanel /> },
+  { id: 'loops', label: 'Autonomous loops', icon: RefreshCcw, render: () => <LoopsPanel /> },
+  { id: 'ambient', label: 'Ambient surfaces', icon: LayoutDashboard, render: () => <AmbientPanel /> },
+  { id: 'companion', label: 'Companion apps', icon: Smartphone, render: () => <CompanionPanel /> },
+  { id: 'sources', label: 'Watched sources', icon: Rss, render: () => <SourcesPanel /> },
+  { id: 'packs', label: 'Packs', icon: Package, render: () => <PacksPanel /> },
+  { id: 'archive', label: 'Archive', icon: Archive, render: () => <ArchivePanel /> },
+  { id: 'portability', label: 'Import / Export', icon: FolderSync, render: () => <PortabilityPanel /> },
+  { id: 'durability', label: 'Backups', icon: HardDriveDownload, render: () => <DurabilityPanel /> },
+  { id: 'updates', label: 'Updates', icon: DownloadCloud, render: () => <UpdatesPanel /> },
+]
+
+/** Settings — a multi-page navigation. The landing page is a bento grid of
+ *  per-subpage widgets (SettingsHome) with one full-width search; clicking a card
+ *  opens that subpage at #/settings/<id> with a Settings › <Label> breadcrumb. No
+ *  left-nav: the home grid IS the navigation. A subpage's own nested state (tabs,
+ *  expanded provider) rides `?query` so it's deep-linkable + refresh/Back-safe. */
+export function SettingsPage({ sub, navigate, query, setQuery }: RouteProps) {
+  const go = (id: string) => navigate?.(id ? `settings/${id}` : 'settings')
+  const current = sub ? SUBPAGES.find((s) => s.id === sub) : undefined
+
+  // Legacy deep-link: Vocabulary merged into Speech & Transcription (the `voice`
+  // subpage). #/settings/vocabulary → #/settings/voice?section=vocabulary, which
+  // scrolls to the merged Vocabulary & corrections section. Replace (not push) so
+  // Back doesn't bounce through the dead route.
+  const legacyVocabulary = sub === 'vocabulary'
+  useEffect(() => {
+    if (legacyVocabulary) navigate?.('settings/voice?section=vocabulary', { replace: true })
+  }, [legacyVocabulary, navigate])
+  if (legacyVocabulary) return null
+
+  // Home (no valid sub, or bare #/settings): the bento grid.
+  if (!current) {
+    return (
+      <div className="flex h-full flex-col">
+        <TopBar left={<PageTitle>Settings</PageTitle>} />
+        <SettingsHome go={go} />
+      </div>
+    )
+  }
+
+  // A subpage: breadcrumb header + the panel, centered to the content width.
+  return (
+    <div className="flex h-full flex-col">
+      <TopBar
+        left={
+          <div className="flex items-center gap-1 min-w-0">
+            <IconButton icon={ArrowLeft} label="Back to Settings" size={36} onClick={() => go('')} />
+            {/* The "Settings" crumb and its chevron drop below `sm`. They are the one duplicate in this
+                row — the arrow to their left already goes to Settings and is already NAMED "Back to
+                Settings" — and at 390px they were eating the width the section name needs: the truncating
+                label measured 20px before the arrow stopped being squeezed and 4px after. Dropping them
+                returns that width to the thing that says where you are. Desktop is untouched. */}
+            <span className="hidden shrink-0 items-center gap-1 sm:inline-flex">
+              <button type="button" onClick={() => go('')}
+                className="text-on-surface-low text-[1.0625rem] transition-colors hover:text-on-surface" style={fvs(470)}>Settings</button>
+              <ChevronRight size={16} className="shrink-0 text-on-surface-low/60" />
+            </span>
+            <span className="flex items-center gap-1.5 min-w-0 text-on-surface text-[1.0625rem]" style={fvs(470)}>
+              <current.icon size={16} className="shrink-0 text-on-surface-low" />
+              <span className="truncate">{current.label}</span>
+            </span>
+          </div>
+        }
+      />
+      <div className="min-w-0 flex-1 overflow-y-auto">
+        <div className="mx-auto px-2xl py-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+          {current.render({ go, navigate, query, setQuery })}
+        </div>
+      </div>
+    </div>
+  )
+}

@@ -1,0 +1,485 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ArrowLeft, Play, Sparkles, RotateCcw } from 'lucide-react'
+import { TopBar } from '../../ui/TopBar'
+import { Loading, LoadError, InlineLoadError } from '../../ui/ListScaffold'
+import { QuietButton } from '../../ui/QuietButton'
+import { Button } from '../../ui/Button'
+import { HeaderActions } from '../../ui/HeaderActions'
+import { Segmented } from '../../ui/Segmented'
+import { Toggle } from '../../ui/Toggle'
+import {
+  buildArgs,
+  declaredInputsSchema,
+  missingRequired,
+  schemaProps,
+  seedArgs,
+  SchemaField,
+  SchemaFields,
+} from '../tools/schema'
+import { PageTitle } from '../../ui/PageTitle'
+import {
+  api,
+  type WorkflowDef,
+  type WorkflowNode,
+  type WorkflowVersionRow,
+  type WorkflowVersionOp,
+  type WorkflowMaturity,
+  type WorkflowLedgerRow,
+} from '../../lib/api'
+import { notify } from '../../app/appSdk'
+
+interface FlatNode { depth: number; kind: string; id: string; label: string; summary: string }
+
+/** Flatten a spec tree for display, one row per node.
+ *
+ *  Rendered as an indented list rather than a graph: a workflow's shape IS a tree (the
+ *  engine's own model), and a force-directed graph of six nodes communicates less than six
+ *  indented lines. The label carries what a reader needs to identify the node; the summary
+ *  carries the one config field that says what it DOES. */
+function flatten(node: WorkflowNode, depth = 0, label = ''): FlatNode[] {
+  const cfg = node.config ?? {}
+  const summary =
+    typeof cfg.prompt === 'string' ? cfg.prompt
+      : typeof cfg.expr === 'string' ? cfg.expr
+      : typeof cfg.provider === 'string' ? `provider: ${cfg.provider}`
+      : typeof cfg.kind === 'string' ? `${cfg.kind} gate`
+      : ''
+  const out: FlatNode[] = [{
+    depth,
+    kind: node.kind,
+    id: node.id ?? '',
+    label,
+    summary: typeof summary === 'string' ? summary.replace(/\s+/g, ' ').slice(0, 140) : '',
+  }]
+  for (const child of node.children ?? []) out.push(...flatten(child, depth + 1))
+  if (node.body) out.push(...flatten(node.body, depth + 1, 'body'))
+  for (const [caseLabel, caseNode] of Object.entries(node.cases ?? {})) {
+    out.push(...flatten(caseNode, depth + 1, `case ${caseLabel}`))
+  }
+  if (node.default) out.push(...flatten(node.default, depth + 1, 'default'))
+  return out
+}
+
+/** The maturity badge (R11). Level and label come from the backend; the tone rises with it so a
+ *  glance says "proven" vs "draft" — a check that has never rejected a bad run is not yet proven,
+ *  and the badge is honest about that. */
+function MaturityBadge({ maturity }: { maturity: WorkflowMaturity }) {
+  const strong = maturity.level >= 2
+  const tone = strong ? 'var(--color-primary)' : 'var(--color-on-surface-low)'
+  return (
+    <span
+      data-type="caption" className="inline-flex shrink-0 items-center rounded-pill px-2 py-0.5"
+      style={{ background: `color-mix(in srgb, ${tone} 14%, transparent)`, color: tone }}
+      title={`Maturity L${maturity.level}: ${maturity.clean_runs} clean run${maturity.clean_runs === 1 ? '' : 's'}`
+        + (maturity.evaluator_rejected ? ', gate has rejected a bad run' : ', gate not yet proven')}
+    >
+      {maturity.label} · L{maturity.level}
+    </span>
+  )
+}
+
+/** One workflow definition — its tree, its declared inputs, its version history and run ledger,
+ *  and a way to run or refine it.
+ *
+ *  Read-mostly by design: authoring a spec by hand is what `workflow_author` and the chat
+ *  planner are for, and a half-built visual editor here would be worse than either. What
+ *  this page owes the user is an honest view of what the workflow DOES plus the ability to
+ *  supply inputs and start it. */
+export function WorkflowDefDetail({ name, onBack, onStarted }: {
+  name: string
+  onBack: () => void
+  onStarted: (runId: string) => void
+}) {
+  const [def, setDef] = useState<WorkflowDef | null>(null)
+  const [loading, setLoading] = useState(true)
+  // `unknown`, not `string`: a declared `boolean` holds a real boolean and a `number` a real
+  // number, all the way from the control to the POST body. Typing this as `string` was the whole
+  // defect — it made a free-text box the only control the form could render (#327).
+  const [inputs, setInputs] = useState<Record<string, unknown>>({})
+  const [starting, setStarting] = useState(false)
+  const [tab, setTab] = useState<'steps' | 'versions' | 'ledger'>('steps')
+  const [versions, setVersions] = useState<WorkflowVersionRow[]>([])
+  const [pinned, setPinned] = useState<number | null>(null)
+  const [maturity, setMaturity] = useState<WorkflowMaturity | null>(null)
+  const [diffOps, setDiffOps] = useState<WorkflowVersionOp[] | null>(null)
+  const [ledger, setLedger] = useState<WorkflowLedgerRow[] | null>(null)
+  // #532 / #2940: the ledger read used to `.catch(() => setLedger([]))`, and the tab's empty branch
+  // then rendered "This template has no recorded runs yet." — a claim about the server's records
+  // made out of the fact that we could not reach them. `null` already means "not loaded", so the
+  // rejection needs its own slot rather than a substitute value.
+  const [ledgerErr, setLedgerErr] = useState<unknown>(null)
+  // #532: the SECOND false-empty in this file, and the one the issue's line citation did not reach.
+  // `versions` starts `[]` and cannot distinguish "no versions" from "we could not read them", so a
+  // failed `workflowVersions` rendered "No version history yet." for a template with a dozen.
+  const [versionsErr, setVersionsErr] = useState<unknown>(null)
+  const [refining, setRefining] = useState(false)
+  // Named for the census's in-flight vocabulary (`disabledReasonCensus`'s BUSY list): the
+  // switch is only ever unavailable while its OWN write is in flight, which is the one class
+  // that stays natively disabled rather than carrying a `disabledReason`.
+  const [publishSaving, setPublishSaving] = useState(false)
+
+  const loadVersions = useCallback(() => {
+    setVersionsErr(null)
+    api.workflowVersions(name)
+      .then((v) => {
+        setVersions(v.versions)
+        setPinned(v.pinned)
+        setMaturity(v.maturity)
+        // A typed-op diff of the two most recent versions — the shape the refiner proposes and
+        // the user rolls back. Only meaningful once a second version exists.
+        if (v.versions.length >= 2) {
+          const [a, b] = [v.versions[v.versions.length - 2].version, v.versions[v.versions.length - 1].version]
+          api.workflowVersionDiff(name, a, b).then((d) => setDiffOps(d.ops)).catch(() => setDiffOps(null))
+        } else {
+          setDiffOps(null)
+        }
+      })
+      .catch((e) => { setVersionsErr(e); setVersions([]); setPinned(null); setMaturity(null) })
+  }, [name])
+
+  useEffect(() => {
+    let alive = true
+    setLoading(true)
+    api.workflowDef(name)
+      .then((d) => {
+        if (!alive) return
+        setDef(d.definition)
+        // Seeded from the declared defaults, so the form opens showing the values a run would
+        // actually use. They were placeholders before — grey text that looks like an empty field,
+        // which is why `apply: false` read as "nothing set" rather than "off".
+        setInputs(seedArgs(declaredInputsSchema(d.definition.inputs)))
+      })
+      .catch(() => { if (alive) setDef(null) })
+      .finally(() => { if (alive) setLoading(false) })
+    loadVersions()
+    return () => { alive = false }
+  }, [name, loadVersions])
+
+  // The Run Ledger tab is a per-run history read; load it lazily the first time it is opened.
+  // `ledgerErr` gates the retry as well as the render: without it the effect would re-fire on every
+  // re-render while `ledger` stayed null, hammering a failing endpoint.
+  useEffect(() => {
+    if (tab === 'ledger' && ledger === null && ledgerErr === null) {
+      api.workflowLedger(name).then((l) => setLedger(l.runs)).catch(setLedgerErr)
+    }
+  }, [tab, ledger, ledgerErr, name])
+
+  const rows = useMemo(() => (def ? flatten(def.root) : []), [def])
+  // The declared inputs as the JSON Schema the shared renderer speaks. One schema drives all
+  // three: which control renders, which values are required, and how they coerce on submit.
+  const paramSchema = useMemo(() => declaredInputsSchema(def?.inputs), [def])
+  const declared = useMemo(() => schemaProps(paramSchema), [paramSchema])
+  const missing = useMemo(
+    () => missingRequired(inputs, declared.required),
+    [inputs, declared],
+  )
+  // Read with `=== true`, matching the backend's `is True`: an absent key is UNPUBLISHED, which
+  // is what every template authored before A2A existed looks like.
+  const published = def?.metadata?.a2a_published === true
+  const handoffs = useMemo(
+    () => (def?.metadata?.hands_off_to ?? []).filter((h) => (h?.target_def ?? '').trim()),
+    [def],
+  )
+
+  const start = useCallback(async () => {
+    // Coerced through the SAME schema that rendered the controls, so what is posted is what the
+    // template declared: a `boolean` goes over the wire as `true`, not `"true"`, and an `array`
+    // textarea is parsed before it leaves. `buildArgs` also drops the empty optionals the old
+    // hand-rolled `value !== ''` loop dropped, so that behaviour is kept, not reimplemented.
+    const { args, error } = buildArgs(paramSchema, inputs)
+    if (error) { notify(error, 'error'); return }
+    setStarting(true)
+    try {
+      const res = await api.startWorkflowRun({ name, inputs: args })
+      onStarted(res.run_id)
+    } catch (e) {
+      notify(e instanceof Error ? e.message : 'Could not start the workflow', 'error')
+    } finally {
+      setStarting(false)
+    }
+  }, [inputs, name, onStarted, paramSchema])
+
+  // "Refine now": fire the propose-only refiner over this template. It launches a run that
+  // proposes a diff for review — it never edits the template — so we navigate to that run.
+  const refine = useCallback(async () => {
+    if (refining) return
+    setRefining(true)
+    try {
+      const res = await api.refineWorkflow(name)
+      if (res.run_id) onStarted(res.run_id)
+      else notify('Refiner started')
+    } catch (e) {
+      notify(e instanceof Error ? e.message : 'Could not start the refiner', 'error')
+    } finally {
+      setRefining(false)
+    }
+  }, [name, onStarted, refining])
+
+  // EXTERNAL-ACCESS §5 — publish/unpublish this template as an A2A skill.
+  //
+  // The optimistic flip is reverted on failure rather than left standing: this switch is the
+  // user's only view of whether an external agent can reach this workflow, and a control that
+  // shows "on" after the write failed is worse than one that lags, because it claims an exposure
+  // decision that did not happen (or hides one that did).
+  const togglePublish = useCallback(async (next: boolean) => {
+    const previous = def?.metadata?.a2a_published === true
+    setPublishSaving(true)
+    setDef((d) => (d ? { ...d, metadata: { ...(d.metadata ?? {}), a2a_published: next } } : d))
+    try {
+      const res = await api.publishWorkflowToA2A(name, next)
+      setDef((d) => (d ? { ...d, metadata: { ...(d.metadata ?? {}), a2a_published: res.a2a_published } } : d))
+    } catch (e) {
+      setDef((d) => (d ? { ...d, metadata: { ...(d.metadata ?? {}), a2a_published: previous } } : d))
+      notify(e instanceof Error ? e.message : 'Could not change A2A publication', 'error')
+    } finally {
+      setPublishSaving(false)
+    }
+  }, [def, name])
+
+  const rollback = useCallback(async (version: number) => {
+    try {
+      await api.repinWorkflowVersion(name, version)
+      loadVersions()
+    } catch (e) {
+      notify(e instanceof Error ? e.message : 'Could not roll back', 'error')
+    }
+  }, [name, loadVersions])
+
+  return (
+    <div className="flex h-full flex-col">
+      <TopBar
+        keepCornerPadding
+        left={<div className="flex min-w-0 items-center gap-m">
+          <QuietButton onClick={onBack} title="Back to workflows"><ArrowLeft size={13} /> Workflows</QuietButton>
+          <PageTitle className="truncate">{name}</PageTitle>
+          {def?.source === 'bundled' && <span data-type="caption" className="shrink-0 text-on-surface-low">bundled</span>}
+          {maturity && <MaturityBadge maturity={maturity} />}
+        </div>}
+        right={def ? (
+          <HeaderActions>
+            {/* 🪤 Same shape OutboxPanel had: `refine` opens with `if (refining) return`, so a second
+                click through the whole refine round-trip was a silent no-op while the button stayed
+                lit — and it sits beside a `Button` that DOES carry `loading`+`disabled`, so the two
+                halves of one header row disagreed about what "in flight" looks like. */}
+            <QuietButton
+              onClick={refine}
+              title="Propose an improvement to this template from its run history"
+              disabled={refining}
+              disabledReason="A refinement is already in flight"
+            >
+              <Sparkles size={13} /> {refining ? 'Refining…' : 'Refine now'}
+            </QuietButton>
+            {/* Off while a required input is blank, and it SAYS which one. Before this the
+                button stayed lit through a blank required field and through a mistyped one: the
+                run was refused by the service, so the only feedback was a toast after the
+                round-trip. `missingRequired` is the same emptiness rule the tool inspector and
+                the app config form use — a legitimate `false` or `0` is present, not missing. */}
+            <Button
+              onClick={start}
+              loading={starting}
+              disabled={starting || missing.length > 0}
+              disabledReason={missing.length ? `Fill in: ${missing.join(', ')}` : undefined}
+            >
+              <Play size={14} /> Run
+            </Button>
+          </HeaderActions>
+        ) : undefined}
+      />
+      <div className="min-h-0 flex-1 overflow-y-auto p-l">
+        {loading ? <Loading what="this workflow" /> : !def ? (
+          <p data-type="body-s" className="text-on-surface-low">This definition could not be loaded.</p>
+        ) : (
+          <div className="mx-auto flex max-w-[var(--content-width)] flex-col gap-l">
+            {def.description && <p data-type="body-s" className="text-on-surface">{def.description}</p>}
+
+            <Segmented
+              ariaLabel="Definition view"
+              value={tab}
+              onChange={(k) => setTab(k as 'steps' | 'versions' | 'ledger')}
+              options={[
+                { key: 'steps', label: 'Steps' },
+                { key: 'versions', label: 'Versions' },
+                { key: 'ledger', label: 'Run Ledger' },
+              ]}
+            />
+
+            {tab === 'steps' && (
+              <>
+                {declared.props.length > 0 && (
+                  <div className="flex flex-col gap-s">
+                    <span data-type="title-m" className="text-on-surface">Inputs</span>
+                    <SchemaFields
+                      fields={declared.props}
+                      required={declared.required}
+                      values={inputs}
+                      advancedFieldClassName="flex flex-col gap-s"
+                      renderField={(key, schema, isRequired) => (
+                        <SchemaField
+                          name={key}
+                          schema={schema}
+                          required={isRequired}
+                          value={inputs[key]}
+                          onChange={(v) => setInputs((p) => ({ ...p, [key]: v }))}
+                        />
+                      )}
+                    />
+                  </div>
+                )}
+
+                <div className="flex items-start justify-between gap-m">
+                  <div className="min-w-0">
+                    <span data-type="title-m" className="text-on-surface">Publish to A2A</span>
+                    <p data-type="caption" className="text-on-surface-low">
+                      {published
+                        ? 'External agents holding an A2A token can see this template on the agent card and start it.'
+                        : 'Off. This template is not on the A2A agent card and cannot be started by an external agent.'}
+                    </p>
+                  </div>
+                  {/* The accessible name states the TEMPLATE, not just the action: the switch's
+                      name is read out of context in a screen-reader's forms list, where four
+                      "Publish to A2A" switches would be indistinguishable. */}
+                  <Toggle
+                    on={published}
+                    onChange={togglePublish}
+                    disabled={publishSaving}
+                    label={`Publish ${name} to A2A`}
+                  />
+                </div>
+
+                <div className="flex flex-col gap-xs">
+                  <span data-type="title-m" className="text-on-surface">Steps</span>
+                  {rows.map((r, i) => (
+                    <div
+                      key={`${r.depth}-${r.id || r.kind}-${i}`}
+                      className="flex items-baseline gap-m py-2xs"
+                      style={{ paddingLeft: `calc(${r.depth} * 1rem)` }}
+                    >
+                      <span data-type="caption" className="shrink-0 font-mono text-on-surface-low">{r.kind}</span>
+                      <div className="min-w-0 flex-1">
+                        {r.id && <span data-type="body-s" className="text-on-surface">{r.id}</span>}
+                        {r.label && <span data-type="caption" className="ml-s text-on-surface-low">{r.label}</span>}
+                        {r.summary && <div data-type="caption" className="truncate text-on-surface-low">{r.summary}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {handoffs.length > 0 && (
+                  <div className="flex flex-col gap-xs">
+                    <span data-type="title-m" className="text-on-surface">Hands off to</span>
+                    {handoffs.map((h) => (
+                      <div key={h.target_def} className="flex items-baseline gap-m py-2xs">
+                        <span data-type="body-s" className="shrink-0 text-on-surface">{h.target_def}</span>
+                        <div className="min-w-0 flex-1">
+                          {h.condition && <span data-type="caption" className="text-on-surface-low">{h.condition}</span>}
+                          {!!h.context_fields?.length && (
+                            <div data-type="caption" className="text-on-surface-low">
+                              carries {h.context_fields.join(', ')}
+                            </div>
+                          )}
+                        </div>
+                        {h.requires_user_request && (
+                          <span data-type="caption" className="shrink-0 text-on-surface-low">only on request</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {def.metadata?.requirements && Object.keys(def.metadata.requirements).length > 0 && (
+                  <div className="flex flex-col gap-xs">
+                    <span data-type="title-m" className="text-on-surface">Requires</span>
+                    {Object.entries(def.metadata.requirements).map(([group, items]) => (
+                      <span key={group} data-type="caption" className="text-on-surface-low">
+                        {group}: {items.join(', ')}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {tab === 'versions' && (
+              <div className="flex flex-col gap-l">
+                <div className="flex flex-col gap-xs">
+                  <span data-type="title-m" className="text-on-surface">Versions</span>
+                  {/* Issue 532 — error BEFORE empty: a rejection leaves `versions` at `[]`, so the
+                      empty test below is also true on failure and would win if it came first.
+                      Spelled out rather than hash-prefixed because `tokenLint`'s comment skip is
+                      line-based over `//` / `*` / `/*` and a JSX `{/*` opener matches none of them,
+                      so a three-digit issue number written with a hash reads as a hex colour on ANY
+                      line of a JSX comment. The file's other two citations sit on `//` lines, which
+                      the skip does cover, so they keep the hash form. */}
+                  {versionsErr !== null ? (
+                    <InlineLoadError what="version history" error={versionsErr} onRetry={loadVersions} />
+                  ) : versions.length === 0 ? (
+                    <p data-type="caption" className="text-on-surface-low">No version history yet.</p>
+                  ) : (
+                    [...versions].reverse().map((v) => (
+                      <div key={v.version} className="flex items-baseline gap-m py-2xs">
+                        <span data-type="body-s" className="shrink-0 font-mono text-on-surface">v{v.version}</span>
+                        <div className="min-w-0 flex-1">
+                          <span data-type="caption" className="text-on-surface-low">{v.source}</span>
+                          {v.created_at && <span data-type="caption" className="ml-s text-on-surface-low">{v.created_at}</span>}
+                        </div>
+                        {v.version === pinned ? (
+                          <span data-type="caption" className="shrink-0 text-on-surface-low">pinned</span>
+                        ) : (
+                          <QuietButton onClick={() => rollback(v.version)} title={`Roll back to v${v.version}`}>
+                            <RotateCcw size={12} /> Roll back
+                          </QuietButton>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {diffOps && diffOps.length > 0 && (
+                  <div className="flex flex-col gap-xs">
+                    <span data-type="title-m" className="text-on-surface">Latest change</span>
+                    {diffOps.map((op, i) => (
+                      <div key={`${op.op}-${op.node_id ?? ''}-${i}`} className="flex items-baseline gap-m py-2xs">
+                        <span data-type="caption" className="shrink-0 font-mono text-on-surface-low">{op.op}</span>
+                        <div data-type="body-s" className="min-w-0 flex-1 text-on-surface">
+                          {op.node_id}
+                          {op.fields?.length ? <span className="text-on-surface-low"> — {op.fields.join(', ')}</span> : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tab === 'ledger' && (
+              <div className="flex flex-col gap-xs">
+                <span data-type="title-m" className="text-on-surface">Run Ledger</span>
+                {ledgerErr !== null ? (
+                  <LoadError what="run ledger" error={ledgerErr} onRetry={() => setLedgerErr(null)} />
+                ) : ledger === null ? (
+                  <Loading what="the run ledger" />
+                ) : ledger.length === 0 ? (
+                  <p data-type="caption" className="text-on-surface-low">This template has no recorded runs yet.</p>
+                ) : (
+                  ledger.map((run) => (
+                    <div key={run.run_id} className="flex items-baseline gap-m py-2xs">
+                      <span data-type="caption" className="shrink-0 font-mono text-on-surface-low">{run.run_id}</span>
+                      <div className="min-w-0 flex-1">
+                        <span data-type="body-s" className="text-on-surface">{run.status}</span>
+                        <span data-type="caption" className="ml-s text-on-surface-low">v{run.spec_version}</span>
+                      </div>
+                      <span data-type="caption" className="shrink-0 text-on-surface-low">
+                        {run.totals?.steps_completed ?? 0} done
+                        {run.totals?.steps_failed ? `, ${run.totals.steps_failed} failed` : ''}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

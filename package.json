@@ -1,0 +1,27 @@
+{
+  "name": "personalclaw",
+  "private": true,
+  "workspaces": ["web", "desktop", "mobile"],
+  "scripts": {
+    "dev": "npm run dev --workspace=web",
+    "build": "npm run build --workspace=web",
+    "typecheck:web": "npm run typecheck --workspace=web",
+    "test:web": "npm run test --workspace=web",
+    "audit:consistency": "npm run audit:consistency --workspace=web",
+    "test:desktop": "npm run test --workspace=desktop",
+    "test:mobile": "npm run test --workspace=mobile",
+    "smoke:render": "node scripts/render_smoke.mjs",
+    "validate:apps": "node scripts/app_ui_validate.mjs",
+    "hooks:install": "sh scripts/install_git_hooks.sh",
+    "postinstall": "sh scripts/install_git_hooks.sh"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0"
+  },
+  "overrides": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4"
+  }
+}

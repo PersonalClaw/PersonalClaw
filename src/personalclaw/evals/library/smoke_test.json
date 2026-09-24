@@ -1,0 +1,47 @@
+{
+  "description": "Minimal 2-session smoke test. Teach one fact, recall it next session. Designed to complete in under 2 minutes.\n",
+  "dimensions": [
+    "memory_recall"
+  ],
+  "fixture_home": "empty",
+  "judge_criteria": "Agent should recall the user's favorite fruit from a prior session.",
+  "name": "smoke_test",
+  "sessions": [
+    {
+      "name": "teach",
+      "turns": [
+        {
+          "assertions": [
+            {
+              "type": "contains",
+              "value": "mango"
+            }
+          ],
+          "user": "Remember: my favorite fruit is mango."
+        }
+      ]
+    },
+    {
+      "name": "recall",
+      "turns": [
+        {
+          "assertions": [
+            {
+              "type": "contains",
+              "value": "mango"
+            },
+            {
+              "type": "judge",
+              "value": "Agent should recall that the user's favorite fruit is mango."
+            }
+          ],
+          "user": "What is my favorite fruit?"
+        }
+      ]
+    }
+  ],
+  "tiers": [
+    "gate"
+  ],
+  "version": 2
+}

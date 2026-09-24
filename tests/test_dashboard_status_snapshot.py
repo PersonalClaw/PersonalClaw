@@ -1,0 +1,190 @@
+"""Tests for DashboardState.status_snapshot() — shared status payload."""
+
+import time
+from unittest.mock import MagicMock
+
+import pytest
+
+from personalclaw.dashboard.state import DashboardState
+
+
+@pytest.fixture
+def state(monkeypatch, tmp_path):
+    monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+    crons = MagicMock()
+    crons.list_jobs.return_value = [{"id": "j1"}, {"id": "j2"}]
+    # Lessons live in memory.db lesson.* now; status_snapshot counts them through
+    # service_for(context_builder.memory).get_lessons(). Wire a record store with
+    # one lesson so the count is 1.
+    vs = MagicMock()
+    vs.get_lessons.return_value = [{"key": "lesson.a", "value_json": '"r1"'}]
+    mem = MagicMock()
+    mem.vector_store = vs
+    cb = MagicMock()
+    cb.memory = mem
+    return DashboardState(
+        sessions=MagicMock(count=3),
+        start_time=time.time() - 120,
+        subagents=MagicMock(count=1),
+        context_builder=cb,
+    )
+
+
+def _store_trigger(tmp_path, trigger_id, *, enabled=True, valid=True):
+    """Write a real store trigger under the state's home, the way the runtime does."""
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    spec = {"kind": "interval", "every_secs": 3600} if valid else {}
+    TriggerStore(base_dir=tmp_path).upsert(
+        Trigger(id=trigger_id, name=trigger_id, kind="clock", enabled=enabled, spec=spec)
+    )
+
+
+class TestStatusSnapshot:
+    def test_the_flat_cron_jobs_mirror_is_gone(self, state: DashboardState, tmp_path) -> None:
+        """🔴 SUPERSEDED, AGAIN (#773). status_snapshot once carried a flat `cron_jobs` =
+        `trigger_counts()["total"]`, the schedule STORE's count, which the dashboard rendered under
+        a "triggers" label. That label over-claimed: the Triggers page counts lifecycle hooks too,
+        which the store never held, so the rail said "5 triggers" where the page listed 7.
+
+        The rail now reads the unified `triggers` count assembled by `api_status`
+        (`handlers.triggers.unified_trigger_count`); the schedule-store count still ships, as the
+        richer `cron` block. The flat mirror had no remaining reader and is dropped — so the field
+        is gone from the snapshot, and the store count is reached through `trigger_counts()`.
+        """
+        _store_trigger(tmp_path, "clock:a")
+        _store_trigger(tmp_path, "clock:b", enabled=False)
+        assert "cron_jobs" not in state.status_snapshot()
+        assert state.trigger_counts()["total"] == 2
+
+    def test_contains_core_fields(self, state: DashboardState) -> None:
+        snap = state.status_snapshot()
+        assert snap["sessions"] == 3
+        assert snap["lessons"] == 1
+        assert snap["subagents"] == 1
+        assert snap["no_crons"] is False
+        assert "uptime" in snap
+        assert "start_time" in snap
+
+    def test_no_crons_true(self, state: DashboardState) -> None:
+        state.no_crons = True
+        assert state.status_snapshot()["no_crons"] is True
+
+    def test_no_subagents(self, state: DashboardState) -> None:
+        state.subagents = None
+        assert state.status_snapshot()["subagents"] == 0
+
+    def test_new_fields_propagate_to_all_callers(self, state: DashboardState) -> None:
+        """Any field added to status_snapshot is automatically in SSE/WS/API."""
+        snap = state.status_snapshot()
+        # These keys must exist — if one is missing, a caller will lose it
+        required = {
+            "uptime",
+            "start_time",
+            "sessions",
+            "lessons",
+            "subagents",
+            "update_available",
+            "no_crons",
+        }
+        assert required.issubset(snap.keys())
+        # `cron_jobs` was removed (#773): the flat schedule-store mirror had no reader once the
+        # dashboard rail moved to the unified `triggers` count (assembled by api_status, not here).
+        assert "cron_jobs" not in snap
+
+    def test_the_snapshot_makes_no_unmeasured_claim(self, state: DashboardState) -> None:
+        """`messages` was in the required set above, and was always 0.
+
+        It read `DashboardState.messages_received`, which was initialized to 0 and incremented
+        nowhere — so every SSE/WS/API consumer received a confident "0 messages" regardless of
+        activity, and nothing in the frontend read it. Requiring the key made the field look
+        load-bearing; it is removed rather than surfaced, because rendering an unmeasured 0 is
+        indistinguishable from a genuinely idle gateway.
+        """
+        assert "messages" not in state.status_snapshot()
+
+    def test_update_available_passthrough(self, state: DashboardState) -> None:
+        assert state.status_snapshot()["update_available"] is False
+        assert state.status_snapshot(update_available=True)["update_available"] is True
+
+
+class TestAllStatusSnapshotCallersPassUpdateAvailable:
+    """Every call to status_snapshot() must pass update_available explicitly."""
+
+    def test_ws_has_no_status_push(self) -> None:
+        """ws.py must NOT push periodic status frames — the FE polls
+        GET /api/status; the old 5s {"type": "dashboard"} push had no
+        frontend consumer and was removed."""
+        import inspect
+
+        from personalclaw.dashboard import ws
+
+        source = inspect.getsource(ws)
+        assert "status_snapshot" not in source
+        assert "_push_status" not in source
+
+    # NOTE: the global SSE handler (api_stream) was removed in the transport
+    # de-duplication (SSE M3), and the WS 5s status push was removed too (no
+    # FE consumer) — /api/status (handlers_system) is the ONE status surface.
+
+    def test_system_api_passes_update_available(self) -> None:
+        import inspect
+
+        from personalclaw.dashboard import handlers_system
+
+        source = inspect.getsource(handlers_system)
+        assert "update_available=" in source
+
+
+class TestTriggerCounts:
+    """`DashboardState.trigger_counts()` — the one source both status surfaces share (S107).
+
+    🔴 The two legacy fold-in tests retired in S112. `counts(store, legacy=svc)` was proven to return
+    results IDENTICAL to `counts(store)`, because since S110 the boot migration imports every legacy
+    row — including the ones the conversion refuses, written disabled. So the `legacy=` parameter,
+    the `crons` attribute it read, and these two tests all went together.
+    """
+
+    def test_an_empty_home_counts_zero(self, state: DashboardState) -> None:
+        assert state.trigger_counts() == {"total": 0, "enabled": 0, "broken": 0}
+
+    def test_enabled_is_counted_separately_from_total(
+        self, state: DashboardState, tmp_path
+    ) -> None:
+        _store_trigger(tmp_path, "clock:on")
+        _store_trigger(tmp_path, "clock:off", enabled=False)
+        counts = state.trigger_counts()
+        assert counts["total"] == 2
+        assert counts["enabled"] == 1
+
+    def test_a_broken_row_is_counted_and_never_enabled(
+        self, state: DashboardState, tmp_path
+    ) -> None:
+        """The store refuses to enable a row that fails validation, so a broken trigger must show up
+        as broken rather than merely vanish from the enabled count with no explanation."""
+        _store_trigger(tmp_path, "clock:bad", valid=False)
+        counts = state.trigger_counts()
+        assert counts["total"] == 1
+        assert counts["enabled"] == 0
+        assert counts["broken"] == 1
+
+    def test_an_unusable_store_reports_zeros_rather_than_500ing(
+        self, state: DashboardState, monkeypatch
+    ) -> None:
+        """`GET /api/status` is what a user opens when something is already wrong."""
+        monkeypatch.setattr(
+            "personalclaw.triggers.store.TriggerStore",
+            MagicMock(side_effect=OSError("home is gone")),
+        )
+        assert state.trigger_counts() == {"total": 0, "enabled": 0, "broken": 0}
+
+    def test_the_legacy_status_method_is_gone(self) -> None:
+        """🔴 The clean break, completed. `ScheduleService.status()` reported
+        `{"running": false, "jobs": 0, "enabled": 0}` on a healthy machine — counts from a service
+        the cutover emptied, and `running` False BY DESIGN because `load_without_timer` never set
+        it.
+        S107 deleted the method; S112 deleted the class it lived on."""
+        # S112 deleted the whole class — a stronger statement than "those two methods are gone".
+        with pytest.raises(ImportError):
+            from personalclaw.schedule import ScheduleService  # noqa: F401

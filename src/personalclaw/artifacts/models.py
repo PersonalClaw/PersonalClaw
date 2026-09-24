@@ -1,0 +1,374 @@
+"""Canonical artifact entity — the model shared across all artifact providers.
+
+An Artifact is a named, versioned piece of LLM-generated content (a widget,
+HTML tool, markdown doc, etc.) that outlives chat scrollback. The dataclass and
+its caps/validators live here (split out of the provider, like ``tasks/models``)
+so every provider and the REST layer share one definition.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+import unicodedata
+from dataclasses import asdict, dataclass, field
+from typing import Any
+
+# ── Caps (bound LLM-authored content + on-disk growth) ──
+MAX_VERSIONS = 50  # FIFO prune older numbered snapshots beyond this
+MAX_CONTENT_BYTES = 1 * 1024 * 1024  # 1 MiB per TEXT artifact body
+# Binary artifacts (kind:image) store bytes on disk, not text-in-content. A
+# generated image is comfortably under this; far above the text cap so a 1.x MiB
+# PNG isn't truncated. Still bounded so a runaway upload can't fill the disk.
+MAX_BINARY_CONTENT_BYTES = 16 * 1024 * 1024  # 16 MiB per binary artifact body
+MAX_NAME_LEN = 200
+MAX_DESCRIPTION_LEN = 2000
+MAX_TAGS = 16
+MAX_TAG_LEN = 64
+MAX_EVENTS_PER_ARTIFACT = 500
+MAX_EVENT_METADATA_KEYS = 8
+MAX_EVENT_METADATA_VALUE_LEN = 256
+
+ALLOWED_KINDS = {
+    "widget",
+    "html",
+    "react",
+    "markdown",
+    "svg",
+    "json",
+    "text",
+    "infographic",
+    "document",
+    "image",
+    # Generated office/PDF documents (DOCUMENT-HANDLING-TOOLS S1). `csv` is a TEXT kind:
+    # it round-trips as text and needs no binary body.
+    "docx",
+    "xlsx",
+    "pptx",
+    "pdf",
+    "csv",
+    # `video_generate` has always passed kind="video", but the kind was in neither set,
+    # so `create_binary`'s old else-branch silently stored every generated video AS AN
+    # IMAGE (issue #94). Registering it here is that fix; hardening the coercion into a
+    # raise is what keeps the class from recurring.
+    "video",
+}
+ALLOWED_SOURCES = {"chat", "cron", "subagent", "manual", "import"}
+ALLOWED_EVENT_TYPES = {"created", "edited", "iterated", "referenced", "reverted"}
+
+# Kinds whose body is BINARY (stored as raw bytes on disk, served via the raw
+# endpoint) rather than text. For these the ``content`` field carries a reference
+# (the raw URL) — never the bytes themselves (no base64-in-content: it inflates
+# context + payload). A kind added here MUST also be in ALLOWED_KINDS.
+BINARY_KINDS = {"image", "video", "docx", "xlsx", "pptx", "pdf"}
+
+# Mapping from an image MIME type to the on-disk file extension. The default
+# (png) covers gpt-image / FAL output; svg is already a TEXT kind, so it's absent.
+_MIME_TO_EXT = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    # Generated documents. Without these the raw endpoint derives the wrong
+    # Content-Type from the stored extension and a download arrives unopenable.
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+    "application/pdf": "pdf",
+    # Generated video (issue #94).
+    "video/mp4": "mp4",
+    "video/webm": "webm",
+    "video/quicktime": "mov",
+}
+
+
+def is_binary_kind(kind: str) -> bool:
+    return (kind or "").strip().lower() in BINARY_KINDS
+
+
+def ext_for_mime(mime: str, default: str = "png") -> str:
+    """On-disk extension for a binary MIME type (png fallback)."""
+    return _MIME_TO_EXT.get((mime or "").strip().lower(), default)
+
+
+def kind_for_mime(mime: str) -> str:
+    """The BINARY artifact kind *mime* belongs to, or ``""`` when it is not one.
+
+    The mime↔kind agreement check for a binary write path (DOCUMENT-FIDELITY-EDITOR
+    §C3): a ``.docx`` slug must not be handed a pdf, and only a MIME the store can
+    name a file for may be stored at all.
+
+    DERIVED, never a second list. Validity comes from :data:`_MIME_TO_EXT` (a MIME
+    with no extension has no on-disk body, so it is refused), and the kind comes from
+    the MIME's own family: ``image/*`` → ``image``, ``video/*`` → ``video``, and the
+    office/PDF types already name their kind with their extension
+    (``…wordprocessingml.document`` → ``docx``). Restating :data:`BINARY_KINDS` here
+    would be a second place to forget a kind.
+    """
+    normalized = (mime or "").strip().lower()
+    ext = _MIME_TO_EXT.get(normalized, "")
+    if not ext:
+        return ""
+    family = normalized.split("/", 1)[0]
+    kind = family if family in BINARY_KINDS else ext
+    return kind if kind in BINARY_KINDS else ""
+
+
+# Inverse of _MIME_TO_EXT: recover a version's MIME from its on-disk extension.
+# Lets a historical body (e.g. versions/v1.jpg) report its true Content-Type even
+# after a later edit changed the artifact's current mime — the extension on disk,
+# not the (mutable) art.mime, is the per-version source of truth.
+_EXT_TO_MIME = {ext: mime for mime, ext in _MIME_TO_EXT.items()}
+
+
+def mime_for_ext(ext: str, default: str = "image/png") -> str:
+    """MIME type for an on-disk binary extension (png fallback)."""
+    return _EXT_TO_MIME.get((ext or "").strip().lower().lstrip("."), default)
+
+
+# Slug: URL-safe handle, 1-80 chars, no leading/trailing hyphen. Blocks path
+# traversal (no dots, slashes, or separators survive slugify) — the security
+# spine for the on-disk dir name.
+_SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$")
+_SLUG_STRIP_RE = re.compile(r"[^a-z0-9]+")
+
+
+def slugify(name: str) -> str:
+    """Derive a URL-safe slug from a display name (NFKD, lowercase, hyphenate)."""
+    normalized = unicodedata.normalize("NFKD", name or "")
+    ascii_only = normalized.encode("ascii", "ignore").decode("ascii")
+    hyphenated = _SLUG_STRIP_RE.sub("-", ascii_only.lower()).strip("-")
+    slug = hyphenated[:80].strip("-")
+    return slug or "artifact"
+
+
+def is_valid_slug(slug: str) -> bool:
+    return bool(_SLUG_RE.match(slug))
+
+
+class ArtifactVersionConflict(ValueError):
+    """A write named an expected version the artifact no longer has.
+
+    Raised by a provider write that was handed ``expect_version`` — the optimistic
+    concurrency check for the whole-document write path (DOCUMENT-FIDELITY-EDITOR
+    §C3). It exists as its own type because the caller's remedy is specific and
+    machine-actionable: reload the artifact and re-apply, not "fix your request". It
+    subclasses ``ValueError`` so a provider caller that already funnels bad input into
+    a 400 keeps working; a caller that cares catches this first.
+
+    ``expected`` is the version the artifact actually holds; ``supplied`` is what the
+    writer claimed to be editing.
+    """
+
+    def __init__(self, slug: str, expected: int, supplied: int) -> None:
+        super().__init__(
+            f"artifact {slug!r} is at version {expected}, not {supplied} — reload before saving"
+        )
+        self.slug = slug
+        self.expected = expected
+        self.supplied = supplied
+
+
+@dataclass
+class ArtifactEvent:
+    """A lifecycle entry in an artifact's activity timeline."""
+
+    ts: str
+    type: str  # one of ALLOWED_EVENT_TYPES
+    by: str = ""  # 'user' | 'agent' | actor label
+    session_id: str = ""  # originating chat session (for the deep-link); '' = none
+    version: int = 0  # post-event version
+    from_version: int = 0  # set on 'reverted'
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "ArtifactEvent":
+        return cls(
+            ts=str(d.get("ts", "")),
+            type=str(d.get("type", "")),
+            by=str(d.get("by", "")),
+            session_id=str(d.get("session_id", "")),
+            version=int(d.get("version", 0) or 0),
+            from_version=int(d.get("from_version", 0) or 0),
+            metadata=d.get("metadata") or {},
+        )
+
+
+@dataclass
+class Artifact:
+    """A named, versioned artifact.
+
+    ``content`` is populated only on detail reads (``list`` omits it). For
+    file-backed artifacts ``source_path`` points at a Workspace file that is the
+    live source of truth; ``live_dirty`` is computed at read time (live content
+    differs from the latest numbered snapshot) and never persisted.
+    """
+
+    slug: str
+    name: str
+    kind: str = "widget"
+    source: str = "chat"
+    description: str = ""
+    tags: list[str] = field(default_factory=list)
+    version: int = 1
+    created_at: str = ""
+    updated_at: str = ""
+    content: str | None = None
+    events: list[ArtifactEvent] = field(default_factory=list)
+    source_path: str = ""
+    live_dirty: bool = False
+    # For BINARY_KINDS (image): the body's MIME type, which fixes the on-disk
+    # extension + tells the renderer how to display it. "" for text kinds.
+    mime: str = ""
+    # Optional containing Project (Projects native entity) this artifact belongs to.
+    # "" = unscoped. Lets a project's outputs surface alongside its loops/code/tasks.
+    project_id: str = ""
+    # Optional user-defined library collection (a free-form grouping label for the
+    # artifacts library — ARTIFACTS S1). "" = uncollected. Tolerant read: pre-existing
+    # meta.json without the key loads as "" (clean break under the pre-1.0 banner).
+    collection: str = ""
+    # Containing library folder (ArtifactFolderStore id) — PEP-6. "" = unfiled (the
+    # library root). Tolerant read: a pre-existing meta.json without the key loads as
+    # "". Distinct from ``collection``: a collection is a free-form label the model may
+    # author, a folder is a user-placed node in the side-rail tree.
+    folder_id: str = ""
+    # Frozen at creation: this body is a RECORD of something, not a working document, so
+    # every content-mutating store method refuses it (SESSION-MANAGEMENT SM-9). The one
+    # writer today is the session-share path — a shared chat transcript that could be
+    # edited and then re-read as "the transcript" would be a forgery surface, and a
+    # redacted export that can be edited back toward the unredacted original defeats the
+    # redaction. Delete is deliberately still allowed: read-only is not undeletable, and
+    # trapping the owner's own artifact in their library would be a worse bargain.
+    readonly: bool = False
+
+    def to_dict(self, *, persist: bool = False) -> dict[str, Any]:
+        """Serialize. ``persist=True`` (meta.json) drops the transient/derived
+        fields: ``content`` (lives in current.html / source_path) and
+        ``live_dirty`` (computed per read)."""
+        d: dict[str, Any] = {
+            "slug": self.slug,
+            "name": self.name,
+            "kind": self.kind,
+            "source": self.source,
+            "description": self.description,
+            "tags": list(self.tags),
+            "version": self.version,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "source_path": self.source_path,
+            "project_id": self.project_id,
+            "collection": self.collection,
+            "folder_id": self.folder_id,
+            "mime": self.mime,
+            # Persisted AND on the wire: the store reads it to refuse a mutation, the
+            # dashboard reads it to stop offering one. A flag enforced only server-side
+            # would render an edit affordance that always errors.
+            "readonly": self.readonly,
+            "events": [e.to_dict() for e in self.events],
+        }
+        if not persist:
+            d["content"] = self.content
+            d["live_dirty"] = self.live_dirty
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Artifact":
+        return cls(
+            slug=str(d.get("slug", "")),
+            name=str(d.get("name", "")),
+            kind=str(d.get("kind", "widget")),
+            source=str(d.get("source", "chat")),
+            description=str(d.get("description", "")),
+            tags=list(d.get("tags", []) or []),
+            version=int(d.get("version", 1) or 1),
+            created_at=str(d.get("created_at", "")),
+            updated_at=str(d.get("updated_at", "")),
+            content=d.get("content"),
+            events=[ArtifactEvent.from_dict(e) for e in (d.get("events") or [])],
+            source_path=str(d.get("source_path", "")),
+            live_dirty=bool(d.get("live_dirty", False)),
+            project_id=str(d.get("project_id", "")),
+            collection=str(d.get("collection", "")),
+            folder_id=str(d.get("folder_id", "")),
+            mime=str(d.get("mime", "")),
+            readonly=bool(d.get("readonly", False)),
+        )
+
+
+def normalize_kind(kind: str) -> str:
+    """Canonicalize a create-path kind — an UNKNOWN kind is refused, never coerced.
+
+    This used to fall back to ``"widget"``, which silently promoted the one case the
+    platform does not understand to the most capable kind in the registry: widget is
+    the sandboxed-EXECUTION kind, so a typo'd ``"markdwon"`` or ``"md"`` was stored as
+    executable payload instead of prose (and lost the comment layer, since sandboxed
+    kinds are not commentable). The binary sibling (``create_binary``) already raises
+    on exactly this shape — silent coercion there is how every generated video was
+    once stored as an image — and failing loudly is what stops the class recurring as
+    kinds are added. An ABSENT kind is different from an unknown one: callers default
+    it to ``"widget"`` deliberately (saving a chat widget is the primary flow), so
+    empty stays the documented default.
+    """
+    k = (kind or "").strip().lower()
+    if not k:
+        return "widget"
+    if k in ALLOWED_KINDS:
+        return k
+    raise ValueError(f"unknown artifact kind {k!r}; allowed: {', '.join(sorted(ALLOWED_KINDS))}")
+
+
+def normalize_source(source: str) -> str:
+    s = (source or "").strip().lower()
+    return s if s in ALLOWED_SOURCES else "chat"
+
+
+def clean_tags(tags: Any) -> list[str]:
+    """Coerce arbitrary tag input into a deduped, capped, trimmed list."""
+    if not isinstance(tags, (list, tuple)):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for t in tags:
+        tag = str(t).strip()[:MAX_TAG_LEN]
+        if tag and tag not in seen:
+            seen.add(tag)
+            out.append(tag)
+        if len(out) >= MAX_TAGS:
+            break
+    return out
+
+
+def clean_event_metadata(metadata: Any) -> dict[str, Any]:
+    """Bound event metadata to ≤8 string-keyed scalar values ≤256 chars."""
+    if not isinstance(metadata, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for k, v in metadata.items():
+        if len(out) >= MAX_EVENT_METADATA_KEYS:
+            break
+        if not isinstance(k, str):
+            continue
+        if isinstance(v, bool) or (
+            isinstance(v, (int, float))
+            # 🔴 …but a NON-FINITE float is not a bounded scalar, and letting one through poisoned
+            # the whole library. `json.dumps` writes `inf`/`nan` as the bare tokens `Infinity` and
+            # `NaN`, which are not JSON — Python's own `json.loads` accepts them, and a browser's
+            # `JSON.parse` rejects the ENTIRE response. So one `POST /events` with
+            # `widget_index: 1e309` made every artifact unreadable in the UI, not just that one
+            # (#424). Measured: `{"widget_index": Infinity}` on the wire.
+            #
+            # It falls through to the `str()` branch rather than being dropped: this is
+            # metadata, the value is decorative, and "inf" records that something out-of-range
+            # arrived instead of hiding it. Guarding HERE rather than at the one reported
+            # route is the point:
+            # this function is the declared bounder for every event-metadata write, and its own
+            # docstring already promises bounded scalars.
+            and not (isinstance(v, float) and not math.isfinite(v))
+        ):
+            out[k] = v
+        else:
+            out[k] = str(v)[:MAX_EVENT_METADATA_VALUE_LEN]
+    return out

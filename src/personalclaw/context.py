@@ -1,0 +1,1878 @@
+"""Context builder — assembles memory, skills, and hooks into prompt context."""
+
+import json
+import logging
+import re
+from dataclasses import replace
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, TypedDict, cast
+
+from personalclaw.agent import _shipped_prompt
+from personalclaw.config.loader import AppConfig, memory_dir_for_cwd
+from personalclaw.context_headroom import Component
+from personalclaw.hooks import (
+    HOOK_INJECT_CONTEXT,
+    HOOK_MODIFY,
+    HookManager,
+    HookResult,
+    safe_read_file,
+)
+from personalclaw.memory import MemoryStore
+from personalclaw.schedule import get_local_tz
+from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.skills import SkillsLoader
+
+if TYPE_CHECKING:
+    from personalclaw.channel_history import ChannelHistory
+    from personalclaw.history import ConversationLog
+    from personalclaw.session import SessionManager
+    from personalclaw.skills.allocation import SkillDecision
+
+
+def _path_home_pclaw():
+    """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
+    try:
+        from personalclaw.config.loader import config_dir as _cd
+
+        return _cd()
+    except Exception:
+        from pathlib import Path as _P
+
+        return _P.home() / ".personalclaw"
+
+
+logger = logging.getLogger(__name__)
+
+# Lazy cache of MemoryStore instances keyed by cwd-partition path.
+_memory_stores: dict[str, MemoryStore] = {}
+
+
+def _attach_vector_store(store: MemoryStore, ws_path) -> None:
+    """Give a cwd-scoped MemoryStore its own semantic/episodic vector index.
+
+    The index lives inside the partition dir so each working directory has
+    isolated semantic memory. Wired to the active embedding model (Settings >
+    Models); if no embedding model is active, the store stays text-only.
+    """
+    try:
+        from personalclaw.embedding_providers.registry import (
+            get_active_embed_fn,
+            get_active_embedding_dim,
+        )
+        from personalclaw.vector_memory import VectorMemoryStore
+
+        embed_fn = get_active_embed_fn()
+        if embed_fn is None:
+            return  # no active embedding model — semantic memory stays off
+        vs = VectorMemoryStore(
+            db_path=ws_path / "memory_index.db",
+            embedding_dim=get_active_embedding_dim() or 384,
+        )
+        vs.init()
+        vs.embed_fn = embed_fn
+        vs.contradiction_judge = _make_contradiction_judge()
+        store.vector_store = vs
+    except Exception:
+        logger.debug("Could not attach vector store for %s", ws_path, exc_info=True)
+
+
+def _make_contradiction_judge():
+    """Build the lesson contradiction judge (or None).
+
+    Returns a sync ``(new_rule, existing_rule) -> bool`` that asks the background
+    LLM whether the new lesson contradicts the existing one. Safe-by-construction:
+    if called from within a running event loop (where a nested ``asyncio.run``
+    would fail) it returns False — keep both — so it never crashes a turn; the
+    judge runs on the sync write paths (consolidation thread, CLI) where it can.
+    """
+
+    def _judge(new_rule: str, existing_rule: str) -> bool:
+        import asyncio
+
+        try:
+            asyncio.get_running_loop()
+            return False  # in an async context → fail-safe: keep both
+        except RuntimeError:
+            pass  # no running loop → safe to run the completion
+        from personalclaw.prompt_providers.runtime import render_use_case_prompt
+
+        prompt = render_use_case_prompt(
+            "contradiction_judge",
+            {"new_rule": new_rule, "existing_rule": existing_rule},
+        )
+        if not prompt:
+            return False
+        try:
+            import asyncio as _aio
+
+            from personalclaw.llm_helpers import one_shot_completion
+
+            resp = _aio.run(one_shot_completion(prompt, use_case="background"))
+            return "CONTRADICT" in resp.upper()
+        except Exception:
+            logger.debug("contradiction judge LLM call failed — keeping both", exc_info=True)
+            return False
+
+    return _judge
+
+
+# Cap injected context to avoid blowing the context window on first turn
+_MAX_CONTEXT_CHARS = 165_000  # ~55k tokens
+
+# ACP agent slices strings at fixed byte offsets (e.g. 4096).
+# Multi-byte UTF-8 chars straddling the boundary cause a Rust panic:
+#   "byte index 4096 is not a char boundary; it is inside '—'"
+# Workaround: replace common multi-byte punctuation with ASCII equivalents.
+# NOTE: truncate_safe workaround for ACP agent string slicing.
+_MULTIBYTE_TABLE = str.maketrans(
+    {
+        "\u2014": "--",  # em dash
+        "\u2013": "-",  # en dash
+        "\u2018": "'",  # left single quote
+        "\u2019": "'",  # right single quote
+        "\u201c": '"',  # left double quote
+        "\u201d": '"',  # right double quote
+        "\u2026": "...",  # ellipsis
+        "\u00a0": " ",  # non-breaking space
+        "\u2022": "-",  # bullet
+        "\u2192": "->",  # rightwards arrow (→) — ACP agent string slicing workaround
+        "\u2190": "<-",  # leftwards arrow (←)
+        "\u2194": "<->",  # left right arrow (↔)
+        "\u21d2": "=>",  # rightwards double arrow (⇒)
+        "\u2713": "[x]",  # check mark (✓)
+        "\u2717": "[ ]",  # ballot x (✗)
+        "\u00d7": "x",  # multiplication sign (×)
+        # Known gap: accented chars (e.g. \u00e9) and emoji are not replaced here.
+        # They are legitimate content; stripping them would be lossy. The real fix
+        # is the ACP agent truncate_safe behavior.
+    }
+)
+
+# Soft per-component caps: each component is individually truncated to its
+# cap, then the assembled context is hard-truncated at _MAX_CONTEXT_CHARS.
+# No single component may exceed 30% of the hard cap to prevent any one
+# category from dominating. The sum of soft caps (~145k) is under the hard
+# cap (165k), so all components can coexist without silent truncation.
+_HISTORY_BUDGET_CHARS = 35_000  # thread history (fallback/truncated)
+_CROSS_TAB_BUDGET_CHARS = 6_000  # sibling dashboard sessions
+# Memory-injection per-section caps. These are the BASELINE (calibrated for a 200k-
+# token window); mem-adaptive-budget scales them proportionally to the resolved
+# model's context window (via _memory_caps) so a 1M-window model recalls more and a
+# 128k one less — clamped floor (the baseline) / ceiling (×5).
+_MEMORY_PREFS_CAP = 4_000  # user preferences
+_MEMORY_PROJECTS_CAP = 6_000  # active projects
+_MEMORY_HISTORY_CAP = 25_000  # daily history (multi-tier decay)
+_SEMANTIC_MEMORY_CAP = 12_000  # structured key-value facts (vector memory)
+_EPISODIC_MEMORY_CAP = 12_000  # relevant past conversation fragments (vector memory)
+_PER_MESSAGE_CAP = 8_000  # truncate individual messages on fallback path
+
+
+def _self_model_snapshot(svc) -> str:
+    """The compact self-model block for the §2.4 allocator's ``self_model`` slot, or "".
+
+    S72/S80 left this slot with a mapped kind but NO live producer — nothing persisted
+    ``user.selfmodel.*`` (WF2LEA-8 built the observer that now does). This is that producer: it
+    reads the live entries the observer/accept-installer wrote and renders them through S72's own
+    ``snapshot`` (retrospections excluded, theories flagged unproven, bounded to
+    ``SNAPSHOT_MAX_CHARS``, whole entries dropped never cut). Reader and writer share
+    ``load_live_entries`` so the injected snapshot and the promotion planner cannot disagree about
+    what the self-model holds. Never raises — a self-model read failing must not cost the turn.
+    """
+    if svc is None or not getattr(svc, "has_vector", False):
+        return ""
+    try:
+        from personalclaw.learning.self_model import snapshot
+        from personalclaw.learning.self_model_observer import load_live_entries
+
+        return snapshot(load_live_entries(svc))
+    except Exception:
+        logger.debug("self-model snapshot failed", exc_info=True)
+        return ""
+
+
+def _record_ambient_measurements(alloc, *, sweep_args: dict) -> None:
+    """Persist what this render measured (LEARN-R14b / §2.5). Never raises.
+
+    Two things, one write path:
+
+    - **Budget utilization**, every render. `ambient.report()` already computed it and
+      sent it to a debug log, which means the flywheel health composite's
+      50-80%-utilization band had no source of truth — it would have rendered from a
+      key nothing wrote.
+    - **The ablation-delta sweep**, on a cadence (default daily). Run here because this
+      is the only place that holds the real candidate pool; a sweep over reconstructed
+      inputs would measure a different assembly and report the delta as if it were
+      this one. Cadence-gated because it costs one extra allocation per heuristic.
+    """
+    try:
+        from personalclaw.learning.staging import get_store
+
+        store = get_store()
+        store.record_allocation(used_tokens=alloc.used_tokens, budget_tokens=alloc.budget_tokens)
+        if not store.ablation_due():
+            return
+        from personalclaw.learning import ambient
+        from personalclaw.learning.surfacing import ablation_deltas
+
+        budget = int(sweep_args.pop("budget_tokens", 0) or 0)
+        query = str(sweep_args.pop("query", "") or "")
+        sources = ambient.sources_for(**sweep_args)
+        if not sources or budget <= 0:
+            return
+        store.record_ablation(ablation_deltas(sources, query=query, budget_tokens=budget))
+    except Exception:
+        logger.debug("ambient measurement recording failed", exc_info=True)
+
+
+def _render_ambient(
+    *,
+    lessons: str = "",
+    skill_index: str = "",
+    voice: str = "",
+    persona: str = "",
+    self_model: str = "",
+    procedural: str = "",
+    query: str = "",
+) -> str:
+    """Render the named ambient blocks under ONE token budget (§2.4 / §7 crit 5).
+
+    Replaces the per-block character caps that governed these independently. Those
+    caps summed to ~36,750 tokens against the 4,000 that
+    ``learning.context_budget_tokens`` declares, and nothing checked the total — so
+    the config knob's promise ("only retrieved context is ever trimmed") was kept by
+    no code at all.
+
+    The budget scales with the model window on the SAME multiple as
+    :func:`_memory_caps`, so the two halves of the prompt grow together; a flat
+    budget beside window-scaled memory sections would make the ambient blocks the
+    only thing that never benefits from a larger window.
+
+    Never raises into a turn. A budgeting failure that cost the user their context
+    would be strictly worse than an over-long prompt, so the fallback is the raw
+    lesson block — the most authoritative content, ungoverned rather than absent.
+    """
+    if not any((lessons, skill_index, voice, persona, self_model, procedural)):
+        return ""
+    try:
+        from personalclaw.config.loader import AppConfig
+        from personalclaw.learning import ambient
+        from personalclaw.model_windows import active_chat_model_window
+
+        budget = int(getattr(AppConfig.load().learning, "context_budget_tokens", 4000) or 4000)
+        alloc = ambient.render(
+            lessons=lessons,
+            skill_index=skill_index,
+            voice=voice,
+            persona=persona,
+            self_model=self_model,
+            procedural=procedural,
+            query=query,
+            budget_tokens=budget,
+            window=active_chat_model_window(),
+        )
+        text = ambient.frame(alloc, lessons_block=lessons)
+        if text:
+            logger.debug("ambient allocation: %s", ambient.report(alloc))
+        _record_ambient_measurements(
+            alloc,
+            sweep_args={
+                "lessons": lessons,
+                "skill_index": skill_index,
+                "voice": voice,
+                "persona": persona,
+                "self_model": self_model,
+                "procedural": procedural,
+                "query": query,
+                "budget_tokens": alloc.budget_tokens,
+            },
+        )
+        return text
+    except Exception:
+        logger.debug("ambient allocation failed; falling back to lessons", exc_info=True)
+        return lessons or ""
+
+
+# The window the baseline caps were calibrated for + the max multiple we scale to.
+_BASELINE_WINDOW = 200_000
+_MAX_BUDGET_MULTIPLE = 5.0
+
+
+#: The two variants the ``widget-instructions`` snippet implements. Density is a FREQUENCY
+#: preference ("how aggressively the agent uses inline widgets"), never a capability switch — both
+#: variants document the `data-action` return channel, because a widget that cannot send data back
+#: while looking interactive is the defect #2263 reported.
+WIDGET_DENSITIES: frozenset[str] = frozenset({"more", "less"})
+
+
+class _MemoryCaps(TypedDict):
+    prefs_cap: int
+    projects_cap: int
+    history_cap: int
+    semantic_cap: int
+    episodic_cap: int
+
+
+def _memory_block_timeout_secs() -> float:
+    """The recall budget, reusing `memory.active_recall_timeout_ms` (default 1500).
+
+    The same knob the active-recall path uses, deliberately: it is the same subsystem making
+    the same promise — its own help text already says "on timeout the turn proceeds without
+    it". A second field would be a second name for one budget, and every config field owes a
+    round-trip (dataclass, _meta, load, to_dict, PATCH allowlist, a control) to say nothing new.
+    """
+    try:
+        return float(getattr(AppConfig.load().memory, "active_recall_timeout_ms", 1500)) / 1000.0
+    except Exception:  # noqa: BLE001 - an unreadable config must not decide whether a turn runs
+        return 1.5
+
+
+def _guarded_recall(label: str, fn, *, timeout_secs: float | None = None):
+    """Run a memory read so that a broken memory degrades RECALL, never the turn.
+
+    🔴 The primary block was the one unguarded read in this function. Its three siblings
+    (preference profile, self-model, procedural priors) each sit in their own `try/except`,
+    and `memory_service.get_context` has no internal guard — so a raising vector store, a
+    locked sqlite file or a corrupt index did not thin the prompt, it killed the reply. The
+    asymmetry was the bug: four blocks from ONE subsystem, three of which could fail safely.
+
+    `timeout_secs` is applied only where a HANG is a real failure mode — the recall read that
+    touches the vector index. The cheap standing-state reads beside it (persona, slots, working
+    memory) get the exception guard without a worker thread, because paying for a thread per
+    turn to bound a dict lookup buys nothing. Stated rather than left as an accident.
+    """
+    try:
+        if timeout_secs is None:
+            return fn()
+        import concurrent.futures
+
+        # NOT a `with` block. `ThreadPoolExecutor.__exit__` calls `shutdown(wait=True)`, which
+        # JOINS the still-running worker — so the future times out and the caller then blocks
+        # anyway. Measured while writing this test: a 0.2s budget against a 30s read took 30.3s
+        # to return. `shutdown(wait=False)` is what makes the budget real; the orphaned worker
+        # finishes into a result nobody reads, which is the cost of bounding a sync read.
+        ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            return ex.submit(fn).result(timeout=timeout_secs)
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)
+    except Exception:  # noqa: BLE001 - includes TimeoutError; the turn proceeds either way
+        logger.warning("memory block %r unavailable — continuing without it", label, exc_info=True)
+        return None
+
+
+def _memory_caps(context_window: int | None) -> _MemoryCaps:
+    """Per-section memory caps scaled to the resolved model window (mem-adaptive-budget).
+
+    Baseline caps are calibrated for a 200k window; scale linearly by
+    ``window / 200k``, clamped to [1.0, 5.0]× so a 1M-window model (e.g. Opus)
+    recalls ~5× more while a small model stays at the safe baseline. ``None``/unknown
+    → the baseline (no regression). History stays the dominant section (its cap is
+    largest), preserving the current section balance across the scale."""
+    win = context_window or _BASELINE_WINDOW
+    mult = max(1.0, min(_MAX_BUDGET_MULTIPLE, win / _BASELINE_WINDOW))
+    return {
+        "prefs_cap": int(_MEMORY_PREFS_CAP * mult),
+        "projects_cap": int(_MEMORY_PROJECTS_CAP * mult),
+        "history_cap": int(_MEMORY_HISTORY_CAP * mult),
+        "semantic_cap": int(_SEMANTIC_MEMORY_CAP * mult),
+        "episodic_cap": int(_EPISODIC_MEMORY_CAP * mult),
+    }
+
+
+# Strip Mode Identity blocks from injected context so cross-tab or history
+# content from a different mode doesn't override the current prompt's identity.
+_MODE_IDENTITY_RE = re.compile(r"## 🔒 Mode Identity.*?(?=\n## |\Z)", re.DOTALL)
+_COMPRESSED_HISTORY_CAP = 45_000  # budget for LLM-compressed thread summary
+
+
+_STOP_EVENT_CAP = 3  # max recent stop events to inject into LLM context
+_STOP_EVENT_RESOLVED_STATES = frozenset({"stopped", "stop_failed_reset"})
+
+
+def _build_stop_event_notes(conversation_log: "ConversationLog", session_key: str) -> str:
+    """Render recent resolved stop_events as short system notes for LLM context."""
+    # Bound the scan: only the last _STOP_EVENT_CAP stop events matter,
+    # and stop events from hundreds of turns ago are not actionable context.
+    # Matches the pattern used by ``build_cancelled_turn_preamble`` below.
+    messages = conversation_log.recent(session_key, max_messages=20)
+    notes: list[str] = []
+    for m in reversed(messages):
+        if len(notes) >= _STOP_EVENT_CAP:
+            break
+        if m.get("role") != "system":
+            continue
+        content = m.get("content", "")
+        try:
+            data = json.loads(content)
+        except (ValueError, TypeError):
+            continue
+        if (
+            isinstance(data, dict)
+            and data.get("kind") == "stop_event"
+            and data.get("state") in _STOP_EVENT_RESOLVED_STATES
+        ):
+            notes.append("[User stopped the previous turn mid-execution.]")
+    if not notes:
+        return ""
+    notes.reverse()
+    return "\n".join(notes) + "\n\n"
+
+
+# Budget tradeoff: 100 user+assistant msgs covers P90 of sessions.
+# Role filtering excludes tool display titles, so the budget is spent
+# on actual conversation content.
+_COMPRESSION_MAX_MESSAGES = 100
+_HEAD_TAIL_MESSAGES = 2  # verbatim head/tail kept around compressed middle
+
+# Display names for runtime environments, keyed by the source tag from
+# sel.py _infer_source().  Kept here so the mapping is close to the
+# injection site and easy to extend.
+_RUNTIME_DISPLAY = {
+    "dashboard": "PersonalClaw dashboard",
+    "cron": "PersonalClaw cron job",
+    "subagent": "PersonalClaw subagent",
+    "background": "PersonalClaw background",
+    "cli": "CLI terminal",
+    "channel": "messaging channel",
+}
+
+
+def _runtime_display_name(session_key: str) -> str:
+    """Map a session_key to a human-readable runtime name.
+
+    Uses the same prefix heuristic as ``sel.py:_infer_source()`` so both
+    SEL audit logs and LLM context agree on the runtime.
+    """
+    if session_key.startswith("dashboard:") or session_key.startswith("dashboard_"):
+        source = "dashboard"
+    elif session_key.startswith("cron:") or session_key.startswith("cron_"):
+        source = "cron"
+    elif session_key.startswith("subagent:"):
+        source = "subagent"
+    elif session_key == "_bg":
+        source = "background"
+    elif session_key == "cli_chat":
+        source = "cli"
+    else:
+        source = "channel"
+    return _RUNTIME_DISPLAY.get(source, source)
+
+
+def _prompt_use_case_for(session_key: str | None, explicit: str = "") -> str:
+    """The prompt use-case for a session. An explicit non-default value wins;
+    otherwise derive from the session_key prefix (background/subagent/cron → the
+    ``background`` prompt; code/loop workers → ``code``/``goal_loop``). Defaults
+    to ``chat``."""
+    if explicit and explicit != "chat":
+        return explicit
+    sk = session_key or ""
+    if sk.startswith("code:") or sk.startswith("code_"):
+        return "code"
+    if sk.startswith("loop:") or sk.startswith("loop_") or sk.startswith("campaign"):
+        return "goal_loop"
+    if (
+        sk == "_bg"
+        or sk.startswith("cron:")
+        or sk.startswith("cron_")
+        or sk.startswith("subagent:")
+        # A run-owned stage session (WORK-CONTAINERS §5.1, S50). Measured: without this an owned
+        # session resolved to the `chat` prompt — a stage worker framed as a conversational
+        # assistant, which is the wrong framing for unattended work and the same near-miss the
+        # `loop_`/`loop:` entry above already documents. Behaviour keying stays on `_app`; this is
+        # only the PROMPT use-case, which is prefix-derived by design here.
+        or sk.startswith("workflow:")
+    ):
+        return "background"
+    return explicit or "chat"
+
+
+def _resolve_use_case_prompt(use_case: str, values: dict[str, Any] | None = None) -> str:
+    """Resolve the default-agent system prompt through the shared renderer.
+
+    Returns "" if it can't resolve so the caller can fall back to the shipped
+    file. Declaration defaults and required-variable failures are owned by the
+    renderer, not reimplemented here.
+    """
+    try:
+        from personalclaw.providers.prompt_use_cases import resolve_prompt_content
+
+        return resolve_prompt_content(use_case, values) or ""
+    except Exception:
+        logger.debug("use-case prompt resolution failed for %r", use_case, exc_info=True)
+        return ""
+
+
+def _snippet_resolver():
+    """A name → PromptSnippet resolver for the render engine's ``{{> name}}``
+    includes, backed by the default prompt provider. Returns a callable that
+    yields None for any name when no provider is available (the engine then
+    renders an explicit ``[missing snippet: name]`` marker)."""
+    try:
+        from personalclaw.prompt_providers.registry import (
+            _ensure_default_providers_registered,
+            get_default_provider,
+        )
+
+        _ensure_default_providers_registered()
+        provider = get_default_provider()
+    except Exception:
+        provider = None
+    return lambda n: provider.get_snippet(n) if provider is not None else None
+
+
+# Critical rules reinforced every session (supplements the system prompt)
+# The always-on critical rules live in the prompt system (bundled ``critical-rules``
+# snippet, bindable/editable in Settings → Prompts). Rendered fresh each session by
+# ``build_session_context`` via the prompt engine.
+
+
+# Regex patterns for noise compression in assistant messages
+_CODE_BLOCK_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
+_JSON_BLOB_RE = re.compile(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", re.DOTALL)
+
+
+def _compress_assistant_message(text: str) -> str:
+    """Reduce low-signal noise from assistant messages on the fallback path.
+
+    Code blocks over 2K chars are replaced with a head/tail excerpt that
+    preserves function signatures, imports, and structure.  JSON blobs
+    over 1K chars are replaced with a truncation marker.
+    """
+
+    def _replace_code_block(m: re.Match[str]) -> str:
+        body = m.group(1)
+        if len(body) <= 2000:
+            return m.group(0)
+        lines = body.strip().splitlines()
+        if len(lines) > 15:
+            kept = lines[:10] + [f"  ... ({len(lines) - 15} lines omitted)"] + lines[-5:]
+        else:
+            # Few lines but still over 2K — apply character-level truncation
+            truncated_body = body[:2000]
+            kept = truncated_body.splitlines()
+            kept.append(f"  ... ({len(body) - 2000} chars truncated)")
+        lang_line = m.group(0).split("\n", 1)[0]  # ```lang
+        return lang_line + "\n" + "\n".join(kept) + "\n```"
+
+    result = _CODE_BLOCK_RE.sub(_replace_code_block, text)
+
+    def _replace_json(m: re.Match[str]) -> str:
+        if len(m.group(0)) <= 1000:
+            return m.group(0)
+        return "[tool output truncated]"
+
+    result = _JSON_BLOB_RE.sub(_replace_json, result)
+    result = re.sub(r"\n{3,}", "\n\n", result)
+    return result
+
+
+def build_cancelled_turn_preamble(
+    conversation_log: "ConversationLog",
+    session_key: str,
+    *,
+    user_cap: int = 2000,
+    assist_cap: int = 2000,
+) -> str:
+    """Build a preamble describing the most recent cancelled turn, if any.
+
+    ACP agent does not persist cancelled turns to its conversation log,
+    so after a soft-stop the LLM has no memory of what the user asked or
+    what it had started saying. Scan the persisted ``conversation_log``
+    backwards for a ``stop_event`` marker, then find the user message
+    immediately before it plus any assistant text in between. Return a
+    short bracketed preamble. Returns "" if nothing to inject.
+
+    Called by both dashboard and channel callers after ``prev_turn_cancelled``
+    is observed on the session.
+    """
+    try:
+        recent = conversation_log.recent(session_key, max_messages=20)
+    except Exception:
+        return ""
+    if not recent:
+        return ""
+    # Look for a stop_event marker (dashboard writes these; channels do not).
+    # If present, it bounds the cancelled turn. Otherwise fall back to "last
+    # user turn" — safe because (a) ``prev_turn_cancelled`` is a one-shot
+    # flag consumed right before this function runs, and (b) callers persist
+    # the NEW user message to ``conversation_log`` only AFTER the preamble
+    # is built (see handler.py save_conversation_turn / chat.py _flush_segment),
+    # so ``recent()`` at this moment contains only prior turns and the most
+    # recent user entry is the cancelled one.
+    stop_idx = -1
+    for i in range(len(recent) - 1, -1, -1):
+        if recent[i].get("role") != "system":
+            continue
+        content = recent[i].get("content", "")
+        if not isinstance(content, str) or not content:
+            continue
+        try:
+            parsed = json.loads(content)
+            if isinstance(parsed, dict) and parsed.get("kind") == "stop_event":
+                stop_idx = i
+                break
+        except (ValueError, TypeError):
+            continue
+    # Find the most recent user message. If a stop_event was found, the user
+    # message must precede it; otherwise just take the latest user entry.
+    search_end = stop_idx if stop_idx >= 0 else len(recent)
+    user_idx = -1
+    for i in range(search_end - 1, -1, -1):
+        if recent[i].get("role") == "user":
+            user_idx = i
+            break
+    if user_idx < 0:
+        return ""
+    # Collect any assistant text between user_idx and the boundary.
+    boundary = stop_idx if stop_idx >= 0 else len(recent)
+    user_text = (recent[user_idx].get("content") or "").strip()
+    assistant_parts: list[str] = []
+    for i in range(user_idx + 1, boundary):
+        if recent[i].get("role") == "assistant":
+            t = (recent[i].get("content") or "").strip()
+            if t:
+                assistant_parts.append(t)
+    assistant_text = "\n".join(assistant_parts)
+    if len(user_text) > user_cap:
+        user_text = user_text[:user_cap] + "… [truncated]"
+    if len(assistant_text) > assist_cap:
+        assistant_text = assistant_text[:assist_cap] + "… [truncated]"
+    # The preamble lives in the prompt system (bundled ``cancelled-turn-preamble``
+    # snippet); its conditional includes the partial assistant response when present.
+    from personalclaw.prompt_providers.runtime import render_snippet_block
+
+    return render_snippet_block(
+        "cancelled-turn-preamble",
+        {"user_text": user_text, "assistant_text": assistant_text},
+    )
+
+
+def has_restorable_history(conversation_log: "ConversationLog | None", session_key: str) -> bool:
+    """True when *session_key* has prior conversation the history bootstrap will restore.
+
+    This is the SAME question :func:`compress_thread_history` asks first, factored out so
+    the caller can answer it before paying for the compression. Two callers share it and
+    must agree: the bootstrap decides whether to inject restored history at all, and the
+    session activity line decides which verb it is allowed to print. A fresh runner over
+    an existing conversation is "restored from history"; a fresh runner over nothing is
+    "created". Deriving the sentence from a *different* predicate is how a label starts
+    lying, so there is one predicate.
+
+    Note the roles filter: only ``user``/``assistant`` turns can be restored, which is why
+    a fact that lives solely in a tool result does NOT survive a non-protocol restart —
+    the honest boundary the label exists to state.
+    """
+    if conversation_log is None:
+        return False
+    try:
+        recent = conversation_log.recent(
+            session_key,
+            max_messages=_COMPRESSION_MAX_MESSAGES,
+            roles={"user", "assistant"},
+        )
+    except Exception:  # a pluggable log must not be able to break the turn's sentence
+        logger.debug("conversation_log.recent failed for %s", session_key, exc_info=True)
+        return False
+    return bool(recent)
+
+
+async def compress_thread_history(
+    conversation_log: "ConversationLog",
+    session_key: str,
+    query: str,
+    sessions: "SessionManager",
+) -> str | None:
+    """Compress full thread history via background LLM call.
+
+    ``is_new`` in callers means a new ACP agent process (or dashboard tab)
+    attached to an *existing* channel thread — not a brand-new conversation.
+    The thread already has history from prior processes, so we compress it
+    to fit within the context window of the fresh session.
+
+    Returns the compressed summary string, or None on failure (callers
+    fall back to raw truncation).  This is the ONLY async function in
+    this module — callers await it and pass the result into the sync
+    ``build_session_context`` / ``build_message`` methods.
+
+    The output uses a head/tail pattern: the first and last
+    ``_HEAD_TAIL_MESSAGES`` are kept verbatim while the middle is
+    LLM-compressed, preserving both conversation opening context and
+    the most recent exchanges.
+    """
+    from personalclaw.llm_helpers import stream_and_collect  # circular import
+    from personalclaw.session import BACKGROUND_KEY  # circular import
+
+    recent = conversation_log.recent(
+        session_key,
+        max_messages=_COMPRESSION_MAX_MESSAGES,
+        roles={"user", "assistant"},
+    )
+    if not recent:
+        return None
+
+    lines: list[str] = []
+    for m in recent:
+        # Compression path: no per-message cap, no code stripping.
+        # The LLM compressor sees full content and decides what to keep.
+        lines.append(f"{m['role'].title()}: {m['content']}")
+    transcript = "\n".join(lines)
+
+    if len(transcript) <= _COMPRESSED_HISTORY_CAP:
+
+        transcript, _ = redact_exfiltration_urls(transcript)
+        transcript, _ = redact_credentials(transcript)
+        return transcript.translate(_MULTIBYTE_TABLE)
+
+    head_lines = lines[:_HEAD_TAIL_MESSAGES]
+    tail_lines = lines[-_HEAD_TAIL_MESSAGES:] if len(lines) > _HEAD_TAIL_MESSAGES else []
+
+    # The compression instruction lives in the prompt system (bundled
+    # ``task-history-compression``, bindable in Settings → Prompts), rendered with
+    # the target cap, latest query, and transcript.
+    from personalclaw.prompt_providers.runtime import render_use_case_prompt
+
+    prompt = render_use_case_prompt(
+        "history_compression",
+        {"cap": _COMPRESSED_HISTORY_CAP, "query": query, "transcript": transcript},
+    )
+    if not prompt:
+        logger.debug("history compression prompt unresolved — skipping compression")
+        return None
+
+    acquired = False
+    try:
+        client, _is_new, _resumed = await sessions.get_or_create(
+            BACKGROUND_KEY, agent="personalclaw-lite"
+        )
+        acquired = True
+        result = await stream_and_collect(client, prompt)
+        if not result:
+            return None
+
+        parts: list[str] = []
+        if head_lines:
+            parts.append("## Thread start (verbatim)\n" + "\n".join(head_lines))
+        parts.append("## Compressed history\n" + result[:_COMPRESSED_HISTORY_CAP])
+        if tail_lines:
+            parts.append("## Recent exchanges (verbatim)\n" + "\n".join(tail_lines))
+        final = "\n\n".join(parts)
+        final, _ = redact_exfiltration_urls(final)
+        final, _ = redact_credentials(final)
+        # `ContextCompact` (AUTO crit 5): declared, selectable in the hook UI, and fired by nothing
+        # until now. Emitted HERE, not at the early return above: that path returns the transcript
+        # untouched because it already fits the cap, so announcing a compaction there would report
+        # work that did not happen. Both sizes ride the payload — the useful signal is the ratio,
+        # and a compaction that barely shrank anything is the interesting case.
+        from personalclaw.triggers.lifecycle_fire import context_compact_payload
+        from personalclaw.triggers.lifecycle_fire import fire as _fire_lifecycle
+
+        await _fire_lifecycle(
+            context_compact_payload(
+                session_key=session_key,
+                before_chars=len(transcript),
+                after_chars=len(final),
+            )
+        )
+        return final.translate(_MULTIBYTE_TABLE)
+    except Exception:
+        logger.warning("Thread history compression failed", exc_info=True)
+        return None
+    finally:
+        if acquired:
+            sessions.release(BACKGROUND_KEY)
+            await sessions.recycle_background()
+
+
+class _Parts:
+    """The assembled prompt as NAMED components rather than one opaque string.
+
+    CE2-8's refusal has to say WHICH component does not fit — "episodic memory", "skill:
+    git-review" — and a joined string cannot be asked that question. So the labels are
+    recorded where the assembly happens, which is the only place that knows what each
+    piece IS; deriving them afterwards from the joined text would be guessing.
+
+    ``text()`` is byte-identical to the ``"".join(parts)`` this replaced: an empty piece is
+    skipped, and joining ``""`` contributes nothing either way. ``__len__`` therefore also
+    matches the old ``len(parts)`` at the one place that logs it — every call site up to
+    that log is already guarded by a truthiness check on its own content.
+
+    ``compressible=False`` marks a piece that must be REFUSED rather than trimmed: the
+    system prompt, the user's own request, and the session-context block (which carries the
+    user's lessons and preferences). Quietly cutting the user's rules in half is precisely
+    the silent drop the contract forbids.
+    """
+
+    __slots__ = ("_items",)
+
+    def __init__(self) -> None:
+        self._items: list[Component] = []
+
+    def add(
+        self,
+        text: str,
+        *,
+        name: str,
+        compressible: bool = True,
+        content_type: str = "",
+    ) -> None:
+        if text:
+            self._items.append(
+                Component(
+                    name=name,
+                    text=text,
+                    compressible=compressible,
+                    content_type=content_type,
+                )
+            )
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def __bool__(self) -> bool:
+        return bool(self._items)
+
+    def text(self) -> str:
+        return "".join(c.text for c in self._items)
+
+    def components(self) -> list[Component]:
+        return list(self._items)
+
+
+class ContextBuilder:
+    """Builds context for injection into ACP prompts.
+
+    Assembles memory, skills, and hook-injected context into a single
+    string that gets prepended to the user's message on the first turn
+    of a session (or after a context reset).
+    """
+
+    @staticmethod
+    def get_memory_for(cwd: str | None = None, memory_store: str | None = None):
+        """Return the memory provider for a session.
+
+        When *memory_store* names a registered memory provider (an agent's
+        explicit ``memory_store`` binding), that provider is returned. Otherwise
+        the filesystem-fallback ``MemoryStore`` is used, partitioned by the
+        session's working directory (see ``memory_dir_for_cwd``) and cached per
+        partition.
+
+        ``memory_store`` is TWO namespaces that share the string: a registered
+        *provider* name (e.g. ``"native"``) OR a ``config.memory_stores`` *tuning-
+        profile* key (e.g. the seeded ``"default"``, which only carries TTL/cap
+        overrides for the fallback store — NOT a provider binding). A profile key
+        must resolve to the fallback SILENTLY; only a name that is neither a
+        provider nor a known profile is genuinely dangling and worth a warning.
+        (Fixes the false "memory_store 'default' not registered" logged on every
+        default-agent turn — the seeded agent binds the ``default`` profile key.)
+        """
+        if memory_store:
+            from personalclaw.memory_providers.registry import get_provider
+
+            provider = get_provider(memory_store)
+            if provider is not None:
+                return provider
+            if memory_store not in AppConfig.load().memory_stores:
+                logger.warning(
+                    "memory_store %r not registered; using filesystem fallback", memory_store
+                )
+
+        ws_path = memory_dir_for_cwd(cwd)
+        key = str(ws_path)
+        if key not in _memory_stores:
+            store = MemoryStore(workspace=ws_path)
+            store.init()
+            _attach_vector_store(store, ws_path)
+            _memory_stores[key] = store
+        return _memory_stores[key]
+
+    def __init__(
+        self,
+        memory: MemoryStore | None = None,
+        skills: SkillsLoader | None = None,
+        hooks: HookManager | None = None,
+        conversation_log: "ConversationLog | None" = None,
+        channel_history: "ChannelHistory | None" = None,
+        bot_name: str = "",
+    ):
+        # Default (no-cwd) memory lives in the shared "_default" partition so it
+        # matches what get_memory_for(None) resolves to.
+        self.memory = memory or MemoryStore(workspace=memory_dir_for_cwd(None))
+        self.skills = skills or SkillsLoader()
+        self.hooks = hooks or HookManager()
+        self.conversation_log = conversation_log
+        self.channel_history = channel_history
+        # Explicit override (tests / embedders). Empty = resolve from config
+        # LIVE per turn (property below) so a Settings → Account save takes
+        # effect on the next message, not the next restart — same live-read
+        # semantic as widget_density in _widget_block.
+        self._bot_name_override = bot_name
+        # Register this builder's memory in the cwd-partition cache under BOTH
+        # the no-cwd "_default" key AND the running workspace key. The gateway
+        # builds ContextBuilder with the MAIN vector store (~/.personalclaw/
+        # memory.db — the one the Memory UI + consolidator read/write); without
+        # the workspace-key registration, a dashboard chat (whose workspace_dir is
+        # PERSONALCLAW_WORKSPACE) resolved a DIFFERENT, near-empty cwd partition,
+        # so user-saved + consolidated memory was invisible to the agent in chat.
+        # Genuinely different cwds (other projects, remote subagents) still get
+        # their own partition via get_memory_for — only the gateway's own
+        # workspace is unified onto the main store here.
+        _memory_stores[str(memory_dir_for_cwd(None))] = self.memory
+        try:
+            from personalclaw.config.loader import default_workspace_dir
+
+            _ws_key = str(memory_dir_for_cwd(default_workspace_dir()))
+            _memory_stores.setdefault(_ws_key, self.memory)
+        except Exception:
+            logger.debug("Could not register memory under the workspace key", exc_info=True)
+
+    @property
+    def _bot_name(self) -> str:
+        """The assistant display name — explicit override, else live config."""
+        if self._bot_name_override:
+            return self._bot_name_override
+        try:
+            return AppConfig.load().agent.bot_name or "PersonalClaw"
+        except Exception:
+            return "PersonalClaw"
+
+    def _runtime_prompt_values(self, session_key: str) -> dict[str, Any]:
+        """Values supplied whenever a system prompt is rendered."""
+        return {
+            "bot_name": self._bot_name,
+            "widget_block": self._widget_block(session_key),
+        }
+
+    def _apply_runtime_vars(self, prompt: str, session_key: str) -> str:
+        """Substitute the runtime prompt variables on the unified ``{{name}}``
+        format used by the prompts entity everywhere:
+
+        * ``{{bot_name}}`` — the configured assistant name.
+        * ``{{widget_block}}`` — the inline-widget instructions (dashboard only;
+          empty elsewhere), honoring ``dashboard.widget_density``.
+
+        Snippet includes (``{{> name}}``) are resolved through the prompt provider
+        so a system prompt can compose shared fragments. Rendered via the prompt
+        engine so the substitution mechanism is identical to provider-rendered
+        prompts; undeclared ``{{…}}`` pass through untouched.
+        """
+        from personalclaw.prompt_providers.base import PromptTemplate, PromptVariable
+        from personalclaw.prompt_providers.engine import render_template
+
+        values = self._runtime_prompt_values(session_key)
+        tpl = PromptTemplate(
+            name="_runtime",
+            content=prompt,
+            variables=[PromptVariable(name=k) for k in values],
+        )
+        return render_template(tpl, values, resolver=_snippet_resolver())
+
+    @staticmethod
+    def _widget_block(session_key: str) -> str:
+        """The inline-widget instruction block for ``{{widget_block}}``.
+
+        Dashboard sessions get widget instructions; channel/CLI get an empty string.
+        Respects dashboard.widget_density config ('more' or 'less').
+        """
+        is_dashboard = session_key and (
+            session_key.startswith("dashboard:") or session_key.startswith("dashboard_")
+        )
+        if not is_dashboard:
+            return ""
+
+        cfg = AppConfig.load()
+        # NORMALIZED, not passed through: the snippet's conditional knows exactly two values and
+        # renders EMPTY for a third (measured: "more" 2212 chars, "less" 1240, "sideways" 0). The
+        # field is enum-constrained on the edit path, so only a hand-edited config.json can hold
+        # something else — and that would strip the whole block, leaving a model that emits raw
+        # `<widget>` markup into the transcript with no idea the tag exists. An unknown value falls
+        # back to the documented default instead of deleting a capability.
+        raw = str(getattr(cfg.dashboard, "widget_density", "more") or "").strip().lower()
+        density = raw if raw in WIDGET_DENSITIES else "more"
+
+        # The widget instructions (both density variants) live in the prompt system
+        # as the ``widget-instructions`` snippet; the conditional selects the variant.
+        from personalclaw.prompt_providers.runtime import render_snippet_block
+
+        return render_snippet_block("widget-instructions", {"density": density})
+
+    @staticmethod
+    def _load_agent_prompt(agent: str) -> str:
+        """Read the prompt from a custom agent's config file."""
+        agents_dir = _path_home_pclaw() / "agents"
+        for f in agents_dir.glob("*.json"):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                if data.get("name") == agent or f.stem == agent:
+                    prompt = data.get("prompt") or ""
+                    if prompt.startswith("file://"):
+                        try:
+                            return safe_read_file(prompt[7:])
+                        except (OSError, PermissionError):
+                            return ""
+                    return prompt
+            except (json.JSONDecodeError, OSError):
+                continue
+        return ""
+
+    def _slots_block(self, vector_store: object | None) -> str:
+        """The ONE bounded Slots block, or "" (MGAV-8).
+
+        Fails to "" rather than propagating: a slot row a user hand-edited into an unreadable
+        shape must not be able to stop a session from starting.
+
+        The budget comes from `memory.slot_size_cap` (MGAV-9) through
+        `resolve_block_limit`, which clamps it into the structural range — so a user can tune
+        what slots cost each turn, and neither this wrapper nor config.json can widen it past
+        the hard ceiling.
+        """
+        if vector_store is None:
+            return ""
+        try:
+            from personalclaw import memory_slots
+
+            store = cast("memory_slots._SlotStore", vector_store)
+            # A slot over its per-slot cap can only come from a row the caps never saw (a
+            # hand-edited memory.db) — every write path refuses over-cap. Logged HERE because
+            # this is the moment it costs something: the block truncates, and without this line
+            # a short Slots block has no explanation anywhere in the logs.
+            excess = memory_slots.over_cap(store)
+            if excess:
+                logger.warning(
+                    "memory slots over cap (hand-edited rows?); block will truncate: %s", excess
+                )
+            limit = memory_slots.resolve_block_limit(
+                getattr(AppConfig.load().memory, "slot_size_cap", None)
+            )
+            return memory_slots.render_slots_block(store, limit=limit)
+        except Exception:
+            logger.debug("slots block render failed", exc_info=True)
+            return ""
+
+    def build_session_context(
+        self,
+        session_key: str | None = None,
+        agent: str | None = None,
+        resumed: bool = False,
+        cwd: str | None = None,
+        memory_store: str | None = None,
+        compressed_history: str | None = None,
+        mode: str = "",
+        blocks_reads: bool = False,
+        # CE2-8: filled with one legible line per assembly-time DROP (today: the
+        # `_MAX_CONTEXT_CHARS` cut, which previously only reached a server log).
+        dropped_out: list[str] | None = None,
+    ) -> str:
+        """Build context for a new session (memory + skills + history).
+
+        Injected once at session start, not on every message.
+
+        When *compressed_history* is provided, it replaces the naive
+        truncation of thread history.  Callers obtain it by awaiting
+        ``compress_thread_history()`` before calling this method.
+
+        For custom agents (non-personalclaw), skills and workspace identity
+        are skipped — the agent loads its own. Memory,
+        lessons, critical rules, and hooks are injected for all agents.
+        """
+        is_custom = agent and agent != "personalclaw"
+        parts: list[str] = []
+
+        if is_custom:
+            logger.info(
+                "Custom agent %r: injecting memory/lessons/rules, skipping skills",
+                agent,
+            )
+        else:
+            logger.debug("Building session context for personalclaw agent")
+
+        from personalclaw.prompt_providers.runtime import render_snippet_block
+
+        parts.append(render_snippet_block("critical-rules") + "\n\n")
+
+        # Current date/time — inject for ALL agents so the LLM knows "today".
+        # Honour AppConfig.timezone (e.g. "Asia/Tokyo") so the LLM sees
+        # the user's local time instead of the gateway host's system TZ, which
+        # is often UTC on remote/server hosts and makes "today" ambiguous.
+        #
+        # PROMPT-CACHE-SUBSTRATE §C3: the date line is NOT appended into `parts` here —
+        # `parts` is joined and hard-truncated at `_MAX_CONTEXT_CHARS` below, and
+        # truncation cuts from the END, so a tail-positioned date would be the FIRST
+        # thing a large context loses (silently regressing "what day is it" for the
+        # heaviest users). Instead the assembled block is built and truncated first,
+        # THEN the date is appended AFTER truncation (see the return path below), so it
+        # always survives. Rendered once here so the timestamp is captured at assembly.
+        _, tz = get_local_tz()
+        now = datetime.now(tz)
+        current_date_line = f"[CURRENT DATE] {now.strftime('%A, %Y-%m-%d %H:%M %Z')}\n\n"
+
+        # Agent identity and runtime — inject for ALL agents so the LLM
+        # knows which agent it is and where it's running.  Without this,
+        # the LLM cannot distinguish dashboard from the ACP agent and may
+        # incorrectly tell the user to "go to the dashboard" when it IS
+        # the dashboard.
+        #
+        # Runtime detection reuses the same heuristic as sel.py
+        # _infer_source() to keep a single source of truth.
+        agent_label = agent or "personalclaw"
+        if session_key:
+            runtime = _runtime_display_name(session_key)
+            parts.append(
+                render_snippet_block(
+                    "agent-runtime-identity",
+                    {"agent_label": agent_label, "runtime": runtime},
+                )
+                + "\n\n"
+            )
+
+        # Workspace identity — personalclaw-only (custom agents don't use workspaces).
+        # The workspace IS the working directory; memory is scoped to it.
+        if not is_custom:
+            ws_path = cwd or "(none)"
+            parts.append(render_snippet_block("workspace-identity", {"ws_path": ws_path}) + "\n\n")
+
+        # Thread conversation history — highest priority context.
+        # Use pre-computed LLM compression when available; fall back to truncation.
+        if session_key and self.conversation_log and not resumed:
+            _history_header = render_snippet_block("thread-history-header") + "\n"
+            if compressed_history:
+
+                compressed_history, _ = redact_exfiltration_urls(compressed_history)
+                compressed_history, _ = redact_credentials(compressed_history)
+                compressed_history = _MODE_IDENTITY_RE.sub("", compressed_history)
+                logger.info(
+                    "🔍 build_session_context: session_key=%s LLM-compressed " "history (%d chars)",
+                    session_key,
+                    len(compressed_history),
+                )
+                parts.append(_history_header + compressed_history + "\n[End of thread history]\n\n")
+            else:
+                recent = self.conversation_log.recent(session_key, roles={"user", "assistant"})
+                logger.info(
+                    "🔍 build_session_context: session_key=%s resumed=%s "
+                    "conv_log_entries=%d (fallback truncation)",
+                    session_key,
+                    resumed,
+                    len(recent),
+                )
+                if recent:
+                    budget = _HISTORY_BUDGET_CHARS
+                    history_lines: list[str] = []
+                    for m in reversed(recent):
+                        content = _MODE_IDENTITY_RE.sub("", m["content"])
+                        if m["role"] == "assistant":
+                            content = _compress_assistant_message(content)
+                        if len(content) > _PER_MESSAGE_CAP:
+                            content = content[:_PER_MESSAGE_CAP] + "…[truncated]"
+                        line = f"{m['role'].title()}: {content}"
+                        if budget - len(line) < 0:
+                            break
+                        history_lines.append(line)
+                        budget -= len(line)
+                    if history_lines:
+                        history_lines.reverse()
+                        history_block = "\n".join(history_lines)
+                        history_block, _ = redact_exfiltration_urls(history_block)
+                        history_block, _ = redact_credentials(history_block)
+                        parts.append(
+                            _history_header + history_block + "\n[End of thread history]\n\n"
+                        )
+        elif session_key and resumed:
+            logger.info(
+                "🔍 build_session_context: session_key=%s RESUMED — "
+                "skipping thread history (ACP agent has native history)",
+                session_key,
+            )
+
+        # Stop event context — inject notes for recent stop events so the
+        # LLM knows prior turns were cancelled by the user.
+        if session_key and self.conversation_log:
+            _stop_notes = _build_stop_event_notes(self.conversation_log, session_key)
+            if _stop_notes:
+                parts.append(_stop_notes)
+
+        # Memory and lessons: inject for ALL agents (including custom).
+        # The user's preferences, project context, and learned corrections
+        # are valuable regardless of which agent is running.
+        # Temporary sessions skip all memory reads.
+        # Memory: an agent's named memory_store provider if set, else the
+        # filesystem-fallback store scoped by the working directory.
+        memory = self.get_memory_for(cwd, memory_store)
+        # The four blocks that share ONE budget (§2.4 / §7 crit 5). Collected rather
+        # than appended, then rendered together by `learning.ambient` below — four
+        # independent appends is what let them accrete prompt weight past the budget
+        # `learning.context_budget_tokens` declares.
+        _persona = ""
+        _voice = ""
+        _skill_index = ""
+        _self_model = ""
+        _procedural = ""
+        if not blocks_reads:
+            from personalclaw.memory_service import service_for
+
+            _svc = service_for(memory)
+            # Adaptive budget (mem-adaptive-budget): scale the per-section caps to the
+            # window of the model actually bound to chat (1M for Opus → ~5× recall;
+            # 200k baseline for smaller models). Resolved from the active-model binding
+            # so no window param has to thread through every build_message call site.
+            from personalclaw.model_windows import active_chat_model_window
+
+            _caps = _memory_caps(active_chat_model_window())
+            memory_ctx = _guarded_recall(
+                "recall",
+                lambda: _svc.get_context(**_caps),
+                timeout_secs=_memory_block_timeout_secs(),
+            )
+            if memory_ctx:
+                parts.append(memory_ctx)
+            # Session working memory (M5c): a rolling distilled summary of THIS
+            # session, always injected (not relevance-gated) — a consequence of
+            # its scope=session, not a separate code path.
+            if session_key:
+                wm = _guarded_recall("working_memory", lambda: _svc.working_memory(session_key))
+                if wm:
+                    parts.append(wm)
+            # Agent self-persona (M5e): the agent's positive self-model, injected
+            # always-on when its scope=agent matches the running agent. The agent
+            # name is normalized to the canonical default when unset, so the most
+            # common case (a default-agent chat, where ``agent`` is None) still
+            # gets — and reads back — its persona. Capture (consolidation) uses the
+            # SAME normalization so write/read agree on the scope key.
+            from personalclaw.agents.defaults import normalize_agent_name
+
+            _persona = (
+                _guarded_recall(
+                    "persona", lambda: _svc.persona_block(agent=normalize_agent_name(agent))
+                )
+                or ""
+            )
+
+            # Memory slots (MEMORY-GRAPH-AND-VAULT §6 — MGAV-8): ONE bounded block of the
+            # always-injected registers, placed here so it sits adjacent to the persona and
+            # USER PROFILE blocks it is a sibling of — a slot is standing state about the
+            # user, not a retrieved fact. Appended directly rather than folded into the
+            # four-block ambient budget because slots are unconditional by definition: they
+            # carry their own hard ceiling (SLOTS_BLOCK_MAX_CHARS) instead of competing for a
+            # relevance-scored share, and an empty block costs nothing (lazy built-ins).
+            _slots = _guarded_recall("slots", lambda: self._slots_block(getattr(_svc, "_vs", None)))
+            if _slots:
+                parts.append(_slots + "\n")
+
+            # User preference profile (C15): the always-on ambient half of the
+            # preference split — Active, decaying, typed facets (style/identity/
+            # tooling/veto/goal/channel) rendered as stable DEFAULTS, distinct from
+            # on-demand memory recall. Capped + Active-only inside render_profile_block.
+            try:
+                from personalclaw.preference_facets import render_profile_block
+
+                _vs = getattr(_svc, "_vs", None)
+                if _vs is not None:
+                    _voice = render_profile_block(_vs) or ""
+            except Exception:
+                logger.debug("preference profile block render failed", exc_info=True)
+
+            # Self-model snapshot (§2.6 — WF2LEA-8): the compact block of observed working
+            # principles/theories/focus, for the allocator's `self_model` slot that S72/S80 mapped
+            # but left producerless. Gated by the same knob the observer writes under — off means
+            # the subsystem is silent on both the read and the write side.
+            if getattr(AppConfig.load().learning, "self_model_enabled", True):
+                _self_model = _self_model_snapshot(_svc)
+
+            # How-to-work priors (M5d — WF2LEA-13): the READ side of procedural memory.
+            # `record_procedural` had two live writers (this module's after-turn review
+            # and learning/run_end) and `procedural_priors()` had no production caller
+            # at all, so every turn paid to capture priors that nothing ever used.
+            # Global scope only, capped at 5, and raw failure rows are excluded — those
+            # are failure-SYNTHESIS input, and surfacing them beside the one prior that
+            # replaces them is how this class becomes a tool-call log.
+            try:
+                _procedural = _svc.procedural_block()
+            except Exception:
+                logger.debug("procedural prior block render failed", exc_info=True)
+
+        # Skills: personalclaw-only (custom agents load their own). Pass the agent
+        # so its agent-local skill tier (skill-agent-local-tier) overrides global
+        # for this turn when present.
+        if not is_custom:
+            _skill_index = self.skills.get_context(agent=agent) or ""
+        # Ephemeral session skills (skill-ephemeral-promotion): drafts the user
+        # taught THIS session are live immediately, for every agent, until the
+        # user promotes or forgets them at session end.
+        if session_key:
+            try:
+                from personalclaw.skills.ephemeral import context_block
+
+                eph = context_block(session_key)
+                if eph:
+                    parts.append(eph)
+            except Exception:
+                logger.debug("ephemeral skills context failed", exc_info=True)
+
+        # Lessons — inject for ALL agents (skipped for temporary sessions). The
+        # memory.db record store is the ONE lesson source of truth: lessons live
+        # in it as ``lesson.*`` namespaced keys, read/written through the memory
+        # service. There is no parallel JSONL store (WF2LEA-3 retired it), so the
+        # dual-source read that let a global + a workspace lesson disagree is gone.
+        lessons_ctx = ""
+        if not blocks_reads:
+            from personalclaw.memory_service import service_for
+
+            # `workspace=cwd` is what makes a workspace-scoped lesson visible, and this
+            # is the ONE read path that can supply it: a workspace IS the working
+            # directory (see the workspace-identity block above, which tells the agent
+            # exactly that). Global lessons come back regardless; a lesson scoped to a
+            # different directory does not.
+            lessons_ctx = (
+                _guarded_recall("lessons", lambda: service_for(memory).lessons_context(cwd)) or ""
+            )
+
+        # ONE budget for the named ambient blocks (§2.4 / §7 crit 5). Replaces four
+        # independent per-block character caps that summed to ~9× the budget the
+        # config declares: driven with 120 realistic lessons the old render passed
+        # 4,000 tokens by 1,576, and at 400+ lessons reached 10,101. Lessons are
+        # never crowded out (their slot is non-sacrificial and they rank
+        # individually), an oversized item is dropped whole rather than cut, and the
+        # authority preamble renders.
+        _ambient = _render_ambient(
+            lessons=lessons_ctx,
+            skill_index=_skill_index,
+            voice=_voice,
+            persona=_persona,
+            self_model=_self_model,
+            procedural=_procedural,
+        )
+        if _ambient:
+            parts.append(_ambient)
+
+        # Cross-tab context (dashboard only, skipped for temporary sessions)
+        if (
+            session_key
+            and self.conversation_log
+            and session_key.startswith("dashboard:")
+            and not blocks_reads
+        ):
+            cross = self.conversation_log.recent_from_source(
+                "dashboard:", exclude_key=session_key, max_messages=10
+            )
+            if cross:
+                cross_lines: list[str] = []
+                cross_len = 0
+                for m in cross:
+                    content = _MODE_IDENTITY_RE.sub("", m["content"])
+                    if len(content) > _PER_MESSAGE_CAP:
+                        content = content[:_PER_MESSAGE_CAP] + "…[truncated]"
+                    line = f"{m['role'].title()}: {content}"
+                    if cross_len + len(line) > _CROSS_TAB_BUDGET_CHARS:
+                        break
+                    cross_lines.append(line)
+                    cross_len += len(line)
+                if cross_lines:
+                    parts.append(
+                        render_snippet_block(
+                            "cross-tab-context", {"cross_lines": "\n".join(cross_lines)}
+                        )
+                        + "\n\n"
+                    )
+
+        # Provenance-tagged entries from recent sessions (skipped for temporary)
+        if session_key and self.conversation_log and not blocks_reads:
+            provenance = self.conversation_log.recent_with_provenance(session_key)
+            if provenance:
+                prov_lines: list[str] = []
+                for p in provenance:
+                    prov_lines.append(
+                        f"- [thread {p['source_thread']}, {p['ts'][:16]}] {p['snippet']}"
+                    )
+                parts.append("## Recent Session Context\n" + "\n".join(prov_lines) + "\n\n")
+
+        context = "".join(parts)
+        if len(context) > _MAX_CONTEXT_CHARS:
+            logger.warning(
+                "Session context too large (%d chars), truncating to %d",
+                len(context),
+                _MAX_CONTEXT_CHARS,
+            )
+            # CE2-8: this cut used to reach a SERVER LOG only — the user's history was
+            # silently shortened and the reply that followed was indistinguishable from
+            # one built on the whole thing. Report it to the caller so the turn can say so.
+            if dropped_out is not None:
+                dropped_out.append(
+                    f"Session context was over the assembly cap, so "
+                    f"{len(context) - _MAX_CONTEXT_CHARS:,} characters of the oldest "
+                    f"history were dropped ({len(context):,} → {_MAX_CONTEXT_CHARS:,})."
+                )
+            context = context[:_MAX_CONTEXT_CHARS]
+            # Avoid cutting mid-line
+            last_nl = context.rfind("\n")
+            if last_nl > 0:
+                context = context[: last_nl + 1]
+
+        # Append the date AFTER truncation (§C3) so it survives even an oversized
+        # context — truncation cut from the end, so a date placed earlier could have
+        # been dropped. Appended for both the custom and personalclaw paths (this is
+        # the single assembly tail both take).
+        context += current_date_line
+
+        logger.debug(
+            "Session context: agent=%s, custom=%s, %d chars",
+            agent or "personalclaw",
+            is_custom,
+            len(context),
+        )
+        return context
+
+    def build_message(
+        self,
+        text: str,
+        is_new_session: bool,
+        session_key: str | None = None,
+        channel_id: str | None = None,
+        agent: str | None = None,
+        resumed: bool = False,
+        thread_ts: str | None = None,
+        cwd: str | None = None,
+        memory_store: str | None = None,
+        user_display_name: str | None = None,
+        compressed_history: str | None = None,
+        mode: str = "",
+        prompt_use_case: str = "chat",
+        blocks_reads: bool = False,
+        action_context: str | None = None,
+        thread_parent_text: str | None = None,
+        system_prompt_override: str = "",
+        system_prompt_suffix: str = "",
+        resolved_agent_id: str = "",
+        force_skill_ids: list[str] | None = None,
+        # Accepted and currently unused: the loop engine still resolves per-phase
+        # `workflow_ids` (a persisted column with live user data), but the injection
+        # that consumed them died with the old feature. Slice 6's `[ACTIVE WORKFLOWS]`
+        # block is what makes them mean something again. Dropping the parameter would
+        # force a matching edit in the loop capability contract for no gain.
+        force_workflow_ids: list[str] | None = None,
+        # MEMORY-GRAPH-AND-VAULT §5.4: when a list is supplied, the episodic block is
+        # rendered with `[Memory N]` markers and this list is filled with one
+        # resolvable manifest entry per cited fragment ({"n", "id", "preview"}), so the
+        # reply can cite a memory by index and the frontend can deep-link the token.
+        # Left None by non-chat callers → the block is byte-identical to before.
+        citations_out: list[dict] | None = None,
+        # CE2-8: when a list is supplied it is filled with one NAMED `Component` per piece
+        # of the assembled prompt, in assembly order, so the headroom contract can name
+        # the specific block that does not fit instead of reporting a generic overflow.
+        # Left None by callers that only want the string → behavior is unchanged.
+        components_out: list[Component] | None = None,
+        # CE2-8: assembly-time drops the USER must hear about (today: the session-context
+        # char cap, which previously only reached a server log). Merged into the turn's
+        # headroom notice by the seam, because a drop the user never sees is
+        # indistinguishable from a wrong answer.
+        notices_out: list[str] | None = None,
+        # CE2-9: when a list is supplied it is filled with one `SkillDecision` per skill
+        # this turn considered — admitted, reduced or refused, with the numbers behind it.
+        # The per-turn answer to "why did my skill not take effect", for callers that want
+        # it structured rather than as the prose notice.
+        skill_decisions_out: list["SkillDecision"] | None = None,
+    ) -> tuple[str, HookResult]:
+        """Build the full message with context and hook processing.
+
+        On new sessions: prepends memory + always-on skills + lessons + history
+        + episodic memory.
+        On follow-up messages: only channel history (group channels), triggered
+        skills, and hook context. ACP native history is trusted — no parallel
+        transcript is injected.
+
+        Pass *compressed_history* (from ``compress_thread_history()``) to
+        inject LLM-compressed thread context instead of naive truncation.
+
+        Returns:
+            (full_message, hook_result) — hook_result may be a reply/modify/inject.
+        """
+        is_custom = agent and agent != "personalclaw"
+        hook_result = self.hooks.on_message(text)
+
+        parts = _Parts()
+
+        # Session context on first message only
+        if is_new_session:
+            # Agent prompt goes BEFORE session context wrapper
+            # so the LLM treats it as its identity, not background info.
+            # An Agent Definition's system_prompt (edited in the Agents UI) wins
+            # over the file-based prompt — so what the user edits actually runs.
+            if system_prompt_override.strip():
+                agent_prompt = system_prompt_override
+            elif is_custom:
+                agent_prompt = self._load_agent_prompt(agent or "")
+            else:
+                # Default-agent system prompt resolves from the prompt provider,
+                # via the use-case binding (chat / background / code / goal_loop;
+                # derived from the session_key when not set explicitly). Falls back
+                # to the shipped prompt file when the provider can't resolve it.
+                _uc = _prompt_use_case_for(session_key, prompt_use_case)
+                agent_prompt = _resolve_use_case_prompt(
+                    _uc, self._runtime_prompt_values(session_key or "")
+                )
+                if not agent_prompt:
+                    try:
+                        agent_prompt = _shipped_prompt().read_text(encoding="utf-8")
+                    except OSError:
+                        agent_prompt = ""
+            # A suffix LAYERS on the resolved prompt (task-mode framing) — it
+            # must never REPLACE it the way the override does, or the posture
+            # block becomes the entire system prompt (dropping identity/safety).
+            if system_prompt_suffix.strip():
+                agent_prompt = (
+                    f"{agent_prompt}\n\n{system_prompt_suffix}"
+                    if agent_prompt
+                    else system_prompt_suffix
+                )
+            if agent_prompt:
+                agent_prompt = self._apply_runtime_vars(agent_prompt, session_key or "")
+                from personalclaw.prompt_providers.runtime import render_snippet_block
+
+                parts.add(
+                    render_snippet_block(
+                        "agent-system-prompt-wrapper", {"agent_prompt": agent_prompt}
+                    )
+                    + "\n\n",
+                    name="system prompt",
+                    compressible=False,
+                )
+            session_ctx = self.build_session_context(
+                session_key,
+                agent=agent,
+                resumed=resumed,
+                cwd=cwd,
+                memory_store=memory_store,
+                compressed_history=compressed_history,
+                mode=mode,
+                blocks_reads=blocks_reads,
+                dropped_out=notices_out,
+            )
+            if session_ctx:
+                from personalclaw.prompt_providers.runtime import render_snippet_block
+
+                parts.add(
+                    render_snippet_block(
+                        "session-context-wrapper", {"session_context": session_ctx}
+                    )
+                    + "\n\n",
+                    # NOT compressible: this block carries the user's lessons, preferences
+                    # and history under the allocator's own budget (§2.4). Blunt-trimming
+                    # it here would cut authoritative content the allocator already ranked
+                    # — the honest outcome is a named refusal and `/compact` as the fix.
+                    name="session context (memory · lessons · history)",
+                    compressible=False,
+                )
+            # CE2-10: a RESUMED session gets the account of what already happened, DERIVED from
+            # the run's own recorded facts. This is the branch that created the defect: the
+            # `resumed` path above deliberately skips thread history (the agent owns it), which
+            # leaves "step 3 already finished" as something the model has to INFER from surviving
+            # prose — and it infers wrong, re-running yesterday's completed step.
+            #
+            # NOT compressible: an account trimmed in the middle is an account that has silently
+            # dropped a completion, which is the very defect it exists to fix. If it does not fit,
+            # CE2-8's contract must name it and refuse.
+            #
+            # `ResumeStateInconsistent` is deliberately NOT caught here. The record contradicting
+            # the tree is the one case where continuing is worse than stopping, and swallowing it
+            # would leave the turn running on a premise already known to be false. The chat runner
+            # turns it into the user-visible refusal.
+            if resumed and session_key:
+                from personalclaw.resume_account import NOT_CONSULTED, resume_account_block
+
+                _account = resume_account_block(
+                    session_key=session_key,
+                    # NOT_CONSULTED, not []: the assembly seam holds no per-tool outcome record.
+                    # The conversation log persists a tool's TITLE and nothing about whether it
+                    # succeeded, so claiming to have read the tool history here would be a
+                    # confident "nothing happened" about a source nobody read. The compaction
+                    # seam, which DOES hold the tool_calls/tool-result pairs, reads it.
+                    tool_messages=NOT_CONSULTED,
+                    tree_root=cwd,
+                )
+                if _account:
+                    parts.add(
+                        _account + "\n\n",
+                        name="record of already-completed work",
+                        compressible=False,
+                    )
+
+        # Channel history — inject on every message for group channel context
+        ch_ctx: str | None = None
+        if channel_id and self.channel_history:
+            ch_ctx = self.channel_history.context_for(channel_id, thread_ts=thread_ts) or None
+            if ch_ctx:
+                parts.add(ch_ctx, name="channel history", content_type="log")
+
+        # Thread parent text — inject whenever available, even alongside
+        # channel history (they serve different purposes: ch_ctx has recent
+        # messages, parent text has the original post that started the thread).
+        if channel_id and thread_ts:
+            # The thread-context block (both the with-parent-text and bare-metadata
+            # variants) lives in the prompt system as the ``channel-thread-context``
+            # snippet; its conditional selects the variant by thread_parent_text.
+            from personalclaw.prompt_providers.runtime import render_snippet_block
+
+            parts.add(
+                render_snippet_block(
+                    "channel-thread-context",
+                    {
+                        "channel_id": channel_id,
+                        "thread_ts": thread_ts,
+                        "thread_parent_text": thread_parent_text or "",
+                    },
+                )
+                + "\n\n",
+                name="thread context",
+            )
+
+        # Trust ACP native history for follow-up messages — do NOT inject
+        # a parallel transcript reminder. Only inject
+        # transcript on new sessions (via build_session_context), never
+        # on follow-ups. Dual sources of truth cause contradictions.
+        logger.info(
+            "🔍 build_message: session_key=%s is_new=%s resumed=%s "
+            "has_channel_history=%s injected_parts=%d",
+            session_key,
+            is_new_session,
+            resumed,
+            bool(channel_id and self.channel_history),
+            len(parts),
+        )
+
+        # Episodic memory — only on new sessions to avoid cross-thread contamination;
+        # ACP native history already provides in-thread context for follow-ups.
+        # Skipped for temporary sessions.
+        if blocks_reads:
+            logger.info("🔍 Temporary session — episodic memory skipped")
+        elif is_new_session:
+            from personalclaw.memory_service import service_for
+
+            memory = self.get_memory_for(cwd, memory_store)
+            episodic_ctx = service_for(memory).episodic_context(
+                query_text=text, cap=3000, citations_out=citations_out
+            )
+            if episodic_ctx:
+                parts.add(episodic_ctx + "\n", name="episodic memory")
+                logger.info("🔍 Injected episodic memory (%d chars)", len(episodic_ctx))
+                # Cite-by-index + admit-ignorance clauses (MEMORY-GRAPH-AND-VAULT §5.4).
+                # Placed adjacent to the block so the model reads the fragments and the
+                # rule together. The cite clause is emitted only when the block carries
+                # `[Memory N]` markers (citations_out supplied AND non-empty) — no marker,
+                # no instruction to cite one. The admit-ignorance clause is unconditional
+                # on an injected block: the whole point is to bound the reply to what was
+                # actually recalled.
+                if citations_out:
+                    parts.add(
+                        "[Memory citation] When you use a fact from the episodic "
+                        "memory above, cite it inline as `[Memory N]` using its number, "
+                        "so the user can trace it to the source. Only cite a number that "
+                        "appears above; never invent one.\n",
+                        name="memory citation instructions",
+                        compressible=False,
+                    )
+                parts.add(
+                    "[Answer only from memory] If the memory above does not contain "
+                    "what the user asked about, say you don't have it in memory rather "
+                    "than guessing — never present an un-recalled fact as remembered.\n",
+                    name="memory grounding instructions",
+                    compressible=False,
+                )
+            else:
+                logger.info("🔍 No episodic memory to inject")
+        else:
+            logger.info("🔍 Follow-up message — episodic memory skipped (trust ACP)")
+
+        # [ACTIVE WORKFLOWS] (WORKFLOWS-V2 §4): runs in flight right now, needs_input
+        # first. A run waiting on a human is the single most actionable thing in the
+        # session, and without this the user has to ask "is anything running?" — the
+        # assistant genuinely cannot see it otherwise.
+        #
+        # NEVER-BREAK-A-TURN: the helper swallows its own errors and returns "" on any
+        # failure. A context builder that raises takes the user's whole message with it,
+        # and a corrupt workflow row must never cost someone their turn.
+        try:
+            from personalclaw.workflows.context_block import active_workflows_block
+
+            # Unfiltered by project deliberately: `resolve_project_id` AUTO-CREATES a
+            # project when none resolves, and a read-only context block must not have
+            # side effects. A run in flight is worth surfacing regardless of project.
+            wf_block = active_workflows_block()
+            if wf_block:
+                parts.add(wf_block, name="active workflows")
+                logger.info("Injected [ACTIVE WORKFLOWS] block (%d chars)", len(wf_block))
+        except Exception:
+            logger.debug("active-workflows block skipped", exc_info=True)
+
+        # ── Skills (CE2-9: one budget, declared tiers, a visible decision) ──
+        #
+        # Both skill paths GATHER here and ALLOCATE once below. Before CE2-9 each one
+        # concatenated its bodies straight into `parts` — so a large skill took the window
+        # by being appended, and a matched skill that did not fit had no way to say so.
+        # Now every body is a candidate in the allocator's existing `skills` slot, bounded
+        # per skill by its declared `context_tier` and in aggregate by the turn's skill
+        # budget, and each one comes back admitted / reduced / refused.
+        #
+        # Force-loaded skills (goal-loop planner/quorum): a loop's confirmed skill_ids load
+        # ACTIVELY every cycle, bypassing both the is_custom skip (the loop worker is a
+        # custom agent) and passive trigger-matching. The user picked these in Plan Review
+        # precisely so they're always present — which is why they enter at the higher
+        # score, not why they get unmetered room.
+        # Imported here, not at module scope: `skills.allocation` reaches into
+        # `personalclaw.learning`, whose package __init__ pulls the whole learning graph —
+        # a cost every `import personalclaw.context` would otherwise pay. Same reason the
+        # ablation import at :214 is local.
+        from personalclaw.skills.allocation import FORCED_SCORE, SkillRequest, allocate_skills
+
+        skill_requests: list[SkillRequest] = []
+        forced_skills: list[str] = []
+        if force_skill_ids:
+            for name in force_skill_ids:
+                content = self.skills.load_skill(name)
+                if content:
+                    skill_requests.append(
+                        SkillRequest(name=name, content=content, score=FORCED_SCORE, forced=True)
+                    )
+                    forced_skills.append(name)
+            if forced_skills:
+                logger.info("Force-loaded loop skills: %s", ", ".join(forced_skills))
+
+        # Surfaced skills (on-demand, any message) — semantic ∪ keyword (#26),
+        # skip for custom agents
+        if not is_custom:
+            triggered = [s for s in self.skills.get_surfaced_skills(text) if s not in forced_skills]
+            if triggered:
+                logger.info("Surfaced skills: %s", ", ".join(triggered))
+            # Progressive disclosure (#29): above the threshold, inject only a
+            # compact INDEX of the matched skills (name + one-line description) and
+            # let the agent pull full bodies on demand via the skill_invoke tool —
+            # instead of inlining every matched body (token efficiency at scale).
+            # At/below the threshold (the common case) inline as before — no extra
+            # round-trip. 0 disables (always inline).
+            # The fallback constructs `SkillsConfig()` rather than restating a literal
+            # (#1783). The literal here was `8` against a `max_triggered` of 3, so an
+            # unreadable config re-created the exact inert state the clamp in
+            # `SkillsConfig.__post_init__` exists to prevent — the same bug, one layer down,
+            # reachable by nothing more than a malformed config.json. Going through the
+            # dataclass means this arm inherits the ordering rule instead of contradicting
+            # it, and it cannot raise: it is a pure default construction, no file IO.
+            try:
+                _disclosure_threshold = AppConfig.load().skills.progressive_disclosure_threshold
+            except Exception:
+                from personalclaw.config.loader import SkillsConfig
+
+                _disclosure_threshold = SkillsConfig().progressive_disclosure_threshold
+            if _disclosure_threshold and len(triggered) > _disclosure_threshold:
+                index_lines = [
+                    "[Relevant skills — INDEX only. Call skill_invoke{name} to load a "
+                    "skill's full steps before using it. These are the matches for this "
+                    "turn; call skill_search(query) to find others in the full library.]"
+                ]
+                by_key = {s["key"]: s for s in self.skills.list_skills()}
+                for name in triggered:
+                    desc = by_key.get(name, {}).get("description") or name
+                    index_lines.append(f"- {name}: {desc}")
+                index_lines.append("[End of skill index]")
+                parts.add("\n".join(index_lines) + "\n\n", name="skill index")
+                # Index-only: nothing loaded yet → no use recorded here (skill_invoke
+                # records the use when the agent actually pulls a body).
+            else:
+                for name in triggered:
+                    content = self.skills.load_skill(name)
+                    if content:
+                        skill_requests.append(SkillRequest(name=name, content=content))
+
+        if skill_requests:
+            skill_alloc = allocate_skills(
+                self.skills, skill_requests, query=text, session=session_key or ""
+            )
+            for _name, _block in skill_alloc.blocks:
+                parts.add(_block, name=f"skill: {_name}")
+            # VISIBLE: which skill was reduced or refused, and why, on CE2-8's existing
+            # assembly-notice channel rather than a second one.
+            if notices_out is not None:
+                notices_out.extend(skill_alloc.notices)
+            if skill_decisions_out is not None:
+                skill_decisions_out.extend(skill_alloc.decisions)
+            # Turn-time use counter (skill-use-counter): record the skills whose content
+            # actually reached this turn — the shared signal for semantic-surfacing
+            # ranking (#26) and library GC (#27). A REFUSED skill is deliberately not
+            # counted as used: crediting a use to a skill the agent never saw would train
+            # the ranker on the allocator's failures. Advisory, never breaks a turn.
+            if skill_alloc.loaded:
+                try:
+                    from personalclaw.skills.usage import SkillUsageStore
+
+                    SkillUsageStore().record_uses(skill_alloc.loaded)
+                except Exception:
+                    logger.debug("skill usage record skipped (error)", exc_info=True)
+
+        # WORKFLOWS-V2 Phase 1: the old `[PREFERRED WORKFLOW …]` surfacing block stood
+        # here — embedding-matched SOPs injected passively every turn, plus a
+        # force-include path for goal-loop-confirmed ids. Deleted with the feature.
+        #
+        # Slice 6 puts an `[ACTIVE WORKFLOWS]` block in this exact spot, and it is a
+        # different thing on purpose: it lists the RUNNING workflows in this session
+        # with the next action each needs, rather than guessing which definition the
+        # turn resembles. Whatever lands here must keep the never-break-a-turn contract
+        # the old path honored (swallow everything → inject nothing).
+
+        # Hook-injected context — apply to all agents
+        if hook_result.action == HOOK_INJECT_CONTEXT:
+            parts.add(
+                f"[Hook context:]\n{hook_result.text}\n[End of hook context]\n\n",
+                name="hook context",
+            )
+
+        # Action button context — structured payload from inline button click
+        if action_context:
+            parts.add(action_context + "\n\n", name="action button context", compressible=False)
+
+        # The actual message (possibly modified by transform hook)
+        if parts:
+            if user_display_name:
+                parts.add(
+                    f"[CURRENT USER] {user_display_name}\n",
+                    name="current user",
+                    compressible=False,
+                )
+            parts.add(
+                "[CURRENT USER REQUEST — respond to this]\n",
+                name="request header",
+                compressible=False,
+            )
+        # NEVER compressible: compressing what the user just said is not a compression,
+        # it is answering a different question.
+        if hook_result.action == HOOK_MODIFY:
+            parts.add(hook_result.text, name="the user's request", compressible=False)
+        else:
+            parts.add(text, name="the user's request", compressible=False)
+
+        # Widget instructions — dashboard only (channel/CLI can't render iframes)
+        _is_dashboard = session_key and (
+            session_key.startswith("dashboard:") or session_key.startswith("dashboard_")
+        )
+        if _is_dashboard:
+            parts.add(
+                "\n\n[WIDGETS] You can render rich HTML inline using "
+                '<widget title="Title">HTML</widget> tags. Tailwind CSS is available. '
+                "The widget iframe inherits the dashboard's active theme: use "
+                "var(--bg), var(--text), var(--card), var(--border), var(--accent), "
+                "var(--muted), var(--ok), var(--warn), var(--danger) (or Tailwind "
+                "arbitrary values like bg-[var(--card)]) instead of hardcoded colors "
+                "so widgets look right on every theme. "
+                "Use when the response benefits from styled visual content that markdown "
+                "cannot express well (e.g. charts with Chart.js, styled cards, color-coded "
+                "tables, or visual previews). "
+                "Keep widgets concise. For larger HTML, save to a file and return "
+                "the path -- you can iterate on it in future turns.",
+                name="widget instructions",
+                compressible=False,
+            )
+
+        # CE2-8: hand the caller the NAMED components, not just the joined string, so the
+        # headroom contract can refuse by naming a specific block. The multibyte
+        # normalization is applied per component AND to the returned text, so what the
+        # contract measures is byte-for-byte what would be sent.
+        if components_out is not None:
+            components_out.extend(
+                replace(c, text=c.text.translate(_MULTIBYTE_TABLE)) for c in parts.components()
+            )
+        return parts.text().translate(_MULTIBYTE_TABLE), hook_result

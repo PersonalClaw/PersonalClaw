@@ -1,0 +1,75 @@
+{
+  "name": "personalclaw-desktop",
+  "version": "0.1.3",
+  "description": "PersonalClaw \u2014 AI agent desktop app",
+  "homepage": "https://personalclaw.dev",
+  "license": "MIT",
+  "desktopName": "personalclaw-desktop",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "dist": "electron-builder --mac --config.electronVersion=$(node -p \"require('electron/package.json').version\")",
+    "dist:linux": "electron-builder --linux --config.electronVersion=$(node -p \"require('electron/package.json').version\")"
+  },
+  "devDependencies": {
+    "electron": "^44.4.2",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "io.personalclaw.app",
+    "productName": "PersonalClaw",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "icon.png",
+      "target": [
+        "dmg"
+      ]
+    },
+    "dmg": {
+      "writeUpdateInfo": false
+    },
+    "linux": {
+      "category": "Development",
+      "icon": "icon.png",
+      "maintainer": "PersonalClaw contributors <noreply@personalclaw.dev>",
+      "synopsis": "PersonalClaw — AI agent desktop app",
+      "syncDesktopName": true,
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    },
+    "files": [
+      "main.js",
+      "context-menu.js",
+      "find-bin.js",
+      "capabilities.js",
+      "pushToTalk.js",
+      "trayPresence.js",
+      "loginItem.js",
+      "nativeNotifications.js",
+      "gatewayShutdown.js",
+      "gatewayEnv.js",
+      "gatewayUrl.js",
+      "endpointRegistry.js",
+      "shellStore.js",
+      "connectMode.js",
+      "connectDialog.js",
+      "connectPreload.js",
+      "connectDialog.html",
+      "preload.js",
+      "loading.html",
+      "icon.png"
+    ],
+    "extraResources": [
+      {
+        "from": "backend-dist/personalclaw-backend",
+        "to": "backend-dist/personalclaw-backend",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ]
+  }
+}

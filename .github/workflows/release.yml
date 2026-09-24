@@ -1,0 +1,503 @@
+# Release — triggered by a version tag (v*). Builds the ONE artifact set every
+# install channel projects from (wheel with prebuilt web/dist + multi-arch images
+# + the unsigned Linux desktop AppImage/deb + the unsigned macOS dmg), publishes to PyPI via Trusted
+# Publishing (no stored tokens), and attaches provenance. Publish jobs sit behind the `release` / `release-client` environments
+# (owner-approved manual gate). Job ids per CI-RELEASE-ENGINEERING C1.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag/ref to build (manual runs)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # The wheel MUST carry web/dist: run the web build FIRST, then python -m build
+    # (setup.py's BuildWithWeb copies web/dist into the package). Verified locally:
+    # the wheel contains static/dist/index.html + JS assets.
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      gh_release_flags: ${{ steps.ver.outputs.gh_release_flags }}
+    steps:
+      - uses: actions/checkout@v7
+      # FIRST, before anything expensive: classify the tag. `scripts/release_tags.py`
+      # is the single parser every job downstream reads (RUM-8) — the version, the
+      # stable/prerelease split, and the image tags all come from it, so the three
+      # shell dialects that used to each answer this differently cannot drift apart
+      # again. It REFUSES a ref it cannot classify (no `v`, not X.Y.Z, or build
+      # metadata), which is why it runs before the 10-minute build rather than after:
+      # a mistyped tag fails here instead of part-publishing.
+      - name: Classify the release tag (one parser — RUM-8)
+        id: ver
+        run: python3 scripts/release_tags.py --ref "$GITHUB_REF_NAME" --github-output >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Build the SPA (npm from repo root)
+        run: |
+          npm ci
+          npm run build
+      - name: Install uv + build backend
+        uses: astral-sh/setup-uv@v7
+      - name: Build sdist + wheel (with web/dist)
+        # `uv build` (not `uv pip install --system build` + `python -m build`): the
+        # runner's /usr python is PEP-668 externally managed, so --system errors.
+        # uv build runs the same sdist-first-then-wheel-from-sdist flow in its own
+        # isolated env — same fix as the ci.yml client job (PR #16).
+        run: |
+          uv python install 3.12
+          uv build --out-dir dist
+      - name: Verify the wheel contract (SPA packaged + Node-free serve)
+        run: |
+          # Full C4 contract (scripts/verify_wheel.py): asserts the SPA is in the
+          # wheel, installs it into a scratch venv from the wheel alone (this runner
+          # has Node for the SPA build, but the verify venv installs only the wheel),
+          # boots `personalclaw gateway --test-mode`, and probes / (200 HTML) +
+          # /api/healthz (200). Replaces the old shallow namelist check.
+          python scripts/verify_wheel.py --wheel "dist/*.whl"
+      - name: SBOM (syft SPDX-JSON over the built dist)
+        uses: anchore/sbom-action@v0
+        with:
+          path: dist/
+          format: spdx-json
+          artifact-name: personalclaw-sbom.spdx.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  pypi:
+    # personalclaw → PyPI via Trusted Publishing. Owner-approved via the `release`
+    # environment gate. No stored token (OIDC).
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write  # OIDC for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      # The client package ships from its own source tree/job — keep only the
+      # personalclaw distributions here.
+      - name: Keep only personalclaw distributions
+        run: |
+          find dist -maxdepth 1 -type f ! -name 'personalclaw-*' -delete
+          ls -la dist
+      # skip-existing: a re-run of an already-published tag no-ops instead of
+      # failing on PyPI's no-re-upload rule (idempotent releases).
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+
+  pypi-client:
+    # personalclaw-client → PyPI, SEPARATE environment (release-client): PyPI's
+    # pending-publisher tuple (owner, repo, workflow, environment) must be unique
+    # per project, so the two packages use distinct environments (both owner-gated).
+    # The client is published by DISTRIBUTION S2; this job is the seam it fills in
+    # (it builds + publishes packages/personalclaw-client-py).
+    #
+    # LOCKSTEP VERSIONING (owner policy 2026-07-22): the client's version always
+    # equals core's — bumped in every release-prep commit whether or not the client
+    # changed (enforced by tests/test_version_consistency.py). skip-existing is
+    # belt-and-suspenders for re-runs of a tag whose client already published:
+    # an already-on-PyPI version no-ops instead of failing the job.
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release-client
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv + build the client
+        uses: astral-sh/setup-uv@v7
+      - name: Build client sdist + wheel
+        # uv build, not --system pip: the runner python is PEP-668 externally managed.
+        run: |
+          uv python install 3.12
+          uv build packages/personalclaw-client-py --out-dir dist-client
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-client/
+          skip-existing: true
+
+  images:
+    # Multi-arch GHCR images (amd64 + arm64). Auth = GITHUB_TOKEN (no extra secret).
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          # `smoke` is the per-image liveness command run INSIDE the container on
+          # BOTH arches (PLATFORM-REACH A2.1). It differs per image because the
+          # images differ: gateway ships the `personalclaw` CLI; web is nginx and
+          # has no such binary, so it proves its own server binary instead. A
+          # single hardcoded `personalclaw --version` would fail on web.
+          - name: gateway
+            dockerfile: deploy/docker/Dockerfile.backend
+            smoke: personalclaw --version
+          - name: web
+            dockerfile: deploy/docker/Dockerfile.web
+            smoke: nginx -v
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Which tags this release may MOVE is a property of the tag, not a constant
+      # (RUM-8). Stable publishes `:X.Y.Z`, the moving minor `:X.Y` and `:latest`;
+      # a prerelease publishes `:X.Y.Z-rc.N` and ONLY `:beta`. The tag list is
+      # rendered by the same `scripts/release_tags.py` the tag-parse test asserts,
+      # so a `tags:` block can no longer say something the test does not check —
+      # the hardcoded `:latest` that used to sit here moved `latest` onto every
+      # release candidate. `:X.Y` and `:beta` are the tags RUM-7's
+      # `select_image_tag` already resolves for the `stable`/`beta` channels and
+      # `docs/guides/containers.md` documents; before this step nothing created them.
+      - name: Plan this tag's image tags (RUM-8)
+        id: imagetags
+        env:
+          IMAGE: ghcr.io/personalclaw/personalclaw-${{ matrix.name }}
+        run: |
+          python3 scripts/release_tags.py --ref "$GITHUB_REF_NAME" --image "$IMAGE"
+          python3 scripts/release_tags.py --ref "$GITHUB_REF_NAME" --image "$IMAGE" \
+            --github-output >> "$GITHUB_OUTPUT"
+      - name: Build and push image with supply-chain attestations
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.imagetags.outputs.image_tags }}
+          sbom: true
+          provenance: mode=max
+      - name: Export image SBOM attestations (SPDX-JSON)
+        env:
+          IMAGE: ghcr.io/personalclaw/personalclaw-${{ matrix.name }}:${{ needs.build.outputs.version }}
+          IMAGE_NAME: personalclaw-${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          mkdir -p image-sboms
+          docker buildx imagetools inspect "$IMAGE" --format '{{ json .SBOM }}' \
+            > image-sboms/attestations.json
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          directory = Path("image-sboms")
+          attestations = json.loads((directory / "attestations.json").read_text(encoding="utf-8"))
+          for platform in ("linux/amd64", "linux/arm64"):
+              record = attestations.get(platform)
+              document = record.get("SPDX") if isinstance(record, dict) else None
+              if not isinstance(document, dict):
+                  raise SystemExit(f"{platform}: missing SPDX SBOM attestation")
+              if document.get("SPDXID") != "SPDXRef-DOCUMENT":
+                  raise SystemExit(f"{platform}: malformed SPDX document")
+              arch = platform.removeprefix("linux/")
+              output = directory / f"{os.environ['IMAGE_NAME']}-{arch}.spdx.json"
+              output.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+              print(f"{platform}: wrote {output}")
+          PY
+          rm image-sboms/attestations.json
+      - name: Upload image SBOM artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-sbom-${{ matrix.name }}
+          path: image-sboms/*.spdx.json
+          if-no-files-found: error
+      # RELEASE-BLOCKING per-arch smoke (A2.1). The build above publishes a
+      # multi-arch manifest; a manifest that merely *builds* can still ship an
+      # arch that cannot start. So pull each arch explicitly and run the image's
+      # own liveness command inside it — arm64 executes under the QEMU emulation
+      # already set up above. This step failing fails the `images` job, and
+      # `notes` (the GitHub Release) `needs: images` — so a broken arm64 blocks
+      # the release rather than shipping silently.
+      - name: Smoke both arches (release-blocking)
+        env:
+          IMAGE: ghcr.io/personalclaw/personalclaw-${{ matrix.name }}:${{ needs.build.outputs.version }}
+          SMOKE: ${{ matrix.smoke }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            echo "::group::smoke linux/$arch — $IMAGE — $SMOKE"
+            docker pull --quiet --platform "linux/$arch" "$IMAGE"
+            # --entrypoint '' bypasses the image ENTRYPOINT (tini/nginx-entrypoint)
+            # so the smoke command runs directly instead of starting the service.
+            docker run --rm --platform "linux/$arch" --entrypoint '' "$IMAGE" \
+              sh -lc "$SMOKE"
+            echo "::endgroup::"
+          done
+
+  desktop-mac:
+    # macOS desktop shell — UNSIGNED .dmg (owner ruling 2026-09-22: "We want to generate
+    # an installable app release. We don't need to be able to sign it in order to produce
+    # the installable app. Signing needs apple developer account with an ongoing payment
+    # which we are not ready for right now.")
+    #
+    # SIGNING AND PRODUCING AN INSTALLER ARE ORTHOGONAL, and conflating them is why this
+    # job did not exist. Q26 descoped desktop SIGNING (SH-11/SH-4/DC-1/RUM-12), and that
+    # was read as descoping the mac artifact itself — so `release.yml` mentioned `macos`
+    # zero times while `desktop/package.json` had carried a working `dist` script
+    # (`electron-builder --mac`, target `dmg`) the whole time. Nothing here needs an Apple
+    # Developer account.
+    #
+    # WHAT UNSIGNED COSTS A MAC USER, unlike Linux. Gatekeeper DOES consume a signature,
+    # so an unsigned, un-notarized dmg will not launch by double-click: the user must go
+    # to System Settings → Privacy & Security → "Open Anyway" once. That is a real first-run
+    # step and docs/guides/desktop.md must say so — shipping it silently would be the
+    # dishonest version of this job.
+    #
+    # ARM64 ONLY, and stated rather than implied. `macos-latest` is Apple silicon, and the
+    # bundled backend is a PyInstaller binary, which CANNOT be cross-compiled — so this dmg
+    # runs on Apple silicon only. Intel coverage needs a real x86_64 runner (macos-13) as a
+    # second leg; it is deliberately not claimed here until a job proves it, exactly as
+    # desktop-linux declines to claim arm64.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install uv + the venv the Makefile's pyinstaller target expects
+        uses: astral-sh/setup-uv@v7
+      - name: Create .venv for the bundled backend build
+        # Same reasoning as desktop-linux: the spec collect_submodules()s
+        # openai/anthropic/slack_sdk, which are extras and must be importable here.
+        run: |
+          uv python install 3.12
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python '.[anthropic,openai,slack]' pyinstaller
+      - name: Build unsigned dmg
+        # make desktop-dist = web-build (SPA) -> pyinstaller (the bundled
+        # personalclaw-backend the shell spawns) -> stage into desktop/backend-dist
+        # -> electron-builder --mac (dmg per desktop/package.json).
+        run: make desktop-dist
+      - name: Smoke the artifact (release-blocking)
+        # The Electron shell is NOT launched (no display, same call as desktop-linux).
+        # What IS executed for real is the bundled backend, from inside the mounted dmg,
+        # on this OS/arch — a bundle that packages but cannot start must fail the release.
+        # Locally built files carry no com.apple.quarantine xattr, so Gatekeeper does not
+        # block this exec; that is why the smoke can run at all on an unsigned build.
+        #
+        # 🔴 `"$BACKEND" --version` USED TO BE THE WHOLE EXECUTION ASSERTION, and argparse's
+        # `--version` prints and exits before the runner catalogue is read, before any
+        # `personalclaw.sdk.*` submodule is imported, and before an MCP server command is
+        # resolved. So the 2026-09-23 dmg passed this step while being unable to enable a
+        # single extension. `scripts/smoke_backend_bundle.sh` boots the packaged gateway and
+        # drives the surfaces that force those reads; it is a script, not inline shell,
+        # because `desktop-linux` needs the identical assertion and two copies drift.
+        run: |
+          set -euo pipefail
+          cd desktop/dist
+          ls -la
+          DMG=$(ls -1 *.dmg | head -1)
+          test -n "$DMG"
+          MNT=$(mktemp -d)
+          hdiutil attach "$DMG" -mountpoint "$MNT" -nobrowse -quiet
+          trap 'hdiutil detach "$MNT" -quiet || true' EXIT
+          APP=$(ls -1d "$MNT"/*.app | head -1)
+          test -n "$APP"
+          echo "mounted: $DMG -> $APP"
+          test -f "$APP/Contents/Resources/app.asar"
+          BACKEND="$APP/Contents/Resources/backend-dist/personalclaw-backend/personalclaw-backend"
+          test -x "$BACKEND"
+          "$GITHUB_WORKSPACE/scripts/smoke_backend_bundle.sh" "$BACKEND"
+          # Name the arch in the log so an arm64-only dmg is never mistaken for universal.
+          echo "built arch: $(uname -m)"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-mac
+          path: desktop/dist/*.dmg
+
+  desktop-linux:
+    # Linux desktop shell — UNSIGNED AppImage + .deb (DC-6, owner ruling 2026-08-27:
+    # ship the Linux target now; Windows stays deferred — the native port is a no-go
+    # per docs/research/windows-native-audit.md:302 and no Windows signing
+    # secrets exist). The macOS dmg is built by `desktop-mac` above and is also
+    # unsigned, by the same owner ruling; the difference is that Gatekeeper consumes a
+    # signature and Linux has no equivalent gate, so here
+    # "unsigned" is the platform norm, not a downgrade — docs/guides/desktop.md says
+    # what that means for users. x86-64 only (this runner's arch); arm64 desktop is
+    # not claimed anywhere until a job proves it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install uv + the venv the Makefile's pyinstaller target expects
+        uses: astral-sh/setup-uv@v7
+      - name: Create .venv for the bundled backend build
+        # Plain `.` is not enough: personalclaw-backend.spec collect_submodules()s
+        # openai/anthropic/slack_sdk into the frozen bundle, and those are extras —
+        # absent from core — so they must be importable in the build venv. The heavy
+        # [models] extra stays OUT deliberately (the spec excludes torch/faiss anyway).
+        run: |
+          uv python install 3.12
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python '.[anthropic,openai,slack]' pyinstaller
+      - name: Build unsigned AppImage + deb
+        # make desktop-dist-linux = web-build (SPA) -> pyinstaller (the bundled
+        # personalclaw-backend the shell spawns) -> stage into desktop/backend-dist
+        # -> electron-builder --linux (AppImage + deb per desktop/package.json).
+        run: make desktop-dist-linux
+      - name: Smoke the artifacts (release-blocking)
+        # The Electron shell itself is NOT launched — that needs a display, and
+        # ci.yml's desktop tier declines display-dependent smoke on purpose. What
+        # IS run for real is the bundled backend: extract the AppImage (no FUSE
+        # needed) and execute the frozen personalclaw-backend on this OS/arch —
+        # a bundle that packages but cannot start must fail the release, same
+        # rationale as the images job's per-arch smoke.
+        #
+        # 🔴 Same hole as `desktop-mac` had, and closed the same way: `--version` is
+        # argparse, so it exits before the runner catalogue, any `personalclaw.sdk.*`
+        # import, or an MCP server resolution. `scripts/smoke_backend_bundle.sh` boots the
+        # packaged gateway and drives those reads. ONE script for both jobs on purpose.
+        run: |
+          set -euo pipefail
+          cd desktop/dist
+          ls -la
+          chmod +x ./PersonalClaw-*.AppImage
+          ./PersonalClaw-*.AppImage --appimage-extract > /dev/null
+          test -f squashfs-root/resources/app.asar
+          BACKEND=squashfs-root/resources/backend-dist/personalclaw-backend/personalclaw-backend
+          test -x "$BACKEND"
+          "$GITHUB_WORKSPACE/scripts/smoke_backend_bundle.sh" "$(pwd)/$BACKEND"
+          # deb: correct package name + the same two load-bearing paths present.
+          dpkg-deb --info personalclaw-desktop_*.deb | grep -q "Package: personalclaw-desktop"
+          dpkg-deb --contents personalclaw-desktop_*.deb | grep -q "resources/app.asar"
+          dpkg-deb --contents personalclaw-desktop_*.deb | grep -q "backend-dist/personalclaw-backend/personalclaw-backend"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-linux
+          path: |
+            desktop/dist/*.AppImage
+            desktop/dist/*.deb
+
+  notes:
+    # GitHub Release with notes drawn from CHANGELOG.md for this version.
+    # desktop-linux is in `needs` so its AppImage/deb attach here and a broken
+    # Linux desktop build blocks the release (the images-smoke precedent).
+    needs: [build, pypi, images, desktop-linux, desktop-mac]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: image-sbom-*
+          path: image-sboms/
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          # Pattern, not a literal name: `desktop-linux` AND `desktop-mac` both land here so
+          # the `gh release create ... desktop-dist/*` glob below attaches every desktop
+          # installer. Mirrors the image-sbom step above. A literal name silently cut the
+          # release without the dmg when desktop-mac was added.
+          pattern: desktop-*
+          path: desktop-dist/
+          merge-multiple: true
+      - name: Extract this version's CHANGELOG section
+        # RELEASE_VERSION comes from the one parser (RUM-8) rather than a second
+        # in-line `lstrip("v")`: the CHANGELOG heading this looks up and the version
+        # the wheel/images carry have to be the same string.
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          python - <<'PY' > release-notes.md
+          import re, os, pathlib
+          ver = os.environ["RELEASE_VERSION"]
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          # Body under "## [<ver>] ...header..." up to the next "## " heading (a
+          # top-level release heading, NOT a "### " subsection) or end of file.
+          m = re.search(rf"^## \[{re.escape(ver)}\][^\n]*\n(.*?)(?=^## \[|\Z)", text, re.S | re.M)
+          print(m.group(1).strip() if m else f"Release {ver}.")
+          PY
+      - name: Create GitHub Release
+        # The stability flags come from `scripts/release_tags.py` via the build job
+        # (RUM-8), not from a shell suffix test. The expression that used to sit here
+        # — `[ "$REF" != "${REF%rc*}" ] && echo --prerelease` — only ever recognized
+        # `rc`, so `v0.3.0-beta.2` was published as a full, non-prerelease Release and
+        # `stable`'s `select_target` then offered it to every user as an upgrade.
+        # A stable tag now claims `--latest` explicitly; a prerelease gets
+        # `--prerelease` and never `--latest`.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_RELEASE_FLAGS: ${{ needs.build.outputs.gh_release_flags }}
+        run: |
+          # Unquoted on purpose: GH_RELEASE_FLAGS is a closed set of whole flags
+          # (`--latest` | `--prerelease`) from the parser above and MUST word-split.
+          # shellcheck disable=SC2086
+          gh release create "$GITHUB_REF_NAME" dist/* image-sboms/* desktop-dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file release-notes.md \
+            $GH_RELEASE_FLAGS
+
+  website-follow:
+    # A published core release is an OBLIGATION on personalclaw.dev: the website
+    # publishes a released version, so its pins and its own version must follow
+    # this tag. Nudge that repo's release-follow workflow so the obligation is
+    # raised immediately instead of waiting for its daily schedule.
+    #
+    # Best-effort by design (`continue-on-error`): the website is a separate repo
+    # with its own enforcement (a strict parity job on every PR/push plus the daily
+    # watchdog), so a missing token or a dispatch hiccup must never fail or hold up
+    # a core release. Requires a PAT with `actions: write` on personalclaw.dev in
+    # the `WEBSITE_DISPATCH_TOKEN` secret; without it this logs and moves on.
+    needs: [notes]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Ask personalclaw.dev to re-check release parity
+        env:
+          GH_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "No WEBSITE_DISPATCH_TOKEN configured — skipping the website nudge."
+            echo "personalclaw.dev still catches this via its daily release-follow watchdog."
+            exit 0
+          fi
+          gh workflow run release-follow.yml --repo PersonalClaw/personalclaw.dev \
+            || echo "Dispatch failed; the website's daily watchdog will still catch it."
+
+  attest:
+    # Build-provenance attestations on the wheel (zero key management — GitHub OIDC).
+    needs: [build, notes]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: "dist/*"

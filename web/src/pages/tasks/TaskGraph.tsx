@@ -1,0 +1,198 @@
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { withWeight } from '../../design/fontWeight'
+import { GitFork, Route, TriangleAlert, Activity } from 'lucide-react'
+import { api, type TaskItem, type DependencyAnalysis } from '../../lib/api'
+import { statusMeta, signalPriority, TERMINAL } from './taskMeta'
+import { depMap, layeredLayout, cyclicNodes } from './dag'
+import { DagView, type DagNode, type DagEdge, type DagNodeState } from './DagView'
+import { EmptyState } from '../../ui/ListScaffold'
+
+/** Task status → DAG node state. A cycle node is an error; otherwise a blocked task
+ *  is gated (pulsing ring), in_progress is active, terminal is done, else todo. */
+function nodeStateFor(status: string, bad: boolean): DagNodeState {
+  if (bad) return 'error'
+  if (status === 'blocked') return 'blocked'
+  if (status === 'in_progress') return 'active'
+  if (TERMINAL.has(status)) return 'done'
+  return 'todo'
+}
+
+/** DAG view, flowing TOP → BOTTOM: prerequisites sit above the tasks that
+ *  depend on them; edges point downward. To stay within the available width
+ *  (never scroll sideways), each dependency layer is WRAPPED into as many
+ *  sub-rows as needed to fit the measured container width — so a layer with
+ *  many independent tasks stacks downward instead of overflowing. Cycle nodes
+ *  are flagged red. Click a node to open its detail panel. */
+const NODE_W = 210, NODE_H = 58, ROW_GAP = 64, COL_GAP = 28, PAD = 24, RADIUS = 12
+
+export function TaskGraph({ tasks, onOpen }: { tasks: TaskItem[]; onOpen: (id: string) => void }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [containerW, setContainerW] = useState(0)
+  // Server-authoritative, library-wide dependency analysis (critical path,
+  // bottlenecks, cycles) — computed by /api/tasks/graph; refetched as the task
+  // set changes so the summary + critical-path highlight stay in sync.
+  const [analysis, setAnalysis] = useState<DependencyAnalysis | null>(null)
+  const [libraryTasks, setLibraryTasks] = useState<TaskItem[]>([])
+  const sig = tasks.map((t) => `${t.id}:${t.status}`).join(',')
+  useEffect(() => {
+    let alive = true
+    api.taskGraph().then((g) => {
+      if (!alive) return
+      setAnalysis(g.analysis)
+      setLibraryTasks(g.tasks)
+    }).catch(() => {})
+    return () => { alive = false }
+  }, [sig])
+  const drawnIds = useMemo(() => new Set(tasks.map((t) => t.id)), [tasks])
+  const criticalSet = useMemo(() => new Set(analysis?.critical_path ?? []), [analysis])
+  const criticalInView = useMemo(
+    () => [...criticalSet].filter((id) => drawnIds.has(id)).length,
+    [criticalSet, drawnIds],
+  )
+  const titleById = useMemo(
+    () => new Map([...libraryTasks, ...tasks].map((t) => [t.id, t.title])),
+    [libraryTasks, tasks],
+  )
+  const isWholeLibrary = useMemo(
+    () => libraryTasks.length === tasks.length && libraryTasks.every((t) => drawnIds.has(t.id)),
+    [libraryTasks, tasks.length, drawnIds],
+  )
+  const completionPct = isWholeLibrary
+    ? (analysis?.completion_pct ?? 0)
+    : (tasks.length === 0 ? 0 : tasks.filter((t) => t.status === 'done').length / tasks.length * 100)
+  useLayoutEffect(() => {
+    if (!ref.current) return
+    const el = ref.current
+    const update = () => setContainerW(el.clientWidth)
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const { nodes, edges, height, cyclic } = useMemo(() => {
+    const m = depMap(tasks)
+    const { nodes: layout } = layeredLayout(m)
+    const cyclic = cyclicNodes(m)
+    const byId = new Map(tasks.map((t) => [t.id, t]))
+
+    const innerW = Math.max(NODE_W, (containerW || 960) - PAD * 2)
+    const cols = Math.max(1, Math.floor((innerW + COL_GAP) / (NODE_W + COL_GAP)))
+
+    // group node ids by layer (preserve insertion order for stable rows)
+    const byLayer = new Map<number, string[]>()
+    for (const n of layout.values()) { const a = byLayer.get(n.layer) ?? []; a.push(n.id); byLayer.set(n.layer, a) }
+    const layers = [...byLayer.keys()].sort((a, b) => a - b)
+
+    const pos = new Map<string, { x: number; y: number; t: TaskItem }>()
+    let rowCursor = 0 // in node-row units, accumulated across layers
+    for (const l of layers) {
+      const ids = byLayer.get(l)!
+      const subRows = Math.ceil(ids.length / cols)
+      for (let r = 0; r < subRows; r++) {
+        const rowIds = ids.slice(r * cols, r * cols + cols)
+        const m2 = rowIds.length
+        const totalW = m2 * NODE_W + (m2 - 1) * COL_GAP
+        const startX = PAD + Math.max(0, (innerW - totalW) / 2)
+        rowIds.forEach((id, c) => {
+          const t = byId.get(id); if (!t) return
+          pos.set(id, { x: startX + c * (NODE_W + COL_GAP), y: PAD + (rowCursor + r) * (NODE_H + ROW_GAP), t })
+        })
+      }
+      rowCursor += subRows
+    }
+
+    const edges: { id: string; from: string; to: string; x1: number; y1: number; x2: number; y2: number; bad: boolean; active: boolean }[] = []
+    for (const [id, deps] of m) {
+      const to = pos.get(id); if (!to) continue
+      for (const d of deps) {
+        const from = pos.get(d); if (!from) continue
+        // An edge is ACTIVE when work is flowing into the dependent: the prerequisite
+        // is done and the dependent is in progress (the "unblocked, now running" hop).
+        const active = from.t.status === 'done' && to.t.status === 'in_progress'
+        edges.push({ id: `${d}->${id}`, from: d, to: id, x1: from.x + NODE_W / 2, y1: from.y + NODE_H, x2: to.x + NODE_W / 2, y2: to.y, bad: cyclic.has(id) && cyclic.has(d), active })
+      }
+    }
+    const height = PAD * 2 + Math.max(1, rowCursor) * (NODE_H + ROW_GAP) - ROW_GAP
+    return { nodes: [...pos.values()], edges, height, cyclic, cols }
+  }, [tasks, containerW])
+
+  const svgW = Math.max(NODE_W + PAD * 2, containerW || 0)
+
+  const bottlenecks = analysis?.bottleneck_tasks ?? []
+  const bottlenecksInView = bottlenecks.filter((b) => drawnIds.has(b.id)).length
+  const cycles = analysis?.cycles ?? []
+  const cyclesInView = cycles.filter(
+    (cycle) => cycle.length > 0 && cycle.every((id) => drawnIds.has(id)),
+  ).length
+
+  return (
+    <div ref={ref} className="rounded-xl bg-surface-container/40 p-2">
+      {tasks.length === 0 ? (
+        <EmptyState icon={GitFork} title="No tasks to graph" hint="Add tasks and link prerequisites to see the dependency DAG." />
+      ) : (
+        <>
+        {analysis && (
+          <div data-type="caption" className="mb-2 flex flex-wrap items-center gap-x-l gap-y-1 px-2 py-1.5 text-on-surface-low">
+            <span className="inline-flex items-center gap-1.5"><Activity size={13} className="text-ok" /> {Math.round(completionPct)}% complete</span>
+            <span className="inline-flex items-center gap-1.5"><Route size={13} className="text-primary" /> Critical path: {criticalSet.size} in library, {criticalInView} in view</span>
+            {bottlenecks.length > 0 && (
+              <span className="inline-flex items-center gap-1.5" title={bottlenecks.slice(0, 5).map((b) => `${titleById.get(b.id) ?? b.id} (${b.dependents})`).join('\n')}>
+                <GitFork size={13} className="text-warn" /> Bottlenecks: {bottlenecks.length} in library, {bottlenecksInView} in view
+              </span>
+            )}
+            {cycles.length > 0 && (
+              <span className="inline-flex items-center gap-1.5 text-danger"><TriangleAlert size={13} /> {cycles.length} cycle{cycles.length === 1 ? '' : 's'} detected in library, {cyclesInView} in view</span>
+            )}
+            {/* Undimmed: `on-surface-low` is already the faintest ink, and the `/70` suffix it used
+                to carry took this legend to 3.84:1 in dark and 3.95:1 in light (axe `[serious]`, all
+                three viewport/theme configs). Its siblings above are full-alpha `text-warn` /
+                `text-danger`; this is the only member that was dimmed, and it is real explanatory
+                copy rather than decoration. */}
+            {criticalInView > 0 && <span className="text-on-surface-low">— critical-path tasks are ringed below</span>}
+          </div>
+        )}
+        <DagView width={svgW} height={height} className="block" onNodeClick={onOpen}
+          label={`Dependency graph — ${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'}`}
+          edges={edges.map((e): DagEdge => ({ id: e.id, from: e.from, to: e.to, x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2, bad: e.bad, active: e.active }))}
+          nodes={nodes.map(({ x, y, t }): DagNode => {
+            const sm = statusMeta(t.status)
+            const pm = signalPriority(t.priority)
+            const bad = cyclic.has(t.id)
+            const done = TERMINAL.has(t.status)
+            return {
+              id: t.id, x, y, w: NODE_W, h: NODE_H, radius: RADIUS,
+              state: nodeStateFor(t.status, bad),
+              accent: sm.tone,
+              ringed: criticalSet.has(t.id),
+              // The node's accessible name. It carries the two things that are
+              // otherwise PURELY VISUAL — the primary ring (critical path) and the
+              // red outline (cycle) — because a screen-reader user has no other
+              // route to either. Priority follows `signalPriority`, so the silent
+              // default ("medium") stays silent here too rather than naming an
+              // intent the task may never have expressed.
+              label: [
+                t.title,
+                ` — ${sm.label}`,
+                pm ? `, ${pm.label}` : '',
+                criticalSet.has(t.id) ? ', on the critical path' : '',
+                bad ? ', in a dependency cycle' : '',
+              ].join(''),
+              content: (
+                <div className="flex h-full flex-col justify-center">
+                  {/* 182px of 386 at 390px — 2.1x, the worst of the four. A DAG node is the smallest slot a
+                      task title gets, so it clips first and hardest. */}
+                  <div className={`truncate text-[0.8125rem] leading-tight ${done ? 'line-through opacity-60' : ''}`} style={withWeight({ color: 'var(--color-on-surface)' }, 500)} title={t.title}>{t.title}</div>
+                  <div data-type="caption" className="mt-0.5 flex items-center gap-1.5" style={{ color: 'var(--color-on-surface-low)' }}>
+                    <span style={{ color: sm.tone }}>{sm.label}</span>
+                    {pm && <span style={{ color: pm.tone }}>· {pm.label}</span>}
+                  </div>
+                </div>
+              ),
+            }
+          })} />
+        </>
+      )}
+    </div>
+  )
+}
