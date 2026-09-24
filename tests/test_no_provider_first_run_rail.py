@@ -375,18 +375,31 @@ class TestRailIsNotVacuous:
     def test_no_model_text_matches_backend_renders(self):
         """Pin the ``isNoModelSetupError`` port against the REAL backend renders: the
         first-run ``ERR_MODEL_UNRESOLVED`` render matches; the stale-pin render (a model
-        WAS chosen, then went missing) does NOT — the exact split the FE draws."""
+        WAS chosen, then went missing) does NOT — the exact split the FE draws.
+
+        The stale-pin half is now BUILT FROM PRODUCTION rather than hand-typed. It used to
+        be an inline string that had already drifted from the real sentence, so this rail
+        was the negative case of a text discriminator describing a message that existed
+        nowhere — and a reword of the real one could not red it (#3408). Deriving it means
+        the discriminator is checked against whatever the code actually says.
+        """
+        from personalclaw.providers.provider_bridge import _diagnose_unbuildable_ref
+
         first_run = AgentError(
             code="ERR_MODEL_UNRESOLVED",
             what="no model provider resolves for use case 'chat'",
             why="no provider in config.json declares the capability this use case needs",
             fix="add a model provider in Settings → Providers, then bind 'chat' to it",
         )
+        why, fix = _diagnose_unbuildable_ref("DoesNotExistAnywhere", "x", "chat", "chat")
+        # Precondition: the diagnosis fired the absent-from-config cause, so the render
+        # below is the stale-pin shape and not some other branch's sentence.
+        assert "no provider named 'DoesNotExistAnywhere' is in config.json" in why, why
         stale_pin = AgentError(
             code="ERR_MODEL_UNRESOLVED",
-            what="the model pinned for use case 'chat' ('bedrock:x') cannot be built",
-            why="the active ref names provider 'bedrock', which is absent from config.json",
-            fix="install 'bedrock' in the App Store, or rebind 'chat' in Settings → Models",
+            what="the model pinned for use case 'chat' ('DoesNotExistAnywhere:x') cannot be built",
+            why=why,
+            fix=fix,
         )
         assert matches_no_model_text(first_run.render()), first_run.render()
         assert not matches_no_model_text(stale_pin.render()), stale_pin.render()

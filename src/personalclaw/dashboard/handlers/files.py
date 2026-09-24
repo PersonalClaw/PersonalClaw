@@ -2380,7 +2380,17 @@ async def api_file_content_search(request: web.Request) -> web.Response:
             results, truncated = await asyncio.wait_for(
                 asyncio.shield(search_task), timeout=_CONTENT_SEARCH_TIMEOUT
             )
-        except TimeoutError:
+        except (TimeoutError, _ContentSearchTimedOut):
+            # BOTH deadlines land here, because both mean "this search ran out of time"
+            # and the user-visible answer is identical. ``TimeoutError`` is the OUTER
+            # ``wait_for`` winning; ``_ContentSearchTimedOut`` is the in-thread rail
+            # winning the race with it (the thread's own ``deadline`` is computed before
+            # ``wait_for`` starts its clock, so it CAN fire first). Naming only the outer
+            # one let an in-thread win escape the handler, skipping the 504, the SEL
+            # ``outcome="error"`` row and the "Narrow the directory" guidance (#3399).
+            # The sentinel keeps its plain ``Exception`` base — re-basing it onto
+            # ``TimeoutError`` would put it back inside the walk's ``except OSError``
+            # reach, which is the bug its own docstring exists to prevent.
             stop_event.set()
             with contextlib.suppress(TimeoutError, asyncio.CancelledError, _ContentSearchTimedOut):
                 await asyncio.wait_for(

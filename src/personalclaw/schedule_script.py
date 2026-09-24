@@ -123,6 +123,7 @@ import importlib.util
 import json
 import os
 import sys
+import urllib.error
 import urllib.request
 
 _SENTINEL = "__PC_SCRIPT_RESULT__"
@@ -164,8 +165,26 @@ def _post(path, payload):
                  "X-Internal-Secret": _SECRET,
                  "X-Session-Key": _SESSION_KEY},
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        # A REFUSAL IS DATA, NOT A CRASH. urlopen raises on every 4xx/5xx and throws the
+        # body away, so the reason the route sent (risk_confirmation_required,
+        # tool_disabled, unknown tool provider) never reached the script author and the
+        # documented `if not r["ok"]` guard could not run -- the call raised first (#3407).
+        # Read the body back and return it, so every refusal is a dict a script branches on.
+        raw = exc.read().decode("utf-8", "replace")
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            body = {"error": {"code": "http_%d" % exc.code,
+                              "message": raw[:2000] or str(exc.reason)}}
+        body.setdefault("ok", False)
+        body.setdefault("status", exc.code)
+        return body
 
 
 class ScriptContext:
@@ -182,8 +201,17 @@ class ScriptContext:
     def call_tool(self, tool, arguments=None, provider="", confirm_risk=""):
         """Invoke a tool through PersonalClaw's Tool entity. Returns the result dict.
 
+        ALWAYS a dict, refusals included: a 4xx answer is parsed and returned with
+        ok=False and the route's reason intact, never raised. So the guard below is
+        the whole contract, and it runs on every outcome:
+
+            r = ctx.call_tool("memory_forget", {"query": "stale note"})
+            if not r["ok"]:
+                raise Report("tool refused: " + r["error"]["code"])
+
         A call whose EFFECTIVE risk resolves as destructive is refused with 403
-        risk_confirmation_required unless it names the tier (#506). Pass
+        risk_confirmation_required unless it names the tier (#506) — which reaches that
+        guard as r["error"]["code"] == "risk_confirmation_required". Pass
         confirm_risk="destructive" to run one deliberately:
 
             ctx.call_tool("bash", {"command": "rm -rf /tmp/cache"},
