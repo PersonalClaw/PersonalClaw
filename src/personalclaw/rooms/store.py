@@ -2,9 +2,10 @@
 
 A **room** is a persistent shared transcript plus a member list, where the human and N
 bound agents deliberate over days. A **member** is an ordinary agent binding with a role
-blurb and a listen policy. This module owns both records and the transcript's storage;
-who speaks next (the arbiter), the per-member cursors and the per-member safety posture
-are later atoms and deliberately absent here.
+blurb, a listen policy and its own declared safety posture. This module owns those records
+and the transcript's storage; who speaks next (the arbiter) and the per-member transcript
+cursors are later atoms and deliberately absent here, and the posture VOCABULARY lives in
+:mod:`personalclaw.rooms.posture` — this module stores the declaration and never judges it.
 
 **Nothing here is a new storage engine.** The transcript is a
 :class:`~personalclaw.history.ConversationLog` pointed at the room's own directory, so
@@ -35,9 +36,9 @@ caller is about to do with the answer, per `AGENTS.md` §"Shared conventions":
 * :func:`list_rooms` / :func:`get_room` fail **OPEN**. They back a listing surface; an
   unreadable index answers "no rooms" and warns, because a corrupt file must not take the
   page down.
-* :func:`members_for_turn` fails **CLOSED**. The member list decides which agent may
-  speak and (from `AR-6`) what it is permitted to do, so an unreadable index refuses the
-  turn with an explicit log rather than guessing a roster.
+* :func:`members_for_turn` fails **CLOSED**. The member list decides which agent may speak
+  AND what each one is permitted to do, so an unreadable index refuses the turn with an
+  explicit log rather than guessing a roster — a guessed roster is a guessed posture.
 * Every WRITE reads strictly (:func:`_read_index_strict`). A write that inherited the
   fail-open ``[]`` would persist it and silently delete every other room — the one
   direction in which failing open is data loss rather than degradation.
@@ -73,6 +74,14 @@ DEFAULT_LISTEN_POLICY = "all"
 
 #: The human's ``speaker`` value. The human is not a member, so they have no member name.
 HUMAN_SPEAKER = ""
+
+#: The ``role`` of a line the ROOM itself writes — today, `AR-6`'s tool refusals. It carries
+#: the member's name as its ``speaker`` (that is the attribution a reader needs) but must not
+#: render as that member having SAID it, so the role is what distinguishes it:
+#: ``turn.render_transcript`` labels a line of this role ``[room]``. A dedicated speaker
+#: sentinel was the alternative and is worse — ``room`` is a legal agent-binding name, so a
+#: member could collide with it, while a role cannot be forged by naming an agent.
+ROOM_NOTE_ROLE = "system"
 
 #: A room id is a lowercase slug and nothing else, so it is safe as a directory name
 #: verbatim (see the module docstring).
@@ -111,11 +120,23 @@ class RoomMember:
     why :func:`add_member` validates it against the configured agents and refuses an
     unknown one (fail closed) instead of letting the ordinary resolution path silently
     substitute the default agent.
+
+    ``profile_narrowing`` is what lets a read-only critic and a tool-bearing executor share
+    one room: the Autonomy-Guardrails capability axes this member declares against the room's
+    own posture. The vocabulary, the validation, the restrictive default and the refusal all
+    live in :mod:`personalclaw.rooms.posture` — this field is storage. It holds the raw
+    DECLARATION rather than a resolved profile because the base it narrows is resolved per
+    turn (the operator ceiling can move between two turns of one room), and because a resolved
+    profile on disk would be a second safety object to keep in step with the first.
+
+    Empty ``{}`` is the common case, and it does NOT mean "the room's posture": a member that
+    declares nothing runs at ``posture.DEFAULT_MEMBER_TOOL_GRANTS``, the narrowest tier.
     """
 
     name: str
     role_blurb: str = ""
     listen_policy: str = DEFAULT_LISTEN_POLICY
+    profile_narrowing: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -165,11 +186,21 @@ class Room:
             policy = str(raw.get("listen_policy", DEFAULT_LISTEN_POLICY))
             if policy not in LISTEN_POLICIES:
                 raise ValueError(f"listen policy {policy!r} is not one of {LISTEN_POLICIES}")
+            narrowing = raw.get("profile_narrowing") or {}
+            if not isinstance(narrowing, dict):
+                # The one member field where "lenient on the rest" would be the WRONG
+                # default. Coercing an unreadable narrowing to {} runs the member at the
+                # restrictive default, which is safe — but it also silently discards a
+                # posture its author wrote, so the member everyone believes is configured is
+                # running on something else. Raising hands the choice to the reader, whose
+                # strict side refuses the write and whose lenient side warns.
+                raise ValueError("member profile_narrowing is not an object")
             members.append(
                 RoomMember(
                     name=name,
                     role_blurb=str(raw.get("role_blurb", "")),
                     listen_policy=policy,
+                    profile_narrowing=dict(narrowing),
                 )
             )
         return cls(
@@ -410,17 +441,27 @@ def add_member(
     *,
     role_blurb: str = "",
     listen_policy: str = DEFAULT_LISTEN_POLICY,
+    profile_narrowing: object = None,
 ) -> Room:
     """Add a member and return the updated room. Only a human reaches this (V1 exclusion).
 
     Validation order is deliberate: every check runs and raises BEFORE the index is
     rewritten, so a refused add writes nothing at all rather than leaving a half-member.
+
+    ``profile_narrowing`` is validated for SHAPE here and judged for actual narrowing at turn
+    time, because "is this narrower" is only answerable against the posture the operator
+    ceiling resolves to when the member speaks. Storing a declaration nothing could read would
+    defer the refusal into the turn, where the member simply falls silent; refusing it at the
+    add is how its author finds out. Imported lazily because ``posture`` reads this module.
     """
+    from personalclaw.rooms.posture import parse_narrowing
+
     if listen_policy not in LISTEN_POLICIES:
         raise RoomError(
             "room_invalid_listen_policy",
             f"listen_policy must be one of {', '.join(LISTEN_POLICIES)}.",
         )
+    parse_narrowing(profile_narrowing)  # raises RoomError on a shape we could not honour
     clean_name = _validate_member_name(name)
     rooms = _read_index_strict()
     room = next((r for r in rooms if r.id == room_id), None)
@@ -441,6 +482,9 @@ def add_member(
             name=clean_name,
             role_blurb=role_blurb.strip()[:_MAX_ROLE_BLURB_CHARS],
             listen_policy=listen_policy,
+            profile_narrowing=(
+                dict(profile_narrowing) if isinstance(profile_narrowing, dict) else {}
+            ),
         )
     )
     _write_index(rooms)
@@ -472,9 +516,9 @@ def members_for_turn(room_id: str) -> list[RoomMember]:
     """The roster a turn runs against. **Fails closed** — see :func:`_read_index_strict`.
 
     Separate from ``get_room(...).members`` because the posture differs, not the data: this
-    is the read whose answer decides which agent speaks (and, from `AR-6`, with what
-    capabilities), so an unreadable index must refuse the turn rather than degrade to an
-    empty roster the way the listing surface does.
+    is the read whose answer decides which agent speaks and with what capabilities, so an
+    unreadable index must refuse the turn rather than degrade to an empty roster the way the
+    listing surface does.
     """
     return require_room(room_id).members
 

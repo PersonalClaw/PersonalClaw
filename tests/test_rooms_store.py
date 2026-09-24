@@ -741,7 +741,13 @@ def test_a_member_turn_refuses_every_tool_rather_than_auto_approving_one(enabled
     ``stream_and_collect``'s default is AUTO_APPROVE and its HOOK_BASED branch falls through
     a hook-neutral tool to auto-approve as well, so a room turn that simply used the default
     would hand a member unsupervised tool access on the surface whose stated property is
-    that the human approves everything. AR-6's per-member posture is what widens this.
+    that the human approves everything.
+
+    **Still true after AR-6, for a tighter reason, which is why it is kept.** The blanket
+    ``REJECT_ALL`` this originally pinned is gone; ``analyst`` is now refused because it
+    declared no posture and so runs at the READ-ONLY default, and ``Bash`` is write-class. The
+    per-member half lives in ``tests/test_rooms_posture.py``, where a member that IS entitled
+    to the tool reaches the human instead.
     """
     from personalclaw.rooms import turn
 

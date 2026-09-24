@@ -302,7 +302,12 @@ def test_the_human_cannot_forge_a_members_words(cfg):
 #: The modules that can raise a ``RoomError``. Enumerated so a new one is a deliberate
 #: edit here rather than a code the rails below silently stop covering — `turn.py` was
 #: already outside the first version of this census.
-_RAISING_MODULES = ("personalclaw.rooms.store", "personalclaw.rooms.turn", h.__name__)
+_RAISING_MODULES = (
+    "personalclaw.rooms.store",
+    "personalclaw.rooms.turn",
+    "personalclaw.rooms.posture",
+    h.__name__,
+)
 
 
 def _raised_room_error_codes() -> set[str]:
