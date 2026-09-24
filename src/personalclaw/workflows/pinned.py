@@ -53,8 +53,9 @@ def _load() -> list[dict[str, Any]]:
     """
     from personalclaw.providers.entity_routes import _load_entity_settings
 
-    raw = _load_entity_settings(_ENTITY)
-    pins = raw.get("pins") if isinstance(raw, dict) else None
+    # Fail-OPEN on a discarded read (`or {}`) — the choice the docstring above states.
+    raw = _load_entity_settings(_ENTITY) or {}
+    pins = raw.get("pins")
     if not isinstance(pins, list):
         return []
     out: list[dict[str, Any]] = []

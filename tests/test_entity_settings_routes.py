@@ -5,12 +5,22 @@ Regression for bug #22: a blind ``current.update(body)`` let any key (e.g. a
 typo'd or garbage field) persist and then leak back through every GET's
 ``{**DEFAULTS, **loaded}`` merge, polluting the config. The defaults dict is the
 authoritative allowlist.
+
+This file is also the home of the entity-settings LOADER's contract, because that is
+where the defaults schemas live. The contract has three outcomes, not two: a file that
+was never written (``{}``) is distinguishable from one that could not be read
+(``None``), and the loader refuses to pick a fallback for the second — each call site
+states its own fail-open / fail-closed choice. The rails below pin both halves of that
+asymmetry, and they pin it per ENTITY: ``agent_routing`` reads a discard as empty
+because nothing it decides is destructive, while ``inbox`` refuses, because its default
+runs a delete.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -35,6 +45,17 @@ async def _json(resp):
     return json.loads(resp.body.decode())
 
 
+# ── the loader SIGNALS a discarded read; the call site chooses what to do about it ──────
+#
+# These three were named `test_*_entity_settings_fail_open_*` and asserted fail-open as the
+# shared loader's contract — using `agent_routing`, the entity where fail-open is harmless.
+# The entity whose default is DESTRUCTIVE inherited that contract silently and had no
+# corrupt-file rail at all, which is the shape the inbox rails further down close. They are
+# retargeted rather than duplicated: the loader no longer decides, so what they can honestly
+# pin is `agents/routing.py`'s own choice at its own site, plus the absent/discarded
+# distinction the loader now publishes.
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -43,11 +64,18 @@ async def _json(resp):
     ],
     ids=["truncated-json", "binary-garbage"],
 )
-def test_corrupt_entity_settings_fail_open_with_one_warning(payload, caplog):
+def test_corrupt_agent_routing_settings_read_as_empty_with_one_warning(payload, caplog):
     entity = "agent_routing"
     path = er._entity_settings_path(entity)
     path.write_bytes(payload)
 
+    # The loader says only "this file was there and is unusable" — it does not answer the
+    # question with a permissive default on the caller's behalf.
+    assert er._load_entity_settings(entity) is None
+    caplog.clear()  # that probe warned too; the count below is about the routing read
+
+    # `agents/routing.py` reads that as empty, ON PURPOSE: a suppression store it cannot read
+    # means nothing is suppressed, and the cost of that is one extra routing notice.
     with caplog.at_level(logging.WARNING, logger=er.__name__):
         assert routing.is_suppressed("dba", now=0.0, cooldown_hours=24.0) is False
 
@@ -57,11 +85,14 @@ def test_corrupt_entity_settings_fail_open_with_one_warning(payload, caplog):
     assert str(path) in warnings[0].getMessage()
 
 
-def test_non_object_entity_settings_fail_open_with_one_warning(caplog):
+def test_non_object_agent_routing_settings_read_as_empty_with_one_warning(caplog):
     entity = "agent_routing"
     path = er._entity_settings_path(entity)
     path.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
 
+    assert er._load_entity_settings(entity) is None
+    caplog.clear()  # that probe warned too; the count below is about the routing read
+
     with caplog.at_level(logging.WARNING, logger=er.__name__):
         assert routing.is_suppressed("dba", now=0.0, cooldown_hours=24.0) is False
 
@@ -71,11 +102,135 @@ def test_non_object_entity_settings_fail_open_with_one_warning(caplog):
     assert str(path) in warnings[0].getMessage()
 
 
-def test_absent_entity_settings_fail_open_without_warning(caplog):
+def test_absent_entity_settings_read_as_empty_without_warning(caplog):
+    """A file that was never written is NOT a discard, and must not be treated as one.
+
+    This is the half that keeps the fix honest in the other direction: "no file" has to keep
+    meaning "first run, the defaults are the user's intent", or every fresh install would
+    read as damaged.
+    """
+    assert er._load_entity_settings("agent_routing") == {}
+
     with caplog.at_level(logging.WARNING, logger=er.__name__):
         assert routing.is_suppressed("dba", now=0.0, cooldown_hours=24.0) is False
 
     assert [record for record in caplog.records if record.name == er.__name__] == []
+
+
+# ── inbox: a discarded read must never resolve to a MORE DESTRUCTIVE value than the stored ──
+#
+# The defect these close: `load_inbox_settings` merged the discarded read over
+# `INBOX_DEFAULTS = {"auto_cleanup_enabled": True, "retention_days": 90}`, so a stored
+# `{False, 3650}` read back as `{True, 90}` under truncated, non-UTF-8 and non-object
+# corruption alike — and `inbox_service.run_maintenance` acts on it, through
+# `InboxStore.cleanup_by_retention`, which deletes items older than the window "regardless of
+# status". One-way, no snapshot, no undo. An unreadable settings file did not disable cleanup;
+# it ENABLED it and threw away 3560 days of the items the user had said to keep.
+
+#: Older than the widest retention window the PUT accepts (3650), so the item is expired under
+#: EVERY window in this table. That is deliberate: it makes the flag the only thing deciding
+#: whether it survives, and leaves the rails no way to pass by accident of the clock.
+_EXPIRED_AGE_DAYS = 4000
+
+
+def _inbox_with_one_expired_item(tmp_path, monkeypatch):
+    """An InboxService on an isolated store holding one expired item. Returns (svc, item_id)."""
+    from personalclaw import inbox_service as mod
+    from personalclaw.inbox import InboxItem, InboxState, InboxStore
+
+    item = InboxItem(
+        id="C1_expired",
+        channel="C1",
+        channel_name="#general",
+        thread_ts=None,
+        message="the message the user said to keep",
+        sender_id="U2",
+        sender_name="Sam",
+        created_at=time.time() - _EXPIRED_AGE_DAYS * 86400,
+    )
+    store = InboxStore(tmp_path / "inbox.json")
+    store.items[item.id] = item
+    monkeypatch.setattr(mod, "_dashboard_state", lambda: None)
+    svc = mod.InboxService(state=InboxState(tmp_path / "state.json"), store=store)
+    return svc, item.id
+
+
+@pytest.mark.parametrize(
+    "payload,readable_as,expect_removed",
+    [
+        (
+            b'{"auto_cleanup_enabled": false, "retention_days": 3650}',
+            {"auto_cleanup_enabled": False, "retention_days": 3650},
+            0,
+        ),
+        (
+            b'{"auto_cleanup_enabled": true, "retention_days": 30}',
+            {"auto_cleanup_enabled": True, "retention_days": 30},
+            1,
+        ),
+        (b'{"auto_cleanup_enabled": fal', None, 0),
+        (b"\xff\xfe\x00\x80", None, 0),
+        (b'["not", "an", "object"]', None, 0),
+    ],
+    ids=[
+        "intact-refusal",
+        "intact-consent",
+        "truncated-json",
+        "binary-garbage",
+        "non-object",
+    ],
+)
+def test_unreadable_inbox_settings_never_enable_the_delete(
+    payload, readable_as, expect_removed, tmp_path, monkeypatch, caplog
+):
+    """Three corruptions, and BOTH controls that make them mean something.
+
+    ``intact-refusal`` proves the probe reads the file at all — it reads the stored
+    ``3650`` back, not a blanket safe default, so the three corrupt rows are the loader
+    discarding real intent rather than a wrong path or an unwritable tmp home.
+    ``intact-consent`` proves the observable is live: with a readable file that DOES enable
+    cleanup the very same expired item is deleted, so a `run_maintenance` that had quietly
+    stopped deleting anything could not pass this table. Before the fix the three corrupt
+    rows failed on both assertions at once (``auto_cleanup_enabled`` came back ``True`` and
+    the item was gone); with either control removed the rows would be vacuous.
+    """
+    path = er._entity_settings_path("inbox")
+    path.write_bytes(payload)
+    svc, item_id = _inbox_with_one_expired_item(tmp_path, monkeypatch)
+
+    with caplog.at_level(logging.WARNING, logger=er.__name__):
+        settings = er.load_inbox_settings()
+        assert settings["auto_cleanup_enabled"] is (expect_removed == 1)
+        assert svc.run_maintenance() == expect_removed
+
+    assert (item_id in svc.inbox.items) is (expect_removed == 0)
+
+    if readable_as is not None:  # the two controls: nothing was discarded
+        assert settings == readable_as
+        assert [r for r in caplog.records if r.name == er.__name__] == []
+    else:
+        # The fail-CLOSED half of the convention is "refuse + explicit log", so the refusal
+        # has to be legible to whoever finds their cleanup stopped — not just the generic
+        # discard warning, which says nothing about what was suppressed.
+        assert any(
+            "SUPPRESSED" in r.getMessage() and str(path) in r.getMessage()
+            for r in caplog.records
+            if r.name == er.__name__
+        )
+
+
+def test_absent_inbox_settings_still_use_the_shipped_default(tmp_path, monkeypatch):
+    """No file means first run, and on a first run auto-cleanup at 90 days is the product's
+    opinion — not a refusal. The whole fix is this asymmetry, so it is pinned: if "unreadable"
+    and "absent" ever collapse back into one answer, either the data loss returns or every
+    fresh install silently stops cleaning up.
+    """
+    assert not er._entity_settings_path("inbox").exists()
+    svc, item_id = _inbox_with_one_expired_item(tmp_path, monkeypatch)
+
+    assert er.load_inbox_settings() == er.INBOX_DEFAULTS
+    assert svc.run_maintenance() == 1
+    assert item_id not in svc.inbox.items
 
 
 @pytest.mark.asyncio

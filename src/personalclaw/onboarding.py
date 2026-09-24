@@ -115,7 +115,9 @@ def load_onboarding_state() -> dict[str, Any]:
     try:
         from personalclaw.providers.entity_routes import _load_entity_settings
 
-        return _sanitize(_load_entity_settings(_ENTITY))
+        # Fail-OPEN on a discarded read (`or {}`): an unreadable store means the first-run
+        # state starts from the top. Replaying onboarding costs a few clicks; nothing is lost.
+        return _sanitize(_load_entity_settings(_ENTITY) or {})
     except Exception:  # noqa: BLE001 — onboarding must never 500 the first-run signal
         logger.warning("onboarding state unreadable — starting from the top", exc_info=True)
         return default_state()

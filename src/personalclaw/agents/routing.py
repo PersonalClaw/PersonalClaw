@@ -227,7 +227,10 @@ def _load_store() -> dict:
     from personalclaw.providers.entity_routes import _load_entity_settings
 
     try:
-        raw = _load_entity_settings(_STORE)
+        # Fail-OPEN on a discarded read (`or {}`): a suppression store we cannot read means
+        # nothing is suppressed, so the user sees a routing notice they had muted. Noise, not
+        # loss — and the opposite choice would silently hide the whole surface.
+        raw = _load_entity_settings(_STORE) or {}
     except Exception:
         logger.warning(
             "Agent-routing suppression store load failed for entity %s; using empty settings",

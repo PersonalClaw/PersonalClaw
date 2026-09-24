@@ -1558,8 +1558,9 @@ def _load_notified() -> dict[str, str]:
     try:
         from personalclaw.providers.entity_routes import _load_entity_settings
 
-        data = _load_entity_settings(_APP_UPDATES_ENTITY)
-        notified = data.get("notified") if isinstance(data, dict) else None
+        # Fail-OPEN on a discarded read (`or {}`) — the choice the docstring above states.
+        data = _load_entity_settings(_APP_UPDATES_ENTITY) or {}
+        notified = data.get("notified")
         return {str(k): str(v) for k, v in notified.items()} if isinstance(notified, dict) else {}
     except Exception:
         logger.debug("app-update notified state unreadable", exc_info=True)

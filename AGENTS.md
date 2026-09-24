@@ -179,7 +179,12 @@ re-invents a shape another touches:
   rules, settings) fail **open**: corrupt file → permissive default + warn.
   Inbound/security surfaces (tokens, inbound `enabled` flags, capability probes)
   fail **closed**: missing/corrupt → refuse + explicit log. State the choice
-  in-code at each site.
+  in-code at each site. **A default that *performs* something irreversible is not a
+  permissive default**, so an availability surface holding one fails closed for that
+  key: a discarded read must never resolve to a value more destructive than what was
+  stored. Inbox auto-cleanup is the live case — `entity_settings` reads therefore
+  distinguish *absent* (`{}`, first run, defaults are the intent) from *unreadable*
+  (`None`, nothing is known), and the loader picks no fallback for the second.
 - **SDK export boundary** — apps import core only via `personalclaw.sdk.*`
   (`test_apps_import_boundary.py`); a new app-facing primitive is added to the
   relevant `sdk/<area>.py` re-export, never reached into directly. An SDK export

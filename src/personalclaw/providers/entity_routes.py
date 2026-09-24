@@ -39,7 +39,30 @@ def _entity_settings_path(entity: str) -> Path:
     return config_dir() / "entity_settings" / f"{entity}.json"
 
 
-def _load_entity_settings(entity: str) -> dict[str, Any]:
+def _load_entity_settings(entity: str) -> dict[str, Any] | None:
+    """The stored settings for *entity*, or ``None`` when a file is there but unusable.
+
+    THREE outcomes, deliberately distinguishable:
+
+    * ``{}`` — no file. First run: the caller's defaults ARE the user's intent.
+    * a dict — the stored object, as written.
+    * ``None`` — the file exists and could not be used (truncated, non-UTF-8, or a payload
+      that is not an object). Nothing is known about what the user stored.
+
+    It used to be two, with a discard collapsed into ``{}``, and that is what silently
+    converted a user's stored *refusal* into a destructive default: a stored
+    ``{auto_cleanup_enabled: False, retention_days: 3650}`` read back as ``{True, 90}`` and
+    the inbox maintenance pass deleted three thousand days of items the user had said to
+    keep. "Absent" and "unreadable" were byte-identical at this boundary, so nothing
+    downstream *could* tell them apart.
+
+    The loader does not pick a fallback for the ``None`` case, because the safe fallback is
+    not a property of the file — it is a property of what the caller does with the answer.
+    Every call site states its own choice in code (AGENTS.md §"Shared conventions"):
+    availability surfaces read a discard as empty (``… or {}``), and a surface whose default
+    performs something irreversible refuses instead — see :func:`load_inbox_settings`, the
+    one such surface today.
+    """
     path = _entity_settings_path(entity)
     if not path.is_file():
         return {}
@@ -47,19 +70,19 @@ def _load_entity_settings(entity: str) -> dict[str, Any]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
         logger.warning(
-            "Discarding unreadable entity settings for %s at %s; using empty settings: %s",
+            "Discarding unreadable entity settings for %s at %s: %s",
             entity,
             path,
             exc,
         )
-        return {}
+        return None
     if not isinstance(data, dict):
         logger.warning(
-            "Discarding non-object entity settings for %s at %s; using empty settings",
+            "Discarding non-object entity settings for %s at %s",
             entity,
             path,
         )
-        return {}
+        return None
     return data
 
 
@@ -82,6 +105,18 @@ INBOX_DEFAULTS: dict[str, Any] = {
     "retention_days": 90,
 }
 
+#: What a DISCARDED read resolves to, overriding :data:`INBOX_DEFAULTS` — the fail-CLOSED
+#: half, and the only asymmetry of its kind in this module.
+#:
+#: `INBOX_DEFAULTS` answers "what does a user who has never chosen want?", and cleanup at 90
+#: days is the product's opinion for a fresh install. It is the WRONG answer to "the user HAS
+#: chosen and we cannot read the choice", because acting on it *deletes* — irreversibly, with
+#: no snapshot — items a stored `False / 3650` said to keep. A read that failed is not consent.
+#:
+#: `retention_days` needs no entry: it is inert while cleanup is off, and inventing a number
+#: here would put a value the user never chose in front of them as if it were stored.
+INBOX_ON_DISCARDED_READ: dict[str, Any] = {"auto_cleanup_enabled": False}
+
 #: The retired alert keys, read ONLY by the backfill.
 _LEGACY_ALERT_KEYS = ("alert_keywords", "alert_on_name_mention")
 
@@ -92,8 +127,11 @@ def legacy_inbox_alert_fields() -> dict[str, Any]:
     Reads the RAW entity settings rather than `load_inbox_settings()`, because that function
     now drops these keys — which is the point of retiring them. Returns ``{}`` when the file
     is absent or the keys are already gone.
+
+    Fail-OPEN on a discarded read, stated here: an unreadable file has nothing to project, so
+    the backfill finds nothing and does nothing. The destructive keys are not its business.
     """
-    raw = _load_entity_settings("inbox")
+    raw = _load_entity_settings("inbox") or {}
     return {k: raw[k] for k in _LEGACY_ALERT_KEYS if k in raw}
 
 
@@ -104,8 +142,25 @@ def load_inbox_settings() -> dict[str, Any]:
     Migrates the legacy split retention shape (dm_retention_days /
     channel_retention_days) to the single source-agnostic ``retention_days``
     (taking the tighter DM window) and drops unknown keys; the store itself
-    self-heals on the next PUT."""
+    self-heals on the next PUT.
+
+    FAIL-CLOSED on a discarded read, which is this module's one exception to the fail-open
+    posture of a settings surface (AGENTS.md §"Shared conventions"): the convention's
+    permissive default is not available here, because the default *performs* the destructive
+    act rather than permitting one. A file we cannot read resolves to
+    :data:`INBOX_ON_DISCARDED_READ`, so cleanup is suppressed until the file is repaired —
+    never to a value more destructive than whatever was stored. An ABSENT file is untouched by
+    this and still means "first run, use the defaults"."""
     raw = _load_entity_settings("inbox")
+    if raw is None:
+        logger.warning(
+            "Inbox entity settings at %s are unreadable, so retention cleanup is SUPPRESSED "
+            "until the file is repaired or removed: acting on the %s-day default would delete "
+            "items a stored setting may have said to keep. Nothing has been deleted.",
+            _entity_settings_path("inbox"),
+            INBOX_DEFAULTS["retention_days"],
+        )
+        return {**INBOX_DEFAULTS, **INBOX_ON_DISCARDED_READ}
     if "retention_days" not in raw and "dm_retention_days" in raw:
         try:
             raw["retention_days"] = int(raw["dm_retention_days"])
@@ -174,8 +229,13 @@ def load_notifications_settings() -> dict[str, Any]:
     retired anyway: routing is decided per note by its **addressee**
     (``notification_addressing``), which is a property of the thing the note is about, not a
     standing preference. A default route would have to answer "everyone's notifications go
-    here", which is the question the addressee replaced."""
-    raw = _load_entity_settings("notifications")
+    here", which is the question the addressee replaced.
+
+    Fail-OPEN on a discarded read, stated here: every default in this schema is permissive
+    (nothing muted, no quiet hours, the lowest severity threshold), so a file we cannot read
+    costs the user notification noise until they repair it, which is recoverable — unlike the
+    inbox's default, which deletes."""
+    raw = _load_entity_settings("notifications") or {}
     if "mute_all" not in raw and "master_mute" in raw:
         raw["mute_all"] = bool(raw["master_mute"])
     known = {k: v for k, v in raw.items() if k in NOTIFICATIONS_DEFAULTS}

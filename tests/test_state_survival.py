@@ -284,6 +284,12 @@ def test_every_store_a_prior_release_wrote_survives_with_the_manifest_s_count_an
         failures.append(f"entity_settings: files are {files}, manifest says {expected['files']}")
     named = expected["named_record"]
     settings = _load_entity_settings(named["entity"])
+    if settings is None:
+        # The loader distinguishes "unreadable" from "absent", and an upgrade that leaves a
+        # settings file unparseable is a survival failure in its own right — recorded as one
+        # rather than raising an AttributeError out of the rail.
+        failures.append(f"entity_settings/{named['entity']}.json: no longer readable")
+        settings = {}
     for key, value in named["settings"].items():
         if settings.get(key) != value:
             failures.append(
