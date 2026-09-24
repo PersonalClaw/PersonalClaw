@@ -57,6 +57,7 @@ import { Markdown } from '../ui/Markdown'
 import { useWidgetActionBridge, takePendingWidgetAction } from '../ui/widget/useWidgetActionBridge'
 import { InlineError } from '../ui/InlineError'
 import { NoModelSetupState, isNoModelSetupError, MODELS_PATH } from './chat/NoModelSetupState'
+import { BundledFloorNotice } from './chat/BundledFloorNotice'
 import { ToolCard } from './chat/ToolCard'
 import { onToolResultFull } from './chat/toolResultBridge'
 import { SdlcProgressCard, sdlcRefFromTool } from './chat/SdlcProgressCard'
@@ -3151,6 +3152,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           <ChatPlanGate session={sessionRef.current} refreshKey={turns.length}
             onTaskMode={(m) => setSelection((sel) => ({ ...sel, taskMode: m }))} />
         )}
+        {/* OU-14: the honest label on the bundled zero-config floor model, immediately above
+            the composer so it is read where the answers arrive. Mounted unconditionally and
+            renders nothing unless chat really is resolving to a floor provider — which is
+            false on every home that has bound anything. */}
+        <BundledFloorNotice />
         <ComposerStage ref={composerRef} value={input} onChange={(v) => { setInput(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length && v.trim().length >= 3) setFollowups([]) }} onSend={() => send()}
           streaming={streaming} onStop={stop} controls={CHAT_CONTROLS} data={data}
           selection={selection} onSelect={applySelection} onAttach={attach} onFocusChange={setComposerFocused}

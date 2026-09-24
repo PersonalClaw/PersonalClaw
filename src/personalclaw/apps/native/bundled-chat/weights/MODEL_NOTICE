@@ -1,0 +1,33 @@
+PersonalClaw bundled default chat model — attribution and terms
+===============================================================
+
+PersonalClaw redistributes one model weight so that a fresh install can answer a first chat
+turn with no provider bound, no API key and no network. This file records what that weight is
+and under what terms it travels; `MODEL_LICENSE` beside it is the full licence text that
+Apache License 2.0 section 4 requires a redistribution to carry.
+
+Weight shipped
+--------------
+  file      SmolLM2-135M-Instruct-Q8_0.gguf
+  bytes     144,811,072 (138.1 MiB)
+  sha256    c4a3dd037301b6ecea31d6da37f5cd793ead920dd5ddfe6d589294628d6ce66a
+
+Provenance
+----------
+  GGUF build    unsloth/SmolLM2-135M-Instruct-GGUF        Apache License 2.0
+                https://huggingface.co/unsloth/SmolLM2-135M-Instruct-GGUF
+  base model    HuggingFaceTB/SmolLM2-135M-Instruct       Apache License 2.0
+                https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct
+                SmolLM2 is a work of Hugging Face.
+
+Neither the base model nor the GGUF build is a work of PersonalClaw, and neither Hugging Face
+nor the maintainers of the GGUF build endorse PersonalClaw. The weight is unmodified: it is
+fetched from the pinned upstream revision recorded in
+`docs/architecture/bundled-model-signoff.txt` and verified against the digest above before it
+is packaged.
+
+PersonalClaw's own code — including the GGUF reader and the numpy executor in this app's
+`provider.py` — is licensed separately under the MIT License; see the repository `LICENSE`.
+
+The weight is provided by its authors on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF
+ANY KIND, either express or implied. See `MODEL_LICENSE` for the governing terms.

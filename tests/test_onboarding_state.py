@@ -286,6 +286,174 @@ async def test_get_reports_no_bound_chat_model_when_nothing_is_bound(_isolate_ho
 
 
 @pytest.mark.asyncio
+async def test_chat_is_bundled_floor_is_true_only_when_a_floor_is_all_there_is(_isolate_home):
+    """OU-14 — the honesty signal, both directions plus the mixed case.
+
+    Three states, three answers, because the whole value of the flag is that it distinguishes
+    them: nothing capable at all (the OU-12 setup state), a FLOOR and nothing else (the
+    bundled weight is about to answer, and the chat surface must say so), and a floor beside a
+    real provider (the user bound something — the floor loses resolution, so the warning must
+    go away). A flag that fired on the third case would put a "you're on a toy model" banner on
+    every properly-configured home.
+    """
+    from personalclaw.llm.capabilities import Capability, ProviderCapability
+    from personalclaw.llm.registry import ProviderEntry, get_default_registry
+
+    registry = get_default_registry()
+
+    def _cap(type_: str) -> ProviderCapability:
+        return ProviderCapability(
+            type=type_,
+            capabilities=frozenset({Capability.CHAT}),
+            supports_streaming=True,
+            supports_tools=False,
+            supports_embeddings=False,
+            supports_vision=False,
+            max_context_tokens=0,
+        )
+
+    for name in ("ou14-floor-type", "ou14-real-type"):
+        try:
+            registry.register_type(_cap(name), lambda **_kw: object())
+        except Exception:  # noqa: BLE001 — already registered by a sibling test
+            pass
+    try:
+        assert (await _json(await hs.api_onboarding(_req({}))))["chat_is_bundled_floor"] is False
+
+        registry.register_entry(
+            ProviderEntry(
+                name="ou14-floor",
+                type="ou14-floor-type",
+                model="tiny",
+                declared_capabilities=frozenset({Capability.CHAT}),
+                floor=True,
+            )
+        )
+        data = await _json(await hs.api_onboarding(_req({})))
+        assert data["chat_is_bundled_floor"] is True
+        assert data["needs_model"] is False, "a floor resolves chat, so the nudge must be gone"
+
+        registry.register_entry(
+            ProviderEntry(
+                name="ou14-real",
+                type="ou14-real-type",
+                model="big",
+                declared_capabilities=frozenset({Capability.CHAT}),
+            )
+        )
+        data = await _json(await hs.api_onboarding(_req({})))
+        assert data["chat_is_bundled_floor"] is False, (
+            "a real provider is configured, so the floor no longer answers and the banner must "
+            "not be shown"
+        )
+    finally:
+        registry.unregister_entry("ou14-floor")
+        registry.unregister_entry("ou14-real")
+
+
+@pytest.mark.asyncio
+async def test_chat_download_offer_names_the_size_and_retires_once_it_is_downloaded(
+    _isolate_home, monkeypatch
+):
+    """OU-14 — the escape hatch from the setup state, and the number that makes it honest.
+
+    The weight is not in the wheel (owner decision 2026-09-24), so on a fresh install the true
+    answer is neither "you have a model" nor "go configure a provider": it is "there is a
+    one-time download and it is this big". This asserts the payload carries the SIZE — a
+    download offer with no number is minutes of silent progress on a slow connection — and that
+    it disappears once the model is on disk, because an offer to download something you already
+    have is a dead control.
+
+    Registered through core's generic local-model registry under TWO provider names, neither of
+    which has anything to do with any app in this tree, and the route must name whichever one
+    answered: the route must not know which app answers, or the provider boundary has a hole in
+    it. Two names rather than one because the real bundled app is registered under one name too,
+    so a single case cannot tell "reports the registry's answer" from "reports that one app".
+
+    The registry's CONTENTS are this test's own input, cleared first, and that is load-bearing
+    rather than tidiness. `local_models.registry` is process-global and its writer is a GATEWAY
+    BOOT path (`ModelTypeHandler._register_local`) that never unregisters, so any test booting a
+    dashboard enrols every native model app for the rest of the worker — and the route walks the
+    registry in registration order. Asserting "the registry answers with MY provider" while the
+    rest of the suite decides what else is in it is not an assertion about the route: it read
+    `bundled-chat` on CI shard 4 of #3441 and looked exactly like an app name leaking into a core
+    payload. (The leak itself is undone by `conftest._restore_local_model_registry`; owning the
+    input is what makes the assertion here measure the route.)
+    """
+    from personalclaw.local_models import registry as lm_registry
+    from personalclaw.local_models.provider import LocalModel, LocalModelProvider
+
+    class _Fake(LocalModelProvider):
+        def __init__(self, provider_name: str) -> None:
+            self._provider_name = provider_name
+            self.present = False
+
+        @property
+        def name(self) -> str:
+            return self._provider_name
+
+        @property
+        def display_name(self) -> str:
+            return "OU-14 fake"
+
+        async def is_available(self) -> bool:
+            return True
+
+        async def list_models(self) -> list[LocalModel]:
+            return [
+                LocalModel(
+                    name="tiny-chat",
+                    size_mb=138.125,
+                    description="a small chat model",
+                    downloaded=self.present,
+                    capabilities=["chat"],
+                    license="Apache-2.0",
+                ),
+                # A second model with a DIFFERENT capability, so the probe is shown to filter
+                # by capability rather than offering the first row it finds.
+                LocalModel(name="not-chat", size_mb=9, downloaded=False, capabilities=["stt"]),
+            ]
+
+        async def download_model(self, model_name: str) -> bool:
+            self.present = True
+            return True
+
+        async def delete_model(self, model_name: str) -> bool:
+            self.present = False
+            return True
+
+    monkeypatch.setattr(lm_registry, "_providers", {})
+    monkeypatch.setattr(lm_registry, "_capabilities", {})
+
+    # The control for everything below, and the contract for a client with no offer: with no
+    # local-model provider registered at all the field is present and null, not absent — a client
+    # distinguishing "no offer" from "old server" reads the key, not its absence.
+    bare = await _json(await hs.api_onboarding(_req({})))
+    assert "chat_download_offer" in bare
+    assert bare["chat_download_offer"] is None
+
+    for provider_name in ("ou14-fake-local", "ou14-unrelated-fake"):
+        fake = _Fake(provider_name)
+        lm_registry.register_provider(fake, capabilities=["chat"])
+        try:
+            data = await _json(await hs.api_onboarding(_req({})))
+            offer = data["chat_download_offer"]
+            assert offer is not None, "nothing is bound and a model is downloadable — offer it"
+            assert offer["provider"] == provider_name
+            assert offer["model"] == "tiny-chat"
+            assert offer["bytes"] == int(138.125 * 1024 * 1024)
+            assert offer["licence"] == "Apache-2.0"
+
+            await fake.download_model("tiny-chat")
+            after = await _json(await hs.api_onboarding(_req({})))
+            assert (
+                after["chat_download_offer"] is None
+            ), "a downloaded model must not still be offered as a download"
+        finally:
+            lm_registry.unregister_provider(provider_name)
+
+
+@pytest.mark.asyncio
 async def test_get_still_answers_over_a_corrupt_store(_isolate_home):
     p = _store_path(_isolate_home)
     p.parent.mkdir(parents=True, exist_ok=True)

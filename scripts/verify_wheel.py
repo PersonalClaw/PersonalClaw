@@ -12,8 +12,9 @@ It asserts, against a real wheel and a scratch venv with NO Node present:
   5. ``GET /`` → 200 HTML (the SPA shell, served from the packaged assets), and
   6. every bundled app/extension the wheel ships actually ENABLED — see
      :func:`extension_failures` for why assertion 6 exists (#2758), and
-  7. the bundled default chat model, if one is signed off, carries a permitted licence and
-     fits its declared size budget — see :func:`_assert_bundled_model_admitted` (OU-14).
+  7. the default chat model is signed off under a permitted licence and is NOT in the wheel —
+     it is fetched at first use — and the wheel is still small; see
+     :func:`_assert_no_bundled_weight_in_wheel` (OU-14).
 
 Exit 0 = contract met. Run locally after ``npm run build && python -m build``,
 and in ``release.yml`` (replacing the shallow namelist check).
@@ -140,26 +141,47 @@ def _load_bundled_model_rail():
     return root, importlib.import_module("personalclaw.bundled_model")
 
 
-def _assert_bundled_model_admitted(wheel: Path) -> None:
-    """Assertion 7 (OU-14): the bundled default chat model's licence and size budget.
+def _assert_no_bundled_weight_in_wheel(wheel: Path) -> None:
+    """Assertion 7 (OU-14): the wheel carries NO model weight, and stays small.
 
-    Three things can red here — an over-budget weight, a weight with a licence that is not on
-    the permitted allowlist, and a weight nothing signed off — and one thing is deliberately
-    NOT a red: no bundle at all, which is the state today. That state prints its own loud line
-    rather than an ``OK``, because a gate whose green means "nobody measured" is not a gate, and
-    OU-14's own escalation found three of its four clauses could go green with no model bundled.
+    🔴 This asserts the OPPOSITE of what it asserted on 2026-09-23, and the direction is the
+    whole point. That revision required the wheel to CARRY the signed-off weight. The owner then
+    settled the shape — *"the intention was always to ship the wheel without the weight and
+    fetch it on first run"* — so the model is downloaded once into ``$PERSONALCLAW_HOME`` at the
+    user's go-ahead, and a wheel carrying one is now the defect. Left pointing the old way this
+    gate would have refused every release.
+
+    Both halves are the same regression seen twice: a ``*.gguf``-shaped glob returning to
+    ``package-data`` puts the wheel over PyPI's 100 MiB per-file limit, and the first symptom of
+    that would be PyPI rejecting the upload of an already-tagged release. The size ceiling also
+    catches the form the member scan would miss — the same weight arriving as a directory of
+    shards, none of them individually weight-shaped.
+
+    The sign-off record is still READ here, and a record that cannot be parsed is still a
+    failure: it carries the licence, the source pin and the digest the runtime fetch depends on,
+    so a release that shipped an unreadable one would ship an install that can never fetch.
     """
     root, rail = _load_bundled_model_rail()
     try:
         declaration = rail.repo_declaration(root)
     except rail.BundleDeclarationError as exc:
         _fail(f"the bundled-model sign-off record is unreadable: {exc}")
-    result = rail.gate_wheel(wheel, declaration)
+    if declaration is None:
+        _fail(
+            "no default chat model is signed off in "
+            f"{rail.DECLARATION_RELPATH} — the first-run fetch has nothing to fetch, so a fresh "
+            "install would reach no chat at all"
+        )
+    licence = rail.licence_decision(declaration.licence)
+    _log(f"bundled model: {declaration.model_id} signed off under {declaration.licence}")
+    if not licence.permitted:
+        _fail(f"the signed-off licence is not permitted: {licence.reason}")
+    result = rail.gate_wheel(wheel)
     _log(f"bundled model: {result.summary}")
     for refusal in result.refusals:
         _log(f"bundled model REFUSAL: {refusal}")
     if not result.ok:
-        _fail(f"bundled-model gate refused this wheel ({len(result.refusals)} refusal(s))")
+        _fail(f"bundled-model wheel gate refused this wheel ({len(result.refusals)} refusal(s))")
 
 
 def _assert_spa_in_wheel(wheel: Path) -> None:
@@ -415,7 +437,7 @@ def main() -> int:
     wheel = _find_wheel(args.wheel)
     _log(f"verifying {wheel}")
     _assert_spa_in_wheel(wheel)
-    _assert_bundled_model_admitted(wheel)
+    _assert_no_bundled_weight_in_wheel(wheel)
     _assert_no_node()
 
     scratch = Path(tempfile.mkdtemp(prefix="pc_verify_wheel_"))

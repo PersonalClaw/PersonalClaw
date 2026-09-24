@@ -16,6 +16,19 @@ import {
 
 const MB = (bytes: number) => (bytes / 1024 / 1024).toFixed(0)
 
+/** `eta_s` as a phrase, or "" when the runner has not worked one out yet.
+ *
+ *  The wire has carried `eta_s` and `speed_bps` since this surface was built and the UI showed
+ *  neither, so a 138 MiB download said "downloading · 40 / 138 MB" and nothing about how long
+ *  that would keep being true. `0` is the runner's "unknown", never "instant" — rendering it as
+ *  "0s left" would be a fabricated estimate, so it renders as nothing at all.
+ */
+function etaLabel(seconds: number): string {
+  if (!seconds || seconds < 1) return ''
+  if (seconds < 60) return ` · ~${Math.round(seconds)}s left`
+  return ` · ~${Math.round(seconds / 60)} min left`
+}
+
 /** Visible text AND accessible name of the browse filter — one string, so the switch cannot
  *  announce something other than the words beside it (SC 2.5.3). */
 const HIDE_LABEL = "Hide models this device can't run"
@@ -38,7 +51,18 @@ function FitChip({ model }: { model: AvailableModel }) {
   const tone = FIT_TONE[verdict]
   const described = fitDescription(model)
   return (
-    <StatusPill tone={tone} role="img" aria-label={described} title={described}>
+    // 🔴 `groundedOn` is not decoration. This chip sits on a row painted
+    // `--color-surface-high` (undownloaded) inside a bento card that itself lifts to
+    // `hover:bg-surface-high`, and a translucent 16% tint over that tier measures **4.4543**
+    // dark / **4.4625** light — under AA in BOTH themes, which axe reports as a serious
+    // `color-contrast` violation on `#/settings/providers`. It had never fired because no
+    // downloadable chat model reached that route until OU-14 added one; the defect was latent,
+    // not new. Pinning the compositing base to the resting tier reads 5.0903 / 5.0075 with the
+    // same ink and the same tint strength. `statusChipContrast.test.ts` records this exact
+    // conclusion — a ground that moves toward the ink is a ground problem — and
+    // `fitChipGround.test.ts` beside this file pins the measurement in both themes.
+    <StatusPill tone={tone} groundedOn="var(--color-surface-container)"
+      role="img" aria-label={described} title={described}>
       {FIT_LABEL[verdict]}
     </StatusPill>
   )
@@ -176,7 +200,7 @@ export function LocalModelManager({
             </div>
             <div data-type="caption" className="truncate text-on-surface-low">
               {downloading
-                ? `downloading${job.downloaded_bytes ? ` · ${MB(job.downloaded_bytes)}${sizeMb ? ` / ${sizeMb}` : ''} MB` : ''}`
+                ? `downloading${job.downloaded_bytes ? ` · ${MB(job.downloaded_bytes)}${sizeMb ? ` / ${sizeMb}` : ''} MB` : ''}${etaLabel(job.eta_s)}`
                 : <>{m.description || (m.capabilities?.length ? m.capabilities.join(', ') : '')}{stated.mb ? ` · ${stated.mb} MB` : ''}{stated.familyMedianMb ? ` · family median ~${stated.familyMedianMb} MB` : ''}</>}
             </div>
             {stepDown && !downloading && (

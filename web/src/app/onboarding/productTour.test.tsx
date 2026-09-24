@@ -62,6 +62,13 @@ vi.mock('../../ui/DotGlow', () => ({ DotGlow: () => null }))
 // Nothing is lost: `ui/DegradedChip.test.tsx` and `ui/degradedChipUnknown.test.tsx` own that
 // component's own behaviour, including its unknown-state handling.
 vi.mock('../../ui/DegradedChip', () => ({ DegradedChip: () => null }))
+// 🪤 THE SAME HAZARD, SAME FIX — `pages/chat/BundledFloorNotice` (OU-14) is mounted by the chat
+// surface and reads the same `GET /api/onboarding` to decide whether chat is about to be answered
+// by the bundled floor model. The recorder above records the API METHOD NAME (`onboarding`), so the
+// `/onboarding/i` predicate cannot tell this read from a tour progress write either. Stubbed for the
+// reason spelled out above rather than loosening the filter; `pages/chat/bundledFloorNotice.test.tsx`
+// owns the component's own behaviour, including both directions of the flag.
+vi.mock('../../pages/chat/BundledFloorNotice', () => ({ BundledFloorNotice: () => null }))
 // The two middle steps are stubbed down to their escape hatch — this file is about what
 // happens AFTER the flow, and `essentialsStep.test.tsx` / `tryOneOutcome.test.tsx` own them.
 vi.mock('./ImportStep', () => ({

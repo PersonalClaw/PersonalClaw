@@ -119,6 +119,28 @@ def _make_contradiction_judge():
 
 
 # Cap injected context to avoid blowing the context window on first turn
+#: The header that separates the assembled CONTEXT from what the user just said. It is the one
+#: boundary inside an assembled prompt that a consumer may rely on, so it is a named constant
+#: re-exported by ``personalclaw.sdk.prompt`` rather than a literal at its one use site.
+#:
+#: Named because a provider can legitimately need it. An assembled prompt is one string of
+#: ~11 KB — identity, memory, session context, skills, history, then the request — which every
+#: capable model handles and a very small one does not: handed the whole blob, a 135M model
+#: CONTINUES the instructions instead of following them (measured, see
+#: ``apps/native/bundled-chat/provider.py``). The bundled zero-config floor therefore reads the
+#: request back out at this marker. An app hard-coding the string would silently stop matching
+#: the day the wording changed, which is exactly the drift a name prevents.
+#:
+#: 🔴 The dash here is an ASCII ``--`` and that is DELIBERATE, not a typo for an em dash. Every
+#: assembled prompt is run through :data:`_MULTIBYTE_TABLE` on the way out (see
+#: ``build_message``'s return), which transliterates ``—`` to ``--`` — so a marker written with
+#: an em dash is NOT the marker a consumer receives, and matching the constant against the
+#: delivered text silently never fires. Measured: the floor model's request-extraction found
+#: nothing and the model parroted the whole system prompt back. Writing it post-transliteration
+#: keeps the delivered bytes byte-identical (``translate`` leaves ``--`` alone) AND makes the
+#: constant match. Any literal added here must survive that table for the same reason.
+USER_REQUEST_MARKER = "[CURRENT USER REQUEST -- respond to this]"
+
 _MAX_CONTEXT_CHARS = 165_000  # ~55k tokens
 
 # ACP agent slices strings at fixed byte offsets (e.g. 4096).
@@ -1939,7 +1961,7 @@ class ContextBuilder:
                     compressible=False,
                 )
             parts.add(
-                "[CURRENT USER REQUEST — respond to this]\n",
+                USER_REQUEST_MARKER + "\n",
                 name="request header",
                 compressible=False,
             )

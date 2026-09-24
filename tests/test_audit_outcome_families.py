@@ -322,10 +322,27 @@ _NO_FAMILY: dict[str, tuple[str, ...]] = {
     "`approved` claimed it, so the Succeeded pill would have returned a refused auto-approval": (
         "not_auto_approved",
     ),
-    "not an audit record at all — an internal ledger row whose field is also called "
-    "`outcome`, which the deliberately tree-wide scan also sees. Recorded rather than "
-    "excluded, because narrowing the scan is the same make-a-word-invisible move #3443 is "
-    "about": ("scope_violation",),
+    # `truncated` (OU-14) is `bundled_model.DOWNLOAD_TRUNCATED`, and the tempting reading is
+    # wrong in a way worth writing down: it is NOT context or prompt truncation, and it is not
+    # the `failed` family either. It is the verdict of `verify_download()` when the fetched
+    # weight is missing, empty or short of the signed-off `size_bytes` — a genuine fault, and
+    # if it were an audit word `failed` would be exactly right. It is not one. Measured:
+    # `bundled_model.py` and the `bundled-chat` app that drives it contain ZERO SEL writers and
+    # ZERO SEL imports (`sel()` appears in 134 files, `log_api_access` in 113, neither in these
+    # two), so no audit row can ever carry `outcome=truncated`. Its three sites are all
+    # `DownloadResult(outcome=…)` — a dataclass field the SPA reads to pick which of four
+    # sentences to print. Putting it in `failed` would add the third invented-in-effect value
+    # to a pill, after `not_permitted` and `timeout`: a term that can only ever return zero
+    # rows, passing `test_no_family_offers_a_term_nobody_writes` only because that rail measures
+    # the census and the census is over-inclusive here BY DESIGN. The arithmetic makes it
+    # plainer still — of the seven-word `DOWNLOAD_*` vocabulary the census sees just this one,
+    # because `bad-status`/`digest-mismatch`/`over-budget` are hyphenated and `_OUTCOME_WORD`
+    # rejects them while `unreachable`/`cancelled` are passed positionally. So a "Failed" pill
+    # would offer one arbitrary seventh of one subsystem's return enum and match nothing.
+    "not an audit record at all — an internal ledger row, or a function's return-value "
+    "discriminator, whose field is also called `outcome` and which the deliberately tree-wide "
+    "scan therefore also sees. Recorded rather than excluded, because narrowing the scan is "
+    "the same make-a-word-invisible move #3443 is about": ("scope_violation", "truncated"),
 }
 
 

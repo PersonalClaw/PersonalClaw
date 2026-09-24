@@ -374,6 +374,29 @@ personalclaw = [
     # derivation removes. Same load-bearing reasoning as the LICENSE/README lines above:
     # non-`.py` files beside `app.json` are DROPPED unless a glob names them.
     "apps/native/*/prompts/*.yaml",
+    # 🔴 The bundled default chat model's WEIGHT IS DELIBERATELY NOT HERE (OU-14, owner
+    # decision 2026-09-24: "ship the wheel without the weight and fetch it on first run").
+    # There is no `*.gguf` glob and there must not be one: the weight is 138 MiB, which is
+    # over PyPI's 100 MiB per-file limit, and a ~147 MiB wheel for every install is a cost
+    # most users would pay for a model they replace on day one. It is fetched ONCE into
+    # `$PERSONALCLAW_HOME/models/bundled-chat/`, digest-verified against
+    # `docs/architecture/bundled-model-signoff.txt`, at the user's explicit go-ahead.
+    # `scripts/verify_wheel.py` assertion 7 enforces the absence: a wheel that grew a
+    # weight-shaped member REDS, because that member would silently reintroduce the limit
+    # problem and nothing else in the pipeline is looking.
+    #
+    # The licence text and attribution ARE shipped — 12 KB, and they are what the fetcher
+    # copies next to the downloaded weight so Apache-2.0 §4 is satisfied on the machine that
+    # actually holds the bytes, with no second network hop to fetch a LICENSE file.
+    "apps/native/*/weights/MODEL_LICENSE",
+    "apps/native/*/weights/MODEL_NOTICE",
+    # The sign-off record itself — the RUNTIME reads it, because it carries the source pin, the
+    # digest and the exact size the first-run download needs. In the tree it is a SYMLINK to the
+    # one copy under `docs/architecture/`, which is where the atom requires the sign-off to be
+    # checked in; setuptools dereferences it, so the wheel gets real bytes and git keeps exactly
+    # one authority. A second committed copy would be two things that can disagree about which
+    # model an install will fetch.
+    "apps/native/*/bundled-model-signoff.txt",
     # The ONE token-lint rule (APE-4), shared by web/src/design/tokenLintRule.ts and
     # apps/quality.py. The apps-repo CI verifies a `quality.designSystem: "v2"` claim
     # from an installed wheel with no core checkout on disk, so a wheel without this
@@ -454,14 +477,18 @@ addopts = [
     # closed — by autouse fixtures in tests/conftest.py that snapshot-and-restore
     # process-global state around every test: _reset_sel_singleton (the
     # SecurityEventLog singleton), _isolate_single_flight_locks (the cross-process
-    # single-flight lock dir) and _restore_pipeline_node_registry (the ingestion
-    # NODE_REGISTRY) — three of the 23 autouse fixtures now carrying that load.
+    # single-flight lock dir), _restore_pipeline_node_registry (the ingestion
+    # NODE_REGISTRY) and _restore_local_model_registry (the local-model provider
+    # registry) — four of the 25 autouse fixtures now carrying that load.
     #
     # This is NOT a determinism guarantee and must not be read as one. The set grows as
     # new process-global state is found: #3124 added the third guard AFTER this comment
     # previously declared the class closed, following two CI shards going red on PRs
-    # whose diffs could not own them. So a red local run is not by itself evidence of
-    # your own diff — see #684 before assuming it is.
+    # whose diffs could not own them. The fourth arrived the same way — a gateway-boot
+    # test enrolling every native model app for the rest of its worker, which reddened
+    # an onboarding test one shard over with what looked like an app name leaking into a
+    # core payload. So a red local run is not by itself evidence of your own diff — see
+    # #684 before assuming it is.
     "--dist", "worksteal",
     "--timeout=120",
     "--cov", "personalclaw",

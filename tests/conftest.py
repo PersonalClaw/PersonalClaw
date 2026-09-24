@@ -836,6 +836,46 @@ def _restore_pipeline_node_registry() -> object:
     _pipeline._REGISTERED = before_registered
 
 
+@pytest.fixture(autouse=True)
+def _restore_local_model_registry() -> object:
+    """Snapshot + restore the process-global LOCAL-MODEL provider registry around every test.
+
+    `local_models.registry` keeps TWO module-level dicts keyed by app name — `_providers` and the
+    parallel `_capabilities` — and `register_provider` mutates both in place. It is the enrolment
+    set every download card, `/api/models/available`, `resilience.doctor`, `local_models.residency`
+    and `routing.policy` read, and the same class of cross-test hazard as the four guards above.
+    It is worse than most because its writer is a GATEWAY BOOT path rather than a test fake: a
+    gateway registers each `type: model` app once for its lifetime and never unregisters (by
+    design — `ModelTypeHandler._register_local`), so a single test that boots a dashboard leaves
+    every native model app enrolled for the rest of the worker's life.
+
+    Measured on this tree, deterministic, `-n0`, no xdist needed once the order is forced:
+
+        pytest tests/test_gateway_boot_provider_sync.py tests/test_onboarding_state.py
+
+    `test_boot_replays_config_providers_before_any_startup_hook` boots `start_dashboard`, which
+    enrols the native `bundled-chat` app. `test_onboarding_state.py`'s
+    `test_chat_download_offer_names_the_size_and_retires_once_it_is_downloaded` then registers a
+    fake local provider and asserts `GET /api/onboarding` names IT — and got `bundled-chat`,
+    because the route walks the registry in registration order and the leaked app was already
+    there. That reads exactly like a provider-boundary hole in the route (an app name in a core
+    payload), which is the expensive part: the route names no app, the registry did. Same
+    signature on CI shard 4 of #3441 — 1 failed, 8906 passed, in a diff that cannot own it.
+
+    Snapshot-and-restore both dicts rather than dropping a list of known names, for the reason the
+    guards above record: a name list silently stops covering the next app someone bundles.
+    """
+    from personalclaw.local_models import registry as _local_models
+
+    providers = dict(_local_models._providers)
+    capabilities = dict(_local_models._capabilities)
+    yield
+    _local_models._providers.clear()
+    _local_models._providers.update(providers)
+    _local_models._capabilities.clear()
+    _local_models._capabilities.update(capabilities)
+
+
 # (The slack-suite autouse fixtures — enterprise bypass, emoji reset, allowlist
 # reset — moved to apps/slack-channel/tests/conftest.py with the slack tests.)
 

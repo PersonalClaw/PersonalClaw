@@ -235,3 +235,39 @@ async def test_handler_stream_missing_job_404():
         _req("GET", "/api/models/downloads/dl-99/stream", reg, match_info={"id": "dl-99"})
     )
     assert resp.status == 404
+
+
+def test_the_expected_total_keeps_a_fractional_mebibyte(monkeypatch):
+    """🔴 The progress denominator must be the size the user was SHOWN, to the byte.
+
+    Measured live while driving OU-14: the offer said 144,811,072 bytes and the download job
+    said 144,703,488, because this helper truncated the float MiB before multiplying
+    (``int(138.102539) * 1024 * 1024``). Two consequences, both user-visible: the bar reaches
+    100% about 105 KiB early, and the number on the button disagrees with the number under the
+    bar. ``LocalModel.size_mb`` is a float precisely so a provider can state an exact size, so
+    throwing the fraction away here silently overrode a provider that was being careful.
+
+    Asserted in BOTH directions — the fractional case reds on a truncating implementation, and
+    the whole-number case pins that nothing was traded away to fix it.
+
+    🪤 ``monkeypatch.undo()`` first: this file's autouse ``_stub_providers`` replaces
+    ``_expected_size_bytes`` itself with a 4 MiB constant, so without undoing it this test would
+    assert against the stub and pass no matter what the real helper does.
+    """
+    monkeypatch.undo()
+
+    class _M:
+        def __init__(self, name, size_mb):
+            self.name, self.size_mb = name, size_mb
+
+    exact = 144_811_072
+    monkeypatch.setattr(
+        M,
+        "_list_models_for_provider",
+        lambda _p: [_M("frac", exact / (1024 * 1024)), _M("whole", 4.0), _M("zero", 0)],
+    )
+    assert M._expected_size_bytes("any", "frac") == exact
+    assert M._expected_size_bytes("any", "whole") == 4 * 1024 * 1024
+    # Unknown size stays 0 — the indeterminate-bar signal, not a fabricated total.
+    assert M._expected_size_bytes("any", "zero") == 0
+    assert M._expected_size_bytes("any", "absent") == 0

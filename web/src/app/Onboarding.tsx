@@ -287,8 +287,16 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
           outcome: 'done',
           // No ref means resolution came from the implicit "first capable configured provider"
           // rule — the same state the step's own verification calls out, in its words, because
-          // naming a model here would imply a choice nobody made.
-          summary: boundModelLabel(s.chat_model_refs) || 'Ready — using a configured provider',
+          // naming a model here would imply a choice nobody made. OU-14 is the one no-ref case
+          // that rule does not cover: the bundled floor answers through an in-memory entry and
+          // is never a binding, so it has no ref to name and must say what IS answering rather
+          // than read as a model setup that was never done. Word for word the sentence the
+          // step's own summary uses, so a first pass and a re-entered pass agree (#3528).
+          summary:
+            boundModelLabel(s.chat_model_refs) ||
+            (s.chat_is_bundled_floor
+              ? 'Ready — using the small model PersonalClaw downloaded'
+              : 'Ready — using a configured provider'),
         }
       }
       const tried = Object.values(s.first_success ?? {}).filter(Boolean).length

@@ -861,13 +861,36 @@ def test_an_export_reachable_from_no_published_signature_is_still_inert():
     an app subclasses, the service objects it is handed and the error classes it catches are
     named by NO published signature, so they stay reported. Measured when the class half landed:
     170 of 229 surfaces survive, 54 of them exported types. After #3511 admitted exported
-    functions as roots: **159 of 248, 43 of them exported types**. So the headroom over the floor
-    below is now THREE, not fourteen — a future clear that drops it under 40 must re-examine the
-    floor against a fresh measurement rather than nudge the number, because the floor's whole job
-    is that a rule which cleared every type would pass the test above and guard nothing.
+    functions as roots: **159 of 248, 43 of them exported types**, leaving a headroom of THREE
+    over the floor rather than fourteen — and the standing instruction was that a clear dropping
+    it under 40 must RE-EXAMINE the floor against a fresh measurement rather than nudge the
+    number, because the floor's whole job is that a rule which cleared every type would pass the
+    test above and guard nothing.
 
-    A named export that leaves this set has been wired, not excused: re-pin it here with the
-    signature that now names it.
+    That re-examination has now happened once (OU-14), and the answer was that the clear rule is
+    innocent: **153 ``sdk_export`` surfaces still reported, 39 of them exported types**. The
+    four that left are TWO
+    names, each exported from two facades, and each acquired a real in-repo importer rather than
+    a new namer — so ``scripts/sdk_surface_closure.py`` is byte-identical and the clear did not
+    widen by one line:
+
+    * ``local_model.LocalModelProvider`` + ``diarization.LocalModelProvider`` — the bundled-chat
+      app SUBCLASSES it (``class BundledChatProvider(ModelProvider, LocalModelProvider)``).
+    * ``settings.ProviderSettings`` + ``channel.ProviderSettings`` — the same app CALLS it
+      (``ProviderSettings.load(APP_NAME)``).
+
+    Both are the census's primary reader shape (an ``ImportFrom`` in ``src/``), and the reason
+    they moved now is that the first bundled app to consume these two facades landed in-tree;
+    neither import is removable without deleting the feature. 39 still-reported types is not a
+    suspiciously clean census, which is the only thing this floor is watching for.
+
+    🔴 THE FLOOR IS NOW SET AT THE MEASUREMENT, WITH NO HEADROOM, DELIBERATELY. The previous
+    three-wide gap is what let this departure arrive as a digit rather than as a decision. At 39
+    the next export to leave reds here and has to be attributed by name, the same way
+    ``_NO_FAMILY`` in ``test_audit_outcome_families.py`` replaced a ceiling with a named
+    register. A named export that leaves this set has been wired, not excused: re-pin it above
+    with the importer or signature that now names it, and move the floor only with that
+    arithmetic attached.
     """
     import importlib
 
@@ -878,10 +901,13 @@ def test_an_export_reachable_from_no_published_signature_is_still_inert():
         obj = getattr(importlib.import_module(f"personalclaw.sdk.{mod_name}"), name, None)
         if isinstance(obj, type):
             types_only.add(label)
-    assert len(types_only) >= 40, (
+    assert len(types_only) >= 39, (
         f"only {len(types_only)} exported TYPES are still reported inert (54 when the "
-        "API-closure clear landed, 43 after function roots) — the clear has over-reached; "
-        "narrow it rather than trusting a suspiciously clean census"
+        "API-closure clear landed, 43 after function roots, 39 after OU-14's app wired "
+        "LocalModelProvider and ProviderSettings) — either the clear has over-reached, in which "
+        "case narrow it rather than trusting a suspiciously clean census, or an export was "
+        "genuinely wired, in which case name it and its new importer in this docstring. The "
+        "floor sits ON the measurement so that choice cannot be skipped."
     )
     for orphan in (
         "action.ActionProvider",  # a provider protocol an app subclasses
