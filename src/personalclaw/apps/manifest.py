@@ -504,7 +504,24 @@ class Permissions:
     # denied" (reassuring, and a real statement by the author) from "never mentioned"
     # (unknown). Collapsing the two made an explicit ``"network": false`` read as silence.
     network_declared: bool = False
-    memory: str = ""  # "", "app-scoped", or "shared"
+    # Whether the app may reach the memory API (``/api/memory/*``), gated by
+    # ``permissions.can_use_memory``. ONE boolean, not a tier: this was
+    # ``""``/``"app-scoped"``/``"shared"`` until #3501, and ``app-scoped`` granted nothing
+    # on any path — the checker answered True for it only when asked about the app-scoped
+    # scope, and its sole enforcement call site asked about ``"shared"``. Deleted rather
+    # than implemented: core has no per-app memory partition for it to name
+    # (``memory_record.MemoryScope`` is ``session|workspace|agent|global``), so a schema
+    # offering the choice was offering a choice that did nothing — and doing it on a
+    # *permission*, which install consent shows the user as something they are approving.
+    # A leftover string value is a validation error (``AppManifest.validate``), never
+    # reinterpreted: coercing ``"app-scoped"`` to True would widen a grant without a fresh
+    # consent prompt, and ignoring ``"shared"`` would revoke one silently.
+    memory: bool = False
+    # The raw non-boolean ``memory`` value a manifest declared, if any. Not a permission
+    # and not a wire key — it exists so ``validate()`` can NAME the offending value after
+    # ``from_dict`` has already coerced the field (same "carry a side fact for the consent
+    # surface" shape as ``network_declared`` above).
+    memory_declared_raw: str = ""
     cron: bool = False
     agent: bool = False  # may run background agent tasks (headless subagent runs)
     # APE-9: target app names this app may send a brokered message to (via
@@ -613,7 +630,7 @@ class Permissions:
         if self.network or self.network_declared:
             d["network"] = bool(self.network)
         if self.memory:
-            d["memory"] = self.memory
+            d["memory"] = True
         if self.cron:
             d["cron"] = True
         if self.agent:
@@ -643,7 +660,10 @@ class Permissions:
             storage=bool(data.get("storage", False)),
             network=bool(data.get("network", False)),
             network_declared="network" in data,
-            memory=str(data.get("memory", "")),
+            memory=data.get("memory") is True,
+            memory_declared_raw=(
+                "" if isinstance(data.get("memory", False), bool) else str(data.get("memory"))
+            ),
             cron=bool(data.get("cron", False)),
             agent=bool(data.get("agent", False)),
             appMessaging=[str(t) for t in data.get("appMessaging", []) if t],  # noqa: N815
@@ -672,11 +692,18 @@ class Permissions:
 #:
 #: DERIVED from the dataclass rather than hand-listed, because a hand-listed copy drifts the
 #: moment a permission is added — and a vocabulary that has silently fallen behind the fields
-#: refuses a permission that works, which is worse than not checking at all. The two excluded
+#: refuses a permission that works, which is worse than not checking at all. The three excluded
 #: names are internal bookkeeping, not wire keys: ``network_declared`` records whether the
-#: author mentioned ``network``, and ``unknown_keys`` is the refusal record itself.
+#: author mentioned ``network``, ``memory_declared_raw`` records the raw ``memory`` value so a
+#: non-boolean can be named back to the author (#3501), and ``unknown_keys`` is the refusal
+#: record itself. Leaving a bookkeeping field IN the vocabulary makes it declarable: an app
+#: could write ``"memory_declared_raw": true``, be accepted, and have it rendered on the
+#: install-consent surface while granting nothing — the exact defect the unknown-key refusal
+#: below exists to prevent.
 PERMISSION_KEYS: frozenset[str] = frozenset(
-    f.name for f in fields(Permissions) if f.name not in {"network_declared", "unknown_keys"}
+    f.name
+    for f in fields(Permissions)
+    if f.name not in {"network_declared", "memory_declared_raw", "unknown_keys"}
 )
 
 
@@ -1746,6 +1773,20 @@ class AppManifest:
                 errors.append(
                     f"cron entry {cron.name!r} must specify either 'every' or 'cron_expr'"
                 )
+
+        # #3501. ``permissions.memory`` is a boolean; the ``"app-scoped"``/``"shared"`` tier
+        # vocabulary is gone. Refused by NAME rather than reinterpreted, because both
+        # reinterpretations are themselves silent failures: truthy-coercing ``"app-scoped"``
+        # would widen a grant that previously did nothing into the full grant with no fresh
+        # consent prompt, and ignoring ``"shared"`` would revoke a working grant without
+        # telling anyone. An install error is the only outcome the author can act on.
+        if self.permissions.memory_declared_raw:
+            errors.append(
+                f"permissions.memory must be a boolean — the "
+                f'"app-scoped"/"shared" tier vocabulary was removed because "app-scoped" '
+                f"granted nothing; declare true for memory access or omit the key, got: "
+                f"{self.permissions.memory_declared_raw!r}"
+            )
 
         # An undeclarable permission is an install error, not something to drop quietly.
         #

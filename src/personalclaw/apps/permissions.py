@@ -30,7 +30,10 @@ sandbox). Enforcement status of each method:
   path such an event reaches an app by, so this is the whole gate. A SEPARATE axis from
   ``can_use_event`` above: a WS grant is not a platform subscription and vice versa.
 * ``can_use_mcp_tool`` — the direct tool-invoke endpoint (handlers/tools.py).
-* ``can_use_memory`` — app-permission middleware gates any ``/api/memory`` path.
+* ``can_use_memory`` — app-permission middleware gates any ``/api/memory`` path. ONE
+  boolean grant, no tier: the ``"app-scoped"``/``"shared"`` vocabulary was deleted in
+  #3501 because ``app-scoped`` granted nothing anywhere and never said so. See that
+  method.
 * ``can_use_cron``  — app-declared manifest crons are registered only when held
   (apps/app_crons.reconcile_app_crons).
 * ``can_use_storage`` — the backend launcher hands the app its DATA_DIR only when
@@ -188,15 +191,27 @@ class PermissionChecker:
         return bool(capability) and capability in self.permissions.desktop
 
     # -- coarse capability flags -----------------------------------------
-    def can_use_memory(self, scope: str = "app-scoped") -> bool:
-        """``memory:""`` → no memory; ``app-scoped`` → only app-scoped; ``shared``
-        → both app-scoped and shared."""
-        declared = self.permissions.memory
-        if not declared:
-            return False
-        if declared == "shared":
-            return True
-        return scope == "app-scoped"
+    def can_use_memory(self) -> bool:
+        """Whether this app may reach the memory API at all. Deny-by-default.
+
+        ONE grant, no scope argument, deliberately (#3501). ``memory`` used to be a tier
+        vocabulary — ``""`` / ``"app-scoped"`` / ``"shared"`` — and this method took the
+        scope being asked about, answering True for a declared ``app-scoped`` only when
+        asked about ``app-scoped``. The single enforcement call site
+        (:func:`app_request_denial`, the ``/api/memory`` gate) asked about ``"shared"``, so
+        the narrower declaration — the responsible one, the one an author reading two tiers
+        would reasonably pick — failed closed on every path and said nothing.
+
+        That is worse than an ordinary inert control: a permission is rendered to the user
+        at install as *consent*, so the user approved a capability that could not happen.
+        The tier was deleted rather than implemented because nothing in core partitions
+        memory per app — ``memory_record.MemoryScope`` is the reach axis
+        (``session|workspace|agent|global``) and has no app dimension for ``app-scoped`` to
+        mean anything against — so implementing it would have been new architecture, not a
+        wiring fix. With one boolean there is no second answer for the gate to disagree
+        with, which is the property the rail in ``tests/test_app_permissions.py`` pins.
+        """
+        return self.permissions.memory
 
     def can_use_cron(self) -> bool:
         return self.permissions.cron
@@ -422,6 +437,6 @@ def app_request_denial(app_name: str, path: str) -> str:
         return "api path not in declared permissions"
     # A memory API path additionally requires the ``memory`` capability (sandbox P3) —
     # declaring the /api/memory path in permissions.api is necessary but not sufficient.
-    if path.startswith("/api/memory") and not checker.can_use_memory("shared"):
+    if path.startswith("/api/memory") and not checker.can_use_memory():
         return "memory access not declared (permissions.memory)"
     return ""

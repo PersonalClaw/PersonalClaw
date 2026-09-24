@@ -486,7 +486,10 @@ export function PermissionList({ perms, hostUi, pythonDeps }: {
   if (perms.api?.length) rows.push(`API: ${perms.api.join(', ')}`)
   if (perms.events?.length) rows.push(`Events: ${perms.events.join(', ')}`)
   if (perms.mcpTools?.length) rows.push(`MCP tools: ${perms.mcpTools.join(', ')}`)
-  if (perms.memory) rows.push(`Memory: ${perms.memory}`)
+  // #3501. One grant, so one bullet — no tier to interpolate. This read `Memory: ${…}`
+  // and rendered the declared tier verbatim, which meant a user could be shown (and
+  // approve) `Memory: app-scoped` for a grant the gateway refused on every path.
+  if (perms.memory) rows.push('Memory')
   if (perms.storage) rows.push('Storage')
   if (perms.cron) rows.push('Scheduled jobs')
   if (perms.agent) rows.push('Run background agents')

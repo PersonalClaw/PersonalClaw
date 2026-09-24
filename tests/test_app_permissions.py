@@ -1,7 +1,8 @@
 """App permission enforcement (A5) — server-side defense-in-depth.
 
 Covers the PermissionChecker decision logic (api prefix/wildcard, events,
-mcpTools, memory tiers, coarse flags) and the enforcement middleware: an
+mcpTools, coarse flags — ``memory`` among them since #3501 deleted its inert
+``app-scoped``/``shared`` tier) and the enforcement middleware: an
 app-identified request to an undeclared API path is 403'd, a declared one
 passes, the app's own backend-proxy path is always allowed, and an owner request
 (no app identity) is unaffected.
@@ -9,6 +10,7 @@ passes, the app's own backend-proxy path is always allowed, and an owner request
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 from contextlib import asynccontextmanager, contextmanager
@@ -21,7 +23,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.apps import manager
-from personalclaw.apps.manifest import PERMISSION_KEYS, Permissions
+from personalclaw.apps.manifest import PERMISSION_KEYS, AppManifest, Permissions
 from personalclaw.apps.permissions import (
     APP_SCOPED_PREFIXES,
     PermissionChecker,
@@ -58,12 +60,64 @@ class TestCheckerLogic:
         assert c.can_use_mcp_tool("fs_read")
         assert not c.can_use_mcp_tool("fs_write")
 
-    def test_memory_tiers(self):
-        assert not _checker(memory="").can_use_memory("app-scoped")
-        appc = _checker(memory="app-scoped")
-        assert appc.can_use_memory("app-scoped") and not appc.can_use_memory("shared")
-        sharedc = _checker(memory="shared")
-        assert sharedc.can_use_memory("app-scoped") and sharedc.can_use_memory("shared")
+    def test_memory_is_one_boolean_grant_with_no_scope_argument(self):
+        """#3501. ``memory`` used to be a TIER vocabulary (``""`` / ``"app-scoped"`` /
+        ``"shared"``) whose narrower member granted nothing anywhere, and never said so.
+
+        ``can_use_memory(scope)`` answered True for a declared ``app-scoped`` only when
+        *asked about* the ``app-scoped`` scope — and the sole enforcement call site asked
+        about ``"shared"``. So the responsible declaration (the narrower of the two the
+        schema offered) failed closed on every path, silently. That is worse than an
+        ordinary inert control because a permission is rendered to the user at install as
+        consent: the user approved a capability that could not happen, and the author had
+        no way to find out short of reading this method.
+
+        The tier is DELETED rather than implemented — nothing in core partitions memory
+        per app (``memory_record.MemoryScope`` is ``session|workspace|agent|global``, with
+        no app axis for ``app-scoped`` to mean anything against), and no bundled manifest
+        declared it. The grant is now one boolean and the accessor takes NO scope
+        argument, so there is no second answer for the enforcement point to disagree with.
+        """
+        assert list(inspect.signature(PermissionChecker.can_use_memory).parameters) == ["self"], (
+            "can_use_memory still takes a scope argument — a second answer the single "
+            "enforcement call site can disagree with, which is exactly the #3501 defect."
+        )
+        assert not _checker().can_use_memory()
+        assert not _checker(memory=False).can_use_memory()
+        assert _checker(memory=True).can_use_memory()
+
+    def test_a_non_boolean_memory_declaration_is_refused_at_install(self):
+        """Deleting the tier must not become a SECOND silent failure.
+
+        Truthy-coercing a legacy ``"app-scoped"`` would *upgrade* a declaration that
+        granted nothing into the full grant with no fresh consent prompt; strictly
+        ignoring it would silently revoke a working ``"shared"``. Both reproduce the
+        defect being fixed. So a non-boolean ``memory`` is a validation error that names
+        the fix, and the install is refused rather than reinterpreted.
+        """
+        for legacy in ("app-scoped", "shared"):
+            errs = AppManifest.from_dict(
+                {
+                    "name": "demo",
+                    "version": "1.0.0",
+                    "displayName": "Demo",
+                    "description": "d",
+                    "permissions": {"memory": legacy},
+                }
+            ).validate()
+            assert any("permissions.memory" in e for e in errs), (
+                f"a manifest declaring memory={legacy!r} was accepted; the removed tier "
+                f"vocabulary must be refused by name, not reinterpreted: {errs}"
+            )
+
+    def test_the_memory_grant_survives_the_consent_wire_as_a_boolean(self):
+        """The grant reaches install consent through ``to_dict`` → ``/api/apps`` →
+        ``PermissionList``, so the wire shape is part of the contract: a boolean, omitted
+        when not held (like ``storage``/``cron``), never a tier string the UI interpolates.
+        """
+        assert Permissions.from_dict({"memory": True}).to_dict()["memory"] is True
+        assert "memory" not in Permissions.from_dict({"memory": False}).to_dict()
+        assert "memory" not in Permissions.from_dict({}).to_dict()
 
     def test_coarse_flags(self):
         c = _checker(cron=True, network=True, storage=False)
