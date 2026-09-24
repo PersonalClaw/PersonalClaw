@@ -109,6 +109,30 @@ def svc(store):
     return MemoryService.over_vector_store(store)
 
 
+#: The push budget these tests run under, in ms, in place of the production 400ms
+#: (`context_engine._PUSH_TIMEOUT_MS`). 400ms is right for a gateway — the reflex is on the
+#: critical path of every turn — and wrong for an assertion about WHICH BRANCH ran, because
+#: past the budget the reflex fails SILENT by design. A loaded runner therefore returns the
+#: bare turn, and the two failure modes are indistinguishable: the positive legs read "the
+#: reflex was silent" and the negative ones (graph-disabled, foreign-provider) pass
+#: VACUOUSLY. Measured: the push costs 28-39ms here against 400ms — a 10x margin that is not
+#: 10x on a four-worker CI runner, and #3412's `test-shard (4)` spent it (`injected_chars=0,
+#: components=[]`) on a diff that never imports the push path at all. 20s keeps a genuinely
+#: wedged push a red rather than a hang: it stays well inside pytest's own `--timeout=120`.
+_PUSH_BUDGET_MS = 20_000
+
+
+@pytest.fixture(autouse=True)
+def _push_budget_off_the_wall_clock(monkeypatch):
+    """Take the wall clock out of every `assemble` assertion in this file.
+
+    Not a widened tolerance — no assertion moves, and the reflex still has to produce the
+    block for the positive legs to pass. What changes is that "did the toggle gate the
+    turn?" stops sharing its answer with "did the push finish inside 400ms on this runner?".
+    """
+    monkeypatch.setattr("personalclaw.context_engine._PUSH_TIMEOUT_MS", _PUSH_BUDGET_MS)
+
+
 class _Builder:
     """The `ContextBuilder` collaborator `assemble` needs, and nothing more.
 
