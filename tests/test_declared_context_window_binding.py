@@ -299,10 +299,9 @@ async def test_an_absent_declaration_leaves_the_gauge_byte_identical(options, fa
     would divide 26682 by 4096 and report 651%) or if the floor leaks in some other way.
     Computed from ``model_context_window`` rather than a literal so it tracks the table.
     """
-    from personalclaw.llm.openai import _DEFAULT_CONTEXT_WINDOW
-    from personalclaw.model_windows import model_context_window
+    from personalclaw.model_windows import resolved_context_window
 
-    expected_window = model_context_window("llama3.1:8b", _DEFAULT_CONTEXT_WINDOW)
+    expected_window = resolved_context_window("llama3.1:8b")
     assert expected_window == 128_000, "the table moved; the control's premise is stale"
     pct = await _openai_measured_pct(options, _MEASURED_PROMPT_TOKENS)
     assert pct == pytest.approx(_MEASURED_PROMPT_TOKENS / expected_window * 100)
@@ -311,3 +310,67 @@ async def test_an_absent_declaration_leaves_the_gauge_byte_identical(options, fa
         "which is why the declaration (or a served-window probe) is the fix and not a "
         "bigger numerator"
     )
+
+
+# ── the override is LIVE-EFFECTIVE on a model the table has never heard of ─────
+#
+# The gap this section closes. #2364 was closed COMPLETED and then reopened as a false
+# success on the finding that "an operator who declares ``context_window: 32768`` changes
+# nothing the product reports". The declaration did start reaching the gauge (PR #3323),
+# but every test that proved it used ``llama3.1:8b`` — a model the TABLE lists, so the
+# undeclared arm had a window either way and the assertions could not tell "the override
+# was read" apart from "a window was found". `gemma4`, the model the issue was actually
+# measured on, is absent from ``model_tokens.json``, and on that binding the override is
+# the ONLY thing that can produce a window at all. So this pair is the live-effect proof:
+# same provider, same turn, same token report — one variable.
+
+
+def _openai_unlisted(options: dict | None):
+    from personalclaw.llm.openai import OpenAIProvider
+
+    return OpenAIProvider(model="gemma4:12b", credential=_cred(), extra_options=options)
+
+
+async def _unlisted_measured_pct(options: dict | None, prompt_tokens: int) -> float | None:
+    from personalclaw.llm.base import EVENT_COMPLETE
+
+    provider = _openai_unlisted(options)
+    provider._client.chat = _FakeChat(_UsageCompletions(_usage_chunks(prompt_tokens)))
+    events = [e async for e in provider.complete([{"role": "user", "content": "hi"}])]
+    terminal = [e for e in events if e.kind == EVENT_COMPLETE]
+    assert len(terminal) == 1
+    return terminal[0].context_usage_pct
+
+
+async def test_the_model_the_issue_was_measured_on_is_still_unlisted():
+    """Premise control. If the table ever lists a ``gemma*`` entry, the two tests below
+    stop measuring what they claim to and must move to another unlisted model."""
+    from personalclaw.model_windows import resolved_context_window
+
+    assert resolved_context_window("gemma4:12b") is None
+
+
+async def test_an_unlisted_binding_reports_NOTHING_until_the_window_is_declared(
+    fake_openai_module,
+):
+    """Half one. No table entry and no declaration ⇒ no number — where the shipped code
+    divided by ``_DEFAULT_CONTEXT_WINDOW = 128_000`` and rendered a confident 25.19% peak."""
+    assert await _unlisted_measured_pct(None, _MEASURED_PROMPT_TOKENS) is None
+
+
+async def test_the_declaration_ALONE_makes_the_live_gauge_read_and_cross_the_gate(
+    fake_openai_module,
+):
+    """Half two, and the assertion #2364 lacked: the override changes the LIVE value.
+
+    Same provider class, same 26682-token report, one variable — the declaration. The
+    inert-control half above proves the number came from the declaration and not from a
+    fallback, and the threshold assertion proves the consequence rather than the
+    arithmetic: it is the compaction gate, not the percentage, that the operator cares
+    about.
+    """
+    from personalclaw.agents.native.runtime import NativeAgentRuntime
+
+    pct = await _unlisted_measured_pct({"context_window": "32768"}, _MEASURED_PROMPT_TOKENS)
+    assert pct == pytest.approx(_MEASURED_PROMPT_TOKENS / _SERVED_WINDOW * 100)
+    assert pct is not None and pct >= NativeAgentRuntime._COMPACT_THRESHOLD_PCT

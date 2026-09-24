@@ -36,16 +36,15 @@ logger = logging.getLogger(__name__)
 # Max conversation history entries before trimming oldest.
 _MAX_HISTORY = 50
 
-# Default fallback when the model is not found in ``model_tokens.json``.
-# Older OpenAI 4-class context windows are typically 128k; newer models
-# (gpt-4.1 / gpt-4o / o-series) are 200k+. We pick a conservative value
-# so the percentage estimate skews high rather than hides usage.
-_DEFAULT_CONTEXT_WINDOW = 128_000
-
-
-# Model → context window tokens (loaded from shared JSON).
+# The context gauge, in ONE place for every adapter — including the rule that an
+# unresolvable window reports NOTHING rather than a percentage of an adapter-local
+# fallback. This adapter used to carry `_DEFAULT_CONTEXT_WINDOW = 128_000` for that
+# purpose and divide by it for any model absent from `model_tokens.json`; measured
+# against a local `gemma4:12b` serving 32768 that denominator was 3.91× too large and
+# capped the gauge at 25.19%, so the 70% compaction trigger could never fire (#3406).
+from personalclaw.context_gauge import ContextGauge, prompt_text_chars  # noqa: E402
 from personalclaw.model_windows import declared_context_window as _declared_window  # noqa: E402
-from personalclaw.model_windows import model_context_window as _model_window  # noqa: E402
+from personalclaw.model_windows import resolved_context_window  # noqa: E402
 
 
 def _read_cache_usage(usage: object) -> tuple[int, int]:
@@ -177,6 +176,10 @@ class OpenAIProvider(ModelProvider):
         # ``None`` until the first usage report: before then this provider has no
         # measurement, and 0.0 would be a fabricated one (see llm/base contract).
         self._last_context_pct: float | None = None
+        # The context gauge for THIS binding. Stateful because truncation detection is
+        # ordinal — it compares a report against the largest prompt this binding has
+        # already had measured — see personalclaw.context_gauge.
+        self._gauge = ContextGauge()
         # One-shot image content part for the next turn (MI-4). None on every ordinary
         # turn, which is what keeps the untouched wire shape byte-identical.
         self._pending_image: str = ""
@@ -443,16 +446,19 @@ class OpenAIProvider(ModelProvider):
         # With no cache activity both buckets are 0 and this is the value it always was.
         prompt_tokens = input_tokens + cache_creation_tokens + cache_read_tokens
         if prompt_tokens > 0:
-            # ``override=`` and deliberately NOT ``local=``: this is a MEASURED
-            # percentage, and the local short-circuit is a conservative FLOOR for the
-            # char estimate (LOCAL_SERVED_CONTEXT_WINDOW), not a served-window claim.
-            # Substituting it here would divide a real 26682-token prompt by 4096 and
-            # display 651% — fabricating in the opposite direction from the bug in
-            # #2364. The per-binding declaration is the only thing that is truth for
-            # both paths, so only it reaches the gauge; with no declaration this stays
-            # byte-identical to the table lookup it has always done.
-            ctx = _model_window(self._model, _DEFAULT_CONTEXT_WINDOW, override=self.context_window)
-            self._last_context_pct = (prompt_tokens / ctx) * 100
+            # ``override=`` is the per-binding declaration and deliberately the ONLY
+            # window claim that reaches a measured gauge: the ``local=`` short-circuit is
+            # a conservative FLOOR for the char estimate (LOCAL_SERVED_CONTEXT_WINDOW),
+            # and substituting it here would divide a real 26682-token prompt by 4096 and
+            # display 651% — fabricating in the opposite direction from #2364.
+            # ``sent_chars`` is what keeps the reading monotone: a reported total is what
+            # the endpoint ACCEPTED, so on a runtime that truncates silently it collapses
+            # as the prompt grows (#3405).
+            self._last_context_pct = self._gauge.measure(
+                reported_tokens=prompt_tokens,
+                sent_chars=prompt_text_chars(request_kwargs["messages"]),
+                window=resolved_context_window(self._model, override=self.context_window),
+            )
 
         if assistant_text:
             self._history.append({"role": "assistant", "content": assistant_text})
@@ -653,11 +659,13 @@ class OpenAIProvider(ModelProvider):
         # note at the streaming gauge above.
         prompt_tokens = input_tokens + cache_creation_tokens + cache_read_tokens
         if prompt_tokens > 0:
-            # ``override=`` only — see the note at the streaming gauge above.
-            ctx = _model_window(
-                model or self._model, _DEFAULT_CONTEXT_WINDOW, override=self.context_window
+            # ``override=`` only, and ``sent_chars`` — see the note at the streaming
+            # gauge above for both.
+            context_pct = self._gauge.measure(
+                reported_tokens=prompt_tokens,
+                sent_chars=prompt_text_chars(request_kwargs["messages"]),
+                window=resolved_context_window(model or self._model, override=self.context_window),
             )
-            context_pct = (prompt_tokens / ctx) * 100
 
         yield LLMEvent(
             kind=EVENT_COMPLETE,

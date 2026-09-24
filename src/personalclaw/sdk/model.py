@@ -14,6 +14,16 @@ to any installed model app). Ollama is the one model provider that stays core-na
 (it owns model download/management), so it is not built on this surface.
 """
 
+# The context gauge, promoted for the same reason: a provider app that reports
+# ``context_usage_pct`` is making the same measurement core's adapters make, and the two
+# rules it has to get right are not obvious enough to re-derive per app — an unresolvable
+# window reports NOTHING rather than a percentage of a fallback, and the numerator has to
+# be checked against the prompt that was SENT, because a runtime that truncates silently
+# reports a count that FALLS as the context grows (#3405 / #3406).
+from personalclaw.context_gauge import (  # noqa: F401
+    ContextGauge,
+    prompt_text_chars,
+)
 from personalclaw.llm.anthropic import AnthropicProvider  # noqa: F401
 from personalclaw.llm.base import (  # noqa: F401
     EVENT_COMPLETE,
@@ -127,6 +137,8 @@ __all__ = [
     "make_think_splitter",
     "model_context_window",
     "declared_context_window",
+    "ContextGauge",
+    "prompt_text_chars",
     "OpenAIProvider",
     "AnthropicProvider",
     # Catalog / management / connectivity axis (Settings → Models discovery).

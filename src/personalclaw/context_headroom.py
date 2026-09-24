@@ -43,11 +43,12 @@ the shortcut cannot drift into a second reserve.
 treats a ``0`` catalog card as "unknown", and ``model_windows.model_context_window``
 hands out a hardcoded 200k when no entry names the model. Accepting that default would be
 the defaulted-field-is-an-unsupplied-input defect: the whole contract would then be
-measured against a number nobody declared. So :func:`resolve_window` asks the table a
-second time with ``default=0`` to tell "the table named this model" apart from "the table
-defaulted", and reports the latter as ``tokens=None`` / ``source="unknown"`` — the same
-discipline :mod:`personalclaw.local_models.fit` uses, where ``None`` means *unmeasured*
-and ``0`` means *measured, nothing fits* (collapsing those two produced a real bug).
+measured against a number nobody declared. So :func:`resolve_window` asks
+``model_windows.resolved_context_window`` — the one reader that can answer ``None`` — and
+reports that as ``tokens=None`` / ``source="unknown"``, the same discipline
+:mod:`personalclaw.local_models.fit` uses, where ``None`` means *unmeasured* and ``0``
+means *measured, nothing fits* (collapsing those two produced a real bug). The measured
+context gauge asks the same question the same way (:mod:`personalclaw.context_gauge`).
 
 An unmeasured window yields ``FITS`` with ``window.measured is False`` and
 ``pressure is None``. That choice is deliberate in both directions: refusing on an
@@ -370,8 +371,8 @@ async def resolve_window(model_ref: str) -> Window:
     """The bound model's real window, its reply reserve, and the authority for both.
 
     Catalog first (``LocalModel.context_tokens`` off the model card), then the shared
-    window table, then UNMEASURED. The second table lookup with ``default=0`` is the whole
-    point: ``model_context_window`` answers every query, returning
+    window table, then UNMEASURED. :func:`~personalclaw.model_windows.resolved_context_window`
+    is the whole point: ``model_context_window`` answers every query, returning
     ``DEFAULT_CONTEXT_WINDOW`` (200k) for a model it has never heard of, so its plain
     answer cannot distinguish a declared window from a hardcoded one.
 
@@ -383,7 +384,7 @@ async def resolve_window(model_ref: str) -> Window:
     ref = (model_ref or "").strip()
     try:
         from personalclaw.local_models.budgets import model_budget
-        from personalclaw.model_windows import model_context_window
+        from personalclaw.model_windows import resolved_context_window
 
         budget = await model_budget(ref)
         reserve = budget.output_tokens
@@ -394,7 +395,7 @@ async def resolve_window(model_ref: str) -> Window:
                 input_tokens=budget.input_tokens,
                 source="catalog",
             )
-        if ref and model_context_window(ref, default=0) > 0:
+        if ref and resolved_context_window(ref) is not None:
             return Window(
                 tokens=budget.context_tokens,
                 output_reserve_tokens=reserve,

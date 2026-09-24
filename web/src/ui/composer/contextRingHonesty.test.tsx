@@ -50,3 +50,42 @@ describe('the context ring never states an unmeasured percentage', () => {
     expect(unmeasured).not.toEqual(measuredZero)
   })
 })
+
+// ── …and the unmeasured dot SAYS it is unmeasured (#3406) ──────────────────────────────
+//
+// Staying silent was only half honest. The backend reaches the unmeasured state whenever no
+// context window is declared for the bound model — a `gemma4` binding gets it by default,
+// since the shared table has never heard of that model — and before this the alternative to
+// a fabricated percentage was a bare dot one pixel away from a nearly-empty ring. A user
+// could not tell "unknown" from "barely any context used", and the remedy is a user action,
+// so the dot has to name it.
+
+describe('the unmeasured dot explains itself', () => {
+  it('carries a title that says the usage is unknown', () => {
+    const { container } = render(pill(undefined))
+    const dot = container.querySelector('[title]')
+    expect(dot).not.toBeNull()
+    expect(dot!.getAttribute('title')!.toLowerCase()).toContain('unknown')
+  })
+
+  it('names the control that fixes it, so the title is actionable', () => {
+    const title = render(pill(undefined)).container.querySelector('[title]')!.getAttribute('title')!
+    // The exact label of the field on the provider form (ModelBackends.tsx) and where it
+    // lives. A rename there without a rename here leaves a user hunting for a control that
+    // does not exist under that name.
+    expect(title).toContain('Served context window')
+    expect(title).toContain('Settings')
+  })
+
+  it('still states no percentage — explaining is not fabricating', () => {
+    const { container } = render(pill(undefined))
+    expect(container.innerHTML).not.toContain('%')
+    expect(container.querySelector('[title^="Context:"]')).toBeNull()
+  })
+
+  it('a measured ring does NOT claim unknown', () => {
+    // The paired control: if the two states ever collapse onto one title, this reds.
+    const measured = render(pill(61.5)).container.querySelector('[title]')!.getAttribute('title')!
+    expect(measured.toLowerCase()).not.toContain('unknown')
+  })
+})
