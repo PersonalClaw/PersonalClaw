@@ -419,12 +419,18 @@ def instructed_by_spec(spec: Any, name: str) -> bool | None:
     """Does this run's OWN spec name the document its kind declares?
 
     The reason this exists: measured across the seven bundled templates the five loop kinds resolve
-    to, NONE of them mentions ``REPORT.md``, ``MONITOR_LOG.md``, ``DESIGN.md`` or ``RESEARCH.md``
-    anywhere. The loop side's brief does (``goal.build_brief`` writes the deliverable name into the
-    DoD and the cycle nudge); the template side's prompts do not. So on the run side today, a
-    document that is absent is usually absent because nothing ever asked for it — and reporting
-    that as "the worker has not written it yet" would send a user to wait for something that is
-    never coming.
+    to, SIX of them mention none of ``REPORT.md``, ``MONITOR_LOG.md``, ``DESIGN.md`` or
+    ``RESEARCH.md`` anywhere. The loop side's brief does (``goal.build_brief`` writes the
+    deliverable name into the DoD and the cycle nudge); those templates' prompts do not. So on the
+    run side, a document that is absent is usually absent because nothing ever asked for it — and
+    reporting that as "the worker has not written it yet" would send a user to wait for something
+    that is never coming.
+
+    ``deep-research`` is the ONE exception and the direction of travel: PP-16's research port made
+    ``RESEARCH.md`` the round loop's own carried state, so its prompts name the file, this returns
+    ``True`` for it, and the panel stops saying nothing asked. Each remaining per-kind port is
+    expected to move one more template out of the six — the count above is the honest measurement
+    of how far that has got, not a permanent property.
 
     ``None`` when there is no name to look for, so "we did not check" stays distinct from "we
     checked and it is not there". A substring scan over the serialized spec rather than a walk of

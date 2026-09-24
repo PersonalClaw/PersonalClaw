@@ -1846,6 +1846,25 @@ class RunController:
                 )
                 if node is not None:
                     self._record_terminal_effect(node, path, inst, inst.state, output)
+            # 🔴 The ITERATION COUNTER, which this method used to leave behind. `_apply` advances
+            # the loop for an awaited dispatch, and for a spawned `stage` it returns at the RUNNING
+            # branch above — so a loop whose body ENDS in a stage settled here, journalled
+            # `step_completed`, and then nothing moved: no `iteration` record, no second round, and
+            # the tick loop reported "run deadlocked: no runnable nodes and none in flight" after
+            # exactly one iteration.
+            #
+            # Measured with a control (PP-16, the research port): a
+            # `sequence[transform, loop(until_dry, streak 2, body=sequence[stage, stage])]`
+            # deadlocks after one iteration with ZERO `iteration` records, while the byte-identical
+            # spec with `infer` bodies runs two and ends on `dry_streak`. That is the same symptom
+            # `_loop_parent`'s docstring records for the container-body bug — deadlock after exactly
+            # one iteration — reached by the other of the two settle paths, and it is why no shipped
+            # stage-bodied loop template had ever been observed past round one.
+            #
+            # Safe to call unconditionally: `_advance_loop` no-ops unless this path really is inside
+            # a loop body AND `_iteration_complete` says the whole body is terminal, so a stage that
+            # is merely the FIRST leaf of a container body still advances nothing.
+            self._advance_loop(path, node_id)
             self._publish(
                 "workflow_node_done",
                 {
@@ -3370,7 +3389,7 @@ class RunController:
                 detail=(result.failure.cause_plain if result.failure else ""),
             )
 
-        self._advance_loop(item)
+        self._advance_loop(item.path, item.node.id)
         self._publish(
             "workflow_node_done",
             {
@@ -3757,14 +3776,20 @@ class RunController:
         loop_inst.completed_at = _now()
         self._escalate(parent_path, node.id, reason=reason, detail=detail)
 
-    def _advance_loop(self, item: ReadyNode) -> None:
+    def _advance_loop(self, path: str, node_id: str) -> None:
         """Advance a loop's iteration counter when its body finished an iteration.
 
         The counter lives here rather than in the frontier because advancing it is a
         WRITE, and the frontier is pure. `loop_should_continue` keeps the decision itself
         pure and testable.
+
+        Takes the settled leaf's PATH and ID rather than a `ReadyNode`, because there are two
+        settle paths and only one of them has a `ReadyNode` in hand. `_apply` settles an awaited
+        dispatch; `_reconcile_dispatched_stages` settles a spawned `stage`, whose awaited coroutine
+        already returned at the spawn. Both must advance the loop — see that method's own note on
+        why a dispatched stage is not an `_inflight` entry.
         """
-        parent_path, iteration = _loop_parent(item.path)
+        parent_path, iteration = _loop_parent(path)
         if parent_path is None:
             return
         node = dict(_walk(self.root)).get(spec_path(parent_path))
@@ -3776,7 +3801,7 @@ class RunController:
             # move, and the synthesize stage after it would be scheduled into the NEXT
             # iteration's path — where nothing had produced its inputs.
             return
-        output = self._outputs.get(item.node.id)
+        output = self._outputs.get(node_id)
         if self._iteration_is_dry(node, parent_path, iteration, output):
             self._dry_streaks[parent_path] = self._dry_streaks.get(parent_path, 0) + 1
         else:
@@ -3794,7 +3819,7 @@ class RunController:
         # by this node's `SupervisorPolicy` — gives the answer: wait, nudge, take a rung, replan,
         # or surface. `loop_middleware.check_middleware`, which used to hold a second copy of
         # that reasoning over a mutable cursor, is deleted.
-        inst = self._instance(item.path)
+        inst = self._instance(path)
         breaker = self._breakers.setdefault(parent_path, BreakerState())
         breaker.record(
             signature=error_signature(inst.failure) if inst.failure else "",

@@ -225,7 +225,20 @@ def test_a_general_kind_run_executes_and_writes_its_own_ledger() -> None:
 
     # 1. It reached a terminal state rather than hanging — the timeout would have surfaced as a
     #    non-terminal status.
-    assert status in (RunStatus.COMPLETE, RunStatus.FAILED), f"run ended {status}"
+    #
+    #    `ESCALATED` joined this set in PP-16 session 2, and the change is worth naming because it
+    #    makes the blocker below MORE visible rather than less. Until then the stage reconciler
+    #    never advanced the loop's iteration counter, so this template failed its first `work` stage
+    #    and the tick loop reported `run deadlocked` — FAILED, on a
+    #    loop that had run exactly one round. With the counter advancing, the loop really iterates,
+    #    the breaker sees the same binding failure repeatedly, and the loop is SURFACED to a human.
+    #    A loop handed to a human for an unresolvable reference is the correct ending; a deadlock
+    #    was not.
+    assert status in (
+        RunStatus.COMPLETE,
+        RunStatus.FAILED,
+        RunStatus.ESCALATED,
+    ), f"run ended {status}"
 
     # 2. The template's OWN nodes were reached, both of them, by id. This is the assertion that
     #    read-time aliasing could never satisfy: there was no run, so there was no node.

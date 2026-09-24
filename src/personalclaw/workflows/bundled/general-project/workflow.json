@@ -12,11 +12,13 @@
     "task": {
       "type": "string",
       "required": true,
+      "loop_field": "task",
       "help": "What to work on."
     },
     "exit_condition": {
       "type": "string",
       "default": "The task is complete and the evidence shows it",
+      "loop_field": "success_criteria",
       "help": "What 'done' means. The judge holds the work to this, so vagueness here becomes vagueness there."
     }
   },

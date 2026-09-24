@@ -411,12 +411,17 @@ def _check_anti_patterns(res: LintResult, spec: dict[str, Any]) -> None:
     for loop in loops:
         cfg = loop.get("config") or {}
         raw_cap = cfg.get("max_iterations")
-        # A BINDING is a valid cap: `max_iterations: "{{inputs.rounds}}"` is resolved at
-        # run start, and requiring a literal int reported the shipped `deep-research` as
-        # unbounded when its cap is simply user-supplied.
-        has_cap = (isinstance(raw_cap, int) and not isinstance(raw_cap, bool) and raw_cap >= 1) or (
-            isinstance(raw_cap, str) and "{{" in raw_cap
-        )
+        # 🔴 A BINDING IS NOT A CAP, and this branch used to accept one on the claim that
+        # `max_iterations: "{{inputs.rounds}}"` is "resolved at run start". It is not. Both readers
+        # of the field — `tick.loop_should_continue` and `resilience.check_breaker` — gate on
+        # `isinstance(cap, int)`, and a loop node's own `config` is never run through
+        # `resolve_config`: that is called per NODE KIND in `engine.py`, and a loop is a container
+        # the controller advances itself. Measured with a positive control (PP-16, the research
+        # port): the same node capped at a literal 3 stops at iteration 3, and capped at
+        # `"{{inputs.rounds}}"` keeps going at iteration 99. The one template that used the binding
+        # form — `deep-research` — was therefore genuinely unbounded, which is exactly what this
+        # branch was added to stop reporting.
+        has_cap = isinstance(raw_cap, int) and not isinstance(raw_cap, bool) and raw_cap >= 1
         # `streak` alone is a valid until_dry exit: the engine terminates on N iterations
         # that surfaced nothing, and `progress_field` only chooses WHAT it reads — the
         # declared field when a loop names one, the whole iteration output when it does not

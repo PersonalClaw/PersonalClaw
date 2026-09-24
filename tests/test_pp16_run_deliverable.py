@@ -512,16 +512,30 @@ def test_instructed_is_null_when_there_is_no_name_to_look_for(run_home):
     assert payload["instructed"] is None
 
 
-def test_no_bundled_template_the_five_kinds_resolve_to_names_its_own_document():
+#: The bundled templates that DO name their kind's document, and therefore report
+#: `instructed: true`. One entry, added by PP-16's research port: `deep-research` made
+#: `RESEARCH.md` the round loop's own carried state, so its prompts name the file.
+#:
+#: An ALLOWLIST rather than a relaxed assertion, because the claim behind `instructed` is a count
+#: and the panel's copy depends on it: every template NOT here still reports "nothing has asked the
+#: worker to write one", and each remaining per-kind port is expected to move one more name across.
+#: A template naming its document without being listed here reds — which is the prompt to re-do the
+#: claim rather than to widen the set quietly.
+TEMPLATES_NAMING_THEIR_DOCUMENT = {"deep-research"}
+
+
+def test_only_the_ported_templates_name_their_own_document():
     """The measurement behind `instructed`, re-taken every run so the claim cannot rot.
 
-    If a template ever starts naming its document, this reds and the prose above (and the panel's
-    copy) must be re-done rather than left claiming a gap that closed.
+    Railed in BOTH directions: a template that starts naming its document without joining
+    :data:`TEMPLATES_NAMING_THEIR_DOCUMENT` reds, and a listed template that STOPS naming it reds
+    too — the second is what would silently turn the panel's "a run's report is there" back into
+    "nothing asked" while this suite stayed green.
     """
     bundled = _SRC / "workflows" / "bundled"
     table = D.template_deliverables()
     checked = 0
-    naming: list[str] = []
+    naming: set[str] = set()
     for template, source in table.items():
         if not source.name:
             continue
@@ -530,9 +544,12 @@ def test_no_bundled_template_the_five_kinds_resolve_to_names_its_own_document():
             continue
         checked += 1
         if source.name in path.read_text(encoding="utf-8"):
-            naming.append(template)
+            naming.add(template)
     assert checked >= 3, f"vacuity floor: only {checked} bundled templates were read"
-    assert not naming, f"these templates now name their document — re-do the claim: {naming}"
+    assert naming == TEMPLATES_NAMING_THEIR_DOCUMENT, (
+        "the set of templates naming their kind's document changed — re-do the claim in "
+        f"`deliverable.instructed_by_spec`'s docstring and the panel copy: {sorted(naming)}"
+    )
 
 
 # ── the route, resolved rather than grepped ──

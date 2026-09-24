@@ -23,6 +23,7 @@ is far harder to debug than "it ran nothing and said why".
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,54 @@ def resolve_kind(kind: str, *, variant: str = "", has_verify_command: bool = Fal
 def resolve_tool(tool_name: str) -> str:
     """The template a legacy loop chat-tool name meant, or ""."""
     return TOOL_TO_TEMPLATE.get((tool_name or "").strip().lower(), "")
+
+
+# ── PP-16: the INTAKE half of the alias (which input receives which loop column) ──
+#
+# `KIND_TO_TEMPLATE` answers the NOUN question. It is not enough to LAUNCH a kind, because the
+# launch has to put the loop's task somewhere and the parameter name is the template's choice, not
+# a constant. Measured across the five templates the kinds resolve to: `general-project`,
+# `goal-pursuit-open-ended` and `code-project` call it `task`, `design-project` calls it `brief`,
+# `deep-research` calls it `question`. `loop_run_map`'s `task` row states the consequence outright:
+# *"the noun change needs a per-template input name, not one constant."*
+#
+# So the TEMPLATE declares it, on the input itself, and nothing here keys a second table by
+# template name — a table like that is a copy of the input block it describes, and the copy is what
+# drifts. A template renaming its input carries its own marker along.
+
+#: The closed vocabulary of the `loop_field` marker an input declaration may carry: the `Loop`
+#: columns a loop-kind launch has in hand. Closed for the same reason
+#: `supervisor_policy.POLICY_FIELDS` is — an author's typo must surface as a named authoring error
+#: (`WF_INPUT_BAD_LOOP_FIELD`) rather than as a marker that parses to nothing and silently leaves
+#: the input unfilled at launch.
+LOOP_INTAKE_FIELDS: frozenset[str] = frozenset({"task", "success_criteria"})
+
+
+def template_intake(spec: Any) -> dict[str, str]:
+    """``{loop column -> the input this template declares for it}``, read off the spec.
+
+    Only DECLARED markers are returned. A template with none yields ``{}``, and its kind therefore
+    cannot be launched from a loop reference — which is the honest outcome, and the same rule
+    :func:`resolve_kind` already follows: guessing which input means "the task" would start a run
+    whose worker was handed nothing, and "it ran something" is harder to debug than "it ran nothing
+    and said why".
+
+    A malformed or unknown marker is DROPPED rather than raised on, matching every parser in
+    `supervisor_policy`: the authoring-time validator is where a typo is reported, with the
+    spelling in hand, and a launch that crashed on one would report the template as broken from a
+    layer that cannot say which word was wrong.
+    """
+    declared = spec.get("inputs") if isinstance(spec, dict) else None
+    if not isinstance(declared, dict):
+        return {}
+    out: dict[str, str] = {}
+    for name, meta in declared.items():
+        if not isinstance(meta, dict):
+            continue
+        field = str(meta.get("loop_field") or "").strip().lower()
+        if field in LOOP_INTAKE_FIELDS:
+            out[field] = str(name)
+    return out
 
 
 def aliased_kinds() -> list[str]:
