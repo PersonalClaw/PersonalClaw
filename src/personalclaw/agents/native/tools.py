@@ -27,7 +27,12 @@ import json
 import logging
 from typing import Any
 
-from personalclaw.tool_providers.base import ToolDefinition, ToolProvider, ToolResult
+from personalclaw.tool_providers.base import (
+    ToolDefinition,
+    ToolFailure,
+    ToolProvider,
+    ToolResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +153,14 @@ class InProcessMcpToolProvider(ToolProvider):
             output = await asyncio.get_event_loop().run_in_executor(
                 None, lambda: ctx.run(_call_tool, tool_name, arguments)
             )
+            # A HANDLED failure says so structurally (#3487). ``success`` used to be an
+            # unconditional True, i.e. it tracked "did the handler raise" — and the handlers
+            # deliberately do not raise for expected failures, so a refused destructive
+            # delete reached the wire as 200 {ok: true} and the SEL as "completed". The TYPE
+            # is the signal; the text is never read here, because a prose predicate calls
+            # ``artifact_delete``'s "Artifact not found: X" a success.
+            if isinstance(output, ToolFailure):
+                return ToolResult(success=False, error=output.reason)
             return ToolResult(success=True, output=output or "")
         except Exception as exc:  # noqa: BLE001 - surface any tool error to the model
             logger.debug("in-process tool %s failed: %s", tool_name, exc, exc_info=True)

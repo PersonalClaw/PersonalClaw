@@ -13,6 +13,7 @@ import urllib.parse
 from typing import Any
 
 from personalclaw.mcp_core import _delete, _get, _post
+from personalclaw.tool_providers.base import tool_failure
 
 
 def _list_tools() -> list[dict[str, Any]]:
@@ -148,13 +149,13 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         rule = args.get("rule", "")
         category = args.get("category", "knowledge")
         if not rule:
-            return "Error: rule is required"
+            return tool_failure("rule is required")
         scope = args.get("scope", "global")
         payload: dict[str, str] = {"rule": rule, "category": category, "scope": scope}
         if scope == "workspace":
             ws = args.get("workspace", "")
             if not ws:
-                return "Error: workspace name is required when scope='workspace'"
+                return tool_failure("workspace name is required when scope='workspace'")
             payload["workspace"] = ws
         d = _post("/api/lessons", payload)
         err_val = d.get("error")
@@ -178,7 +179,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                     "lesson you want to save — it will not carry over "
                     "from this session automatically."
                 )
-            return f"Error: {err_val}"
+            return tool_failure(f"{err_val}")
         return f"Saved lesson ({scope}): {rule}"
 
     if name == "memory_list":
@@ -201,19 +202,19 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         query = args["query"]
         d = _delete("/api/lessons", {"rule": query})
         if d.get("error"):
-            return f"Error: {d['error']}"
+            return tool_failure(f"{d['error']}")
         return f"Removed lessons matching: {query}"
 
     if name == "memory_recall":
         query = (args.get("query") or "").strip()
         if not query:
-            return "Error: query is required"
+            return tool_failure("query is required")
         qs = f"q={urllib.parse.quote(query)}"
         if args.get("deep"):
             qs += "&deep=true"
         d = _get(f"/api/memory/recall?{qs}")
         if d.get("error"):
-            return f"Error: {d['error']}"
+            return tool_failure(f"{d['error']}")
         return d.get("result", "No matching memory found.")
 
     if name == "triage_rules":
@@ -234,7 +235,7 @@ def _triage_rules(args: dict[str, Any]) -> str:
     if action == "list":
         d = _get("/api/memory/approval-rules")
         if d.get("error"):
-            return f"Error: {d['error']}"
+            return tool_failure(f"{d['error']}")
         rules = d.get("rules") or []
         if not rules:
             return "No triage approval rules. The digest asks about everything."
@@ -259,9 +260,9 @@ def _triage_rules(args: dict[str, Any]) -> str:
         pattern = str(args.get("pattern") or "").strip()
         verdict = str(args.get("verdict") or "").strip().lower()
         if not pattern:
-            return "Error: pattern is required to add a rule"
+            return tool_failure("pattern is required to add a rule")
         if verdict not in ("approve", "deny"):
-            return "Error: verdict must be 'approve' or 'deny'"
+            return tool_failure("verdict must be 'approve' or 'deny'")
         payload: dict[str, Any] = {
             "pattern": pattern,
             "verdict": verdict,
@@ -272,20 +273,20 @@ def _triage_rules(args: dict[str, Any]) -> str:
             payload["expires_at"] = str(args["expires_at"])
         d = _post("/api/memory/approval-rules", payload)
         if d.get("error"):
-            return f"Error: {d['error']}"
+            return tool_failure(f"{d['error']}")
         rule = d.get("rule") or {}
         return f"Added {verdict} rule for {pattern} (id: {rule.get('key', '?')})"
 
     if action == "revoke":
         rule_id = str(args.get("id") or "").strip()
         if not rule_id:
-            return "Error: id is required to revoke a rule (get it from action='list')"
+            return tool_failure("id is required to revoke a rule (get it from action='list')")
         d = _delete(f"/api/memory/approval-rules/{urllib.parse.quote(rule_id)}", {})
         if d.get("error"):
-            return f"Error: {d['error']}"
+            return tool_failure(f"{d['error']}")
         return f"Revoked rule {rule_id}"
 
-    return f"Error: unknown action {action!r} — use list, add, or revoke"
+    return tool_failure(f"unknown action {action!r} — use list, add, or revoke")
 
 
 def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:

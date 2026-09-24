@@ -6,10 +6,18 @@ Core keeps the ABC + the native in-process tool machinery (registry, projection,
 result_store, tool_prefs, and ``agents.native.tools.InProcessMcpToolProvider``).
 """
 
-from personalclaw.tool_providers.base import ToolDefinition, ToolProvider, ToolResult
+from personalclaw.tool_providers.base import (
+    ToolDefinition,
+    ToolFailure,
+    ToolProvider,
+    ToolResult,
+    tool_failure,
+)
 
 __all__ = [
     "ToolDefinition",
+    "ToolFailure",
     "ToolProvider",
     "ToolResult",
+    "tool_failure",
 ]

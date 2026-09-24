@@ -24,6 +24,7 @@ import logging
 from typing import Any
 
 from personalclaw.safety_flags import confirm_granted
+from personalclaw.tool_providers.base import tool_failure
 
 logger = logging.getLogger(__name__)
 
@@ -354,7 +355,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     elif name == "automation_update":
         patch = args.get("patch")
         if not isinstance(patch, dict):
-            return "Error: 'patch' must be an object."
+            return tool_failure("'patch' must be an object.")
         result = T.update(store, trigger_id=str(args.get("id") or ""), patch=patch)
     elif name == "automation_pause":
         result = T.set_paused(store, trigger_id=str(args.get("id") or ""), paused=True)
@@ -380,7 +381,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         # is precisely the access control the retired `schedule_remove_all` enforced.
         result = T.delete_all(store, created_by="agent", confirm=confirm_granted(args))
     else:
-        return f"Error: unknown automation tool {name!r}."
+        return tool_failure(f"unknown automation tool {name!r}.")
 
     # The tool's own text is the agent-facing message; the structured data rides in a trailing
     # JSON line for a surface that wants it, matching how the other category modules answer.
