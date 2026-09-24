@@ -147,8 +147,25 @@ _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
 @dataclass
-class ToolResult:
-    """One tool call's outcome. `text` is what the agent sees; `data` is for a surface."""
+class AutomationToolResult:
+    """One `automation_*` tool call's outcome. `text` is what the agent sees; `data` is for a
+    surface.
+
+    Named `ToolResult` until #3511, when `personalclaw.sdk.channel` had to publish it: three of
+    its functions (`delete_automation`, `delete_all_automations`, `set_automation_paused`) return
+    this type, and an app that cannot NAME a return type cannot annotate what it got back. The
+    facade already exported a DIFFERENT `ToolResult` — `tool_providers.base.ToolResult`
+    (`success`/`output`/`error`/`agent_error`), which every one of the eleven first-party apps
+    imports from `sdk.tool`. Two disjoint dataclasses reachable under one name from one facade is
+    a name that answers "which one?" with "it depends which module you imported", so the less
+    established of the two was renamed rather than aliased: this one had zero by-name importers
+    anywhere, and all forty-nine of its references lived in this module.
+
+    NOT merged with that type, which would be the coherence fix: the field names are disjoint and
+    `to_dict()`'s `{ok, text, data}` shape is on the wire (the `automation_*` chat tools, the
+    dashboard trigger handlers and `mcp_automation` all read it), so merging is a wire change, not
+    a rename.
+    """
 
     ok: bool
     text: str
@@ -170,7 +187,7 @@ class ToolResult:
 _BROWSE_PROVIDER = "browse"
 
 
-def unattended_action_refusal(workflow: Any) -> ToolResult | None:
+def unattended_action_refusal(workflow: Any) -> AutomationToolResult | None:
     """Refuse AT REGISTRATION an action whose execution target can never run unattended.
 
     Every trigger in this store fires with no human present by construction — the dispatch seam
@@ -181,8 +198,8 @@ def unattended_action_refusal(workflow: Any) -> ToolResult | None:
     the user a green automation that refuses on every tick until they read a log.
 
     Returns `None` for every action that is not this one, so the cost on the normal path is one
-    provider-name comparison. The typed `AgentError` rides in `data["error"]` — `ToolResult.text`
-    is the sentence, and a surface that wants to branch reads the code.
+    provider-name comparison. The typed `AgentError` rides in `data["error"]` —
+    `AutomationToolResult.text` is the sentence, and a surface that wants to branch reads the code.
     """
     inline = _inline_action_of(workflow)
     if str(inline.get("provider") or "").strip() != _BROWSE_PROVIDER:
@@ -200,11 +217,15 @@ def unattended_action_refusal(workflow: Any) -> ToolResult | None:
         target = resolve_target(config if isinstance(config, dict) else {})
     except UnknownBrowseTarget as exc:
         typed = unknown_target_error(exc.raw)
-        return ToolResult(False, f"Error: {typed.what}. {typed.fix}.", {"error": typed.to_dict()})
+        return AutomationToolResult(
+            False, f"Error: {typed.what}. {typed.fix}.", {"error": typed.to_dict()}
+        )
     if permits_unattended(target):
         return None
     typed = unattended_refusal(target, origin="a scheduled automation")
-    return ToolResult(False, f"Error: {typed.what}. {typed.fix}.", {"error": typed.to_dict()})
+    return AutomationToolResult(
+        False, f"Error: {typed.what}. {typed.fix}.", {"error": typed.to_dict()}
+    )
 
 
 def _inline_action_of(workflow: Any) -> dict[str, Any]:
@@ -221,7 +242,7 @@ def _inline_action_of(workflow: Any) -> dict[str, Any]:
     return inline if isinstance(inline, dict) else block
 
 
-def unregistered_action_provider_refusal(workflow: Any) -> ToolResult | None:
+def unregistered_action_provider_refusal(workflow: Any) -> AutomationToolResult | None:
     """Refuse an action whose provider the registry cannot dispatch (#779).
 
     An unregistered provider was created-enabled-armed and then rejected on EVERY dispatch by the
@@ -252,7 +273,7 @@ def unregistered_action_provider_refusal(workflow: Any) -> ToolResult | None:
     # name, handed to a runner, or executed, which is the whole of this module's exemption from
     # `EXECUTION_SITES` (`test_the_create_time_provider_check_only_asks_existence`).
     if get_action_provider(name) is None:
-        return ToolResult(
+        return AutomationToolResult(
             False,
             f"Error: unknown action provider {name!r}. "
             f"Registered providers: {sorted(list_action_providers())}.",
@@ -261,7 +282,7 @@ def unregistered_action_provider_refusal(workflow: Any) -> ToolResult | None:
     return None
 
 
-def spec_error_refusal(kind: str, spec: Any) -> ToolResult | None:
+def spec_error_refusal(kind: str, spec: Any) -> AutomationToolResult | None:
     """Refuse a spec that cannot do what it says — structure AND semantics (#483/#687/#612/#270).
 
     `validate_spec` owns STRUCTURE ("Structure here, semantics there" — its own docstring) and
@@ -287,7 +308,7 @@ def spec_error_refusal(kind: str, spec: Any) -> ToolResult | None:
     if not errors:
         return None
     detail = "; ".join(f"{i.path}: {i.message}" for i in errors)
-    return ToolResult(False, f"Error: {detail}", {"spec": block})
+    return AutomationToolResult(False, f"Error: {detail}", {"spec": block})
 
 
 def slug_for(name: str, kind: str) -> str:
@@ -359,7 +380,7 @@ def create(
     cadence_to_cron: Any = None,
     resume: dict[str, Any] | None = None,
     ttl_secs: float = 0,
-) -> ToolResult:
+) -> AutomationToolResult:
     """`automation_create` — §4's NL-friendly constructor. Criterion 2's one message.
 
     `when` is routed by `nl_kind.route()` BEFORE any cadence conversion, which is the whole point:
@@ -375,7 +396,7 @@ def create(
     from personalclaw.triggers.nl_kind import route
 
     if not (name or "").strip():
-        return ToolResult(False, "Error: name is required.")
+        return AutomationToolResult(False, "Error: name is required.")
 
     resolved_spec = dict(spec or {})
     because = ""
@@ -386,14 +407,14 @@ def create(
         if not routed.ok:
             # The refusal is the RESULT, phrased for the user. Defaulting an unroutable request to
             # a schedule is how "when a file changes" becomes a per-minute poll.
-            return ToolResult(False, f"Error: {routed.error}", {"when": when})
+            return AutomationToolResult(False, f"Error: {routed.error}", {"when": when})
         resolved_kind, because = routed.kind, routed.because
         resolved_spec = {**routed.spec, **resolved_spec}
         if routed.cadence and "expr" not in resolved_spec and "at" not in resolved_spec:
             converter = cadence_to_cron or _default_cadence_to_cron
             expr, err = converter(routed.cadence)
             if err:
-                return ToolResult(False, f"Error: {err}", {"cadence": routed.cadence})
+                return AutomationToolResult(False, f"Error: {err}", {"cadence": routed.cadence})
             resolved_spec = {"kind": "cron", "expr": expr, **resolved_spec}
 
     if created_by == "agent":
@@ -402,7 +423,7 @@ def create(
         if active >= cap:
             # Decision 5d's cap. Refusing with the count and the remedy, because "limit reached"
             # without a number leaves the user unable to tell what to pause.
-            return ToolResult(
+            return AutomationToolResult(
                 False,
                 f"Error: {active} agent-created automations are already active "
                 f"(cap {cap}). Pause or delete one first.",
@@ -417,21 +438,25 @@ def create(
         # `message` rides as the gate ANSWER (what the woken run reads) rather than as a
         # run-prompt action that would never fire.
         if workflow:
-            return ToolResult(
+            return AutomationToolResult(
                 False,
                 "Error: give either a resume target or a workflow, not both — a trigger with a "
                 "resume target wakes the named run instead of running an action.",
             )
         target = {k: v for k, v in dict(resume).items() if v not in (None, "")}
         if not str(target.get("run_id", "") or "").strip():
-            return ToolResult(False, "Error: a resume target needs a run_id.", {"resume": target})
+            return AutomationToolResult(
+                False, "Error: a resume target needs a run_id.", {"resume": target}
+            )
         if message and "answer" not in target:
             target["answer"] = message
         workflow = {"resume": target}
     if message and not workflow:
         workflow = {"provider": "run-prompt", "config": {"message": message}}
     if not workflow:
-        return ToolResult(False, "Error: give a message or a workflow for the automation to run.")
+        return AutomationToolResult(
+            False, "Error: give a message or a workflow for the automation to run."
+        )
 
     # BA-7: refused HERE, before the row exists, not on its first tick. A saved automation that
     # refuses forever is worse than a rejected form — the user gets a green row and a silent
@@ -526,7 +551,7 @@ def create(
             f"  I created this for you — it is {_state} and visible on the Automations page "
             f"({_active_agent_count(store)}/{max_agent_triggers()} agent-created)."
         )
-    return ToolResult(True, "\n".join(lines), {"trigger": saved.to_dict()})
+    return AutomationToolResult(True, "\n".join(lines), {"trigger": saved.to_dict()})
 
 
 def _default_cadence_to_cron(cadence: str) -> tuple[str, str]:
@@ -549,7 +574,7 @@ def _default_cadence_to_cron(cadence: str) -> tuple[str, str]:
         return pool.submit(asyncio.run, nl_to_cron(cadence)).result(timeout=60)
 
 
-def list_automations(store: Any, *, kind: str = "", state: str = "") -> ToolResult:
+def list_automations(store: Any, *, kind: str = "", state: str = "") -> AutomationToolResult:
     """`automation_list` — §4: "includes health rollups".
 
     Broken rows are INCLUDED. `store.load()` keeps a row it could not parse (S87's lenient-parse
@@ -581,17 +606,17 @@ def list_automations(store: Any, *, kind: str = "", state: str = "") -> ToolResu
             }
         )
     if not out:
-        return ToolResult(True, "No automations match.", {"automations": []})
+        return AutomationToolResult(True, "No automations match.", {"automations": []})
     lines = []
     for a in out:
         flag = "" if a["enabled"] else " [paused]"
         broken = f" ⚠ {a['broken'][0]}" if a["broken"] else ""
         health = f" health={a['health']}" if a["health"] else ""
         lines.append(f"{a['id']} — {a['name']} ({a['kind']}){flag}{health}{broken}")
-    return ToolResult(True, "\n".join(lines), {"automations": out})
+    return AutomationToolResult(True, "\n".join(lines), {"automations": out})
 
 
-def update(store: Any, *, trigger_id: str, patch: dict[str, Any]) -> ToolResult:
+def update(store: Any, *, trigger_id: str, patch: dict[str, Any]) -> AutomationToolResult:
     """`automation_update` — patch an existing automation through the allowlist.
 
     A rejected key is REPORTED, not dropped silently: an agent that thinks it changed
@@ -599,11 +624,11 @@ def update(store: Any, *, trigger_id: str, patch: dict[str, Any]) -> ToolResult:
     """
     row = store.get(trigger_id)
     if row is None:
-        return ToolResult(False, f"Error: no automation with id {trigger_id!r}.")
+        return AutomationToolResult(False, f"Error: no automation with id {trigger_id!r}.")
     rejected = sorted(set(patch) - PATCHABLE)
     applied = {k: v for k, v in patch.items() if k in PATCHABLE}
     if not applied:
-        return ToolResult(
+        return AutomationToolResult(
             False,
             f"Error: nothing to update. Not settable here: {', '.join(rejected) or 'none given'}.",
             {"rejected": rejected},
@@ -634,10 +659,10 @@ def update(store: Any, *, trigger_id: str, patch: dict[str, Any]) -> ToolResult:
     text = f"Updated {saved.id}: {', '.join(sorted(applied))}."
     if rejected:
         text += f"\n  Ignored (not settable via this tool): {', '.join(rejected)}."
-    return ToolResult(True, text, {"trigger": saved.to_dict(), "rejected": rejected})
+    return AutomationToolResult(True, text, {"trigger": saved.to_dict(), "rejected": rejected})
 
 
-def set_paused(store: Any, *, trigger_id: str, paused: bool) -> ToolResult:
+def set_paused(store: Any, *, trigger_id: str, paused: bool) -> AutomationToolResult:
     """`automation_pause` / `automation_resume`.
 
     Resume goes through `store.set_enabled`, which REFUSES to enable a row that failed to parse
@@ -646,7 +671,7 @@ def set_paused(store: Any, *, trigger_id: str, paused: bool) -> ToolResult:
     """
     row = store.get(trigger_id)
     if row is None:
-        return ToolResult(False, f"Error: no automation with id {trigger_id!r}.")
+        return AutomationToolResult(False, f"Error: no automation with id {trigger_id!r}.")
     saved = store.set_enabled(trigger_id, not paused)
     if saved is None:
         # 🔴 MEASURED: `set_enabled` returns None — not a trigger with `enabled` unchanged — when it
@@ -654,41 +679,43 @@ def set_paused(store: Any, *, trigger_id: str, paused: bool) -> ToolResult:
         # never run, so a refused resume would have reported the generic "could not change" with no
         # hint that the row has a parse error the user must fix first.
         if row.errors:
-            return ToolResult(
+            return AutomationToolResult(
                 False,
                 f"Error: {trigger_id} could not be resumed — it has a parse error "
                 f"({row.errors[0].message}). Fix it first.",
                 {"errors": [i.message for i in row.errors]},
             )
-        return ToolResult(False, f"Error: could not change {trigger_id!r}.")
-    return ToolResult(
+        return AutomationToolResult(False, f"Error: could not change {trigger_id!r}.")
+    return AutomationToolResult(
         True,
         f"{'Paused' if paused else 'Resumed'} {saved.id} ({saved.name}).",
         {"trigger": saved.to_dict()},
     )
 
 
-def delete(store: Any, *, trigger_id: str, confirm: bool = False) -> ToolResult:
+def delete(store: Any, *, trigger_id: str, confirm: bool = False) -> AutomationToolResult:
     """`automation_delete` — §4: `(id, confirm: true)`.
 
     The confirm flag is enforced, not decorative. Deleting an automation the user built and cannot
     recover is exactly the irreversible action a tool call should not be able to take by accident.
     """
     if not confirm:
-        return ToolResult(
+        return AutomationToolResult(
             False,
             f"Error: deleting {trigger_id!r} needs confirm: true. "
             "Pause it instead if you might want it back.",
         )
     row = store.get(trigger_id)
     if row is None:
-        return ToolResult(False, f"Error: no automation with id {trigger_id!r}.")
+        return AutomationToolResult(False, f"Error: no automation with id {trigger_id!r}.")
     name = row.trigger.name
     store.delete(trigger_id)
-    return ToolResult(True, f"Deleted {trigger_id} ({name}).", {"deleted": trigger_id})
+    return AutomationToolResult(True, f"Deleted {trigger_id} ({name}).", {"deleted": trigger_id})
 
 
-def delete_all(store: Any, *, created_by: str = "agent", confirm: bool = False) -> ToolResult:
+def delete_all(
+    store: Any, *, created_by: str = "agent", confirm: bool = False
+) -> AutomationToolResult:
     """`automation_delete_all` — bulk delete, SCOPED to one creator (S109).
 
     Carries forward the one capability `schedule_remove_all` had that no `automation_*` tool did.
@@ -710,14 +737,14 @@ def delete_all(store: Any, *, created_by: str = "agent", confirm: bool = False) 
     was wrong instead of assuming the work is done.
     """
     if not confirm:
-        return ToolResult(
+        return AutomationToolResult(
             False,
             f"Error: deleting every {created_by}-created automation needs confirm: true. "
             "Pause them instead if you might want them back.",
         )
     owned = [row.trigger for row in store.load() if row.trigger.created_by == created_by]
     if not owned:
-        return ToolResult(
+        return AutomationToolResult(
             True,
             f"No {created_by}-created automations to delete.",
             {"deleted": [], "created_by": created_by},
@@ -734,7 +761,7 @@ def delete_all(store: Any, *, created_by: str = "agent", confirm: bool = False) 
         # Reported, not swallowed: a partial bulk delete that claimed full success would leave the
         # caller believing the list is empty when rows it cannot see are still firing.
         text += f"\n  ⚠️ {len(owned) - len(deleted)} could not be deleted."
-    return ToolResult(True, text, {"deleted": deleted, "created_by": created_by})
+    return AutomationToolResult(True, text, {"deleted": deleted, "created_by": created_by})
 
 
 #: Gates a MANUAL fire may skip, per §4: "bypasses min-interval + max_runs_per_hour, never rate
@@ -814,7 +841,7 @@ def run(
     trigger_id: str,
     dry_run: bool = False,
     runner: Any = None,
-) -> ToolResult:
+) -> AutomationToolResult:
     """`automation_run` — §4: "(id, dry_run?) — manual fire / observe-mode replay".
 
     A DISABLED automation still runs manually: pausing means "stop firing on your own", and
@@ -826,9 +853,9 @@ def run(
     """
     row = store.get(trigger_id)
     if row is None:
-        return ToolResult(False, f"Error: no automation with id {trigger_id!r}.")
+        return AutomationToolResult(False, f"Error: no automation with id {trigger_id!r}.")
     if row.errors:
-        return ToolResult(
+        return AutomationToolResult(
             False,
             f"Error: {trigger_id} has a parse error and cannot run " f"({row.errors[0].message}).",
             {"errors": [i.message for i in row.errors]},
@@ -844,22 +871,24 @@ def run(
         lines.append("  note: this automation is paused — running it here does not re-enable it.")
     if dry_run:
         lines.append("  nothing was executed.")
-        return ToolResult(True, "\n".join(lines), {"plan": plan, "trigger": trigger.to_dict()})
+        return AutomationToolResult(
+            True, "\n".join(lines), {"plan": plan, "trigger": trigger.to_dict()}
+        )
     # 🔴 The gates the plan claims to enforce, actually enforced. Below the dry-run return so a dry
     # run still REPORTS the plan during an incident (that is a read, and telling an operator what
     # would happen is the opposite of running unattended work).
     refusal = manual_refusal()
     if refusal:
         lines.append(f"  refused: {refusal}")
-        return ToolResult(False, "\n".join(lines), {"plan": plan, "refused": refusal})
+        return AutomationToolResult(False, "\n".join(lines), {"plan": plan, "refused": refusal})
     if runner is None:
         # Honest refusal rather than a fabricated success. "Launched" with nothing behind it is the
         # fire-and-forget lie S90's executor was written to keep out of this codebase.
         lines.append("  no runner is wired in this context, so nothing was executed.")
-        return ToolResult(False, "\n".join(lines), {"plan": plan})
+        return AutomationToolResult(False, "\n".join(lines), {"plan": plan})
     result = runner({"trigger_id": trigger.id, "workflow": dict(trigger.workflow)})
     lines.append(f"  result: {result}")
-    return ToolResult(True, "\n".join(lines), {"plan": plan, "result": result})
+    return AutomationToolResult(True, "\n".join(lines), {"plan": plan, "result": result})
 
 
 def _same_trigger(record_id: str, wanted: str) -> bool:
@@ -887,7 +916,7 @@ def history(
     schedule_runs: list[dict[str, Any]] | None = None,
     hooks: list[Any] | None = None,
     event_triggers: list[Any] | None = None,
-) -> ToolResult:
+) -> AutomationToolResult:
     """`automation_history` — §4: "run/fire rows incl. typed outcomes (agents self-debug)".
 
     Projects through S84's `unified_feed` rather than a second projection, so a `file` trigger, a
@@ -901,7 +930,7 @@ def history(
     """
     row = store.get(trigger_id)
     if row is None:
-        return ToolResult(False, f"Error: no automation with id {trigger_id!r}.")
+        return AutomationToolResult(False, f"Error: no automation with id {trigger_id!r}.")
     from personalclaw.triggers.history import feed_response, unified_feed
 
     records = unified_feed(
@@ -912,7 +941,7 @@ def history(
     )
     mine = [r for r in records if _same_trigger(r.trigger_id, trigger_id)][: max(1, n)]
     if not mine:
-        return ToolResult(
+        return AutomationToolResult(
             True,
             f"{trigger_id} has no recorded runs yet.",
             {"trigger_id": trigger_id, **feed_response([])},
@@ -924,7 +953,7 @@ def history(
         + (f" — {r.reason}" if r.reason else "")
         for r in mine
     ]
-    return ToolResult(
+    return AutomationToolResult(
         True,
         f"{trigger_id} — last {len(mine)} run(s):\n" + "\n".join(lines),
         {"trigger_id": trigger_id, **feed_response(mine)},

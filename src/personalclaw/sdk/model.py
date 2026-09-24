@@ -58,10 +58,16 @@ from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, PromptCache  # noqa: F
 from personalclaw.llm.registry import (  # noqa: F401
     CredentialMissing,
     ProviderEntry,
+    ProviderRegistry,
     ProviderResolutionError,
     get_default_registry,
 )
-from personalclaw.llm.stream_tags import KIND_OUTSIDE, make_think_splitter  # noqa: F401
+from personalclaw.llm.stream_tags import (  # noqa: F401
+    KIND_OUTSIDE,
+    Segment,
+    StreamingTagSplitter,
+    make_think_splitter,
+)
 
 # Media-model catalog contribution: the OpenAI-compatible audio/image PROTOCOL
 # clients are core, but WHICH concrete models a vendor serves (OpenAI's whisper-1/
@@ -123,8 +129,18 @@ __all__ = [
     "ProviderEntry",
     "ProviderResolutionError",
     "CredentialMissing",
+    # #3511: the RETURN types of the two published accessors above.
+    # `get_default_registry() -> ProviderRegistry` is the pool a model app registers into, and
+    # every typed thing it hands back (`ModelCatalog`, `ProviderEntry`, `ProviderCapability`)
+    # was already exported here — the container they come out of was the one name missing.
+    "ProviderRegistry",
     "KIND_OUTSIDE",
     "make_think_splitter",
+    # `make_think_splitter() -> StreamingTagSplitter`, whose `feed()`/`flush()` return
+    # `Segment`s. A provider app that splits thinking tags off its own stream has to name the
+    # segments to read `KIND_OUTSIDE` off them, which is the reason `KIND_OUTSIDE` is here.
+    "StreamingTagSplitter",
+    "Segment",
     "model_context_window",
     "declared_context_window",
     "OpenAIProvider",

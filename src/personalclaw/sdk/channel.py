@@ -27,6 +27,12 @@ from personalclaw.acp.types import (  # noqa: F401
     is_cancelled_stop,
 )
 from personalclaw.atomic_write import atomic_write
+
+# ── Auth posture (#3511) ──
+# `resolve_bind_host(auth_cfg)` is published, so its parameter type is too: an app that
+# resolves a bind address has to be able to CONSTRUCT the config it passes, and `AuthMode`
+# comes with it because `AuthConfig.mode` is the field the resolution actually turns on.
+from personalclaw.auth.modes import AuthConfig, AuthMode
 from personalclaw.channel_delivery import ChannelDelivery
 
 # ── Transport ABC + data types ──
@@ -112,6 +118,14 @@ from personalclaw.dashboard.origin import (
     resolve_bind_host,
     resolve_dashboard_host,
 )
+
+# `DashboardState` — the first parameter of the published `save_session_to_history` — and the
+# `SseRegistry`/`SseHub` its `*_sse()` accessors return are NOT exported, and that is a declared
+# closure exemption rather than an oversight: see `CLOSURE_EXEMPT_PREFIX` in
+# `scripts/sdk_surface_closure.py`. Importing them here would add the FIFTH and SIXTH
+# `core-must-not-import-the-http-surface` edge to this file, and that rule grandfathers the four
+# above precisely so a fifth cannot be added ("an allowlist is a thing that rots, a measured
+# floor is not"). The HTTP surface is deliberately not part of the app type contract.
 from personalclaw.dashboard.token_auth import (
     LINK_WINDOW_SECS,
     MAX_SESSION_TTL_SECS,
@@ -143,7 +157,7 @@ from personalclaw.llm.base import (
     ModelProvider,
 )
 from personalclaw.llm_helpers import save_conversation_turn
-from personalclaw.mcp_discovery import list_servers
+from personalclaw.mcp_discovery import McpServerInfo, list_servers
 from personalclaw.memory_service import MemoryService
 from personalclaw.prompt_providers.runtime import render_use_case_prompt
 from personalclaw.providers.settings import ProviderSettings
@@ -163,7 +177,12 @@ from personalclaw.providers.use_cases import (
 # the same shipped formatter, so the wording stays identical while the input becomes the store's.
 # `to_schedule_row` is the wire projection (id, enabled, message, next_run_ts, last_status) that the
 # API already publishes, which is what a list command needs.
-from personalclaw.schedule import compute_next_run_ts, format_schedule
+from personalclaw.schedule import (
+    ScheduleDefinition,
+    ScheduleJob,
+    compute_next_run_ts,
+    format_schedule,
+)
 
 # ── Security + audit ──
 from personalclaw.security import (
@@ -174,7 +193,7 @@ from personalclaw.security import (
     redact_exfiltration_urls,
     should_record_observe_history,
 )
-from personalclaw.sel import sel
+from personalclaw.sel import SecurityEvent, SecurityEventLog, sel
 
 # ── Session + conversation runtime ──
 from personalclaw.session import (
@@ -215,6 +234,7 @@ from personalclaw.triggers.schedule_view import (
     to_schedule_row,
 )
 from personalclaw.triggers.store import TriggerStore
+from personalclaw.triggers.tools import AutomationToolResult
 from personalclaw.triggers.tools import delete as delete_automation
 from personalclaw.triggers.tools import delete_all as delete_all_automations
 from personalclaw.triggers.tools import set_paused as set_automation_paused
@@ -231,7 +251,10 @@ __all__ = [
     "AcpProcessDied",
     "AcpTimeoutError",
     "AppConfig",
+    "AuthConfig",
+    "AuthMode",
     "AutoSkillProvenance",
+    "AutomationToolResult",
     "BACKGROUND_KEY",
     "CANNED_PAIRING_REPLY",
     "CRED_OWNER_ID",
@@ -258,6 +281,7 @@ __all__ = [
     "LINK_WINDOW_SECS",
     "LLMEvent",
     "MAX_SESSION_TTL_SECS",
+    "McpServerInfo",
     "MemoryService",
     "ModelProvider",
     "OutboundMessage",
@@ -268,6 +292,10 @@ __all__ = [
     "CANCELLED_STOP_REASONS",
     "STOP_REASON_STOPPED_BY_USER",
     "is_cancelled_stop",
+    "ScheduleDefinition",
+    "ScheduleJob",
+    "SecurityEvent",
+    "SecurityEventLog",
     "SessionManager",
     "SessionMap",
     "SkillResource",
