@@ -310,6 +310,23 @@ _KINDS: tuple[NotificationKind, ...] = (
         SEV_INFO,
         owner="personalclaw.dashboard.handlers.hooks",
     ),
+    # An Agent Room that hit its round budget (AGENT-ROOMS AR-5). `attention=True` because a
+    # paused room is a STANDING request — the deliberation is stopped until the human reads it
+    # — so a toast that scrolls past would leave the room silently halted. INFO rather than
+    # WARNING: nothing failed and nothing is at risk; the agents simply reached the bound the
+    # user configured, and the room resumes the moment they reply. `verifiable=False` because
+    # the payload is a count of turns this module took, not an AI claim a second model could
+    # check.
+    NotificationKind(
+        "agent",
+        "room_paused",
+        "Room paused",
+        "immediate",
+        SEV_INFO,
+        attention=True,
+        verifiable=False,
+        owner="personalclaw.rooms.arbiter",
+    ),
     # system-level warnings and drift
     NotificationKind(
         "system",

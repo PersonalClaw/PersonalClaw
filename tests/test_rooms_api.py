@@ -518,9 +518,9 @@ def test_the_room_id_route_is_registered_after_its_siblings():
 
 
 class _RecordingRoomTurn:
-    """Captures the ``(room_id, content)`` the route hands to ``rooms.turn``.
+    """Captures the ``(room_id, content)`` the route hands to ``rooms.arbiter``.
 
-    The turn itself is exercised against real providers in `test_rooms_store.py`; what only
+    The round itself is exercised against real providers in `test_rooms_arbiter.py`; what only
     the HTTP layer can get wrong is WHETHER it hands the round over, with which arguments,
     and whether the task outlives the request — which is what this records.
     """
@@ -528,7 +528,7 @@ class _RecordingRoomTurn:
     def __init__(self) -> None:
         self.rounds: list[tuple[str, str]] = []
 
-    async def __call__(self, sessions, room_id, content):
+    async def __call__(self, state, sessions, room_id, content):
         self.rounds.append((room_id, content))
         return []
 
@@ -558,7 +558,7 @@ def _post_message_with_state(room_id, payload, state):
 def test_posting_a_message_starts_the_round_for_the_listening_members(cfg, monkeypatch):
     """AR-3's residual, at the route: the human's line is what puts members on a session."""
     recorder = _RecordingRoomTurn()
-    monkeypatch.setattr(h.turn, "run_human_message_round", recorder)
+    monkeypatch.setattr(h.arbiter, "run_round", recorder)
 
     room_id = _body(_create("Round"))["room"]["id"]
     _add_member(room_id, {"name": "analyst"})
@@ -576,7 +576,7 @@ def test_posting_a_message_starts_the_round_for_the_listening_members(cfg, monke
 def test_a_room_with_no_listening_member_starts_no_round(cfg, monkeypatch):
     """A room of observers costs nothing: no provider is opened and no task is created."""
     recorder = _RecordingRoomTurn()
-    monkeypatch.setattr(h.turn, "run_human_message_round", recorder)
+    monkeypatch.setattr(h.arbiter, "run_round", recorder)
 
     room_id = _body(_create("Observers"))["room"]["id"]
     _add_member(room_id, {"name": "analyst", "listen_policy": "silent"})
@@ -595,7 +595,7 @@ def test_the_humans_message_is_durable_even_when_no_session_manager_exists(
     the round being startable — but the dropped round is logged at ERROR, never swallowed."""
     import logging
 
-    monkeypatch.setattr(h.turn, "run_human_message_round", _RecordingRoomTurn())
+    monkeypatch.setattr(h.arbiter, "run_round", _RecordingRoomTurn())
     room_id = _body(_create("No manager"))["room"]["id"]
     _add_member(room_id, {"name": "analyst"})
 

@@ -22,9 +22,10 @@ Two postures worth naming here, because they are invisible in the route bodies:
   unless it declares them. That is asserted in the tests rather than re-implemented.
 
 The human is the only caller that reaches these routes. Posting a message is the one route
-that runs anything afterwards: it hands the roster to ``rooms.turn`` (see
-:func:`api_room_message_post`), which is where a member's provider session is actually held.
-The cursors that keep that feed from re-sending what a member has already read are `AR-4`.
+that runs anything afterwards: it hands the room to ``rooms.arbiter`` (see
+:func:`api_room_message_post`), which decides the speaker order, bounds the round, and drives
+each member's turn through ``rooms.turn``. The cursors that keep that feed from re-sending
+what a member has already read are `AR-4`.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from typing import Any
 
 from aiohttp import web
 
@@ -43,7 +45,7 @@ from personalclaw.request_validation import (
     require_string,
     string_field,
 )
-from personalclaw.rooms import posture, store, turn
+from personalclaw.rooms import arbiter, posture, store
 
 logger = logging.getLogger(__name__)
 
@@ -274,10 +276,20 @@ async def api_room_message_post(request: web.Request) -> web.Response:
 
     The human's line is appended FIRST and synchronously, so a 201 means it is durable even
     if every member then fails; the round itself runs in the background because N provider
-    turns do not fit in a request. The response carries ``speaking``: the members whose
-    listen policy admits them, which is what lets a caller (and the `AR-8` UI) distinguish
-    "nobody was listening" from "the answers have not landed yet". Poll
-    ``GET /api/rooms/{room_id}`` for the replies.
+    turns do not fit in a request. The response carries ``speaking``: the arbiter's FIFO
+    speaker queue for this message, in the order those members will speak — which is what
+    lets a caller (and the `AR-8` UI) distinguish "nobody was listening" from "the answers
+    have not landed yet". Poll ``GET /api/rooms/{room_id}`` for the replies.
+
+    ``speaking`` is computed through :func:`~personalclaw.rooms.arbiter.resume_queue` rather
+    than the bare mention queue, so answering a PAUSED room reports the turns it still owed
+    ahead of the ones this message asks for — the same order the round will actually take. The
+    parked queue is read here and not consumed; the round drains it.
+
+    **The budget is refilled synchronously too**, on the same reasoning as the append: a human
+    message is what resets ``rounds_used`` and closes a standing pause item, and doing that
+    inside the background round would skip it exactly when the round is dropped — leaving a
+    room paused that its human had already answered.
     """
     room_id = request.match_info["room_id"]
     try:
@@ -285,19 +297,41 @@ async def api_room_message_post(request: web.Request) -> web.Response:
         body = await json_object_body(request, empty_ok=False)
         content = require_string(body, "content")
         store.append_message(room_id, role="user", content=content, speaker=store.HUMAN_SPEAKER)
+        state = _gateway_state(request)
+        owed = store.require_room(room_id).pending_queue
+        arbiter.note_human_message(state, room_id)
         messages = store.read_messages(room_id)
-        speaking = [m.name for m in turn.speakers_for(store.members_for_turn(room_id), content)]
+        speaking = arbiter.resume_queue(owed, store.members_for_turn(room_id), content)
     except RequestValidationError as exc:
         return exc.response
     except store.RoomError as exc:
         return _refusal(exc)
     if speaking:
-        _start_round(request, room_id, content)
+        _start_round(state, room_id, content)
     return web.json_response({"messages": messages, "speaking": speaking}, status=201)
 
 
-def _start_round(request: web.Request, room_id: str, content: str) -> None:
-    """Fire the roster's turn in the background, holding a reference so it is not GC'd.
+def _gateway_state(request: web.Request) -> Any:
+    """The gateway state this request carries, or None when it has none.
+
+    ``app["state"]`` rather than ``app.get("state")``, which is both this surface's idiom and
+    the only one that is honest under ``make_mocked_request``: its app is a ``MagicMock``, so
+    ``.get`` answers a truthy mock for a key nobody set, and every guard downstream would wave
+    through a mock. A ``KeyError`` here is the honest "there is no gateway behind this
+    request", which the inbox writes tolerate and :func:`_start_round` refuses.
+
+    ``Any`` rather than a state protocol, matching ``inbox.emit_attention_item`` and
+    ``rooms.arbiter``: the gateway state is assembled at runtime and there is no declared type
+    for it, so a narrower annotation here would only be a cast the handlers then fight.
+    """
+    try:
+        return request.app["state"]
+    except KeyError:
+        return None
+
+
+def _start_round(state: Any, room_id: str, content: str) -> None:
+    """Fire the arbiter's round in the background, holding a reference so it is not GC'd.
 
     ``state._background_tasks`` is the shipped set every other fire-and-forget handler
     parks its task in (``dashboard/side.py`` is the closest sibling); an un-referenced
@@ -308,23 +342,14 @@ def _start_round(request: web.Request, room_id: str, content: str) -> None:
     request whose message is already durably on the transcript — the human's words are the
     part they cannot re-derive, and every member's reply is one more human message away. The
     log is the point: a dropped round must be findable, not inferred from a quiet room.
-
-    ``app["state"]`` rather than ``app.get("state")``, which is both this surface's idiom and
-    the only one that is honest under ``make_mocked_request``: its app is a ``MagicMock``, so
-    ``.get`` answers a truthy mock for a key nobody set and this guard would wave through a
-    round driven by a mock session manager.
     """
-    try:
-        state = request.app["state"]
-        sessions = state.sessions
-    except (KeyError, AttributeError):
-        sessions = None
+    sessions = getattr(state, "sessions", None) if state is not None else None
     if sessions is None:
         logger.error(
             "rooms: no SessionManager on the dashboard state — room %s takes no turn", room_id
         )
         return
-    task = asyncio.create_task(turn.run_human_message_round(sessions, room_id, content))
+    task = asyncio.create_task(arbiter.run_round(state, sessions, room_id, content))
     state._background_tasks.add(task)
     task.add_done_callback(state._background_tasks.discard)
 
