@@ -28,6 +28,8 @@ export {
   subscribeKey,
   resetDataStore,
   cachedKeys,
+  REQUEST_DEADLINE_MS,
+  RequestDeadlineError,
   type CacheEntry,
   type CacheKeySpec,
 } from './store'

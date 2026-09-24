@@ -93,6 +93,16 @@ export function useQuery<T>(
     // does not bump it, or the fetch would re-trigger the fetch that produced it.
   }, [key, epoch, tick, persist, window_])
 
+  // A value LANDING for this key clears this reader's error, whoever fetched it.
+  //
+  // Required by the request deadline in `store.ts`: the deadline ends the reader's WAIT without
+  // aborting the request, so a slow-but-successful response arrives after `error` was already
+  // set. Call sites gate on the raw `error` (`appsErr ? <LoadError/> : …`), so without this the
+  // surface would keep showing "not responding" over data that had since arrived. `at === 0`
+  // means invalidated-not-current, which is not a landing.
+  const landedAt = entry?.at ?? 0
+  useEffect(() => { if (landedAt) setError(null) }, [landedAt])
+
   const data = entry?.value as T | undefined
   const stale = isStale(key, entry, window_)
 

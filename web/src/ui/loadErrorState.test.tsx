@@ -646,11 +646,33 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // seven left are stats/lint/observability decorations and a settings read with its own branch.
   'pages/settings/MemoryPanel.tsx': 7,
   'pages/settings/ModelBackends.tsx': 1,
-  // The sixth is the RECORDS veto's other blind edge (see `ChatPage` above): the reindex failure IS
-  // recorded — `setReindex({ status: 'error', message })` — but into a FIELD of a state object, and the
-  // veto keys off the SETTER's name. The surface tells the user the reindex failed; only the scanner
-  // cannot see it.
-  'pages/settings/ModelsPanel.tsx': 6,
+  // 6 → 4. The two that LEFT were the panel's PRIMARY read, and it was the last surface in the
+  // first-run defect set with no terminal state: `api.modelsAvailable().catch(() => [])` +
+  // `api.modelsActive().catch(() => ({}))` inside one `Promise.all`, under a call site that bound
+  // only `data`. A failed read therefore painted "No models discovered" — a confident claim about a
+  // page that never loaded — and a read that never settled kept `<ListSkeleton>` up forever
+  // (measured on a fresh home with every `/api` read held open: still "Loading…" with
+  // `aria-busy=1` and no Retry at 9.5s). Both reads are REQUIRED to render a binding, so the
+  // rejection now propagates and the site renders `LoadError` + Retry.
+  //
+  // 🪤 THIS NUMBER WAS BRIEFLY MIS-READ AS 2, AND THE CAUSE IS WORTH RECORDING because it is this
+  // file's own scanner biting the hand that feeds it. The census strips block comments before
+  // counting, with `/\/\*[\s\S]*?\*\//g` — and a `//` line comment citing the glob `/api/` followed
+  // by two asterisks contains a `/*`, which opened a block the stripper then closed at a much later
+  // `*/`, swallowing two real swallow sites along with it. Same family as the token-lint defect in
+  // this release's notes (a comment-state scanner that is not comment-aware), and the reason no
+  // comment added here spells that glob out.
+  //
+  // The four that remain are deliberate and different in kind: the reclaim-size read behind the
+  // "Reclaim N" button, the per-provider breaker health that decorates the chain-entry dots, the
+  // judge-benchmark tier recommendation whose absence is an honest "no chip" (the Learning page owns
+  // reporting WHY), and a per-provider local-model health read. None of them is the panel.
+  //
+  // The RECORDS veto's other blind edge (see `ChatPage` above) also lives in this file: the reindex
+  // failure IS recorded — `setReindex({ status: 'error', message })` — but into a FIELD of a state
+  // object, and the veto keys off the SETTER's name. The surface tells the user the reindex failed;
+  // only the scanner cannot see it.
+  'pages/settings/ModelsPanel.tsx': 4,
   // 2 → 1, and the halving is the interesting part: this entry USED to read "Both read a provider's
   // JSON SCHEMA", and only one of the two ever did. The remaining site is the schema read, whose
   // substitute is `{ properties: {} }` — every caller turns that into `props.length === 0` → `return
@@ -666,7 +688,12 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // `settingsWidgets` in the same commit, because the two share `settings:packs:installed`. The one
   // left is the bundled catalog, whose own `LoadError` the store section already renders beside it.
   'pages/settings/PacksPanel.tsx': 1,
-  'pages/settings/PromptsPanel.tsx': 1,
+  // `PromptsPanel` is GONE from this map, not zeroed — same call as `FeedbackPanel` above: its one
+  // swallow WAS the defect. `api.promptBindings().catch(() => null)` substituted `null`, which is
+  // exactly what "still loading" looks like under this panel's `!data` gate, so a failed read
+  // rendered `<ListSkeleton>` forever and the error state was unreachable whether the read rejected
+  // OR never settled (measured on a fresh home with the read held open: still "Loading…" with
+  // `aria-busy=1` at 9.6s). The rejection propagates now and the site renders `LoadError` + Retry.
   // The same schema read `MultiInstanceCard` above keeps, same `{ properties: {} }`, same `return null`
   // — and the same open design question, which is why the two move together or not at all.
   'pages/settings/ProviderConfigForm.tsx': 1,
