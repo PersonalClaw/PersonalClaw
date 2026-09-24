@@ -111,14 +111,26 @@ export function ActionCenter({ navigate }: RouteProps) {
     // `navigate` strips the leading `#/` and preserves the `?node=` verbatim (`useHashRoute`).
     if (e.kind === 'approval' && e.session) return approvalDestination(e.session).href
     if (e.kind === 'approval') return 'chat'
-    if (e.kind === 'inbox') return 'inbox'
+    // 🔑 THE ITEM, NOT THE LIST — the same defect #258 names, on the lane that was left behind.
+    // `?open=<id>` is the inbox's own deep link: `InboxPage` reads the `open` param, and its
+    // `WindowedList` carries an `anchorKey` added precisely so a deep-linked row scrolls into view.
+    // So the destination existed all along and only the id was dropped. Measured on a fresh
+    // container: a captured note appeared in this card under a control labelled "Reply: user —
+    // Decide whether the IoT VLAN…" titled "Open to reply", and pressing it landed on a bare
+    // `#/inbox` with no panel open — the one thing the button names is the one thing it discarded.
+    // On an inbox of two that is a shrug; on the 400-row inbox `anchorKey` exists for, it is a hunt.
+    if (e.kind === 'inbox') return `inbox?open=${encodeURIComponent(e.id)}`
     return 'skills?mode=proposals'
   }
 
   const primary = (e: Entry) => {
     if (e.kind === 'approval') withBusy(e.key, `approve “${rowSubject([e.title, e.sub])}”`, () => api.resolveApproval(e.id, 'approve'))
     else if (e.kind === 'proposal') withBusy(e.key, `accept “${rowSubject([e.title, e.sub])}”`, () => api.acceptSkillProposal(e.id).then(bustProposals))
-    else navigate('inbox')  // reply in the detail where the draft editor lives
+    // Reply resolves through `routeFor`, not its own spelling. The row body and the Reply control are
+    // two entrances to ONE destination, and this line read `navigate('inbox')` beside a comment
+    // promising "the detail where the draft editor lives" — the comment described the intent and the
+    // call did something else. One derivation is what stops the two drifting apart again.
+    else navigate(routeFor(e))
   }
   const secondary = (e: Entry) => {
     if (e.kind === 'approval') withBusy(e.key, `reject “${rowSubject([e.title, e.sub])}”`, () => api.resolveApproval(e.id, 'reject'))
