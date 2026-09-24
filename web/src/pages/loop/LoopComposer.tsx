@@ -15,6 +15,7 @@ import { spring } from '../../design/motion'
 import { api, isCreatedLoopRun, type Granularity, type LoopCreateResult, type LoopKind } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { optimizeFailure, optimizeOutcome } from '../../ui/composer/optimizeOutcome'
+import { classifyFailure } from './classifyFailure'
 import type { ComposerControls } from '../../ui/composer/types'
 
 /** The ONE Loop front door — a single composer with a kind slider (General / Goal /
@@ -158,8 +159,13 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
     if (task.trim().length < MIN_CHARS || busy) return
     setBusy(true); setError(null)
     try {
-      const cls = await api.classifyULoop(kind, task.trim()).catch(() => null)
-      if (!cls) { setError('Could not analyze the task — is a model configured?'); setBusy(false); return }
+      // #3470: keep the rejection. The backend authors a remediation for the case that
+      // actually happens here (409 `model_unresolved` names Settings → Models), so the
+      // handler relays it rather than substituting a shorter question of its own.
+      const cls = await api.classifyULoop(kind, task.trim()).catch((e) => {
+        setError(classifyFailure(e)); return null
+      })
+      if (!cls) { setBusy(false); return }
       // Build the unified create body: spine fields at top level, kind-specific in
       // kind_config (the classify result's kind_config round-trips; we layer the
       // composer's choices over it). Goal: granularity. Code: project_kind.
