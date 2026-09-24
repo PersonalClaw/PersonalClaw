@@ -795,6 +795,20 @@ def guard_unattended_spawn(runtime_id: str, *, unattended: bool) -> None:
     is refused too — the flag's whole promise is that nothing unproven runs while
     nobody is watching.
 
+    **An unreadable config is refused for the same reason**, and this used to be the one
+    place the paragraph above was false: the config read's ``except`` arm ``return``ed, so
+    a failed read retired the gate entirely rather than refusing. That is not a trade-off
+    between safety and availability — it is code contradicting its own declared contract.
+    A read that failed cannot establish that the operator turned the flag OFF, and "we
+    could not check" is not permission. Note the arm is only reachable on an UNEXPECTED
+    raise: since #3424 a merely corrupt ``config.json`` resolves this flag to ``True``
+    by value rather than raising, so arriving here means the host cannot read its own
+    configuration at all.
+
+    The refusal stays narrow, which is what makes it affordable: the early return above
+    means interactive chat and the native in-process loop (no ``runtime_id``) never reach
+    the config read, so only unattended spawns onto an external ACP runner are affected.
+
     ``unattended`` is resolved by the caller, and the ONE caller
     (:meth:`personalclaw.session.SessionManager.get_or_create`) derives it from the
     session key via :func:`personalclaw.guardrails.policy.is_unattended_session` rather
@@ -807,9 +821,15 @@ def guard_unattended_spawn(runtime_id: str, *, unattended: bool) -> None:
         from personalclaw.config.loader import AppConfig
 
         enabled = bool(AppConfig.load().agent.unattended_requires_verified_adapter)
-    except Exception:
-        logger.debug("adapter-verification gate: config unreadable", exc_info=True)
-        return
+    except Exception as exc:
+        logger.warning("adapter-verification gate: config unreadable — refusing", exc_info=True)
+        raise UnverifiedAdapterError(
+            f"Unattended spawn refused: config.json could not be read "
+            f"({type(exc).__name__}: {exc}), so whether "
+            "agents.unattended_requires_verified_adapter is on cannot be established. Repair "
+            "the config (`personalclaw doctor` names the file) — an unverifiable setting "
+            "authorises nothing."
+        ) from exc
     if not enabled:
         return
     defn = definition_for_runtime(runtime_id)
