@@ -13,9 +13,9 @@ dashboard you own. Local-first, provider-agnostic, no analytics, MIT.
 [![Full verification on main](https://github.com/PersonalClaw/PersonalClaw/actions/workflows/full.yml/badge.svg?branch=main)](https://github.com/PersonalClaw/PersonalClaw/actions/workflows/full.yml?query=branch%3Amain)
 [![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/PersonalClaw/PersonalClaw/badges/coverage-badge.json)](https://github.com/PersonalClaw/PersonalClaw/actions/workflows/full.yml?query=branch%3Amain)
 [![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
-[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
+[![Python 3.12 – 3.13](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue.svg)](pyproject.toml)
 [![No analytics](https://img.shields.io/badge/analytics-none-brightgreen.svg)](#privacy)
-[![Self-hosted](https://img.shields.io/badge/self--hosted-local--first-ff6b5b.svg)](#)
+[![Self-hosted](https://img.shields.io/badge/self--hosted-local--first-ff6b5b.svg)](#what-is-personalclaw)
 [![Pre-1.0](https://img.shields.io/badge/status-pre--1.0%20%C2%B7%20breaking%20changes%20expected-orange.svg)](#-pre-10-heads-up)
 
 <img src="docs/screenshots/dark/01-dashboard.png" alt="PersonalClaw dashboard" width="80%" />
@@ -149,11 +149,34 @@ bound, the row says so rather than letting you find out after installing.
 | Looking for | What ships today | Details |
 |---|---|---|
 | **RAG · retrieval · vector search** | A knowledge base over your own documents: keyword search (SQLite FTS5) is always available, and on top of it semantic **vector** retrieval, entity extraction, and a knowledge graph feed chat context with citations. **Caveat:** the vector half needs an embedding-provider app bound — with none bound, embeddings are off and retrieval stays keyword-only. | [Knowledge & memory](docs/architecture/knowledge-memory.md) |
-| **Ollama · local models** | Run chat against a local Ollama with no API key: setup probes `localhost:11434`, and an opt-in, time-bounded sweep can find one elsewhere on your own private network. Downloading and managing local models is a first-class provider axis. **Caveat:** the `ollama-models` provider is a **removable app** you install from the Store — core ships the detection and the binding, not the vendor. | [App platform](docs/architecture/app-platform.md) |
+| **Ollama · local models** | Run chat against a local Ollama with no API key: setup probes `localhost:11434`, and an opt-in, time-bounded sweep can find one elsewhere on your own private network. Downloading and managing local models is a first-class provider axis. **Caveat:** you supply Ollama itself — core ships the detection and the binding, not the inference server. The `ollama-models` bundle that owns that binding is the one model provider packaged in the wheel: it is seeded into your home at first boot and, like every native app, locked against disable and uninstall. Every *other* model provider is an app you install from the Store. | [App platform](docs/architecture/app-platform.md) |
 | **web search** | `web_search` and `web_fetch` tools, plus the research flows built on them, served by a search-**provider app** you bind. **Caveat:** no search provider ships bundled, so nothing is bound out of the box — this is a provider seam you fill, not a batteries-included search feature. | [App platform](docs/architecture/app-platform.md) |
 | **MCP — both directions** | PersonalClaw **connects out to any MCP server** you configure in `~/.personalclaw/mcp.json` — stdio or remote SSE/HTTP — and calls its tools inside the native agent loop. It also works the other way: it **exposes** six read-only tools of its own to your editor's assistant. **Caveat:** the outbound client needs the optional `personalclaw[mcp]` extra; without it the server registry is simply empty. | [Use it from your editor](docs/guides/use-from-your-ide.md) · [API](docs/reference/api-routes.md) |
 | **SSO · SAML · OIDC login** | **Not shipped, by design** — PersonalClaw is single-user and self-hosted, so there is no directory to federate with. The gateway's selectable auth is a local token, or none when bound to loopback only; `api_key` and `oauth2` exist as half-implementations that no configuration can select, and the runtime says so out loud. Reaching it from outside is a tunnel plus password and TOTP 2FA instead. | [Remote access](docs/guides/remote-access.md) · [Security model](docs/architecture/security.md) |
 | **Document upload** | Resumable chunked **upload** of large files — size-policed before the first byte and content-scanned on assembly — routed to a chat attachment, knowledge ingest, or your workspace. Documents ingest as PDF/DOCX/PPTX/HTML, web pages, and media. **Caveat:** PDFs/DOCX/PPTX/HTML/web pages parse with no model needed, but media (image OCR/vision, audio/video transcription) is model-gated — with none bound, the file still ingests, extraction just gracefully skips. | [Getting started](docs/guides/getting-started.md) |
+
+## When PersonalClaw is *not* the right tool (yet)
+
+The table above is what ships. This is the other half — ten situations where you should
+close this tab today rather than find the limit after an evening of setup. **"Never"
+means a design boundary we expect to still hold at 1.0**, not a backlog item:
+
+| If you… | Today | Because |
+|---|---|---|
+| need your data to survive upgrades | **no** | pre-1.0 clean breaks, and there is no migration machinery |
+| have no model your machine can reach | **no** | no model ships; a fully offline install needs your own Ollama |
+| need accounts for more than one person | **never** | single-user by construction — *"no hub in core, ever"* |
+| want a native phone app | **no** | the phone is the dashboard installed as a PWA, not a store app |
+| need a native Windows install | **no** | WSL2 or Docker Desktop only; the native port was ruled no-go |
+| want a signed, auto-updating desktop app | **no** | macOS-only, unsigned, built from a checkout, no update channel |
+| want it to live in Telegram / Discord / email | **no** | core registers exactly one channel: the web dashboard |
+| expect web search to work out of the box | **no** | no search provider ships bundled — it is a seam you fill |
+| plan to install apps you do not trust | **no** | the platform *vets* what you install; it does not confine it after |
+| want a hosted service | **never** | you run the process — there is no SaaS and none is planned |
+
+**[Read the full version, with the code citations »](docs/guides/when-not-to-use-personalclaw.md)**
+Each item there names the file or the recorded decision that makes it true, so you can
+check it rather than take our word for it.
 
 ## Quickstart
 
@@ -187,7 +210,7 @@ personalclaw gateway
 | **uv tool** *(recommended)* | `uv tool install personalclaw` | anyone — `uv` provides Python 3.12 |
 | **Bootstrap** | `curl -fsSL https://personalclaw.dev/install \| sh` | the fastest start |
 | pipx | `pipx install personalclaw` | isolated Python tools |
-| pip | `pip install personalclaw` | inside an existing Python 3.12+ venv |
+| pip | `pip install personalclaw` | inside an existing Python 3.12 or 3.13 venv |
 | Homebrew | `brew install personalclaw/tap/personalclaw` | macOS · `brew upgrade` tracks releases |
 | Nix | `nix profile install github:PersonalClaw/PersonalClaw#personalclaw` | a fully pinned, reproducible closure |
 | **Docker** | see below | one container, no checkout, no `.env` |
@@ -324,6 +347,7 @@ push to `main`.
 ## Documentation
 
 - [Getting started](docs/guides/getting-started.md) — install → first chat.
+- [When PersonalClaw is not the right tool (yet)](docs/guides/when-not-to-use-personalclaw.md) — ten situations where you should walk away today, each with the file or recorded decision that makes it true, and which limits are permanent design boundaries rather than unfinished work.
 - [Working inside a chat](docs/guides/chat-surface.md) — the nine things the chat surface does beyond a send button: rewind to any earlier message, branch a conversation two ways, have a plan approved before anything runs, let a queued message cut in, find and quote, follow-up suggestions, the streaming reveal, and putting part of your screen into the conversation.
 - [Automations you can leave alone](docs/guides/automations.md) — the three guarantees about unattended runs (a failure reaches your inbox even when delivery is off; a gated run is labelled inert, not green; a run whose host died is terminalized), each with the surface it is checked on, plus a recipe that falsifies all three in one automation.
 - [Remote access](docs/guides/remote-access.md) — reaching your dashboard from outside your home network (tunnel + password + 2FA), and what it does *not* protect you from.
