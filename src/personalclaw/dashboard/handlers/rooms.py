@@ -43,7 +43,7 @@ from personalclaw.request_validation import (
     require_string,
     string_field,
 )
-from personalclaw.rooms import store, turn
+from personalclaw.rooms import posture, store, turn
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +109,20 @@ _REFUSALS: dict[str, Callable[[str], web.Response]] = {
     "room_invalid_listen_policy": lambda msg: json_error(
         "room_invalid_listen_policy", message=msg, status=400
     ),
+    # 400 — the member's declared safety posture is unreadable, or reaches past the room's
+    # own. Both are authoring mistakes in a declaration a human wrote, which is why neither
+    # is clamped silently: see ``rooms.posture``.
+    "room_member_posture_invalid": lambda msg: json_error(
+        "room_member_posture_invalid", message=msg, status=400
+    ),
+    "room_member_posture_widens": lambda msg: json_error(
+        "room_member_posture_widens", message=msg, status=400
+    ),
+    # 403 — somebody other than the human tried to approve a member's tool call. A refused
+    # IDENTITY, not a refused request shape, so it is an authorization answer.
+    "room_approver_not_human": lambda msg: json_error(
+        "room_approver_not_human", message=msg, status=403
+    ),
 }
 
 
@@ -170,15 +184,25 @@ async def api_rooms_create(request: web.Request) -> web.Response:
 
 
 async def api_room_get(request: web.Request) -> web.Response:
-    """GET /api/rooms/{room_id} — one room, its members, and its transcript."""
+    """GET /api/rooms/{room_id} — one room, its members, its posture, and its transcript.
+
+    ``member_posture`` is the RESOLVED answer per member — the tier, allowlist and budget each
+    one actually runs under once the restrictive default and the operator ceiling are folded
+    in. The declaration is already on the wire inside each member record; the resolution is
+    the part a reader cannot compute, and without it "this member is read-only" would be a
+    claim the UI had to re-derive. It is the contract `AR-8`'s member chips render from.
+    """
     room_id = request.match_info["room_id"]
     try:
         _require_enabled()
         room = store.require_room(room_id)
         messages = store.read_messages(room_id)
+        member_posture = posture.describe_members(room)
     except store.RoomError as exc:
         return _refusal(exc)
-    return web.json_response({"room": _room_payload(room), "messages": messages})
+    return web.json_response(
+        {"room": _room_payload(room), "member_posture": member_posture, "messages": messages}
+    )
 
 
 async def api_room_archive(request: web.Request) -> web.Response:
@@ -193,7 +217,13 @@ async def api_room_archive(request: web.Request) -> web.Response:
 
 
 async def api_room_member_add(request: web.Request) -> web.Response:
-    """POST /api/rooms/{room_id}/members {name, role_blurb?, listen_policy?}."""
+    """POST /api/rooms/{room_id}/members {name, role_blurb?, listen_policy?, profile_narrowing?}.
+
+    ``profile_narrowing`` is the member's own safety posture — the capability axes it may
+    reach, narrowed against the room's. Omitting it is the common case and yields the
+    RESTRICTIVE default (``rooms.posture.DEFAULT_MEMBER_TOOL_GRANTS``), never the room's own
+    reach, so an unconfigured member is the read-only one.
+    """
     room_id = request.match_info["room_id"]
     try:
         _require_enabled()
@@ -203,7 +233,16 @@ async def api_room_member_add(request: web.Request) -> web.Response:
         # string_field, not optional_string: both fields are omittable, and an omitted
         # listen policy means the declared default rather than a refusal.
         listen_policy = string_field(body, "listen_policy", default=store.DEFAULT_LISTEN_POLICY)
-        room = store.add_member(room_id, name, role_blurb=role_blurb, listen_policy=listen_policy)
+        # Passed through unvalidated ON PURPOSE: the safety axes and their refusals belong to
+        # ``rooms.posture``, and re-checking the shape here would be a second opinion about
+        # what a posture is. ``add_member`` raises the posture codes this route maps above.
+        room = store.add_member(
+            room_id,
+            name,
+            role_blurb=role_blurb,
+            listen_policy=listen_policy,
+            profile_narrowing=body.get("profile_narrowing"),
+        )
     except RequestValidationError as exc:
         return exc.response
     except store.RoomError as exc:

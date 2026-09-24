@@ -17,6 +17,9 @@ room's sole approver" true by construction rather than by a policy branch a late
 could forget. A room must never register itself as an unattended or stateless prefix: the
 HEADLESS profile approves via hooks, which would silently remove the human from the loop
 of a surface whose entire point is that they are in it.
+:func:`personalclaw.rooms.posture.member_posture` REFUSES a turn whose base resolved to any
+other approval posture, so that absence is re-checked on every turn rather than only
+asserted in a test.
 
 **Where the turn comes from.** :func:`run_human_message_round` is this module's production
 entry point, called by ``POST /api/rooms/{id}/messages`` once the human's line is on the
@@ -37,6 +40,7 @@ from typing import TYPE_CHECKING, AsyncIterator
 from personalclaw.history import speaker_of
 from personalclaw.rooms.store import (
     HUMAN_SPEAKER,
+    ROOM_NOTE_ROLE,
     Room,
     RoomError,
     RoomMember,
@@ -48,6 +52,7 @@ from personalclaw.security import fence_untrusted
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from personalclaw.llm.base import ModelProvider
+    from personalclaw.rooms.posture import RoomApprover, ToolRefusal
     from personalclaw.session import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -68,6 +73,11 @@ _MENTION_RE = re.compile(r"(?<![\w@])@([a-zA-Z0-9_-]+)")
 #: How a member's own turn is labelled to the others. The blurb rides along because a
 #: member's position is only legible next to the role it argues from.
 _HUMAN_LABEL = "human"
+
+#: How a line the ROOM wrote is labelled — a refusal note carries the member's name as its
+#: ``speaker`` for attribution, so the label has to come from the role or the note would read
+#: as that member having said it. See :data:`~personalclaw.rooms.store.ROOM_NOTE_ROLE`.
+_ROOM_LABEL = "room"
 
 
 def session_key(room_id: str, member_name: str) -> str:
@@ -153,12 +163,18 @@ def speakers_for(members: list[RoomMember], content: str) -> list[RoomMember]:
 # ── what a member is fed ───────────────────────────────────────────────────
 
 
-def _label(room: Room, speaker: str) -> str:
-    """``human`` or ``name/role blurb`` — the attribution prefix on one transcript line.
+def _label(room: Room, speaker: str, role: str = "") -> str:
+    """``human`` / ``room`` / ``name/role blurb`` — the attribution on one transcript line.
 
     Compares against :data:`~personalclaw.rooms.store.HUMAN_SPEAKER` rather than testing
     falsiness, so the store stays the one place that decides how the human is recorded.
+
+    ``role`` is consulted FIRST, and only to catch the room's own notes: a refusal note keeps
+    the refused member as its ``speaker`` (that is the attribution the human needs) so keying
+    the label on the speaker alone would render the room's words as that member's position.
     """
+    if role == ROOM_NOTE_ROLE:
+        return _ROOM_LABEL
     if speaker == HUMAN_SPEAKER:
         return _HUMAN_LABEL
     member = room.member(speaker)
@@ -179,7 +195,8 @@ def render_transcript(room: Room, messages: list[dict]) -> str:
         content = str(msg.get("content", "") or "")
         if not content.strip():
             continue
-        lines.append(f"[{_label(room, speaker_of(msg))}]: {content}")
+        label = _label(room, speaker_of(msg), str(msg.get("role", "") or ""))
+        lines.append(f"[{label}]: {content}")
     return "\n".join(lines)
 
 
@@ -222,36 +239,68 @@ def build_member_prompt(room: Room, member: RoomMember, messages: list[dict]) ->
 # ── the turn ───────────────────────────────────────────────────────────────
 
 
-async def run_member_turn(sessions: "SessionManager", room_id: str, member_name: str) -> str:
+async def run_member_turn(
+    sessions: "SessionManager",
+    room_id: str,
+    member_name: str,
+    *,
+    approver: "RoomApprover | None" = None,
+) -> str:
     """Drive ONE member's turn and append its reply to the shared transcript.
 
     Returns the reply text, or ``""`` when the member produced nothing (which is appended
     nowhere — an empty message in a shared transcript reads as a member having taken a
-    position it did not take).
+    position it did not take). ``""`` is also what a member over its OWN budget returns: it
+    stops speaking while the rest of the room carries on.
 
-    **Tools are refused for the duration, deliberately.** The room's session key resolves to
-    the INTERACTIVE profile whose ``approval`` is ``"ask"`` — and there is nobody to ask,
-    because the room UI is `AR-8`. Of the three shipped resolutions that leaves,
-    ``AUTO_APPROVE`` would remove the human from the loop outright, and ``HOOK_BASED`` only
-    looks safer: ``llm_helpers._resolve_permission`` falls through a hook-NEUTRAL tool to
-    "Default: auto-approve", so a member could act on the machine with no human involved.
-    ``REJECT_ALL`` is the one resolution that is strictly tighter than ``ask`` rather than
-    looser, and a room is deliberation — the tool-bearing member is `AR-6`'s ``posture.py``,
-    which replaces this single argument with a per-member grant. Nothing here touches the
-    prefix tuples that make the profile INTERACTIVE in the first place.
+    **Each member carries its own reach; the human remains the only approver.** The posture is
+    resolved per turn from this member's session key by :mod:`personalclaw.rooms.posture` — the
+    room's INTERACTIVE-by-construction base (the prefix tuples that make it so are untouched
+    here), narrowed by what this member declared, defaulting to the READ-ONLY tier when it
+    declared nothing. That is what lets a read-only critic and a tool-bearing executor share
+    one room: they differ in ``tool_grants``, never in who approves.
+
+    *approver* is the human's channel. With none bound every tool call is refused rather than
+    waved through, and each refusal is written onto the transcript so the human can see which
+    member wanted which tool and why it did not happen. `AR-8` builds the UI that binds one.
     """
-    from personalclaw.llm_helpers import ToolApprovalPolicy, stream_and_collect
+    from personalclaw.guardrails.budgets import BudgetVerdict
+    from personalclaw.llm_helpers import stream_and_collect
+    from personalclaw.rooms import posture
 
     room = require_room(room_id)
     member = room.member(member_name)
     if member is None:
         raise RoomError("room_member_not_found", f"{member_name!r} is not a member of this room.")
+
+    key = session_key(room_id, member_name)
+    profile = posture.member_posture(key, member)
+    verdict, reason = posture.spend_verdict(key, profile)
+    if verdict is BudgetVerdict.EXCEEDED:
+        # This member alone stops; the room is NOT paused. A shared ceiling would make one
+        # member's spend everybody's silence, which is the opposite of a per-member budget.
+        _note_refusal(room_id, posture.ToolRefusal(member_name, "its turn", reason))
+        return ""
+    if verdict is BudgetVerdict.WARN:
+        logger.warning(
+            "rooms: member %s in room %s is near its own budget (%s)", member_name, room_id, reason
+        )
+
+    refusals: list["ToolRefusal"] = []
+    policy, gate = posture.approval_channel(member, profile, approver, record=refusals.append)
     prompt = build_member_prompt(room, member, read_messages(room_id))
 
     async with member_session(sessions, room_id, member_name) as provider:
-        reply = await stream_and_collect(
-            provider, prompt, approval_policy=ToolApprovalPolicy.REJECT_ALL
-        )
+        with posture.member_spend_scope(key, profile):
+            reply = await stream_and_collect(
+                provider, prompt, approval_policy=policy, on_tool_approval=gate
+            )
+
+    # Refusals first: they happened DURING the turn, so they belong before the reply the
+    # member wrote around them. Written after the stream rather than inside the gate so a
+    # transcript write can never raise into the provider's permission loop.
+    for refusal in refusals:
+        _note_refusal(room_id, refusal)
 
     if not reply.strip():
         logger.info(
@@ -260,6 +309,38 @@ async def run_member_turn(sessions: "SessionManager", room_id: str, member_name:
         return ""
     append_message(room_id, role="assistant", content=reply, speaker=member_name)
     return reply
+
+
+def _note_refusal(room_id: str, refusal: "ToolRefusal") -> None:
+    """Put one refusal on the shared transcript, attributed to the room rather than a member.
+
+    **This is what makes a refusal legible rather than a silent drop.** The transcript is the
+    room's user-visible record (``GET /api/rooms/{id}`` and the export both read it), so a
+    refusal recorded anywhere else would be a member that inexplicably never acts. The note
+    also reaches the other members on their next turn, fenced like every other line, which is
+    deliberate: a critic that learns its write tool was refused stops proposing writes.
+
+    A failure to write the note is logged at ERROR and swallowed, and that is the ONE place
+    swallowing is right here: the alternative is a transcript-bookkeeping error replacing the
+    member's actual reply, which would lose the turn to protect its footnote. The refusal
+    itself already happened — the gate returned ``False`` before this ran — so nothing is
+    granted by this failing.
+    """
+    logger.warning("rooms: %s (room %s)", refusal.sentence(), room_id)
+    try:
+        append_message(
+            room_id,
+            role=ROOM_NOTE_ROLE,
+            content=refusal.sentence(),
+            speaker=refusal.member,
+        )
+    except Exception:
+        logger.error(
+            "rooms: could not record a tool refusal on room %s's transcript — it is in the "
+            "log above but the human will not see it in the room",
+            room_id,
+            exc_info=True,
+        )
 
 
 async def run_human_message_round(

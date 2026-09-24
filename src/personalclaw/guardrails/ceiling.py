@@ -784,3 +784,35 @@ def resolve(ceiling: Ceiling, profile: "SafetyProfile") -> "SafetyProfile":
     if not overrides:
         return profile
     return profile.with_overrides(**overrides)
+
+
+def widening_scopes(base: "SafetyProfile", candidate: "SafetyProfile") -> tuple[str, ...]:
+    """The governed scopes on which *candidate* is LOOSER than *base*, in table order.
+
+    Empty means *candidate* is at-or-tighter than *base* everywhere the ceiling governs —
+    i.e. a legitimate narrowing. Callers that let one actor derive a posture from another's
+    (rooms' per-member postures: ``rooms.posture``) refuse on a non-empty answer.
+
+    This is :func:`resolve`'s own algebra with *base* in the ceiling's seat, reusing
+    :data:`CEILING_SCOPES`, :data:`_FROM_PROFILE` and :data:`_COMPOSE` rather than
+    comparing fields by hand: "tightest wins" is defined once, so a scope added to the
+    table is judged here the day it lands and cannot mean two things in two modules.
+    A scope is a widening exactly when composing it against *base* would change it — if
+    the intersection is not the candidate itself, the candidate asked for more.
+
+    Two consequences are correct but surprising, so they are stated rather than discovered:
+
+    * ``approval="hook_based"`` is a WIDENING of an ``ask`` base. ``ask`` is the strictest
+      rung of ``registries.SCALE_APPROVAL``, so "let a hook decide" removes the human.
+    * DROPPING a ``denylist_extra`` entry is a widening, because deny planes compose as a
+      union — a candidate that forgets one of the base's denials is asking for access.
+    """
+    validate_scope_table()
+    wider: list[str] = []
+    for spec in CEILING_SCOPES:
+        archetype = spec.archetype
+        from_base = _FROM_PROFILE[archetype](spec, base)
+        from_candidate = _FROM_PROFILE[archetype](spec, candidate)
+        if _COMPOSE[archetype](from_base, from_candidate) != from_candidate:
+            wider.append(spec.name)
+    return tuple(wider)

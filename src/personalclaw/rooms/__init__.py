@@ -1,10 +1,10 @@
 """Agent Rooms — a persistent shared transcript with a bound-agent member list.
 
 Public surface of the room store. The turn path lives in :mod:`personalclaw.rooms.turn` and
-is imported from there by name, because its entry points take a ``SessionManager`` and
-re-exporting them here would put a provider-shaped import on the path of every caller that
-only wants to list rooms. Per-member cursors and per-member safety posture are later
-AGENT-ROOMS atoms and do not exist yet.
+the per-member safety posture in :mod:`personalclaw.rooms.posture`; both are imported from
+there by name rather than re-exported here, because their entry points reach the provider and
+guardrail layers and a caller that only wants to list rooms should not pay for that import.
+Per-member transcript cursors are a later AGENT-ROOMS atom and do not exist yet.
 """
 
 from personalclaw.rooms.store import (
