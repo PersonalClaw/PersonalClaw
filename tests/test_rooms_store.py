@@ -219,6 +219,60 @@ def test_export_payload_hands_over_everything_a_renderer_needs(enabled):
     assert caught.value.code == "room_not_found"
 
 
+def test_the_export_meta_carries_the_ROOMs_creation_time_not_the_first_messages(enabled):
+    """The transcript log is created lazily, so ITS `created_at` is the first message's ts.
+
+    Measured live before the fix: a room created at 14:37:50 whose first message landed at
+    14:38:07 exported `created_at: 2026-09-23T14:38:07` — 17.6s of drift, and a week's worth
+    for a room that sits idle before anyone speaks. `GET /api/rooms/{id}` returned the right
+    value in the same request cycle, so the wrong one was never an instrument artifact.
+
+    Asserted against the message's own `ts` rather than a clock, so the test states the
+    defect ("the export reports the first message's timestamp") rather than re-measuring a
+    duration that a fast machine could collapse to equality.
+    """
+    room = store.create_room("Aged")
+    store.append_message(room.id, role="user", content="first words")
+    first_ts = store.read_messages(room.id)[0]["ts"]
+
+    _, meta, _ = store.export_payload(room.id)
+    assert meta["created_at"] == room.created_at
+    assert meta["created_at"] != first_ts, "the export is still reading the transcript's metadata"
+
+
+def test_an_unspoken_room_exports_a_real_creation_time(enabled):
+    """The room nobody has spoken in: no transcript log exists, so the metadata line is `{}`.
+
+    That is what produced `created_at: ""` in the JSON export and dropped the `Created:` row
+    from the markdown header entirely — missing data, not a missing template branch.
+    """
+    room = store.create_room("Silent")
+    assert not store.transcript_path(room.id).exists(), "the premise: nothing lazily created it"
+
+    _, meta, messages = store.export_payload(room.id)
+    assert messages == []
+    assert meta["created_at"] == room.created_at
+    assert meta["created_at"], "an unspoken room must not export an empty creation time"
+
+
+def test_the_export_merge_does_not_write_into_the_transcripts_cached_metadata(enabled):
+    """`get_metadata` hands back its own cache entry, so the merge must copy before writing.
+
+    Without the copy, exporting a room publishes its creation time into the transcript log's
+    cached metadata, and every later reader of that log sees a `created_at` the file on disk
+    does not contain.
+    """
+    room = store.create_room("Shared")
+    store.append_message(room.id, role="user", content="hello")
+    before = store.room_log(room.id).get_metadata(store.TRANSCRIPT_KEY)["created_at"]
+    assert before != room.created_at, "the premise: the log stamps its OWN creation time"
+
+    store.export_payload(room.id)
+
+    after = store.room_log(room.id).get_metadata(store.TRANSCRIPT_KEY)["created_at"]
+    assert after == before, "exporting overwrote the transcript log's own cached metadata"
+
+
 def test_the_store_never_imports_the_http_surface(enabled):
     """`rooms/` is domain code: an import of ``dashboard/`` inverts the dependency.
 

@@ -136,13 +136,13 @@ def preserve_unchanged_secrets(
     return incoming
 
 
-# ── The schema-LESS surface: a config document nothing declares a schema for ─────────────────
+# ── Deriving sensitivity from a NAME: the org's one definition ────────────────────────────────
 
-#: Name words that make a config field a credential. Consulted ONLY where there is no
-#: ``x-meta.sensitive`` declaration to read — never in place of one. Word-matched rather than
-#: substring-matched, because ``token`` as a substring also names every budget field in the
-#: config (``max_tokens_per_day``, ``context_budget_tokens``) and masking an integer ceiling
-#: would corrupt a config while protecting nothing.
+#: Words that name a credential. Consulted where there is no ``x-meta.sensitive`` declaration
+#: to read — never in place of one. Word-matched rather than substring-matched, because
+#: ``token`` as a substring also names every budget field in the config
+#: (``max_tokens_per_day``, ``context_budget_tokens``) and masking an integer ceiling would
+#: corrupt a config while protecting nothing.
 _CREDENTIAL_WORDS = frozenset(
     {
         "apikey",
@@ -164,23 +164,60 @@ _KEY_QUALIFIERS = frozenset(
 )
 
 
-def _words(name: object) -> set[str]:
-    return {w for w in re.split(r"[^a-z0-9]+", str(name).lower()) if w}
+def _words(name: object) -> list[str]:
+    """*name*'s words, lowercased, IN ORDER — position is part of the rule below."""
+    return [w for w in re.split(r"[^a-z0-9]+", str(name).lower()) if w]
 
 
 def is_credential_field_name(name: object) -> bool:
     """Does *name* name a credential, judged from the name alone?
 
-    The fallback authority for a field no schema describes. Measured against
-    ``AppConfig().to_dict()`` (337 names, 26 of them non-empty strings): it matches exactly
-    one modelled name, ``security.credential_keychain``, a bool — so nothing in the modelled
-    config is masked by it today, and the blocks it does reach are the unmodeled ones that
-    actually hold credentials.
+    **The single definition of "credential-shaped" in this repository.** Two consumers ask
+    this one question and must get one answer:
+
+    * the maskers below, for a field no schema describes (``personalclaw config get``
+      prints ``config.json``, whose credential-bearing blocks — ``providers``, the legacy
+      ``slack`` block — arrive with no ``settingsSchema`` anywhere to read); and
+    * ``tests/test_app_manifest_secret_fields.py``, the rail that requires a
+      credential-shaped app setting to declare ``x-meta.sensitive``.
+
+    Those two used to disagree, and the disagreement shipped: the rail matched an *unanchored
+    substring* list containing ``token``, so ``max_tokens`` — an integer request parameter —
+    was a credential and the rail reddened on two shipped manifests by default in any
+    workspace holding both clones. Neither remedy it offered was available (annotating an
+    integer ``x-meta.sensitive`` renders it ``type="password"`` and write-only; ``max_tokens``
+    is the provider API's own parameter name), which is what two answers to one question
+    costs.
+
+    **The rule: a credential noun must be the name's LAST word.** That single constraint is
+    what separates a credential from a field *about* one, in both directions:
+
+    * ``max_tokens``, ``token_limit``, ``secrets_dir``, ``api_key_env``, ``keyring_backend``
+      and ``context_budget_tokens`` are ordinary fields — a ceiling, a path, an env-var name.
+      A rule keyed on mere presence masks all of them.
+    * ``sort_key``, ``cache_key`` and ``semantic_keys`` are identifiers, so ``key`` also needs
+      a qualifier from :data:`_KEY_QUALIFIERS` — ``api_key`` and ``signing_key`` are
+      credentials, ``sort_key`` is a dict lookup.
+    * a trailing ``id`` names the same subject, so it is transparent: ``access_key_id`` and
+      ``aws_access_key_id`` are half of an AWS credential pair, while ``client_id`` and
+      ``user_id`` resolve to ``client``/``user`` and stay public.
+
+    Measured against ``AppConfig().to_dict()`` (337 names, 26 of them non-empty strings), it
+    matches nothing in the modelled config, so the blocks it reaches are the unmodeled ones
+    that actually hold credentials. Measured over all 100 first-party manifests (257 setting
+    occurrences, 108 distinct leaf names) it flags 8 names across 28 sites, every one a real
+    credential. The floors that pin both directions live in
+    ``tests/test_provider_config_secrets.py`` and ``tests/test_app_manifest_secret_fields.py``.
     """
     words = _words(name)
-    if words & _CREDENTIAL_WORDS:
+    if len(words) > 1 and words[-1] == "id":
+        words = words[:-1]
+    if not words:
+        return False
+    last = words[-1]
+    if last in _CREDENTIAL_WORDS:
         return True
-    return bool(words & {"key", "keys"} and words & _KEY_QUALIFIERS)
+    return bool(last in {"key", "keys"} and set(words) & _KEY_QUALIFIERS)
 
 
 def _schema_for(names: set[str]) -> dict[str, Any]:

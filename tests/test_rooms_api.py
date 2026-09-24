@@ -213,6 +213,56 @@ def test_export_answers_both_formats_and_refuses_a_third(cfg):
     assert _body(bad)["error"]["code"] == "room_export_format_invalid"
 
 
+def _export_room(room_id, fmt):
+    return asyncio.run(
+        h.api_room_export(
+            make_mocked_request(
+                "GET",
+                f"/api/rooms/{room_id}/export?format={fmt}",
+                match_info={"room_id": room_id},
+            )
+        )
+    )
+
+
+def test_both_export_formats_report_the_ROOMs_creation_time(cfg):
+    """The two surfaces disagreed about the same room in the same request cycle.
+
+    `export_payload` handed the renderer the transcript log's metadata, whose `created_at` is
+    stamped when the log is lazily created on the first message write. So the export claimed
+    the room was created when someone first spoke in it, while `GET /api/rooms/{id}` — read
+    here as the positive control, on the same gateway in the same cycle — returned the real
+    value. That control is what makes this a data defect rather than an instrument artifact.
+    """
+    created = _body(_create("Exportable"))["room"]
+    room_id = created["id"]
+    _post_message(room_id, {"content": "hello room"})
+
+    assert _body(_get(room_id))["room"]["created_at"] == created["created_at"]
+
+    assert json.loads(_export_room(room_id, "json").text)["created_at"] == created["created_at"]
+    assert f"- **Created:** {created['created_at']}" in _export_room(room_id, "md").text
+
+
+def test_a_room_nobody_has_spoken_in_still_exports_a_created_at_and_its_header_row(cfg):
+    """No transcript exists yet, so the metadata line is `{}` — which exported `created_at: ""`.
+
+    The markdown header went straight from the title to `**Messages:** 0` with no `Created:`
+    row at all, because `render_markdown` emits that row only when `meta` supplies the key.
+    Both halves are asserted: the JSON value is real (not `""`) and the markdown row is back.
+    """
+    created = _body(_create("Silent"))["room"]
+    room_id = created["id"]
+
+    as_json = json.loads(_export_room(room_id, "json").text)
+    assert as_json["messages"] == []
+    assert as_json["created_at"] == created["created_at"] != ""
+
+    markdown = _export_room(room_id, "md").text
+    assert f"- **Created:** {created['created_at']}" in markdown
+    assert "- **Messages:** 0" in markdown
+
+
 # ── refusals: the envelope and the status ──────────────────────────────────
 
 

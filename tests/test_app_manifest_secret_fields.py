@@ -47,65 +47,74 @@ apps repository at all.** The enforcing gate is ``PersonalClawApps``'
 ``.github/scripts/check_settings_schema_posture.py`` rule 4, in the CI of the repo that owns
 the manifests. What lives here is the detector plus its planted floors.
 
-**THIS MODULE IS THE CANONICAL STATEMENT OF "credential-shaped", as of 2026-09-23.** It was
-not, and that was the bug. Core matched an *unanchored substring* list containing ``token``,
-so ``max_tokens`` — an integer request parameter, ``{"type": "integer", "minimum": 0}`` —
-was credential-shaped, and the corpus arm above reddened on ``bedrock-models: max_tokens``
-and ``claude-subscription: max_tokens``. Neither remedy the failure message offers applies:
-marking an integer ``x-meta.sensitive`` makes ``appConfigForm.tsx`` render it
-``type="password"`` with write-only blank-input behaviour (masking a non-secret and making a
-normal numeric setting un-editable), and it cannot be renamed because ``max_tokens`` is the
-provider API's own parameter name.
+**"Credential-shaped" IS NOT DEFINED HERE — it is imported, and that is the fix, as of
+2026-09-23.** The question "does this name hold a credential?" had three implementations:
 
-That red is the DEFAULT outcome for a dual-clone workspace, not something you opt into:
-``_app_roots()`` resolves the first-party apps clone as a sibling of the checkout. A CI
-runner has no sibling, so CI stayed green and only humans and agent lanes ever saw it —
-the worst place for a false red, because it reads as product breakage or gets "fixed" by
+1. this rail's ``_CRED_HINTS``, an *unanchored substring* list containing ``token``;
+2. ``PersonalClawApps``' ``check_settings_schema_posture.py::CRED_CLASS``, an anchored regex;
+3. :func:`personalclaw.apps.secret_fields.is_credential_field_name`, a word-and-position
+   predicate — the one core's **maskers actually run** on every ``personalclaw config get``.
+
+(1) made ``max_tokens`` — an integer request parameter, ``{"type": "integer", "minimum": 0}``
+— credential-shaped, so the corpus arm reddened on ``bedrock-models: max_tokens`` and
+``claude-subscription: max_tokens``. Neither remedy its message offers applies: marking an
+integer ``x-meta.sensitive`` makes ``appConfigForm.tsx`` render it ``type="password"`` with
+write-only blank-input behaviour (masking a non-secret and making a normal numeric setting
+un-editable), and it cannot be renamed because ``max_tokens`` is the provider API's own
+parameter name. That red was the DEFAULT outcome for a dual-clone workspace, not something
+you opt into — ``_app_roots()`` resolves the apps clone as a sibling of the checkout, and a CI
+runner has no sibling, so CI stayed green and only humans and agent lanes ever saw it. That
+is the worst place for a false red: it reads as product breakage, or gets "fixed" by
 annotating a non-secret as a credential.
 
-The apps repo had already solved this and documented the divergence in its own comment
-("An unanchored substring list — the shape core's rail uses — flags ``max_tokens`` and
-would red on a normal numeric field"), which left the org holding **two answers to one
-question** — the defect shape this very module says the rail exists to prevent, and what
-issue 1777 is cited for. So core adopts the sibling's ``CRED_CLASS`` verbatim rather than
-inventing a third answer, and states it here, once. An exception list for ``max_tokens``
-would have been that third answer.
+Replacing (1) with a copy of (2) fixed the ``max_tokens`` instance and left the CLASS intact,
+because a rail that duplicates a pattern is still a second answer. Measured: (2) flags
+``sort_key`` and ``cache_key`` — dict lookups, identical in kind to ``max_tokens`` — and
+misses ``aws_access_key_id``, ``credentials`` and ``apiKey``, which are real credentials (3)
+does catch. So this rail now **imports (3)** and defines nothing. There is one predicate, it
+lives beside the maskers that consume it, and a rail requiring an annotation now asks exactly
+the question the masker will ask at runtime. A rail that demanded ``x-meta.sensitive`` on a
+field core's masker would not mask was never enforcing core's policy.
 
-**Why the pattern is anchored, and why it cannot be narrowed further.** ``_CRED_CLASS``
-matches a credential noun only at the END of the name (or a whole-name special case), so
-``max_tokens``, ``token_limit``, ``api_keys`` and ``auth_mode`` do not match. Measured, this
-is not adjustable: dropping ``key`` from the alternation to stop matching ``ssh_key`` would
-also stop matching ``api_key`` (19 live sites) and ``secret_access_key`` — real credentials.
-A name that is a credential noun in the wrong position is handled as a *subject* exemption
-(``_PATH_VALUED_EXEMPT``), never by loosening the pattern.
+**Why the shared predicate is not promoted to ``personalclaw.sdk.*``**, which the
+provider-agnostic-core tenet would otherwise require of a cross-repo import: the only
+would-be cross-repo consumer is the sibling's ``settings-schema-posture`` CI job, which is
+deliberately a **pure-stdlib job with no core install** ("Pure stdlib — no core install", its
+own ``ci.yml`` comment) so that a contributor runs byte-identically what CI runs. Making it
+import core would put an apps-CI gate behind a ``git+https://…@main`` resolve of core. No app
+*bundle* needs this predicate, so promoting it to the SDK would add public surface with zero
+consumers. The sibling therefore keeps its own regex **deliberately**, and the divergence is
+measured rather than trusted:
+:func:`test_the_sibling_rails_verdicts_match_ours_over_the_live_catalog` imports the
+sibling's pattern wherever both clones are resolved and asserts the two reach the same verdict
+on every field that exists — the assertion whose absence let ``max_tokens`` diverge for 16
+days. It skips, naming what it did not check, where no sibling is resolved.
 
-**The false-negative census that licensed this change, measured 2026-09-23** over all 100
-manifests (31 core bundled + 69 ``PersonalClawApps``), 257 setting-field occurrences, 147
-distinct leaf names, classified under both patterns. The difference runs in BOTH directions
-and is one field each way:
+**The delta this convergence makes to what core requires, measured 2026-09-23** over all 100
+manifests (31 core bundled + 69 ``PersonalClawApps``), 257 setting occurrences, 108 distinct
+leaf names, classified under all three:
 
-* **stops being flagged:** ``max_tokens`` only (``bedrock-models``, ``claude-subscription``)
-  — an integer ceiling, not a credential. Nothing that is or could hold a credential loses
-  flagging; the 8 names in the intersection (``api_key``, ``access_key_id``,
-  ``secret_access_key``, ``session_token``, ``app_token``, ``bot_token``, ``hf_token``,
-  ``token_credential`` — 28 sites) are untouched.
-* **starts being flagged:** ``ssh_key`` (``rsync-sync``) — core's substring list held
-  ``api_key``/``access_key`` but no bare ``key``, so core never flagged it; the anchored
-  pattern does. Its value is a *path* handed to ``ssh`` ("The key itself is never read by
-  PersonalClaw — only handed to ssh by path"), so masking it would hide a path the user must
-  verify. The sibling gate already exempts exactly this pair with exactly this reason, so
-  adopting rule 4 means adopting both of its halves — pattern *and* exemption. Adopting only
-  the pattern would trade the ``max_tokens`` false red for an identical ``ssh_key`` one.
+* against the superseded copy of (2), on the live catalog: **one name moves**, ``ssh_key``
+  (``rsync-sync``), which stops being credential-shaped. Its value is a *path* handed to
+  ``ssh`` ("The key itself is never read by PersonalClaw — only handed to ssh by path"), so
+  masking it would hide a path the user must verify — which is why the sibling flags it and
+  then exempts it by subject. Under (3) a bare ``key`` needs a qualifier, so it is not flagged
+  in the first place and core needs no exemption list to un-flag it. Same verdict, one
+  mechanism instead of two.
+* against (3) as the maskers already ran it, on the live catalog: **nothing moves.** The 8
+  flagged names (``api_key``, ``access_key_id``, ``secret_access_key``, ``session_token``,
+  ``app_token``, ``bot_token``, ``hf_token``, ``token_credential`` — 28 sites) are exactly the
+  8 (3) flagged before. No runtime masking behaviour changes.
+* ``api_keys`` moves the other way, into the genuine list below. (2) and the old (3) both
+  called it ordinary; it is the plural of ``api_key``, and
+  :func:`~personalclaw.apps.secret_fields.mask_secrets_in_document` already masks every string
+  inside a credential-named list, so the rail asking for the annotation is what core does.
 
-Net effect on what core requires masked: ``max_tokens`` stops being required, and nothing
-else moves in either direction.
-
-**Inherited limitation, named because it is real.** The superseded substring list matched
-case-insensitively on the whole name, so it fired on ``apiKey``/``clientSecret``/
-``refreshToken``; the anchored pattern does not (``key`` must follow ``_`` or start). That
-is sound only while settings keys stay snake_case — measured true, 0 of 147 distinct names
-are anything else — so the precondition is pinned by a test below rather than left to rot.
-Widening the pattern to cover camelCase would have reopened the two-answers problem.
+**Inherited limitation, named because it is real.** (3) splits on non-alphanumerics, so
+``apiKey`` collapses to one word it recognises but ``clientSecret`` and ``refreshToken``
+collapse to words it does not. That is sound only while settings keys stay snake_case —
+measured true, 0 of 108 distinct names are anything else — so the precondition is pinned by a
+test below rather than left to rot.
 """
 
 from __future__ import annotations
@@ -117,37 +126,12 @@ from typing import Any
 
 import pytest
 
+from personalclaw.apps.secret_fields import is_credential_field_name
+
 # The resolution of "where do first-party apps live" has ONE owner already — reuse it rather
 # than re-deriving it here. A second answer to that question is the defect shape this rail
 # exists to catch, and issue 1777 is what a wrong answer costs.
 from tests.test_apps_import_boundary import _app_roots
-
-#: What makes a settings key credential-shaped. **This is the org's one definition** — the
-#: module docstring explains why it lives here and what the second copy cost. The credential
-#: noun must END the name (or be the whole-name special case), so a qualifier or a plural
-#: cannot match: `max_tokens`, `token_limit`, `api_keys` and `auth_mode` are normal fields.
-#: `access_key_id` is spelled out because it ends in `_id` yet is half of an AWS credential
-#: pair. Byte-identical to `PersonalClawApps`' `check_settings_schema_posture.py::CRED_CLASS`,
-#: the gate that actually enforces this where the manifests live — deliberately, so the two
-#: cannot drift again. Do not narrow it: dropping `key` also drops `api_key` (measured).
-_CRED_CLASS = re.compile(
-    r"((^|_)(key|token|secret|password|passphrase|credential)$)|(^access_key_id$)",
-    re.I,
-)
-
-#: `(app, field)` pairs whose value is a PATH to a credential, not the credential. Masking
-#: these would hide something the user must be able to read back, so they are exempted by
-#: SUBJECT — never by loosening `_CRED_CLASS`, which is the one place the rule could be
-#: weakened invisibly. Mirrors the sibling gate's `PATH_VALUED_EXEMPT` for the same reason.
-#: Keep it tiny and always give the reason; a stale entry reds (floor in the corpus test).
-_PATH_VALUED_EXEMPT = {
-    # Handed to `ssh` by path; the app never reads the key bytes. Its own help says so.
-    ("rsync-sync", "ssh_key"),
-}
-
-
-def _is_credential_shaped(key: str) -> bool:
-    return bool(_CRED_CLASS.search(key))
 
 
 def _credential_fields(props: dict[str, Any] | None, trail: str = "") -> list[tuple[str, bool]]:
@@ -161,7 +145,7 @@ def _credential_fields(props: dict[str, Any] | None, trail: str = "") -> list[tu
     for key, spec in (props or {}).items():
         if not isinstance(spec, dict):
             continue
-        if _is_credential_shaped(key):
+        if is_credential_field_name(key):
             meta = spec.get("x-meta")
             marked = bool(isinstance(meta, dict) and meta.get("sensitive"))
             out.append((trail + key, marked))
@@ -270,8 +254,6 @@ def test_no_credential_field_ships_unmarked() -> None:
     """
     unmarked: list[str] = []
     credential_fields_seen = 0
-    apps_in_scope: set[str] = set()
-    exempt_seen: set[tuple[str, str]] = set()
     for path in _manifests():
         try:
             manifest = json.loads(path.read_text(encoding="utf-8"))
@@ -280,29 +262,11 @@ def test_no_credential_field_ships_unmarked() -> None:
         if not isinstance(manifest, dict):
             continue
         app = path.parent.name
-        apps_in_scope.add(app)
         for props in _schema_property_blocks(manifest):
             for name, marked in _credential_fields(props):
                 credential_fields_seen += 1
-                if (app, name) in _PATH_VALUED_EXEMPT:
-                    exempt_seen.add((app, name))
-                    continue
                 if not marked:
                     unmarked.append(f"{app}: {name}")
-
-    # An exemption that outlives its subject silently widens the rule, so it must red
-    # instead. Only checkable for apps actually in scope — a bare CI clone resolves none of
-    # the exempt apps, and asserting there would red every clean clone.
-    stale = {
-        (app, field)
-        for app, field in _PATH_VALUED_EXEMPT
-        if app in apps_in_scope and (app, field) not in exempt_seen
-    }
-    assert not stale, (
-        "a path-valued exemption no longer resolves to a credential-shaped field in an app "
-        f"that IS in scope: {sorted(stale)}. Delete the entry rather than leaving it to "
-        "silently widen the rule."
-    )
 
     if credential_fields_seen == 0:
         pytest.skip(
@@ -358,25 +322,35 @@ def test_a_non_credential_field_is_ignored() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Pattern floors: BOTH directions, because anchoring the pattern LOOSENED the rail.
+# Predicate floors: BOTH directions, because converging the rail onto the masker's predicate
+# LOOSENS it on some names and TIGHTENS it on others.
 #
-# Nothing pinned `_CRED_HINTS`' membership or any name's classification before 2026-09-23
-# — measured, with a fired positive control — so replacing the substring list with the
-# anchored pattern turned nothing red and no existing test would have noticed a mistake in
-# either direction. The negative half below (false positives stop being flagged) is the
-# change's point; the positive half (real credentials keep being flagged) is what makes a
-# loosened security rail reviewable. Neither half is sufficient alone.
+# Nothing pinned any name's classification from this rail's side before 2026-09-23 —
+# measured, with a fired positive control — so every one of the three implementations could
+# have been wrong in either direction with no test noticing. The negative half below (false
+# positives stop being flagged) is the change's point; the positive half (real credentials
+# keep being flagged) is what makes a loosened security rail reviewable. Neither half is
+# sufficient alone. The predicate's own floors live beside it in
+# `test_provider_config_secrets.py`; these are the manifest-shaped names, which that file
+# has no reason to carry.
 # ---------------------------------------------------------------------------
 
 
 def test_a_genuine_credential_name_is_still_flagged() -> None:
-    """The half that guards the loosening: anchoring must not drop a real credential.
+    """The half that guards the loosening: convergence must not drop a real credential.
 
-    Every name here either appears in the live catalog (the 8 intersection names the
-    2026-09-23 census measured across 28 sites) or is the canonical spelling of a secret a
-    future app would plausibly declare. If any of these stops matching, the rail has been
-    narrowed into shipping a cleartext credential — the exact failure the superseded
-    substring list accepted false positives in order to avoid.
+    Every name here either appears in the live catalog (the 8 names the 2026-09-23 census
+    measured across 28 sites) or is the canonical spelling of a secret a future app would
+    plausibly declare. If any stops matching, the rail has been narrowed into shipping a
+    cleartext credential.
+
+    The last four are names the superseded anchored regex MISSED and the predicate catches, so
+    they are also the measurement that this convergence is not a pure loosening: ``api_keys``
+    is the plural of a credential (and
+    :func:`~personalclaw.apps.secret_fields.mask_secrets_in_document` already masks every
+    string inside a credential-named list, so requiring the flag is what core does),
+    ``aws_access_key_id`` is the spelling every AWS SDK uses, and ``credentials``/``apiKey``
+    are live shapes in ``config.json``'s unmodeled blocks.
     """
     genuine = [
         # measured live in the catalog
@@ -395,68 +369,192 @@ def test_a_genuine_credential_name_is_still_flagged() -> None:
         "refresh_token",
         "passphrase",
         "signing_key",
+        "private_key",
         "webhook_secret",
         "db_password",
+        # caught by the predicate, MISSED by the regex this rail used to duplicate
+        "api_keys",
+        "aws_access_key_id",
+        "credentials",
+        "apiKey",
     ]
-    missed = [name for name in genuine if not _is_credential_shaped(name)]
+    missed = [name for name in genuine if not is_credential_field_name(name)]
     assert not missed, (
-        "the credential-shape pattern no longer flags names that DO hold credentials, so "
+        "the credential-shape predicate no longer flags names that DO hold credentials, so "
         f"these would ship unmasked with nothing objecting: {missed}"
     )
 
 
 def test_the_documented_false_positives_are_not_flagged() -> None:
-    """The half the fix exists for: a credential noun in a non-terminal position is a field.
+    """The half the fix exists for: a credential noun that is not the LAST word is a field.
 
     ``max_tokens`` is the field that reddened the corpus arm on every dual-clone workspace
     while core CI stayed green. It is ``{"type": "integer", "minimum": 0}`` in both
-    ``bedrock-models`` and ``claude-subscription``, and it is the provider API's own
-    parameter name, so it can be neither masked nor renamed.
+    ``bedrock-models`` and ``claude-subscription``, and it is the provider API's own parameter
+    name, so it can be neither masked nor renamed.
+
+    The list is deliberately wider than that one field, because the defect was a CLASS and an
+    instance fix would have left it open. Each group below is a way for a name to carry a
+    credential word and hold no credential:
+
+    * a **ceiling** (``max_tokens``, ``token_limit``, ``context_budget_tokens``);
+    * a **location** (``secrets_dir``, ``api_key_env`` — an env-var *name*);
+    * an **identifier** (``sort_key``, ``cache_key``, ``semantic_keys``, ``client_id``) —
+      the group the anchored regex still flagged, which is why duplicating it was not a fix;
+    * a **longer word that merely contains one** (``tokenizer``, ``monkey_patch``,
+      ``keyboard``, ``keyring_backend``) — the group the unanchored substring list flagged.
     """
     not_credentials = [
+        # ceilings
         "max_tokens",  # the reported defect: an integer ceiling
         "token_limit",
-        "api_keys",
-        "auth_mode",
-        "context_window",
+        "context_budget_tokens",
         "max_turns",
+        "context_window",
+        # locations and modes
+        "secrets_dir",
+        "api_key_env",
+        "auth_mode",
+        "timeout_secs",
         "default_model",
         "embedding_model",
-        "timeout_secs",
-        "keyring_backend",
-        "secrets_dir",
+        # identifiers: flagged by the anchored regex, which is why copying it was not a fix
+        "sort_key",
+        "cache_key",
+        "semantic_keys",
+        "client_id",
+        # longer words that merely contain a credential word
         "tokenizer",
+        "monkey_patch",
+        "keyboard",
+        "keyring_backend",
     ]
-    flagged = [name for name in not_credentials if _is_credential_shaped(name)]
+    flagged = [name for name in not_credentials if is_credential_field_name(name)]
     assert not flagged, (
-        "the credential-shape pattern flags fields that hold no credential. Marking one "
+        "the credential-shape predicate flags fields that hold no credential. Marking one "
         '`x-meta.sensitive` renders it type="password" with write-only blank-input '
         f"behaviour, which masks a non-secret and makes it un-editable: {flagged}"
     )
 
 
-def test_a_path_valued_exemption_is_a_subject_exemption_not_a_pattern_hole() -> None:
-    """``ssh_key`` IS credential-shaped; only the named ``(app, field)`` pair is exempt.
+def test_a_bare_key_needs_a_qualifier_which_is_what_retires_the_exemption_list() -> None:
+    """``ssh_key`` is not credential-shaped, so core needs no exemption to stop requiring it.
 
-    The distinction is the whole reason the exemption is a pair and not a pattern tweak. The
-    same field name in any other app still has to carry the flag, and the pattern itself is
-    never weakened — the one place the rule could be loosened invisibly.
+    This replaces a ``_PATH_VALUED_EXEMPT`` set that existed only to un-flag one pair the
+    duplicated regex flagged. The sibling gate still needs its copy — its pattern matches any
+    terminal ``key`` — and its reason is the right one: ``rsync-sync.ssh_key`` holds a *path*
+    handed to ``ssh`` ("The key itself is never read by PersonalClaw — only handed to ssh by
+    path"), so masking it would hide something the user must be able to read back.
+
+    Core reaches the same verdict through the rule instead of through an exception, because
+    ``key`` unqualified is an identifier. Both halves are asserted: the qualifier is what
+    makes the difference, so ``api_key`` must still be flagged in the same breath — a
+    predicate that simply stopped matching ``key`` would pass the first assertion and ship a
+    cleartext credential.
     """
-    assert _is_credential_shaped("ssh_key")
-    assert _credential_fields({"ssh_key": {"type": "string"}}) == [("ssh_key", False)]
-    assert ("rsync-sync", "ssh_key") in _PATH_VALUED_EXEMPT
-    assert ("some-other-app", "ssh_key") not in _PATH_VALUED_EXEMPT
+    assert not is_credential_field_name("ssh_key")
+    assert _credential_fields({"ssh_key": {"type": "string"}}) == []
+    assert is_credential_field_name("api_key"), "the qualifier, not `key`, is what was dropped"
+    assert is_credential_field_name("secret_access_key")
 
 
-def test_settings_keys_are_snake_case_which_the_anchored_pattern_depends_on() -> None:
-    """The anchored pattern's precondition, pinned so it cannot lapse silently.
+def test_the_sibling_rails_verdicts_match_ours_over_the_live_catalog() -> None:
+    """Two deliberate implementations, one verdict — measured, not trusted.
 
-    ``_CRED_CLASS`` requires the credential noun to follow ``_`` or start the name, so it
-    does NOT match ``apiKey``, ``clientSecret`` or ``refreshToken`` — names the superseded
-    substring list did match. That is safe only while every settings key is snake_case,
-    which was measured true on 2026-09-23 (0 of 147 distinct leaf names were anything else).
-    If a camelCase key ever lands, this reds and names the consequence rather than letting
-    a real credential slip past the pattern unnoticed.
+    ``PersonalClawApps``' ``settings-schema-posture`` job keeps its own anchored regex because
+    it is a stated pure-stdlib job with no core install, so it cannot consume this predicate
+    (the module docstring carries the full reason). That makes drift possible, and drift is
+    exactly what shipped: for 16 days core required ``x-meta.sensitive`` on ``max_tokens``
+    while the sibling did not, and **nothing compared them**. This is that comparison.
+
+    It compares VERDICTS over the fields that actually exist, not patterns: the sibling's
+    verdict is "matches ``CRED_CLASS`` and is not in ``PATH_VALUED_EXEMPT``", ours is
+    ``is_credential_field_name``. Two spellings may legitimately disagree about a hypothetical
+    name; they may not disagree about a shipped one, because then one of the two repos is
+    demanding an annotation the other calls wrong.
+
+    The sibling's pattern is read out of its source rather than retyped here, so this cannot
+    pass against a stale copy of it. Skips — naming what it did not check — where no sibling
+    clone is resolved, which is every CI runner.
+    """
+    sibling = next(
+        (
+            candidate
+            for root in _app_roots()
+            for candidate in [root / ".github" / "scripts" / "check_settings_schema_posture.py"]
+            if candidate.is_file()
+        ),
+        None,
+    )
+    if sibling is None:
+        pytest.skip(
+            "no sibling apps clone with a settings-schema-posture rail was resolved, so the "
+            "two implementations were not compared at all. Roots searched: "
+            f"{[str(r) for r in _app_roots()]}"
+        )
+
+    source = sibling.read_text(encoding="utf-8")
+    pattern = re.search(r"CRED_CLASS = re\.compile\(\s*\n\s*r\"(?P<body>.+?)\",", source)
+    assert pattern, (
+        f"{sibling} no longer spells CRED_CLASS the way this comparison reads it, so the "
+        "comparison would silently check nothing. Re-derive the extraction rather than "
+        "deleting the check."
+    )
+    sibling_class = re.compile(pattern.group("body"), re.I)
+
+    # Read the exemptions as (app, field) PAIRS, scoped to their own block. The sibling exempts
+    # a subject, not a name — another app's `ssh_key` is still a credential there — so matching
+    # the bare field would make this comparison quietly more permissive than the gate it reads.
+    block = re.search(r"PATH_VALUED_EXEMPT\s*=\s*\{(?P<body>.*?)\n\}", source, re.S)
+    assert block, (
+        f"{sibling} no longer spells PATH_VALUED_EXEMPT the way this comparison reads it. "
+        "Without it every exempted pair reads as a disagreement, so re-derive the extraction."
+    )
+    exempt = set(re.findall(r'\(\s*"(?P<a>[^"]+)"\s*,\s*"(?P<f>[^"]+)"\s*\)', block.group("body")))
+    assert exempt, "the sibling's exemption block parsed as empty, which would fake disagreements"
+
+    disagreements: list[str] = []
+    names_compared = 0
+    for path in _manifests():
+        try:
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):  # pragma: no cover - covered by the corpus arm
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        app = path.parent.name
+        for props in _schema_property_blocks(manifest):
+            for dotted in _all_setting_names(props):
+                leaf = dotted.rsplit(".", 1)[-1]
+                names_compared += 1
+                theirs = bool(sibling_class.search(leaf)) and (app, leaf) not in exempt
+                ours = is_credential_field_name(leaf)
+                if theirs != ours:
+                    disagreements.append(
+                        f"{path.parent.name}: {dotted} — sibling says "
+                        f"{'credential' if theirs else 'ordinary'}, core says "
+                        f"{'credential' if ours else 'ordinary'}"
+                    )
+
+    assert names_compared, "no settings fields were compared, so this proves nothing"
+    assert not disagreements, (
+        "the two deliberate implementations of `credential-shaped` disagree about a field "
+        "that SHIPS, so one repo requires an `x-meta.sensitive` annotation the other calls "
+        "wrong — the `max_tokens` failure, recurring. Reconcile them (and record which one "
+        "moved and why) rather than adding an exception:\n  " + "\n  ".join(sorted(disagreements))
+    )
+
+
+def test_settings_keys_are_snake_case_which_the_predicate_depends_on() -> None:
+    """The predicate's precondition, pinned so it cannot lapse silently.
+
+    :func:`~personalclaw.apps.secret_fields.is_credential_field_name` splits a name on
+    non-alphanumerics, so ``clientSecret`` and ``refreshToken`` collapse to a single word it
+    does not recognise and would NOT be flagged. (``apiKey`` happens to collapse to a word it
+    does recognise, which is luck rather than coverage.) That is safe only while every
+    settings key is snake_case, which was measured true on 2026-09-23 — 0 of 108 distinct leaf
+    names were anything else. If a camelCase key ever lands, this reds and names the
+    consequence rather than letting a real credential slip past unnoticed.
 
     Holds in a bare CI clone: the bundled tree carries 53 setting fields over 14 manifests.
     """
@@ -482,8 +580,9 @@ def test_settings_keys_are_snake_case_which_the_anchored_pattern_depends_on() ->
         "bundled tree should supply them in any clone"
     )
     assert not offenders, (
-        "a settings key is not snake_case, which the anchored credential pattern depends "
-        "on: it matches a credential noun only after `_` or at the start, so `apiKey` and "
-        "`clientSecret` would NOT be flagged and would ship unmasked. Rename the key to "
-        f"snake_case (the catalog convention) rather than widening the pattern: {offenders}"
+        "a settings key is not snake_case, which the credential-shape predicate depends on: "
+        "it splits the name on non-alphanumerics, so `clientSecret` and `refreshToken` "
+        "collapse to one unrecognised word and would NOT be flagged — they would ship "
+        "unmasked. Rename the key to snake_case (the catalog convention) rather than widening "
+        f"the predicate: {offenders}"
     )
