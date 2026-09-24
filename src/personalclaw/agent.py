@@ -39,6 +39,7 @@ from personalclaw.sel import (  # circular import: sel imports config which impo
     SecurityEvent,
     sel,
 )
+from personalclaw.self_update import is_frozen
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +161,19 @@ def _resolve_personalclaw_bin() -> str:
 
     Resolution order (first existing + executable wins):
 
+    0. **Frozen bundle: the running executable IS the CLI.** In the PyInstaller
+       bundle the desktop app ships, ``sys.executable`` is
+       ``…/backend-dist/personalclaw-backend/personalclaw-backend`` — a launcher
+       whose entry script is ``personalclaw/__main__.py``, i.e. ``cli.main()``. So
+       ``sys.executable mcp-core`` is the same command a console script would run.
+       There is no ``bin/personalclaw`` inside an ``.app`` and no interpreter to put
+       a console script beside, so every probe below misses and the bare-name
+       fallback resolves to nothing: on the Chairman's 2026-09-23 macOS install the
+       gateway logged "Could not resolve personalclaw binary to an existing file"
+       and then "Dropping MCP server 'personalclaw-core'", leaving the agent with no
+       core tool surface and one WARNING as the only evidence. This clause is FIRST
+       because when frozen it is the only correct answer — a PATH hit would find a
+       *different* install of a possibly different version.
     1. Same install as the current process: walk up from ``personalclaw.__file__``
        looking for a ``bin/personalclaw`` sibling. Covers source-tree dev installs
        and venv-based installs whose bin/ sits above the package.
@@ -187,6 +201,11 @@ def _resolve_personalclaw_bin() -> str:
         if not (sp and os.path.isfile(sp) and os.access(sp, os.X_OK)):
             return False
         return _bin_is_usable(Path(sp))
+
+    # 0. Frozen bundle — `sys.executable` is the CLI launcher itself.
+    if is_frozen() and _usable(sys.executable):
+        _PERSONALCLAW_BIN = sys.executable
+        return _PERSONALCLAW_BIN
 
     # 1. Walk up from the running package to find bin/personalclaw
     try:

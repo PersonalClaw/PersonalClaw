@@ -8,10 +8,44 @@ the Electron app embeds via `extraResources` into the macOS .app. Run with:
 
 Output is `dist/personalclaw-backend/personalclaw-backend` (executable) plus a
 sibling `_internal/` directory.
+
+WHAT GOES IN IS NOT DECIDED HERE for first-party content. `scripts/backend_bundle_manifest.py`
+derives the data payload from `[tool.setuptools.package-data]` — the same declaration the
+wheel is built from — and the dynamically-imported module lists from the tree, and
+`tests/test_backend_bundle_manifest.py` asserts that derivation is complete. This file used
+to transcribe those globs by hand and had drifted eleven of thirty, which is how the shipped
+`.app` came to have no `agents/runner_catalog.json` and no `tool_providers/rules_builtin.json`.
+Third-party collection stays below, where PyInstaller's knowledge of site-packages belongs.
 """
+import importlib.util
+import os
+import sys
+
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
+
+
+def _load_manifest():
+    """Import `scripts/backend_bundle_manifest.py` by path.
+
+    A spec is `exec`'d, not imported, so it has no package context and cannot `import
+    scripts.backend_bundle_manifest`. `SPECPATH` is the directory PyInstaller resolves the
+    spec from (the repo root); fall back to CWD for a direct `exec` of this file, which is
+    how a linter or a `python personalclaw-backend.spec` smoke read would reach it.
+    """
+    root = globals().get("SPECPATH") or os.getcwd()
+    path = os.path.join(root, "scripts", "backend_bundle_manifest.py")
+    spec = importlib.util.spec_from_file_location("backend_bundle_manifest", path)
+    if spec is None or spec.loader is None:  # pragma: no cover - unreachable with the file present
+        raise SystemExit(f"personalclaw-backend.spec: cannot load the bundle manifest at {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+manifest = _load_manifest()
 
 
 def _assert_host_native_arch() -> None:
@@ -57,42 +91,6 @@ def _assert_host_native_arch() -> None:
 
 
 _assert_host_native_arch()
-
-
-def _backend_data():
-    """Replicate the package-data globs from pyproject.toml.
-
-    Sources live under ``src/personalclaw/``; bundle destinations mirror the
-    import package (``personalclaw/...``) so the frozen binary resolves data
-    via ``importlib.resources`` the same way the installed wheel does.
-    """
-    patterns = [
-        ("src/personalclaw/py.typed", "personalclaw"),
-        ("src/personalclaw/slack-manifest.yaml", "personalclaw"),
-        ("src/personalclaw/model_tokens.json", "personalclaw"),
-        ("src/personalclaw/model_pricing.json", "personalclaw"),
-        # The baseline bash denylist (SH-6) — PyInstaller's import analysis cannot see a
-        # data file, and security.py raises at import without it, so the frozen binary
-        # would refuse to start rather than run with a shorter denylist.
-        ("src/personalclaw/baseline_denylist.json", "personalclaw"),
-        ("src/personalclaw/config", "personalclaw/config"),
-        ("src/personalclaw/eval/scenarios", "personalclaw/eval/scenarios"),
-        ("src/personalclaw/scripts", "personalclaw/scripts"),
-        ("src/personalclaw/static", "personalclaw/static"),
-        ("src/personalclaw/tests_fixtures", "personalclaw/tests_fixtures"),
-        ("src/personalclaw/skills/bundled", "personalclaw/skills/bundled"),
-        ("src/personalclaw/workflows/bundled", "personalclaw/workflows/bundled"),
-        ("src/personalclaw/apps/native", "personalclaw/apps/native"),
-        # Built React SPA — served by personalclaw.dashboard.handlers.core.index.
-        # Must be built first: `cd web && npm install && npm run build`.
-        ("web/dist", "personalclaw/static/dist"),
-    ]
-    out = []
-    import os
-    for src, dst in patterns:
-        if os.path.exists(src):
-            out.append((src, dst))
-    return out
 
 
 def _bundled_provider_modules():
@@ -142,6 +140,12 @@ hidden = [
     "personalclaw.inbox_providers.slack_source",
 ]
 hidden += _bundled_provider_modules()
+# Every `personalclaw.sdk.*` submodule. An app imports core ONLY through the SDK and
+# `providers.registry` resolves that import at ENABLE time via importlib, so static analysis
+# sees none of it: the 2026-09-23 bundle could not enable a single one of the four extensions
+# it shipped (sdk.search / sdk.tts / sdk.channel / sdk.trigger_source all
+# ModuleNotFoundError). Enumerated from the directory, never named one by one.
+hidden += manifest.sdk_submodules()
 # acp:<cli> bundles import sibling helpers dynamically too — collect the whole
 # package so ``personalclaw.acp_bundles._register`` etc. always ship.
 hidden += collect_submodules("personalclaw.acp_bundles")
@@ -161,7 +165,7 @@ hidden += collect_submodules("openpyxl")
 # frozen bundle can extract pages.
 hidden += collect_submodules("trafilatura")
 
-datas = _backend_data()
+datas = manifest.bundle_datas()
 # trafilatura bundles data files (language models / settings) referenced at runtime.
 datas += collect_data_files("trafilatura")
 # Slack SDK ships a `version.py` and `data/` files referenced at runtime.

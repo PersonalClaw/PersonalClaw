@@ -14,6 +14,7 @@ from pathlib import Path
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
+from personalclaw.config import validation
 from personalclaw.config.loader import (
     AgentConfig,
     AgentProfile,
@@ -127,7 +128,16 @@ _WARNING_SOURCES = (
 
 
 def _load_from_dict_with_logs(data: object) -> tuple[AppConfig, list[str]]:
-    """Load config and capture warning log messages from every config module that emits them."""
+    """Load config and capture warning log messages from every config module that emits them.
+
+    The validation memo is cleared first. ``AppConfig.load()`` now validates and REPORTS once
+    per distinct file content (the 1144-identical-warnings fix), so a helper whose whole job is
+    "load this and hand me the warnings" must not inherit a hit from an earlier call. That is
+    not hypothetical: the property tests below are ``@given``, and hypothesis re-runs an
+    example while shrinking, so without this line the second run of an identical example sees
+    no warning and the property fails on its own repeat rather than on the code.
+    """
+    validation._STRIP_MEMO.clear()
     with tempfile.NamedTemporaryFile(
         mode="w",
         suffix=".json",

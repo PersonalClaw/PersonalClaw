@@ -1,10 +1,12 @@
 """The desktop shell must DECLARE its install kind (`DC-1` T1.3, DISTRIBUTION C1) — #2673.
 
-`self_update.detect_install_kind()` resolves ``PERSONALCLAW_INSTALL_KIND`` first, then probes
-``PERSONALCLAW_PROJECT_DIR`` for a ``.git``, then falls back to ``"pip"``. The ``"desktop"``
-member is therefore *produced* by exactly one thing in this repository — the Electron shell's
-spawn env — and consumed by three: the Updates panel, ``POST /api/update``, and
-``personalclaw update``.
+`self_update.detect_install_kind()` resolves ``PERSONALCLAW_INSTALL_KIND`` first, then asks
+whether the process is FROZEN, then probes ``PERSONALCLAW_PROJECT_DIR`` for a ``.git``, then
+falls back to ``"pip"``. The ``"desktop"`` member has two producers: the Electron shell's spawn
+env (asserted here) and the frozen artefact answering for itself
+(``tests/test_frozen_bundle_runtime.py``) — a second, independent producer added on 2026-09-23
+so the correct refusal no longer depends on an environment variable being present. It is
+consumed by three: the Updates panel, ``POST /api/update``, and ``personalclaw update``.
 
 Nothing produced it. `DC-6` shipped the Linux AppImage/.deb to every GitHub Release while
 `DC-1`'s install-kind clause was still open, and `desktop/main.js` set ``PROJECT_DIR`` but not

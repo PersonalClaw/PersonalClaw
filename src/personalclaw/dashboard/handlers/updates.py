@@ -128,7 +128,22 @@ def _redact_log_text(text: str) -> str:
 
 
 async def _do_update_check() -> None:
-    """Run git fetch and compare HEAD with remote."""
+    """Run git fetch and compare HEAD with remote — on a GIT install only.
+
+    The changelog-diff half of the check, which only the ``git`` kind can answer. Every
+    other kind's "is there a newer version?" is the release-tag comparison
+    :func:`self_update.build_update_status` makes, and ``api_update_check`` merges the two.
+
+    **Why the kind gate is here and not just the project-dir probe.** ``PERSONALCLAW_PROJECT_DIR``
+    is not a proxy for "this is a checkout": the Electron shell sets it to ``…/Resources``
+    inside the app bundle (``desktop/gatewayEnv.js``), which carries no ``.git``. So on the
+    Chairman's 2026-09-23 desktop install this function ran ``git fetch`` in a directory that
+    is not a repository, twelve times in one session, each logging
+    ``git fetch failed (rc=128): fatal: not a git repository`` and returning before it
+    reached anything useful. The kind is what decides whether git means anything here, and
+    ``self_update.detect_install_kind()`` is the one place that answers it — the same
+    decision ``POST /api/update`` already dispatches on.
+    """
     global _last_update_check
 
     # Egress kill switch (RUM-3): with updates.check_enabled=false the updater
@@ -137,6 +152,11 @@ async def _do_update_check() -> None:
     # let the check slip through.
     if not AppConfig.load().updates.check_enabled:
         logger.debug("update check disabled (updates.check_enabled=false)")
+        return
+
+    kind = self_update.detect_install_kind()
+    if kind != "git":
+        logger.debug("update check: %s install has no git history to diff; release tags only", kind)
         return
 
     proj = os.environ.get("PERSONALCLAW_PROJECT_DIR", "")
