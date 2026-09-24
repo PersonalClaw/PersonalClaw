@@ -13,6 +13,7 @@ from typing import Any
 
 from personalclaw.artifacts import dedupe as artifact_dedupe
 from personalclaw.mcp_core import _resolve_session_key
+from personalclaw.tool_providers.base import tool_failure
 
 logger = logging.getLogger(__name__)
 
@@ -560,7 +561,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
     prov = registry.get_provider("native")
     if prov is None:
-        return "Error: artifact provider unavailable"
+        return tool_failure("artifact provider unavailable")
     sk = _resolve_session_key()
 
     def _audit(outcome: str, slug: str = "", error: str = "") -> None:
@@ -578,10 +579,10 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             content, err = _read_artifact_content(args)
             if err:
                 _audit("denied", error=err)
-                return f"Error: {err}"
+                return tool_failure(f"{err}")
             if content is None:
                 _audit("denied", error="no content")
-                return "Error: provide content or content_file"
+                return tool_failure("provide content or content_file")
             # Same-deliverable dedup (#290): a save tagged `loop:<id>` whose bytes are
             # already in the library under that same tag IS that artifact, whatever the
             # model chose to call it. The framework's completion-time graduation of a
@@ -647,7 +648,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             got = prov.get(args["slug"], version=args.get("version"))
             if got is None:
                 _audit("not_found", args["slug"])
-                return f"Artifact not found: {args['slug']}"
+                return tool_failure(f"Artifact not found: {args['slug']}")
             _audit("success", got.slug)
             return redact(got.content or "")
 
@@ -655,7 +656,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             content, err = _read_artifact_content(args)
             if err:
                 _audit("denied", args.get("slug", ""), err)
-                return f"Error: {err}"
+                return tool_failure(f"{err}")
             upd = prov.update(
                 args["slug"],
                 content=content,
@@ -668,7 +669,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             )
             if upd is None:
                 _audit("not_found", args["slug"])
-                return f"Artifact not found: {args['slug']}"
+                return tool_failure(f"Artifact not found: {args['slug']}")
             _audit("success", upd.slug)
             return f"Updated artifact '{upd.name}' → version {upd.version}."
 
@@ -703,7 +704,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             ok = prov.delete(args["slug"])
             _audit("success" if ok else "not_found", args["slug"])
             return (
-                f"Deleted artifact: {args['slug']}" if ok else f"Artifact not found: {args['slug']}"
+                f"Deleted artifact: {args['slug']}"
+                if ok
+                else tool_failure(f"Artifact not found: {args['slug']}")
             )
 
         if name == "image_generate":
@@ -727,7 +730,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
     except (ValueError, PermissionError) as e:
         _audit("error", args.get("slug", ""), str(e))
-        return f"Error: {e}"
+        return tool_failure(f"{e}")
 
     return f"Unknown artifact tool: {name}"
 
@@ -748,8 +751,8 @@ def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
     resolved = active_image_gen()
     if resolved is None:
         _audit("denied", error="no image_gen model configured")
-        return (
-            "Error: no image-generation model is configured. Bind one to the "
+        return tool_failure(
+            "no image-generation model is configured. Bind one to the "
             "'image_gen' use-case in Settings → Models (e.g. an OpenAI gpt-image-1 "
             "or a FAL model)."
         )
@@ -757,7 +760,7 @@ def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
     prompt = str(args.get("prompt", "")).strip()
     if not prompt:
         _audit("denied", error="empty prompt")
-        return "Error: provide a non-empty prompt."
+        return tool_failure("provide a non-empty prompt.")
     size = str(args.get("size", "")).strip()
     edit_slug = str(args.get("edit_artifact", "")).strip()
 
@@ -766,10 +769,10 @@ def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
             src = prov.get(edit_slug)
             if src is None or src.kind != "image":
                 _audit("denied", edit_slug, "edit source not an image artifact")
-                return f"Error: {edit_slug!r} is not an existing image artifact to edit."
+                return tool_failure(f"{edit_slug!r} is not an existing image artifact to edit.")
             raw = prov.raw_bytes(edit_slug)
             if raw is None:
-                return f"Error: could not read source image {edit_slug!r}."
+                return tool_failure(f"could not read source image {edit_slug!r}.")
             src_bytes, src_mime = raw
             from personalclaw.artifacts.models import ext_for_mime
 
@@ -789,23 +792,23 @@ def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
             results = _run_async(provider.generate(prompt, model=model_id, size=size))
     except ImageGenError as e:
         _audit("error", edit_slug, str(e))
-        return f"Error: {e}"
+        return tool_failure(f"{e}")
 
     if not results:
         _audit("error", edit_slug, "no image returned")
-        return "Error: the image provider returned no image."
+        return tool_failure("the image provider returned no image.")
 
     materialized = _materialize_image(results[0])
     if materialized is None:
         _audit("error", edit_slug, "could not materialize image")
-        return "Error: generated image could not be saved (no resolvable bytes)."
+        return tool_failure("generated image could not be saved (no resolvable bytes).")
     data, mime = materialized
 
     display_name = str(args.get("name", "")).strip() or prompt[:60]
     if edit_slug:
         art = prov.update_binary(edit_slug, data=data, mime=mime, actor="agent", session_id=sk)
         if art is None:
-            return f"Error: could not update image artifact {edit_slug!r}."
+            return tool_failure(f"could not update image artifact {edit_slug!r}.")
         _audit("success", art.slug)
         # Pin the inline image to THIS version (not live /raw) so the chat message
         # keeps showing the image it produced even after a later edit.
@@ -883,8 +886,8 @@ def _video_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
     resolved = active_video_gen()
     if resolved is None:
         _audit("denied", error="no video_gen model configured")
-        return (
-            "Error: no video-generation model is configured. Bind one to the "
+        return tool_failure(
+            "no video-generation model is configured. Bind one to the "
             "'video_gen' use-case in Settings → Models (e.g. a FAL Kling or Veo "
             "model)."
         )
@@ -892,7 +895,7 @@ def _video_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
     prompt = str(args.get("prompt", "")).strip()
     if not prompt:
         _audit("denied", error="empty prompt")
-        return "Error: provide a non-empty prompt."
+        return tool_failure("provide a non-empty prompt.")
     duration_seconds = float(args.get("duration_seconds", 5.0))
     aspect_ratio = str(args.get("aspect_ratio", "")).strip()
 
@@ -907,16 +910,16 @@ def _video_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
         )
     except VideoGenError as e:
         _audit("error", "", str(e))
-        return f"Error: {e}"
+        return tool_failure(f"{e}")
 
     if not results:
         _audit("error", "", "no video returned")
-        return "Error: the video provider returned no video."
+        return tool_failure("the video provider returned no video.")
 
     materialized = _materialize_video(results[0])
     if materialized is None:
         _audit("error", "", "could not materialize video")
-        return "Error: generated video could not be saved (no resolvable bytes)."
+        return tool_failure("generated video could not be saved (no resolvable bytes).")
     data, mime = materialized
 
     display_name = str(args.get("name", "")).strip() or prompt[:60]
@@ -1019,21 +1022,21 @@ def _visualize(args: dict[str, Any], _audit: Any) -> str:
 
     if "data" not in args:
         _audit("denied", error="no data")
-        return "Error: provide `data` to visualize."
+        return tool_failure("provide `data` to visualize.")
     hint = str(args.get("hint", "") or "")
     title = str(args.get("title", "") or "Visualization")
     try:
         result = _run_async(_visualize_primitive(args["data"], hint, title=title))
     except Exception as e:  # noqa: BLE001 — a model/provider failure is a caller-facing refusal
         _audit("error", error=str(e))
-        return (
-            f"Error: could not produce a visualization ({e}). No reasoning model may be "
+        return tool_failure(
+            f"could not produce a visualization ({e}). No reasoning model may be "
             "configured — bind one in Settings → Models, or present the data as text."
         )
     if not result.dsl.strip():
         _audit("error", error="empty visualization")
-        return (
-            "Error: the model produced no renderable components. Present the data as text instead."
+        return tool_failure(
+            "the model produced no renderable components. Present the data as text instead."
         )
     _audit("success")
     return (
@@ -1117,8 +1120,8 @@ def _document_create(
     writer = get_writer(fmt)
     if writer is None:
         _audit("denied", error=f"unsupported format {fmt}")
-        return (
-            f"Error: no writer for format {fmt!r}. Available: "
+        return tool_failure(
+            f"no writer for format {fmt!r}. Available: "
             f"{', '.join(available_formats()) or 'none'}."
         )
 
@@ -1150,7 +1153,7 @@ def _document_create(
             )
         else:
             _audit("denied", error="no deck input")
-            return "Error: provide markdown or slides."
+            return tool_failure("provide markdown or slides.")
     elif name == "sheet_create":
         sheets = args.get("sheets")
         rows = args.get("rows")
@@ -1173,7 +1176,7 @@ def _document_create(
             model = SheetModel.from_rows({"Sheet1": parsed})
         else:
             _audit("denied", error="no sheet input")
-            return "Error: provide sheets, rows, or csv."
+            return tool_failure("provide sheets, rows, or csv.")
     else:
         markdown = str(args.get("markdown") or "")
         html = str(args.get("html") or "")
@@ -1185,8 +1188,8 @@ def _document_create(
             resolved, title = _resolve_document_source(prov, source)
             if resolved is None:
                 _audit("denied", error=f"source not found: {source}")
-                return (
-                    f"Error: no knowledge item or text artifact matches {source!r}. "
+                return tool_failure(
+                    f"no knowledge item or text artifact matches {source!r}. "
                     "Pass a knowledge item id or an artifact slug."
                 )
             markdown = resolved
@@ -1204,7 +1207,7 @@ def _document_create(
             model = document_from_html(html, title=str(args.get("title") or ""))
         else:
             _audit("denied", error="no document input")
-            return "Error: provide markdown, html, or source."
+            return tool_failure("provide markdown, html, or source.")
 
     binary = is_binary_kind(fmt)
     try:
@@ -1212,14 +1215,14 @@ def _document_create(
         text_content = None if binary else data.decode("utf-8")
     except Exception as e:  # noqa: BLE001 — a writer failure is a caller-facing refusal
         _audit("error", error=str(e))
-        return f"Error: could not render the {fmt}: {e}"
+        return tool_failure(f"could not render the {fmt}: {e}")
 
     size_cap = MAX_BINARY_CONTENT_BYTES if binary else MAX_CONTENT_BYTES
     if len(data) > size_cap:
         mb, cap = len(data) / 1_048_576, size_cap / 1_048_576
         _audit("denied", error=f"oversized {len(data)}")
-        return (
-            f"Error: the generated {fmt} came to {mb:.1f}MB (cap {cap:.0f}MB). "
+        return tool_failure(
+            f"the generated {fmt} came to {mb:.1f}MB (cap {cap:.0f}MB). "
             "Reduce the content or split it across documents."
         )
 

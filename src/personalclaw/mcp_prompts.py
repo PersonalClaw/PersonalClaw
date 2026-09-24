@@ -17,6 +17,7 @@ import urllib.parse
 from typing import Any
 
 from personalclaw.mcp_core import _post
+from personalclaw.tool_providers.base import tool_failure
 
 
 def _list_tools() -> list[dict[str, Any]]:
@@ -55,19 +56,19 @@ def _call_tool(name: str, args: dict[str, Any]) -> str:
     if name == "prompt_render":
         pid = (args.get("prompt_id") or "").strip()
         if not pid:
-            return "Error: prompt_id is required."
+            return tool_failure("prompt_id is required.")
         variables = args.get("vars") or {}
         if not isinstance(variables, dict):
-            return "Error: 'vars' must be an object (variable name → value)."
+            return tool_failure("'vars' must be an object (variable name → value).")
         d = _post(
             f"/api/prompts/{urllib.parse.quote(pid)}/render",
             {"variables": variables},
         )
         if d.get("error"):
-            return f"Error: {d['error']}"
+            return tool_failure(f"{d['error']}")
         rendered = (d.get("rendered") or "").strip()
         if not rendered:
-            return f"Error: prompt {pid!r} rendered empty."
+            return tool_failure(f"prompt {pid!r} rendered empty.")
         return f"Rendered prompt '{pid}' — carry out the following:\n\n{rendered}"
 
-    return f"Error: unknown prompts tool {name!r}."
+    return tool_failure(f"unknown prompts tool {name!r}.")

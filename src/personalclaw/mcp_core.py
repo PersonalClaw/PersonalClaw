@@ -39,6 +39,7 @@ from typing import Any
 
 from personalclaw import gateway_base
 from personalclaw.config import loader as config_loader
+from personalclaw.tool_providers.base import tool_failure
 
 
 def config_dir() -> Path:
@@ -936,12 +937,12 @@ def _load_skill_resource(args: dict[str, Any]) -> str:
     skill_name = (args.get("skill") or "").strip()
     rel_path = (args.get("path") or "").strip()
     if not skill_name or not rel_path:
-        return "Error: both skill and path are required."
+        return tool_failure("both skill and path are required.")
     loader = SkillsLoader()
     try:
         read = loader.read_resource(skill_name, rel_path)
     except SkillResourceRefused as exc:
-        return f"Error: {exc}"
+        return tool_failure(f"{exc}")
     # Usage-recorded like skill_invoke: loading a resource IS a use of the skill,
     # so surfacing-ranking and the curator (§2.3) see it.
     try:
@@ -986,13 +987,15 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     if name == "skill_invoke":
         skill_name = (args.get("name") or "").strip()
         if not skill_name:
-            return "Error: name is required."
+            return tool_failure("name is required.")
         from personalclaw.skills.loader import SkillsLoader
 
         loader = SkillsLoader()
         content = loader.load_skill(skill_name)
         if content is None:
-            return f"Error: no skill named '{skill_name}'. Check the skill index for exact names."
+            return tool_failure(
+                f"no skill named '{skill_name}'. Check the skill index for exact names."
+            )
         # Phase-2 disclosure: record the load as a use (#25) so surfacing-ranking
         # and the curator see on-demand invocations, then return the full body.
         try:
@@ -1015,14 +1018,14 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         title = (args.get("title") or "").strip()
         body = (args.get("body") or "").strip()
         if not title or not body:
-            return "Error: both title and body are required."
+            return tool_failure("both title and body are required.")
         from personalclaw.skills import ephemeral
 
         session_key = get_current_session_key() or "default"
         draft = ephemeral.remember(session_key, title, body)
         if draft is None:
-            return (
-                "Error: could not save the draft (empty after redaction, or this "
+            return tool_failure(
+                "could not save the draft (empty after redaction, or this "
                 "session's draft limit was reached)."
             )
         return (
@@ -1037,7 +1040,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     if name == "skill_search":
         query = (args.get("query") or "").strip()
         if not query:
-            return "Error: query is required."
+            return tool_failure("query is required.")
         try:
             limit = int(args.get("limit") or 20)
         except (ValueError, TypeError):
@@ -1063,7 +1066,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         path = "/api/context" + ("?" + "&".join(qs) if qs else "")
         resp = _get(path)
         if resp.get("error"):
-            return f"Error loading context: {resp['error']}"
+            return tool_failure(f"loading context: {resp['error']}")
         # The endpoint already renders the tiered markdown body; return it verbatim so
         # the agent reads the same block an adapter file would carry.
         return resp.get("text") or "No context available for this project."
@@ -1124,7 +1127,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
         hook_id = str(args.get("hook_id", "")).strip()
         if not hook_id:
-            return "Error: hook_id is required"
+            return tool_failure("hook_id is required")
         context_summary = str(args.get("context_summary", ""))
         session_key = f"hook:{hook_id}"
         # Persist hook registration in the ACTIVE home. This was
@@ -1146,7 +1149,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 try:
                     hooks = json.loads(hook_file.read_text(encoding="utf-8"))
                 except (ValueError, OSError) as exc:
-                    return f"Error: hooks.json is corrupted, fix or delete it: {exc}"
+                    return tool_failure(f"hooks.json is corrupted, fix or delete it: {exc}")
             hooks[hook_id] = {
                 "session_key": session_key,
                 "context_summary": context_summary,
@@ -1172,7 +1175,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         try:
             _resolved_base = _api_base()
         except gateway_base.GatewayBaseUnresolved as exc:
-            return f"Error: cannot build the webhook URL — {exc}"
+            return tool_failure(f"cannot build the webhook URL — {exc}")
         parsed = urlparse(_resolved_base)
         base = f"{parsed.scheme}://{parsed.hostname}"
         if parsed.port:
@@ -1237,7 +1240,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             args = {**args, "session": "origin"}
         if args.get("session"):
             if args["session"] not in ("origin", "channel"):
-                return 'Error: session must be "origin" or "channel".'
+                return tool_failure('session must be "origin" or "channel".')
             payload["session"] = args["session"]
             caller_session = _resolve_session_key()
             if caller_session.startswith("cron:"):
@@ -1281,7 +1284,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 outcome="denied",
                 error=f"file_too_large: {e}",
             )
-            return f"Error: {e}"
+            return tool_failure(f"{e}")
         if raw is None:
             sel().log_tool_invocation(
                 session_key="mcp_core",
@@ -1290,7 +1293,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 outcome="denied",
                 error=f"path_not_allowed: {src}",
             )
-            return f"Error: file not found or access denied: {src}"
+            return tool_failure(f"file not found or access denied: {src}")
         clean_name = src.name
         if redact(clean_name) != clean_name:
             sel().log_tool_invocation(
@@ -1300,7 +1303,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 outcome="denied",
                 error=f"sensitive_filename: {redact(clean_name)}",
             )
-            return "Error: filename contains sensitive content. Rename the file first."
+            return tool_failure("filename contains sensitive content. Rename the file first.")
         try:
             text = raw.decode("utf-8")
         except UnicodeDecodeError:
@@ -1311,7 +1314,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 outcome="denied",
                 error="not_utf8",
             )
-            return "Error: only UTF-8 text files are supported"
+            return tool_failure("only UTF-8 text files are supported")
         if redact(text) != text:
             sel().log_tool_invocation(
                 session_key="mcp_core",
@@ -1320,7 +1323,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 outcome="denied",
                 error="sensitive_content_detected",
             )
-            return "Error: file content contains sensitive data; send aborted"
+            return tool_failure("file content contains sensitive data; send aborted")
         dest = outbox_dir() / clean_name
         try:
             with dest.open("xb") as f:
@@ -1349,7 +1352,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             },
         )
         if d.get("error"):
-            return f"Error: {d['error']}"
+            return tool_failure(f"{d['error']}")
         # Also upload to the active channel if available
         thread_ts = _current_session_thread_ts()
         channel_resp = _post(
@@ -1435,7 +1438,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
         ops = args.get("ops")
         if not isinstance(ops, list) or not ops:
-            return "Error [WF_REFINE_NO_OPS]: 'ops' must be a non-empty array of typed ops."
+            return tool_failure(
+                "'ops' must be a non-empty array of typed ops.", code="WF_REFINE_NO_OPS"
+            )
         result = refiner_tools.file_template_diff(
             str(args.get("workflow_name", "") or ""),
             ops=[o for o in ops if isinstance(o, dict)],
@@ -1466,7 +1471,7 @@ def _suggest_template(args: dict[str, Any]) -> str:
     args = validate_tool_args(args, SUGGEST_TEMPLATE_SCHEMA)
     shape = str(args.get("shape", "") or "").strip()
     if not shape:
-        return "Error [SUGGEST_TEMPLATE_SHAPE_REQUIRED]: 'shape' is required."
+        return tool_failure("'shape' is required.", code="SUGGEST_TEMPLATE_SHAPE_REQUIRED")
     decision = str(args.get("decision", "") or "observe").strip().lower()
 
     state = template_store.load_nudge(shape)
@@ -1569,9 +1574,11 @@ def _save_template_from_session(args: dict[str, Any]) -> str:
     )
     description = str(args.get("description") or "").strip()
     if not slug:
-        return "Error: name is required (the proposed template name)."
+        return tool_failure("name is required (the proposed template name).")
     if not steps:
-        return "Error: steps is required — a non-empty list of the procedure's steps, in order."
+        return tool_failure(
+            "steps is required — a non-empty list of the procedure's steps, in order."
+        )
 
     # `template_surfaced` resolved against the real def registry, not left at its dataclass
     # default: the TEMPLATE_EXISTS pre-gate depends on library state, and defaulting it False
@@ -1643,11 +1650,11 @@ def _project_context_review(args: dict[str, Any]) -> str:
 
     raw_items = args.get("items")
     if not isinstance(raw_items, list) or not raw_items:
-        return "Error: at least one item is required."
+        return tool_failure("at least one item is required.")
     project_id = _resolve_review_project_id(str(args.get("project_id") or ""))
     if not project_id:
-        return (
-            "Error: no project to review. This session is not bound to a project — "
+        return tool_failure(
+            "no project to review. This session is not bound to a project — "
             "pass project_id explicitly."
         )
     candidates = [
@@ -1748,16 +1755,16 @@ def _dashboard_tile_propose(args: dict[str, Any]) -> str:
     args = validate_tool_args(args, DASHBOARD_TILE_PROPOSE_SCHEMA)
     slug = str(args.get("slug") or "").strip()
     if not slug:
-        return "Error: slug is required (the saved artifact to pin)."
+        return tool_failure("slug is required (the saved artifact to pin).")
     view_id = str(args.get("view_id") or "").strip() or views_store.PRESET_OVERVIEW_ID
     size = str(args.get("size") or "m")
     ref = slug if slug.startswith("artifact:") else f"artifact:{slug}"
     try:
         views_store.add_tile(view_id, ref, size=size, added_by="agent")
     except views_store.ViewNotFoundError:
-        return f"Error: no view '{view_id}' to propose onto."
+        return tool_failure(f"no view '{view_id}' to propose onto.")
     except ValueError as exc:
-        return f"Error: {exc}"
+        return tool_failure(f"{exc}")
     where = (
         "the Overview home" if view_id == views_store.PRESET_OVERVIEW_ID else f"view '{view_id}'"
     )
