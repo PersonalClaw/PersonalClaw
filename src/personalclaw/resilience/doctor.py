@@ -586,7 +586,31 @@ async def _probe_serving_fs(ctx: DoctorContext) -> ProbeResult:
                 "target_ok": bool(target and (target / "index.html").is_file()),
             }
         elif dist.is_dir():
-            ev["dist"] = {"kind": "copy", "target_ok": (dist / "index.html").is_file()}
+            # 🔴 A PLAIN DIRECTORY IS NOT EVIDENCE OF A SHADOWING COPY — it is what the WHEEL
+            # SHIPS. This branch classified every real directory as `copy`, and the detail below
+            # turns `copy` into "serves a stale SPA", so EVERY pip-installed instance reported a
+            # permanent serving-fs fault. Measured on a fresh container (0.1.3 wheel): `static/dist`
+            # a real directory holding the very `index.html` whose `/assets/*.js` the gateway had
+            # just served 200, no `web/` anywhere in the image — and the Doctor said "COPY shadowing
+            # the runtime symlink (serves a stale SPA)", which put a degraded badge on a new user's
+            # home screen for a fault that cannot exist there.
+            #
+            # 🔑 THE OTHER HALF OF THIS PROBE ALREADY GETS THIS RIGHT. `spa_dist_freshness` returns
+            # `no-sources` for exactly this case and documents it as "an installed wheel. Not
+            # checkable, never a fault." Same probe, same distinction, one half of it missing.
+            #
+            # And the FIX already knew too: `serving-fs.symlink-repair` refuses with "no web/dist
+            # build found to link" on an installed layout — so the fault we reported was one whose
+            # only offered remediation declines to run. `resolve_website_dist` is that same
+            # discriminator, now shared: a symlink can only be shadowed where there is something
+            # for it to point AT.
+            from personalclaw.frontend import resolve_website_dist
+
+            shadowable = resolve_website_dist(pkg_dir) is not None
+            ev["dist"] = {
+                "kind": "copy" if shadowable else "packaged",
+                "target_ok": (dist / "index.html").is_file(),
+            }
         else:
             ev["dist"] = {"kind": "missing", "target_ok": False}
 

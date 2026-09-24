@@ -17,6 +17,8 @@ capability failed at tier 3, no restart) is asserted directly.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from personalclaw.resilience import doctor
@@ -282,22 +284,97 @@ async def test_memory_probe_detects_faiss_desync(tmp_path):
     assert res.evidence["embedded_count"] == 2 and res.evidence["faiss_ids"] == 1
 
 
+def _fake_pkg(root: Path, *, with_web_build: bool) -> Path:
+    """A fake package tree at ``<root>/src/personalclaw`` with a real-directory static/dist.
+
+    ``with_web_build`` decides which of the two layouts this is, and it is the ONLY
+    difference between them:
+
+    * ``True``  — a dev checkout: ``<root>/web/dist/index.html`` exists, so ``static/dist``
+      is a directory standing where a symlink belongs. That IS the stale-SPA bug-class.
+    * ``False`` — an installed wheel: there is no ``web/`` at all, so a real directory is
+      exactly what was shipped and there is no symlink for it to shadow.
+
+    The path is ``src/personalclaw`` and not ``pkg`` because ``resolve_website_dist``
+    reads the repo root as two levels up from the package dir — the layout this project
+    actually ships. The old fixture used ``<tmp>/pkg``, which made ``<tmp>`` look like a
+    repo root with no ``web/``: an installed layout, asserted to be a defect.
+    """
+    pkg = root / "src" / "personalclaw"
+    (pkg / "static" / "dist").mkdir(parents=True)
+    (pkg / "static" / "dist" / "index.html").write_text("<html></html>", encoding="utf-8")
+    if with_web_build:
+        (root / "web" / "dist").mkdir(parents=True)
+        (root / "web" / "dist" / "index.html").write_text("<html></html>", encoding="utf-8")
+    return pkg
+
+
 @pytest.mark.asyncio
 async def test_serving_fs_probe_flags_copy_shadowing_symlink(tmp_path, monkeypatch):
-    """A real-directory static/dist copy (not a symlink) is the stale-SPA bug-class
-    and must be flagged."""
+    """A real-directory static/dist standing where a symlink belongs — a web/dist build
+    exists to point at — is the stale-SPA bug-class and must be flagged."""
     import personalclaw
 
-    # Point the probe's package-dir resolution at a fake pkg with a COPY dist.
-    fake_pkg = tmp_path / "pkg"
-    (fake_pkg / "static" / "dist").mkdir(parents=True)
-    (fake_pkg / "static" / "dist" / "index.html").write_text("<html></html>", encoding="utf-8")
-    monkeypatch.setattr(personalclaw, "__file__", str(fake_pkg / "__init__.py"))
+    pkg = _fake_pkg(tmp_path, with_web_build=True)
+    monkeypatch.setattr(personalclaw, "__file__", str(pkg / "__init__.py"))
 
     res = await doctor._probe_serving_fs(DoctorContext(home=tmp_path))
     assert res.ok is False
     assert res.evidence["dist"]["kind"] == "copy"
     assert "stale SPA" in res.detail
+
+
+@pytest.mark.asyncio
+async def test_serving_fs_probe_does_not_call_an_installed_wheel_a_stale_spa(tmp_path, monkeypatch):
+    """🔴 THE DEFECT: every pip-installed instance reported a permanent serving-fs fault.
+
+    ``static/dist`` was classified ``copy`` on the mere fact of being a directory, and
+    ``copy`` is rendered as "a COPY shadowing the runtime symlink (serves a stale SPA)".
+    In a wheel a real directory is *what ships* — measured on a fresh container (0.1.3
+    wheel, nothing configured): ``static/dist`` a real directory holding the very
+    ``index.html`` whose ``/assets/index-*.js`` the gateway had just served 200, no
+    ``web/`` anywhere in the image, and ``/api/doctor`` reporting ``serving-fs`` not ok.
+    That put a degraded badge on a new user's home screen for a fault that cannot exist
+    there, and the only remediation offered (``serving-fs.symlink-repair``) refuses on
+    that layout with "no web/dist build found to link".
+
+    🔑 The freshness half of this same probe already answers this correctly —
+    ``spa_dist_freshness`` returns ``no-sources`` and documents it as "an installed wheel.
+    Not checkable, never a fault." One half of the probe had the distinction; the other
+    did not.
+
+    🪤 The fixture differs from the arm above by ONE THING: whether ``web/dist`` exists.
+    That is the whole discriminator, so a fix that hard-coded "a directory is fine" would
+    pass this and break the arm above.
+    """
+    import personalclaw
+
+    pkg = _fake_pkg(tmp_path, with_web_build=False)
+    monkeypatch.setattr(personalclaw, "__file__", str(pkg / "__init__.py"))
+
+    res = await doctor._probe_serving_fs(DoctorContext(home=tmp_path))
+    assert res.evidence["dist"]["kind"] == "packaged"
+    assert res.ok is True, res.detail
+    assert "stale SPA" not in res.detail
+    assert "shadowing" not in res.detail
+
+
+@pytest.mark.asyncio
+async def test_serving_fs_probe_still_fails_a_packaged_dist_with_no_index(tmp_path, monkeypatch):
+    """🪤 VACUITY FLOOR. "An installed layout is never a fault" must not become "an
+    installed layout is never CHECKED": a wheel built without the SPA serves the
+    deliberate "Build the dashboard" placeholder behind a 200, which is the exact trap
+    ``scripts/verify_wheel.py`` exists for. ``target_ok`` still has to bite.
+    """
+    import personalclaw
+
+    pkg = _fake_pkg(tmp_path, with_web_build=False)
+    (pkg / "static" / "dist" / "index.html").unlink()
+    monkeypatch.setattr(personalclaw, "__file__", str(pkg / "__init__.py"))
+
+    res = await doctor._probe_serving_fs(DoctorContext(home=tmp_path))
+    assert res.ok is False
+    assert "not resolvable" in res.detail
 
 
 # ── 🔴 the state-inventory guard now has a runtime caller (S179) ──
