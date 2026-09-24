@@ -21,7 +21,7 @@ class TestDoctor:
             patch(
                 "personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"
             ),
-            patch("personalclaw.cli_doctor.AGENTS_DIR", tmp_path),
+            patch("personalclaw.cli_doctor.agents_dir", lambda: tmp_path),
             patch("subprocess.run", return_value=mock_run),
             patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no gateway")),
             patch("personalclaw.cli_doctor.is_local_bind", return_value=True),
@@ -1080,7 +1080,7 @@ class TestDoctorStaleProjectDir:
             patch(
                 "personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"
             ),
-            patch("personalclaw.cli_doctor.AGENTS_DIR", tmp_path),
+            patch("personalclaw.cli_doctor.agents_dir", lambda: tmp_path),
             patch("subprocess.run", return_value=mock_run),
             patch("urllib.request.urlopen"),
             patch("personalclaw.cli_doctor.is_local_bind", return_value=True),
@@ -1121,7 +1121,7 @@ class TestDoctorMcpCmdFixed:
 
         with (
             patch("personalclaw.cli_doctor.shutil.which", side_effect=which_side_effect),
-            patch("personalclaw.cli_doctor.AGENTS_DIR", tmp_path),
+            patch("personalclaw.cli_doctor.agents_dir", lambda: tmp_path),
             patch("subprocess.run", return_value=mock_run),
             patch("urllib.request.urlopen"),
             patch("personalclaw.cli_doctor.is_local_bind", return_value=True),
@@ -1178,7 +1178,7 @@ class TestDoctorStt:
             patch(
                 "personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"
             ),
-            patch("personalclaw.cli_doctor.AGENTS_DIR", tmp_path),
+            patch("personalclaw.cli_doctor.agents_dir", lambda: tmp_path),
             patch("subprocess.run", return_value=mock_run),
             patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no gateway")),
             patch("personalclaw.cli_doctor.is_local_bind", return_value=True),
@@ -1206,7 +1206,7 @@ class TestDoctorStt:
             patch(
                 "personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"
             ),
-            patch("personalclaw.cli_doctor.AGENTS_DIR", tmp_path),
+            patch("personalclaw.cli_doctor.agents_dir", lambda: tmp_path),
             patch("subprocess.run", return_value=mock_run),
             patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no gateway")),
             patch("personalclaw.cli_doctor.is_local_bind", return_value=True),
@@ -1235,7 +1235,7 @@ class TestDoctorStt:
             patch(
                 "personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"
             ),
-            patch("personalclaw.cli_doctor.AGENTS_DIR", tmp_path),
+            patch("personalclaw.cli_doctor.agents_dir", lambda: tmp_path),
             patch("subprocess.run", return_value=mock_run),
             patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no gateway")),
             patch("personalclaw.cli_doctor.is_local_bind", return_value=True),

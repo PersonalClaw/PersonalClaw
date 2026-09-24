@@ -248,11 +248,17 @@
   --color-on-surface-var: #5f6368;
   --color-outline: #8e918f;
   --color-outline-variant: #e1e3e1;
-  --color-primary: #c8452e;
+  /* #3503: retuned from #c8452e / #a33922. The old pair was chosen against the BARE ground
+     ("≥4.5:1 as white-text button fill AND as text on white"), and a status chip composites its ink
+     over its own 16% wash of itself — which drags the ground toward the ink and spent the margin.
+     Swept as a chip ink, `--color-primary` was under AA in 42 of 96 cells, every one light mode,
+     worst 3.4870. Derivation and the full per-scheme table live in `schemes.ts`. These two values
+     are coral's and `schemeContrast.test.ts` asserts that they stay coral's. */
+  --color-primary: #b12e18;
   --color-on-primary: #ffffff;
   --color-primary-container: #ffe0d6;
   --color-on-primary-container: #3f1008;
-  --color-primary-emphasis: #a33922;
+  --color-primary-emphasis: #8d240b;
   /* Light needs a MUCH deeper ink than dark, and unlike dark it does not need to track the scheme.
      Both halves of that are measured.
 

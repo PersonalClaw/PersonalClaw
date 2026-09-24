@@ -22,14 +22,35 @@ export type StatusPillTone = 'ok' | 'warn' | 'danger' | 'info' | 'primary' | 'ne
 
 /** The closed tone → ink var map. Everything routes through the semantic
  *  tokens, so scheme retints and the documented per-scheme info-ink
- *  correction apply for free; `neutral` is the no-verdict grey. */
+ *  correction apply for free; `neutral` is the no-verdict grey.
+ *
+ *  🔴 `neutral` IS THE INK RAMP'S MUTED TIER, NOT A HAIRLINE TOKEN (#3493). It
+ *  drew in `--color-outline-variant` — a border/divider value — and a hairline
+ *  is designed to be *barely* separable from its surface, which is the opposite
+ *  of what text needs. Measured over its own 16% tint on the four resting tiers,
+ *  in both modes: **1.6346 dark** on `surface-container` and **1.1381 light** on
+ *  the canvas, against AA's 4.5 for 12px text. All 8 cells failed, and no ground
+ *  rescues it — the token is 1.07–2.04 against every tier even BEFORE the tint,
+ *  which `knowledge/graphMarkContrast.test.ts` independently records (2.04 dark /
+ *  1.17 light on the canvas) as its reason for deleting the same value from two
+ *  graph marks. So this is an INK fix and NOT a compositing one: pinning which
+ *  opaque tier the 16% tint resolves against (the remedy the model-fit chip took
+ *  in #3441 for a 4.4543 reading) cannot move a ratio that is already under 2:1
+ *  on every tier, with or without a tint.
+ *
+ *  `--color-on-surface-low` is the muted TEXT tier of the same ramp (0 of 8
+ *  cells under AA, worst 4.5472 dark on `surface-container`, best 7.2320 light),
+ *  and it is the value the tree's OTHER neutral pill already ships:
+ *  `settings/bento.tsx`'s `muted` variant paints exactly this ink. Picking it
+ *  makes the two agree rather than mint a third grey. `--color-on-surface-var`
+ *  was measured and rejected — 4.4308 on the light canvas, still under. */
 const TONE_VAR: Record<StatusPillTone, string> = {
   ok: 'var(--color-ok)',
   warn: 'var(--color-warn)',
   danger: 'var(--color-danger)',
   info: 'var(--color-info)',
   primary: 'var(--color-primary)',
-  neutral: 'var(--color-outline-variant)',
+  neutral: 'var(--color-on-surface-low)',
 }
 
 export function StatusPill({ tone, sized = true, pad = true, className, style, children, ...rest }: HTMLAttributes<HTMLSpanElement> & {

@@ -52,6 +52,24 @@ function caseLabels(): string[] {
   return [...src.matchAll(/case '([^']+)':/g)].map((m) => m[1])
 }
 
+/** The `SHELL_ROUTES` literal — the routes the shell renders from an early return. */
+function shellRoutes(): string[] {
+  const line = code.match(/const SHELL_ROUTES = new Set\(\[([^\]]*)\]\)/)
+  if (!line) return []
+  return [...line[1].matchAll(/'([^']+)'/g)].map((m) => m[1])
+}
+
+/** Every route the component returns for ITSELF, full-screen, instead of handing it to the nav
+ *  switch — read off `App`'s own top-level `if (route === '<x>')` guards.
+ *
+ *  Anchored at exactly two spaces of indentation, which is what distinguishes a guard in the
+ *  component body from the identically-shaped branch four spaces deep inside the route effect.
+ *  Read from `code` (comment-free) because this file's own prose names those routes, and a rail
+ *  that matches its own explanation measures nothing. */
+function earlyReturnRoutes(): string[] {
+  return [...new Set([...code.matchAll(/^ {2}if \(route === '([^']+)'/gm)].map((m) => m[1]))]
+}
+
 describe('the routable set and the render switch agree', () => {
   it('🪤 every ROUTABLE route has a case — which is what makes `default:` unreachable', () => {
     // Two hand-maintained lists, in one file, that must stay in step. A route added to ROUTABLE
@@ -86,26 +104,65 @@ describe('the routable set and the render switch agree', () => {
 })
 
 describe('an unknown route corrects its URL', () => {
-  it('🔑 navigates to the dashboard when the route is not routable', () => {
-    expect(src).toMatch(/if \(route && !ROUTABLE\.has\(route\)\) navigate\('dashboard'/)
+  it('🔑 navigates to the dashboard when the shell can render nothing for the route', () => {
+    expect(code).toMatch(/if \(route && !renderable\(route\)\) \{ navigate\('dashboard'/)
   })
 
   it('replaces rather than pushes', () => {
     // A push would leave the bogus hash in history: Back would return the user to the broken URL
     // they were just rescued from, and re-running this effect would bounce them forward again.
-    expect(src).toMatch(/!ROUTABLE\.has\(route\)\) navigate\('dashboard', \{ replace: true \}\)/)
+    expect(code).toMatch(/!renderable\(route\)\) \{ navigate\('dashboard', \{ replace: true \}\)/)
   })
 
-  it('is gated so it cannot fight the onboarding redirect', () => {
-    // `#/onboarding` is deliberately NOT in ROUTABLE, so an ungated correction would compete with
-    // the onboarding effect for the route.
-    const effect = src.slice(src.indexOf("if (route && !ROUTABLE.has(route))") - 400)
-    expect(effect).toMatch(/if \(!loaded \|\| !onboarded\) return[\s\S]{0,200}!ROUTABLE\.has\(route\)/)
+  it('🔴 asks `renderable`, not `ROUTABLE` — the two are not the same question (#3506)', () => {
+    // `ROUTABLE` answers "does the nav switch have a case". The corrector's question is "can the
+    // shell render this AT ALL", and `onboarding`/`companion` answer yes by early return while
+    // answering no to `ROUTABLE`. Testing the wrong one made the corrector rewrite the app's own
+    // PWA `start_url` and every onboarding exit deep-link to `#/dashboard`.
+    expect(code).toMatch(/const renderable = \(route: string\): boolean =>\s*ROUTABLE\.has\(route\) \|\| SHELL_ROUTES\.has\(route\)/)
+    expect(code, 'the corrector must not test ROUTABLE directly').not.toMatch(
+      /!ROUTABLE\.has\(route\)\) \{? ?navigate\('dashboard'/)
+  })
+
+  it('🔴 every route the shell renders itself is one the corrector will not rewrite (#3506)', () => {
+    // The relationship that broke, asserted as a relationship rather than as two literals: a
+    // full-screen route added with an early return and NOT added to SHELL_ROUTES would be
+    // corrected away a tick after it rendered — reachable by code, unreachable by URL.
+    const admitted = new Set(shellRoutes())
+    const orphans = earlyReturnRoutes().filter((r) => !admitted.has(r))
+    expect(orphans, 'these routes render from an early return but SHELL_ROUTES does not admit them')
+      .toEqual([])
+  })
+
+  it('🪤 vacuity floor — both route lists were actually found', () => {
+    // Either regex matching nothing would make the check above pass on an empty array.
+    expect(earlyReturnRoutes().sort()).toEqual(['companion', 'onboarding'])
+    expect(shellRoutes().sort()).toEqual(['companion', 'onboarding'])
+  })
+
+  it('🔴 the correction is downstream of the onboarding branches, in ONE effect (#3506)', () => {
+    // It used to be a second effect "gated on `loaded && onboarded` so it cannot race the
+    // onboarding effect above". That gate named the wrong window: at the instant `onboarded`
+    // flips, `route` is STILL the stale `'onboarding'`, so both effects fired on one commit and
+    // the corrector `replace`d the destination the guard had just pushed. Ordering two effects by
+    // a predicate is what failed; the fix is that there is only one, and correction sits after
+    // every `return` that precedes it, so it cannot run while a route decision is pending.
+    const effects = [...code.matchAll(/useEffect\(\(\) => \{\s*\n\s*if \(!loaded\)/g)]
+    expect(effects.length, 'exactly one effect may decide the route').toBe(1)
+    const body = code.slice(code.indexOf('if (!loaded) return'))
+    const onboardingBranch = body.indexOf("if (route === 'onboarding')")
+    const correction = body.indexOf('!renderable(route)')
+    expect(onboardingBranch).toBeGreaterThan(-1)
+    expect(correction).toBeGreaterThan(onboardingBranch)
+    // And the onboarding branch must RETURN, or "downstream" would not mean "unreachable".
+    expect(body.slice(onboardingBranch, correction)).toContain('return }')
   })
 
   it('still renders something for that tick rather than blanking', () => {
     // The clamp stays: the effect corrects the URL on the next tick, so this render needs a page.
-    expect(src).toContain("const rendered = ROUTABLE.has(route) ? route : 'dashboard'")
+    // `ROUTABLE.has` here is correct and deliberate — a SHELL_ROUTES member never reaches the
+    // switch, so widening this would hand the switch a route with no case.
+    expect(code).toContain("const rendered = ROUTABLE.has(route) ? route : 'dashboard'")
   })
 })
 

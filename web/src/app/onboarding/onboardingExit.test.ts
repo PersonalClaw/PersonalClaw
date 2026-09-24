@@ -73,8 +73,14 @@ describe('the guard consumes it', () => {
   it('the exit branch PEEKS, defaulting to the dashboard', () => {
     // Asserted on the guard's source because the branch only runs inside the full App tree with a
     // live identity provider; a mechanism with no reader is the other defect this pins.
+    //
+    // 🔴 It reaches the branch having already RETURNED on `!onboarded`, which is why `onboarded`
+    // no longer appears in the condition. The flat `else if` chain this replaced was one of two
+    // effects, and the other one — the unknown-hash corrector — overwrote this navigation on the
+    // handoff commit (#3506). That is the second time this destination was measured landing on
+    // `#/dashboard`; see `routeCasesCoverRoutable.test.ts` for the ordering rail.
     expect(app()).toMatch(
-      /onboarded && route === 'onboarding'\)\s*navigate\(peekOnboardingExit\(\) \|\| 'dashboard'\)/)
+      /if \(route === 'onboarding'\) \{ navigate\(peekOnboardingExit\(\) \|\| 'dashboard'\); return \}/)
   })
 
   it('the exit branch must NOT consume — a clearing read reintroduces the measured bug', () => {
@@ -82,11 +88,27 @@ describe('the guard consumes it', () => {
   })
 
   it('clearing happens on a LATER branch, once the route has left onboarding', () => {
-    expect(app()).toMatch(/else if \(onboarded\) clearOnboardingExit\(\)/)
+    // Last statement of the effect, reachable only once every route decision above declined —
+    // i.e. onboarded, not on `#/onboarding`, and on a route the shell can render.
+    expect(app()).toMatch(/\n {4}clearOnboardingExit\(\)\n {2}\}, \[loaded, onboarded, route, navigate\]\)/)
   })
 
   it('the redirect INTO onboarding is untouched — the gate still holds', () => {
-    expect(app()).toMatch(/!onboarded && route !== 'onboarding'\) navigate\('onboarding'\)/)
+    expect(app()).toMatch(
+      /if \(!onboarded\) \{ if \(route !== 'onboarding'\) navigate\('onboarding'\); return \}/)
+  })
+
+  it('🔴 a pending destination survives a run that happens BEFORE `onboarded` flips (#3506)', () => {
+    // `exitTo` sets the destination and THEN commits the name, so the effect can run in between
+    // with `!onboarded` and `route === 'onboarding'`. That run must do nothing at all: clearing
+    // there would drop the destination before the branch that reads it ever ran. The `!onboarded`
+    // branch returns, which is what makes `clearOnboardingExit()` unreachable in that state.
+    const src = app()
+    const effect = src.slice(src.indexOf('if (!loaded) return'), src.indexOf('[loaded, onboarded, route, navigate])'))
+    const notOnboarded = effect.indexOf('if (!onboarded)')
+    expect(notOnboarded).toBeGreaterThan(-1)
+    expect(effect.slice(notOnboarded, effect.indexOf('\n', notOnboarded))).toContain('return }')
+    expect(effect.indexOf('clearOnboardingExit()')).toBeGreaterThan(notOnboarded)
   })
 
   it('the flow hands the destination over and then finishes, in that order', () => {

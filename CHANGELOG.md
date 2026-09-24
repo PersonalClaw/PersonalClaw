@@ -10,6 +10,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 - **Browse can now click a `<canvas>`: an opt-in vision-grounding fallback, using a vision model you pull yourself.**
+- **"When PersonalClaw is not the right tool (yet)" — ten situations where a new reader should walk away today, and the two README claims that contradicted the code.**
+- **Agent Rooms are now something you can see and use: a Rooms tab, an attributed transcript, the pause card and per-member status.**
+- **Agent Rooms take turns deterministically, and a round budget pauses the room to you rather than running on.**
+- **Deep research is now a judged, bounded research loop, and a template can say which input carries a loop's task.**
 - **A loop kind can now be started as a workflow run: `general` is the first.**
 - **Agent Rooms: a shared transcript several bound agents deliberate in.**
 - **Agent Rooms: every member now carries its own tool reach, and the human is the only one who can approve a tool call.**
@@ -42,6 +46,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An MCP server can now ask *you* a question mid-tool-call, through the approval card PersonalClaw already had**
 - The Learning page gains a **Lab vs field** panel: one row per subject (bundled template or registered action type) showing its pinned lab score beside its live field record — 👍/👎 rate, edit-before-approve rate, and approval/rejection/undo rates derived from the feedback and earned-autonomy ledgers, computed by query and stored nowhere new.
 - **The published HTTP route reference is now generated, and its count is measured rather than asserted**
+- **Homebrew and Nix are now real install paths, and a fresh-install validator proves it on a machine that does not already have them.**
 
 ### Changed
 - **The five Settings switches that relax a security or safety default now confirm before they take effect.**
@@ -71,7 +76,28 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Chat's Activity → **Index** tab is gone; the Session Map is the session's index.**
 
 ### Fixed
+- **App installs that declare Python dependencies were refused on every clean install: `packaging` was never a declared dependency of core.**
+- **An empty code fence no longer paints the literal word `undefined` into a chat answer.**
+- **A `<widget>` shown inside a code fence is now shown, not run — and the fence keeps the line it was about.**
+- **A room's member picker no longer says "Loading…" forever when the agent list cannot be read, and no longer tells a user with no agents that they are all already in the room.**
+- **The default accent was under AA as chip text on every light surface — 3.52:1 on a page every user visits — so `--color-primary`'s light value is retuned across all 12 schemes.**
+- **The `neutral` status pill is readable: its text was drawn in a border token at 1.63:1, and the contrast rail that should have caught it measured four of the six tones.**
+- **The shell no longer corrects away the two routes it renders itself: `#/companion` — the PWA's own `start_url` — is reachable again, and every deep-link out of first-run setup lands where its button says.**
+- **A handled tool failure now reaches the wire AND the audit log as a failure, so a refused destructive operation is no longer recorded as one that ran.**
+- **Doctor is clean on a fresh install: the last two "in NO snapshot" paths are now recorded as deliberately not state, with the reasoning beside them.**
+- **A misspelled permission in `app.json` is now refused at install by name, instead of vanishing silently from both the manifest and the consent screen.**
+- **An unreadable spend ceiling no longer reads as an unlimited one, and the four unattended seams now refuse rather than spend against an unknown.**
+- **First run no longer tells you your name is saved before it has been saved.**
+- **The audit-outcome rail now sees the outcome words a subsystem names as CONSTANTS, and its raisable ceiling is replaced by a named ledger — so the better practice is no longer the one that evades the rail.**
+- **The Doctor no longer tells every pip-installed instance that its dashboard “serves a stale SPA”.**
+- **The Inbox no longer tells a fresh install its inbox “is not connected yet” while its own banner says the native source is active.**
+- **Prompt-cache counts now survive the native runtime, which is why every ledger row read a structural zero.**
+- **The home screen’s “Needs you” card now opens the inbox item it names, instead of dropping you on the inbox list.**
+- **Two security controls that resolved an unreadable config to their most permissive value now refuse instead.**
+- **A first chat no longer shows the assistant's finalized reply twice until reload.**
+- **A `config.json` that cannot be parsed no longer re-widens a deliberately narrowed security posture — it now fails CLOSED.**
 - **A browse run that got stuck or was refused by the egress policy now explains itself in a sentence instead of printing a reason code.**
+- **First-run setup no longer tells you a chat model is ready when chat cannot use it, and when it cannot, it names the actual reason.**
 - **A credential typed into a project name no longer reaches the download filename, and download filenames now carry non-ASCII names instead of dropping them.**
 - **`personalclaw config --help` no longer advertises a key the command refuses, and a rail now holds every key it advertises to that standard.**
 - **`personalclaw config set --file` no longer reports `✅` for a deletion it did not apply, and `config unset` gives removal a path at all.**
@@ -87,8 +113,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **`ERR_MODEL_UNRESOLVED` now states the cause that actually fired instead of asserting one cause for all of them.**
 - **A scheduled script can finally read a tool refusal instead of crashing on it.**
 - **A content search that hits its deadline inside the worker thread now answers 504 with guidance and records the audit row, instead of letting the exception escape the handler.**
+- **A room's export reports when the room was created, not when someone first spoke in it — and a room nobody has spoken in exports a real date instead of an empty one.**
+- **A failed model-catalog or file-roots read no longer renders as "you have none".**
+- **`LedgerRailsPanel` no longer renders a token FLOOR as a plain number on the same run page where `IntrospectPanel` discloses it.**
+- **A never-fired store trigger no longer reads `never run` in the list and ok-green "Firing on its own" one click later.**
 - **The macOS sandbox wrap no longer resolves its own enforcement binaries through the PATH of the child it is about to confine.**
 - **An unreadable `entity_settings/inbox.json` no longer ENABLES retention cleanup and deletes the items you told it to keep.**
+- **A workflow loop whose body is an agent step now runs more than one round.**
+- **A workflow loop's round cap written as `{{inputs.…}}` was not a cap at all.**
 - **`personalclaw doctor` no longer loads `torch` to answer a yes/no question, which is what aborted macOS verification runs inside `faiss`.**
 - **The desktop app's dashboard window runs inside the Chromium process sandbox again, and a test can now see whether its bridge actually loaded.**
 - **Uninstalling an app while keeping its data, or updating an app, no longer refuses because the app's own background process touched a file.**
@@ -652,6 +684,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Changing your embedding model silently stopped the assistant remembering anything.**
 - **A task comment could be signed as anyone, and never taken back.**
 - **`personalclaw app new` no longer names your app as its own copyright holder, and every licence file in the tree is now held to the real MIT grant.**
+
+### Security
+
+- **Seven known vulnerabilities were shipping in the dashboard's bundled dependencies, and the usual way of checking said there were none.**
+
+### Fixed
+
+- **First-run setup could require a model provider it offered no way to configure: Ollama's on-ramp is discovery-only, and Ollama is never in the app catalogue because it is already installed.**
 
 ## [0.1.3] — 2026-07-30
 

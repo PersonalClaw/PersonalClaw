@@ -1364,11 +1364,63 @@ def validate_spec(spec: dict[str, Any], *, strict: bool = False) -> ValidationRe
         _add(res, "WF_BAD_BINDING", str(exc), "root")
         return res
 
+    _validate_loop_intake(res, spec)
     tree_res = validate_node_tree(root, strict=strict)
     res.issues.extend(tree_res.issues)
     _validate_wip_invariant(res, spec, root)
     res.levels = tree_res.levels if res.ok else []
     return res
+
+
+def _validate_loop_intake(res: ValidationResult, spec: dict[str, Any]) -> None:
+    """Authoring-time validation of the `loop_field` input markers (PP-16).
+
+    Checked here and not only in `loop_aliases.template_intake` because that reader is tolerant on
+    the same terms as every parser in `supervisor_policy` — it drops what it cannot use. A dropped
+    marker means the launch door cannot find the template's task input, and the failure surfaces as
+    a REFUSAL TO LAUNCH a kind the author believed they had just ported. That is the wrong place to
+    learn about a typo, so the spelling is reported where it was written.
+
+    Two shapes, because each has a different silent outcome:
+
+    * an unknown value — the marker is inert. `loop_field: "tsak"` reads as "this template declares
+      no task input", which is indistinguishable from a template that never tried.
+    * two inputs claiming the SAME column — the reader keeps one, decided by dict order, so which
+      of the two receives the user's task depends on the order they happen to be written in.
+    """
+    from personalclaw.workflows.loop_aliases import LOOP_INTAKE_FIELDS
+
+    declared = spec.get("inputs")
+    if not isinstance(declared, dict):
+        return
+    claimed: dict[str, str] = {}
+    for name, meta in declared.items():
+        if not isinstance(meta, dict) or "loop_field" not in meta:
+            continue
+        field = str(meta.get("loop_field") or "").strip().lower()
+        if field not in LOOP_INTAKE_FIELDS:
+            _add(
+                res,
+                "WF_INPUT_BAD_LOOP_FIELD",
+                (
+                    f"input {name!r} declares loop_field {meta.get('loop_field')!r}, which must be "
+                    f"one of {'|'.join(sorted(LOOP_INTAKE_FIELDS))}"
+                ),
+                "inputs",
+            )
+            continue
+        if field in claimed:
+            _add(
+                res,
+                "WF_INPUT_DUPLICATE_LOOP_FIELD",
+                (
+                    f"inputs {claimed[field]!r} and {name!r} both declare loop_field {field!r} — "
+                    "only one input can receive it"
+                ),
+                "inputs",
+            )
+            continue
+        claimed[field] = str(name)
 
 
 def _validate_wip_invariant(res: ValidationResult, spec: dict[str, Any], root: Node) -> None:

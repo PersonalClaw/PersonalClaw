@@ -50,7 +50,7 @@ def _run_install(tmp_path: Path, cfg_dir: Path, managed_mcps: dict | None = None
     patches = [
         patch.multiple(
             "personalclaw.agent",
-            AGENTS_DIR=agents_dir,
+            agents_dir=lambda: agents_dir,
             _BUNDLED_CFG_DIR=cfg_dir,
             _PERSONALCLAW_BIN="/usr/bin/personalclaw",
             _USER_DIR=tmp_path / "personalclaw_home",
@@ -708,7 +708,7 @@ class TestAgentHooksMerge:
         patches = [
             patch.multiple(
                 "personalclaw.agent",
-                AGENTS_DIR=agents_dir,
+                agents_dir=lambda: agents_dir,
                 _BUNDLED_CFG_DIR=cfg_dir,
                 _PERSONALCLAW_BIN="/usr/bin/personalclaw",
                 _MANAGED_MCP_SERVERS=_DEFAULT_MANAGED_MCPS,

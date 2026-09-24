@@ -1343,13 +1343,30 @@ class RailTotals:
     percentile to compute, so it can afford the stricter shape and carry the absence IN the field —
     these stay ``None`` until some step actually carried the key. Two shapes, one fact; a caller of
     either can tell a measured zero from an unrecorded one.
+
+    `cost_recorded` / `tokens_recorded` are the OTHER fact `RunStats` discloses that this class used
+    to drop (#3400). A ``None`` field above already says "nothing here was ever measured" — but once
+    at least one `step_completed` finding carries the key, this projection sums only the rows that
+    do, and a partial sum with nothing beside it reads exactly like a total. Mirrors
+    `RunStats.priced` / `RunStats.tokens_recorded` EXACTLY rather than inventing a second absence
+    convention: the flag is ``False`` whenever ANY finding lacked the key, independent of whether
+    the total above ended up ``None`` (no finding ever carried it) or a real number (some did, some
+    did not). Two separate flags, for the same reason `RunStats` keeps its two separate: a step can
+    book a cost and report no token count, and one flag covering both would have to lie to one of
+    its two readers (#2630).
     """
 
     steps_completed: int = 0
     verdicts: int = 0
     #: `None` until a `step_completed` carried the key; the sum thereafter.
     cost_usd: float | None = None
+    #: False when some `step_completed` finding lacked the `cost_usd` key (or carried an explicit
+    #: null), so a non-`None` `cost_usd` above is a FLOOR, not a total (#3400).
+    cost_recorded: bool = True
     tokens: int | None = None
+    #: Same rule as `cost_recorded`, applied to `tokens` — kept a SEPARATE flag for the same reason
+    #: `RunStats.tokens_recorded` is separate from `RunStats.priced` (#2630).
+    tokens_recorded: bool = True
     duration_secs: float | None = None
     #: Judge outcomes, by the verdict word the ledger row carried.
     verdicts_by_word: dict[str, int] = field(default_factory=dict)
@@ -1363,7 +1380,9 @@ class RailTotals:
             "steps_completed": self.steps_completed,
             "verdicts": self.verdicts,
             "cost_usd": None if self.cost_usd is None else round(self.cost_usd, 6),
+            "cost_recorded": self.cost_recorded,
             "tokens": self.tokens,
+            "tokens_recorded": self.tokens_recorded,
             "duration_secs": None if self.duration_secs is None else round(self.duration_secs, 3),
             "verdicts_by_word": dict(self.verdicts_by_word),
             "overall_series": None if self.overall_series is None else list(self.overall_series),
@@ -1381,13 +1400,33 @@ def rail_totals(findings: list[dict[str, Any]], verdicts: list[dict[str, Any]]) 
     eight rows above a count of nine.
     """
     totals = RailTotals(steps_completed=len(findings), verdicts=len(verdicts))
-    for key in ("cost_usd", "duration_secs"):
-        carried = [row[key] for row in findings if isinstance(row.get(key), (int, float))]
-        if carried:
-            setattr(totals, key, float(sum(carried)))
+    carried_duration = [
+        row["duration_secs"]
+        for row in findings
+        if isinstance(row.get("duration_secs"), (int, float))
+    ]
+    if carried_duration:
+        totals.duration_secs = float(sum(carried_duration))
+
+    # Same rule as `RunStats.priced` / `RunStats.tokens_recorded` (#3218), mirrored here rather than
+    # re-derived (#3400): a `step_completed` finding that carries no key (or an explicit null) makes
+    # the running total a FLOOR, not a measurement, and the flag flips on that absence ALONE —
+    # independent of whether `cost_usd` / `tokens` above end up `None` (no finding ever carried the
+    # key) or a partial sum (some did, some did not).
+    carried_cost = [
+        row["cost_usd"] for row in findings if isinstance(row.get("cost_usd"), (int, float))
+    ]
+    if carried_cost:
+        totals.cost_usd = float(sum(carried_cost))
+    if any(row.get("cost_usd") is None for row in findings):
+        totals.cost_recorded = False
+
     carried_tokens = [row["tokens"] for row in findings if isinstance(row.get("tokens"), int)]
     if carried_tokens:
         totals.tokens = sum(carried_tokens)
+    if any(row.get("tokens") is None for row in findings):
+        totals.tokens_recorded = False
+
     by_word: dict[str, int] = {}
     series: list[float] = []
     for row in verdicts:

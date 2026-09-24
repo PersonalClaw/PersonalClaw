@@ -69,14 +69,14 @@ def _legacy_mcp_json() -> Path:
 # PERSONALCLAW_HOME outright — so a dev gateway read the operator's REAL agent config and
 # `_remove_from_agent_file` DELETED a server from it.
 #
-# `config_dir()` and not `agent.AGENTS_DIR`, which four other modules use for this same file:
-# that constant is evaluated at IMPORT time and so freezes the home as it was then. Calling it
-# per use is the whole point here.
+# Through `agent.agents_dir()`, the ONE owner of `<home>/agents` (#3463). This used to spell
+# `config_dir() / "agents"` itself, because `agent.AGENTS_DIR` was evaluated at IMPORT time and
+# froze the home as it was then. Resolving per use is still the whole point — it is just no
+# longer a reason to derive the path a second time here.
 def _installed_agent_json() -> Path:
-    from personalclaw.agent import AGENT_FILENAME
-    from personalclaw.config.loader import config_dir
+    from personalclaw.agent import AGENT_FILENAME, agents_dir
 
-    return config_dir() / "agents" / AGENT_FILENAME
+    return agents_dir() / AGENT_FILENAME
 
 
 def _migrate_legacy_mcp_json() -> None:
@@ -431,7 +431,7 @@ async def api_mcp_active(request: web.Request) -> web.Response:
     when ``--agent <name>`` is passed.  For personalclaw (or no agent),
     reads from global ``~/.personalclaw/mcp.json`` as before.
     """
-    from personalclaw.agent import AGENTS_DIR  # noqa: F811
+    from personalclaw.agent import agents_dir  # noqa: F811
 
     agent = request.query.get("agent", "")
 
@@ -454,7 +454,7 @@ async def api_mcp_active(request: web.Request) -> web.Response:
 
     # A custom/discovered agent (non-empty, non-personalclaw): read its per-agent config.
     if agent and agent != "personalclaw":
-        for f in AGENTS_DIR.glob("*.json"):
+        for f in agents_dir().glob("*.json"):
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 if data.get("name") == agent:

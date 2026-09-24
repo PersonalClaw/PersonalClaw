@@ -1374,6 +1374,33 @@ IGNORED: tuple[str, ...] = (
     # (`base = config_dir()` … `base / f".stop-{key}"`) — it had been invisible to every
     # spelling the scan knew.
     ".stop-*",
+    # 🔴 #3473 — the per-store disk-footprint series (`durability/footprint.py`). It is a
+    # MEASUREMENT of this machine's filesystem, not user state: `measure()` re-reads bytes-on-disk
+    # for every declared store off this same manifest, and the maintenance tick records a fresh
+    # sample on its own cadence. The only content a restore could not reproduce is the TREND, and
+    # that is exactly what must not travel — a snapshot is restored onto another machine or the same
+    # one after a wipe, where those byte counts describe a filesystem that no longer exists, so
+    # `growth()` would read the ends of a window straddling the restore and report a rate that never
+    # happened. The module's own rule is that a single sample "deliberately reports NO rate rather
+    # than a fabricated zero"; a foreign series fabricates something worse than a zero, because it
+    # looks like real history. Ignored rather than `derived=True` on an entry for the same reason as
+    # `usage_stats.json` above: a derived entry is still CLAIMED, and there is nothing here worth
+    # claiming — the next tick writes the only sample that is true of this machine.
+    "footprint.json",
+    # 🔴 #3473 — the trigger claim store (`triggers/claims.py`). Pure RUNTIME COORDINATION, and the
+    # one row in this list where restoring the path would be actively harmful rather than merely
+    # stale. A claim answers "which trigger is running RIGHT NOW" and names `owner_pid`, the process
+    # that granted it and is doing the work. Restored onto any machine, every pid in it is dead or
+    # belongs to an unrelated process — and because expiry is read-time, not swept, the claim reads
+    # as LIVE until `max_duration_secs` elapses. For that window `overlap: skip` suppresses fires
+    # that should happen and `is_running` asserts a run that does not exist, which is precisely the
+    # single-flight failure `claims.py` was written to fix, reintroduced by a backup. `reaper
+    # .terminalize_orphans` consumes `orphaned_ids` at boot to clear exactly these, so a restore
+    # that re-plants them manufactures work for the reaper in the best case. Nothing is lost:
+    # high-churn sidecar state whose whole meaning is "a process on THIS machine holds this
+    # trigger", the same posture as `locks` and `*.lock` above and the same convention as
+    # `trigger-watch/` and `task_leases/`.
+    "trigger-claims",
 )
 
 

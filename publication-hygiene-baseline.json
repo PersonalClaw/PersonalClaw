@@ -32,6 +32,11 @@
       "name": "dotenv-with-real-values",
       "pattern": "(?:^|/)\\.env(?:\\.local)?$",
       "rationale": "`.env` and `.env.local` are where real keys live. `.env.example` is deliberately tracked and deliberately NOT matched by this pattern: it is the documented template and carries only commented-out placeholders (`sk-ant-...`, `xoxb-...`). `tests/test_the_tracked_env_example_carries_no_real_value` re-checks that claim rather than trusting it."
+    },
+    {
+      "name": "internal-planning-draft",
+      "pattern": "^docs/launch/",
+      "rationale": "Launch planning drafts are internal by their own declaration — all four files removed in this change carried a literal `**State:** draft, internal, not published` header while being served from a PUBLIC repository, and none was linked from any published page. One of them (`prechannel-arrival-baseline.md:15`) additionally published the exact scope set of a live personal access token (`gist, read:org, repo, workflow`), which tells a reader precisely what a stolen token would grant. The token itself was never in the file. This rule is a path rule rather than a content rule because the directory is the unit of the decision: `docs/launch/` is where launch planning is drafted, and drafting is not publishing. If a launch document is genuinely meant for readers, it belongs on personalclaw.dev or in `docs/guides/`, not here."
     }
   ],
   "binary_size_rule": {
@@ -50,6 +55,8 @@
       "config.json",
       "dev",
       "dev.linux",
+      "lb",
+      "linuxbrew",
       "me",
       "personalclaw",
       "projects",
@@ -64,7 +71,7 @@
       "x",
       "you"
     ],
-    "rationale": "An absolute path into a real developer's home publishes the author's username and machine layout. This is an ALLOWLIST of placeholder home names rather than a denylist of real ones, for two reasons: a denylist would have to write the maintainer's username INTO the public repo to keep it out (self-defeating), and an allowlist reds an unrecognised name the first time it appears instead of only the names someone already thought of. The listed names are the complete measured set across the tracked tree — every one a synthetic fixture (`/Users/x`, `/home/u`, `/Users/dev`) or a dev-home path fragment (`/home/config.json`). Adding a name here is a claim that it is a PLACEHOLDER, not a person."
+    "rationale": "An absolute path into a real developer's home publishes the author's username and machine layout. This is an ALLOWLIST of placeholder home names rather than a denylist of real ones, for two reasons: a denylist would have to write the maintainer's username INTO the public repo to keep it out (self-defeating), and an allowlist reds an unrecognised name the first time it appears instead of only the names someone already thought of. The listed names are the complete measured set across the tracked tree — every one a synthetic fixture (`/Users/x`, `/home/u`, `/Users/dev`) or a dev-home path fragment (`/home/config.json`). Adding a name here is a claim that it is a PLACEHOLDER, not a person. `linuxbrew` and `lb` are claimed as placeholders on the same measured basis: `/home/linuxbrew/.linuxbrew` is Homebrew-on-Linux's canonical install prefix, byte-identical on every machine and named in Homebrew's own documentation, so it publishes nothing about this author; and `lb` is an unprivileged account that `scripts/fresh_install_validate.sh` CREATES inside a throwaway container (`chown -R lb:lb`, `su lb -c`) because Homebrew refuses to run as root — it is a fixture of the script, not a person's home."
   },
   "allowed": [
     {

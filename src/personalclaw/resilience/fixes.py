@@ -91,16 +91,20 @@ def apply_fix(fix_id: str, *, session_key: str = "dashboard") -> dict:
 
 
 def _dist_paths() -> tuple[Path, Optional[Path]]:
-    """(static/dist path, resolved web/dist target-or-None) — mirrors frontend.py's
-    resolution without calling it (that function early-returns on a valid copy)."""
+    """(static/dist path, resolved web/dist target-or-None).
+
+    Calls ``frontend.resolve_website_dist`` rather than re-deriving it. The hand-rolled
+    copy this replaces carried the note *"mirrors frontend.py's resolution without
+    calling it"*, and that duplication is how the doctor probe came to disagree with this
+    very fix about whether an installed layout is broken: the fix refused with "no
+    web/dist build found to link" while the probe reported a fault anyway. One
+    derivation, one answer.
+    """
     import personalclaw
+    from personalclaw.frontend import resolve_website_dist
 
     pkg_dir = Path(personalclaw.__file__).resolve().parent
-    tree_dist = pkg_dir / "static" / "dist"
-    repo_root = pkg_dir.parent.parent
-    built = repo_root / "web" / "dist"
-    target = built.resolve() if (built / "index.html").is_file() else None
-    return tree_dist, target
+    return pkg_dir / "static" / "dist", resolve_website_dist(pkg_dir)
 
 
 def _symlink_repair_preview() -> str:

@@ -320,7 +320,7 @@ def test_personalclaw_doctor_prints_the_deficit_and_its_blocker(tmp_path, monkey
     mock_run = MagicMock(returncode=0, stdout="v22.12.0", stderr="")
     with (
         patch("personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"),
-        patch("personalclaw.cli_doctor.AGENTS_DIR", tmp_path),
+        patch("personalclaw.cli_doctor.agents_dir", lambda: tmp_path),
         patch("subprocess.run", return_value=mock_run),
         patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no gateway")),
         patch("personalclaw.cli_doctor.is_local_bind", return_value=True),

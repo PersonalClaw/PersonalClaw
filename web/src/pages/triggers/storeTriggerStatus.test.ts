@@ -18,7 +18,7 @@
  * `attention_card`'s docstring says the error text exists to prevent.
  */
 import { describe, it, expect } from 'vitest'
-import { triggerHealthMeta } from '../schedule/scheduleMeta'
+import { triggerHealthMeta, triggerStatusMeta } from '../schedule/scheduleMeta'
 
 /** The panel's status sentence, kept in step with StoreTriggerDetail.tsx. */
 function statusLine(state?: string, enabled = true): string {
@@ -74,10 +74,23 @@ describe('the store panel status line', () => {
 describe('the status dot beside it', () => {
   it('reuses the shared mapper rather than a third local vocabulary', () => {
     // S163 and S164 each found a local copy of a status vocabulary that had drifted. This panel is
-    // the third surface; it maps through `triggerHealthMeta` instead of inventing its own.
+    // the third surface; it maps through the shared reconciler instead of inventing its own.
+    //
+    // These two stopped states still go through `triggerHealthMeta` directly — that is
+    // `triggerStatusMeta`'s own internal delegation for a non-active state, not a bypass of it
+    // (the reconciler calls `triggerHealthMeta` itself once `stopped` is true), so asserting them
+    // against `triggerHealthMeta` still pins real, current behaviour.
     expect(triggerHealthMeta('failing', 'autopaused').tone).toBe('var(--color-danger)')
     expect(triggerHealthMeta('parked', 'parked').tone).toBe('var(--color-info)')
-    expect(triggerHealthMeta('ok', 'active').tone).toBe('var(--color-ok)')
+    // 🔴 CORRECTED, NOT SILENCED (issue 3396). This used to assert
+    // `triggerHealthMeta('ok', 'active').tone === 'var(--color-ok)'` directly — a GREEN assertion on
+    // the exact value that is WRONG for a trigger that has never fired: `health` DEFAULTS to `ok`
+    // before anything has run, so that line pinned the panel's own bug (it called `triggerHealthMeta`
+    // with no `hasRun` gate, same shape as this assertion) instead of catching it. The panel now
+    // reads through `triggerStatusMeta`, which gates an `active`+`ok` rollup on `hasRun` — both arms
+    // asserted here so this rail cannot go blind to either direction again.
+    expect(triggerStatusMeta({ health: 'ok', state: 'active', hasRun: false }).tone).toBe('var(--color-on-surface-low)')
+    expect(triggerStatusMeta({ health: 'ok', state: 'active', hasRun: true }).tone).toBe('var(--color-ok)')
   })
 
   it('keeps a machine stop visually distinct from a user pause', () => {

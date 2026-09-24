@@ -4,7 +4,7 @@ import type { ScheduleJob, ScheduleKind, ScheduleExecMode } from '../../lib/api'
 import { useAgentCatalog, useModelCatalog } from '../../lib/agents'
 import { Combobox, type ComboOption } from '../../ui/Combobox'
 import { Toggle } from '../../ui/Toggle'
-import { Field, TextInput, TextArea, Segmented, ChipInput } from '../../ui/forms'
+import { Field, TextInput, TextArea, Segmented, ChipInput, FieldError } from '../../ui/forms'
 import { SoonTag } from '../tasks/taskMeta'
 import { epochSeconds } from '../../lib/epoch'
 import {
@@ -210,7 +210,10 @@ export function draftToPayload(d: ScheduleDraft): Record<string, unknown> {
 export function ScheduleForm({ draft, onChange, compact, triggerOnly }: { draft: ScheduleDraft; onChange: (d: ScheduleDraft) => void; compact?: boolean; triggerOnly?: boolean }) {
   const set = <K extends keyof ScheduleDraft>(k: K, v: ScheduleDraft[K]) => onChange({ ...draft, [k]: v })
   const { options: agentOptions } = useAgentCatalog()
-  const { options: modelOptions } = useModelCatalog()
+  // The catalog's rejection is bound, not discarded: an unreachable `/api/models` used to render
+  // this picker's "No models found" empty text, which tells a user with a bound provider that they
+  // have none. See `lib/agents.ts`.
+  const { options: modelOptions, error: modelErr } = useModelCatalog()
   const km = kindMeta(draft.kind)
   const mm = modeMeta(draft.mode)
 
@@ -263,6 +266,7 @@ export function ScheduleForm({ draft, onChange, compact, triggerOnly }: { draft:
                 </Field>
                 <Field label="Model override" hint="Optional — leave on Auto to use the agent's model.">
                   <Combobox options={modelOptions} value={draft.model} onChange={(v) => set('model', v)} placeholder="Auto — agent's model" emptyText="No models found" />
+                  {modelErr ? <FieldError className="mt-1">Couldn't load your models — {(modelErr as Error)?.message || 'the server did not respond'}. Leave this on Auto, or reload to try again.</FieldError> : null}
                 </Field>
               </div>
             </>

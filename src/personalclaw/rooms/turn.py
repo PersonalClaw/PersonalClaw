@@ -21,13 +21,12 @@ of a surface whose entire point is that they are in it.
 other approval posture, so that absence is re-checked on every turn rather than only
 asserted in a test.
 
-**Where the turn comes from.** :func:`run_human_message_round` is this module's production
-entry point, called by ``POST /api/rooms/{id}/messages`` once the human's line is on the
-transcript: it walks the roster in order and every member whose listen policy admits it
-takes ONE turn through its own session. A member's reply triggers nobody — the FIFO
-arbiter, the round budget and the pause belong to `AR-5`, and restricting this path to a
-single human-triggered pass is what lets it ship without them, because there is no
-agent-to-agent loop here for a budget to bound.
+**Where the turn comes from.** :func:`run_member_turn` runs ONE member's turn and is this
+module's production entry point; the decision of *which* member, in what order, and for how
+long belongs to :mod:`personalclaw.rooms.arbiter`, which is this function's only production
+caller. The split is the load-bearing one in the feature: this module knows how to make a
+provider speak and nothing about sequencing, so no model's output can reach the scheduler
+except as the ``@``-mentions :func:`mentions_in_order` extracts from it.
 """
 
 from __future__ import annotations
@@ -65,9 +64,9 @@ SESSION_KEY_PREFIX = "room:"
 #: can name exactly the strings a member name can be and nothing else. The lookbehind
 #: keeps an email address (``a@b``) and a doubled ``@@`` from reading as a mention.
 #:
-#: Homed here rather than in the not-yet-built ``rooms/arbiter.py`` so there is ONE mention
-#: parser: `AR-5` imports this to build its FIFO queue instead of deriving a second regex
-#: that could disagree with the one that decided who was fed.
+#: Homed here rather than in ``rooms/arbiter.py`` so there is ONE mention parser: the arbiter
+#: imports :func:`mentions_in_order` to build its FIFO queue instead of deriving a second
+#: regex that could disagree with the one that decided who was fed.
 _MENTION_RE = re.compile(r"(?<![\w@])@([a-zA-Z0-9_-]+)")
 
 #: How a member's own turn is labelled to the others. The blurb rides along because a
@@ -120,44 +119,27 @@ async def member_session(
         sessions.release(key)
 
 
-# ── who takes a turn ───────────────────────────────────────────────────────
+# ── who was named ──────────────────────────────────────────────────────────
 
 
-def mentioned_names(content: str) -> set[str]:
-    """Every ``@name`` in *content*, lowercase-sensitive and un-validated.
+def mentions_in_order(content: str) -> list[str]:
+    """Every ``@name`` in *content*, in the order written, de-duplicated. Un-validated.
+
+    **A list, not a set, and that is the whole point.** The arbiter's speaker queue is FIFO
+    over these names, so the order the human wrote two mentions in IS the order those two
+    members speak; collapsing to a set would hand the ordering decision to hash iteration,
+    which is exactly the "nothing outside the text decides the order" property `AR-5` is
+    built to hold. De-duplicated because naming somebody twice in one sentence is emphasis,
+    not a request for two turns.
 
     Names are returned as written; whether one is a member is the caller's question, so a
     typo'd mention simply matches nobody rather than raising.
     """
-    return set(_MENTION_RE.findall(content or ""))
-
-
-def speakers_for(members: list[RoomMember], content: str) -> list[RoomMember]:
-    """The members that take a turn on a HUMAN message, in roster order.
-
-    The three listen policies, which is the whole of what this decides:
-
-    * ``all`` — speaks on every human message.
-    * ``mention`` — speaks only when the message ``@``-names it.
-    * ``silent`` — never speaks from this path. An observer that is fed nothing and says
-      nothing; `AR-5` is what lets the human call on one explicitly.
-
-    **Roster order, and one round per human message.** A member's reply does NOT cause
-    another member to take a turn — that is `AR-5`'s FIFO arbiter and its round budget, and
-    it is the reason this path needs neither: a human message produces exactly one pass
-    over the roster, so there is no agent-to-agent loop for a budget to bound. Deriving an
-    order here that `AR-5` then replaces would be the second implementation this atom
-    exists to avoid.
-    """
-    named = mentioned_names(content)
-    out: list[RoomMember] = []
-    for member in members:
-        if member.listen_policy == "silent":
-            continue
-        if member.listen_policy == "mention" and member.name not in named:
-            continue
-        out.append(member)
-    return out
+    seen: list[str] = []
+    for name in _MENTION_RE.findall(content or ""):
+        if name not in seen:
+            seen.append(name)
+    return seen
 
 
 # ── what a member is fed ───────────────────────────────────────────────────
@@ -341,34 +323,3 @@ def _note_refusal(room_id: str, refusal: "ToolRefusal") -> None:
             room_id,
             exc_info=True,
         )
-
-
-async def run_human_message_round(
-    sessions: "SessionManager", room_id: str, content: str
-) -> list[str]:
-    """One pass over the roster after the human speaks. Returns the members that spoke.
-
-    The production caller of :func:`member_session`: this is where a member stops being a
-    record in an index and starts holding the provider session `AR-3` promises it. The human
-    message is already on the transcript when this runs (the route appends it first), so a
-    member is fed the message it is answering rather than a snapshot taken before it landed.
-
-    **One member's failure does not silence the room.** A provider that dies mid-turn is
-    logged with its traceback and the pass continues to the next member — the alternative
-    makes one broken binding look like a room where nobody had anything to say. The return
-    value names who actually spoke, so a caller can tell the difference between "silent by
-    policy" and "failed".
-    """
-    spoke: list[str] = []
-    for member in speakers_for(require_room(room_id).members, content):
-        try:
-            if await run_member_turn(sessions, room_id, member.name):
-                spoke.append(member.name)
-        except Exception:
-            logger.warning(
-                "rooms: member %s failed its turn in room %s — the round continues",
-                member.name,
-                room_id,
-                exc_info=True,
-            )
-    return spoke

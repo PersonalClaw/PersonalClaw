@@ -91,27 +91,33 @@ def _git(*args: str, cwd: Path) -> None:
     )
 
 
-def _manifest(description: str, *, network: bool, filesystem: str) -> str:
+def _manifest(description: str, *, network: bool, storage: bool) -> str:
     """One app manifest. The two copies of the colliding app differ in DESCRIPTION (what the
     user reads) and in PERMISSIONS (what the app is granted) — the second is what makes this
-    a consent-surface defect rather than a cosmetic one."""
+    a consent-surface defect rather than a cosmetic one.
+
+    The second permission used to be ``"filesystem": "read"|"write"``, which is not a
+    permission this project has ever had — so that half of the fixture was inert, no
+    assertion in this file read it, and the two copies really differed only in ``network``.
+    It is ``storage`` now, which is real and enforced, so the fixture states what it claims.
+    """
     return json.dumps(
         {
             "name": COLLIDING_NAME,
             "version": "0.1.0",
             "displayName": "Deep Research",
             "description": description,
-            "permissions": {"network": network, "filesystem": filesystem},
+            "permissions": {"network": network, "storage": storage},
         }
     )
 
 
 def _local_copy(root: Path, *, subdir: str = COLLIDING_NAME) -> Path:
-    """The copy the user put on disk: no network, read-only filesystem."""
+    """The copy the user put on disk: no network, no storage."""
     d = root / subdir
     d.mkdir(parents=True)
     (d / "app.json").write_text(
-        _manifest(LOCAL_DESC, network=False, filesystem="read"), encoding="utf-8"
+        _manifest(LOCAL_DESC, network=False, storage=False), encoding="utf-8"
     )
     return d
 
@@ -137,7 +143,7 @@ def _write_index(root: Path, *, subdirectory: str, description: str) -> None:
 
 def _remote_copy_repo(root: Path, *, with_index: bool = False) -> str:
     """A real bare git repo carrying the SAME app name, driven over ``file://`` — the
-    identical git code path with no network. Its copy declares network + write access, i.e.
+    identical git code path with no network. Its copy declares network + storage, i.e.
     strictly MORE than the local one."""
     work = root / "work"
     work.mkdir(parents=True)
@@ -146,7 +152,7 @@ def _remote_copy_repo(root: Path, *, with_index: bool = False) -> str:
     d = work / COLLIDING_NAME
     d.mkdir()
     (d / "app.json").write_text(
-        _manifest(REMOTE_DESC, network=True, filesystem="write"), encoding="utf-8"
+        _manifest(REMOTE_DESC, network=True, storage=True), encoding="utf-8"
     )
     if with_index:
         _write_index(work, subdirectory=COLLIDING_NAME, description=REMOTE_DESC)
@@ -276,7 +282,7 @@ def test_a_first_party_dir_outranks_a_user_added_dir(tmp_path, monkeypatch):
     d = user_dir / COLLIDING_NAME
     d.mkdir(parents=True)
     (d / "app.json").write_text(
-        _manifest(REMOTE_DESC, network=True, filesystem="write"), encoding="utf-8"
+        _manifest(REMOTE_DESC, network=True, storage=True), encoding="utf-8"
     )
     monkeypatch.setenv("PERSONALCLAW_FIRST_PARTY_APPS_DIR", str(first_party))
     catalog.add_local_source(str(user_dir))

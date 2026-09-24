@@ -9,9 +9,10 @@ Design follows the same pattern as :class:`backend.plugins.manifest.PluginManife
 app-specific fields.
 """
 
+import difflib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -556,13 +557,20 @@ class Permissions:
     proposals: list["ProposalKind"] = field(default_factory=list)
     # This app may register a long-lived supervised worker (APE-3's
     # ``sdk/background.py`` hosted by ``backend_runtime``) — richer than ``cron``, which
-    # is N discrete agent runs on a clock. NOT ENFORCED TODAY, and honestly so: nothing in
-    # core hosts an app worker yet, so the flag grants nothing and denies nothing. It is a
-    # DECLARATION that reaches install consent and goes live — with no second prompt —
-    # when APE-3 ships the host, which is precisely why it is disclosed at install time.
-    # The consent surface therefore lists it under "declared, not yet in effect", NOT
-    # among the permissions the gateway enforces: claiming an enforcement the gateway
-    # cannot perform is the EI-12 D2 defect (``PermissionList``, web/src/pages/apps).
+    # is N discrete agent runs on a clock. ENFORCED since APE-3 shipped the host:
+    # ``worker_runtime.py`` consults ``permissions.can_run_background_tasks()`` before it
+    # will spawn OR revive a worker, and it re-asks at every spawn, so revoking the grant
+    # in an app update stops the next revival rather than only the first launch. The
+    # consent surface lists it among the permissions the gateway enforces ("Run a
+    # long-lived background worker", ``PermissionList``, web/src/pages/apps), which is the
+    # move APE-2 already made for ``eventSubscriptions``.
+    #
+    # #3500: this comment used to say "NOT ENFORCED TODAY … the flag grants nothing and
+    # denies nothing" and that consent listed it under "declared, not yet in effect". Stale
+    # in both halves once the host landed, and stale in the direction that matters most —
+    # a comment asserting a permission is unenforced, while the gateway enforces it, invites
+    # the next reader to build on a model the code does not implement. That is the EI-12 D2
+    # defect inverted, and just as wrong.
     backgroundTasks: bool = False  # noqa: N815
     # Typed PLATFORM events this app subscribes to (the ``app_events.py``
     # registry — ``session.created``, ``knowledge.ingested``, ``task.completed``). A
@@ -576,6 +584,16 @@ class Permissions:
     # (deny by default). So this one joins the permissions the gateway enforces at consent,
     # unlike ``backgroundTasks`` above, whose host still does not exist.
     eventSubscriptions: list[str] = field(default_factory=list)  # noqa: N815
+    # Permission keys the manifest declared that this vocabulary does not contain. NOT a
+    # permission and never emitted by ``to_dict`` — the same bookkeeping shape as
+    # ``network_declared`` above: a fact about the RAW dict that the parsed value cannot
+    # express, recorded here so ``AppManifest.validate`` can refuse it at install.
+    #
+    # It has to be recorded rather than checked in ``from_dict`` because parsing happens on
+    # every load path (the Store scan, the catalog listing, the provider loader) where a raise
+    # would take out the listing, while ``validate`` runs only at install and update. So a
+    # malformed app still renders a Store card explaining itself, and still cannot be installed.
+    unknown_keys: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {}
@@ -639,6 +657,7 @@ class Permissions:
             eventSubscriptions=[  # noqa: N815
                 str(e) for e in data.get("eventSubscriptions", []) if e
             ],
+            unknown_keys=tuple(sorted(k for k in data if k not in PERMISSION_KEYS)),
         )
 
     def proposal_kind(self, kind_suffix: str) -> "ProposalKind | None":
@@ -647,6 +666,18 @@ class Permissions:
             if entry.kind_suffix == kind_suffix:
                 return entry
         return None
+
+
+#: The closed vocabulary of ``permissions`` keys an ``app.json`` may declare.
+#:
+#: DERIVED from the dataclass rather than hand-listed, because a hand-listed copy drifts the
+#: moment a permission is added — and a vocabulary that has silently fallen behind the fields
+#: refuses a permission that works, which is worse than not checking at all. The two excluded
+#: names are internal bookkeeping, not wire keys: ``network_declared`` records whether the
+#: author mentioned ``network``, and ``unknown_keys`` is the refusal record itself.
+PERMISSION_KEYS: frozenset[str] = frozenset(
+    f.name for f in fields(Permissions) if f.name not in {"network_declared", "unknown_keys"}
+)
 
 
 @dataclass
@@ -1715,6 +1746,30 @@ class AppManifest:
                 errors.append(
                     f"cron entry {cron.name!r} must specify either 'every' or 'cron_expr'"
                 )
+
+        # An undeclarable permission is an install error, not something to drop quietly.
+        #
+        # ``Permissions.from_dict`` reads the fifteen known keys BY NAME, so a typo produced
+        # silence in both directions at once: nothing refused the install, and nothing appeared
+        # on the consent surface either. Measured — ``{"strorage": true, "filesystem": true,
+        # "root": true, "exec": true}`` validated clean, and ``to_dict()`` returned ``{}``. Two
+        # people were misled by the same silence. The AUTHOR ships believing the app holds a
+        # permission it will never be granted, and finds out as an unexplained runtime denial
+        # far from the manifest. The USER is asked to consent to a set that is not the set the
+        # author wrote, which is the one thing an install-consent surface must never do.
+        #
+        # Refused rather than preserved in ``extra`` (the top level's forward-compat choice)
+        # because an unknown permission cannot be enforced, so accepting one is strictly worse
+        # than declining it: it can only ever widen the gap between what was declared and what
+        # is held. Nearest-match suggestions come from the same vocabulary the check reads, so
+        # the message cannot name a key that does not exist.
+        for key in self.permissions.unknown_keys:
+            near = difflib.get_close_matches(key, sorted(PERMISSION_KEYS), n=2, cutoff=0.6)
+            hint = f" — did you mean {' or '.join(repr(n) for n in near)}?" if near else ""
+            errors.append(
+                f"permissions declares unknown key {key!r}, which grants nothing and would "
+                f"not appear on the install-consent surface{hint}"
+            )
 
         # Declared proposal kinds — validated HERE so a bad suffix is an install
         # error, not a broken rules-store key discovered at enable time.

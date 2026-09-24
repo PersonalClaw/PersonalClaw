@@ -111,6 +111,18 @@ describe('refTarget', () => {
     expect(refTarget({ refs: { artifact: 'a', session: 's1' } })).toBe('chat/s1')
   })
 
+  it("routes a paused ROOM to its room, and never ahead of an older ref", () => {
+    // AGENT-ROOMS' pause item (`agent/room_paused`) stamps `refs.room` and nothing else, so this is
+    // that row's only link — and it is what makes the pause CARD the destination of the inbox row
+    // rather than a second notice about one event. Same vacuity floor as the artifact branch above:
+    // `room` is LAST, so a row that also names a session must still go to the session.
+    expect(refTarget({ refs: { room: 'pricing-debate' } })).toBe('chat/room/pricing-debate')
+    expect(refTarget({ refs: { room: 'r', session: 's1' } })).toBe('chat/s1')
+    // A room id is a strict slug, but the encode is kept for the same reason every sibling has one:
+    // the path segment is built, not trusted.
+    expect(refTarget({ refs: { room: 'a b' } })).toBe('chat/room/a%20b')
+  })
+
   it('returns empty when there is nowhere to go', () => {
     // The row then renders no deep-link affordance at all, rather than a dead link.
     expect(refTarget({ refs: {} })).toBe('')
@@ -127,6 +139,7 @@ describe('refLabel', () => {
     expect(refLabel({ refs: { session: 's1' } })).toBe('Go to chat')
     expect(refLabel({ refs: { workflow: 'w1' } })).toBe('Go to workflow')
     expect(refLabel({ refs: { artifact: 'learning-identity-report' } })).toBe('Open the report')
+    expect(refLabel({ refs: { room: 'pricing-debate' } })).toBe('Go to the room')
   })
 
   it('falls back to a generic label', () => {

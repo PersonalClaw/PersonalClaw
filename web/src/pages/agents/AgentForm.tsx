@@ -5,7 +5,7 @@ import type { SavedAgent } from '../../lib/api'
 import { api } from '../../lib/api'
 import { useActiveChatModelOptions } from '../../lib/agents'
 import { Combobox } from '../../ui/Combobox'
-import { Field, TextInput, TextArea, Segmented } from '../../ui/forms'
+import { Field, TextInput, TextArea, Segmented, FieldError } from '../../ui/forms'
 import { Toggle } from '../../ui/Toggle'
 import { confirm } from '../../ui/dialog'
 import { APPROVAL_MODES } from './agentMeta'
@@ -104,7 +104,7 @@ export function AgentForm({ draft, onChange, nameLocked, compact }: { draft: Age
   const set = <K extends keyof AgentDraft>(k: K, v: AgentDraft[K]) => onChange({ ...draft, [k]: v })
   // Constrain to ACTIVE chat models so an agent can't pin a model that isn't
   // bound (which would go stale when the active set changes). 'Auto' = inherit.
-  const { options: modelOptions } = useActiveChatModelOptions()
+  const { options: modelOptions, error: modelErr } = useActiveChatModelOptions()
 
   // capability catalogs
   const [skills, setSkills] = useState<CheckOption[]>([])
@@ -136,6 +136,7 @@ export function AgentForm({ draft, onChange, nameLocked, compact }: { draft: Age
 
       <Field label="Model" hint="The model this agent runs on. Auto uses the provider default.">
         <Combobox options={modelOpts} value={draft.model} onChange={(v) => set('model', v)} placeholder="Auto — provider default" emptyText="No models" />
+        {modelErr ? <FieldError className="mt-1">Couldn't load your active chat models — {(modelErr as Error)?.message || 'the server did not respond'}. Only Auto is safe to pick until this loads.</FieldError> : null}
       </Field>
 
       <Field label="System prompt" hint="The agent's standing instructions — WHAT it does (operating rules).">

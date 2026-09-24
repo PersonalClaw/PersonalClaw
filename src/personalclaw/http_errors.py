@@ -179,6 +179,7 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "room_member_posture_widens": "A member may only narrow the room's safety posture.",
     "room_approver_not_human": "Only the human may approve a room member's tool call.",
     "room_export_format_invalid": "A room export format must be md or json.",
+    "room_round_budget_invalid": "A room's round budget must be 0 (inherit) or 1-100.",
     # ── push subscriptions (handlers/push.py) ──
     "push_subscription_invalid": "The push subscription is missing an https endpoint or its keys.",
     "push_not_subscribed": "That device has no push subscription.",

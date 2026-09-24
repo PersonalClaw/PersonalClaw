@@ -165,6 +165,66 @@ gh release view vX.Y.Z
 
 Then clean up: `rm -rf /tmp/relcheck`.
 
+### Convenience-channel smoke (Homebrew · Nix)
+
+The two convenience channels are the only install paths that live **outside** the release
+pipeline, so nothing in a tag push updates or verifies them. Run this checklist once per
+release, after PyPI has the new version — both channels point at a *published* artifact, so
+neither can be bumped before then.
+
+Every step runs in a throwaway container, because a dev box cannot test the claim these
+channels make: that they work on a machine that does not already have the dependency. One
+command does all three install paths:
+
+```bash
+VERSION=X.Y.Z scripts/fresh_install_validate.sh          # pip · brew · nix
+VERSION=X.Y.Z scripts/fresh_install_validate.sh pip nix  # or one leg at a time
+```
+
+Then the per-channel work a release actually requires:
+
+**Homebrew** — [`PersonalClaw/homebrew-tap`](https://github.com/PersonalClaw/homebrew-tap):
+
+- [ ] Bump `Formula/personalclaw.rb`: **`url` and `sha256`, and nothing else**. The tap's
+      README carries the one-liner that prints both lines; the URL cannot be hand-edited from
+      the version because `brew style` requires PyPI's opaque digest path.
+- [ ] Push to the tap's `main` and confirm its `formula` workflow is green. That job is the
+      only evidence for the Homebrew row: it runs the real
+      `brew install personalclaw/tap/personalclaw` on a clean GitHub-hosted macOS runner.
+- [ ] `brew upgrade personalclaw` on a machine that already had the previous version — a
+      fresh install and an upgrade take different code paths through the keg.
+
+**Nix** — `flake.nix` + `nix/personalclaw.nix` in this repository:
+
+- [ ] Bump `version` and the wheel `hash` in `nix/personalclaw.nix`
+      (`nix store prefetch-file --json <wheel url>`).
+- [ ] Re-check the dependency list against the **released wheel's** metadata, not against
+      `pyproject.toml`. They drift: 0.1.3's wheel asks for `croniter<7` and `reportlab<5`
+      where `pyproject.toml` now says `croniter<3` and `reportlab<6`, and the wheel declares
+      no `sqlite-vec`, `cryptography` or `jsonschema` at all.
+      `unzip -p <wheel> personalclaw-X.Y.Z.dist-info/METADATA | grep '^Requires-Dist'`
+- [ ] Re-check the `nixpkgs` pin in `flake.nix` satisfies those bounds. This is the step that
+      actually breaks: `nixos-unstable` carried reportlab 5.0.1 against `reportlab<5`, and
+      `nixos-25.11` carried tree-sitter-language-pack 0.10.0 against `>=1.0` — the two
+      failures point in opposite directions, so neither "track unstable" nor "pin older" is a
+      standing answer. `pythonRuntimeDepsCheckHook` fails the build and names the offending
+      specifier, so measure rather than guess.
+- [ ] `nix flake check` passes (it runs `personalclaw --version` and greps for the version).
+
+A failure in either channel is **not** release-blocking for PyPI or the containers — the
+convenience channels lag by design, since they can only reference a published artifact. It is
+blocking for the corresponding row in the [install matrix](../../README.md#install-matrix):
+fix the channel or demote the row, and do not leave it claiming support it did not earn.
+
+Coverage this checklist does **not** give you, stated so nobody reads it as more than it is:
+
+| Claim | Evidence | Gap |
+|---|---|---|
+| Homebrew on macOS | the tap's CI, on a clean macOS runner, every push | arm64 only (`macos-latest`); no Intel Mac |
+| Homebrew on Linux | `fresh_install_validate.sh brew` (linuxbrew in a container) | host architecture only. Do **not** try `--platform linux/amd64` on Apple Silicon: Homebrew refuses an x86_64 CPU without SSSE3, it reads `/proc/cpuinfo` (which shows the host's ARM CPU), and `QEMU_CPU=max` does not help |
+| Nix | `fresh_install_validate.sh nix` | the container's architecture only |
+| pip | `fresh_install_validate.sh pip` | ditto |
+
 ### Windows smoke (rung 1 — Docker Desktop)
 
 Do this once per release on a Windows box with Docker Desktop (WSL2 backend).

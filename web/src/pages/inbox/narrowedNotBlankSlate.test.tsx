@@ -113,18 +113,22 @@ describe('the inbox distinguishes "nothing matches" from "you have nothing"', ()
   it('the narrowed hint tells the user about their filter, not about onboarding', () => {
     const tag = inbox.match(/<EmptyState icon=\{InboxIcon\}[\s\S]{0,900}?\/>/)?.[0] ?? ''
     expect(tag, 'the empty state must still exist').toContain('InboxIcon')
-    expect(tag, 'narrowed must be tested BEFORE disabled').toMatch(
-      /hint=\{narrowed[\s\S]*?:\s*disabled/,
+    expect(tag, 'narrowed must be tested BEFORE the blank slate').toMatch(
+      /hint=\{narrowed[\s\S]*?:\s*neverReceived/,
     )
     expect(tag).toMatch(/Try a different search or filter\./)
   })
 
-  it('keeps the blank-slate copy for the state it was written for', () => {
-    // The onboarding paragraph is right when the inbox genuinely has nothing AND no source is on —
-    // deleting it would trade one wrong answer for another.
+  it('keeps a blank-slate line for the state it was written for, and it is a TRUE one', () => {
+    // The paragraph is right when nothing has ever landed here — deleting it would trade one wrong
+    // answer for another. What changed is the claim it makes: it used to say "Enable a source to
+    // begin", which is false (the native agent→inbox sink is always live, and the page's own banner
+    // says so). It now says what a never-used inbox actually needs to hear.
     const tag = inbox.match(/<EmptyState icon=\{InboxIcon\}[\s\S]{0,900}?\/>/)?.[0] ?? ''
-    expect(tag).toMatch(/Enable a source to begin\./)
-    expect(tag, 'and the caught-up line for a genuinely empty, enabled inbox').toMatch(/all caught up/)
+    expect(tag, 'a never-used inbox still gets its own paragraph').toMatch(/land here for triage/)
+    expect(tag, 'and the caught-up line for an inbox whose items were all handled').toMatch(/all caught up/)
+    expect(tag, 'the false sentence must not come back — nothing needs connecting for agents to post')
+      .not.toMatch(/Enable a source to begin|not connected/)
   })
 
   it('keeps the kind-specific narrowed line, and makes it say why', () => {
@@ -147,13 +151,18 @@ describe('the inbox distinguishes "nothing matches" from "you have nothing"', ()
     // This test's PURPOSE (its own name) is that the two props cannot disagree. Once a third state was
     // named, a pinned two-branch title could no longer express that purpose — so the assertion now
     // requires BOTH flags in BOTH props, in the same order. Strictly more than it demanded before.
-    // Behaviour is covered by `inboxZeroNotConnected.test.tsx`.
+    // Behaviour is covered by `inboxBlankSlateTruth.test.tsx`.
+    //
+    // 🔁 RE-POINTED at `neverReceived`. The second flag was `disabled` (`!status.enabled`), and the
+    // shape this rail pins was never the problem — the flag's MEANING was. `enabled` is the poll
+    // half only, so the middle branch called a working inbox unconnected. Same two-props-one-order
+    // property, now over a flag that is true when it says it is.
     const tag = inbox.match(/<EmptyState icon=\{InboxIcon\}[\s\S]{0,900}?\/>/)?.[0] ?? ''
     expect(tag, 'the tag must be found before it can be measured').not.toBe('')
-    expect(tag, 'the title must branch narrowed → disabled → caught-up')
-      .toMatch(/title=\{narrowed \? 'Nothing here' : disabled \? '[^']+' : 'Inbox zero'\}/)
+    expect(tag, 'the title must branch narrowed → neverReceived → caught-up')
+      .toMatch(/title=\{narrowed \? 'Nothing here' : neverReceived \? '[^']+' : 'Inbox zero'\}/)
     expect(tag, 'and the hint must test the same two flags in the same order')
-      .toMatch(/hint=\{narrowed[\s\S]*?: disabled/)
+      .toMatch(/hint=\{narrowed[\s\S]*?: neverReceived/)
   })
 
   it('the announcement shares that one definition too', () => {

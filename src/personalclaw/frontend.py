@@ -21,11 +21,18 @@ _NPM_CI_TIMEOUT = 180.0
 _NPM_BUILD_TIMEOUT = 120.0
 
 
-def _resolve_website_dist(pkg_dir: Path) -> Optional[Path]:
+def resolve_website_dist(pkg_dir: Path) -> Optional[Path]:
     """Locate a usable ``web/dist``.
 
     The package lives at ``<repo>/src/personalclaw``, so the repo root is two
     levels up. Probes repo root — ``<repo>/web/dist``.
+
+    PUBLIC because it is also the only honest answer to *"could ``static/dist`` be a
+    symlink here at all?"* — ``None`` means an installed layout, where a real directory
+    is what the wheel ships and not a shadowing copy. The doctor probe and the
+    ``serving-fs.symlink-repair`` fix both need that discriminator, and both used to
+    re-derive it (the fix's ``_dist_paths`` docstring apologised for doing so). One
+    derivation, so a probe and its own remediation cannot disagree about the layout.
     """
     repo_root = pkg_dir.parent.parent
 
@@ -196,7 +203,7 @@ def ensure_dev_dist_symlink() -> Optional[Path]:
             logger.warning("Failed to remove stale dist symlink %s: %s", tree_dist, exc)
             return None
 
-    candidate = _resolve_website_dist(pkg_dir)
+    candidate = resolve_website_dist(pkg_dir)
     if candidate is None:
         return None
 

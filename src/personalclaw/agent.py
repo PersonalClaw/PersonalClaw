@@ -81,19 +81,43 @@ def _atomic_json_write(path: Path, data: dict) -> None:
         raise
 
 
-# Honor PERSONALCLAW_HOME for AGENTS_DIR / _USER_MCP_JSON. config_dir() in
-# personalclaw.config.loader respects the env var; using it here keeps a single
-# source of truth so containerized deployments writing to /data don't end up
-# splitting agent state between /data and ~/.personalclaw/.
+# Honor PERSONALCLAW_HOME. config_dir() in personalclaw.config.loader respects the env
+# var; using it here keeps a single source of truth so containerized deployments writing
+# to /data don't end up splitting agent state between /data and ~/.personalclaw/.
 def _user_dir() -> Path:
     from personalclaw.config.loader import config_dir as _cd
 
     return _cd()
 
 
-AGENTS_DIR = _user_dir() / "agents"
+def agents_dir() -> Path:
+    """``<home>/agents``, resolved at CALL time.
+
+    🔴 THIS WAS ``AGENTS_DIR = _user_dir() / "agents"``, A MODULE-LEVEL CONSTANT, AND THAT
+    FROZE THE REAL HOME (#3463). ``_user_dir()`` is ``config_dir()``, so importing this
+    module before a caller established ``PERSONALCLAW_HOME`` — or before a test patched
+    ``config_dir`` / pointed the home at ``tmp_path`` — pinned the path to
+    ``~/.personalclaw`` for the life of the process, and no later isolation could move it.
+    Whether that happened was a function of pytest's collection and import order, not of
+    any test's own correctness. The symptom was the worst shape a gate can have:
+    ``148 passed, 0 failed`` with a non-zero exit, because the suite's real-home rail saw
+    ``modified agents/personalclaw.json``. Measured cleaner than that: a run that resolved
+    to ``collected 0 items`` produced the same residue, i.e. it happens at import.
+
+    🪤 NOT THE ``DASHBOARD_PORT`` CASE. ``config.loader.DASHBOARD_PORT`` is also import-time
+    and is documented as safe, because ``PERSONALCLAW_PORT`` is validated at CLI entry and
+    so is settled before ``loader.py`` is imported. There is no equivalent guarantee here:
+    relocating the home AFTER import is the supported way to isolate a test. Same shape,
+    opposite verdict — which is why the fix is a resolver rather than an earlier assignment.
+
+    Two modules already worked around the constant by calling ``config_dir()`` themselves
+    (``mcp_discovery``, ``dashboard/handlers/mcp``), each with a comment naming the freeze.
+    ``subagent_persistence._subagents_dir`` is the shipped precedent for this exact shape.
+    """
+    return _user_dir() / "agents"
+
+
 AGENT_FILENAME = "personalclaw.json"
-_USER_MCP_JSON = _user_dir() / "mcp.json"
 
 # Bundled fallback — inside the personalclaw.config package
 _BUNDLED_CFG_DIR = Path(__file__).resolve().parent / "config"
@@ -1156,8 +1180,9 @@ def rebuild_agent_config(*, clean: bool = False) -> Path:
     Args:
         clean: If True, ignore existing config and regenerate from defaults.
     """
-    AGENTS_DIR.mkdir(parents=True, exist_ok=True)
-    path = AGENTS_DIR / AGENT_FILENAME
+    _agents = agents_dir()
+    _agents.mkdir(parents=True, exist_ok=True)
+    path = _agents / AGENT_FILENAME
 
     # Managed MCP sync happens after config is fully built (see below).
 

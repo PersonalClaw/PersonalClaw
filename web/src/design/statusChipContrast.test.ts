@@ -225,33 +225,224 @@ const SITES = chipSites()
 // `surface-high`/`-highest` are excluded on measurement — see the header's third trap.
 const RESTING = ['canvas', 'surface', 'surface-low', 'surface-container'] as const
 
-/** The status vocabulary: the tones a `*Meta` status/priority/due/state registry can hand a chip.
- *  `success`/`warning`/`error` are `var()` aliases of these three and are asserted to be so below,
- *  so the canonical names cover every spelling. `on-surface-low`/`-var` (the registries' "no
- *  signal" tone) are the ink RAMP rather than semantic tones and appear only at 14%, which is green
- *  for them on every tier in both modes; they are covered by the ceiling ratchet, not swept here.
- *  `primary` is deliberately absent — an accent chip is a different family with its own history
- *  (`design/accent.ts`, `#1257`) and its own open finding. */
-const GLOBAL_TONES = ['ok', 'warn', 'danger'] as const
+// ── The tone vocabulary, READ OUT OF THE PRIMITIVE ──────────────────────────────────────────────
+//
+// 🔴 A HAND-WRITTEN TONE LIST CANNOT NOTICE A TONE IT DOES NOT MENTION (#3493). This was
+// `const GLOBAL_TONES = ['ok', 'warn', 'danger']` plus `info` swept per scheme — four of the SIX
+// tones `ui/StatusPill` vends. The two it never named, `neutral` and `primary`, are exactly where the
+// next defect was: `neutral` drew its text in `--color-outline-variant`, a hairline/border value, and
+// read **1.6346 dark** / **1.1381 light** over its own 16% tint — all 8 resting cells under AA, on ten
+// call sites. The old list was not wrong about the tones it swept; it was silent about the ones it
+// did not, and silence is indistinguishable from a pass.
+//
+// So the list is DERIVED. Every tone in `TONE_VAR` is either swept below or named in `UNSWEPT_TONES`
+// with its measurement, and the assertion further down closes the set both ways: a SEVENTH tone reds
+// this file until someone sweeps it or argues for it, and a tone that stops being vended reds the
+// exclusion pin. The old prose said "`on-surface-low`/`-var` … are the ink RAMP rather than semantic
+// tones and … are covered by the ceiling ratchet, not swept here" — that is no longer true of
+// `on-surface-low`, which is now `neutral`'s ink and is swept like any other.
+
+/** `tone → '--color-…'`, parsed out of `ui/StatusPill.tsx`'s `TONE_VAR`.
+ *
+ *  🪤 THE PARSE IS THE VACUITY HOLE, so it is controlled rather than trusted: a tone whose ink stops
+ *  being a plain `var(--color-x)` literal (an imported constant, a `color-mix`, a ternary) simply
+ *  would not match, and the sweep would silently shrink by one — the same failure this file exists to
+ *  end. `tone_vocabulary` below cross-checks these keys against the `StatusPillTone` UNION parsed
+ *  from the same file, so a skipped entry reds instead of vanishing. */
+function pillToneInks(): Record<string, string> {
+  const src = readFileSync(join(SRC, 'ui/StatusPill.tsx'), 'utf8')
+  const block = src.match(/const TONE_VAR:[^=]*=\s*\{([\s\S]*?)\n\}/)
+  if (!block) throw new Error('could not find the TONE_VAR map in ui/StatusPill.tsx')
+  const out: Record<string, string> = {}
+  for (const m of block[1].matchAll(/^\s*([a-z]+):\s*'var\((--color-[a-z-]+)\)',/gm)) out[m[1]] = m[2]
+  return out
+}
+const PILL_TONES = pillToneInks()
+
+/** The `StatusPillTone` union's members, from the same file — the control on the parse above. */
+function pillToneUnion(): string[] {
+  const src = readFileSync(join(SRC, 'ui/StatusPill.tsx'), 'utf8')
+  const m = src.match(/export type StatusPillTone\s*=\s*([^\n]+)/)
+  if (!m) throw new Error('could not find the StatusPillTone union in ui/StatusPill.tsx')
+  return [...m[1].matchAll(/'([a-z]+)'/g)].map((x) => x[1])
+}
+
+/** Which `--color-*` tokens a scheme supplies, read off a scheme rather than listed. A tone whose
+ *  ink is one of these is swept once PER SCHEME; anything else is a global value in `tokens.css`. */
+const SCHEME_SUPPLIED = new Set(Object.keys(SCHEMES[0].colors))
+
+/** THE BORDER/HAIRLINE TOKENS, BY NAME — the class of value that must never be a text ink.
+ *
+ *  This is a denylist rather than a threshold because the property is structural, not numeric: a
+ *  hairline exists to be *barely* separable from its surface, so being close to the ground is the
+ *  token's job. `no_hairline_ink` asserts no tone uses one, and `hairline_unreadable` asserts these
+ *  values really are unreadable on every tier — so the denylist carries its own justification and
+ *  cannot rot into a superstition. `--color-outline` is listed for the same reason plus a structural
+ *  tell: it is `#8e918f` in BOTH modes, and an ink that does not invert with the mode cannot be
+ *  readable in both.
+ *
+ *  🔴 SCOPE: THIS GUARDS `ui/StatusPill`'s MAP AND NOTHING ELSE. `pillToneInks` reads one file, so a
+ *  tone map anywhere else in the tree is invisible to it. A census run for #3493 found exactly one
+ *  other live case — `pages/learning/learningMeta.ts`'s `DAY_TONE.out_of_scope`, `--color-outline` as
+ *  text ink at 3.1833 on the light `surface-container` — filed as #3504, which is where widening this
+ *  to every tone map belongs. Do not widen it here while that site is still red: a tree-wide version
+ *  of `no_hairline_ink` fails on `DAY_TONE` today. */
+const HAIRLINE_TOKENS = new Set(['--color-outline', '--color-outline-variant'])
+
+/** Tones this rail does NOT sweep. ✅ **EMPTY SINCE #3503 — the whole vocabulary is measured.**
+ *
+ *  It held exactly one entry, `primary`, and the entry was honest: swept as a chip ink it was under
+ *  4.5 in **42 of 96** cells (12 schemes × 2 modes × 4 resting tiers at 16%), worst 3.4870
+ *  (`rose`/light/canvas, `#d22b6f`), and **every one of the 42 was LIGHT mode** — dark passed 48/48.
+ *  `--color-primary-emphasis`, the substitute this file's header used to point at, only reached
+ *  20/96, so no token swap fixed it. The fix was a retune of `--color-primary`'s LIGHT value across
+ *  all 12 schemes — because `schemes.ts` had chosen those values to be "≥4.5:1 as white-text button
+ *  fill AND as text on white", i.e. against the BARE ground, which is the same mistake the
+ *  `--color-info` retune corrected one token over. It landed, with the per-scheme table and the
+ *  measured collateral in `schemes.ts`'s header, and the entry is gone rather than kept: an exclusion
+ *  that no longer excludes anything is a rail guarding nothing.
+ *
+ *  🔴 THE FLOOR WAS NEVER TOUCHED, IN EITHER CYCLE. It is 4.5 for all six tones now. The exclusion
+ *  existed so that "unswept" was legible instead of invisible, never to accommodate 3.4870 — widening
+ *  the sweep to six tones against a lowered threshold would have read as broader coverage while
+ *  asserting less. The mechanism stays in place for the next tone that needs it: `tone_coverage`
+ *  requires swept ∪ unswept to be the whole vocabulary and pins the exclusion count, so an entry can
+ *  only arrive with its measurement and a review conversation. It is now pinned at ZERO. */
+const UNSWEPT_TONES = new Map<string, string>()
 
 function inks(mode: Mode): Array<[string, string]> {
-  return [
-    ...GLOBAL_TONES.map((t) => [t, token(t, mode)] as [string, string]),
-    ...SCHEMES.map((s) => [`info:${s.id}`, s.colors['--color-info'][mode]] as [string, string]),
-  ]
+  const out: Array<[string, string]> = []
+  for (const [tone, tok] of Object.entries(PILL_TONES)) {
+    if (UNSWEPT_TONES.has(tone)) continue
+    if (SCHEME_SUPPLIED.has(tok)) {
+      for (const s of SCHEMES) out.push([`${tone}:${s.id}`, s.colors[tok][mode]])
+    } else {
+      out.push([tone, token(tok.replace('--color-', ''), mode)])
+    }
+  }
+  return out
 }
+
+// ═══ Tone COVERAGE — the half of #3493 that was not the ink ══════════════════════════════════════
+//
+// Closed both ways, because each direction fails differently: an unswept tone ships a defect (what
+// happened), and a stale exclusion claims a gap that is no longer there (how the fix rots).
+describe('the tone vocabulary is closed: every StatusPill tone is swept or named', () => {
+  it('tone_vocabulary: the parsed TONE_VAR keys are exactly the StatusPillTone union', () => {
+    // The control on `pillToneInks`'s regex. Without it, an ink that stopped being a plain
+    // `var(--color-x)` literal would drop out of the sweep and nothing would say so.
+    const union = pillToneUnion()
+    expect(union.length, 'members of the StatusPillTone union').toBe(6)
+    expect(Object.keys(PILL_TONES).sort(), 'TONE_VAR entries the parser could read').toEqual(union.slice().sort())
+    for (const [tone, tok] of Object.entries(PILL_TONES)) {
+      expect(tok, `tone \`${tone}\``).toMatch(/^--color-[a-z-]+$/)
+    }
+  })
+
+  it('tone_coverage: swept ∪ unswept is the whole vocabulary, and unswept is now EMPTY', () => {
+    const swept = Object.keys(PILL_TONES).filter((t) => !UNSWEPT_TONES.has(t))
+    expect(swept.sort(), 'tones this file measures against 4.5').toEqual(
+      ['danger', 'info', 'neutral', 'ok', 'primary', 'warn'],
+    )
+    // Cardinality pinned separately from identity: an exclusion is a review conversation, and
+    // absorbing it into the set comparison above would let one arrive silently. #3503 emptied this,
+    // so the pin is ZERO — a tone cannot be quietly dropped out of the sweep again.
+    expect([...UNSWEPT_TONES.keys()], 'no tone may be excluded from the 4.5 sweep — see UNSWEPT_TONES').toEqual([])
+    for (const t of UNSWEPT_TONES.keys()) {
+      expect(PILL_TONES[t], `\`${t}\` is excluded but is no longer a StatusPill tone — drop the entry`).toBeTruthy()
+      expect(UNSWEPT_TONES.get(t)!.length, `\`${t}\`'s exclusion must carry its measurement`).toBeGreaterThan(40)
+    }
+  })
+
+  it('no_hairline_ink: no tone draws its text in a border/hairline token', () => {
+    // The generalization of #3493, and the reason it is a denylist: this is the property the ratio
+    // sweep below would also catch, asserted by NAME so the failure message says *why* rather than
+    // just how far under. Positive control first — a denylist that matches nothing reads identical
+    // to a clean tree (see this file's "write the control that makes the selector fire" siblings).
+    expect(HAIRLINE_TOKENS.has('--color-outline-variant'), 'the guard must fire on the #3493 value').toBe(true)
+    for (const [tone, tok] of Object.entries(PILL_TONES)) {
+      expect(HAIRLINE_TOKENS.has(tok),
+        `tone \`${tone}\` draws text in ${tok}, a border/hairline token. A hairline is designed to be ` +
+        `barely separable from its surface, so no choice of ground and no pinned compositing base can ` +
+        `make it readable — pick an ink-ramp value (\`--color-on-surface-low\` is \`neutral\`'s).`).toBe(false)
+    }
+  })
+
+  it('hairline_unreadable: the denylisted values are inadmissible as ink, and outline-variant on every tier', () => {
+    // The denylist's own justification, so it cannot rot into a superstition — and the in-test
+    // vacuity floor for `no_hairline_ink`, which would pass just as happily if these tokens were
+    // fine. Inverted on purpose: these cells must FAIL.
+    //
+    // 🪤 THE FIRST DRAFT ASSERTED "every cell under 4.5" AND ITS OWN CONTROL DISPROVED IT:
+    // `--color-outline` (`#8e918f`, the SAME value in both modes) reads **4.8936** on the dark canvas
+    // and clears AA there, while failing the other six cells (2.4891 worst, light canvas). That is
+    // worth more than the tidier claim, because it is the exact trap the sweep exists for — a token
+    // checked against one ground looks admissible, and the ground a chip lands on is not knowable at
+    // the call site. So the predicate is admissibility: a pill ink must clear 4.5 on ALL eight cells,
+    // and a token with even one failing cell cannot be one.
+    const failing = new Map<string, number>()
+    for (const tok of HAIRLINE_TOKENS) {
+      let under = 0
+      for (const mode of ['dark', 'light'] as Mode[]) {
+        for (const ground of RESTING) {
+          const ink = token(tok.replace('--color-', ''), mode)
+          if (tintedChipRatio(ink, token(ground, mode), 16) < aaFloor(12, false)) under++
+        }
+      }
+      failing.set(tok, under)
+    }
+    const detail = [...failing].map(([t, n]) => `${t} ${n}/8`).join(', ')
+    for (const [tok, under] of failing) {
+      expect(under, `${tok} now clears AA on all 8 resting cells (${detail}), so it is admissible as a ` +
+        `pill ink — either it stopped being a hairline (drop it from HAIRLINE_TOKENS and sweep it as a ` +
+        `tone) or a ground moved`).toBeGreaterThan(0)
+    }
+    // The load-bearing half of #3493's claim, asserted separately: for `--color-outline-variant` it is
+    // not "some grounds are bad", it is that NO ground rescues it — every tier, both modes, 1.14–1.89.
+    expect(failing.get('--color-outline-variant'),
+      `#3493's "no choice of ground fixes it" — every resting cell must be under AA (${detail})`).toBe(8)
+  })
+})
 
 // ═══ Tier 1 — every strength up to 16%, on every resting tier, in every scheme, in both modes ════
 //
-// 600 cells. Worst after the fix: 4.5200 (`danger` dark, surface-container, 16%). With the previous
-// `info` values, 171 of the 600 were under 4.5 and EVERY ONE was an `info:*` cell — which is the
-// evidence that the diagnosis (only the scheme-retinted tone drifted) and the fix are the same size
-// as the defect.
+// 1120 cells — 4 global tones + 12 `info:*` + 12 `primary:*` inks, × 4 tiers × 5 strengths × 2 modes.
+// It was 600 before `neutral` joined (#3493) and 640 before `primary` did (#3503). Worst: 4.5007
+// (`primary:coral` light, canvas, 16%); `neutral`'s worst is 4.5472 and `danger` dark's is 4.5200.
+//
+// Three findings of the SAME SHAPE, one token each, and the cell counts are the evidence that each
+// diagnosis was the same size as its defect:
+//
+//   · `info`     171 of the then-600 under 4.5, EVERY ONE an `info:*` cell — only the scheme-retinted
+//                tone had drifted.
+//   · `neutral`  8 of its 8 sixteen-percent cells under AA, both modes — a hairline used as ink, so no
+//                ground and no compositing base could fix it (#3493).
+//   · `primary`  42 of its 96 resting cells under AA, **every one LIGHT** — dark passed 48/48. Worst
+//                3.4870 (`rose`/light/canvas). No token substitution fixed it, so the 12 light values
+//                were retuned in OKLCH with hue and chroma held (#3503); all 96 now clear, worst
+//                4.5007. `schemes.ts`'s header carries the per-scheme table and the collateral.
+//
+// All three were tones this file did not measure at the time. That is the actual lesson, and it is why
+// `UNSWEPT_TONES` is now pinned at zero rather than merely emptied.
 describe('status-chip tone over its own ≤16% tint clears AA on every resting tier, every scheme', () => {
   it('has the full curated scheme set (a sweep over an empty list passes forever)', () => {
     expect(SCHEMES.length, 'curated schemes').toBeGreaterThanOrEqual(12)
     expect(SCHEMES.every((s) => /^#[0-9a-f]{6}$/i.test(s.colors['--color-info'].dark))).toBe(true)
     expect(SCHEMES.every((s) => /^#[0-9a-f]{6}$/i.test(s.colors['--color-info'].light))).toBe(true)
+  })
+
+  it('sweeps every ink the derived vocabulary yields (the cell count, not the tone count)', () => {
+    // The tone list is parsed rather than written (see `pillToneInks`), so the population floor lives
+    // here: four global tones (`ok`/`warn`/`danger`/`neutral`) + TWO scheme-supplied inks per scheme,
+    // `info:*` and — since #3503 — `primary:*`. A parse that silently read five tones instead of six
+    // would leave `tone_vocabulary` red AND this count short, and the pair names which half broke.
+    for (const mode of ['dark', 'light'] as Mode[]) {
+      const list = inks(mode)
+      expect(list.length, `${mode} inks swept`).toBe(4 + 2 * SCHEMES.length)
+      expect(list.map(([n]) => n), `${mode} must include the tone #3493 added`).toContain('neutral')
+      expect(list.map(([n]) => n), `${mode} must include the tone #3503 added`).toContain('primary:coral')
+      expect(list.every(([, ink]) => /^#[0-9a-f]{6}$/i.test(ink)), `${mode} inks are all hex`).toBe(true)
+    }
   })
 
   it('reads real, per-mode ground values out of tokens.css', () => {

@@ -407,7 +407,16 @@ class TestSpawnCwd:
         Defaulting to the permissive ``["~/workspace"]`` would silently
         re-enable the feature for admins who explicitly disabled it with
         ``subagent_cwd_allowed_roots = []``.
+
+        🪤 THE BUDGET GUARD NOW REFUSES THE SAME CAUSE, AND IT RUNS FIRST (#3458). It reads
+        the same ``AppConfig.load`` this patch breaks, and an unverifiable spend ceiling is
+        also a spawn refusal — so without holding that axis constant this test would pass
+        on the *other* guard's message and stop saying anything about ``cwd`` at all. The
+        budget half is asserted on its own in ``test_budget_ceiling_unverified.py``; here it
+        is pinned to a readable unlimited ceiling so the cwd axis is the only one moving.
         """
+        from personalclaw.guardrails.budgets import Budget
+
         project = tmp_path / "project"
         project.mkdir()
         manager = SubagentManager(
@@ -418,7 +427,16 @@ class TestSpawnCwd:
             "personalclaw.subagent.AppConfig.load",
             side_effect=OSError("config unreadable"),
         )
-        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"), load_mock:
+        budget_ok = patch(
+            "personalclaw.guardrails.budgets.budget_from_config",
+            lambda: Budget(),
+        )
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            budget_ok,
+            load_mock,
+        ):
             info = manager.spawn("t", cwd=str(project))
 
         assert info is not None

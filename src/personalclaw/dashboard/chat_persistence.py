@@ -6,7 +6,7 @@ import re
 import time
 import uuid
 
-from personalclaw.agent import AGENTS_DIR
+from personalclaw.agent import agents_dir
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.chat_utils import (
@@ -45,7 +45,7 @@ def _build_agent_model_map() -> dict[str, str]:
     """
     model_map: dict[str, str] = {}
     try:
-        for f in AGENTS_DIR.glob("*.json"):
+        for f in agents_dir().glob("*.json"):
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 model = data.get("model", "")

@@ -122,6 +122,13 @@ def _budget_check() -> tuple[str, str]:
     must not be allowed to spend its first token. Never raises — an unreadable meter answers
     ``ok`` because failing browse closed on a bookkeeping error would take out the feature
     without protecting a cent (the model-call chokepoint still meters the call itself).
+
+    🪤 THAT INCLUDES :class:`BudgetConfigUnreadable`, AND THAT IS A DECISION (#3458). The four
+    unattended seams refuse on an unverifiable ceiling; this one is the named exemption,
+    because it is consulted *inside* a loop whose every model call already passes through
+    ``ModelCallGuard``. Nothing here is silent about it: ``budget_from_config`` logs the
+    failed read at WARNING before raising, so the fact reaches the log even though this seam
+    declines to act on it.
     """
     try:
         from personalclaw.guardrails.budgets import (

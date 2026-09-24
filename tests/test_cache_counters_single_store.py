@@ -63,6 +63,32 @@ _TURN_LOCALS = ("_turn_cache_read_tokens", "_turn_cache_creation_tokens")
 # accumulating at all — an exemption must not outlive its reason.
 _READ_SIDE_FOLDS = frozenset({"usage_ledger.py"})
 
+# TURN-ASSEMBLY EXEMPTION, one module, justified and floored below (#3434).
+#
+# ``agents/native/runtime.py`` sums the two cache counts across a turn's inferences and
+# puts the totals on its terminal ``AgentEvent``. That is not a second store, by this
+# file's own definition of one — "a long-lived tally fed from the live turn path". These
+# are FUNCTION LOCALS that die with the turn, sitting on the lines beside ``agg_in`` /
+# ``agg_out`` / ``agg_cost``, which this scan does not flag only because they are not
+# cache-named. And the event they assemble is the very thing ``Stats`` is later fed
+# FROM, via ``chat_runner`` — it is the tally's SOURCE, not a duplicate of it.
+#
+# It could not be avoided by assigning instead of accumulating. ``input_tokens`` on that
+# same event is a turn total, and every consumer reconstructs the whole served prompt as
+# ``input + cache_creation + cache_read`` (``stats.py:160``, ``pricing.py:169``,
+# ``llm/openai.py:444``), so a last-inference-only cache count would divide a whole-turn
+# numerator by a single-inference denominator. Wrong arithmetic, not a style choice.
+#
+# Renaming the locals to something this scanner does not match was the other way through,
+# and is rejected: it would leave the invariant unchecked while looking checked, which is
+# the exact failure mode this file was written to end.
+#
+# The exemption is not a free pass. ``test_the_turn_assembly_exemption_is_still_locals_only``
+# proves the accumulators are bare locals (never ``self._x`` or a subscript — the shapes a
+# persistent store takes), that the module still accumulates at all, and that it aggregates
+# ``input_tokens`` in the same function, so the numerator and denominator cannot drift apart.
+_TURN_ASSEMBLERS = frozenset({"agents/native/runtime.py"})
+
 # A module that keeps its own running total. If the scanner cannot flag this, it
 # cannot flag the real thing either.
 _POSITIVE_CONTROL = """
@@ -183,7 +209,7 @@ def test_no_module_on_the_live_path_accumulates_a_prompt_cache_quantity() -> Non
     hits: list[str] = []
     for path in _py_files():
         rel = path.relative_to(SRC).as_posix()
-        if rel in _READ_SIDE_FOLDS:
+        if rel in _READ_SIDE_FOLDS or rel in _TURN_ASSEMBLERS:
             continue
         hits.extend(_accumulators(path.read_text(encoding="utf-8"), rel))
     assert hits == [], (
@@ -220,6 +246,70 @@ def test_the_read_side_exemption_is_still_read_side() -> None:
     assert first["cache_read_tokens"] == 7
     # The decisive property: folding into one group left the other group untouched.
     assert second["cache_read_tokens"] == 0, "one group's fold leaked into another"
+
+
+def test_the_turn_assembly_exemption_is_still_locals_only() -> None:
+    """FLOOR on the #3434 exemption: prove it is turn-scoped locals, not a tally.
+
+    Three ways this reds, each retiring the exemption's own justification:
+
+    * the module stops accumulating → the exemption is stale and must be deleted;
+    * an accumulator becomes ``self._x`` / ``obj.attr`` / ``d["k"]`` → it can now outlive
+      the turn, which is precisely the long-lived tally this file forbids;
+    * it stops aggregating ``input_tokens`` in the same function → the served-prompt sum
+      ``input + cache_creation + cache_read`` would mix a turn total with one
+      inference's, which is the reason accumulating was necessary in the first place.
+    """
+    for rel in _TURN_ASSEMBLERS:
+        source = (SRC / rel).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        augs = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.AugAssign)
+            and any(frag in name for name in _target_names(node.target) for frag in _CACHE_NAMES)
+        ]
+        assert augs, (
+            f"{rel} no longer accumulates a cache quantity — drop it from "
+            "_TURN_ASSEMBLERS instead of exempting a module that needs no exemption"
+        )
+
+        stores = [n.lineno for n in augs if not isinstance(n.target, ast.Name)]
+        assert stores == [], (
+            f"{rel} accumulates a cache quantity into a non-local target at line(s) "
+            f"{stores} — an attribute or subscript can outlive the turn, which makes it "
+            "the second store this file forbids, not a turn-assembly local"
+        )
+
+        # The paired invariant: whatever function sums the cache counts must sum
+        # input_tokens too, or the served-prompt denominator desynchronises.
+        cache_fns = {
+            fn.name
+            for fn in ast.walk(tree)
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+            for node in ast.walk(fn)
+            if isinstance(node, ast.AugAssign)
+            and any(frag in name for name in _target_names(node.target) for frag in _CACHE_NAMES)
+        }
+        input_fns = {
+            fn.name
+            for fn in ast.walk(tree)
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+            for node in ast.walk(fn)
+            if isinstance(node, ast.AugAssign)
+            and isinstance(node.value, ast.BoolOp)
+            and any(
+                isinstance(sub, ast.Attribute) and sub.attr == "input_tokens"
+                for sub in ast.walk(node.value)
+            )
+        }
+        assert cache_fns, f"{rel}: no function accumulates a cache quantity"
+        assert cache_fns <= input_fns, (
+            f"{rel}: {sorted(cache_fns - input_fns)} sums the cache counts without also "
+            "summing input_tokens — the whole-served-prompt denominator would mix a turn "
+            "total with a single inference's"
+        )
 
 
 # --- half (2): one writer, one module ----------------------------------------------

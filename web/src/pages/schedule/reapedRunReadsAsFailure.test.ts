@@ -86,6 +86,17 @@ describe('every renderer consumes the reconciler, not the bare chain', () => {
     expect(s).not.toContain('statusMeta(job.last_run_status || job.last_status)')
   })
 
+  it('the store panel', () => {
+    // 🔴 issue 3396. This renderer was the miss: it kept calling `triggerHealthMeta` directly, with
+    // no `hasRun` gate, so a just-created store trigger (`health:'ok'`, `state:'active'`,
+    // `run_count:0`) drew an ok-green tick one click after the list drew the neutral never-run dot
+    // for the identical row. This census exists precisely to catch a renderer bypassing the
+    // reconciler, and it enumerated three of the four — this is the fourth.
+    const s = read('triggers/StoreTriggerDetail.tsx')
+    expect(s).toContain('triggerStatusMeta({')
+    expect(s, 'the panel must not reach around the reconciler').not.toContain('triggerHealthMeta(trigger.health, trigger.state)')
+  })
+
   it("the list's rows — ONE call, no per-kind branch", () => {
     // 🔴 The per-kind ternary WAS the second copy. Each branch chose a mapper, so a new kind chose a
     // vocabulary again — and the event branch chose the run-outcome mapper for a row that has no run

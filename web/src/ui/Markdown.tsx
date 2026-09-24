@@ -228,9 +228,26 @@ function looksLikeFile(s: string): boolean {
  *  read by both `code` call sites (COMPONENTS and componentsWith). */
 const InPre = createContext(false)
 
+/** The text of a `code` element's children, with react-markdown's trailing newline off.
+ *
+ *  🔴 An EMPTY fence has NO children at all — react-markdown hands a childless `<code>`
+ *  `children === undefined` — and a bare `String(children)` turns that into the string
+ *  "undefined", which then flowed into `<CodeBlock>` and PAINTED the word `undefined` in
+ *  the transcript. Measured in a browser: zero non-2xx responses, zero console errors and
+ *  zero gateway tracebacks, so the only place it was visible was the rendered surface.
+ *  Nullish is the empty string; a fence whose content genuinely IS `undefined` is
+ *  untouched, because this coerces the ABSENCE of children, never their value.
+ *
+ *  Shared by both `code` call sites (`COMPONENTS` and `componentsWith`) for the same
+ *  reason `InPre` is: chat goes through the second one, so a coercion fixed in only one
+ *  leaves the highest-traffic consumer painting the word. */
+function codeText(children: unknown): string {
+  return (children === undefined || children === null ? '' : String(children)).replace(/\n$/, '')
+}
+
 function renderCode({ className, children, inPre }: any) {
   const m = /language-(\w+)/.exec(className || '')
-  const str = String(children).replace(/\n$/, '')
+  const str = codeText(children)
   // Block vs inline. `inPre` decides it; the other two are independent fallbacks
   // for a raw-HTML `<code>` that rehype-raw hands us with no `<pre>` around it.
   //
@@ -461,7 +478,7 @@ function componentsWith(
       // This is the SECOND `renderCode` call site; a fix that only threads the signal into
       // COMPONENTS would leave chat, the highest-traffic consumer, on the old predicate.
       const inPre = useContext(InPre)
-      const str = String(children).replace(/\n$/, '')
+      const str = codeText(children)
       if (onFileClick && !className && looksLikeFile(str)) {
         return (
           <button type="button" onClick={() => onFileClick(str.trim())} title={`Open ${str.trim()}`}

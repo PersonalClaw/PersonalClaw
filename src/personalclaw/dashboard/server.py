@@ -670,6 +670,14 @@ async def start_dashboard(
     from personalclaw.dashboard.handlers.local_model import register_local_model_routes
 
     register_local_model_routes(app)
+    # The model step's VERIFICATION: run chat's real resolution and relay the bridge's own
+    # cause. Separate from `/api/onboarding` above because that route's `needs_model` is a
+    # no-instantiate probe by contract (it is also the workflow preflight's), and a
+    # declaration is not a build — see the handler module's docstring for the measured
+    # state where the two disagree.
+    from personalclaw.dashboard.handlers.model_check import register_model_check_routes
+
+    register_model_check_routes(app)
     # Doctor — tiered read-only health probes
     # Scheduled-backup status, the archive list with its
     # retention plan, and on-demand jobs. Restore is deliberately NOT here (see the
@@ -1419,6 +1427,7 @@ async def start_dashboard(
         api_room_member_add,
         api_room_member_remove,
         api_room_message_post,
+        api_room_update,
         api_rooms_create,
         api_rooms_list,
     )
@@ -1435,6 +1444,7 @@ async def start_dashboard(
     app.router.add_post("/api/rooms/{room_id}/messages", api_room_message_post)
     app.router.add_get("/api/rooms/{room_id}/export", api_room_export)
     app.router.add_get("/api/rooms/{room_id}", api_room_get)
+    app.router.add_patch("/api/rooms/{room_id}", api_room_update)
 
     # Tools — aggregated listing from all tool providers
     from personalclaw.dashboard.handlers.tools import (

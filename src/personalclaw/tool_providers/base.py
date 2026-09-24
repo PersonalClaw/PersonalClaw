@@ -108,6 +108,60 @@ class ToolResult:
     agent_error: "AgentError | None" = None
 
 
+class ToolFailure(str):
+    """A tool handler's answer for a failure it HANDLED rather than raised (#3487).
+
+    The in-process MCP handlers (``mcp_*._call_tool``) are ``str``-returning by design and
+    deliberately do not raise for expected failures — an unknown slug, a missing required
+    argument, a service error code. Before this type, the only trace of such a failure was
+    the PROSE of the message, so every consumer had to re-derive the verdict by reading it:
+    ``InProcessMcpToolProvider.invoke`` did not try at all and answered ``success=True`` for
+    every non-raising call, so ``POST /api/tools/invoke`` returned ``200 {ok: true,
+    error: ""}`` and the hash-chained Security Event Log recorded four refused DESTRUCTIVE
+    operations as ``outcome: "completed"``. An audit log that answers "did an agent delete
+    anything?" wrongly is worse than the wire lie it came with.
+
+    A predicate over the text was rejected rather than tuned: ``artifact_list`` answering
+    ``"No artifacts found."`` is a success while ``artifact_delete`` answering
+    ``"Artifact not found: X"`` is a failure, and a leading-``Error`` sniff calls both
+    successes. It also stops working the moment a handler rewords a message — a protection
+    that reads as present and cannot be relied on.
+
+    Why a ``str`` SUBCLASS is the carrier, rather than a richer return type or a contextvar:
+
+    * The verdict has to travel WITH the value. ``InProcessMcpToolProvider.invoke`` runs the
+      handler through ``run_in_executor`` under ``contextvars.copy_context().run``, which
+      isolates every mutation to the copy — so a contextvar a handler set cannot come back
+      out of the worker thread at all.
+    * Being a ``str``, it needs no signature change and no second code path: the MCP stdio
+      loop, ``format_tool_result``, the staged-spec echo and every existing test read it
+      exactly as before. The TYPE is the new information; the text is unchanged.
+
+    Construct these through :func:`tool_failure`, which owns the package's failure
+    convention (``Error: …`` / ``Error [CODE]: …``) in one place instead of at ~90 call
+    sites. ``reason`` is the same message without that prefix, so a consumer that adds its
+    own (``format_tool_result``) renders exactly one.
+    """
+
+    reason: str
+
+    def __new__(cls, text: str, *, reason: str = "") -> "ToolFailure":
+        self = super().__new__(cls, text)
+        self.reason = reason or str(text)
+        return self
+
+
+def tool_failure(reason: str, *, code: str = "") -> ToolFailure:
+    """The one owner of this package's model-facing tool-failure convention.
+
+    Renders ``Error: {reason}``, or ``Error [{code}]: {reason}`` when the handler has a
+    machine-readable code for the model to branch on. Returns a :class:`ToolFailure`, so the
+    verdict is structural and no consumer has to read the prose to recover it.
+    """
+    head = f"Error [{code}]" if code else "Error"
+    return ToolFailure(f"{head}: {reason}", reason=reason)
+
+
 def maybe_truncate(text: str, cap: int | None) -> tuple[str, bool, int | None]:
     """Cap ``text`` to ``cap`` chars, signalling whether it was truncated.
 

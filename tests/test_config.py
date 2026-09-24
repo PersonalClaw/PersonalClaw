@@ -38,12 +38,20 @@ class TestAppConfig:
         assert cfg.hooks == {"auto_approve_tools": ["ReadFile"]}
 
     def test_load_invalid_json(self, tmp_path, monkeypatch):
+        """Invalid JSON is DISCARDED, not read as "no configuration" (#3424).
+
+        This row used to assert `approval_mode == "auto"` with the comment "falls back to
+        defaults", and that assertion was the defect written down: `auto` auto-approves every
+        tool call, so a truncated file silently widened a posture the operator had narrowed.
+        An unreadable file resolves to the most restrictive value instead. An ABSENT file
+        still yields the defaults — `test_load_missing_file` above is that half.
+        """
         cfg_file = tmp_path / "config.json"
         cfg_file.write_text("not json")
         monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: cfg_file)
 
         cfg = AppConfig.load()
-        assert cfg.agent.approval_mode == "auto"  # falls back to defaults
+        assert cfg.agent.approval_mode == "interactive"
 
 
 class TestObserveSizing:

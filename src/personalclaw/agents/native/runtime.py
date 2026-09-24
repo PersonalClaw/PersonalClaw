@@ -825,6 +825,16 @@ class NativeAgentRuntime(AgentProvider):
             # context leads. Providers that don't cache simply ignore the extra key.
             self._messages.append({"role": "system", "content": turn_note, "_volatile": True})
         agg_in = agg_out = 0
+        # The prompt-cache halves of the served prompt, accumulated over the turn's
+        # inferences exactly like ``agg_in`` beside them. They have to travel together:
+        # every consumer of cache telemetry reconstructs the whole served prompt as
+        # ``input + cache_creation + cache_read`` (``stats.py:160``, ``pricing.py:169``,
+        # ``llm/openai.py:444``), so a terminal event carrying an accumulated
+        # ``input_tokens`` next to a zeroed or last-inference-only cache count would
+        # divide a whole-turn numerator by a single-inference denominator. Omitting them
+        # is what made every ledger row read a STRUCTURAL zero — indistinguishable from
+        # "caching is not working" — for every provider, not just Bedrock.
+        agg_cache_read = agg_cache_creation = 0
         agg_cost = 0.0
         turns = 0
         # Turn telemetry (parity with ACP's last_prompt_stats): events observed
@@ -852,6 +862,8 @@ class NativeAgentRuntime(AgentProvider):
                         # hides spend is why users distrust the button.
                         input_tokens=agg_in,
                         output_tokens=agg_out,
+                        cache_read_tokens=agg_cache_read,
+                        cache_creation_tokens=agg_cache_creation,
                         cost_usd=agg_cost,
                         num_turns=turns,
                         context_usage_pct=self._last_context_pct,
@@ -1042,6 +1054,8 @@ class NativeAgentRuntime(AgentProvider):
                 if usage is not None:
                     agg_in += usage.input_tokens or 0
                     agg_out += usage.output_tokens or 0
+                    agg_cache_read += usage.cache_read_tokens or 0
+                    agg_cache_creation += usage.cache_creation_tokens or 0
                     agg_cost += usage.cost_usd or 0.0
                     # ``is not None``, not truthiness: a provider reporting a real
                     # 0% must update the gauge, and only an absent report must not.
@@ -1081,6 +1095,8 @@ class NativeAgentRuntime(AgentProvider):
                         ),
                         input_tokens=agg_in,
                         output_tokens=agg_out,
+                        cache_read_tokens=agg_cache_read,
+                        cache_creation_tokens=agg_cache_creation,
                         cost_usd=agg_cost,
                         num_turns=turns,
                         context_usage_pct=self._last_context_pct,
@@ -1120,6 +1136,8 @@ class NativeAgentRuntime(AgentProvider):
                 stop_reason="max_turns",
                 input_tokens=agg_in,
                 output_tokens=agg_out,
+                cache_read_tokens=agg_cache_read,
+                cache_creation_tokens=agg_cache_creation,
                 cost_usd=agg_cost,
                 num_turns=turns,
                 context_usage_pct=self._last_context_pct,

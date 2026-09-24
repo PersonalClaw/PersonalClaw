@@ -5,7 +5,7 @@ import {
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { SidePanel } from '../../ui/SidePanel'
-import { EmptyState, Loading } from '../../ui/ListScaffold'
+import { EmptyState, Loading, LoadError } from '../../ui/ListScaffold'
 import { Modal } from '../../ui/Modal'
 import { SearchField } from '../../ui/SearchField'
 import { ResultAnnouncement } from '../../ui/ListControls'
@@ -35,7 +35,11 @@ const TAB_KEY = 'files-tab'
  *  (`#/artifacts`, ARTIFACTS S1b) — they were a tab here for navigational
  *  similarity only. Old `#/files/<slug>` deep-links redirect there. */
 export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: RouteProps) {
-  const { roots, loading: rootsLoading } = useFileRoots()
+  // 🔴 `rootsErr` used to be discarded in `useFileRoots`, so an unreachable `/api/files/roots`
+  // rendered the explorer with an EMPTY root strip and no tabs — a file browser that says the
+  // gateway exposes nothing, which is also what a correctly-locked-down gateway looks like. The
+  // error branch below is tested before the workbench so the failure cannot read as a config.
+  const { roots, loading: rootsLoading, error: rootsErr, refresh: refreshRoots } = useFileRoots()
   // Legacy deep-link `#/files/<slug>` (the pre-split artifact link, persisted in
   // old chat transcripts/events) → redirect to the artifact's new home.
   const deepSlug = (sub || '').split('/')[0] || ''
@@ -306,9 +310,16 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
         }
       />
 
-      {/* Workbench body is centered + bounded to the shell content-width preset
-          (the 'full' preset still fills — min(1600px,100%)); its internal columns
-          flex within that. */}
+      {/* The roots are the page's premise: with none readable there is no tree to browse and no tab
+          to pick, so this branch REPLACES the workbench rather than decorating it. Tested before the
+          body for the reason `ui/loadErrorState.test.tsx` states — `roots.length === 0` is true for
+          the loading, error AND genuinely-empty cases, so an error branch after it never runs. */}
+      {rootsErr && roots.length === 0 ? (
+        <LoadError what="file roots" error={rootsErr} onRetry={refreshRoots} />
+      ) : (
+      /* Workbench body is centered + bounded to the shell content-width preset
+         (the 'full' preset still fills — min(1600px,100%)); its internal columns
+         flex within that. */
       <div className="mx-auto flex min-h-0 w-full flex-1" style={{ maxWidth: 'var(--content-width)' }}>
             {/* editor column — tab strip + the focused file's viewer (fills width;
                 the explorer is a right-docked, hidable panel beside it) */}
@@ -484,6 +495,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
             </SidePanel>
             )}
       </div>
+      )}
 
       {artModal && (
         <Modal title="Save as artifact" icon={<Box size={18} className="text-primary" />} onClose={() => setArtModal(null)}>

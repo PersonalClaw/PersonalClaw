@@ -1,16 +1,19 @@
 """Tests for personalclaw.apps.manifest — AppManifest parser and validator."""
 
 import json
+from dataclasses import fields
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from personalclaw.apps.manifest import (
+    PERMISSION_KEYS,
     AppManifest,
     CliConfig,
     Dependencies,
     MarketplaceDependencies,
+    Permissions,
     SetupConfig,
     version_tuple,
 )
@@ -170,6 +173,109 @@ class TestValidation:
         assert len(m.crons) == 1
         assert len(m.ui.pages) == 1
         assert m.permissions.storage is True
+
+
+# ---------------------------------------------------------------------------
+# The permission vocabulary is CLOSED at install
+# ---------------------------------------------------------------------------
+
+
+class TestPermissionVocabulary:
+    """An undeclarable permission is refused, not dropped in silence.
+
+    ``Permissions.from_dict`` reads the fifteen known keys by name, so a typo used to produce
+    silence in BOTH directions: nothing refused the install, and nothing reached the consent
+    surface either. That misleads two different people with one bug — the author ships
+    believing the app holds a permission it will never be granted, and the user is asked to
+    consent to a set that is not the set the author wrote.
+    """
+
+    def test_the_measured_typo_case_is_refused_and_named(self):
+        """The exact payload measured as validating clean before this check existed."""
+        m = AppManifest.from_dict(
+            _valid_manifest(
+                permissions={"strorage": True, "filesystem": True, "root": True, "exec": True}
+            )
+        )
+        errors = m.validate()
+        assert len(errors) == 4, errors
+        for key in ("strorage", "filesystem", "root", "exec"):
+            assert any(repr(key) in e for e in errors), f"{key!r} was not named: {errors}"
+
+    def test_a_near_miss_suggests_the_real_key(self):
+        """An error naming the field and the fix, not a generic refusal."""
+        m = AppManifest.from_dict(_valid_manifest(permissions={"strorage": True}))
+        (error,) = m.validate()
+        assert "'strorage'" in error
+        assert "'storage'" in error, f"no did-you-mean for a one-letter typo: {error}"
+
+    def test_an_unrecognisable_key_still_refuses_without_a_suggestion(self):
+        """`get_close_matches` returns nothing below its cutoff; the refusal must not depend
+        on having something to suggest."""
+        m = AppManifest.from_dict(_valid_manifest(permissions={"zzzzzzzz": True}))
+        (error,) = m.validate()
+        assert "'zzzzzzzz'" in error
+        assert "did you mean" not in error
+
+    @pytest.mark.parametrize("key", sorted(PERMISSION_KEYS))
+    def test_every_key_in_the_vocabulary_is_accepted(self, key):
+        """The other direction, and the one that would break real apps if the vocabulary
+        drifted: a declared permission this project DOES support must never be refused."""
+        m = AppManifest.from_dict(_valid_manifest(permissions={key: []}))
+        assert m.permissions.unknown_keys == ()
+        assert m.validate() == []
+
+    def test_the_vocabulary_is_derived_from_the_dataclass(self):
+        """A hand-listed copy drifts the moment a permission is added, and a vocabulary that
+        has fallen behind its fields refuses a permission that works — worse than no check.
+
+        Both bookkeeping names are asserted absent by name: they are fields but not wire keys,
+        and letting either through would make ``network_declared`` a declarable permission.
+        """
+        declared = {f.name for f in fields(Permissions)}
+        assert PERMISSION_KEYS == declared - {"network_declared", "unknown_keys"}
+        assert "network_declared" not in PERMISSION_KEYS
+        assert "unknown_keys" not in PERMISSION_KEYS
+        assert len(PERMISSION_KEYS) >= 15, "the vocabulary shrank — did a permission move?"
+
+    def test_every_key_to_dict_can_emit_is_in_the_vocabulary(self):
+        """The consent surface reads ``to_dict``, so a key it can emit but the vocabulary
+        rejects would be refused at install and rendered at consent — contradictory."""
+        every = Permissions(
+            api=["/api/x"],
+            events=["refresh"],
+            mcpTools=["t"],
+            storage=True,
+            network=True,
+            memory="shared",
+            cron=True,
+            agent=True,
+            appMessaging=["other"],
+            storageShared=True,
+            storageRead=["other"],
+            desktop=["audio_capture"],
+            backgroundTasks=True,
+            eventSubscriptions=["session.created"],
+        )
+        emitted = set(every.to_dict())
+        assert (
+            emitted <= PERMISSION_KEYS
+        ), f"emitted but not declarable: {emitted - PERMISSION_KEYS}"
+        assert "unknown_keys" not in emitted, "the refusal record leaked onto the wire"
+
+    def test_the_bookkeeping_field_never_reaches_the_wire(self):
+        """``unknown_keys`` is a fact about the raw dict, not a permission."""
+        m = AppManifest.from_dict(_valid_manifest(permissions={"nonsense": True}))
+        assert m.permissions.unknown_keys == ("nonsense",)
+        assert m.permissions.to_dict() == {}
+        assert "unknown_keys" not in json.dumps(m.to_dict())
+
+    def test_parsing_never_raises_so_a_bad_app_still_lists(self):
+        """Parsing happens on every load path (Store scan, catalog, provider loader) where a
+        raise would take out the listing; only ``validate`` — install and update — refuses."""
+        m = AppManifest.from_dict(_valid_manifest(permissions={"exec": True}))
+        assert m.name == "test-app"
+        assert m.validate(), "the refusal belongs to validate(), and it did not fire"
 
 
 # ---------------------------------------------------------------------------

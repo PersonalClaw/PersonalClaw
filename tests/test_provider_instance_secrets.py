@@ -107,7 +107,7 @@ async def _client(tmp_path: Path):
     # `instance_routes._refresh_multi_instance_provider_safe` widened its guard from
     # `type == "tool"` to `type in ("tool", "model")` (#3372), so every `_create()` call
     # in this file — previously a dead branch for a model-type fake ext — now runs
-    # `rebuild_agent_config()`, which writes through `agent.AGENTS_DIR` / `agent._USER_DIR`,
+    # `rebuild_agent_config()`, which writes through `agent.agents_dir()` / `agent._USER_DIR`,
     # module-level constants frozen at import (`agent.py:93`/`:135`). Patching `config_dir`
     # alone leaves them pointing at the real home, so the write escapes tmp_path and the
     # conftest real-home rail fails the session (`agents/personalclaw.json` modified) —
@@ -115,7 +115,7 @@ async def _client(tmp_path: Path):
     with (
         patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
         patch("personalclaw.providers.registry.get_provider_registry", lambda: _FakeRegistry()),
-        patch("personalclaw.agent.AGENTS_DIR", tmp_path / "agents"),
+        patch("personalclaw.agent.agents_dir", lambda: tmp_path / "agents"),
         patch("personalclaw.agent._USER_DIR", tmp_path),
     ):
         app = web.Application()

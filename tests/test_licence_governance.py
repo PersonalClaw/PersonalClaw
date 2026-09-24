@@ -129,10 +129,36 @@ _SKIP_DIRS = frozenset(
         "dist",
         "build",
         "htmlcov",
-        ".dev-home",
         "site-packages",
     }
 )
+
+#: Directories skipped by PREFIX rather than by exact name (#3462).
+#:
+#: 🔴 `.dev-home` USED TO BE A LITERAL IN `_SKIP_DIRS` ABOVE, AND THAT DISAGREED WITH
+#: `.gitignore`. The ignore rule is the glob `/.dev-home*/`, with a comment saying not to
+#: narrow it — every dev home holds live credentials, so an ad-hoc `.dev-home-<something>`
+#: for a one-off validation run has to be ignored by default rather than each name being
+#: added after the fact. The membership test here honoured only the canonical spelling, so
+#: `.dev-home-i3` was invisible to `git status` AND walked by this sweep — and a dev home
+#: holds installed app copies, i.e. real `LICENSE` files, so it reported them as undeclared
+#: declaration sites.
+#:
+#: 🪤 A PREFIX, BECAUSE ANOTHER LITERAL FIXES ONE MACHINE. `_SKIP_DIRS` is a frozenset and
+#: the walk tests membership, so adding `.dev-home-i3` would fix the checkout that reported
+#: it and no other — and the next `make serve`-style run in a worktree mints a new name.
+#:
+#: Deliberately NOT a general glob engine: a prefix is what `.gitignore` expresses and it
+#: cannot swallow an unrelated name by accident (`.dev-homework` and `dev-home` are still
+#: walked, asserted in `test_dev_home_is_skipped_by_prefix.py`).
+_SKIP_DIR_PREFIXES = (".dev-home",)
+
+
+def _is_skipped_dir(name: str) -> bool:
+    """Whether the walk prunes a directory called *name*. One owner for both rules, so the
+    exact set and the prefix list cannot drift into two answers."""
+    return name in _SKIP_DIRS or name.startswith(_SKIP_DIR_PREFIXES)
+
 
 #: A lockfile is a record of OTHER projects' licences. See the module docstring.
 _SKIP_FILES = frozenset({"package-lock.json", "uv.lock", "yarn.lock", "pnpm-lock.yaml"})
@@ -259,9 +285,12 @@ def _walk(root: Path):
     absolute parts made the whole sweep return nothing there while looking perfectly clean —
     a rail that silently scans zero files. `test_the_census_is_not_vacuous` is what catches
     that class of mistake, and it caught exactly this one.
+
+    Pruning goes through `_is_skipped_dir`, not a bare set membership, so a dev home is
+    matched by prefix the way `.gitignore` matches it (#3462).
     """
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
+        dirnames[:] = sorted(d for d in dirnames if not _is_skipped_dir(d))
         here = Path(dirpath)
         for name in sorted(filenames):
             yield here / name

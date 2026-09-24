@@ -124,6 +124,11 @@ export function refTarget(it: Pick<InboxItem, 'refs'>): string {
   // pre-existing ref resolves exactly as before — an item that carries both a session and
   // an artifact still goes to the session, which is the referent it always went to.
   if (refs.artifact) return `artifacts/${encodeURIComponent(refs.artifact)}`
+  // AGENT-ROOMS' pause item (`agent/room_paused`) stamps `refs.room` and nothing else, so this
+  // is the row's only route. LAST in the chain like `artifact` above, so every pre-existing ref
+  // resolves exactly as it did. It is the reason the pause card is not a second notice: the row
+  // and the card are one event with one destination, and this is the link between them.
+  if (refs.room) return `chat/room/${encodeURIComponent(refs.room)}`
   return ''
 }
 
@@ -135,6 +140,7 @@ export function refLabel(it: Pick<InboxItem, 'refs'>): string {
   if (refs.session) return 'Go to chat'
   if (refs.workflow) return 'Go to workflow'
   if (refs.artifact) return 'Open the report'
+  if (refs.room) return 'Go to the room'
   return 'Go to source'
 }
 

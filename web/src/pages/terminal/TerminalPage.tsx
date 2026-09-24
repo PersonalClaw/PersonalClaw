@@ -56,7 +56,11 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   useEffect(() => {
     api.personalclawConfig()
       .then((c) => setPersist(Boolean(c?.dashboard?.terminal?.persist)))
-      .catch(() => setPersist(false))
+      // 🔴 This used to `setPersist(false)`, which rendered the toggle OFF off an UNREAD config —
+      // "an unread switch is not an off switch" (#532 row 19). The comment three lines above already
+      // states the honest encoding: `null` means not answered, and the toggle stays hidden. A user
+      // who cannot reach the gateway is not told their persistence is disabled.
+      .catch(() => {})
   }, [])
   // The config flag is INTENT; whether it can be honoured is a host fact (is `tmux` installed?),
   // and the backend ANDs the two — `_persist_enabled`. Deriving the promise from the flag alone

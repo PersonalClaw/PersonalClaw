@@ -136,7 +136,16 @@ describe('the two canvas-painted accent texts use the emphasis shade', () => {
 // 🔑 AND ONLY THE `primary` TONE WAS BROKEN. Every other `RowAction` tone measures 5.59-10.11 on that
 // ground (ok, danger, warn, info, on-surface-var, on-surface-low). `--color-primary` is the token tuned
 // for brand presence; the emphasis shade is the legible sibling, in both modes — it is DARKER in light
-// (#c8452e → #a33922) and LIGHTER in dark (#ff6b5b → #ff9a86), i.e. further from the ground either way.
+// and LIGHTER in dark (#ff6b5b → #ff9a86), i.e. further from the ground either way.
+//
+// 🔑 THAT LAST CLAUSE IS NOW ASSERTED, NOT JUST STATED (#3503). The light pair read #c8452e → #a33922
+// when this was written and is #b12e18 → #8d240b now, because `--color-primary`'s light value had to be
+// retuned across all 12 schemes. The retune had to carry emphasis with it: moving primary alone crossed
+// emphasis outright in 6 of 12 schemes — making a hover fill LIGHTER than its resting state — and
+// collapsed coral's step to 0.20, and every rail in the tree stayed green through both. The ordering is
+// now a named assertion in `schemeContrast.test.ts` ("emphasis is further from the ground than primary,
+// in every scheme and BOTH modes") with a minimum step, so the sentence above cannot silently stop
+// being true. The hex pair is deliberately no longer quoted inline: it is scheme-dependent and moves.
 //
 // One line in `dashboard/widgets/kit.tsx` fixes all four `RowAction tone="primary"` call sites (Reply,
 // Answer, Send, Apply update). After: **0 blocking at all four theme × viewport combinations**, and the

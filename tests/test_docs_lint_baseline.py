@@ -72,9 +72,9 @@ def _scanned_doc_count() -> int:
     scanned set is what distinguishes "we looked at 120 docs and found nothing" from "we
     looked at nothing".
     """
-    from scripts.generate_docs_lint_baseline import _docs_md, _tracked_files
+    from scripts.generate_docs_lint_baseline import _tracked_files, _tracked_md
 
-    return len(_docs_md(_tracked_files()))
+    return len(_tracked_md(_tracked_files()))
 
 
 def test_no_per_file_counter_rose_vs_committed_baseline():
@@ -150,7 +150,7 @@ def test_baseline_is_well_shaped_and_sorted():
     for rel, bucket in inv["per_file"].items():
         assert set(bucket) == {"findings", "total"}, bucket
         assert isinstance(rel, str) and rel and not rel.startswith("/"), rel
-        assert rel.startswith("docs/") and rel.endswith(".md"), rel
+        assert rel.endswith(".md"), rel
         findings = bucket["findings"]
         assert findings == sorted(findings), f"{rel} findings not sorted"
         assert len(findings) == len(set(findings)), f"{rel} has duplicate findings"
@@ -189,6 +189,33 @@ def test_baseline_ships_at_the_measured_population_whatever_it_is():
         "the docs-lint renderer scanned ZERO documents — a baseline of zero findings then "
         "proves nothing about the docs, only that the scanner found nothing to read."
     )
+
+
+def test_the_scan_set_is_every_tracked_markdown_file():
+    """The scan SCOPE is a contract, not an implementation detail.
+
+    A non-zero corpus is not enough: the scope was previously ``docs/**``, which measured
+    **76 of 267** tracked ``*.md`` files and passed the ``> 0`` assertion above with the
+    entire reader-facing repo root outside it — ``README.md``, ``SHOWCASE.md``,
+    ``CONTRIBUTING.md``, ``AGENTS.md``, and every README under ``src/``, ``web/`` and
+    ``mobile/``. A gate that silently stops looking at the first document a reader opens is
+    the failure this pins, so the scope is asserted by EQUALITY against ``git ls-files``
+    rather than by a floor.
+    """
+    from scripts.generate_docs_lint_baseline import _tracked_files, _tracked_md
+
+    tracked = _tracked_files()
+    scanned = set(_tracked_md(tracked))
+    every_md = {p for p in tracked if p.endswith(".md")}
+    missed = sorted(every_md - scanned)
+    assert not missed, (
+        "the docs-lint census skips tracked markdown files, so nothing checks their "
+        f"links: {missed[:20]}"
+    )
+    # The root documents a stranger reads first must be in the set by name, so a future
+    # narrowing cannot pass by keeping the equality true over a shrunken tracked set.
+    for anchor in ("README.md", "CONTRIBUTING.md", "SHOWCASE.md", "AGENTS.md"):
+        assert anchor in scanned, f"{anchor} is tracked but outside the docs-lint scan set"
 
 
 def test_a_new_finding_reds_the_ratchet():

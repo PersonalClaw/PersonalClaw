@@ -48,6 +48,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw.tool_providers.base import ToolFailure, tool_failure
+
 logger = logging.getLogger(__name__)
 
 #: The gateway route the shim forwards to. One path for every tool: the branch on *which*
@@ -265,7 +267,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
     response = _post(DISPATCH_PATH, {"tool": name, "params": args})
     if not isinstance(response, dict):
-        return f"Error: computer use returned {type(response).__name__}, not an object."
+        return tool_failure(f"computer use returned {type(response).__name__}, not an object.")
     if response.get("error"):
         # Both envelopes land here: the gateway's ``{"error": {...}}`` refusal body and
         # ``_post``'s own ``{"error": "<transport message>"}``. Rendering the refusal's
@@ -295,9 +297,14 @@ def _render_error(error: Any) -> str:
         body = "\n".join(line for line in lines if line)
         if body:
             code = str(error.get("agent_code") or error.get("code") or "")
-            return f"{body}\n\n(code: {code})" if code else body
-        return str(error.get("message") or error)
-    return f"Error: {error}"
+            rendered = f"{body}\n\n(code: {code})" if code else body
+            # Verbatim, and marked as the failure it is: this function exists only to render
+            # a refusal, so its answer must not reach the bridge as a success (#3487). The
+            # text is unchanged — ``ToolFailure`` adds the verdict, not a prefix.
+            return ToolFailure(rendered, reason=rendered)
+        message = str(error.get("message") or error)
+        return ToolFailure(message, reason=message)
+    return tool_failure(f"{error}")
 
 
 def _call_tool(name: str, raw_args: dict[str, Any]) -> str:

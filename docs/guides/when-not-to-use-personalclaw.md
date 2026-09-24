@@ -1,0 +1,221 @@
+# When PersonalClaw is not the right tool (yet)
+
+Most projects tell you what they do. This page tells you when to close the tab.
+
+Every item below is a situation where PersonalClaw, **as the code stands today**, will
+not serve you — not a feature we are coy about, and not a roadmap promise dressed as a
+caveat. Each one names the file or the documented decision that makes it true, so you
+can check rather than trust. Where a limit is a deliberate design boundary rather than
+unfinished work, it says so, because those two deserve very different decisions from
+you: one is "wait", the other is "use something else".
+
+If none of these describe you, start at [Getting started](getting-started.md).
+
+---
+
+## 1. You need your data to survive upgrades
+
+**Walk away if:** PersonalClaw would hold anything you cannot afford to lose or
+recreate.
+
+There is no migration machinery. PersonalClaw is pre-1.0 and follows a clean-break
+doctrine: when a design is replaced the old path is deleted in the same change, and
+state under `~/.personalclaw` — sessions, memory, knowledge, config, app state — may
+need to be recreated after a 0.x update. That is stated in the README's pre-1.0 banner
+and in [CONTRIBUTING.md → Breaking changes](../../CONTRIBUTING.md#breaking-changes),
+where the lifecycle model is described as *a mental model, not shipped machinery*.
+
+This is also not nearly over. Migration-backed change discipline is scheduled
+deliberately late — it binds once the architecture stops moving — so breaking 0.x
+updates are the norm, not the exception, for the foreseeable future.
+
+`personalclaw snapshot` writes a portable archive and `personalclaw restore` reads it
+back, which is a real backup path. It is not a migration: restoring an old snapshot into
+a newer PersonalClaw is subject to the same clean breaks.
+
+**Come back when:** the README's pre-1.0 banner is gone. It is removed on a judgment
+about architectural stability, not on a date.
+
+## 2. Your machine cannot reach a model
+
+**Walk away if:** the machine is air-gapped and has no local inference server, or you
+were expecting a model to be included.
+
+No model weights and no hosted model ship with PersonalClaw, and **a fresh install has
+no chat model bound.** Concretely:
+
+- Core contains `llm/anthropic.py` and `llm/openai.py`, but these are *wire-protocol
+  clients only* — neither registers itself as a provider at import. Registration is
+  owned by the `anthropic-models` and `openai-models` app bundles, which live in the
+  separate [PersonalClawApps](https://github.com/PersonalClaw/PersonalClawApps) repo.
+  This split is the provider boundary and is documented as such in
+  [provider-boundary.md](../architecture/provider-boundary.md).
+- The Store's default source is that repo's git URL
+  (`_DEFAULT_GIT_SOURCES` in `src/personalclaw/apps/catalog.py`), so installing a
+  hosted-model provider needs a reachable `github.com`.
+- The one model provider the wheel *does* bundle is `ollama-models` — it is seeded into
+  your home at first boot and cannot be uninstalled, so it needs no network to appear.
+  But it is a client for [Ollama](https://ollama.com), defaulting to
+  `http://localhost:11434`. It needs Ollama actually running with a model pulled.
+
+So a genuinely offline install works **only** if you bring your own Ollama with a pulled
+model. An air-gapped machine with no local inference server cannot complete setup into a
+working chat, and nothing in the product will pretend otherwise.
+
+This is a design boundary, not a gap: the provider-agnostic core is the reason no vendor
+is baked in, and it is the same reason none is included.
+
+## 3. More than one person needs an account
+
+**Walk away if:** you want per-person logins, a shared workspace, per-member
+permissions, or SSO.
+
+PersonalClaw is single-user by construction. There is no user-account concept in the
+codebase to attach a second person to. The gateway's auth is a local token (or none,
+when it is bound to loopback only); SSO/SAML/OIDC is **not shipped by design**, because
+a single-user self-hosted system has no directory to federate with — see
+[Security model](../architecture/security.md) and [Remote access](remote-access.md).
+
+Nor can you build a team out of several installs. From
+[Companion apps → No hub, ever](companion-apps.md#no-hub-ever), quoted as an owner
+ruling rather than a status:
+
+> **No hub in core, ever. No gateway-to-gateway anything.** Gateways never discover,
+> sync with, or proxy for each other; no shared identity, no cross-gateway search, no
+> aggregated inbox in core or in the shells.
+
+Several gateways can appear in one *client's* endpoint list, but they stay N independent
+machines and only the client knows they are related. If you need a shared assistant for
+a team, family, or company, this is the wrong architecture and will stay the wrong
+architecture — that is a permanent boundary, not a backlog item.
+
+## 4. You want a real app on your phone
+
+**Walk away if:** you expected something to install from the App Store or Play Store.
+
+There is no native mobile app and none is in progress. Two shells exist: the Electron
+desktop app and "the phone", which is the served dashboard **installed as a PWA** —
+[Companion apps → Bringing up a new platform](companion-apps.md#bringing-up-a-new-platform).
+That works, and it is genuinely usable on a phone on your own network, but it is a web
+app in a browser shell: no push notifications from a closed app, no background
+execution, no store listing.
+
+The phone also has to reach the gateway. On your own network that is a LAN address; from
+outside it is a tunnel plus password and 2FA ([Remote access](remote-access.md)). If you
+wanted a cloud account that "just works" from anywhere, there isn't one — by design,
+since there is no hosted service.
+
+## 5. You are on Windows and will not use WSL2 or a container
+
+**Walk away if:** you need a native Windows install.
+
+Windows native is **not supported**, and the reason is recorded rather than deferred
+vaguely: a [native-Windows audit](../research/windows-native-audit.md) ruled the backend
+port *no-go* because it would silently weaken file-permission and sandbox guarantees the
+rest of the system depends on. There is also no Windows desktop shell, and none is
+planned until both that audit flips and Windows code-signing secrets exist
+([The desktop app → Windows](desktop.md#windows--deferred-2026-09-05)).
+
+What does work on Windows is **WSL2** or **Docker Desktop**, both documented walkthroughs
+in [Platforms](platforms.md#windows-via-wsl2). Honest nuance: the WSL2 path is a checklist
+that has been executed; the Docker Desktop checklist is written but **not yet executed
+verbatim** (see the proof column in [Platforms](platforms.md)). If "install a Windows
+program" is a hard requirement, stop here.
+
+## 6. You want a signed, auto-updating desktop app
+
+**Walk away if:** an unsigned build or a manual build step is unacceptable.
+
+The macOS Electron shell is explicitly experimental. It is **not built, signed, or
+released by CI, and has no auto-update channel** — the README's tech-stack note says
+exactly that. The `.dmg` is not attached to releases because Apple Developer signing and
+notarization credentials do not exist in CI; until they do you build it yourself with
+`make desktop-dist`, and macOS Gatekeeper charges you one approval step per installed
+version ([The desktop app → macOS](desktop.md)).
+
+The gateway itself updates fine (`personalclaw update`, plus **Settings → Updates**).
+It is the desktop *shell* that has no update channel. If you only need a window, the
+dashboard in an ordinary browser tab is the supported path and always current.
+
+## 7. You want it to live in Telegram, Discord, or your email
+
+**Walk away if:** a specific chat app *is* the product for you.
+
+Core registers exactly one channel transport by default: the **Web UI**. That is the
+whole of `register_default_transports()` in
+`src/personalclaw/channel_transports/__init__.py`. Slack is not in core either — its
+lifecycle is owned by the extension system, so it arrives as an app you install. Telegram
+and Discord are named in that module's own docstring as *future*; they do not exist
+today, and neither does an email channel.
+
+So the inbox that watches channels and drafts replies is real, but on a fresh install the
+only channel it has to watch is the dashboard. Bringing a new one is a documented,
+supported job — [Build a channel app](build-a-channel-app.md) ships the transport and
+delivery obligations plus a conformance kit — but it is work you would be doing, not a
+setting you would be toggling.
+
+## 8. You want batteries-included web search or internet-wide RAG
+
+**Walk away if:** you expected search to work out of the box.
+
+**No search provider ships bundled.** `web_search` and `web_fetch` are real tools, and
+the research flows are built on them, but they are served by a search-provider app you
+bind — with none bound, nothing is bound. This is a provider seam you fill.
+
+Retrieval over *your own* documents is the part that works without any of that: keyword
+search (SQLite FTS5) is always available. The semantic half is not free either — vector
+retrieval needs an embedding provider bound, and with none bound embeddings are off and
+retrieval stays keyword-only. Media extraction (image OCR/vision, audio/video
+transcription) is model-gated the same way: the file still ingests, extraction just
+skips.
+
+## 9. You intend to run apps you do not trust
+
+**Walk away if:** you were reading "permission-gated app platform" as a sandbox.
+
+It is not one, and the project says so at length in
+[Security limitations](../security/limitations.md). The four named
+non-enforcements matter most here:
+
+- The app `network` permission is **declaration-only, unenforced by design**. An app's
+  provider code is imported **in-process** by the gateway, so its outbound calls *are*
+  the gateway's. The consent surface labels this advisory rather than implying
+  containment.
+- An app's declared Python dependencies pip-install into the **shared** virtualenv the
+  gateway runs from. There is no per-app `site-packages`.
+- An app's frontend bundle runs in the dashboard's **own page**, not a separate origin.
+- ACP agents under auto-approve rely on system-prompt framing, not rails.
+
+The real control is the supply-chain scanner — quarantine → scan → consent → install,
+with a `dangerous` terminal verdict — plus a closed owner-only API registry that no
+manifest can reach (the terminal, computer-use, the credential store, the audit log,
+your password and second factor). That is meaningful, and it is also *vetting what you
+choose to install*, not confinement afterwards. Treat installing an app as running a
+program as yourself, because that is what it is.
+
+## 10. You want a hosted service, or to run one install for other people
+
+**Walk away if:** you do not want to operate a process.
+
+There is no hosted PersonalClaw and no plan for one. You run the gateway: a local
+process, a container, or a systemd/launchd service, on a machine you keep. Nobody
+operates it for you, nobody backs it up for you, and support is a GitHub issue rather
+than an SLA (see [SECURITY.md](../../SECURITY.md) for what response to expect on a
+security report specifically).
+
+Running one install *on behalf of* several people is the same wrong shape as §3: there
+are no accounts to separate them, so everyone sharing an install shares one memory, one
+knowledge base, one credential store, and one chat history.
+
+---
+
+## What this page is not
+
+It is not the security threat model — that is
+[threat-model.md](../security/threat-model.md), which maps each control to the OWASP
+Agentic Top-10 with code citations. It is not a roadmap: nothing here is a commitment to
+change, and two of the items (§3's no-hub ruling and §10's no hosted service) are
+permanent boundaries we expect to still be true at 1.0.
+
+If something on this page has gone stale against the code, that is a bug worth filing —
+the code is the authority, and a wrong limitations page is worse than none.

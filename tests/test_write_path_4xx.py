@@ -149,7 +149,7 @@ class TestAgentDetailPatch:
         surface and answered `{"ok": true}` — on `personalclaw.json`, the runtime config the ACP
         agent reads.
 
-        Asserted at the source because the handler needs a real `AGENTS_DIR` to drive, and the
+        Asserted at the source because the handler needs a real `agents_dir()` to drive, and the
         finding is the branch itself: both siblings ignore a non-list, and this one acted on it.
         """
         import inspect
@@ -175,7 +175,7 @@ class TestAgentDetailPatch:
         src = inspect.getsource(A.api_agent_detail)
         assert "isinstance(patch_body, dict)" in src
         assert src.index("isinstance(patch_body, dict)") < src.index(
-            "AGENTS_DIR.glob"
+            "agents_dir().glob"
         ), "the shape check must run BEFORE the file loop, or a bad body still reaches it"
 
     def test_the_delete_guard_uses_the_reserved_SET(self):

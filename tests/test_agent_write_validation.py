@@ -381,7 +381,7 @@ def file_backed(tmp_path, monkeypatch):
     """The per-file agent config the ACP agent reads at boot."""
     agents_dir = tmp_path / "agents"
     agents_dir.mkdir()
-    monkeypatch.setattr("personalclaw.agent.AGENTS_DIR", agents_dir)
+    monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
     path = agents_dir / "personalclaw.json"
     path.write_text(
         json.dumps(

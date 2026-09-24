@@ -99,9 +99,28 @@ def _glob_match(path: str, pattern: str) -> bool:
     return path_glob(path, pattern)
 
 
-def _load_config_rules() -> tuple[list[DenyRule], list[str]]:
-    """(rules, denied_command_patterns) from ``security`` config. Fail-open to
-    empty on any read error — the built-in checks below still apply."""
+def _load_config_rules() -> tuple[list[DenyRule], list[str]] | None:
+    """(rules, denied_command_patterns) from ``security`` config, or ``None`` on a failed read.
+
+    TWO outcomes, deliberately distinguishable — the same three-way discipline
+    ``providers/entity_routes._load_entity_settings`` and ``AppConfig.load`` now carry, with
+    "absent" folded into the empty-tuple case because an operator who declared no rules and one
+    who has no config file are asking for the same thing:
+
+    * a pair — the operator's rules, as stored (possibly empty, which means "I denied nothing").
+    * ``None`` — the config could not be read, so nothing is known about what they denied.
+
+    It used to return ``([], [])`` for the second, described as "fail-open to empty ... the
+    built-in checks below still apply", and that sentence is the defect: the built-ins are a
+    different, narrower control (a fixed sensitive-path list and a fixed command-pattern list),
+    so "the built-ins still apply" is not a reason the *operator's* rules may be dropped. A
+    denylist that could not be read has not said "nothing is denied" — it has said it does not
+    know, and substituting the first for the second converts an unknown into a permission.
+
+    This loader picks no fallback, because a denylist has no expressible restrictive value: the
+    restrictive answer is "everything is denied", which a list cannot say. ``check_action``
+    resolves it instead, by refusing the action — a restrictive posture that invents nothing.
+    """
     try:
         from personalclaw.config.loader import AppConfig
 
@@ -117,8 +136,8 @@ def _load_config_rules() -> tuple[list[DenyRule], list[str]]:
         ]
         return rules, list(getattr(sec, "denied_commands", []) or [])
     except Exception:
-        logger.debug("denylist config read failed (fail-open to built-ins)", exc_info=True)
-        return [], []
+        logger.warning("denylist config read failed — refusing the action", exc_info=True)
+        return None
 
 
 def check_action(
@@ -136,10 +155,28 @@ def check_action(
     ``session_key`` identifies the run so its SafetyProfile can layer extra path
     globs onto the operator denylist. Every named profile ships
     ``denylist_extra=()``, so this is a no-op until a profile/operator sets globs.
+
+    FAIL-CLOSED on an unreadable ``security`` config, before any other check: if the operator's
+    rules cannot be read then no composed decision below is trustworthy, so the honest answer is
+    a refusal naming the reason rather than a verdict computed from half the denylist. Checked
+    first so the message the user sees is *why* everything is being refused, not whichever
+    built-in happened to match. Only reachable on an unexpected raise — since #3424 a corrupt
+    ``config.json`` resolves fail-closed by value instead of raising.
     """
     from personalclaw.security import baseline_denied_command_patterns, is_sensitive_path
 
-    config_rules, denied_cmd_patterns = _load_config_rules()
+    loaded = _load_config_rules()
+    if loaded is None:
+        return DenyDecision(
+            blocked=True,
+            verdict="block",
+            reason=(
+                "the security config could not be read, so the operator's denylist is unknown — "
+                "refusing rather than acting on an empty one"
+            ),
+            matched="config:unreadable",
+        )
+    config_rules, denied_cmd_patterns = loaded
     paths = _config_paths(action_config)
 
     # The session's SafetyProfile can layer extra path globs (§3 ``denylist_extra``) and

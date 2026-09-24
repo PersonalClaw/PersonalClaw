@@ -576,6 +576,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/onboarding/local-model` — is a local Ollama reachable on localhost?
 - `POST /api/onboarding/local-model/bind` — credential-free bind of an endpoint.
 - `POST /api/onboarding/local-model/scan` — opt-in LAN sweep for an Ollama.
+- `GET /api/onboarding/model-check` — did a chat provider actually build?
 - `POST /api/onboarding/state` — Record first-run progress — a partial merge into the onboarding entity state.
 - `POST /api/optimizer/optimize` — rewrite a prompt using session context.
 - `GET /api/outbox` — list files in the outbox.
@@ -649,6 +650,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/rooms` — every room, newest first. ``?archived=1`` includes archived ones.
 - `POST /api/rooms` — {title} — create a room.
 - `GET /api/rooms/{room_id}` — one room, its members, its posture, and its transcript.
+- `PATCH /api/rooms/{room_id}` — {round_budget} — the room's own budget override.
 - `POST /api/rooms/{room_id}/archive` — archive a room. Idempotent.
 - `GET /api/rooms/{room_id}/export` — the transcript, redacted.
 - `POST /api/rooms/{room_id}/members` — {name, role_blurb?, listen_policy?, profile_narrowing?}.

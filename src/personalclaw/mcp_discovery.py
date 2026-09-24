@@ -216,15 +216,16 @@ def _load_agent_config() -> dict[str, Any]:
     # not a `Path.home()` hardcode: this spelled the real home outright, so a gateway on a
     # custom PERSONALCLAW_HOME discovered the OPERATOR's MCP servers.
     #
-    # `config_dir()` rather than `agent.AGENTS_DIR`, even though four other modules use the
-    # latter for this same file: `AGENTS_DIR` is a module-level constant evaluated at IMPORT
-    # time, so it freezes whatever the home was then and cannot follow a later change. That
-    # is measurable — routing this through it made four `TestListServers` cases read the real
-    # installed config. `config_dir()` re-reads the env var per call.
+    # Through `agent.agents_dir()`, which is the ONE owner of `<home>/agents` (#3463). This
+    # used to spell `config_dir() / "agents"` itself and say why: `agent.AGENTS_DIR` was a
+    # module-level constant evaluated at IMPORT time, so it froze whatever the home was then
+    # — measurably, routing this through it made four `TestListServers` cases read the real
+    # installed config. That is fixed at the source now, so the workaround is no longer a
+    # workaround and the duplicated derivation is gone with it.
     from personalclaw.agent import AGENT_FILENAME  # circular import: agent imports mcp_discovery
-    from personalclaw.config.loader import config_dir
+    from personalclaw.agent import agents_dir
 
-    installed = config_dir() / "agents" / AGENT_FILENAME
+    installed = agents_dir() / AGENT_FILENAME
     if installed.is_file():
         try:
             configs.append(json.loads(installed.read_text(encoding="utf-8")))
@@ -876,11 +877,11 @@ def sync_to_agent_config(servers: list[McpServerInfo]) -> bool:
     """
     from personalclaw.agent import (  # circular import
         AGENT_FILENAME,
-        AGENTS_DIR,
+        agents_dir,
         rebuild_agent_config,
     )
 
-    config_path = AGENTS_DIR / AGENT_FILENAME
+    config_path = agents_dir() / AGENT_FILENAME
 
     # Determine which servers are genuinely new (not yet in agent config)
     existing_names: set[str] = set()

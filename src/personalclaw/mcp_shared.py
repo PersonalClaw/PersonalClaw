@@ -388,8 +388,18 @@ def call_tool_with_logging(
     session_key: str,
     downstream_service: str,
 ) -> str:
-    """Validate args, call inner tool function, and log the invocation."""
+    """Validate args, call inner tool function, and log the invocation.
+
+    The returned string carries its own verdict: a handled failure is a
+    :class:`~personalclaw.tool_providers.base.ToolFailure`, so this function and
+    ``InProcessMcpToolProvider.invoke`` read ONE signal instead of each re-deriving the
+    verdict from the prose (#3487). The outcome below used to be
+    ``result.startswith("Error:")`` — which missed every coded failure, because
+    ``mcp_workflows._fmt`` writes ``Error [CODE]: …``, and missed ``artifact_delete``'s
+    ``Artifact not found: X`` entirely.
+    """
     from personalclaw.sel import sel
+    from personalclaw.tool_providers.base import ToolFailure, tool_failure
     from personalclaw.validation import ValidationError
 
     # The `__wf_depth` tool-handler seam. EVERY in-process MCP tool call funnels through this
@@ -409,7 +419,7 @@ def call_tool_with_logging(
             downstream_service=downstream_service,
             error=denial,
         )
-        return f"Error: {denial}"
+        return tool_failure(denial)
 
     try:
         args = validate_fn(name, raw_args)
@@ -423,10 +433,10 @@ def call_tool_with_logging(
             downstream_service=downstream_service,
             error=str(e),
         )
-        return f"Error: {e}"
+        return tool_failure(str(e))
 
     result = inner_fn(name, args)
-    outcome = "failed" if result.startswith("Error:") else "completed"
+    outcome = "failed" if isinstance(result, ToolFailure) else "completed"
     sel().log_tool_invocation(
         session_key=session_key,
         source="mcp",

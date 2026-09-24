@@ -29,6 +29,7 @@ import logging
 from typing import Any
 
 from personalclaw.safety_flags import confirm_granted
+from personalclaw.tool_providers.base import ToolFailure, tool_failure
 from personalclaw.workflows import grill_protocol as grill_mod
 from personalclaw.workflows import intent as intent_mod
 from personalclaw.workflows import rigor as rigor_mod
@@ -549,10 +550,14 @@ def _fmt(body: dict[str, Any], *, summary: str = "") -> str:
         code = body.get("code", "WF_ERROR")
         message = body.get("message", "")
         extra = {k: v for k, v in body.items() if k not in ("ok", "code", "message")}
-        text = f"Error [{code}]: {message}"
+        reason = message
         if extra:
-            text += "\n" + json.dumps(extra, indent=2, ensure_ascii=False, default=str)
-        return text
+            reason += "\n" + json.dumps(extra, indent=2, ensure_ascii=False, default=str)
+        # The service's own ``ok`` flag IS the verdict, so it travels with the rendered text
+        # rather than being re-read out of it downstream (#3487). This branch is why a
+        # leading-``Error:`` predicate could not work: every coded failure here reads
+        # ``Error [CODE]: …``, which that predicate never matched.
+        return tool_failure(reason, code=code)
     payload = {k: v for k, v in body.items() if k != "ok"}
     rendered = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
     return f"{summary}\n{rendered}" if summary else rendered
@@ -597,7 +602,12 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     if needs_staging(name):
         echo = staged_spec_echo(str((args or {}).get("run_id", "") or ""))
         if echo:
-            return f"{out}\n\n{echo}"
+            combined = f"{out}\n\n{echo}"
+            # Formatting a ``ToolFailure`` yields a plain ``str``, which would silently
+            # downgrade a stated failure back to a success at the bridge — so re-carry it.
+            if isinstance(out, ToolFailure):
+                return ToolFailure(combined, reason=out.reason)
+            return combined
     return out
 
 
@@ -627,7 +637,9 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
     if name == "workflow_author":
         root = args.get("root")
         if not isinstance(root, dict):
-            return "Error [WF_DEF_ROOT_REQUIRED]: 'root' must be the spec's root node object."
+            return tool_failure(
+                "'root' must be the spec's root node object.", code="WF_DEF_ROOT_REQUIRED"
+            )
         save = bool(args.get("save", True))
         result = _run(
             service.author_def(
@@ -684,7 +696,9 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
     if name == "workflow_edit":
         ops = args.get("ops")
         if not isinstance(ops, list) or not ops:
-            return "Error [WF_MUT_NO_OPS]: 'ops' must be a non-empty array of mutation ops."
+            return tool_failure(
+                "'ops' must be a non-empty array of mutation ops.", code="WF_MUT_NO_OPS"
+            )
         if bool(args.get("preview_only")):
             return _fmt(service.preview_edit(run_id, ops))
         expect = args.get("expect_version")
@@ -701,7 +715,7 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
     if name == "workflow_skip":
         node_ids = args.get("node_ids")
         if not isinstance(node_ids, list) or not node_ids:
-            return "Error [WF_NO_NODE_IDS]: 'node_ids' must be a non-empty array."
+            return tool_failure("'node_ids' must be a non-empty array.", code="WF_NO_NODE_IDS")
         return _fmt(
             service.skip_nodes(run_id, [str(n) for n in node_ids], supervisor=_supervisor())
         )
@@ -764,7 +778,7 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
     if name == "workflow_delete_def":
         return _fmt(_run(service.delete_def(str(args.get("name", "") or ""))))
 
-    return f"Error: unknown workflows tool {name!r}."
+    return tool_failure(f"unknown workflows tool {name!r}.")
 
 
 def _plan(args: dict[str, Any]) -> str:
@@ -799,11 +813,12 @@ def _plan(args: dict[str, Any]) -> str:
         goal = template_pipeline.mined_goal(mined).strip()
     if not goal:
         if source_session_id:
-            return (
-                f"Error [WF_PLAN_SESSION_NOT_MINEABLE]: no transcript with usable turns for "
-                f"session {source_session_id!r}; pass 'goal' explicitly."
+            return tool_failure(
+                f"no transcript with usable turns for "
+                f"session {source_session_id!r}; pass 'goal' explicitly.",
+                code="WF_PLAN_SESSION_NOT_MINEABLE",
             )
-        return "Error [WF_PLAN_GOAL_REQUIRED]: 'goal' is required."
+        return tool_failure("'goal' is required.", code="WF_PLAN_GOAL_REQUIRED")
 
     project_id = str(args.get("project_id", "") or "").strip()
 
@@ -1716,9 +1731,10 @@ def _plan_from_template(
     if not definition:
         available = _run(service.list_defs())
         names = [d["name"] for d in available.get("defs", [])]
-        return (
-            f"Error [WF_PLAN_TEMPLATE_NOT_FOUND]: no workflow definition named "
-            f"{template!r}. Available: {', '.join(names) or 'none'}."
+        return tool_failure(
+            f"no workflow definition named "
+            f"{template!r}. Available: {', '.join(names) or 'none'}.",
+            code="WF_PLAN_TEMPLATE_NOT_FOUND",
         )
 
     meta = definition.get("metadata") or {}

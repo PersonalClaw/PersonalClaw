@@ -17,6 +17,7 @@ import time
 from typing import Any
 
 from personalclaw.mcp_core import _get, _post, _resolve_session_key
+from personalclaw.tool_providers.base import tool_failure
 from personalclaw.workflows import batch_compile
 from personalclaw.workflows.batch_compile import Capability, LeafTask
 
@@ -129,7 +130,7 @@ def _run_compiled_batch(
 
     root = result.spec.get("root")
     if not isinstance(root, dict):
-        return "Error: the compiler produced no root node"
+        return tool_failure("the compiler produced no root node")
     saved = _post(
         "/api/workflows",
         {
@@ -146,14 +147,14 @@ def _run_compiled_batch(
         },
     )
     if saved.get("error"):
-        return f"Error: could not persist the compiled batch: {saved['error']}"
+        return tool_failure(f"could not persist the compiled batch: {saved['error']}")
 
     body: dict[str, Any] = {"name": name, "mode": "background"}
     if cwd:
         body["inputs"] = {"cwd": cwd}
     started = _post("/api/workflows/runs", body)
     if started.get("error"):
-        return f"Error: could not start the compiled batch: {started['error']}"
+        return tool_failure(f"could not start the compiled batch: {started['error']}")
     run_id = str(started.get("run_id", "") or "")
 
     lines = [
@@ -297,13 +298,13 @@ def _best_of_n(args: dict[str, Any]) -> str:
 
     prompt = str(args.get("prompt", "") or "").strip()
     if not prompt:
-        return "Error: provide a `prompt` to sample."
+        return tool_failure("provide a `prompt` to sample.")
     n = int(args.get("n") or 3)
     criteria = str(args.get("criteria", "") or "")
     try:
         result = _run_async(best_of_n(prompt, n, criteria))
     except Exception as exc:  # noqa: BLE001 — a tool must answer, not traceback
-        return f"Error: best-of-N sampling failed: {type(exc).__name__}: {exc}"
+        return tool_failure(f"best-of-N sampling failed: {type(exc).__name__}: {exc}")
     if result["winner"] is None:
         return (
             f"No candidate: {result['note']}. Nothing was selected — try again or answer directly."
@@ -335,7 +336,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             leaf_specs = [(str(task), {})]
             task_list = [str(task)]
         else:
-            return "Error: task or tasks is required"
+            return tool_failure("task or tasks is required")
 
         # Read parent session key so completions inject back into this session.
         parent_session = _resolve_session_key()
@@ -347,7 +348,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         max_turns = args.get("max_turns") or 0
         cwd = args.get("cwd") or ""
         if agents_list and len(agents_list) != len(task_list):
-            return f"Error: agents length ({len(agents_list)}) must match tasks length ({len(task_list)})"  # noqa: E501
+            return tool_failure(
+                f"agents length ({len(agents_list)}) must match tasks length ({len(task_list)})"
+            )  # noqa: E501
 
         # N>=2 is a BATCH: compiled to one `parallel[stage...]` run rather than N independent
         # fire-and-forget spawns. The difference is not cosmetic — N spawns have no run record, so
@@ -445,10 +448,10 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     if name == "subagent_status":
         agent_id = args.get("agent_id", "")
         if not agent_id or not agent_id.isalnum():
-            return "Error: invalid agent_id"
+            return tool_failure("invalid agent_id")
         d = _get(f"/api/spawn/{agent_id}")
         if d.get("error"):
-            return f"Error: {d['error']}"
+            return tool_failure(f"{d['error']}")
         from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
         result = d.get("result") or "_No result._"
