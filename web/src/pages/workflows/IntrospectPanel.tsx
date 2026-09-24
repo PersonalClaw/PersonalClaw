@@ -291,7 +291,13 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                       ? `${data.answers.failed.length} node${data.answers.failed.length === 1 ? '' : 's'} failed`
                       : 'Nothing failed'}
                   />
-                  <Answer q="What is costing money" a={runCostText(data.stats.cost_usd, data.stats.priced)} />
+                  {/* `models` is passed because this answer names a CAUSE, and the only evidence for
+                      it is the field the `Models` cell above renders: a measured zero with no model
+                      recorded is a run that called none, not a free local one. */}
+                  <Answer
+                    q="What is costing money"
+                    a={runCostText(data.stats.cost_usd, data.stats.priced, data.stats.models.length > 0)}
+                  />
                   <Answer
                     q="What is risky"
                     a={riskyText(data.answers.risky.degraded.length, fakeChecks.length, data.stats.verification_debt)}
