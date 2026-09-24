@@ -6,7 +6,7 @@ import { Toggle } from '../../ui/Toggle'
 import { confirmDelete } from '../../ui/dialog'
 import { api, type Trigger as WireTrigger } from '../../lib/api'
 import { RunHistory } from '../schedule/ScheduleDetail'
-import { triggerHealthMeta, explainsCause } from '../schedule/scheduleMeta'
+import { triggerStatusMeta, explainsCause } from '../schedule/scheduleMeta'
 import { actionLabel } from './triggerMeta'
 import { reportingWrite } from '../../app/reportingWrite'
 import { BUSY_REASON } from '../../ui/unavailable'
@@ -61,9 +61,16 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
   // names the failure: *"Showing both as 'paused' would make the user look for a switch they never
   // flipped."* Measured — all three states produced that identical sentence.
   //
-  // Reuses S164's shared `triggerHealthMeta` for the dot + label rather than inventing a third
-  // vocabulary mapper on a third surface.
-  const lc = triggerHealthMeta(trigger.health, trigger.state)
+  // 🔴 THE DOT ITSELF REACHED AROUND THE RECONCILER (issue 3396). This used to call
+  // `triggerHealthMeta` directly — passing `trigger.health` and `trigger.state` with no `hasRun`
+  // gate at all — the one call `triggerStatusMeta`'s own docstring says does not exist ("Every
+  // surface calls this and nothing else"). `health` DEFAULTS to `ok` on a trigger that has never
+  // fired, so a just-created automation with `run_count: 0` drew an ok-green tick reading "Firing
+  // on its own" one click after the list drew the neutral never-run dot for the same row. `hasRun`
+  // is `storeToTrigger`'s own gate (`triggerMeta.ts`), reused verbatim rather than re-derived, so
+  // this panel and the list can never read `run_count` two different ways.
+  const hasRun = (trigger.run_count ?? 0) > 0
+  const lc = triggerStatusMeta({ health: trigger.health, state: trigger.state, hasRun })
   const statusLine =
     trigger.state === 'autopaused'
       ? 'Stopped by the system after repeated failures'

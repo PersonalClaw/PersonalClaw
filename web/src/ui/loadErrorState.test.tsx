@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { LoadError, EmptyState } from './ListScaffold'
+import { stripComments } from '../design/tokenLintRule'
 
 // ── A failed load is not an empty collection ──────────────────────────────────────────
 //
@@ -119,12 +120,41 @@ const SRC = join(process.cwd(), 'src')
 // drifted upward through any file with a block comment in it, and a reader sent to
 // `MemoryPanel.tsx:214` found something else there. `^\s*//` was the worse of the two: `\s` matches
 // `\n`, so a blank line followed by a comment line was consumed as ONE match and the blank line's
-// newline went with it. Measured: with `^[ \t]*//` and block comments blanked rather than removed,
-// the `lib/api.ts` control below resolves to its exact line.
-const codeOf = (abs: string) =>
-  readFileSync(abs, 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
-    .replace(/^[ \t]*\/\/.*$/gm, '')
+// newline went with it.
+//
+// 🔴 AND THEN THE STRIPPER ITSELF WAS DELETING SOURCE — the blind shape UPSTREAM OF EVERY OTHER ONE.
+// `codeOf` was two regexes, and it blanked BLOCK comments FIRST:
+//
+//     .replace(/\/\*[\s\S]*?\*\//g, blank)     ← ran first
+//     .replace(/^[ \t]*\/\/.*$/gm, '')         ← ran second
+//
+// So a `//` line comment containing an UNCLOSED `/*` opened a block that the first regex closed at
+// the next `*/` ANYWHERE IN THE FILE, blanking every line between. The prose that does it is this
+// repo's own house style — an `/api/*` glob cited in a comment. **Measured on this tree: 34 line
+// comments carry an unclosed `/*`,** and the span they hid reached 4,677 code characters in
+// `design/consistencyAudit.report.ts`, 2,478 in `pages/loops/DesignCockpitPage.tsx` and 2,275 in
+// `pages/notifications/notificationMeta.ts`. A widened `SWALLOW_SHAPE` cannot find a site that
+// preprocessing already removed from its input, so this defect made every count above it
+// untrustworthy in an UNBOUNDED way — the boolean gap was 17 enumerable sites, this one hides a span
+// whose length depends on where the next `*/` happens to fall.
+//
+// 🔑 THE FIX IS TO REUSE THE ONE THAT ALREADY EXISTS, not to write a third. `design/tokenLintRule`'s
+// `stripComments` is the #3347/#3337 fix for exactly this defect in exactly this corpus: `//` beats
+// `/*`, a `/*` inside a string or a line comment cannot open a block, template literals are
+// line-local, `://` is a scheme separator, and a `/*` preceded by alnum or `[` is division or a
+// regex class rather than an opener. It is verified over all 1559 `web/src/**/*.{ts,tsx}` files and
+// returns one entry per input line, so line numbers still survive. **Two independent censuses in
+// this repo have now been defeated by naive comment handling** (this one and the token lint), which
+// is why the shared implementation is the point: a third hand-rolled stripper would be a third
+// instance of the same bug.
+//
+// 🪤 `codeOfText` IS SPLIT OUT SO THE CONTROLS CAN REACH IT. A control that calls `stripComments`
+// directly proves only that `stripComments` is correct — which it is, by construction — and would
+// stay green if THIS file swapped its preprocessing back to the old regex pair. The controls in §B's
+// vacuity block go through `codeOfText`, the same function the census uses, so reverting the one line
+// below reds them. That is the difference between testing a dependency and testing the program.
+const codeOfText = (text: string) => stripComments(text).code.join('\n')
+const codeOf = (abs: string) => codeOfText(readFileSync(abs, 'utf8'))
 /** An absolute path as the repo-relative form the budget below is keyed on. */
 const rel = (abs: string) => abs.slice(SRC.length + 1)
 
@@ -167,6 +197,29 @@ const SWALLOW = /\.catch\(\(\)\s*=>\s*\(?\s*(\[\]|null|undefined|\{\}|''|"")/
 // `=>` is an empty BLOCK, a parenthesised `({})` is a fabricated object — so form A admits the second
 // and not the first.
 const SWALLOW_EMPTY = String.raw`\[\]|null\b|undefined\b|''|""|\{\s*\}`
+/** 🪤 AND THE SCALAR ONE — THE THIRD BLIND SHAPE, and the one that made the ratchet unable to red on
+ *  the sharpest site the class had. A boolean or a number substituted for a rejection is the same lie
+ *  as `[]`: `.catch(() => setGone(true))` tells the user the thing is GONE because the read failed, and
+ *  `.catch(() => setCount(0))` prints a zero the server never sent. The selector had no `true`, no
+ *  `false` and no digit member, so at ONE file position `.catch(() => [])` moved the census 0 → 1 and
+ *  red CI while `.catch(() => setGone(true))` moved it 0 → 0 and left the suite green — the same
+ *  mutation in the same place, differing only in what the handler fabricated. Measured across the tree
+ *  the shape hid **17 sites in 14 files**, and #532's own close-condition criterion 1 had named it
+ *  all along ("…or a boolean 'gone' flag"), so the selector was one shape short of the criterion it
+ *  was scored against.
+ *
+ *  🪤 THE WIDENING HAD TO LAND IN TWO PLACES, and that is why it could hide: `FABRICATES`'s
+ *  bare-expression-body alternation was a HAND-COPIED duplicate of `SWALLOW_EMPTY` minus `\{\s*\}`,
+ *  so adding a member to `SWALLOW_SHAPE` alone would have scored the parenthesised, setter and braced
+ *  spellings while `.catch(() => true)` — the plainest one — still read zero. `SWALLOW_BARE` below
+ *  exists so the two can no longer drift: a member added here reaches every form or none.
+ *
+ *  Like the structured member, this is a SYNTACTIC over-approximation with one semantic veto. It
+ *  counts `setLoading(false)` in a rejection handler that records nothing — which is the eternal-spinner
+ *  shape when it is wrong and a correct teardown when the surface reports the failure some other way.
+ *  The veto (`RECORDS_THE_ERROR`) clears the latter; the rest sit in §B's budget with a written reason,
+ *  which is the design this whole section runs on. */
+const SWALLOW_SCALAR = String.raw`true\b|false\b|-?\d+\b`
 /** 🪤 AND THE STRUCTURED ONE, which is how the scanner's OWN blind spot was found: fixing
  *  `settings/MemoryGraph.tsx` changed no count, because its fallback was
  *  `.catch(() => setSelfGraph({ nodes: [], edges: [] }))` — an object literal with PROPERTIES, which
@@ -180,7 +233,10 @@ const SWALLOW_EMPTY = String.raw`\[\]|null\b|undefined\b|''|""|\{\s*\}`
  *  semantic veto (`RECORDS_THE_ERROR`), and every correct site sitting in the budget with a written
  *  reason. Narrowing it instead would mean a rule that models control flow, and nobody can predict
  *  the verdict of one of those. */
-const SWALLOW_SHAPE = String.raw`${SWALLOW_EMPTY}|\{\s*[\w'"]`
+const SWALLOW_SHAPE = String.raw`${SWALLOW_EMPTY}|\{\s*[\w'"]|${SWALLOW_SCALAR}`
+/** The subset spellable as a BARE expression body — `SWALLOW_SHAPE` minus its two braced members,
+ *  because an unparenthesised `{` after `=>` is a block (forms B and C), not a fabricated object. */
+const SWALLOW_BARE = String.raw`\[\]|null\b|undefined\b|''|""|${SWALLOW_SCALAR}`
 /** Form A, anchored at the first character after `=>`. `\[\]` is not followed by `\)`, which is what
  *  makes it CAST-TOLERANT: 21 of the 30 array-form sites in the tree are `catch(() => [] as Foo[])`,
  *  and a selector ending in `\)` would score 9 — a 70% false negative on the single commonest shape.
@@ -188,7 +244,7 @@ const SWALLOW_SHAPE = String.raw`${SWALLOW_EMPTY}|\{\s*[\w'"]`
  *  write rather than a return. A BARE `{` after `=>` is a block and is handled below, so the object
  *  shape is admitted only through the paren — form C stays out by construction. */
 const FABRICATES = new RegExp(
-  String.raw`^(?:\(\s*(?:${SWALLOW_SHAPE})|\[\]|null\b|undefined\b|''|""|set[A-Z]\w*\(\s*(?:${SWALLOW_SHAPE}))`,
+  String.raw`^(?:\(\s*(?:${SWALLOW_SHAPE})|${SWALLOW_BARE}|set[A-Z]\w*\(\s*(?:${SWALLOW_SHAPE}))`,
 )
 /** Form B: somewhere in the braced body, a state setter is handed an empty or fabricated value. */
 const FABRICATES_IN_BLOCK = new RegExp(String.raw`set[A-Z]\w*\(\s*(?:${SWALLOW_SHAPE})`)
@@ -201,10 +257,19 @@ const RECORDS_THE_ERROR = /set\w*(?:Err|Error|Fail)\w*\(/i
 /** The line number of every fabricating `.catch` in a whole file. */
 function swallowSites(src: string): number[] {
   const lines: number[] = []
-  // One arrow parameter at most: `.catch(() => …)` or `.catch((e) => …)`. A `.catch(fn)` reference
-  // fabricates nothing here, and a multi-arg arrow is not a rejection handler.
-  for (const m of src.matchAll(/\.catch\(\((\s*\w*\s*)\)\s*=>\s*/g)) {
+  // One arrow parameter at most: `.catch(() => …)`, `.catch((e) => …)` or the UNPARENTHESISED
+  // `.catch(e => …)`. A `.catch(fn)` reference fabricates nothing here, and a multi-arg arrow is not
+  // a rejection handler.
+  //
+  // 🪤 THE UNPARENTHESISED PARAMETER WAS A FOURTH SYNTACTIC FORM, AND IT WAS CLOSED AT ZERO COST.
+  // This matcher required `\.catch\(\(` — a parenthesised parameter list — so `.catch(e => setRows([]))`
+  // was invisible to BOTH forms regardless of what it fabricated. It was closed while the tree held
+  // **0** instances of it, which is the only moment a widening is free: no count moves, no budget
+  // shifts, and the form can never grow in unseen. The lesson generalises past this file — a form with
+  // no members yet is cheaper to model than the same form after someone writes twelve of them.
+  for (const m of src.matchAll(/\.catch\(\s*(?:\((\s*\w*\s*)\)|(\w+))\s*=>\s*/g)) {
     const at = (m.index ?? 0) + m[0].length
+    const param = (m[1] ?? m[2] ?? '').trim()
     let hit: boolean
     if (src[at] === '{') {
       let depth = 1
@@ -221,7 +286,7 @@ function swallowSites(src: string): number[] {
       // rejection — `(e) => e.message` is a transform, not a substitute. And the 64-char slice is
       // safe where this file's old 220-char window was not: `FABRICATES` is `^`-anchored, so it can
       // only ever read the expression that starts right here.
-      hit = m[1].trim() === '' && FABRICATES.test(src.slice(at, at + 64))
+      hit = param === '' && FABRICATES.test(src.slice(at, at + 64))
     }
     if (hit) lines.push(src.slice(0, m.index).split('\n').length)
   }
@@ -237,8 +302,8 @@ function swallowSites(src: string): number[] {
  *  invisible to every check built on this function. Measured: **51 of 225** `useQuery` invocations,
  *  23% of the tree, including 11 that were swallowing. The file's own comment used to record one of
  *  those as a known exclusion; it was eleven. Callers that genuinely need a key now filter on it. */
-function cachedCalls(src: string): { key?: string; args: string; line: number }[] {
-  const out: { key?: string; args: string; line: number }[] = []
+function cachedCalls(src: string): { key?: string; args: string; line: number; at: number }[] {
+  const out: { key?: string; args: string; line: number; at: number }[] = []
   for (const m of src.matchAll(/useQuery(?:<[^>]*>)?\(/g)) {
     const start = (m.index ?? 0) + m[0].length
     let i = start
@@ -250,10 +315,37 @@ function cachedCalls(src: string): { key?: string; args: string; line: number }[
       i++
     }
     const args = src.slice(start, i - 1)
-    out.push({ key: args.match(/^\s*'([^']+)'/)?.[1], args, line: src.slice(0, m.index).split('\n').length })
+    // `at` is the character offset of the `useQuery` token itself. §D reads BACKWARDS from it to the
+    // destructuring pattern, which is the half of the contract that lives above the call rather than
+    // inside it — see its header for why one scanner has to see both.
+    out.push({ key: args.match(/^\s*'([^']+)'/)?.[1], args, line: src.slice(0, m.index).split('\n').length, at: m.index ?? 0 })
   }
   return out
 }
+
+/** The destructuring pattern a `useQuery(` call is assigned to — `{ data, error, refresh }` → the text
+ *  between the braces — or `null` when the call is not the right-hand side of one.
+ *
+ *  🪤 THE ASSIGNMENT TEST IS LOAD-BEARING AND WAS WRONG FIRST. Scanning backwards for the nearest
+ *  `}`…`{` pair without first requiring that the call sit immediately after an `=` matched JSX two
+ *  hundred characters upstream, and reported patterns like `{actions}</div> </div> )}` as
+ *  destructurings — it inflated this census from 69 sites to 113. The call must BE the RHS. */
+function destructuredAs(src: string, at: number): string | null {
+  const before = src.slice(Math.max(0, at - 400), at)
+  if (!/=\s*$/.test(before)) return null
+  const lhs = before.slice(0, before.lastIndexOf('='))
+  const trimmed = lhs.trimEnd()
+  // `const q = useQuery(…)` binds the WHOLE result, so `error` stays reachable as `q.error`. Only a
+  // destructuring can drop a field on the floor, so only a destructuring is in scope here.
+  if (!trimmed.endsWith('}')) return null
+  const close = trimmed.length - 1
+  const open = lhs.lastIndexOf('{', close)
+  return open === -1 ? null : lhs.slice(open + 1, close)
+}
+/** Does a destructuring pattern bind `name`, plainly or under an alias (`error: tasksErr`)? The
+ *  trailing boundary is what keeps `errorCount` from reading as `error`. */
+const binds = (pattern: string, name: string) =>
+  new RegExp(String.raw`(^|[,{\s])${name}\s*(?::\s*\w+)?\s*(,|$|\})`).test(pattern)
 // `.tsx?` — `app/usePlatform.ts` is a `.ts` module that calls `useQuery` and swallows, and a
 // `.tsx`-only walker could never see it.
 const walk = (d: string): string[] =>
@@ -590,7 +682,13 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // load the full result: …)" })` puts the failure in the copy the user reads. The veto matches SETTER
   // names (`setSearchErr`), and this records into a FIELD — so widen the veto and it starts exempting
   // any `setX({ error })` that never renders; leave it, and one honest site sits here with a reason.
-  'pages/ChatPage.tsx': 6,
+  // 7th (SCALAR widening): the history hydration's `setLoadingHistory(false)`. It ends the skeleton
+  // without recording why, which is the eternal-spinner shape's benign cousin — the transcript pane
+  // has its own connection-state surface and a resumed session re-hydrates on the next socket frame,
+  // so the cost is one unexplained empty pane rather than a fabricated claim. The autonudge site that
+  // WAS in this count is fixed: it read `setEnabled(false)` and the panel then named an environment
+  // variable ("Disabled on this server (PERSONALCLAW_AUTONUDGE=0)") as the cause of a failed read.
+  'pages/ChatPage.tsx': 7,
   'pages/agents/AgentDetail.tsx': 3,
   'pages/artifacts/ArtifactCard.tsx': 1,
   'pages/chat/OrganizeChip.tsx': 1,
@@ -603,6 +701,12 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // draft to resume", which is exactly what a 404 means. Left as debt rather than teaching the scanner
   // a third exemption — the rule for that would have to model status checks, and a rule that models
   // control flow is a rule nobody can predict the verdict of.
+  // SCALAR widening. A readiness PREDICATE, not a data read: `isReady` answers "has the plan
+  // reached review?" and `.catch(() => false)` answers "not yet", which is the fail-closed direction
+  // — the walkthrough keeps polling every 3s instead of advancing a user past a step whose status it
+  // could not read. Its consumer half is budgeted at `ui/PlanningWalkthrough.tsx`, and
+  // `pages/loops/LoopPlanningView.tsx` is its byte-for-byte twin for the non-code kinds.
+  'pages/code/CodePlanningView.tsx': 1,
   'pages/code/CodeSection.tsx': 1,
   // Git semantics, documented at both sites: an untracked file has no HEAD blob, so the `''` fallback
   // is what makes it render as all-added; a file deleted from the working copy has no working blob, so
@@ -617,13 +721,38 @@ const SWALLOW_BUDGET: Record<string, number> = {
   'pages/inbox/InboxPage.tsx': 1,
   'pages/knowledge/KnowledgeCreatePage.tsx': 1,
   'pages/knowledge/KnowledgeListPage.tsx': 1,
+  // 🪤 Two of these three are the reason the `RECORDS_THE_ERROR` veto was NOT extended to form A when
+  // the scalar member landed. Form A scores a 64-char slice after `=>`, which is safe only because
+  // `FABRICATES` is `^`-anchored; an UNANCHORED veto over the same slice matches a setter up to 60
+  // characters DOWNSTREAM in unrelated code, and measured here it "cleared" both of this file's
+  // `.catch(() => null)` sites that way. That is the character-window bug this file's header already
+  // records fixing once. A correct form-A veto needs the catch's argument paren-matched; until then
+  // the veto stays form-B-only and `ui/SystemWidget.tsx` below carries its reason by hand.
   'pages/loop/LoopComposer.tsx': 3,
-  'pages/loops/DesignCockpitPage.tsx': 1,
+  // 2nd (SCALAR widening): `if (e?.status === 404) setNotFound(true)` — the same
+  // status-DISCRIMINATING shape already budgeted at `pages/code/CodeSection.tsx`, where a 404 IS the
+  // answer "this loop does not exist". Left as debt for the identical reason stated there: the
+  // exemption would have to model a status check, and a rule that models control flow is one nobody
+  // can predict the verdict of.
+  'pages/loops/DesignCockpitPage.tsx': 2,
   // The artifact tab's swallow is GONE (it printed an empty document for a failed read). What is left
   // is a per-item `api.task(id).catch(() => null)` behind a `.filter(Boolean)` — partial degradation
   // of a fan-out, deliberately — and a fire-and-forget `updateULoop` mutation, a different family.
-  'pages/loops/LoopCockpitPage.tsx': 3,
-  'pages/loops/LoopsSection.tsx': 1,
+  // 4th (SCALAR widening) is the RECORDS veto's THIRD blind edge, and the most instructive one: the
+  // action handler DOES report — `reportActionFailure(`${a} this loop`)(e)`, the helper the file's own
+  // comment introduced for exactly this — but the veto keys off SETTER names (`setSearchErr`), and a
+  // report helper is not a setter. Widening it to report helpers would start exempting any handler
+  // that toasts and then fabricates, so the veto stays narrow and this sits here with the reason.
+  'pages/loops/LoopCockpitPage.tsx': 4,
+  // SCALAR widening: the non-code twin of `pages/code/CodePlanningView.tsx` above — same `isReady`
+  // predicate, same fail-closed `false`, same reason.
+  'pages/loops/LoopPlanningView.tsx': 1,
+  // 2nd (SCALAR widening): the cockpit ROUTER's kind probe, `setMissing(true)`. It is a router, not a
+  // renderer of loop data — it must send the user somewhere, and "missing" is the only terminal it
+  // has. 🪤 It does conflate UNREACHABLE with DELETED, which is a real (smaller) defect of the #3396
+  // family; fixing it means giving the router a third outcome, which is a routing design decision and
+  // not a swallow to delete.
+  'pages/loops/LoopsSection.tsx': 2,
   // 🪤 THE FILE #532's BODY HELD UP AS THE EXEMPLAR, and it is in this map — which is the clearest
   // statement of what a number here means. `dirErrorMessage` is the pattern every fix in this commit
   // copies; the counted site is a different read in the same file, a peek section whose every consumer
@@ -672,7 +801,11 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // failure IS recorded — `setReindex({ status: 'error', message })` — but into a FIELD of a state
   // object, and the veto keys off the SETTER's name. The surface tells the user the reindex failed;
   // only the scanner cannot see it.
-  'pages/settings/ModelsPanel.tsx': 4,
+  // 7th (SCALAR widening): the reclaim button's `setTotalBytes(0)`. A zero here reads as "nothing to
+  // reclaim" and the button disables itself, so an unreadable candidates list hides a real cleanup
+  // rather than inventing one — the conservative direction, and the button is a decoration on a panel
+  // whose own model reads have error branches.
+  'pages/settings/ModelsPanel.tsx': 5,
   // 2 → 1, and the halving is the interesting part: this entry USED to read "Both read a provider's
   // JSON SCHEMA", and only one of the two ever did. The remaining site is the schema read, whose
   // substitute is `{ properties: {} }` — every caller turns that into `props.length === 0` → `return
@@ -737,7 +870,14 @@ const SWALLOW_BUDGET: Record<string, number> = {
   'pages/skills/SkillInspector.tsx': 2,
   'pages/skills/SkillsPage.tsx': 2,
   'pages/tasks/TasksListPage.tsx': 2,
-  'pages/terminal/TerminalPage.tsx': 1,
+  // 2nd (SCALAR widening): the tab-restore effect's `setRestored(true)`. "The restore attempt has
+  // finished" is true whether it succeeded or not, and the flag exists to unblock first paint — a
+  // terminal with no restored tabs is the correct outcome of an unreadable restore. The OTHER scalar
+  // site the widening surfaced here was a defect and is FIXED: `.catch(() => setPersist(false))`
+  // rendered the tmux-persistence toggle OFF off an unread config, and this file's own comment three
+  // lines up already documented `null` as "not answered yet, toggle hidden" — an unread switch is not
+  // an off switch (#532 row 19).
+  'pages/terminal/TerminalPage.tsx': 2,
   // The fifth is a capability probe whose substitute is `({ available: false })` — the widened scanner
   // counts a structured literal, and this is the shape it is deliberately wrong about. "We could not
   // reach the capability check" and "the capability is not available" are the same fact to a user who
@@ -757,13 +897,31 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // Documented at the site: the freshness column is decoration on a row whose identity came from the
   // list read. An unreadable timestamp renders as unknown freshness, which is what it is.
   'pages/workflows/WorkflowsListPage.tsx': 1,
-  'ui/DegradedChip.tsx': 1,
-  'ui/PlanningWalkthrough.tsx': 3,
+  // 2nd (SCALAR widening): `.catch(() => setUnread(true))`, and it is the one site in this map that
+  // fails LOUD on purpose — the file's own comment records the measured defect it fixes (seven
+  // degraded surfaces, no chip, and the sibling indicator affirming "Gateway connected"). Showing the
+  // chip off an unreadable cold poll is the SAFE direction for a mitigation indicator, so the scalar
+  // scanner counting it is the over-approximation, not the code.
+  'ui/DegradedChip.tsx': 2,
+  // SCALAR widening: a kill-switch. `.catch(() => setDisabled(true))` hides the 👍/👎 control
+  // entirely, so an unreachable feedback endpoint removes an affordance rather than rendering one that
+  // cannot work — nothing is claimed about the user's verdicts, which is the line this map draws.
+  'ui/FeedbackThumbs.tsx': 1,
+  // 4th (SCALAR widening): `cfg.api.isReady(id).catch(() => false)`, the CONSUMER half of the two
+  // `*PlanningView` predicates budgeted above. Same fail-closed reading, and it must move with them.
+  'ui/PlanningWalkthrough.tsx': 4,
   'ui/chat/ChatPlanGate.tsx': 1,
   // A capability probe: the rejection IS the answer (`setAvailable(false)`), and it counts here only
   // because clearing the disabled-reason string reads as a fabrication to a syntactic scanner. Left
   // as debt rather than vetoed — one more special case in the scanner costs more than one row here.
   'ui/composer/useScreenShare.ts': 1,
+  // SCALAR widening, and the clearest statement of why the veto is form-B-only. `.catch(() =>
+  // setFailed(true))` RECORDS the rejection — `failed` gates a rendered "couldn't reach the fleet"
+  // line, and the file's own comment 115 lines up states the rule ("still give the click a useful
+  // result"). `RECORDS_THE_ERROR` already matches `setFailed(`, so form B would have vetoed it; form A
+  // has no veto, for the measured reason recorded at `pages/loop/LoopComposer.tsx` above. This is a
+  // scanner limitation sitting in the budget with a reason, not a defect to fix.
+  'ui/SystemWidget.tsx': 1,
 }
 
 describe('§B no fetcher swallows its own rejection, tree-wide and by COUNT', () => {
@@ -810,6 +968,27 @@ describe('§B no fetcher swallows its own rejection, tree-wide and by COUNT', ()
     expect(counts('.catch(() => ({ nodes: [], edges: [] }))'), 'the fabricated envelope').toBe(1)
     expect(counts('.catch(() => setGraph({ nodes: [], edges: [] }))'), 'the SAME lie, via a setter').toBe(1)
     expect(counts(".catch(() => ({ 'a': 1 }))"), 'a quoted key is still a literal').toBe(1)
+    // THE SCALAR SHAPE, one control PER SPELLING — and the per-spelling granularity is the whole
+    // point rather than tidiness. The shape was blind for three cycles because the selector carried
+    // `[]`, `null` and `{}` and nobody re-read it for `true`; a single control would pin one spelling
+    // and leave the next narrowing invisible in exactly the same way. Measured before the widening:
+    // all six of these scored 0 while `.catch(() => [])` scored 1 AT THE SAME FILE POSITION, which is
+    // what made a green suite not evidence of a clean tree.
+    //
+    // 🪤 THE WIDENING IS TWO-SITED. `SWALLOW_SHAPE` reaches the parenthesised, inline-setter and
+    // braced spellings; the BARE body reads `SWALLOW_BARE`. These controls cover both limbs on
+    // purpose — adding a member to one alone leaves `.catch(() => true)` reading zero, which is the
+    // narrowing this block exists to make impossible.
+    expect(counts('.catch(() => true)'), 'the bare boolean, SWALLOW_BARE limb').toBe(1)
+    expect(counts('.catch(() => false)'), 'the bare false, SWALLOW_BARE limb').toBe(1)
+    expect(counts('.catch(() => 0)'), 'the bare zero, SWALLOW_BARE limb').toBe(1)
+    expect(counts('.catch(() => (true))'), 'the parenthesised boolean, SWALLOW_SHAPE limb').toBe(1)
+    expect(counts('.catch(() => setReady(false))'), 'the inline setter, SWALLOW_SHAPE limb').toBe(1)
+    expect(counts('.catch(() => setCount(0))'), 'the inline numeric setter').toBe(1)
+    // #532's close-condition criterion 1 names this exact spelling ("or a boolean 'gone' flag"), and
+    // it is the class's sharpest named member — the site whose blindness the whole widening is for.
+    expect(counts('.catch(() => { if (alive) setGone(true) })'), "#532's boolean 'gone' flag").toBe(1)
+    expect(counts('.catch(() => { setGone(true) })'), 'the same, unbraced by an `if`').toBe(1)
 
     // ── NEGATIVE CONTROLS ────────────────────────────────────────────────────────────────────────
     expect(counts('.catch(() => {})'), 'form C: an empty BLOCK fabricates nothing').toBe(0)
@@ -822,6 +1001,111 @@ describe('§B no fetcher swallows its own rejection, tree-wide and by COUNT', ()
       counts('.catch((e) => { setSearchErr(e); setResults(null) })'),
       'record-then-reset is the CORRECT pattern, not a swallow',
     ).toBe(0)
+    // ── AND THE SCALAR WIDENING'S OWN NEGATIVE CONTROLS ──────────────────────────────────────────
+    // A census with no reachable zero is decoration, and a SCALAR selector is the easiest one to make
+    // unreachable: `setLoading(false)` ends a hundred rejection handlers in this tree. The veto is
+    // what keeps the widening from swallowing the whole file, so it gets pinned from the scalar side
+    // too — if these ever score, the widening has become a rubber stamp rather than a rail.
+    expect(
+      counts('.catch((e) => { setErr(e); setLoading(false) })'),
+      'clearing a spinner while RECORDING the error is the fix, not the defect',
+    ).toBe(0)
+    expect(
+      counts('.catch((e) => { setFailed(true); setBusy(false) })'),
+      'a recorded failure flag is a capture — `setFailed` is what the veto is for',
+    ).toBe(0)
+    // Word-boundary hygiene: the scalar members must not fire on identifiers that merely START with
+    // one. Both of these are ordinary state writes, not fabrications.
+    expect(counts('.catch(() => setMode(trueish))'), '`trueish` is not `true`').toBe(0)
+    expect(counts('.catch(() => setFlag(falsey))'), '`falsey` is not `false`').toBe(0)
+    // Form C is unchanged by the widening — a scalar member must not turn an empty block into a hit.
+    expect(counts('.catch(() => { })'), 'form C stays out after the scalar widening').toBe(0)
+
+    // ── THE FORM BOUNDARY, ENUMERATED AND PINNED ─────────────────────────────────────────────────
+    // 🔴 THE SELECTOR IS ONE AXIS AND THE HANDLER'S SYNTAX IS ANOTHER, and widening the first while
+    // leaving the second unstated is how 17 sites stayed invisible. The forms below were enumerated by
+    // reading the matcher rather than recalling it, and each unmodelled one carries its MEASURED
+    // population — because "we do not model that" is only a boundary if someone counted what is
+    // outside it. Re-measure these before trusting any of the numbers above.
+    //
+    //   A  `.catch(() => <literal>)`              MODELLED   expression body
+    //   B  `.catch(() => { setX(<literal>) })`    MODELLED   braced body, assigns a literal
+    //   F  `.catch(e => …)`                       MODELLED   unparenthesised param — closed at 0 sites
+    //   C  `.catch(() => {})`                     out, by design: discards a VOID rejection, fabricates
+    //                                             nothing. Counting it adds ~85 sites no surface reads.
+    //   E  `.catch(fnReference)`                  out, measured 7 sites, and ALL SEVEN ARE CAPTURES
+    //                                             (`.catch(setLoadErr)`, `.catch(setScanError)`) — i.e.
+    //                                             the correct pattern. Modelling it would red the fix.
+    //   D  `try { … } catch { … }` STATEMENT      out, measured 181 candidate sites, dominated by
+    //                                             non-fetch guards (`JSON.parse`, `localStorage`).
+    //                                             This is the one genuinely open form.
+    //   H  `.then(onOk, onErr)`                   out, measured 0 GENUINE sites (paren-matched; a naive
+    //                                             regex scores 34 by reading `useQuery`'s options
+    //                                             object as a second `.then` argument).
+    //
+    // THE BYPASS CONTROL. Not "does a violation red" but "does a violation written in a DIFFERENT
+    // SYNTACTIC FORM red" — the question the selector-only widening cannot answer about itself.
+    expect(counts('.catch(e => { setRows([]) })'), 'form F: the unparenthesised param still counts').toBe(1)
+    expect(counts('.catch(e => { setGone(true) })'), 'form F carrying the SCALAR shape too').toBe(1)
+    expect(counts('.catch(e => e.message)'), 'form F transform is still a transform').toBe(0)
+    // And the boundary itself, stated as assertions so it cannot rot into folklore.
+    expect(counts('.catch(setLoadErr)'), 'form E stays out — every live instance is a capture').toBe(0)
+    expect(counts('try { r = await api.x() } catch { setRows([]) }'), 'form D is NOT modelled').toBe(0)
+    expect(counts('api.x().then((r) => r.ok, () => [])'), 'form H is NOT modelled').toBe(0)
+
+    // ── THE PREPROCESSING CONTROLS — a shape the SELECTOR can score but the STRIPPER deletes ──────
+    // 🔴 THESE ARE UPSTREAM OF EVERY CONTROL ABOVE, and that is the whole reason they exist. The
+    // stripper ran BLOCK comments first, so a `//` line comment carrying an unclosed `/*` — an
+    // `/api/*` glob cited in prose, this repo's own house style — opened a block that closed at the
+    // next `*/` anywhere in the file and blanked every line between. A widened `SWALLOW_SHAPE`
+    // cannot score a site that preprocessing already removed from its input, so the selector
+    // controls above are only meaningful if these pass. Measured on this tree: **34 line comments
+    // carry an unclosed `/*`**, blanking up to 4,677 code characters in one file.
+    //
+    // 🪤 AND THE HONEST NUMBER IS ZERO, which is worth writing down rather than implying otherwise:
+    // fixing the stripper moved this census 119 -> 119 sites. The hidden spans happened to contain no
+    // fabricating `.catch`. The hazard was real and UNBOUNDED — the hidden length depends on where
+    // the next `*/` falls, so nothing bounded it — but its realised cost here was nil. Stating that
+    // plainly is the point: the fix is justified by the unbounded hazard, not by a count it moved.
+    // 🪤 EVERY FIXTURE BELOW ENDS IN A JSDOC, AND THAT IS THE LOAD-BEARING PART. The first version of
+    // these controls omitted it and was VACUOUS — reverting the stripper to the old regex pair left
+    // all three GREEN. The old pair needs a LATER `*/` to close the block it wrongly opened: with
+    // nothing below it the lazy `[\s\S]*?\*\/` simply fails to match and nothing is blanked, so the
+    // defect does not reproduce. An ordinary doc comment further down is what supplies the closer —
+    // which is also why the live defect is silent rather than loud in real files, every one of which
+    // has a JSDoc somewhere below. Verified failable: with the stripper reverted, these three red.
+    const CLOSER = '\n/** an ordinary doc comment, further down the file */\n'
+    const stripped = (src: string) => swallowSites(codeOfText(src + CLOSER)).length
+    expect(
+      stripped('// the `/api/**` glob in prose\nconst a = api.x().catch(() => [])\n'),
+      'a `//` comment with two asterisks must not eat the swallow below it',
+    ).toBe(1)
+    expect(
+      stripped("const pat = '/*'\nconst a = api.x().catch(() => [])\n"),
+      'a `/*` inside a STRING must not open a block comment',
+    ).toBe(1)
+    expect(
+      stripped('// see `/api/*` and `#/settings/*`\n// and `image/*`\nconst a = api.x().catch(() => setGone(true))\n'),
+      'several unclosed openers in a row, and the SCALAR shape below them',
+    ).toBe(1)
+    // And the inverse, so the stripper is not simply passing everything through: prose that QUOTES a
+    // swallow must still not count. This is the trap the file's header records four times.
+    expect(
+      stripped('// we deleted `.catch(() => [])` here, see #532\nconst a = api.x()\n'),
+      'a swallow QUOTED in a comment is still prose, not code',
+    ).toBe(0)
+    expect(
+      stripped('/* block prose naming .catch(() => null) */\nconst a = api.x()\n'),
+      'the same, in a block comment',
+    ).toBe(0)
+    // 🔑 `stripComments` says when it ended mid-block, and a stuck-open tracker reads as "the rest of
+    // the file is clean" — the exact silent weakening. Its own docstring says callers MUST assert on
+    // this, so the census does.
+    const stuck = walk(SRC).filter((abs) => stripComments(readFileSync(abs, 'utf8')).endState === 'block')
+    expect(
+      stuck.map(rel),
+      'these files leave the comment scanner stuck open, so every swallow below the opener is invisible',
+    ).toEqual([])
 
     // The live file control: `lib/api.ts` carries the issue's own `:84` exemplar plus four siblings,
     // all `r.json().catch(() => null)` parse fallbacks read BEFORE `r.ok`. They are correct code and
@@ -879,6 +1163,214 @@ describe('§B no fetcher swallows its own rejection, tree-wide and by COUNT', ()
 
   it('scans real files (not vacuously green)', () => {
     expect(walk(SRC).length, 'the walker must find the tree').toBeGreaterThan(200)
+  })
+})
+
+// ── §D THE ERROR CONTRACT, PER INVOCATION — the fetcher AND the destructuring together ──────────
+//
+// 🔴 `useQuery` RETURNS `error` AND `status`, AND THE CONTRACT IS DEFEATED ON BOTH SIDES OF IT. §B
+// above counts fabricating `.catch`es anywhere in a file; that is the right shape for "does this file
+// lie about server state" and the wrong shape for "can this CALL ever see its own failure". The two
+// halves of the class, measured tree-wide:
+//
+//   (A) the FETCHER swallows        the rejection never reaches the hook, so `error` is structurally
+//                                   unreachable — a call site that binds it correctly still cannot
+//                                   fire, because the layer was handed a successful empty value
+//   (B) the fetcher PROPAGATES but  the rejection reaches the hook and nobody asks. `status` never
+//       the call binds neither      leaves 'loading' from the surface's point of view, so the error
+//       `error` nor `status`        state collapses into a PERMANENT SPINNER — the eternal-spinner bug
+//
+// 🪤 AND EITHER CHECK ALONE PASSES HALF THE CLASS. A rail that inspects the DESTRUCTURING passes every
+// (A) while the surface still lies; a rail that inspects the FETCHER misses every (B). That is why
+// this section scores one invocation twice instead of being two sections — the contract is defeated
+// one layer BELOW the hook and one layer ABOVE it, and no check aimed at the hook itself sees either.
+//
+// 🪤 AND THE BIGGER POPULATION IS THE ONE THIS SECTION CANNOT SEE AT ALL. §D is scoped to
+// `useQuery(` invocations, so a surface that hand-rolls its own loading flag around a DIRECT `api.*`
+// call is invisible to it — the same defect wearing a shape no `useQuery` audit can reach. Measured
+// on this tree: **109 files carry a hand-rolled loading/busy flag AND 662 direct `api.*` reads that
+// sit outside any `useQuery()` argument list.** That is roughly eight times the unbound-`useQuery`
+// class below it. It is deliberately NOT ratcheted here, and the reason is a product decision rather
+// than effort: bounding that class needs a deadline in `lib/api.ts`, whose blast radius includes the
+// long POSTs (an app-update git clone, a model pull, a doctor run) that are *supposed* to take
+// minutes. Three of the four Settings subpages a store-level deadline cannot reach show up in that
+// census by name — `settings/memory` (30 reads, 11 flags), `settings/doctor` (7/5) and
+// `settings/audit` (4/1); `settings/apps` does not, because it reads through `useQuery` and is
+// therefore already covered by the (B) budget below.
+//
+// 🔑 THIS SHIPS AT A RECORDED POPULATION, NOT AT ZERO, AND HAS NO REGENERATE MODE. Both were
+// deliberate. Shipping at zero is right for a rail whose decay is removed in the same commit; it is
+// wrong here, because most of (A) and (B) is a per-surface PRODUCT decision — what a retry re-runs,
+// whether a cached copy should still paint — and sweeping 116 of those in one commit would be the
+// "convert them all" move this file's §A header already declines for the same reason. So the numbers
+// below are debt, and the only supported edit is DOWNWARD. There is no generator: a regenerate mode on
+// a budget like this is not a convenience, it is a loophole — it would let the next lane bless a new
+// swallow by re-running a script instead of writing down why the site is correct.
+const FETCHER_SWALLOW_BUDGET: Record<string, number> = {
+  'app/usePlatform.ts': 1,
+  'pages/agents/AgentDetail.tsx': 1,
+  'pages/code/CodeCockpitPage.tsx': 1,
+  'pages/dashboard/PinnedTiles.tsx': 2,
+  'pages/inbox/InboxPage.tsx': 1,
+  'pages/knowledge/KnowledgeCreatePage.tsx': 1,
+  'pages/knowledge/KnowledgeListPage.tsx': 1,
+  'pages/settings/AgentDefaultsPanel.tsx': 1,
+  'pages/settings/ChatPanel.tsx': 1,
+  'pages/settings/DurabilityPanel.tsx': 1,
+  'pages/settings/MemoryPanel.tsx': 4,
+  'pages/settings/ModelBackends.tsx': 1,
+  'pages/settings/ModelsPanel.tsx': 2,
+  'pages/settings/MultiInstanceCard.tsx': 1,
+  'pages/settings/NotificationsPanel.tsx': 1,
+  'pages/settings/PacksPanel.tsx': 1,
+  'pages/settings/PromptsPanel.tsx': 0,
+  'pages/settings/ProvidersPanel.tsx': 3,
+  'pages/settings/RoutingPanel.tsx': 1,
+  'pages/settings/SearchPanel.tsx': 1,
+  'pages/settings/SecurityPanel.tsx': 2,
+  'pages/settings/UpdatesPanel.tsx': 1,
+  'pages/settings/UsagePanel.tsx': 5,
+  'pages/settings/VoicePanel.tsx': 1,
+  'pages/settings/settingsWidgets.tsx': 2,
+  'pages/skills/LearningSummaryBlock.tsx': 1,
+  'pages/skills/SkillInspector.tsx': 2,
+  'pages/skills/SkillsPage.tsx': 2,
+  'pages/tools/ToolsPage.tsx': 1,
+  'pages/triggers/TriggersListPage.tsx': 1,
+  'pages/workflows/WorkflowsListPage.tsx': 1,
+}
+/** (B) — the eternal-spinner half. A number here is a surface whose failed load is indistinguishable
+ *  from a load still in progress, forever. */
+const UNBOUND_ERROR_BUDGET: Record<string, number> = {
+  'app/App.tsx': 1,
+  'app/onboarding/EssentialsStep.tsx': 1,
+  'app/usePlatform.ts': 1,
+  'pages/ChatPage.tsx': 6,
+  'pages/agents/AgentDetail.tsx': 1,
+  'pages/apps/AppsSection.tsx': 2,
+  'pages/code/CodeCockpitPage.tsx': 1,
+  'pages/companion/CompanionPage.tsx': 1,
+  'pages/dashboard/DashboardPage.tsx': 1,
+  'pages/dashboard/PinnedTiles.tsx': 2,
+  'pages/knowledge/KnowledgeCreatePage.tsx': 1,
+  'pages/knowledge/KnowledgeListPage.tsx': 3,
+  'pages/projects/ProjectsSection.tsx': 4,
+  'pages/prompts/PromptDetail.tsx': 1,
+  'pages/prompts/SnippetDetail.tsx': 1,
+  'pages/prompts/SyntaxReference.tsx': 1,
+  'pages/settings/AppsPanel.tsx': 1,
+  'pages/settings/ChatPanel.tsx': 0,
+  'pages/settings/CompanionPanel.tsx': 3,
+  'pages/settings/MemoryPanel.tsx': 8,
+  'pages/settings/ModelBackends.tsx': 1,
+  'pages/settings/ModelsPanel.tsx': 2,
+  'pages/settings/MultiInstanceCard.tsx': 1,
+  'pages/settings/NotificationsPanel.tsx': 1,
+  'pages/settings/ProjectionRulesPanel.tsx': 1,
+  'pages/settings/PromptsPanel.tsx': 0,
+  'pages/settings/ProvidersPanel.tsx': 3,
+  'pages/settings/RoutingPanel.tsx': 1,
+  'pages/settings/SecurityPanel.tsx': 3,
+  'pages/settings/UsagePanel.tsx': 5,
+  'pages/skills/LearningSummaryBlock.tsx': 1,
+  'pages/skills/SkillInspector.tsx': 2,
+  'pages/skills/SkillsPage.tsx': 2,
+  'pages/tasks/TaskCreatePage.tsx': 1,
+  'pages/triggers/TriggersListPage.tsx': 1,
+  'ui/Composer.tsx': 1,
+}
+
+describe('§D the error contract, per invocation — the fetcher AND the destructuring', () => {
+  /** file → [swallowing fetchers, destructurings binding neither `error` nor `status`]. */
+  const contractCensus = (): Map<string, [number, number]> => {
+    const out = new Map<string, [number, number]>()
+    for (const abs of walk(SRC)) {
+      const src = codeOf(abs)
+      let a = 0
+      let b = 0
+      for (const c of cachedCalls(src)) {
+        if (swallowSites(c.args).length > 0) a++
+        const pattern = destructuredAs(src, c.at)
+        if (pattern !== null && !binds(pattern, 'error') && !binds(pattern, 'status')) b++
+      }
+      if (a > 0 || b > 0) out.set(rel(abs), [a, b])
+    }
+    return out
+  }
+
+  it('VACUITY: both halves of the contract are still detectable', () => {
+    // A census that scores nothing reads exactly like a clean tree, and this one has TWO detectors
+    // that can fail independently — so each gets its own floor and its own shape control.
+    const c = contractCensus()
+    const totalA = [...c.values()].reduce((s, [a]) => s + a, 0)
+    const totalB = [...c.values()].reduce((s, [, b]) => s + b, 0)
+    expect(totalA, 'the FETCHER half found no swallowing invocation at all').toBeGreaterThanOrEqual(20)
+    expect(totalB, 'the DESTRUCTURING half found no unbound invocation at all').toBeGreaterThanOrEqual(30)
+
+    // The destructuring detector, as shapes. `binds` is the whole rail for half this section.
+    expect(binds('data, error, refresh', 'error'), 'the plain binding').toBe(true)
+    expect(binds('data, error: tasksErr, refresh', 'error'), 'an ALIASED binding still binds it').toBe(true)
+    expect(binds('data, status', 'status'), '`status` satisfies the contract too').toBe(true)
+    expect(binds('data, loading', 'error'), 'neither bound — the (B) shape').toBe(false)
+    // 🪤 The boundary that makes it a rail and not a substring search: a longer identifier that merely
+    // STARTS with `error` is a different binding, and reading it as `error` would silently exempt
+    // whole files. Same trap, inverted, as the `trueish`/`true` control in §B's vacuity block.
+    expect(binds('data, errorCount', 'error'), '`errorCount` is not `error`').toBe(false)
+    expect(binds('data, statusText', 'status'), '`statusText` is not `status`').toBe(false)
+
+    // And the assignment test, which is what stops JSX upstream from being read as a pattern.
+    const jsx = "  {actions}</div> </div> )}\n  const x = "
+    expect(destructuredAs(`${jsx}useQuery(`, jsx.length), 'a non-destructuring RHS is not a site').toBeNull()
+    const real = '  const { data, error } = '
+    expect(destructuredAs(`${real}useQuery(`, real.length), 'a real destructuring IS a site').toBe(' data, error ')
+  })
+
+  it('no fetcher inside a useQuery call swallows beyond its budget — (A)', () => {
+    const c = contractCensus()
+    const over = [...c.entries()]
+      .filter(([f, [a]]) => a > (FETCHER_SWALLOW_BUDGET[f] ?? 0))
+      .map(([f, [a]]) => `${f}: ${a} > ${FETCHER_SWALLOW_BUDGET[f] ?? 0}`)
+    expect(
+      over,
+      'a `useQuery` fetcher that resolves its own rejection makes `error` STRUCTURALLY unreachable — '
+      + 'the hook is handed a successful empty value, so even a call site that binds `error` correctly '
+      + 'can never render it. Delete the `.catch` and give the surface an error branch.',
+    ).toEqual([])
+  })
+
+  it('and no invocation drops BOTH `error` and `status` beyond its budget — (B)', () => {
+    const c = contractCensus()
+    const over = [...c.entries()]
+      .filter(([f, [, b]]) => b > (UNBOUND_ERROR_BUDGET[f] ?? 0))
+      .map(([f, [, b]]) => `${f}: ${b} > ${UNBOUND_ERROR_BUDGET[f] ?? 0}`)
+    expect(
+      over,
+      'these `useQuery` call sites bind neither `error` nor `status`, so a failed load is '
+      + 'indistinguishable from one still in flight and the surface spins forever. Bind `error` and '
+      + 'render `ui/ListScaffold`\'s `LoadError` (or `ui/forms`\' `FieldError` for a single field).',
+    ).toEqual([])
+  })
+
+  it('and neither budget carries slack — fixing a site ratchets its number down', () => {
+    const c = contractCensus()
+    const stale: string[] = []
+    for (const [f, n] of Object.entries(FETCHER_SWALLOW_BUDGET)) {
+      const a = c.get(f)?.[0] ?? 0
+      if (a < n) stale.push(`(A) ${f}: ${a} < ${n} — lower it to ${a}`)
+    }
+    for (const [f, n] of Object.entries(UNBOUND_ERROR_BUDGET)) {
+      const b = c.get(f)?.[1] ?? 0
+      if (b < n) stale.push(`(B) ${f}: ${b} < ${n} — lower it to ${b}`)
+    }
+    // Same house rule §B runs on: "slack is not a safety margin here, it is a hole."
+    expect(stale, 'ratchet these down in the same commit that fixed them').toEqual([])
+  })
+
+  it('and neither budget names a file that has stopped existing', () => {
+    const all = new Set(walk(SRC).map(rel))
+    const ghosts = [...Object.keys(FETCHER_SWALLOW_BUDGET), ...Object.keys(UNBOUND_ERROR_BUDGET)]
+      .filter((f) => !all.has(f))
+    expect([...new Set(ghosts)], 'delete these entries').toEqual([])
   })
 })
 

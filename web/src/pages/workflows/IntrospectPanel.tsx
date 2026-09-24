@@ -118,7 +118,10 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                   {/* Routed through `runTokensStat` for the SAME reason the cell above is routed,
                       one fact over: a step that recorded no token count makes this int a FLOOR, and
                       `.toLocaleString()` on a floor printed "Tokens 100" for a run the ledger's own
-                      `run_totals` reported as `null` (issue 3218). The two aggregates now agree. */}
+                      `run_totals` reported as `null` (issue 3218). `LedgerRailsPanel`'s Tokens cell
+                      on this same run page is routed through the identical helper (issue 3400), so
+                      it is not just this panel and `run_totals` that agree now — both on-screen
+                      panels do. */}
                   <Stat
                     label="Tokens"
                     value={runTokensStat(data.stats.tokens, data.stats.tokens_recorded)}

@@ -5,6 +5,8 @@ import { FormSkeleton } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { api, type WorkflowLedgerRails } from '../../lib/api'
 import { fmtElapsed } from './workflowMeta'
+import { runCostStat } from '../../lib/runCost'
+import { runTokensStat } from '../../lib/unrecorded'
 
 /** The run-side ledger rails (PP-16 seam 4): the findings rail and the verdict/ROI rail.
  *
@@ -107,7 +109,7 @@ export function LedgerRailsPanel({ runId }: { runId: string }) {
   if (error) return <InlineError>{error}</InlineError>
   if (!data) return <p data-type="body-s" className="text-on-surface-low">This run has no ledger to project.</p>
 
-  const { findings, verdicts, totals, coverage } = data
+  const { findings, verdicts, coverage, totals } = data
   const absent = coverage.filter((c) => c.producer === 'none')
 
   return (
@@ -121,8 +123,21 @@ export function LedgerRailsPanel({ runId }: { runId: string }) {
         <dl data-type="caption" className="grid grid-cols-2 gap-xs sm:grid-cols-3">
           <Stat label="Steps completed" value={String(totals.steps_completed)} />
           <Stat label="Verdicts" value={String(totals.verdicts)} />
-          <Stat label="Cost (est.)" value={cell(totals.cost_usd, (n) => `~$${n.toFixed(4)}`)} />
-          <Stat label="Tokens" value={cell(totals.tokens, (n) => n.toLocaleString())} />
+          {/* Routed through `runCostStat`/`runTokensStat` — the SAME helpers `IntrospectPanel`
+              uses for the identical fact over the identical `step_completed` rows (#3400). Before
+              this, a mixed run's partial sum (some steps costed/counted, one did not) rendered
+              here as a bare number while `IntrospectPanel` correctly disclosed it as `≥N` — two
+              on-screen aggregates over one journal, disagreeing. `=== null` still renders the em
+              dash: that is a DIFFERENT fact ("no step here ever carried the key at all") from a
+              disclosed floor, and this panel's whole point is not to collapse the two. */}
+          <Stat
+            label="Cost (est.)"
+            value={totals.cost_usd === null ? EM_DASH : runCostStat(totals.cost_usd, totals.cost_recorded)}
+          />
+          <Stat
+            label="Tokens"
+            value={totals.tokens === null ? EM_DASH : runTokensStat(totals.tokens, totals.tokens_recorded)}
+          />
           <Stat label="Step time" value={cell(totals.duration_secs, fmtElapsed)} />
           <Stat
             label="Judge outcomes"

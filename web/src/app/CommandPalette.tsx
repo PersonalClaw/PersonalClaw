@@ -139,9 +139,9 @@ export function CommandPalette({ commands }: { commands: Command[] }) {
             </div>
             {/* footer hint */}
             <div className="flex items-center gap-3 border-t border-outline-variant/40 px-l py-2 text-on-surface-low text-[0.75rem]">
-              <span className="inline-flex items-center gap-1"><ArrowRight size={11} className="rotate-90" /> navigate</span>
-              <span className="inline-flex items-center gap-1"><CornerDownLeft size={11} /> select</span>
-              <span className="ml-auto inline-flex items-center gap-1"><kbd className="rounded bg-surface-high px-1 font-mono">⌘K</kbd> toggle</span>
+              <span className="inline-flex items-center gap-xs"><ArrowRight size={11} className="rotate-90" /> navigate</span>
+              <span className="inline-flex items-center gap-xs"><CornerDownLeft size={11} /> select</span>
+              <span className="ml-auto inline-flex items-center gap-xs"><kbd className="rounded bg-surface-high px-1 font-mono">⌘K</kbd> toggle</span>
             </div>
           </TrappedCard>
         </motion.div>

@@ -310,7 +310,10 @@ function AgentHooksView() {
 /** Model-only editor for a reserved built-in agent: swap its model (constrained
  *  to active chat models + Auto) without touching its locked persona/tools. */
 function ReservedModelEditor({ agent, onSaved }: { agent: SavedAgent; onSaved: () => void }) {
-  const { options } = useActiveChatModelOptions()
+  // `catalogErr` is bound so an unreachable active-model list cannot render as "No active chat
+  // models" — on a box with three bound models that sentence is a false claim about a setting, and
+  // it is the one fact this editor exists to show.
+  const { options, error: catalogErr } = useActiveChatModelOptions()
   const [model, setModel] = useState(agent.model ?? '')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
@@ -332,6 +335,7 @@ function ReservedModelEditor({ agent, onSaved }: { agent: SavedAgent; onSaved: (
         {dirty && <Button size="sm" onClick={save} loading={saving}><Check size={14} /> Save</Button>}
       </div>
       {err && <FieldError>{err}</FieldError>}
+      {catalogErr ? <FieldError>Couldn't load your active chat models — {(catalogErr as Error)?.message || 'the server did not respond'}. The list above is incomplete; reload before changing it.</FieldError> : null}
     </div>
   )
 }

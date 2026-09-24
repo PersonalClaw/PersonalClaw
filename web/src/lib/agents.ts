@@ -113,34 +113,48 @@ export function flattenModelOptions(models: ModelItem[]): ModelOption[] {
   return models.map((m) => ({ value: m.name, label: m.model_name || m.name, group: m.provider || 'Models', description: m.description }))
 }
 
-/** Hook: the model catalog (the same /api/models the composer uses), grouped
- *  by provider. Degrades to an empty list if the backend isn't reachable. */
-export function useModelCatalog(): { options: ModelOption[]; loading: boolean } {
+/** Hook: the model catalog (the same /api/models the composer uses), grouped by provider.
+ *
+ *  🔴 IT USED TO "DEGRADE TO AN EMPTY LIST IF THE BACKEND ISN'T REACHABLE", and that sentence was
+ *  the defect written down as a feature. `.catch(() => setLoading(false))` left `options` at `[]`
+ *  with `loading` false, so a failed `/api/models` rendered a model picker that said the user has
+ *  no models — identical on screen to an account with none, with nothing announced and no retry.
+ *  The rejection is CAPTURED now and every consumer renders it beside the field: an empty picker
+ *  and an unreachable one are different facts and the form has to say which it is. */
+export function useModelCatalog(): { options: ModelOption[]; loading: boolean; error: unknown } {
   const [options, setOptions] = useState<ModelOption[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<unknown>(null)
   useEffect(() => {
     let alive = true
-    api.models().then((m) => { if (alive) { setOptions(flattenModelOptions(m)); setLoading(false) } }).catch(() => { if (alive) setLoading(false) })
+    api.models()
+      .then((m) => { if (alive) { setOptions(flattenModelOptions(m)); setLoading(false) } })
+      .catch((e) => { if (alive) { setError(e); setLoading(false) } })
     return () => { alive = false }
   }, [])
-  return { options, loading }
+  return { options, loading, error }
 }
 
 /** Hook: the ACTIVE chat models (Settings → Models bindings), shaped for the
  *  Combobox. Used for agent model selection so a user can only pin a model
  *  that's actually active/bound — preventing the staleness that arises when an
- *  agent points at a model later removed from the active set. */
-export function useActiveChatModelOptions(): { options: ModelOption[]; loading: boolean } {
+ *  agent points at a model later removed from the active set.
+ *
+ *  Same capture as `useModelCatalog` above, and the stakes are higher here: this list is the set a
+ *  user may PIN an agent to, so an unreadable one that renders empty reads as "no model is active"
+ *  on a box where three are bound. */
+export function useActiveChatModelOptions(): { options: ModelOption[]; loading: boolean; error: unknown } {
   const [options, setOptions] = useState<ModelOption[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<unknown>(null)
   useEffect(() => {
     let alive = true
     api.chatModels().then((rows) => {
       if (!alive) return
       setOptions(rows.map((r) => ({ value: r.name, label: r.model_id || r.name, group: r.provider || 'Models', description: r.description })))
       setLoading(false)
-    }).catch(() => { if (alive) setLoading(false) })
+    }).catch((e) => { if (alive) { setError(e); setLoading(false) } })
     return () => { alive = false }
   }, [])
-  return { options, loading }
+  return { options, loading, error }
 }
