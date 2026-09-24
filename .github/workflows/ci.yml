@@ -724,6 +724,23 @@ jobs:
       - name: Session Map in the transcript (web/e2e/sessionMap.spec.ts)
         working-directory: web
         run: npx playwright test e2e/sessionMap.spec.ts --project=chromium
+      # FIRST RUN'S GEOMETRY — the one class of defect no gate in `web/` could see. jsdom computes no
+      # layout, so every `clientHeight` is 0 and every rect is zeros there: the onboarding screen
+      # shipped with its `<h1>` at -247px and its "go back to step 1" button at -141px — unreachable at
+      # every viewport, `scrollTop` clamped at 0 — while every frontend rail was
+      # green, and `design/onboardingScrollable.test.tsx` can only assert the two CSS shapes we
+      # already know about. This spec asserts the PROPERTY — everything the user must reach lies
+      # inside the scroller's reachable range — at four viewports, plus the keyboard legs (focus
+      # survives a step change; every visible control is in the tab ring). It also publishes the
+      # measured offsets into `web/test-results/`, which the upload step below already collects.
+      #
+      # THIS JOB rather than its own: it needs exactly the harness the steps above stand up (isolated
+      # gateway + auth handshake + previewed SPA) and nothing more, it asserts no screenshot, and it
+      # is ~45s. Listed explicitly because CI names specs one by one — a spec not named here runs
+      # nowhere, which is the failure class these rails exist to catch.
+      - name: first run is reachable at every viewport (web/e2e/onboardingGeometry.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/onboardingGeometry.spec.ts --project=chromium
       - name: upload the axe reports
         if: always()
         uses: actions/upload-artifact@v7

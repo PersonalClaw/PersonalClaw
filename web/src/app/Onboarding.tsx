@@ -300,14 +300,19 @@ export function Onboarding() {
             </div>
 
             {/* vertical collapsing stepper — the centered focal element */}
-            {/* Announces step progress to assistive tech: a step CHANGE is not a focus change, so
-                without this a screen-reader user is never told they advanced (WCAG 4.1.3). Always
-                mounted so the text change is observed; polite so it does not interrupt.
-                🪤 This comment used to justify itself with "the rows are not focusable" — true then,
-                FALSE now that a completed row's header is a real button, and it was never the reason
-                anyway: the live region is needed because advancing does not move focus, not because
-                focus was impossible. Keeping the stale clause would have argued for deleting a
-                still-necessary region the next time someone audited this file. */}
+            {/* Announces step progress to assistive tech (WCAG 4.1.3). Always mounted so the text
+                change is observed; polite so it does not interrupt.
+                🔑 WHAT IT CARRIES THAT THE FOCUS MOVE CANNOT. Advancing a step now moves focus to
+                the new step's heading (`StepStack`), so "you have arrived somewhere" no longer needs
+                a live region — but the heading it moves to is named for the step, not for its
+                position, so it says "Bring your setup over" and never "Step 2 of 5". This region is
+                the only place the POSITION is spoken, which is the half of the answer a first-run
+                user actually wants.
+                🪤 TWO EARLIER JUSTIFICATIONS DIED HERE, both by being true when written. First "the
+                rows are not focusable" — false once a completed row's header became a real button.
+                Then "a step CHANGE is not a focus change" — false once the heading took focus. Both
+                would have argued for deleting a still-necessary region; the reason above is about
+                what the region SAYS, which does not depend on how focus behaves. */}
             <p role="status" aria-live="polite" className="sr-only">
               {`Step ${ORDER.indexOf(step) + 1} of ${ORDER.length}: ${TITLES[step]}`}
             </p>
