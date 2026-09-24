@@ -22,9 +22,18 @@ import { useQueryParam, type RouteProps } from '../../app/useQueryState'
  *  against a 4.5 floor, so the three primary-toned kinds (Note / Fleeting note / Journal)
  *  failed AA in the breadcrumb trail below; every other tone on that ground measures
  *  5.71-5.83 and passes, so only this one is remapped. `primary-emphasis` is the mode-aware
- *  legible sibling — further from the ground in BOTH modes (light `#c8452e`→`#a33922` = 6.0:1,
- *  dark `#ff6b5b`→`#ff9a86` = 9.33:1) — and is the token cycles 147/155/158 already settled
- *  for this same failure on the canvas, `surface-high` and `surface-low`.
+ *  legible sibling — further from the ground in BOTH modes (dark `#ff6b5b`→`#ff9a86` = 9.33:1)
+ *  — and is the token cycles 147/155/158 already settled for this same failure on the canvas,
+ *  `surface-high` and `surface-low`.
+ *
+ *  ⚠️ THE REMAP IS STILL CORRECT BUT ITS MARGIN IS NOW SMALL, AND THAT IS WORTH KNOWING BEFORE
+ *  ANYONE "TIDIES" IT (#3503). `--color-primary`'s light value was retuned across all 12 schemes,
+ *  so the 4.37 above is history: plain primary now reads **5.80** on the light canvas for coral and
+ *  clears the 4.5 floor in every scheme, which means this remap is no longer load-bearing for AA
+ *  *here*. It is kept because it is a HOUSE RULE, not a per-site patch — accent text on the canvas,
+ *  `surface-high` and `surface-low` uses the emphasis shade, in eleven other places, and `emphasis`
+ *  is asserted to out-contrast `primary` on its own ground. Reverting this one site would fork that
+ *  rule for a token whose value moves. The light hex pair is no longer quoted: it is per-scheme.
  *
  *  The REGISTRY is deliberately left alone: `knowledgeMeta`'s tone also inks icons in
  *  `ArtifactCard`, `ArtifactViewer` and `KnowledgeDetail`, which carry a 3:1 non-text floor

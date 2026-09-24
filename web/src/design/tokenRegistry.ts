@@ -64,12 +64,24 @@ const sel = (varName: string, label: string, group: string, value: string, optio
 
 export const TOKENS: Token[] = [
   // ── Brand ──
-  // Light primary is the old emphasis shade: #e85a3f under 13px white button
-  // text was 3.52:1 (axe serious on every list page's New-X button); #c8452e
-  // is 4.83:1 and stays unmistakably coral. Emphasis (hover) steps darker in
-  // kind. Dark mode was already AA and is untouched.
-  c('--color-primary', 'Primary (coral)', 'Brand', '#ff6b5b', '#c8452e'),
-  c('--color-primary-emphasis', 'Primary emphasis', 'Brand', '#ff9a86', '#a33922'),
+  // 🔴 THESE TWO LIGHT VALUES ARE WHAT A DEFAULT INSTALL ACTUALLY PAINTS, which is why #3503's
+  // retune had to land here and not only in `schemes.ts`. `app/appearance.tsx` writes EVERY
+  // registered colour token inline on `<html>` at mount, falling back to the values on this line
+  // whenever the user has no stored override — and `applyScheme` only populates overrides once the
+  // user picks a scheme. So on a fresh light-mode install `schemes.ts`'s coral entry is never read,
+  // an inline style beats `.light`'s class rule, and `tokens.css` is a pre-hydration fallback only.
+  // Fixing two of the three would have shipped contrast that depends on where the user's value came
+  // from. `schemeContrast.test.ts` now asserts all three agree.
+  //
+  // The history, because the direction repeats: light primary was once #e85a3f, which under 13px
+  // white button text read 3.52:1 (axe serious on every list page's New-X button); #c8452e fixed
+  // that at 4.83:1 against the BARE ground. #3503 is the same mistake one ground over — a status
+  // chip composites its ink over its own 16% wash, and #c8452e read 3.5229 there. #b12e18 is
+  // 4.5007 on the worst resting tier and 6.42 as a white-text button fill, and stays unmistakably
+  // coral: hue angle and chroma are held in OKLCH, only lightness moved. Emphasis steps darker in
+  // kind by the same delta, so hover still reads as "more". Dark mode was already AA and is untouched.
+  c('--color-primary', 'Primary (coral)', 'Brand', '#ff6b5b', '#b12e18'),
+  c('--color-primary-emphasis', 'Primary emphasis', 'Brand', '#ff9a86', '#8d240b'),
   c('--color-on-primary', 'On primary', 'Brand', '#3f1008', '#ffffff'),
   c('--color-primary-container', 'Primary container', 'Brand', '#5a1d12', '#ffe0d6'),
   c('--color-secondary', 'Secondary (amber)', 'Brand', '#ffb454', '#cf7a23'),

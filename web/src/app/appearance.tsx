@@ -72,7 +72,9 @@ function themeToScheme(t: ThemeRecord): Scheme {
     if (d == null && l == null) continue
     colors[tok.varName] = { dark: d ?? tok.dark, light: l ?? tok.light }
   }
-  const prim = colors['--color-primary'] ?? { dark: '#ff6b5b', light: '#e85a3f' }
+  // The swatch for a saved custom theme that did not store `--color-primary` at all. Kept in step
+  // with `tokenRegistry`'s default pair — it had been left on `#e85a3f`, two retunes stale (#3503).
+  const prim = colors['--color-primary'] ?? { dark: '#ff6b5b', light: '#b12e18' }
   return { id: `custom:${t.slug}`, label: t.name, emoji: t.emoji, swatch: prim, colors }
 }
 
