@@ -32,8 +32,8 @@ const seg = (over: Partial<ApprovalSegment> = {}): ApprovalSegment => ({
   kind: 'approval', id: 'a1', tool: 'bash', ...over,
 })
 
-const scopeTab = (label: string) => screen.getByRole('tab', { name: label })
-const maybeScopeTab = (label: string) => screen.queryByRole('tab', { name: label })
+const scopeTab = (label: string) => screen.getByRole('radio', { name: label })
+const maybeScopeTab = (label: string) => screen.queryByRole('radio', { name: label })
 const allow = () => screen.getByRole('button', { name: /^Allow bash/ })
 
 describe('#541 — the "This agent" promise names the agent the grant will be saved on', () => {

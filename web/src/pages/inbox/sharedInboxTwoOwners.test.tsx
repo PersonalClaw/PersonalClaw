@@ -117,8 +117,8 @@ describe('the shared inbox surfaces every owner but counts only yours', () => {
   it('offers per-owner filtering, and "Mine" is a separate scope from an owner handle', async () => {
     mockApi()
     await renderInbox()
-    await waitFor(() => expect(screen.getByRole('tablist', { name: 'Filter by owner' })).toBeInTheDocument())
-    const chips = screen.getByRole('tablist', { name: 'Filter by owner' })
+    await waitFor(() => expect(screen.getByRole('radiogroup', { name: 'Filter by owner' })).toBeInTheDocument())
+    const chips = screen.getByRole('radiogroup', { name: 'Filter by owner' })
     // Everyone (the shared default), Mine (belongs_to), and a chip per OTHER owner. There is
     // deliberately no chip for the unattributed bucket: it is not a person, and Mine covers it.
     expect(chips.textContent).toContain('Everyone')
@@ -157,7 +157,7 @@ describe('the shared inbox surfaces every owner but counts only yours', () => {
     })
     await renderInbox()
     await waitFor(() => expect(screen.getByText(/1 open · 1 total/)).toBeInTheDocument())
-    expect(screen.queryByRole('tablist', { name: 'Filter by owner' }),
+    expect(screen.queryByRole('radiogroup', { name: 'Filter by owner' }),
       'one owner is nothing to choose between').toBeNull()
     expect(screen.queryByText(/are yours/), 'no need to scope a queue that is entirely yours').toBeNull()
   })

@@ -135,7 +135,7 @@ describe('the declaration-implies-implementation census', () => {
       expect(codeOf(rel), `${rel} should call menuCursorKeydown`).toMatch(/menuCursorKeydown\(/)
     }
     // No second spelling — except `ui/Segmented.tsx`, which holds TWO widgets: the expanded
-    // `role="tablist"` strip keeps its own ←/→/↑/↓ handler (a tablist is horizontal-first and is not
+    // A `Segmented` strip keeps its own ←/→/↑/↓ handler (a radiogroup is horizontal-first and is not
     // a popup), while the collapsed listbox uses the reducer. Asserted by slicing, so "Segmented is
     // exempt" cannot quietly grow into "Segmented's popup hand-rolls its arrows too".
     for (const rel of focusMoving.filter((r) => r !== 'ui/Segmented.tsx')) {

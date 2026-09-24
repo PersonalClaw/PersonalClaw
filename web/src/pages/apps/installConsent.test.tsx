@@ -25,7 +25,7 @@ const NOT_SUPPLIED = undefined
 // is ≥24px (2.5.8); `aria-modal="true"` is present; and nothing inside the dialog actually scrolls, so
 // there is no unnamed/unreachable scroll region — the `curl … | sh` one-liner the guide documents
 // fits without overflow. The tab strip that reveals the Store was checked too and is correct
-// (`role="tablist"` + `aria-label` + `aria-selected` + roving `tabindex`).
+// (`role="radiogroup"` + `aria-label` + `aria-checked` + roving `tabindex`).
 //
 // 🪤 AND ONE "FINDING" WAS MY OWN INSTRUMENT. The probe first reported the 20px dialog title at
 // **1.27:1** in light. The title is `rgb(31,31,31)` on a header painted

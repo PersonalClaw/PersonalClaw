@@ -15,6 +15,24 @@ export interface SegOption { key: string; label?: string; tone?: string; icon?: 
  *  pill group. Use this for every "pick one of N" choice (filters, view
  *  switches, mode toggles, tab strips) so they look identical everywhere.
  *
+ *  🔑 IT IS A RADIOGROUP, AND THAT WAS AN OPEN OWNER RULING UNTIL #3472. It declared
+ *  `role="tablist"` / `role="tab"` / `aria-selected` across **50 call sites with ZERO
+ *  `role="tabpanel"` in the entire app** — the only two tabpanels live in
+ *  `pages/chat/ChatActivityPanel`, which does not use this control. So a screen reader
+ *  announced "tab 2 of 6" for the task form's Status field: the user was told they were
+ *  navigating a tabbed interface that does not exist, and was told nothing about the values
+ *  being mutually exclusive alternatives of one field. `tablist` also promises manual
+ *  activation and an associated panel, and neither ever held here.
+ *
+ *  It also broke test authoring in a way that hid the problem, which is how it survived
+ *  fifty adoptions: `getByRole('button', { name: 'High' })` times out against a `role="tab"`,
+ *  so the next author reaches for `getByRole('tab')` and encodes the wrong semantics as
+ *  correct. Twenty-four such queries existed; they now read `role="radio"`.
+ *
+ *  A `tablist` is still the right vocabulary for a strip that reveals a panel, and the six
+ *  that do (`ChatActivityPanel`, `MemoryPanel`, `LoopCockpitPage`, `FilesSection`,
+ *  `TerminalPage`, `TerminalDrawer`) keep it — they are hand-rolled and untouched here.
+ *
  *  Selected styling: solid `--color-primary` by default (clear, high-contrast),
  *  or the option's own `tone` when supplied (for semantic coloring like task
  *  status). Inner option height is h-8 to line up with `Button size="sm"` and
@@ -42,7 +60,7 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
   const reduce = useReducedMotion()
   // Claim the enclosing `Field`'s label, the same contract `TextInput` already honours: an explicit
   // `ariaLabel` always WINS, otherwise the published label id names the group. Measured before this —
-  // a DOM census of 14 routes found **7 unnamed tablists** (9 named), so a screen-reader user heard
+  // a DOM census of 14 routes found **7 unnamed groups** (9 named), so a screen-reader user heard
   // "Critical / High / Medium / Low" with no statement of WHAT was being chosen. Six of those sit
   // inside a `Field` whose visible label already says it ("Status", "Priority", "When", "Runs",
   // "Approval mode", "Trigger kind") — the label existed, the group just never claimed it.
@@ -98,9 +116,14 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
   // A per-instance layoutId so the sliding active-indicator is scoped to THIS
   // segmented group (two on a page must not share/steal one indicator).
   const groupId = useId()
-  // WAI-ARIA tablist keyboard nav: ←/→ (and Home/End) move selection between
-  // tabs, with a roving tabindex (only the active tab is in the tab order). A
-  // role="tablist" sets that expectation for screen-reader users, so honor it.
+  // WAI-ARIA radiogroup keyboard nav: ←/→/↑/↓ (and Home/End) move selection between
+  // options, with a roving tabindex (only the checked option is in the tab order).
+  //
+  // 🔑 THIS HANDLER DID NOT CHANGE WHEN THE ROLES DID (#3472), and that is the evidence the
+  // roles were the only thing wrong. A radiogroup's arrow model is "move AND select" — which
+  // is exactly what this already did — whereas a tablist's is manual activation, where arrows
+  // move focus and Enter/Space activates. The keys were already a radiogroup's; only the
+  // words announced to the user said otherwise.
   const move = (e: React.KeyboardEvent, idx: number) => {
     let next = -1
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (idx + 1) % options.length
@@ -116,14 +139,15 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
       el?.focus()
     }
   }
-  // Tabs are `shrink-0`. `size-8` / `px-m` set a tab's size but NOT its floor, so in a constrained
-  // slot the flex parent squeezed them: measured on the #/skills header at 390px, where this control
-  // deliberately collapses to icon-only, the two icon tabs rendered **15.3 x 32** instead of 32 x 32 —
-  // under the 24px SC 2.5.8 minimum, with the 15px glyph filling the box edge to edge. Overflow is the
-  // job of `collapse` ('scroll' / 'menu'), not of silently crushing every target: a strip that cannot
-  // fit should scroll or fold, and a tab that is 15px wide is neither legible nor tappable.
+  // Options are `shrink-0`. `size-8` / `px-m` set an option's size but NOT its floor, so in a
+  // constrained slot the flex parent squeezed them: measured on the #/skills header at 390px, where
+  // this control deliberately collapses to icon-only, the two icon options rendered **15.3 x 32**
+  // instead of 32 x 32 — under the 24px SC 2.5.8 minimum, with the 15px glyph filling the box edge to
+  // edge. Overflow is the job of `collapse` ('scroll' / 'menu'), not of silently crushing every
+  // target: a strip that cannot fit should scroll or fold, and an option 15px wide is neither
+  // legible nor tappable.
   const strip = (
-    <div role="tablist"
+    <div role="radiogroup"
       aria-labelledby={claimsFieldLabel ? fieldLabelId : undefined}
       aria-label={claimsFieldLabel ? undefined : ariaLabel}
       className={`inline-flex items-center gap-0.5 rounded-pill ${sm ? 'p-0.5 bg-surface-container/60' : 'p-1 bg-surface-container'} ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
@@ -138,15 +162,15 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
           ? (o.tone ? o.tone : 'var(--color-on-primary)')
           : 'var(--color-on-surface-low)'
         return (
-          <motion.button key={o.key} type="button" role="tab" aria-selected={on} disabled={disabled}
+          <motion.button key={o.key} type="button" role="radio" aria-checked={on} disabled={disabled}
             tabIndex={on ? 0 : -1} onKeyDown={(e) => move(e, idx)}
             whileTap={disabled ? undefined : { scale: pressScale }}
             transition={spring.spatialFast}
             onClick={() => onChange(o.key)} title={o.title ?? o.label}
-            // The role carries size + line-height; the WEIGHT stays what the tab
+            // `data-type` carries size + line-height; the WEIGHT stays what this control
             // always rendered — fw-400 pins the sm tier back to 400 (caption's own
-            // 470 would bolden every inactive tab) and the active tab's inline 550
-            // (below) wins over both.
+            // 470 would bolden every unchecked option) and the checked option's inline
+            // 550 (below) wins over both.
             data-type={sm ? 'caption' : 'body-s'}
             className={`relative inline-flex shrink-0 items-center justify-center gap-1.5 rounded-pill transition-colors whitespace-nowrap ${sm ? 'fw-400' : ''} ${iconOnly ? (sm ? 'size-6' : 'size-8') : (sm ? 'h-6 px-2.5' : 'h-8 px-m')}`}
             style={on ? withWeight({ color: fg }, 550) : { color: fg }}>

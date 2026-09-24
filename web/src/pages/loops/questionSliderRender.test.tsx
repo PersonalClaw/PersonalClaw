@@ -24,14 +24,14 @@ describe('QuestionSlider stepper (WF2UNI-10 render)', () => {
     // one-at-a-time: the second question is not on screen yet
     expect(screen.queryByText('second question')).toBeNull()
     // typed `choice` control: the closed options + the protocol-mandated Other… escape hatch
-    expect(screen.getByRole('tab', { name: 'x' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: /Other/ })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'x' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /Other/ })).toBeInTheDocument()
   })
 
   it('the choice escape hatch reveals a freeform custom-answer box', () => {
     render(<QuestionSlider questions={[q({ id: 'c', prompt: 'pick', kind: 'choice', choices: ['x'] })]} onSubmit={() => {}} />)
     expect(screen.queryByRole('textbox', { name: 'Your custom answer' })).toBeNull()
-    fireEvent.click(screen.getByRole('tab', { name: /Other/ }))
+    fireEvent.click(screen.getByRole('radio', { name: /Other/ }))
     expect(screen.getByRole('textbox', { name: 'Your custom answer' })).toBeInTheDocument()
   })
 

@@ -44,10 +44,10 @@ beforeEach(() => {
 describe('the Home lens is on the page, not just in the file tree', () => {
   it('offers Home FIRST in the view strip', async () => {
     mount()
-    expect(await screen.findByRole('tab', { name: /Home/ })).toBeInTheDocument()
+    expect(await screen.findByRole('radio', { name: /Home/ })).toBeInTheDocument()
     // First, because it is the orienting lens. The strip is `role=tablist`/`role=tab`, not
     // buttons — asserting the wrong role here was how this test first passed vacuously.
-    expect(screen.getAllByRole('tab').map((t) => t.textContent))
+    expect(screen.getAllByRole('radio').map((t) => t.textContent))
       // `Decisions` (PA-6) is the seventh lens — a filtered view of the same library, per
       // PROACTIVE-ASSISTANT §5.3 ("not a new nav section — decisions ARE knowledge items").
       // Appended, so Home keeps the first slot this test is really about.
@@ -65,13 +65,13 @@ describe('the Home lens is on the page, not just in the file tree', () => {
 
   it('does NOT render them under a lens that is not Home', async () => {
     mount('graph')
-    await screen.findByRole('tab', { name: /Home/ })
+    await screen.findByRole('radio', { name: /Home/ })
     expect(screen.queryByRole('region', { name: 'Recently added' })).toBeNull()
   })
 
   it('selecting Home puts the lens in the URL, so it is linkable and survives a reload', async () => {
     const setQuery = mount()
-    await userEvent.click(await screen.findByRole('tab', { name: /Home/ }))
+    await userEvent.click(await screen.findByRole('radio', { name: /Home/ }))
     expect(setQuery).toHaveBeenCalledWith({ view: 'home' }, expect.anything())
   })
 })
