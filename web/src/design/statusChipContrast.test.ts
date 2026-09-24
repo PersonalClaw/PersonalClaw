@@ -281,13 +281,115 @@ const SCHEME_SUPPLIED = new Set(Object.keys(SCHEMES[0].colors))
  *  tell: it is `#8e918f` in BOTH modes, and an ink that does not invert with the mode cannot be
  *  readable in both.
  *
- *  🔴 SCOPE: THIS GUARDS `ui/StatusPill`'s MAP AND NOTHING ELSE. `pillToneInks` reads one file, so a
- *  tone map anywhere else in the tree is invisible to it. A census run for #3493 found exactly one
- *  other live case — `pages/learning/learningMeta.ts`'s `DAY_TONE.out_of_scope`, `--color-outline` as
- *  text ink at 3.1833 on the light `surface-container` — filed as #3504, which is where widening this
- *  to every tone map belongs. Do not widen it here while that site is still red: a tree-wide version
- *  of `no_hairline_ink` fails on `DAY_TONE` today. */
+ *  ✅ SCOPE WIDENED FROM ONE FILE TO THE TREE (#3504). This used to read `ui/StatusPill.tsx` only,
+ *  and recorded that limit honestly: "a tree-wide version of `no_hairline_ink` fails on `DAY_TONE`
+ *  today". It did — `pages/learning/learningMeta.ts`'s `DAY_TONE.out_of_scope` was `--color-outline`
+ *  at 3.1833 on the light `surface-container`. That site is fixed (`--color-on-surface-var`, worst
+ *  5.4738 across all four tiers in both modes), so the assertion now runs over EVERY tone map in
+ *  `web/src` and every literal ink position — see `toneMaps()` and `literalInkSites()`. A
+ *  component-scoped guard for a class-shaped defect is a guard that finds the class exactly once. */
 const HAIRLINE_TOKENS = new Set(['--color-outline', '--color-outline-variant'])
+
+// ── The TREE-WIDE population for `no_hairline_ink` (#3504) ──────────────────────────────────────
+//
+// Two complementary scans, because the defect class takes two shapes and each is sound in a
+// different domain. Both #3493 and #3504 were the SECOND shape — a tone map — which is why a scan
+// that only understood literals would have found neither.
+//
+// 🪤 A THIRD SHAPE EXISTS AND IS DELIBERATELY OUT OF SCOPE, WITH ITS MEASUREMENT: a tone FUNCTION
+// (`lib/residency.ts`'s `pressureTone` → `var(--color-outline-variant)` for an unreadable host) and
+// an inline ternary (`pages/tasks/DagView.tsx:200`, `pages/knowledge/KnowledgeDetail.tsx:814`,
+// `pages/settings/MemoryGraph.tsx:114`). Every one of those was traced and every one feeds a
+// NON-text property — `Meter`'s `background`, an SVG `stroke`, an SVG `fill`, a dot — so none is a
+// live defect. They are excluded because **a regex over function bodies is not sound here, measured**:
+// a body-window scan reported 27 "tone functions returning a hairline", of which 24 were React
+// components whose JSX merely contained a `border` or `stroke` hairline somewhere inside. A selector
+// with a 24/27 false-positive rate cannot be a rail, and widening to it would have been the
+// "broader coverage while asserting less" trade this file's `UNSWEPT_TONES` note already refuses.
+// `no_hairline_fn_ink` below closes the half of that shape that IS soundly checkable: a named tone
+// function reached from a `color:` position.
+
+/** Every `.ts`/`.tsx` module under `src`, comments stripped.
+ *
+ *  🪤 STRIPPING COMMENTS IS LOAD-BEARING, and this file's siblings record why four separate times: a
+ *  rail that greps raw source matches the PROSE EXPLAINING the fix, so the commit that fixes the
+ *  defect is the commit the rail reds. `ui/StatusPill.tsx`'s `neutral` comment and
+ *  `learningMeta.ts`'s `DAY_TONE` comment BOTH name `--color-outline*` in exactly the sentence that
+ *  records it was removed. Unstripped, this scan reds on both fixes. */
+function modules(): Array<[string, string]> {
+  return walk(SRC).map((abs) => [
+    abs.slice(SRC.length + 1),
+    readFileSync(abs, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, ''),
+  ])
+}
+const MODULES = modules()
+
+/** SHAPE 1 — a LITERAL ink position: `color: 'var(--color-x)'` in a style object, or the Tailwind
+ *  `text-<token>` / `text-[var(--color-x)]` utility. The ground is not knowable here either, but the
+ *  token is, which is all this scan needs. */
+function literalInkSites(): Array<{ file: string; token: string; form: string }> {
+  const out: Array<{ file: string; token: string; form: string }> = []
+  for (const [file, src] of MODULES) {
+    for (const m of src.matchAll(/(?:^|[{,\s])color:\s*['"`]var\((--color-[a-z-]+)\)['"`]/g)) {
+      out.push({ file, token: m[1], form: 'color:' })
+    }
+    for (const m of src.matchAll(/\btext-\[var\((--color-[a-z-]+)\)\]/g)) {
+      out.push({ file, token: m[1], form: 'text-[var()]' })
+    }
+    // The bare Tailwind utility: `text-outline`, `text-outline-variant`. Keyed on the denylist's own
+    // suffixes rather than on every token name, because Tailwind's `text-*` namespace also carries
+    // sizes (`text-sm`) and the two cannot be told apart by shape.
+    for (const m of src.matchAll(/\btext-(outline(?:-variant)?)\b/g)) {
+      out.push({ file, token: `--color-${m[1]}`, form: 'text-* utility' })
+    }
+  }
+  return out
+}
+const LITERAL_INK = literalInkSites()
+
+/** SHAPE 2 — a TONE MAP: a module-level object literal whose values are `var(--color-*)` string
+ *  literals. This is the shape of BOTH filed defects, and it is the shape a literal scan cannot see,
+ *  because the `color:` that consumes it is in another file and names only the map.
+ *
+ *  🔑 EVERY VALUE IS CHECKED REGARDLESS OF CONSUMPTION, and that is the stricter reading on purpose.
+ *  A tone map is a semantic INK vocabulary handed to callers who each pick their own ground — the
+ *  premise this whole file rests on is that the ground is not knowable at the call site, so a map
+ *  holding an inadmissible ink is a defect waiting for its second consumer even if today's only
+ *  consumer happens to paint a border with it. Measured: 15 such maps exist and after #3504 exactly
+ *  ZERO hold a hairline token, so the strict reading costs nothing and needs no allowlist. */
+function toneMaps(): Array<{ file: string; name: string; tokens: string[] }> {
+  const out: Array<{ file: string; name: string; tokens: string[] }> = []
+  for (const [file, src] of MODULES) {
+    for (const m of src.matchAll(/(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]*?)?=\s*\{([^{}]*?)\}/g)) {
+      const body = m[2]
+      const vals = [...body.matchAll(/['"`]var\((--color-[a-z-]+)\)['"`]/g)].map((x) => x[1])
+      const entries = body.match(/^\s*[\w'"[\]]+\s*:/gm)?.length ?? 0
+      // ≥2 token values AND a clear majority of the entries: enough to be a tone VOCABULARY rather
+      // than a one-off style object that happens to name a token.
+      if (vals.length >= 2 && entries > 0 && vals.length / entries >= 0.6) {
+        out.push({ file, name: m[1], tokens: [...new Set(vals)] })
+      }
+    }
+  }
+  return out
+}
+const TONE_MAPS = toneMaps()
+
+/** SHAPE 3, the soundly-checkable half — a named function whose body returns a hairline literal AND
+ *  which is reached from a `color:` position. `pressureTone` is the live example and it is reached
+ *  from `Meter`'s `tone` prop (a `background`), never from an ink position, so this reads zero. */
+function hairlineToneFns(): string[] {
+  const names: string[] = []
+  for (const [, src] of MODULES) {
+    for (const m of src.matchAll(
+      /(?:export\s+)?function\s+([a-z][\w$]*)\s*\([^)]*\)[^{]*\{([\s\S]{0,700}?)\n\}/g,
+    )) {
+      if (/['"`]var\((--color-outline(?:-variant)?)\)['"`]/.test(m[2])) names.push(m[1])
+    }
+  }
+  return [...new Set(names)]
+}
+const HAIRLINE_TONE_FNS = hairlineToneFns()
 
 /** Tones this rail does NOT sweep. ✅ **EMPTY SINCE #3503 — the whole vocabulary is measured.**
  *
@@ -327,7 +429,7 @@ function inks(mode: Mode): Array<[string, string]> {
 //
 // Closed both ways, because each direction fails differently: an unswept tone ships a defect (what
 // happened), and a stale exclusion claims a gap that is no longer there (how the fix rots).
-describe('the tone vocabulary is closed: every StatusPill tone is swept or named', () => {
+describe('the tone vocabulary is closed: every StatusPill tone is swept or named, and no ink in the tree is a hairline', () => {
   it('tone_vocabulary: the parsed TONE_VAR keys are exactly the StatusPillTone union', () => {
     // The control on `pillToneInks`'s regex. Without it, an ink that stopped being a plain
     // `var(--color-x)` literal would drop out of the sweep and nothing would say so.
@@ -354,18 +456,76 @@ describe('the tone vocabulary is closed: every StatusPill tone is swept or named
     }
   })
 
-  it('no_hairline_ink: no tone draws its text in a border/hairline token', () => {
-    // The generalization of #3493, and the reason it is a denylist: this is the property the ratio
-    // sweep below would also catch, asserted by NAME so the failure message says *why* rather than
-    // just how far under. Positive control first — a denylist that matches nothing reads identical
-    // to a clean tree (see this file's "write the control that makes the selector fire" siblings).
+  const WHY = (where: string, tok: string) =>
+    `${where} draws TEXT in ${tok}, a border/hairline token. A hairline is designed to be barely ` +
+    `separable from its surface, so no choice of ground and no pinned compositing base can make it ` +
+    `readable — pick an ink-ramp value (\`--color-on-surface-low\` or \`--color-on-surface-var\`; ` +
+    `they are \`StatusPill.neutral\`'s and \`DAY_TONE.out_of_scope\`'s respectively).`
+
+  it('scan_population: both tree-wide scans found a real population (a scan over nothing passes forever)', () => {
+    // 🔴 THE VACUITY FLOOR FOR EVERYTHING BELOW. `modules()`, `literalInkSites()`, `toneMaps()` and
+    // `hairlineToneFns()` are all DERIVED by regex over the tree, and every one of them can come back
+    // empty — a renamed directory, a tightened `walk` filter, a `color:` idiom that stops matching —
+    // at which case `no_hairline_ink` iterates NOTHING and reports green over a tree full of defects.
+    // That is the precise failure this file was widened to end, so the counts are pinned first.
+    expect(MODULES.length, 'src modules scanned').toBeGreaterThanOrEqual(500)
+    expect(LITERAL_INK.length, 'literal ink positions found').toBeGreaterThanOrEqual(250)
+    expect(TONE_MAPS.length, 'tone maps found').toBeGreaterThanOrEqual(12)
+    // Named members of each population, so a parse that reads a smaller-but-nonzero set still reds.
+    // These two are the exact maps the two filed defects lived in, which makes them the right pins.
+    const named = TONE_MAPS.map((m) => `${m.file}::${m.name}`)
+    expect(named, "#3493's map must be in the population").toContain('ui/StatusPill.tsx::TONE_VAR')
+    expect(named, "#3504's map must be in the population").toContain('pages/learning/learningMeta.ts::DAY_TONE')
+    // And the scans really do reach beyond `design/` — a walk that collapsed to one directory would
+    // still satisfy the counts above if that directory were big enough.
+    expect(new Set(TONE_MAPS.map((m) => m.file.split('/')[0])).size,
+      'tone maps span more than one top-level directory').toBeGreaterThanOrEqual(3)
+  })
+
+  it('no_hairline_ink: no tone map value and no literal ink position is a border/hairline token', () => {
+    // The generalization of #3493 AND #3504, and the reason it is a denylist: this is the property the
+    // ratio sweep below would also catch, asserted by NAME so the failure message says *why* rather
+    // than just how far under. Positive control first — a denylist that matches nothing reads
+    // identical to a clean tree (see this file's "write the control that makes the selector fire"
+    // siblings).
     expect(HAIRLINE_TOKENS.has('--color-outline-variant'), 'the guard must fire on the #3493 value').toBe(true)
+    expect(HAIRLINE_TOKENS.has('--color-outline'), 'the guard must fire on the #3504 value').toBe(true)
+
+    // The pill's own map, still named explicitly: it is in `TONE_MAPS` below, but the union parse
+    // above is what makes the SWEEP honest, and this keeps the two halves of #3493 side by side.
     for (const [tone, tok] of Object.entries(PILL_TONES)) {
-      expect(HAIRLINE_TOKENS.has(tok),
-        `tone \`${tone}\` draws text in ${tok}, a border/hairline token. A hairline is designed to be ` +
-        `barely separable from its surface, so no choice of ground and no pinned compositing base can ` +
-        `make it readable — pick an ink-ramp value (\`--color-on-surface-low\` is \`neutral\`'s).`).toBe(false)
+      expect(HAIRLINE_TOKENS.has(tok), WHY(`StatusPill tone \`${tone}\``, tok)).toBe(false)
     }
+
+    const offenders = [
+      ...TONE_MAPS.flatMap((m) =>
+        m.tokens.filter((t) => HAIRLINE_TOKENS.has(t)).map((t) => `${m.file} :: ${m.name} → ${t}`)),
+      ...LITERAL_INK.filter((s) => HAIRLINE_TOKENS.has(s.token))
+        .map((s) => `${s.file} :: ${s.form} ${s.token}`),
+    ]
+    expect(offenders, WHY(`${offenders.length} site(s)`, 'a hairline token') +
+      `\n\n${offenders.join('\n')}`).toEqual([])
+  })
+
+  it('no_hairline_fn_ink: no tone FUNCTION returning a hairline is reached from a color: position', () => {
+    // Shape 3's checkable half — see the scope note above `modules()` for why the general function
+    // form is not soundly greppable and what was measured when it was tried.
+    //
+    // Control: the census must actually find the known function, or this assertion is a scan over an
+    // empty list. `pressureTone` returns `var(--color-outline-variant)` for an unreadable host and is
+    // consumed as `Meter`'s `tone` prop, i.e. a `background` — legitimate, and the reason this reads
+    // zero rather than being absent.
+    expect(HAIRLINE_TONE_FNS, 'the known hairline-returning tone function').toContain('pressureTone')
+    const reached: string[] = []
+    for (const [file, src] of MODULES) {
+      for (const fn of HAIRLINE_TONE_FNS) {
+        const re = new RegExp(`(?:^|[{,\\s])color:\\s*[^,;}\\n]*\\b${fn}\\s*\\(`, 'g')
+        for (const m of src.matchAll(re)) reached.push(`${file} :: color: … ${fn}(…)  [${m[0].trim()}]`)
+      }
+    }
+    expect(reached, `a tone function that can return a hairline token is painted as TEXT:\n${
+      reached.join('\n')}\nEither give the function an ink-ramp fallback or route this site to a ` +
+      `non-text property.`).toEqual([])
   })
 
   it('hairline_unreadable: the denylisted values are inadmissible as ink, and outline-variant on every tier', () => {
