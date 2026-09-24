@@ -32,6 +32,11 @@
       "name": "dotenv-with-real-values",
       "pattern": "(?:^|/)\\.env(?:\\.local)?$",
       "rationale": "`.env` and `.env.local` are where real keys live. `.env.example` is deliberately tracked and deliberately NOT matched by this pattern: it is the documented template and carries only commented-out placeholders (`sk-ant-...`, `xoxb-...`). `tests/test_the_tracked_env_example_carries_no_real_value` re-checks that claim rather than trusting it."
+    },
+    {
+      "name": "internal-planning-draft",
+      "pattern": "^docs/launch/",
+      "rationale": "Launch planning drafts are internal by their own declaration — all four files removed in this change carried a literal `**State:** draft, internal, not published` header while being served from a PUBLIC repository, and none was linked from any published page. One of them (`prechannel-arrival-baseline.md:15`) additionally published the exact scope set of a live personal access token (`gist, read:org, repo, workflow`), which tells a reader precisely what a stolen token would grant. The token itself was never in the file. This rule is a path rule rather than a content rule because the directory is the unit of the decision: `docs/launch/` is where launch planning is drafted, and drafting is not publishing. If a launch document is genuinely meant for readers, it belongs on personalclaw.dev or in `docs/guides/`, not here."
     }
   ],
   "binary_size_rule": {
