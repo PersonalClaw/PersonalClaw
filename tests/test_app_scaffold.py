@@ -254,6 +254,105 @@ def test_generated_app_passes_the_apps_repo_checks(provider_type: str, tmp_path:
     _check_no_credentials(app)
 
 
+def test_a_scaffold_without_an_author_never_names_the_app_as_the_holder(tmp_path: Path) -> None:
+    """The `--author`-omitted path, which every other test in this file skips.
+
+    ``_generate`` always passes ``author="Scaffold Test"``, so the fallback branch was
+    exercised by nothing — and it read ``_license_text(author or display, …)``, writing the
+    app's own display name onto the copyright line. Four published exemplar repositories
+    shipped `Copyright (c) 2026 Channel Null` because of it: a grant naming an artefact,
+    which holds no copyright and points at nobody to ask for permission.
+
+    The rule is not re-derived here. ``test_licence_governance`` owns it, and this drives that
+    rail over the generated bundle — so there is one definition of "the holder is an artefact"
+    and the generator is measured against the same one the tree is.
+    """
+    import test_licence_governance as governance
+
+    # `channel-null` on purpose: the real exemplar, and the case where the display name is
+    # DERIVED from the app name rather than passed, which is the harder half to catch.
+    app = scaffold("channel-null", "channel", dest=tmp_path, year=2026)
+    text = (app.path / "LICENSE").read_text(encoding="utf-8")
+    assert text.startswith("MIT License")
+    assert json.loads((app.path / "app.json").read_text(encoding="utf-8"))["displayName"] == (
+        "Channel Null"
+    )
+
+    holder = governance.licence_holder(text)
+    assert holder is not None, "the generated LICENSE has no copyright line"
+    assert holder not in {"Channel Null", "channel-null"}, (
+        f"the scaffold named the app itself as copyright holder: {holder!r} — this is the "
+        "`author or display` fallback returning"
+    )
+    governance.check_no_licence_holder_is_an_artefact_name(tmp_path)
+
+    # The placeholder has to be OBVIOUSLY unfilled, or it is just a different wrong holder.
+    assert holder.startswith("<") and holder.endswith(">"), (
+        f"the unfilled holder {holder!r} does not read as a placeholder, so an author who "
+        "never opens LICENSE would publish it believing it named someone"
+    )
+    # …and the grant itself is untouched by any of this.
+    assert governance.grant_digest(text) == governance._LICENCE_BODY_SHA256
+
+    # An author GIVEN still lands verbatim — the fix must not have broken the good path.
+    named = scaffold(
+        "channel-null", "channel", dest=tmp_path / "b", author="Ada Lovelace", year=2026
+    )
+    assert "Copyright (c) 2026 Ada Lovelace" in (named.path / "LICENSE").read_text(encoding="utf-8")
+
+
+def test_the_cli_tells_an_author_the_holder_is_unfilled(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A placeholder nobody is told about is a defect with extra steps.
+
+    The LICENSE is the app's grant; `<your name>` grants nothing until someone fills it in. So
+    the omission has to reach the person who can fix it, at the moment they can — not in a
+    README they may never open.
+    """
+    code = app_cmd(
+        argparse.Namespace(
+            app_cmd="new",
+            name="channel-null",
+            type="channel",
+            dest=str(tmp_path),
+            display_name="",
+            description="",
+            author="",
+            force=False,
+            list_types=False,
+            from_template=False,
+            template_url="",
+            template_archive="",
+        )
+    )
+    assert code == 0
+    out = capsys.readouterr().out
+    assert (
+        "LICENSE" in out and "--author" in out
+    ), f"the scaffold left an unfilled copyright holder and said nothing about it:\n{out}"
+
+    # Control: with --author there is nothing to fill, so the advice must NOT appear.
+    code = app_cmd(
+        argparse.Namespace(
+            app_cmd="new",
+            name="channel-null",
+            type="channel",
+            dest=str(tmp_path / "b"),
+            display_name="",
+            description="",
+            author="Ada Lovelace",
+            force=False,
+            list_types=False,
+            from_template=False,
+            template_url="",
+            template_archive="",
+        )
+    )
+    assert code == 0
+    assert "--author" not in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("provider_type", ALL_TYPES)
 def test_generated_manifest_declares_the_plan32_seams(provider_type: str, tmp_path: Path) -> None:
     app = _generate(provider_type, tmp_path)

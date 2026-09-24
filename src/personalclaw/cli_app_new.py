@@ -557,7 +557,23 @@ def resolve_kit(type_name: str) -> ConformanceKit | None:
 # ---------------------------------------------------------------------------
 
 
+#: The copyright holder written when ``--author`` was not given. A copyright line names a
+#: PERSON OR AN ORGANISATION; an app's display name is an artefact and holds nothing, so the
+#: scaffold must not quietly invent one from it. The previous fallback did exactly that and
+#: shipped `Copyright (c) 2026 Channel Null` to four published exemplar repositories — a
+#: grant naming a thing that cannot own a copyright, which is a defective licence rather
+#: than a cosmetic blemish. An obviously-unfilled placeholder is the honest alternative: it
+#: cannot be mistaken for a real holder, and `app_cmd` says so out loud. Angle brackets are
+#: the MIT template's own convention for a field the licensor must complete.
+_UNFILLED_COPYRIGHT_HOLDER = "<your name>"
+
+
 def _license_text(holder: str, year: int) -> str:
+    """The MIT grant, verbatim, with *holder* on the copyright line.
+
+    *holder* must be a person or an organisation — never an app name, display name or any
+    other artefact. Callers that have no author pass :data:`_UNFILLED_COPYRIGHT_HOLDER`.
+    """
     return f"""MIT License
 
 Copyright (c) {year} {holder}
@@ -1041,7 +1057,9 @@ def scaffold(
         "README.md": _render_readme(
             contract, app_name=name, display_name=display, description=desc
         ),
-        "LICENSE": _license_text(author or display, year or _dt.date.today().year),
+        "LICENSE": _license_text(
+            author or _UNFILLED_COPYRIGHT_HOLDER, year or _dt.date.today().year
+        ),
     }
     target.mkdir(parents=True, exist_ok=True)
     for rel, content in files.items():
@@ -1420,4 +1438,12 @@ def app_cmd(args: argparse.Namespace) -> int:
     print("Next:")
     print(f"  pytest {result.path}")
     print(f"  install it from this local path (see {result.path / 'README.md'})")
+    if not args.author:
+        # Said here rather than left to the README: the LICENSE is the app's grant, and a
+        # copyright line reading `<your name>` grants nothing until someone fills it in. An
+        # author who never opens LICENSE would otherwise publish an unheld licence.
+        print(
+            f"  fill in LICENSE's copyright holder (currently "
+            f"{_UNFILLED_COPYRIGHT_HOLDER!r}) — or re-run with --author"
+        )
     return 0

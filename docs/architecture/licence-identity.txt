@@ -10,17 +10,26 @@
 # declaration site reds, and a stale entry reds — so the table cannot quietly accumulate or
 # quietly shrink. Every identifier here must be `MIT`.
 #
+# Three things that rail checks about a licence FILE, which are three different claims and so
+# three different assertions. The IDENTIFIER (`MIT`), the GRANT (sha256-pinned against the
+# root file's body, whitespace-collapsed, copyright line excluded), and the HOLDER. The holder
+# is checked twice: every licence file in this tree must name `PersonalClaw contributors`, and
+# — the rule the app scaffolder broke — no licence file may name the app BESIDE it as its
+# holder. `personalclaw app new` used to fall back to the app's display name when `--author`
+# was omitted, so four published exemplar repositories shipped `Copyright (c) 2026 Channel
+# Null`: a grant naming an artefact, which holds nothing and points at nobody to ask.
+#
 # Format: <path> — <judgment>
 #
 # NOT here, by rule rather than by omission: `package-lock.json` and the other lockfiles.
 # They record OTHER projects' licences (MPL-2.0 appears there today), so a non-MIT
 # identifier in a lockfile is correct and says nothing about this project's terms.
 
-LICENSE — the licence itself. The only artifact that grants anyone anything; its grant text is sha256-pinned by the rail so a rewrite that keeps the "MIT License" title still reds.
+LICENSE — the licence itself. The only artifact that grants anyone anything; its grant text is sha256-pinned by the rail so a rewrite that keeps the "MIT License" title still reds. The pin is taken from THIS file's body, and every other licence file in the tree is measured against it — so "MIT" means the same bytes in all six, not six files that each start with the same title.
 pyproject.toml — the wheel's declared licence, in both `license` and the trove classifier. This is what PyPI shows and what every `pip install personalclaw` records in its dist-info, so it is the copy the largest number of users actually see.
 packages/personalclaw-client-py/pyproject.toml — the `personalclaw-client` wheel's declared licence, in both `license` and the trove classifier. A SECOND separately published distribution, so it has its own dist-info and its own PyPI page; a licence change here would land on installers who never installed the main package. Found by the sweep, not by hand — it was missed by a manual census of "the pyproject" written the same day.
 README.md — the shields.io badge in the header. The first licence statement a visitor reads, and the one a screenshot of the repo carries.
-src/personalclaw/apps/native/ollama-models/LICENSE — the bundled Ollama provider app's own licence file, carried in with the app when it moved into core (Chairman ruling R1, 2026-09-21). It IS this project's grant, not a third party's: the app was written by this project and its copyright line reads "PersonalClaw contributors", so it belongs in this mirror rather than under the lockfile exemption. WHO READS IT: the app platform treats a `LICENSE` beside `app.json` as the app's declared terms — the Store consent card and `apps/quality.py` both look for one — and an app keeps its licence file when it is exported or re-published, so this is the copy that travels to anyone who takes the bundle out of the wheel. Kept for that reason rather than deleted as a duplicate of the root LICENSE: a bundled app that ships without one would read as unlicensed the moment it left the distribution.
+src/personalclaw/apps/native/ollama-models/LICENSE — the bundled Ollama provider app's own licence file, carried in with the app when it moved into core (Chairman ruling R1, 2026-09-21). It IS this project's grant, not a third party's: the app was written by this project and its copyright line reads "PersonalClaw contributors", so it belongs in this mirror rather than under the lockfile exemption. WHO READS IT: the app platform treats a `LICENSE` beside `app.json` as the app's declared terms, and two CI rails enforce that — the apps repo's `manifest-validate` job requires a LICENSE beside every `app.json` and reds when a manifest's declared `license` disagrees with the file's first line, and the registry's `validate_registry.py:check_license` blocks a listing whose repo has no licence file or whose `app.json` omits one. (Corrected 2026-09-23: this entry used to name the Store consent card and `apps/quality.py` as the readers. Neither reads a licence — `apps/quality.py` contains the string zero times, and the Store card renders permissions and quality badges only. The readers above were verified in code.) An app also keeps its licence file when it is exported or re-published, so this is the copy that travels to anyone who takes the bundle out of the wheel. Kept for that reason rather than deleted as a duplicate of the root LICENSE: a bundled app that ships without one would read as unlicensed the moment it left the distribution.
 desktop/package.json — the Electron app's manifest licence. Read by electron-builder and embedded in the packaged desktop artifact's metadata, so it travels to users who never see the repo.
 staged-repos/app-template/LICENSE — the licence copied into every app scaffolded from the template. Not this project's grant, but it is the licence the template PROPAGATES to third-party app authors, so a change here changes what new apps ship under.
 staged-repos/registry/fixtures/apps/clean-app/LICENSE — an app-registry validation fixture. Listed because the registry's own licence checks read it, so a change would silently move what the validator treats as an acceptable app licence.

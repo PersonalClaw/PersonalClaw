@@ -28,12 +28,34 @@ Three disjuncts, any one of which reds CI:
    here. :func:`test_the_rail_reds_on_a_test_phone_home_host` drives *that* rail red from
    this file so clause 3 of the atom is exercised for all three disjuncts in one place.
 
+Disjunct 1 is three claims, not one, because an identifier is the *cheapest* of the three to
+keep honest and the least load-bearing. A licence file says MIT, carries a GRANT, and names a
+HOLDER, and each can rot without moving the other two:
+
+* the **identifier** — :func:`check_every_declaration_is_mit`;
+* the **grant** — :func:`check_every_licence_file_carries_the_real_grant`, sha256 against the
+  root file's body, over EVERY licence file in the tree rather than only the root one. A
+  paraphrased or narrowed grant under an intact ``MIT License`` title is invisible to the
+  identifier sweep by construction (arm (d) of the teeth test passes it on purpose), and five
+  sibling licence files — the bundled ollama-models app's, the app template's, the three
+  registry fixtures' — were pinned by nothing at all;
+* the **holder** — :func:`check_every_licence_holder_is_a_real_holder` (this tree names
+  ``PersonalClaw contributors``) and :func:`check_no_licence_holder_is_an_artefact_name` (no
+  licence names the app beside it). The grant hash deliberately excludes the copyright line,
+  so before these the holder was checked by nothing, and ``personalclaw app new``'s
+  ``author or display`` fallback shipped ``Copyright (c) 2026 Channel Null`` to four
+  published exemplar repositories — a grant naming an artefact, which holds no copyright and
+  names nobody to ask. ``tests/test_app_scaffold.py`` drives the artefact check over freshly
+  generated output rather than re-deriving the rule, so there is one definition of it.
+
 **What this cannot answer, stated so nobody reads more into a green run.** It is a census of
-*declarations*, not of rights. It cannot tell you who holds copyright, whether a contributor
-assigned anything by another route, or what a future release will be licensed under — only
-that the tree as committed still says MIT in every place it says anything, and that no CLA
-has appeared. A licence change made *deliberately* is supposed to red this file: the point
-is that it takes an explicit, reviewable edit to two committed artifacts, not a quiet one.
+*declarations*, not of rights. It reads the copyright line, so it can tell you what a file
+SAYS about its holder — it cannot tell you who legally holds copyright, whether a contributor
+assigned anything by another route, or what a future release will be licensed under. Only that
+the tree as committed still says MIT in every place it says anything, that every grant is the
+grant, that every holder is one this project uses, and that no CLA has appeared. A licence
+change made *deliberately* is supposed to red this file: the point is that it takes an
+explicit, reviewable edit to two committed artifacts, not a quiet one.
 
 A lockfile is skipped BY RULE, not by allowlist entry: ``package-lock.json`` records
 *other people's* licences (it carries MPL-2.0 and more today), so a non-MIT identifier there
@@ -43,6 +65,7 @@ is correct and says nothing about this project's terms.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 from functools import lru_cache
@@ -60,6 +83,35 @@ _EXPECTED = "MIT"
 #: to the GRANT reds while a copyright-year or holder change does not — the year is
 #: bookkeeping, the grant is the promise.
 _LICENCE_BODY_SHA256 = "7c9b48b52decb9837c70f608678129e1ac79e056829c8d1e82e8cdd8aed562f8"
+
+#: Every copyright holder a licence file in THIS tree may name. One entry, because every
+#: licence file here covers work this project wrote, and a grant is only as useful as the
+#: certainty about who granted it: six files carrying six holders would mean a contributor
+#: could not tell whose terms their change lands under. The whole org uses this string —
+#: measured 2026-09-23, all nine repositories with a licence carried byte-identical files.
+#:
+#: This is deliberately NOT the same question as "is the holder a real holder at all", which
+#: :func:`check_no_licence_holder_is_an_artefact_name` answers for any bundle anywhere. Only
+#: a first-party tree can be held to an exact string.
+_APPROVED_HOLDERS = frozenset({"PersonalClaw contributors"})
+
+#: A file that IS a licence, matched on NAME. Case-SENSITIVE, and that is the whole point:
+#: the first version of this matched `name.upper().startswith(("LICENSE", "LICENCE", ...))`
+#: like :func:`licence_identifiers` does, which swept in `docs/architecture/licence-identity.txt`
+#: — the census TABLE, whose name uppercases to `LICENCE-IDENTITY.TXT`. Both holder rails
+#: promptly reported the table as a licence file with no copyright line. Uppercase is the
+#: universal convention for the real thing (`LICENSE`, `LICENSE.md`, `LICENSE-MIT`, `COPYING`),
+#: so requiring it is what separates a grant from a document that merely discusses one.
+#: `licence_identifiers` can afford the loose form because `_CANDIDATE_NAMES` gates it first.
+_LICENCE_FILE_RE = re.compile(r"^(LICEN[CS]E|COPYING)([-.][A-Za-z0-9.\-]*)?$")
+
+#: A licence file's copyright line, with the year discarded and the holder captured. Accepts
+#: the `(c)` / `©` / bare spellings and a year range, because a rail that only reads the one
+#: spelling this tree uses today would go quietly vacuous the first time someone wrote `©`.
+_COPYRIGHT_RE = re.compile(
+    r"^\s*copyright\s*(?:\(c\)|©|\(C\))?\s*(?:\d{4}(?:\s*[-–]\s*\d{4})?)?\s*(?P<holder>.*?)\s*$",
+    re.IGNORECASE,
+)
 
 #: Directories that cannot hold a declaration of *this* project's licence: build output,
 #: caches, dependency trees and sibling worktrees.
@@ -304,6 +356,57 @@ def _pattern_hits() -> dict[str, int]:
     return hits
 
 
+def licence_files(root: Path) -> list[Path]:
+    """Every licence FILE under *root* — the files that actually grant something.
+
+    Distinct from :func:`declaration_sites`, which also returns manifests and the README
+    badge. Those declare an identifier; only these carry a grant and a copyright holder.
+    """
+    return sorted(
+        p
+        for p in _walk(root)
+        if _LICENCE_FILE_RE.match(p.name) and p.suffix.lower() in _TEXT_SUFFIXES
+    )
+
+
+def licence_holder(text: str) -> str | None:
+    """The copyright holder *text* names, or ``None`` if it carries no copyright line.
+
+    The year is discarded: this rail is about WHO, and the year is bookkeeping already
+    excluded from the grant hash.
+    """
+    for line in text.splitlines():
+        match = _COPYRIGHT_RE.match(line)
+        if match:
+            return match.group("holder").strip() or None
+    return None
+
+
+def artefact_names_beside(path: Path) -> frozenset[str]:
+    """Casefolded identities of the app whose bundle *path* sits in, if any.
+
+    An app bundle is a directory holding an ``app.json``, so a licence file's sibling
+    manifest is what says which artefact the directory IS. Returns the manifest's ``name``,
+    its ``displayName``, and the title-cased expansion of ``name`` that the scaffolder
+    derives when ``--display-name`` is omitted (``channel-null`` -> ``Channel Null``) — that
+    derived form is the exact string the broken fallback wrote, and it appears in no file.
+    """
+    manifest = path.parent / "app.json"
+    if not manifest.is_file():
+        return frozenset()
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return frozenset()
+    if not isinstance(data, dict):
+        return frozenset()
+    name = str(data.get("name") or "")
+    names = {name, str(data.get("displayName") or "")}
+    if name:
+        names.add(" ".join(part.capitalize() for part in name.split("-")))
+    return frozenset(n.casefold() for n in names if n)
+
+
 def _table() -> dict[str, str]:
     """path -> judgment, from the census table."""
     out: dict[str, str] = {}
@@ -352,16 +455,101 @@ def check_no_cla_file(root: Path) -> None:
     )
 
 
-def check_the_licence_grant_is_unmodified(root: Path) -> None:
-    """RED if `LICENSE`'s grant text changed. A year or holder change is allowed."""
-    text = (root / "LICENSE").read_text(encoding="utf-8")
+def grant_digest(text: str) -> str:
+    """sha256 of *text*'s licence body with the copyright line removed, whitespace collapsed.
+
+    Excluding the copyright line is deliberate: a year or holder change is bookkeeping, the
+    grant is the promise, and the two want different rails.
+    :func:`check_every_licence_file_carries_the_real_grant` owns the grant;
+    :func:`check_every_licence_holder_is_a_real_holder` owns the holder.
+    """
     body = "\n".join(line for line in text.splitlines() if not line.lower().startswith("copyright"))
-    digest = hashlib.sha256(re.sub(r"\s+", " ", body).strip().encode("utf-8")).hexdigest()
-    assert digest == _LICENCE_BODY_SHA256, (
-        f"LICENSE's grant text changed (sha256 {digest}, pinned {_LICENCE_BODY_SHA256}).\n"
-        "The copyright line is excluded from this hash, so a year or holder update does not "
-        "reach it — this is the licence GRANT itself. If the change is deliberate, update "
-        "the pin and the dated commitment in README.md and SECURITY.md together."
+    return hashlib.sha256(re.sub(r"\s+", " ", body).strip().encode("utf-8")).hexdigest()
+
+
+def check_every_licence_file_carries_the_real_grant(root: Path) -> None:
+    """RED if ANY licence file in *root* is not the pinned MIT grant, verbatim.
+
+    Every one of these files is this project's own grant — the root `LICENSE`, the bundled
+    Ollama app's, the template the scaffolder propagates, the registry's validation fixtures
+    — so "MIT" has to mean the same bytes in all of them. The identifier sweep above cannot
+    see this: its "licence file title" pattern reads the first line, so a file whose title
+    still says `MIT License` over a *paraphrased* or narrowed grant is invisible to it.
+    Proven by arm (d) of :func:`test_the_rail_reds_on_a_fake_spdx_change`, where the
+    identifier check passes on exactly that mutation.
+
+    Scoped to every licence file rather than the root one alone because the root file was
+    the only pinned copy while five siblings were pinned by nothing, and a bundled app's
+    LICENSE is the copy that travels when the bundle leaves the wheel.
+    """
+    wrong = []
+    for path in licence_files(root):
+        digest = grant_digest(path.read_text(encoding="utf-8"))
+        if digest != _LICENCE_BODY_SHA256:
+            wrong.append(f"{path.relative_to(root)} (sha256 {digest})")
+    assert not wrong, (
+        "these licence files do not carry the pinned MIT grant:\n"
+        + "\n".join(f"  {w}" for w in wrong)
+        + f"\n\nPinned: {_LICENCE_BODY_SHA256}. The copyright line is excluded from this "
+        "hash, so a year or holder update does not reach it — this is the licence GRANT "
+        "itself, and a paraphrase of it is not MIT however the first line is titled. If the "
+        "change is deliberate, update the pin and the dated commitment in README.md and "
+        "SECURITY.md together."
+    )
+
+
+def check_every_licence_holder_is_a_real_holder(root: Path) -> None:
+    """RED if a licence file in *root* names a holder outside :data:`_APPROVED_HOLDERS`.
+
+    A copyright line names whoever holds the copyright. Every licence file in THIS tree
+    covers work this project wrote, so there is exactly one right answer, and anything else
+    is either a mistake or a governance decision that belongs in review.
+    """
+    wrong = []
+    for path in licence_files(root):
+        holder = licence_holder(path.read_text(encoding="utf-8"))
+        if holder is None:
+            wrong.append(f"{path.relative_to(root)} has no copyright line at all")
+        elif holder not in _APPROVED_HOLDERS:
+            wrong.append(f"{path.relative_to(root)} names {holder!r}")
+    assert not wrong, (
+        "these licence files name a copyright holder this project does not use:\n"
+        + "\n".join(f"  {w}" for w in wrong)
+        + f"\n\nApproved: {sorted(_APPROVED_HOLDERS)}. Keeping one holder across the org is "
+        "what makes a contributed change land under the same grant wherever it lands. If a "
+        "new holder is correct, add it here and say why in the same PR."
+    )
+
+
+def check_no_licence_holder_is_an_artefact_name(root: Path) -> None:
+    """RED if a licence file's holder is the name or display name of the app beside it.
+
+    This is the rule the app scaffolder broke. ``personalclaw app new`` wrote
+    ``_license_text(author or display, …)``, so every app generated without ``--author`` got
+    a grant whose holder was the app itself — `Copyright (c) 2026 Channel Null`. An app is an
+    artefact; it cannot hold a copyright, so that licence grants nothing and names nobody to
+    ask. Four published exemplar repositories shipped it.
+
+    Separate from :func:`check_every_licence_holder_is_a_real_holder` on purpose. That one
+    asks "is this THE holder", which only a first-party tree can answer; this one asks "is
+    this a holder AT ALL", which is true of any app bundle anywhere — so the scaffolder's own
+    test drives *this* function over its generated output rather than re-deriving the rule.
+    """
+    wrong = []
+    for path in licence_files(root):
+        holder = licence_holder(path.read_text(encoding="utf-8"))
+        if holder is None:
+            continue
+        artefacts = artefact_names_beside(path)
+        if holder.casefold() in artefacts:
+            wrong.append(f"{path.relative_to(root)} names the app itself: {holder!r}")
+    assert not wrong, (
+        "these licence files name an APP as the copyright holder:\n"
+        + "\n".join(f"  {w}" for w in wrong)
+        + "\n\nA copyright line names a person or an organisation. An app name or display "
+        "name is an artefact: it holds nothing, so the grant is defective and there is "
+        "nobody to ask for permission. Name the author (`app new --author`), or leave the "
+        "scaffold's obviously-unfilled placeholder so the omission is visible."
     )
 
 
@@ -408,9 +596,56 @@ def test_every_licence_declaration_in_the_tree_says_mit() -> None:
     check_every_declaration_is_mit(_ROOT)
 
 
-def test_the_licence_grant_text_is_pinned() -> None:
-    """A relicense can be done by rewriting `LICENSE` without touching any identifier."""
-    check_the_licence_grant_is_unmodified(_ROOT)
+def test_every_licence_file_carries_the_pinned_grant() -> None:
+    """A relicense can be done by rewriting a licence file without touching any identifier."""
+    check_every_licence_file_carries_the_real_grant(_ROOT)
+
+
+def test_every_licence_file_names_an_approved_holder() -> None:
+    """The holder half of the grant, which the pinned hash deliberately cannot see."""
+    check_every_licence_holder_is_a_real_holder(_ROOT)
+
+
+def test_no_licence_file_names_an_app_as_its_holder() -> None:
+    """The scaffolder's defect, as a standing rail over the bundles this tree ships."""
+    check_no_licence_holder_is_an_artefact_name(_ROOT)
+
+
+def test_the_licence_file_sweep_is_not_vacuous() -> None:
+    """Both holder rails iterate ``licence_files``, so a sweep that finds nothing is silent.
+
+    The bug this guards is measured, not hypothetical: ``_walk``'s sibling-worktree skip once
+    matched on the ABSOLUTE path and made the whole census return nothing while looking clean
+    (see that function). Two of the three checks above are ``for … in licence_files(root)``
+    loops whose assertion never runs on an empty list, so they would pass a tree with no
+    licence in it at all. The bundle arm needs its own floor for the same reason: every
+    licence file living at a root with no ``app.json`` beside it would make
+    :func:`check_no_licence_holder_is_an_artefact_name` a loop that compares against the
+    empty set every time.
+    """
+    files = licence_files(_ROOT)
+    assert len(files) >= 5, (
+        f"the licence-file sweep found only {len(files)} file(s) — it is not reading. "
+        "This tree carries the root LICENSE, the bundled ollama-models app's, the app "
+        f"template's, and the registry fixtures': {[str(f) for f in files]}"
+    )
+    assert any(
+        f.name == "LICENSE" and f.parent == _ROOT for f in files
+    ), "the sweep did not even find the root LICENSE file"
+    with_bundle = [f for f in files if artefact_names_beside(f)]
+    assert len(with_bundle) >= 3, (
+        f"only {len(with_bundle)} licence file(s) sit beside an app.json, so the artefact-"
+        "holder rail is comparing against the empty set almost everywhere. Either the bundled "
+        "apps moved or `artefact_names_beside` stopped resolving a manifest."
+    )
+    # The over-matching half, measured: the census TABLE uppercases to `LICENCE-IDENTITY.TXT`,
+    # so a case-insensitive name match swept it in and both holder rails reported the table
+    # itself as a licence with no copyright line. See `_LICENCE_FILE_RE`.
+    assert _TABLE not in files, (
+        f"{_TABLE.name} is the census table, not a licence — `_LICENCE_FILE_RE` has gone "
+        "case-insensitive again and the holder rails are now grading a document that only "
+        "discusses the licence"
+    )
 
 
 def test_every_declaration_site_is_in_the_census() -> None:
@@ -513,12 +748,113 @@ def _minimal_tree(tmp_path: Path) -> Path:
     return root
 
 
+def _bundle(root: Path, name: str, display: str, holder: str) -> Path:
+    """An app bundle under *root*: an ``app.json`` and a LICENSE naming *holder*.
+
+    Shaped exactly like the scaffolder's output, so the artefact-holder rail is exercised
+    against the real thing rather than a fixture that happens to be easier to catch.
+    """
+    bundle = root / name
+    bundle.mkdir(parents=True, exist_ok=True)
+    (bundle / "app.json").write_text(
+        json.dumps({"name": name, "version": "0.1.0", "displayName": display}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    text = (_ROOT / "LICENSE").read_text(encoding="utf-8")
+    (bundle / "LICENSE").write_text(
+        re.sub(r"(?im)^copyright.*$", f"Copyright (c) 2026 {holder}", text, count=1),
+        encoding="utf-8",
+    )
+    return bundle
+
+
 def test_the_teeth_test_s_own_baseline_is_green(tmp_path: Path) -> None:
     """The control arm. A baseline that already failed would make every red below vacuous."""
     root = _minimal_tree(tmp_path)
+    _bundle(root, "channel-null", "Null Channel", sorted(_APPROVED_HOLDERS)[0])
     check_every_declaration_is_mit(root)
     check_no_cla_file(root)
-    check_the_licence_grant_is_unmodified(root)
+    check_every_licence_file_carries_the_real_grant(root)
+    check_every_licence_holder_is_a_real_holder(root)
+    check_no_licence_holder_is_an_artefact_name(root)
+
+
+def test_the_rail_reds_when_a_licence_names_the_app_as_its_holder(tmp_path: Path) -> None:
+    """The scaffolder's own defect, reproduced from its two derivations of an app identity.
+
+    Both spellings, because the broken fallback was ``author or display`` and ``display``
+    itself had two sources: an explicit ``--display-name``, and the title-cased expansion of
+    the app NAME when that flag was omitted. A rail that caught only the manifest's
+    ``displayName`` would have waved through `Copyright (c) 2026 Channel Null` — the string
+    four published repositories actually shipped, which appears in no file as a field value.
+    """
+    root = _minimal_tree(tmp_path)
+
+    # (a) the manifest's declared displayName
+    _bundle(root, "channel-null", "Null Channel", "Null Channel")
+    with pytest.raises(AssertionError, match="names the app itself"):
+        check_no_licence_holder_is_an_artefact_name(root)
+
+    # (b) the name expanded the way the scaffolder expands it with no --display-name. This is
+    # the exemplars' real shape: `channel-null` -> `Channel Null`.
+    _bundle(root, "channel-null", "Null Channel", "Channel Null")
+    with pytest.raises(AssertionError, match="Channel Null"):
+        check_no_licence_holder_is_an_artefact_name(root)
+
+    # (c) the bare kebab name
+    _bundle(root, "channel-null", "Null Channel", "channel-null")
+    with pytest.raises(AssertionError, match="names the app itself"):
+        check_no_licence_holder_is_an_artefact_name(root)
+
+    # A real holder in the same bundle clears all three — so the red above is the HOLDER and
+    # not the bundle's existence.
+    _bundle(root, "channel-null", "Null Channel", "Ada Lovelace")
+    check_no_licence_holder_is_an_artefact_name(root)
+
+
+def test_the_rail_reds_on_an_unapproved_or_missing_holder(tmp_path: Path) -> None:
+    """The holder half, which the grant hash excludes by design and so cannot catch."""
+    root = _minimal_tree(tmp_path)
+
+    # A person, not this project — correct for a third-party bundle, wrong for this tree.
+    _bundle(root, "some-app", "Some App", "Ada Lovelace")
+    with pytest.raises(AssertionError, match="Ada Lovelace"):
+        check_every_licence_holder_is_a_real_holder(root)
+    # …and the grant is untouched, proving the two rails are independent rather than one
+    # assertion reported twice.
+    check_every_licence_file_carries_the_real_grant(root)
+
+    # No copyright line at all: an MIT grant that names nobody.
+    text = (_ROOT / "LICENSE").read_text(encoding="utf-8")
+    (root / "some-app" / "LICENSE").write_text(
+        "\n".join(line for line in text.splitlines() if not line.lower().startswith("copyright"))
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(AssertionError, match="no copyright line at all"):
+        check_every_licence_holder_is_a_real_holder(root)
+
+
+def test_the_grant_rail_reaches_beyond_the_root_licence(tmp_path: Path) -> None:
+    """The reason this replaced a root-only pin: five sibling licence files were unpinned.
+
+    A bundled app's LICENSE is the copy that travels when the bundle leaves the wheel, so a
+    narrowed grant there reaches users while the root file stays pristine.
+    """
+    root = _minimal_tree(tmp_path)
+    bundle = _bundle(root, "some-app", "Some App", sorted(_APPROVED_HOLDERS)[0])
+    check_every_licence_file_carries_the_real_grant(root)
+
+    (bundle / "LICENSE").write_text(
+        f"MIT License\n\nCopyright (c) 2026 {sorted(_APPROVED_HOLDERS)[0]}\n\n"
+        "Permission is NOT granted.\n",
+        encoding="utf-8",
+    )
+    # The identifier still says MIT and the holder is still right — only the GRANT moved.
+    check_every_declaration_is_mit(root)
+    check_every_licence_holder_is_a_real_holder(root)
+    with pytest.raises(AssertionError, match="some-app/LICENSE"):
+        check_every_licence_file_carries_the_real_grant(root)
 
 
 def test_the_rail_reds_on_a_fake_spdx_change(tmp_path: Path) -> None:
@@ -549,17 +885,19 @@ def test_the_rail_reds_on_a_fake_spdx_change(tmp_path: Path) -> None:
     )
     with pytest.raises(AssertionError, match="Business Source"):
         check_every_declaration_is_mit(root)
-    with pytest.raises(AssertionError, match="grant text changed"):
-        check_the_licence_grant_is_unmodified(root)
+    with pytest.raises(AssertionError, match="do not carry the pinned MIT grant"):
+        check_every_licence_file_carries_the_real_grant(root)
 
     # (d) and the subtler one: MIT's title kept, the grant quietly narrowed
     (root / "LICENSE").write_text(
-        "MIT License\n\nCopyright (c) 2026 someone\n\nPermission is NOT granted.\n",
+        f"MIT License\n\nCopyright (c) 2026 {sorted(_APPROVED_HOLDERS)[0]}\n\n"
+        "Permission is NOT granted.\n",
         encoding="utf-8",
     )
     check_every_declaration_is_mit(root)  # the identifier still says MIT — and that is the point
-    with pytest.raises(AssertionError, match="grant text changed"):
-        check_the_licence_grant_is_unmodified(root)
+    check_every_licence_holder_is_a_real_holder(root)  # …and the holder is still right
+    with pytest.raises(AssertionError, match="do not carry the pinned MIT grant"):
+        check_every_licence_file_carries_the_real_grant(root)
 
 
 @pytest.mark.parametrize(
