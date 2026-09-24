@@ -1098,7 +1098,7 @@ class TestRebuildAgentConfigRemote:
 
         # Single user MCP source: ~/.personalclaw/mcp.json (none here).
         user_dir = tmp_path / ".personalclaw"
-        monkeypatch.setattr("personalclaw.agent.AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
         monkeypatch.setattr("personalclaw.agent._USER_DIR", user_dir)
         monkeypatch.setattr("personalclaw.agent._PERSONALCLAW_BIN", "/usr/bin/personalclaw")
         monkeypatch.setattr("shutil.which", lambda cmd, path=None: None)
@@ -1129,7 +1129,7 @@ class TestRebuildAgentConfigRemote:
             json.dumps({"mcpServers": {"deepwiki": {"url": "https://mcp.deepwiki.com/mcp"}}})
         )
 
-        monkeypatch.setattr("personalclaw.agent.AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
         monkeypatch.setattr("personalclaw.agent._USER_DIR", user_dir)
         monkeypatch.setattr("personalclaw.agent._PERSONALCLAW_BIN", "/usr/bin/personalclaw")
         monkeypatch.setattr("shutil.which", lambda cmd, path=None: None)
@@ -1372,7 +1372,7 @@ class TestSharedServerToolsRegistration:
             )
         )
 
-        monkeypatch.setattr("personalclaw.agent.AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
         monkeypatch.setattr("personalclaw.agent._USER_DIR", user_dir)
         monkeypatch.setattr("personalclaw.agent._PERSONALCLAW_BIN", "/usr/bin/personalclaw")
         monkeypatch.setattr("shutil.which", lambda cmd, path=None: "/usr/bin/srv")
@@ -1417,7 +1417,7 @@ class TestSharedServerToolsRegistration:
             )
         )
 
-        monkeypatch.setattr("personalclaw.agent.AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
         monkeypatch.setattr("personalclaw.agent._USER_DIR", user_dir)
         monkeypatch.setattr("personalclaw.agent._PERSONALCLAW_BIN", "/usr/bin/personalclaw")
         monkeypatch.setattr("shutil.which", lambda cmd, path=None: "/usr/bin/srv")
@@ -1461,7 +1461,7 @@ class TestSharedServerToolsRegistration:
             )
         )
 
-        monkeypatch.setattr("personalclaw.agent.AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
         monkeypatch.setattr("personalclaw.agent._USER_DIR", user_dir)
         monkeypatch.setattr("personalclaw.agent._PERSONALCLAW_BIN", "/usr/bin/personalclaw")
         monkeypatch.setattr("shutil.which", lambda cmd, path=None: "/usr/bin/srv")
@@ -1497,7 +1497,7 @@ class TestSharedServerToolsRegistration:
             )
         )
 
-        monkeypatch.setattr("personalclaw.agent.AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
         monkeypatch.setattr("personalclaw.agent._USER_DIR", user_dir)
         monkeypatch.setattr("personalclaw.agent._PERSONALCLAW_BIN", "/usr/bin/personalclaw")
         monkeypatch.setattr("shutil.which", lambda cmd, path=None: None)

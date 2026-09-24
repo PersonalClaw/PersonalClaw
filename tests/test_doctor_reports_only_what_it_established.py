@@ -37,10 +37,10 @@ measurement:
 * the git row may report a verdict only when something established one, and must have a
   distinguishable "could not determine" state for when nothing did.
 
-⚠️  `_doctor()` touches the agent config under `AGENTS_DIR`, which is frozen at import
+⚠️  `_doctor()` touches the agent config under `agents_dir()`, which used to be frozen at import
 from the real home — and its MCP section REWRITES `personalclaw.json` when it finds a
 stale binary path. Every test here that drives `_doctor()` repoints
-`cli_doctor.AGENTS_DIR` at `tmp_path` first, so no test can write the operator's home.
+`cli_doctor.agents_dir` at `tmp_path` first, so no test can write the operator's home.
 """
 
 from __future__ import annotations
@@ -230,9 +230,9 @@ def _dependencies_block(
         stdout = node_version if argv[:2] == ["node", "-v"] else "Python 3.13.14"
         return subprocess.CompletedProcess(argv, 0, stdout=f"{stdout}\n", stderr="")
 
-    # AGENTS_DIR is frozen at import from the real home, and the MCP section REWRITES
+    # agents_dir() resolves the ACTIVE home, and the MCP section REWRITES
     # personalclaw.json when it sees a stale command path. Repoint it at tmp_path.
-    monkeypatch.setattr(cd, "AGENTS_DIR", tmp_path / "agents")
+    monkeypatch.setattr(cd, "agents_dir", lambda: tmp_path / "agents")
     with (
         patch.object(cd.shutil, "which", side_effect=_which),
         patch("subprocess.run", side_effect=_run),

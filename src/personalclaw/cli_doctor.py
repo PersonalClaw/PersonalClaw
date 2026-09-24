@@ -11,7 +11,7 @@ import urllib.request
 from pathlib import Path
 
 from personalclaw import __version__ as _pc_version
-from personalclaw.agent import AGENT_FILENAME, AGENTS_DIR
+from personalclaw.agent import AGENT_FILENAME, agents_dir
 from personalclaw.auth.modes import classify_auth_mode_request
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
@@ -548,7 +548,7 @@ def _doctor() -> None:
 
     # ── Agent config ──
     print("\nAgent")
-    agent_path = AGENTS_DIR / AGENT_FILENAME
+    agent_path = agents_dir() / AGENT_FILENAME
     if agent_path.exists():
         print(f"  config:      ✅ {agent_path}")
     else:

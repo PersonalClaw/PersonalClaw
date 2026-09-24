@@ -210,7 +210,7 @@ async def _model_provider_client(tmp_path):
 
     # 🪤 `config_dir` is NOT the only home seam these routes reach. A successful
     # instance mutation now also runs `_rebuild_agent_config_safe()`, and
-    # `rebuild_agent_config()` writes through `agent.AGENTS_DIR`, a MODULE-LEVEL
+    # `rebuild_agent_config()` writes through `agent.agents_dir()` — no longer a MODULE-LEVEL
     # constant frozen at import (`agent.py:93`) — patching `config_dir` alone
     # leaves it pointing at the REAL home, so the write escapes tmp_path and the
     # conftest real-home rail fails the whole session (`agents/personalclaw.json`
@@ -218,7 +218,7 @@ async def _model_provider_client(tmp_path):
     # from reading the real user's `mcp.json` into the rebuilt config.
     with (
         patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
-        patch("personalclaw.agent.AGENTS_DIR", tmp_path / "agents"),
+        patch("personalclaw.agent.agents_dir", lambda: tmp_path / "agents"),
         patch("personalclaw.agent._USER_DIR", tmp_path),
     ):
         app = web.Application()
