@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fmtElapsed, isTerminal, itemProgress, nodeDepth, nodeLabel, nodeLook, runLook } from './workflowMeta'
+import { elapsedStat, fmtElapsed, isTerminal, itemProgress, nodeDepth, nodeLabel, nodeLook, runLook } from './workflowMeta'
 import { WORKFLOW_LIFECYCLE } from './useWorkflowStream'
 
 // ── The engine's outcome vocabulary must survive into the UI ────────────────
@@ -125,6 +125,45 @@ describe('fmtElapsed', () => {
     expect(fmtElapsed(9)).toBe('9s')
     expect(fmtElapsed(90)).toBe('1m 30s')
     expect(fmtElapsed(3720)).toBe('1h 2m')
+  })
+})
+
+// ── A LABELLED cell cannot render nothing ───────────────────────────────────
+// Measured on a fresh container: the deterministic bundled template `knowledge-health`
+// completed in under 10ms and its run page showed FOUR labels with no value —
+// `Duration`, `Duration p50`, `Duration p95` (`stats.duration_secs: 0.0`) and the findings
+// rail's `Took` for the step whose `duration_secs` was exactly `0.0`. The sibling step's
+// `0.007` rounded to `0s` and rendered, so one panel showed the same label as `0s` and as
+// blank space for two measurements seven milliseconds apart.
+
+describe('elapsedStat', () => {
+  it('renders a measured zero as 0s, never as nothing', () => {
+    // The exact figures the container produced.
+    expect(elapsedStat(0)).toBe('0s')
+    expect(elapsedStat(0.0)).toBe('0s')
+    // …and its sibling, which already worked — the two must agree that something happened.
+    expect(elapsedStat(0.007)).toBe('0s')
+  })
+
+  it('keeps fmtElapsed’s rounding for every non-zero figure, so the two never disagree', () => {
+    for (const secs of [0.6, 9, 59, 60, 90, 3600, 3720]) {
+      expect(elapsedStat(secs)).toBe(fmtElapsed(secs))
+    }
+  })
+
+  it('does not call a non-figure an instant', () => {
+    // NaN is not a measurement of zero. `LedgerRailsPanel.cell` screens null/undefined before
+    // this is reached; this is the one a `<Stat>` can hand it directly.
+    expect(elapsedStat(Number.NaN)).toBe('not recorded')
+    expect(elapsedStat(Number.POSITIVE_INFINITY)).toBe('not recorded')
+  })
+
+  it('is never the empty string, for any input a duration field can hold', () => {
+    // The invariant, stated once: the whole point of this helper over `fmtElapsed` is that a
+    // label rendered unconditionally always gets something after it.
+    for (const secs of [0, -0, 0.001, 0.5, 1, 61, 3601, Number.NaN, -5]) {
+      expect(elapsedStat(secs)).not.toBe('')
+    }
   })
 })
 

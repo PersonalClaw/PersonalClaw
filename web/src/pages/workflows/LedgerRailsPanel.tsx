@@ -4,7 +4,7 @@ import { Segmented } from '../../ui/Segmented'
 import { FormSkeleton } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { api, type WorkflowLedgerRails } from '../../lib/api'
-import { fmtElapsed } from './workflowMeta'
+import { elapsedStat } from './workflowMeta'
 import { runCostStat } from '../../lib/runCost'
 import { runTokensStat } from '../../lib/unrecorded'
 
@@ -138,7 +138,7 @@ export function LedgerRailsPanel({ runId }: { runId: string }) {
             label="Tokens"
             value={totals.tokens === null ? EM_DASH : runTokensStat(totals.tokens, totals.tokens_recorded)}
           />
-          <Stat label="Step time" value={cell(totals.duration_secs, fmtElapsed)} />
+          <Stat label="Step time" value={cell(totals.duration_secs, elapsedStat)} />
           <Stat
             label="Judge outcomes"
             value={Object.entries(totals.verdicts_by_word).map(([w, n]) => `${w} ${n}`).join(' · ') || EM_DASH}
@@ -190,7 +190,7 @@ export function LedgerRailsPanel({ runId }: { runId: string }) {
                   <dl data-type="caption" className="grid grid-cols-2 gap-xs text-on-surface-low sm:grid-cols-4">
                     <div><dt className="inline">Cost </dt><dd className="inline tabular-nums">{cell(f.cost_usd, (n) => `~$${n.toFixed(4)}`)}</dd></div>
                     <div><dt className="inline">Tokens </dt><dd className="inline tabular-nums">{cell(f.tokens, (n) => n.toLocaleString())}</dd></div>
-                    <div><dt className="inline">Took </dt><dd className="inline tabular-nums">{cell(f.duration_secs, fmtElapsed)}</dd></div>
+                    <div><dt className="inline">Took </dt><dd className="inline tabular-nums">{cell(f.duration_secs, elapsedStat)}</dd></div>
                     <div><dt className="inline">Retries </dt><dd className="inline tabular-nums">{cell(f.retries, String)}</dd></div>
                     <div className="col-span-2"><dt className="inline">Model </dt><dd className="inline">{text(f.model)}</dd></div>
                     <div className="col-span-2"><dt className="inline">Produced </dt><dd className="inline break-all">{text(f.output_ref)}</dd></div>

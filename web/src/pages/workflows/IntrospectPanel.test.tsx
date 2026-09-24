@@ -102,6 +102,30 @@ describe('the nine questions reach the DOM', () => {
     expect(screen.getByText('830 ms')).toBeTruthy()
   })
 
+  it('renders a sub-second run’s duration as 0s, not as a label with nothing after it', async () => {
+    // Measured on a fresh container: `knowledge-health` (a deterministic bundled template, no
+    // model call) completed with `stats.duration_secs: 0.0` and `template_card.duration_p50/p95:
+    // 0.0`, and `fmtElapsed` returns '' for a zero — so THREE labels in this panel rendered with
+    // no value at all. A blank `<dd>` is also indistinguishable from the sibling rail's deliberate
+    // em dash, which means "the ledger carried no key" — the opposite claim.
+    const base = payload()
+    introspect = async () => ({
+      ...base,
+      stats: { ...base.stats, duration_secs: 0, first_byte_ms: 0 },
+      template_card: { ...base.template_card, duration_p50: 0, duration_p95: 0 },
+    })
+    render(<IntrospectPanel runId="r1" onClose={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Duration')).toBeTruthy())
+    // Read the VALUE beside each label rather than searching the panel for the string: a `0s`
+    // anywhere on screen would satisfy a text query while these three cells stayed blank.
+    for (const label of ['Duration', 'Duration p50', 'Duration p95']) {
+      const dt = screen.getByText(label)
+      const dd = dt.parentElement?.querySelector('dd')
+      expect(dd, `${label} has no <dd>`).toBeTruthy()
+      expect(dd!.textContent?.trim(), `${label} rendered a label with no value`).toBe('0s')
+    }
+  })
+
   it('shows the template p50/p95 card, never a mean', async () => {
     render(<IntrospectPanel runId="r1" onClose={() => {}} />)
     expect(await screen.findByText(/cost p50/i)).toBeTruthy()
