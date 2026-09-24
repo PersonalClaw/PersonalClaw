@@ -28,6 +28,7 @@ keeps a template portable across a user's provider setup.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import time
@@ -433,7 +434,7 @@ async def dispatch_infer(
 
     output: Any = text
     if want_json:
-        parsed = _parse_json_loose(text)
+        parsed = parse_json_loose(text)
         if parsed is None:
             return NodeResult(
                 state=InstanceState.FAILED,
@@ -510,13 +511,33 @@ async def dispatch_visualize(
     )
 
 
-def claim_key(run_id: str, node_id: str) -> str:
-    """The lease target for one branch.
+def claim_key(run_id: str, instance_path: str) -> str:
+    """The lease target for one node INSTANCE.
 
-    Per-NODE, not per-run: a run's leaves are meant to execute concurrently, so a run-scoped claim
-    would serialize the fan-out the lease exists to protect.
+    Per-INSTANCE, not per-run: a run's leaves are meant to execute concurrently, so a run-scoped
+    claim would serialize the fan-out the lease exists to protect.
+
+    And per-instance rather than per-NODE-ID (#3524), because a node id is not a unit of work — a
+    `loop` body and a `foreach` body both execute the SAME node id many times, at different
+    instance paths. Keyed by node id, the first execution took the claim and held it for the whole
+    TTL, so every later one was refused as a duplicate of work that had already finished: measured
+    on `general-project`, iterations 2..6 of the body's `judge` stage each returned DEGRADED with
+    "another worker holds the claim … for another 674s". A fan-out was worse — twelve `foreach`
+    items sharing one node id meant eleven of them never ran. The claim is supposed to stop ONE
+    unit of work executing twice, and the instance path is what names that unit.
+
+    DIGESTED rather than spelled out, for two reasons that both come from `leases._lease_path`:
+    it truncates a target id to 64 characters (a deep nested path plus a run id exceeds that, and
+    a truncated id collides), and it rewrites `.`/`@`/`[`/`#` all to `_` — so `body@1.children[1]`
+    and `body#1.children[1]` sanitize to the same filename. Either would silently reintroduce the
+    exact false refusal this fixes. The node id is not in the key because the claim's own
+    `holder` carries it (`claim_holder` → `workflow:<run>:<node_id>#<uuid>`), so a human reading a
+    lease file still sees which node holds it.
     """
-    return f"{run_id}:{node_id}" if run_id and node_id else ""
+    if not run_id or not instance_path:
+        return ""
+    digest = hashlib.sha256(instance_path.encode("utf-8")).hexdigest()[:16]
+    return f"{run_id}:{digest}"
 
 
 def claim_holder(run_id: str, node_id: str) -> str:
@@ -595,6 +616,9 @@ async def dispatch_stage(
     subagents: Any = None,
     depth: int = 0,
     run_id: str = "",
+    #: This instance's engine key (`root.body@2.children[1]`). The claim's target — see
+    #: `claim_key` on why a node id is not one.
+    instance_path: str = "",
     cwd: str = "",
 ) -> NodeResult:
     """One subagent execution, with tools and a session.
@@ -643,9 +667,27 @@ async def dispatch_stage(
     # No double-execution (WORK-CONTAINERS §1.5). Taken BEFORE the spawn, because a lease acquired
     # after the work started would record the claim without preventing the thing it exists to
     # prevent — two co-tenant workers would both have spawned by the time either checked. The claim
-    # is per-NODE (`run_id:node_id`), not per-run: a run's leaves are meant to execute concurrently,
-    # so a run-scoped claim would serialize the fan-out it was written to protect.
-    claim_target = claim_key(run_id, node.id or "")
+    # is per-INSTANCE, not per-run and not per-node-id: see `claim_key`.
+    #
+    # FAIL CLOSED when a run-attached dispatch carries no instance path. `instance_path` is a
+    # defaulted keyword, so an omission is silent: `claim_key` returns "", the `if claim_target`
+    # below skips the lease entirely, and the control reads as present while protecting nothing —
+    # both dispatches of one unit of work spawn. AGENTS.md settles the direction: a default that
+    # PERFORMS something irreversible is not a permissive default, and a spawn is irreversible. So
+    # refuse rather than skip, because with no instance identity there is no way to tell a first
+    # execution from a second. INTERNAL, not USER: the only way to get here is a caller that did
+    # not thread the path.
+    #
+    # A dispatch with no `run_id` is the other case and stays unclaimed as before: it belongs to no
+    # run, so there is no run to scope a claim to and no co-tenant worker that could hold one.
+    if run_id and not instance_path:
+        return _fail(
+            FailureClass.INTERNAL,
+            "stage dispatched without an instance path, so its no-double-execution claim "
+            "cannot be keyed — not spawning",
+            "thread the node's instance path through `dispatch` into `dispatch_stage`",
+        )
+    claim_target = claim_key(run_id, instance_path)
     holder = claim_holder(run_id, node.id or "")
     if claim_target:
         granted, reason = leases.acquire_claim(claim_target, holder)
@@ -2293,7 +2335,7 @@ def check_output_contract(value: Any, contract: dict[str, Any]) -> str:
     """
     if contract.get("must_be_json"):
         if isinstance(value, str):
-            if _parse_json_loose(value) is None:
+            if parse_json_loose(value) is None:
                 return "expected JSON, got unparseable text"
         elif not isinstance(value, (dict, list)):
             return f"expected JSON object/array, got {type(value).__name__}"
@@ -2302,7 +2344,7 @@ def check_output_contract(value: Any, contract: dict[str, Any]) -> str:
     if isinstance(required, list) and required:
         target = value
         if isinstance(target, str):
-            target = _parse_json_loose(target)
+            target = parse_json_loose(target)
         if not isinstance(target, dict):
             return "required_keys declared but output is not an object"
         missing = [k for k in required if str(k) not in target]
@@ -2329,11 +2371,15 @@ def check_output_contract(value: Any, contract: dict[str, Any]) -> str:
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
-def _parse_json_loose(text: Any) -> Any:
+def parse_json_loose(text: Any) -> Any:
     """Parse JSON, stripping markdown fencing first.
 
     Fenced output is the dominant real-world format failure and stripping it fixes most
     cases with ZERO retries — measurably cheaper than a retry round-trip.
+
+    PUBLIC because a stage's output is not produced at a dispatch seam: `dispatch_stage` returns at
+    the spawn, so `RunController._settled_stage_output` is where a subagent's text becomes an output
+    and it has to apply the same parse an `infer` node gets here (#3524).
     """
     import json
 
@@ -2369,7 +2415,7 @@ def _action_output(result: Any) -> Any:
     """A provider's canonical output. Prefers parsed JSON stdout (the BYOI contract is
     "stdout = one JSON object"), falling back to raw text."""
     stdout = getattr(result, "stdout", "") or ""
-    parsed = _parse_json_loose(stdout)
+    parsed = parse_json_loose(stdout)
     if parsed is not None:
         return parsed
     return {
@@ -2413,8 +2459,9 @@ async def dispatch(
     #: This node instance's engine key (`root.children[0]`, `root.body#2`). Threaded for the third
     #: time for the same reason as `run_id`/`project_id`, and it is the one id a provider CANNOT
     #: reconstruct: a ledger row stamped with a bare node id lands outside every per-node slice
-    #: `inspect_node` builds, so it is written and still invisible in the runs surface. Only the
-    #: ACTION branch reads it.
+    #: `inspect_node` builds, so it is written and still invisible in the runs surface. Read by the
+    #: ACTION branch for that, and by the STAGE branch as its no-double-execution claim target — a
+    #: node id names a SPEC position, not a unit of work, so it cannot be one (`claim_key`).
     instance_path: str = "",
     cwd: str = "",
     tiers: dict[str, str] | None = None,
@@ -2542,7 +2589,15 @@ async def _dispatch_inner(
     if dispatcher is dispatch_visualize:
         return await dispatcher(node, ctx, completion=completion)
     if dispatcher is dispatch_stage:
-        return await dispatcher(node, ctx, subagents=subagents, depth=depth, run_id=run_id, cwd=cwd)
+        return await dispatcher(
+            node,
+            ctx,
+            subagents=subagents,
+            depth=depth,
+            run_id=run_id,
+            instance_path=instance_path,
+            cwd=cwd,
+        )
     if dispatcher is dispatch_branch:
         return await dispatcher(node, ctx)
     if dispatcher is dispatch_action:

@@ -179,6 +179,13 @@ def test_a_rewound_stage_retries_after_its_first_attempt_FAILED(wired, monkeypat
     so the retry claims something else, and reusing the holder so the retry RENEWS. `claim_holder`'s
     docstring records the second as measured: a stable holder let BOTH executions through while a
     lease file sat there looking like protection.
+
+    **The claim COORDINATE moved in #3524 and this test was reading the old one**, which is worse
+    than a plain red: `claim_key` now takes the node INSTANCE path, so `claim_key(run.id, "work")`
+    digests a string no run ever claims, and the premise assertion below ("the failed attempt is no
+    longer holding its claim") read a key that is unconditionally absent — it passed by looking in
+    the wrong place. The target is now taken from the recorder, so the release is asserted against
+    the key the run demonstrably took.
     """
     controller, fake, run = wired(errors=(REAPED, ""))
     acquired: list[tuple[str, str, bool]] = []
@@ -199,7 +206,19 @@ def test_a_rewound_stage_retries_after_its_first_attempt_FAILED(wired, monkeypat
             "test is not measuring a retry of a failed stage"
         )
         assert len(fake.spawns) == 1, f"the premise failed: {len(fake.spawns)} spawns, not 1"
-        assert leases.read_claim(claim_key(run.id, "work")) is None, (
+        # The target is READ BACK from the recorder rather than recomputed from a coordinate this
+        # test chose. `inst.claim_target` is cleared by the release itself, so the acquisition is
+        # the only place the live key survives — and reading it here is what stops the assertion
+        # below from being satisfied by a key the run never touched.
+        assert len(acquired) == 1, f"the first attempt took {len(acquired)} claims, not 1"
+        first_target = acquired[0][0]
+        assert first_target == claim_key(run.id, STAGE_PATH), (
+            "the claim is not keyed on the node INSTANCE path any more, so this test is measuring "
+            f"a coordinate the run does not use (took {first_target!r}; the instance key is "
+            f"{claim_key(run.id, STAGE_PATH)!r}, the pre-#3524 node-id key was "
+            f"{claim_key(run.id, 'work')!r})"
+        )
+        assert leases.read_claim(first_target) is None, (
             "the failed attempt is still holding its claim — this is #3533 itself, and every "
             "assertion below would be measuring the unfixed code"
         )
@@ -222,7 +241,7 @@ def test_a_rewound_stage_retries_after_its_first_attempt_FAILED(wired, monkeypat
 
     assert len(acquired) == 2, f"expected one acquisition per attempt, got {acquired}"
     targets = {t for t, _, _ in acquired}
-    assert targets == {claim_key(run.id, "work")}, (
+    assert targets == {claim_key(run.id, STAGE_PATH)}, (
         f"the retry claimed a DIFFERENT target ({targets}) — the fix widened the key instead of "
         "releasing the attempt's claim, which would let two concurrent workers past as well"
     )
@@ -285,6 +304,11 @@ def test_a_stage_that_SUCCEEDS_still_holds_its_claim(wired) -> None:
 
     **If you widen the release to both branches, this test is the one that must change**: rewrite it
     as the new behaviour and check `test_pp16_research_kind_as_run.py` in the same commit.
+
+    The retained target is read from `inst.claim_target` — the success branch is the one that keeps
+    it — and pinned against `claim_key(run.id, STAGE_PATH)` in the same breath, so the test asserts
+    the claim is held AND that it is held at the instance coordinate #3524 moved it to. Reading a
+    recomputed node-id key here fails open the other way: absent, therefore "no claim".
     """
     controller, fake, run = wired(errors=("",))
     status = asyncio.run(controller.run_to_completion(timeout=RUN_TIMEOUT))
@@ -293,7 +317,11 @@ def test_a_stage_that_SUCCEEDS_still_holds_its_claim(wired) -> None:
     assert status is RunStatus.COMPLETE, f"the premise failed: status={status.value}"
     assert inst.state is InstanceState.DONE, f"the premise failed: {inst.state.value}"
     assert len(fake.spawns) == 1, f"the premise failed: {len(fake.spawns)} spawns"
-    held = leases.read_claim(claim_key(run.id, "work"))
+    assert inst.claim_target == claim_key(run.id, STAGE_PATH), (
+        "the succeeded stage recorded no instance-keyed claim target, so the read below would be "
+        f"looking in the wrong place ({inst.claim_target!r} vs {claim_key(run.id, STAGE_PATH)!r})"
+    )
+    held = leases.read_claim(inst.claim_target)
     assert held is not None and held.holder == inst.claim_holder, (
         "a SUCCEEDED stage no longer holds its claim. That is a defensible change and not this "
         "issue's: read this docstring, then update `test_pp16_research_kind_as_run.py`'s "
@@ -312,6 +340,12 @@ def test_a_concurrent_second_execution_of_the_same_instance_is_still_refused(wir
     window is the thing §1.5 is about, and it must still be turned away — and the winner must
     still hold its claim afterwards, because a release by a non-holder would let the loser steal
     the work by releasing first.
+
+    The second worker is dispatched WITH `instance_path=STAGE_PATH`, because that is what makes it
+    concurrent with the first: #3524 keys the claim on the instance path, so a dispatch omitting it
+    is turned away by the fail-closed guard (`FailureClass.INTERNAL`, "not spawning") BEFORE the
+    claim is consulted. That is a refusal for the wrong reason, and taking it as this assertion's
+    green would let the lease itself rot unobserved.
     """
     controller, fake, run = wired(settles=False)
 
@@ -327,9 +361,14 @@ def test_a_concurrent_second_execution_of_the_same_instance_is_still_refused(wir
         assert (
             held is not None and held.holder == inst.claim_holder
         ), f"the live attempt's claim is not on disk: {held}"
-        # A second worker arriving at the SAME instance while the first is still executing.
+        # A second worker arriving at the SAME instance while the first is still executing. The
+        # instance path is what "the same instance" means now, so it travels with the dispatch.
         return await engine.dispatch_stage(
-            _stage_node(), BindingContext(), subagents=fake, run_id=run.id
+            _stage_node(),
+            BindingContext(),
+            subagents=fake,
+            run_id=run.id,
+            instance_path=STAGE_PATH,
         )
 
     second = asyncio.run(_go())
@@ -356,7 +395,11 @@ def test_only_the_recorded_holder_can_release_a_claim(wired, tmp_path: Path) -> 
     So carrying the identity per attempt cannot become a way for one attempt to free another's
     claim — including the retry freeing a claim taken by a genuinely concurrent worker.
     """
-    target = claim_key("run-1", "work")
+    # The two helpers take DIFFERENT coordinates since #3524 and it is worth spelling out where
+    # they sit side by side: the key is the node INSTANCE path, the holder is the node id plus a
+    # per-attempt nonce. Passing a node id as the key still returns a well-formed digest, so the
+    # mix-up is silent — it just names a unit of work no run ever claims.
+    target = claim_key("run-1", STAGE_PATH)
     mine = claim_holder("run-1", "work")
     theirs = claim_holder("run-1", "work")
     assert mine != theirs, "`claim_holder` is no longer unique per attempt — the premise is gone"
@@ -399,8 +442,10 @@ def test_the_attempt_identity_stays_out_of_the_lease_path() -> None:
     long_key = "x" * 80
     assert len(leases._lease_path(long_key).stem) == 64, "`_lease_path` no longer truncates"
 
-    key = claim_key("run-1", "work")
-    assert key == claim_key("run-1", "work"), "the claim key is not a pure function of its inputs"
+    key = claim_key("run-1", STAGE_PATH)
+    assert key == claim_key(
+        "run-1", STAGE_PATH
+    ), "the claim key is not a pure function of its inputs"
     holders = {claim_holder("run-1", "work") for _ in range(5)}
     assert len(holders) == 5, "the holder is not per-attempt, so a retry would RENEW, not refuse"
 
@@ -417,15 +462,20 @@ def test_the_recorded_claim_survives_a_state_round_trip() -> None:
 
     Persisted for the same reason `subagent_id` is: a restarted gateway re-adopting this run is
     the only thing that can give the claim back before its TTL.
+
+    The target is the REAL `claim_key` output rather than a hand-written `run-1:work`, because that
+    literal stopped being a shape the engine produces in #3524 — a round-trip test carrying an
+    obsolete example teaches the wrong key to whoever copies it next.
     """
+    target = claim_key("run-1", STAGE_PATH)
     inst = NodeInstance(
         path=STAGE_PATH,
         state=InstanceState.RUNNING,
-        claim_target="run-1:work",
+        claim_target=target,
         claim_holder="workflow:run-1:work#deadbeefcafe",
     )
     back = NodeInstance.from_dict(inst.to_dict())
-    assert back.claim_target == "run-1:work", inst.to_dict()
+    assert back.claim_target == target, inst.to_dict()
     assert back.claim_holder == "workflow:run-1:work#deadbeefcafe", inst.to_dict()
 
 
@@ -439,6 +489,11 @@ def test_a_spawn_that_raises_releases_the_claim_it_took(tmp_path: Path, monkeypa
     the controller. A raising `spawn` returns nothing, so unless the claim is dropped on the way
     out there is no code anywhere that could ever release it — the node would refuse its own
     retry for the full TTL, which is #3533 wearing an exception.
+
+    `instance_path` travels with the dispatch for the reason the concurrency test above records: it
+    is the claim's key since #3524, and without it the fail-closed guard returns before `spawn` is
+    ever called — so the premise (a spawn that RAISES) would not be reached and the test would red
+    on `DID NOT RAISE` rather than on the claim it is about.
     """
     monkeypatch.setattr("personalclaw.workflows.leases.config_dir", lambda: tmp_path)
 
@@ -460,11 +515,15 @@ def test_a_spawn_that_raises_releases_the_claim_it_took(tmp_path: Path, monkeypa
     with pytest.raises(RuntimeError, match="session store"):
         asyncio.run(
             engine.dispatch_stage(
-                _stage_node(), BindingContext(), subagents=_Boom(), run_id="run-1"
+                _stage_node(),
+                BindingContext(),
+                subagents=_Boom(),
+                run_id="run-1",
+                instance_path=STAGE_PATH,
             )
         )
 
-    target = claim_key("run-1", "work")
+    target = claim_key("run-1", STAGE_PATH)
     assert [t for t, _ in acquired] == [
         target
     ], f"the raising path never took a claim ({acquired}), so the assertion below is vacuous"

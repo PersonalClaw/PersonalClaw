@@ -209,36 +209,31 @@ def test_a_general_kind_run_executes_and_writes_its_own_ledger() -> None:
     read-time alias resolution with no launch — produces no run and therefore no ledger at all,
     so every assertion here reds against it.
 
-    Deliberately NOT asserted: `status is COMPLETE`. The template still cannot complete, for a
-    reason that is not this session's to fix and is pinned by
-    :func:`test_a_loop_body_still_gets_no_real_previous_iteration` below — a loop BODY receives no
-    `last` at all, so only its FIRST iteration has an honest value to read. (That blocker is the
-    SECOND one this run hit. The first — every body prompt failing to bind on
-    `{{last.… | default(…)}}`, so the run died at its first node — is fixed, and
-    :func:`test_the_loop_bodys_first_iteration_binds` now holds it that way.) Asserting a green
-    here would mean either weakening that blocker or editing the template's prompts to dodge it,
-    and both would report a working port that is not one. What IS asserted is everything the port
-    genuinely delivers: the template's own nodes are reached, a real stage dispatches a real
-    subagent, and the run writes its own ledger.
+    `status is COMPLETE` IS asserted now, and the history of that line is the point. It began as
+    "deliberately NOT asserted: the template still cannot complete", because a loop BODY received no
+    `last` at all — so only iteration 0 had an honest value to read and every later one failed to
+    bind. Three separate engine seams had to land for the template to finish, the last two in #3524:
+    the stage reconciler advancing the iteration counter, `_context_for` handing a body its previous
+    iteration (:func:`test_a_loop_body_reads_its_previous_iteration`), and a spawned stage's output
+    reaching its declared `schema` at all. With those in, the loop ends on its OWN declared
+    `until_dry` streak rather than burning its iteration budget, which is a stronger claim than a
+    terminal state: `dry_streak` can only be reached by reading `meaningful_progress` out of the
+    body's output, so a green here is also evidence the declared shape arrived.
     """
     status, run_id, fake = _drive_the_template()
 
-    # 1. It reached a terminal state rather than hanging — the timeout would have surfaced as a
-    #    non-terminal status.
-    #
-    #    `ESCALATED` joined this set in PP-16 session 2, and the change is worth naming because it
-    #    makes the blocker below MORE visible rather than less. Until then the stage reconciler
-    #    never advanced the loop's iteration counter, so this template failed its first `work` stage
-    #    and the tick loop reported `run deadlocked` — FAILED, on a
-    #    loop that had run exactly one round. With the counter advancing, the loop really iterates,
-    #    the breaker sees the same binding failure repeatedly, and the loop is SURFACED to a human.
-    #    A loop handed to a human for an unresolvable reference is the correct ending; a deadlock
-    #    was not.
-    assert status in (
-        RunStatus.COMPLETE,
-        RunStatus.FAILED,
-        RunStatus.ESCALATED,
-    ), f"run ended {status}"
+    # 1. It COMPLETED. Not "reached some terminal state": `ESCALATED` and `FAILED` were both
+    #    accepted here while the loop could not read its own previous iteration, and accepting them
+    #    still would let this suite go green against a regression of exactly that.
+    assert status is RunStatus.COMPLETE, f"run ended {status}"
+    # And it ended on the TEMPLATE's own exit condition rather than on its iteration ceiling —
+    # `max_iterations` is what a loop whose body fails every round reaches, so the two endings must
+    # not be conflated (#3524's escalation-headline half).
+    outcomes = [str(e.get("outcome") or "") for e in J.journal_records(run_id, kinds={"iteration"})]
+    assert "dry_streak" in outcomes, f"the loop did not end on its declared condition: {outcomes}"
+    assert not [
+        o for o in outcomes if o.startswith("breaker:")
+    ], f"the breaker tripped on a run that should not thrash: {outcomes}"
 
     # 2. The template's OWN nodes were reached, both of them, by id. This is the assertion that
     #    read-time aliasing could never satisfy: there was no run, so there was no node.
@@ -268,11 +263,12 @@ def test_the_loop_bodys_first_iteration_binds() -> None:
     """The guarded `{{last.… | default(…)}}` idiom works, verified by EXECUTION not by text.
 
     This replaces `test_the_loop_body_cannot_read_its_previous_iteration`, whose claim was "a loop
-    body cannot read ``last`` on ANY iteration". Half of that is now false: `bindings` keys its
-    first-cycle escape on a positive first-iteration signal (`iter_index == 0` with no `foreach`
-    item rebinding it) instead of on the root simply being absent, so iteration 0 resolves the
-    documented default and both body stages run. The half that is still true is narrower and moved
-    to :func:`test_a_loop_body_still_gets_no_real_previous_iteration`.
+    body cannot read ``last`` on ANY iteration". `bindings` keys its escape on a positive
+    in-a-loop-body signal instead of on the root simply being absent, so iteration 0 resolves the
+    documented default and both body stages run. Iterations 2+ are covered by
+    :func:`test_a_loop_body_reads_its_previous_iteration`, which asserts the carried value rather
+    than the default — so this test is specifically the FIRST pass, where the honest answer really
+    is the default.
 
     **Why every assertion here is runtime.** The rail that certified this fixed once
     (`test_last_refs_carry_a_default`) scanned the template's JSON source text for
@@ -280,13 +276,12 @@ def test_the_loop_bodys_first_iteration_binds() -> None:
     not work, because `_walk_path` raised before any pipe. A source-text assertion is exactly what
     must not be trusted at this seam.
 
-    **Scoped to ITERATION 0's instances (`root.body@0.…`), deliberately and not for convenience.**
-    A later iteration with no `last` still raises, by design — that is what
-    :func:`test_a_loop_body_still_gets_no_real_previous_iteration` pins and what keeps an absent
-    root from rendering "(this is the first pass)" for the rest of the loop. So a run-wide "no
-    unresolved reference anywhere" assertion would be asserting the OPPOSITE of that design the
-    moment the loop advances past its first iteration, and would red on a change to the scheduler
-    rather than to this seam. The claim here is exactly the one in the name.
+    **Still scoped to ITERATION 0's instances (`root.body@0.…`)**, now for a different reason than
+    when it was written. The old reason was that a later iteration was DESIGNED to raise, so a
+    run-wide assertion would have contradicted the design; #3524 removed that. The reason it stays
+    scoped is that the claim in the name is about the first pass specifically — the run-wide version
+    lives in :func:`test_a_loop_body_reads_its_previous_iteration`, and a test asserting both would
+    no longer be able to say which of the two seams broke.
     """
     _, run_id, fake = _drive_the_template()
 
@@ -316,44 +311,285 @@ def test_the_loop_bodys_first_iteration_binds() -> None:
     assert "(this is the first pass" in work[0], work[0][:400]
 
 
-def test_a_loop_body_still_gets_no_real_previous_iteration() -> None:
-    """The half of the old blocker that is STILL open, re-pinned at the seam that owns it.
+def test_a_loop_body_reads_its_previous_iteration() -> None:
+    """The other half of the old blocker, now CLOSED (#3524) and pinned as the fixed behaviour.
 
-    `RunController._context_for` is the only `BindingContext` a body node receives and it sets no
-    `last_output`/`has_last`. The single site that does is the loop's CONTINUE decision, which is
-    why a loop's own `config.condition` may read `last` (four bundled templates do) and a body
-    prompt may not. So iteration 0's default above is the honest absence of a value, not a carried
-    one, and iteration 1+ still RAISES rather than pretending to be a first pass forever — which is
-    the whole reason the escape is keyed on the iteration index and not on the missing root.
+    This replaces `test_a_loop_body_still_gets_no_real_previous_iteration`, whose claim was that
+    `RunController._context_for` sets no `last_output`/`has_last` so a body prompt may never read
+    `last`. It does now, and the contract that test said was missing is the one it named: what a
+    loop ITERATION's output IS when the body is a container whose children emit different schemas.
+    The answer is the body's outputs LAYERED in document order — this template reads `summary` from
+    its worker and `verdict` from its judge in one prompt, so no single child's output could ever
+    have been it (`RunController._last_output`).
 
-    Closing it needs the loop-body binding contract: what a loop ITERATION's output IS when the
-    body is a container whose children emit different schemas. `general-project` reads `summary`
-    from its worker and `verdict` from its judge, so no single child's output is the answer. That
-    is a shared contract, not port scaffolding, and it stays recorded rather than improvised.
+    **Runtime, on the SECOND iteration's real prompt, not on a hand-built context.** A
+    `_context_for` assertion would pass against a `_last_output` that returns the right shape from
+    the wrong iteration, and the value that matters is the one the model is handed. So this asserts
+    the previous iteration's own words are in iteration 1's `work` prompt, and that the first-pass
+    default is NOT — which is what tells a carried value from a rescued absence.
+
+    Three engine seams had to land together for this, and the third is why fixing `last` alone was
+    not enough: a spawned stage's output was `{"result": "<raw text>"}` regardless of its declared
+    `schema`, so wiring `last` only moved the failure from `unresolved reference at 'last'` to
+    `unresolved reference at 'summary'`. `_settled_stage_output` carries that argument.
     """
-    from personalclaw.workflows.bindings import BindingError, resolve
-    from personalclaw.workflows.tick import ReadyNode
+    _, run_id, fake = _drive_the_template()
 
-    spec = _template_spec()
-    run = store.create(
-        WorkflowRun(id="", workflow_name=TEMPLATE, inputs={"task": "t", "exit_condition": "e"})
+    work = [p for p in fake.prompts if "Do the next meaningful step" in p]
+    assert len(work) >= 2, (
+        "the loop never reached a second iteration, so this test cannot observe a carried `last` "
+        f"at all: {len(work)} work prompt(s)"
     )
-    store.write_spec(run.id, spec)
-    controller = RunController(run, spec, services=EngineServices(subagents=_FakeSubagents()))
-    body = _loop_node(spec).body
-    assert body is not None and body.children, "the loop body is no longer a container of stages"
-    item = ReadyNode(
-        path="root.body@1.children[0]", node=body.children[0], lane="llm", iter_index=1
+    second = work[1]
+    assert "wrote the line the task asked for" in second, (
+        "iteration 1's prompt does not carry iteration 0's `summary` — the worker's half of the "
+        f"layered iteration output is missing: {second[:600]}"
+    )
+    assert "What the judge ruled on it: PASS" in second, (
+        "iteration 1's prompt does not carry iteration 0's `verdict` — the JUDGE's half is "
+        f"missing, which is the half no single child's output could supply: {second[:600]}"
+    )
+    assert "(this is the first pass" not in second, (
+        "iteration 1 still rendered the first-pass default, so `last` resolved to an absence "
+        f"rather than to the previous iteration: {second[:600]}"
     )
 
-    ctx = controller._context_for(item)
-    assert not ctx.has_last and ctx.last_output is None, (
-        "a body node now receives `last` — the loop-body binding contract may have landed; "
-        "update this claim and the first-iteration escape's docstring with it"
+    # And nothing in the run failed on a reference, at ANY iteration. The narrower
+    # `root.body@0.`-scoped version of this assertion in
+    # `test_the_loop_bodys_first_iteration_binds` was correct while iterations 2+ were designed to
+    # raise; now that they are not, run-wide is the honest scope.
+    unresolved = [
+        str(e.get("error") or "")
+        for e in J.journal_records(run_id, kinds={"step_failed"})
+        if "unresolved reference" in str(e.get("error") or "")
+    ]
+    assert not unresolved, f"a reference still fails somewhere in the run: {unresolved}"
+
+
+#: The subagent manager's own sentence for a child it killed on its deadline, verbatim — the
+#: controller files it unchanged as the failure's `cause_plain`, so this is also what a user reads.
+REAPED = "Reaped after 900s (exceeded 900s deadline) [stage]"
+
+WORK_PROMPT = "Do the next meaningful step"
+
+
+class _ProseWorker(_FakeSubagents):
+    """The work stage answers in PROSE, so its declared schema cannot be parsed.
+
+    This was #3524's measured shape and it is now the CONTROL rather than the defect, which is the
+    whole point of keeping it. Iteration 0 renders its documented default; from iteration 1 the
+    output is the unstructured `{"result": "<text>"}` envelope, so `{{last.output.summary}}` reads a
+    field a PRESENT `last` does not carry — and #3544's `_prior_cycle_field_miss` rescues exactly
+    that, because the template already declares `| default(…)` for it. So the iterations no longer
+    fail: the loop runs all six, `meaningful_progress` is never parseable out of prose so
+    `until_dry` cannot fire, and it stops on `max_iterations` HONESTLY.
+
+    Measured: `_iteration_failures` reports `(0, 6, '')` and the run journals ZERO `step_failed`
+    rows. That is the negative direction of the test below — the same template, the same ceiling,
+    and the reason must stay `max_iterations` — and it is what stops `iterations_failed` from being
+    a label this suite would hang on any run that ran out of room.
+    """
+
+    def spawn(self, **kw: Any) -> _Info:
+        prompt = str(kw.get("prompt") or kw.get("task") or "")
+        if WORK_PROMPT in prompt:
+            self.prompts.append(prompt)
+            info = _Info(f"sub{len(self.prompts)}", "I had a look around and things seem fine.")
+            self.infos[info.id] = info
+            return info
+        return super().spawn(**kw)
+
+
+class _ReapedWorker(_FakeSubagents):
+    """The work stage's subagent is KILLED on its deadline, every iteration.
+
+    The premise the test below needs, re-derived against post-#3544 `main`. The original premise was
+    `_ProseWorker` — iterations failing on `unresolved reference at 'summary'` — and #3544 rescues
+    that miss, so the loop stopped failing and started reaching its ceiling for real. Re-deriving
+    rather than re-pointing the assertion: a reap is a failure mode #3544 has no opinion about, so
+    the iterations genuinely fail and the escalation has something to be wrong about.
+
+    It is also the honest shape for this claim. `general-project`'s three `last` reads all carry
+    `| default(…)` and a stage that returns unparseable text keeps its `{"result": …}` envelope
+    rather than failing, so **no binding failure is reachable in this template at all** now — the
+    test asserts that too, so the premise cannot quietly drift back onto a rescued miss.
+
+    The error is applied at LOOKUP, not at spawn. `dispatch_stage` reads `info.error` the moment
+    `spawn` returns and files a non-empty one as a PERMISSION-class *spawn rejection* — a child that
+    never started. A reap is a child that started, ran and was killed, which settles through
+    `_reconcile_dispatched_stages` as `FailureClass.TIMEOUT` with `retries_exhausted`. Those are
+    different rows with different `cause_plain` values (`spawn rejected: …` vs the sentence itself),
+    and only the second is the run this escalation was measured on.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._reaped: set[str] = set()
+
+    def spawn(self, **kw: Any) -> _Info:
+        prompt = str(kw.get("prompt") or kw.get("task") or "")
+        if WORK_PROMPT not in prompt:
+            return super().spawn(**kw)
+        self.prompts.append(prompt)
+        info = _Info(f"sub{len(self.prompts)}", "")
+        self._reaped.add(info.id)
+        self.infos[info.id] = info
+        return info
+
+    def get(self, agent_id: str) -> _Info | None:
+        info = super().get(agent_id)
+        if info is not None and agent_id in self._reaped:
+            info.error = REAPED
+            info.result = ""
+            info.reaped = True
+        return info
+
+
+def test_a_loop_that_spent_its_budget_failing_does_not_blame_its_ceiling() -> None:
+    """The escalation names the real cause, not the budget it happened to reach (#3524).
+
+    Measured shape: five of six iterations failed instantly on a binding and never called a model,
+    and the banner read *"the loop reached its iteration ceiling at project. reached 6 iterations"*
+    — which a reader takes as "my task was too big" and acts on by shrinking a task that was never
+    the problem. The engine held both facts and surfaced the wrong one.
+
+    Asserted on `run.attention`, the record the panel really renders (`attentionMeta.readAttention`
+    → `EscalationPanel`), rather than on the helper that derives it: a `_iteration_failures` unit
+    test would pass against a `_surface_loop` that ignored it.
+
+    **The PREMISE was re-derived here, and the reason is worth stating rather than absorbing.** The
+    failing iterations used to be produced by `_ProseWorker`, whose unstructured output made every
+    `{{last.output.summary | default(…)}}` read raise `unresolved reference at 'summary'`. #3544
+    rescues precisely that miss, so on current `main` that worker's loop reaches its ceiling with
+    **zero** failed iterations — measured `(0, 6, '')` — and the old assertion failed in both
+    directions at once: the reason really was `max_iterations`, honestly. Re-pointing the assertion
+    at whatever now happens would have deleted the claim; instead the premise moved to a failure
+    mode #3544 has no opinion about, a subagent killed on its deadline (`_ReapedWorker`). No binding
+    failure is reachable in this template any more — all three `last` reads carry a default and an
+    unparseable stage output keeps its envelope rather than failing — which is asserted below so the
+    premise cannot drift back onto a rescued miss.
+
+    **Both directions, in one test deliberately.** The claim is comparative — the reason must track
+    whether the loop spent its budget WORKING — so the control is the same template hitting the
+    same six-iteration ceiling with iterations that did not fail, and it must still read
+    `max_iterations`. Split across two tests that discriminator can half-rot; here it is
+    structural. (The clean drive elsewhere in this file is a third point: a schema-honouring worker
+    COMPLETES on `dry_streak` and produces no escalation at all.)
+    """
+
+    def _drive(worker: _FakeSubagents) -> tuple[RunStatus, RunController, str]:
+        spec = _template_spec()
+        run = store.create(
+            WorkflowRun(
+                id="",
+                workflow_name=TEMPLATE,
+                inputs={"task": "t", "exit_condition": "e"},
+            )
+        )
+        store.write_spec(run.id, spec)
+        controller = RunController(run, spec, services=EngineServices(subagents=worker))
+        return asyncio.run(controller.run_to_completion(timeout=RUN_TIMEOUT)), controller, run.id
+
+    status, controller, run_id = _drive(_ReapedWorker())
+
+    assert (
+        status is RunStatus.ESCALATED
+    ), f"the run did not escalate, so there is no banner: {status}"
+    attention = controller.run.attention or {}
+    assert attention.get("kind") == "escalation", attention
+
+    # 1. The token, which is what picks the sentence the user reads.
+    assert attention.get("reason") == "iterations_failed", (
+        "the escalation still blames the budget it reached rather than the iterations that failed: "
+        f"{attention.get('reason')!r} / {attention.get('detail')!r}"
     )
-    with pytest.raises(BindingError) as exc:
-        resolve('{{last.output.summary | default("(this is the first pass)")}}', ctx)
-    assert "unresolved reference at 'last'" in str(exc.value)
+
+    # 2. The counts and the first failure's own words, so the detail is falsifiable rather than a
+    #    second adjective. The original budget token stays in it — it is still true, and it is what
+    #    a reader greps for.
+    detail = str(attention.get("detail") or "")
+    assert "iterations failed instead of finishing their work" in detail, detail
+    assert (
+        REAPED in detail
+    ), f"the detail does not carry the failure the user cannot otherwise read: {detail}"
+    assert "max_iterations" in detail, f"the budget token was dropped rather than kept: {detail}"
+
+    # 3. The vacuity floor: the run really did fail most of its iterations. Without this, a detail
+    #    naming failures could be describing a run that had none.
+    rows = list(J.journal_records(run_id, kinds={"step_failed"}))
+    failed = {str(e.get("instance_path") or "") for e in rows}
+    assert (
+        len(failed) >= 2
+    ), f"fewer than two iterations failed, so the claim is not measured: {failed}"
+
+    # 4. And the premise is the re-derived one, not the rescued one it replaced. If a binding miss
+    #    ever fails here again, #3544's field-miss rescue has regressed and THAT is the finding —
+    #    this test would otherwise absorb it and keep reporting green on the wrong premise.
+    unresolved = [
+        str(e.get("error") or "")
+        for e in rows
+        if "unresolved reference" in str(e.get("error") or "")
+    ]
+    assert not unresolved, (
+        "an iteration failed on a binding reference, so this run is no longer measuring a reap — "
+        f"#3544's field-miss rescue has regressed: {unresolved}"
+    )
+
+    # ── the other direction: the SAME ceiling, iterations that did not fail ──────────────────
+    #
+    # Without this the token above would be satisfied by a `_surface_loop` that had simply stopped
+    # reading the budget reason at all and always said `iterations_failed`.
+    ctl_status, ctl_controller, ctl_run_id = _drive(_ProseWorker())
+    ctl_attention = ctl_controller.run.attention or {}
+
+    assert ctl_status is RunStatus.ESCALATED, (
+        "the control did not escalate, so it is not the same ending and cannot discriminate: "
+        f"{ctl_status}"
+    )
+    assert not list(J.journal_records(ctl_run_id, kinds={"step_failed"})), (
+        "the control's iterations FAILED, so it is a second copy of the case above rather than "
+        "its opposite — re-derive it against a worker whose iterations complete"
+    )
+    assert ctl_attention.get("reason") == "max_iterations", (
+        "a loop that spent its budget WITHOUT failing is now also reported as `iterations_failed`, "
+        f"so the re-derivation is a relabel rather than a discrimination: {ctl_attention!r}"
+    )
+
+
+def test_a_tripped_breaker_reaches_the_timeline_a_user_can_read() -> None:
+    """A tripped breaker is journaled; before #3524 no surface showed it.
+
+    `controller._advance_loop` records a trip as an `iteration` row with
+    `outcome="breaker:<reason>"`, and that was the ONLY record: `breaker_trip` is a kind only the
+    LOOP noun writes (`introspection.RAIL_PRODUCERS` declares that asymmetry deliberately), and
+    `iteration` was outside `service._TIMELINE_KINDS`. The node-inspect endpoint did return the row,
+    but `web/src/pages/workflows/ledgerRowDetail.ts` projects only `kind`/`sha`/`impact`/
+    `rationale`, so it rendered as the bare word `iteration`. An inert signal.
+
+    **The filter is asserted in BOTH directions**, because allowlisting `iteration` wholesale is the
+    wrong fix and would pass a one-directional test: an `until_cancelled` watcher writes one row per
+    cycle for months, which is the noise the whitelist exists to keep out. So a `breaker:` row must
+    arrive and a `continue` row must not.
+    """
+    from personalclaw.workflows.service import introspection_timeline
+
+    rows = introspection_timeline(
+        [
+            {"kind": "iteration", "ts": "t1", "node_id": "project", "outcome": "continue"},
+            {"kind": "iteration", "ts": "t2", "node_id": "project", "outcome": "dry_streak"},
+            {
+                "kind": "iteration",
+                "ts": "t3",
+                "node_id": "project",
+                "outcome": "breaker:identical_output",
+            },
+        ]
+    )
+    assert [r["detail"] for r in rows] == ["breaker:identical_output"], (
+        "the timeline must carry the tripped breaker and nothing else from a loop's per-round "
+        f"bookkeeping: {rows}"
+    )
+    assert rows[0]["kind"] == "iteration" and rows[0]["node_id"] == "project", rows
 
 
 @contextlib.contextmanager

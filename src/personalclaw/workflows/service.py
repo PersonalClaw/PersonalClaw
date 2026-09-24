@@ -1982,7 +1982,20 @@ _TIMELINE_KINDS = (
     "decision",
     "steering",
     "breaker_trip",
+    # `iteration` is FILTERED, not simply allowlisted — see `_TRIPPED_ITERATION` below. A loop's
+    # per-round bookkeeping is the noise this whitelist exists to keep out (an `until_cancelled`
+    # watcher writes one row per cycle for months), but the subset that records a TRIPPED BREAKER is
+    # the opposite: measured on a `general-project` run, `breaker:identical_output` was journaled
+    # twice and reachable from no user surface at all (#3524). `breaker_trip` above is a kind only
+    # the LOOP noun writes (`introspection.RAIL_PRODUCERS` declares the asymmetry), so the run-side
+    # trip has no other row to travel on.
+    "iteration",
 )
+
+#: The prefix `controller._advance_loop` writes into an `iteration` row's `outcome` when
+#: `check_breaker` tripped. Everything else it writes (`continue`, `dry_streak`, `condition_met`, …)
+#: is bookkeeping a reader does not need one row per round of.
+_TRIPPED_ITERATION = "breaker:"
 
 
 def introspection_timeline(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -2000,7 +2013,11 @@ def introspection_timeline(events: list[dict[str, Any]]) -> list[dict[str, Any]]
     for event in events or []:
         if not isinstance(event, dict):
             continue
-        if str(event.get("kind") or "") not in _TIMELINE_KINDS:
+        kind = str(event.get("kind") or "")
+        if kind not in _TIMELINE_KINDS:
+            continue
+        outcome = str(event.get("outcome") or "")
+        if kind == "iteration" and not outcome.startswith(_TRIPPED_ITERATION):
             continue
         row = {
             "kind": str(event.get("kind") or ""),
@@ -2014,7 +2031,10 @@ def introspection_timeline(events: list[dict[str, Any]]) -> list[dict[str, Any]]
             "cost_usd": event.get("cost_usd"),
             "model": str(event.get("model") or ""),
             "approved": event.get("approved"),
-            "detail": event.get("detail") or event.get("error") or "",
+            # `outcome` joins the chain for the `iteration` rows above: it is the only field that
+            # names WHICH breaker tripped, and a row reading just `iteration` with a blank detail
+            # would surface the event while still hiding the signal.
+            "detail": event.get("detail") or event.get("error") or outcome,
         }
         out.append(journal_mod.redact(row))
     return out
