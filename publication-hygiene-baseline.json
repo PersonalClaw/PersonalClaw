@@ -1,0 +1,76 @@
+{
+  "generated_from": "scripts/check_publication_hygiene.py",
+  "why": "This repository is PUBLIC. Every tracked path is published to every clone, forever, and `git rm` does not un-publish history. The rules below are the classes of path that reached `main` once and must not reach it again: per-PR review residue, a directory named for scratch work, build output, an embedded git worktree, dev-home or secret material, and an absolute path into the maintainer's real machine. Each is cheap to add by accident (a `git add -A` is enough) and expensive to remove.",
+  "how_to_fix_a_red": "Delete the path, or move it somewhere the repo already publishes deliberately. Do NOT add it to `allowed` to make CI green unless you can write a rationale a stranger reading the public repo would accept — `allowed` is for paths whose name matches a rule but whose CONTENT is deliberately published, and every entry is reviewed as policy, not as a build fix.",
+  "path_rules": [
+    {
+      "name": "residue-name",
+      "pattern": "(?:^|/)(?:temp|tmp|scratch|wip|old|bak|debug)(?:[-_.][^/]*)?(?:/|$)",
+      "rationale": "A path segment that IS a residue word, or a residue word followed by a delimiter. This is the rule that `temp-screenshots/` (80 files, 20.8 MB of per-PR before/after evidence) and `scratch/` (38 files, two sibling repositories' content) both broke. Delimiter-anchored on purpose so ordinary names that merely START with a residue word stay green: `template.py` and `bakeoff.py` do not match, and `tests/test_residue_name_rule_does_not_fire_on_template_or_bakeoff` pins that."
+    },
+    {
+      "name": "residue-suffix",
+      "pattern": "(?:\\.(?:orig|rej|bak|tmp|swp|swo)|~)$",
+      "rationale": "Editor backups and the conflict-resolution droppings of `git merge`/`patch`. None is ever content; each is produced by a tool the contributor did not mean to commit from."
+    },
+    {
+      "name": "build-output-or-cache",
+      "pattern": "(?:^|/)(?:dist|build|node_modules|__pycache__|htmlcov|coverage|reports|eval_results|\\.pytest_cache|\\.mypy_cache|\\.hypothesis|\\.cache)(?:/|$)",
+      "rationale": "Regenerable output. Committing it makes every clone carry a frozen copy that silently shadows a fresh build — the exact failure mode `src/personalclaw/static/dist` exists as a SYMLINK to avoid (see AGENTS.md, mechanical gotchas). `.gitignore` covers these; this rule is what catches a `git add -f` or a new directory the ignore rules do not yet name."
+    },
+    {
+      "name": "embedded-repo-or-editor-state",
+      "pattern": "(?:^|/)(?:\\.worktrees|\\.local|\\.claude|\\.idea|\\.vscode|\\.playwright-mcp)(?:/|$)",
+      "rationale": "`.worktrees/` is the worst of these: `git add -A` stages each linked worktree as a GITLINK pointing at a local absolute path that exists on no other machine, and git warns that clones 'will not contain the contents of the embedded repository and will not know how to obtain it'. The artefact is a broken clone for every user, produced by the most ordinary contributor reflex there is (#3413). The rest is per-user editor and tool state that is not repo content."
+    },
+    {
+      "name": "dev-home-or-secret-material",
+      "pattern": "(?:^|/)(?:\\.dev-home[^/]*|\\.screenshot-home|\\.secrets\\.env|\\.local_secret|session_key|sel_hmac\\.key|\\.mutation-session)(?:/|$)",
+      "rationale": "A dev home holds LIVE credential material — `.local_secret`, `session_key`, `sel_hmac.key` — so committing one publishes working secrets, not just clutter. `.gitignore` globs these; this rule is the second lock, because the cost of one miss is not recoverable by deleting forward."
+    },
+    {
+      "name": "dotenv-with-real-values",
+      "pattern": "(?:^|/)\\.env(?:\\.local)?$",
+      "rationale": "`.env` and `.env.local` are where real keys live. `.env.example` is deliberately tracked and deliberately NOT matched by this pattern: it is the documented template and carries only commented-out placeholders (`sk-ant-...`, `xoxb-...`). `tests/test_the_tracked_env_example_carries_no_real_value` re-checks that claim rather than trusting it."
+    }
+  ],
+  "binary_size_rule": {
+    "name": "oversized-binary",
+    "max_bytes": 524288,
+    "rationale": "A tracked binary is permanent, unshrinkable weight in every clone (no Git LFS here). Measured ceiling after the publication-hygiene pass: the largest tracked binary is `docs/brand/social-preview.png` at 352 KB, and `docs/screenshots/` tops out at 328 KB. 512 KB is one step above that measured max — the same 'one step above measured, forbid growth' shape the structural ratchets use. It would have red `temp-screenshots/graph-cap/before-after-harness.png` (1.80 MB), the single largest file the repo ever tracked. TEXT files are exempt: CHANGELOG.md is 704 KB and grows legitimately."
+  },
+  "real_home_path_rule": {
+    "name": "real-home-path",
+    "pattern": "/(?:Users|home)/([A-Za-z0-9._-]+)",
+    "placeholder_home_names": [
+      "ada",
+      "alice",
+      "apps",
+      "bob",
+      "config.json",
+      "dev",
+      "dev.linux",
+      "me",
+      "personalclaw",
+      "projects",
+      "runner",
+      "skills",
+      "someone",
+      "state-history",
+      "surfaces",
+      "u",
+      "user",
+      "workflows",
+      "x",
+      "you"
+    ],
+    "rationale": "An absolute path into a real developer's home publishes the author's username and machine layout. This is an ALLOWLIST of placeholder home names rather than a denylist of real ones, for two reasons: a denylist would have to write the maintainer's username INTO the public repo to keep it out (self-defeating), and an allowlist reds an unrecognised name the first time it appears instead of only the names someone already thought of. The listed names are the complete measured set across the tracked tree — every one a synthetic fixture (`/Users/x`, `/home/u`, `/Users/dev`) or a dev-home path fragment (`/home/config.json`). Adding a name here is a claim that it is a PLACEHOLDER, not a person."
+  },
+  "allowed": [
+    {
+      "path": "tests/debug_sandbox.sh",
+      "rule": "residue-name",
+      "rationale": "Matches `residue-name` on its `debug_` prefix, but the word is descriptive of what it does, not a mark of residue: it is a documented manual on-host sandbox check (listed in `tests/README.md`) that prints the detected backend and confirms `~/.aws/` is blocked. Present since the initial public commit and referenced from the tests README. Kept broad-rule-plus-exception rather than narrowing the pattern, so the NEXT `debug_*` file that appears reds and forces a deliberate decision."
+    }
+  ]
+}

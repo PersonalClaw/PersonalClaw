@@ -33,6 +33,20 @@ venv/
 .venv/
 .venv-client/
 
+# Linked git worktrees (`git worktree add .worktrees/<name>`). GLOB-anchored at the root
+# because each entry is an EMBEDDED GIT REPOSITORY: `git add -A` stages it as a gitlink
+# pointing at a local absolute path that exists on no other machine, and git says so
+# itself — "Clones of the outer repository will not contain the contents of the embedded
+# repository and will not know how to obtain it." So the artefact of the single most
+# ordinary contributor reflex is a broken clone for every user of a PUBLIC repo. Ignored
+# rather than documented-around, because the reflex is what has to be safe (#3413).
+/.worktrees/
+
+# Per-user local tool state (`gh` writes .local/state/gh/device-id — a stable installation
+# identifier). Nothing under here is repo content and none of it is reproducible on another
+# machine; it exists only because XDG-style tools default to the nearest writable root.
+/.local/
+
 # IDE / editor configs
 .vscode/
 .idea/
@@ -122,3 +136,10 @@ src/personalclaw/tests_fixtures/**/*.db-shm
 # tests for the directory itself and refuses the commit, so an ignored residue is a
 # LOUD residue rather than a hidden one.
 /.mutation-session/
+
+# Per-worktree pytest bootstrap. A linked worktree has no venv of its own, and an editable
+# install in the main checkout means a bare `import personalclaw` from a worktree resolves to
+# the MAIN checkout's src — so a lane writes a small runner that strips the editable finder
+# and re-points sys.path before collecting. It is scaffolding for one session, never repo
+# content, and `git add -A` would sweep it in (it did, once, during this rule's own change).
+/.lane_pytest.py

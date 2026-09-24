@@ -18,8 +18,8 @@ machine-checked institutional knowledge:
 The CLI runs on the repo venv (``.venv/bin/python`` at the repo root) when there is one,
 and otherwise on whatever interpreter invoked it — a git worktree has no ``.venv`` of its
 own, so ``harness.profiles.resolve_python`` decides once for every profile command. See
-``harness/README.md`` for layout and ``AGENT.md`` at the repo root for the machine-facing
-gotcha list every coding agent needs.
+``harness/README.md`` for layout and ``AGENTS.md`` §"Mechanical gotchas" at the repo root
+for the machine-facing gotcha list every coding agent needs.
 """
 
 __all__ = ["__version__"]

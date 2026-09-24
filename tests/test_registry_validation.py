@@ -1,4 +1,4 @@
-"""ET-3 — the registry data tier staged under ``scratch/registry/``.
+"""ET-3 — the registry data tier staged under ``staged-repos/registry/``.
 
 The three clauses the listing policy lives or dies on are the first three tests:
 
@@ -41,7 +41,7 @@ import pytest
 from personalclaw.apps.manifest import PROVIDER_TYPES
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-STAGED = REPO_ROOT / "scratch" / "registry"
+STAGED = REPO_ROOT / "staged-repos" / "registry"
 FIXTURE_APPS = STAGED / "fixtures" / "apps"
 FIXTURE_REGISTRIES = STAGED / "fixtures" / "registries"
 
@@ -941,8 +941,8 @@ def test_every_shipped_listing_carries_a_real_scan_verdict() -> None:
         # unrecognised string as blocking rather than as reassuring and so must this.
         assert verdict in verdicts, (
             f"{name!r} carries last_scan_verdict={verdict!r}. Re-stamp with "
-            f"'python scratch/registry/validate_registry.py "
-            f"scratch/registry/app-registry.json --write' and commit the result."
+            f"'python staged-repos/registry/validate_registry.py "
+            f"staged-repos/registry/app-registry.json --write' and commit the result."
         )
         assert verdict != blocking, f"{name!r} is listed with a {blocking!r} verdict"
         stamped = row.get("last_validated")
@@ -995,25 +995,32 @@ def test_core_ci_keeps_the_shipped_verdicts_filled() -> None:
     """Something must call the stamper, or the rail above is a standing red waiting to happen.
 
     The three staged workflows cannot: GitHub runs workflows only from ``.github/workflows/``
-    at the repo ROOT, and they live under ``scratch/registry/``. Until the standalone registry
+    at the repo ROOT, and they live under ``staged-repos/registry/``. Until the standalone registry
     repo exists (ET-9, owner-only, #2490) core's own ``full.yml`` owns the job.
     """
     workflows = REPO_ROOT / ".github" / "workflows"
     full = (workflows / "full.yml").read_text(encoding="utf-8")
     commands = _workflow_job_commands(workflows / "full.yml", "registry-verdicts")
-    assert "scratch/registry/validate_registry.py" in commands, "the job never runs the validator"
-    assert "scratch/registry/app-registry.json" in commands, "the job never reads the shipped index"
+    assert (
+        "staged-repos/registry/validate_registry.py" in commands
+    ), "the job never runs the validator"
+    assert (
+        "staged-repos/registry/app-registry.json" in commands
+    ), "the job never reads the shipped index"
 
     # Vacuity for the two removals in _workflow_job_commands, self-proving. Each mutant that
     # survived before them is named there; these two assertions are what keep them dead.
     commented = [
         line
         for line in full.splitlines()
-        if line.strip().startswith("#") and "scratch/registry/validate_registry.py" in line
+        if line.strip().startswith("#") and "staged-repos/registry/validate_registry.py" in line
     ]
     assert commented, "the WHY header stopped naming the validator; comment-stripping is inert"
     heredoc = full.rsplit("<<'PY'\n", 1)[1].split("\n          PY", 1)[0]
-    for path in ("scratch/registry/app-registry.json", "scratch/registry/validate_registry.py"):
+    for path in (
+        "staged-repos/registry/app-registry.json",
+        "staged-repos/registry/validate_registry.py",
+    ):
         assert (
             path in heredoc
         ), f"the compare step stopped quoting {path}; heredoc-stripping is inert"
@@ -1042,7 +1049,7 @@ def test_the_staged_content_is_complete() -> None:
         ".github/workflows/comment-listing-verdict.yml",
         ".github/workflows/revalidate-listings.yml",
     ):
-        assert (STAGED / expected).is_file(), f"{expected} is missing from scratch/registry/"
+        assert (STAGED / expected).is_file(), f"{expected} is missing from staged-repos/registry/"
 
 
 def test_the_listing_policy_states_the_three_outcomes() -> None:

@@ -45,7 +45,7 @@ describe('localSourceLabel turns a filesystem path into a human folder name', ()
     expect(localSourceLabel('C:\\Users\\me\\apps')).toBe('apps')
   })
   it('never returns a value containing a path separator for a real folder', () => {
-    const leaky = '/Users/golani/PersonalProjects/PersonalClaw/.worktrees/ux-inspect/src/personalclaw/apps'
+    const leaky = '/Users/me/PersonalProjects/PersonalClaw/.worktrees/ux-inspect/src/personalclaw/apps'
     expect(localSourceLabel(leaky)).toBe('apps')
     expect(localSourceLabel(leaky)).not.toContain('/')
   })
@@ -56,7 +56,7 @@ describe('localSourceLabel turns a filesystem path into a human folder name', ()
 
 describe('sourceGroup labels a local source by folder name, keyed by full path', () => {
   it('a worktree-checkout source does not leak the absolute path into the heading (WT-10)', () => {
-    const worktree = '/Users/golani/PersonalProjects/PersonalClaw/.worktrees/ux-inspect/src/personalclaw/apps'
+    const worktree = '/Users/me/PersonalProjects/PersonalClaw/.worktrees/ux-inspect/src/personalclaw/apps'
     const g = sourceGroup(mk({ source: `${worktree}/ledger`, sourceKind: 'local', origin: 'local' }), [])
     // Heading is human, and carries no filesystem path.
     expect(g.label).toBe('apps')

@@ -229,7 +229,7 @@ product names into this draft.
 
 ## Status
 
-`DL-8` stays `todo` in DL.md / `dag.json`: these are the drafts the
+`DL-8` stays `todo` in the maintainer's roadmap (not in this repo): these are the drafts the
 `done_when` names, but the atom also requires the PRs/entries to actually be open and the gate to be
 green before any owner posting — external, owner-only steps. Flip the atom only when the submissions
 are live.
