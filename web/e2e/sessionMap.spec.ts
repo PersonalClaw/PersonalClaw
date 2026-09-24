@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Locator, type Page } from '@playwright/test'
 import { gotoRoute, driveScriptedTurns, openHeaderOverflowIfNeeded, settleEntranceAnimations } from './helpers'
 
 // ── SESSION MAP — WIRED INTO THE TRANSCRIPT (SSM-11) + THE COARSE FORM (SSM-10) ──────────────
@@ -24,6 +24,10 @@ const PROMPT = 'Index this turn on the session map, please'
 const RAIL = 'nav[aria-label="Session map"]'
 const MARK = '[data-session-mark]'
 const SCROLLER = '[data-transcript-scroll]'
+/** The rail's own live region (`SessionMapRail.tsx:275`). `jump()` writes `Jumped to turn N of M`
+ *  into it and nothing else does, so it is the product's statement of WHICH turn an activation
+ *  resolved — the one reading a test cannot fake by guessing. */
+const LIVE = '[data-session-map-live]'
 
 /** Scroll geometry of the transcript container, read in the page. */
 async function scrollBox(page: Page): Promise<{ top: number; scrollable: number }> {
@@ -32,6 +36,103 @@ async function scrollBox(page: Page): Promise<{ top: number; scrollable: number 
     if (!el) return { top: -1, scrollable: -1 }
     return { top: el.scrollTop, scrollable: el.scrollHeight - el.clientHeight }
   }, SCROLLER)
+}
+
+/** Poll the transcript's offset until it stops changing, and return where it came to rest.
+ *
+ *  `jumpToTurn` uses `scrollIntoView({behavior:'smooth'})` (`ChatPage.tsx:2432`), so every
+ *  post-activation reading has to be taken AFTER the animation, not after a number of
+ *  milliseconds. Quiet is the condition; elapsed time is not one.
+ *
+ *  🪤 THIS ALSO REPLACES THE FOUR `waitForTimeout(250)` PARKS, and they were the file's other
+ *  wall-clock dependence. Assigning `scrollTop = scrollHeight` is synchronous, but the offset that
+ *  assignment SETTLES at is not: the transcript is still re-laying-out from the turn that just
+ *  finished, so `scrollHeight` can move under it. A fixed 250 ms is therefore a bet on the host —
+ *  it is generous on a quiet box and a coin flip at 4-5× CPU oversubscription, which is the one
+ *  condition this gate runs under. It is also strictly slower in the common case: two equal samples
+ *  ~100 ms apart end the wait as soon as the offset is genuinely at rest. Nothing is loosened —
+ *  every baseline derived from a park is now a resting value rather than a timed one. */
+async function restingOffset(page: Page, what: string): Promise<number> {
+  let last = -1
+  await expect
+    .poll(async () => {
+      const now = (await scrollBox(page)).top
+      const quiet = now === last
+      last = now
+      return quiet
+    }, { message: `${what}: the transcript never stopped scrolling`, timeout: 10_000 })
+    .toBe(true)
+  return last
+}
+
+/** THE LANDING PROOF, READ OFF THE MARK THAT WAS ACTIVATED.
+ *
+ *  🪤 WHY THE TARGET IS NEVER A PROMPT NUMBER, AND THIS IS THE DEFECT THE WHOLE FILE SHARED.
+ *  Three sites used to activate a mark and then assert that `${PROMPT} (k)` — a prompt number
+ *  derived from a LOOP INDEX — had come on screen. That coupling holds only if two things the test
+ *  cannot see are both true: that the Nth send became the Nth turn, and that the Nth mark of a kind
+ *  belongs to that turn. Both failed in run 35949502119, in the two different ways they can:
+ *   · SSM-13 — `driveScriptedTurns(…, 6)` produced FIVE user turns (one send was swallowed into a
+ *     live run), so `userMarks.nth(1)` was prompt `(3)` and `(2)` did not exist at all. The jump
+ *     was correct — the rail's live region read `Jumped to turn 3 of 10` — and the test failed
+ *     with "the rail tick did not bring its turn on screen", naming the rail.
+ *   · SSM-15 — `End` lands the roving cursor on the LAST mark, which for a 6-turn session is mark
+ *     17 of 18: the newest turn's ACTIVITY mark, whose coordinate is the assistant turn's node.
+ *     Space jumped there correctly (scrollTop 0 → 952 of 1271) and the test then demanded a
+ *     DIFFERENT element — the newest USER prompt, which sits above that node and is off the top at
+ *     the resting offset. Whether it happens to be visible is a function of the last turn's
+ *     rendered height, i.e. of host font metrics: a pass there was as unsound as the failure.
+ *
+ *  So the subject is read from the element under test instead. Two conditions, both deterministic
+ *  and both the PRODUCT's own:
+ *   1. the rail's live region names the turn this mark names (`aria-label` `Turn N of M: …` →
+ *      `Jumped to turn N of M`), which is what proves the activation reached the handler AND
+ *      resolved the right coordinate; and
+ *   2. the mark is `data-current`, the rail's own "this turn is on screen" reading — driven by
+ *      `useVisibleTurns`' `IntersectionObserver` rooted on the transcript (`sessionMapRegion.ts`),
+ *      i.e. exactly the coral region a user sees.
+ *
+ *  🔑 (2) IS STRUCTURAL, NOT PROBABILISTIC, which is the property the prompt-text assertion never
+ *  had. `jumpToTurn` centres the target (`block: 'center'`), and a centred element intersects its
+ *  scroll root in every clamping case — clamped to 0 its extent overlaps the first band, clamped to
+ *  the maximum it overlaps the last. So a working jump always satisfies this and a broken one never
+ *  can, at any viewport, on any runner. Callers pair it with the `not.toHaveAttribute` control
+ *  below so "it lit up" is a reading of the jump rather than of where the transcript already was. */
+async function expectMarkLanded(page: Page, mark: Locator, what: string): Promise<void> {
+  const name = (await mark.getAttribute('aria-label')) ?? ''
+  const at = /^Turn (\d+) of (\d+)\b/.exec(name)
+  expect(
+    at,
+    `${what}: the activated mark carries no "Turn N of M" accessible name (aria-label: ` +
+      `${JSON.stringify(name)}). \`sessionMapMarkName\` is the one writer of that name (§A.6) — if its\n` +
+      'shape changed, fix this reader; do not drop the assertion, because without the turn coordinate\n' +
+      'there is nothing to compare the rail\'s announcement against.',
+  ).not.toBeNull()
+  await expect(
+    page.locator(LIVE),
+    `${what} REACHED NO JUMP: the rail's live region never announced "Jumped to turn ${at![1]} of ` +
+      `${at![2]}".\nThe activation either never reached \`jump()\` or resolved a different mark than the ` +
+      'one that had the\ncursor — a screen-reader user would be told nothing happened (WCAG 4.1.3).',
+  ).toHaveText(`Jumped to turn ${at![1]} of ${at![2]}`, { timeout: 10_000 })
+  await expect(
+    mark,
+    `${what} ANNOUNCED A JUMP THAT DID NOT LAND: the rail says it went to turn ${at![1]} of ${at![2]}, but\n` +
+      "that mark is still not `data-current` — the rail's own IntersectionObserver does not see its turn\n" +
+      'on screen. `jumpToTurn` centres the node it resolves, and a centred node always intersects the\n' +
+      'transcript, so this means the coordinate resolved no node (a `turnNodes` key mismatch) or the\n' +
+      'scroll never ran.',
+  ).toHaveAttribute('data-current', 'true', { timeout: 10_000 })
+}
+
+/** The control that makes `expectMarkLanded` non-vacuous: the mark is NOT already lit, so its
+ *  turn is not already on screen and "it became current" can only be the activation's doing. */
+async function expectMarkNotCurrent(mark: Locator, what: string): Promise<void> {
+  await expect(
+    mark,
+    `${what}: the mark being activated is ALREADY \`data-current\`, so its turn is already on screen and\n` +
+      'the landing assertion below would pass without the jump doing anything. Park the transcript\n' +
+      'further away rather than letting it through.',
+  ).not.toHaveAttribute('data-current', 'true')
 }
 
 test.describe('Session Map — in the transcript (SSM-11)', () => {
@@ -82,7 +183,7 @@ test.describe('Session Map — in the transcript (SSM-11)', () => {
       const el = document.querySelector(sel)!
       el.scrollTop = el.scrollHeight
     }, SCROLLER)
-    await page.waitForTimeout(250)
+    await restingOffset(page, 'parking the transcript at its newest turn')
     const after = await scrollBox(page)
     expect(after.top, 'the transcript did not scroll, so the fixity assertion below is vacuous').toBeGreaterThan(40)
     const railTopAfter = (await rail.boundingBox())!.y
@@ -179,7 +280,7 @@ test.describe('Session Map — the coarse-pointer form (SSM-10)', () => {
       const el = document.querySelector(sel)
       if (el) el.scrollTop = el.scrollHeight
     }, SCROLLER)
-    await page.waitForTimeout(250)
+    await restingOffset(page, 'parking the transcript at its newest turn')
     await expect(
       oldest,
       'the oldest turn is still on screen at the newest scroll position — the transcript does not\n' +
@@ -265,6 +366,43 @@ test.describe('Session Map — operable from the KEYBOARD alone (SSM-15)', () =>
    *  reading, so reach and cursor position are one measurement and cannot disagree. */
   const focusedMark = (page: Page) => page.evaluate((sel) =>
     [...document.querySelectorAll(sel)].indexOf(document.activeElement as Element), MARK)
+
+  /** The focused tick AND the rail's length, read in ONE page evaluation.
+   *
+   *  🪤 THE MARK COUNT MUST NOT BE CACHED, AND CACHING IT IS A LIVE FLAKE THIS FILE SHIPPED WITH.
+   *  The rail re-derives its marks from the transcript, and a turn keeps emitting marks after its
+   *  stream ends: the per-turn `Turn complete: N events, …` stats line and the `Injected N chars of
+   *  context` line each arrive as their own `activity_event` and each becomes a tick. So a count
+   *  taken near the top of a six-turn walk is a SNAPSHOT of a list that is still growing, and
+   *  `total - 1` stops meaning "the last mark" at some unknowable later point.
+   *
+   *  MEASURED on Darwin at 1-min load 125 / 18 cores: `End` put focus on index **18** while a count
+   *  read earlier in the same test said **18 marks** (so `total - 1` was 17). The rail had gained a
+   *  19th tick — a second `Turn 12 of 12: Turn complete: 2 events, 0 tool calls · …` — in between,
+   *  and the failure read "the cursor left the rail before Space", i.e. it blamed the cursor for the
+   *  list moving underneath it. That is the same defect as the prompt-number coupling
+   *  `expectMarkLanded` documents: a subject derived once and asserted later.
+   *
+   *  One `evaluate` makes position and length a single observation that cannot disagree. Appends are
+   *  at the end (marks are emitted in turn order), so an index read this way stays valid for the
+   *  locator built from it even if a tick lands immediately afterwards. */
+  const cursorAndLength = (page: Page) => page.evaluate((sel) => {
+    const marks = [...document.querySelectorAll(sel)]
+    return { at: marks.indexOf(document.activeElement as Element), length: marks.length }
+  }, MARK)
+
+  /** `End` must put the cursor on the rail's LAST tick (§A.6), asserted against the rail's length
+   *  as it is at that instant. Returns the index it landed on, for the caller's locator. */
+  const expectEndLandsOnLastMark = async (page: Page, what: string): Promise<number> => {
+    const { at, length } = await cursorAndLength(page)
+    expect(
+      at,
+      `${what}: End did not put the cursor on the rail's last tick — focus is on index ${at} of ${length}\n` +
+        'marks. Both numbers are read in one evaluation, so this is not the list having grown; the\n' +
+        "cursor is genuinely somewhere else (§A.6's End goes to `lastIndex`).",
+    ).toBe(length - 1)
+    return at
+  }
 
   test('Tab reaches the rail, the arrows rove the cursor, and Enter and Space each move the transcript', async ({ page }) => {
     await gotoRoute(page, 'chat')
@@ -367,8 +505,8 @@ test.describe('Session Map — operable from the KEYBOARD alone (SSM-15)', () =>
     await page.keyboard.press('ArrowUp')
     expect(await focusedMark(page), 'ArrowUp did not step back').toBe(1)
     await page.keyboard.press('End')
-    expect(await focusedMark(page), 'End did not land on the last mark').toBe(total - 1)
-    expect(await tabStops(page)).toEqual([total - 1])
+    const lastMark = await expectEndLandsOnLastMark(page, 'ROVE')
+    expect(await tabStops(page)).toEqual([lastMark])
 
     /** Park the transcript at its newest turn and return that offset — the "from" a jump leaves. */
     const parkAtBottom = async (): Promise<number> => {
@@ -376,8 +514,7 @@ test.describe('Session Map — operable from the KEYBOARD alone (SSM-15)', () =>
         const el = document.querySelector(sel)
         if (el) el.scrollTop = el.scrollHeight
       }, SCROLLER)
-      await page.waitForTimeout(250)
-      return (await scrollBox(page)).top
+      return restingOffset(page, 'parking the transcript at its newest turn')
     }
 
     const from = await parkAtBottom()
@@ -392,6 +529,8 @@ test.describe('Session Map — operable from the KEYBOARD alone (SSM-15)', () =>
     // the early-read mode SSM-13's block documents in full.
     await page.keyboard.press('Home')
     expect(await focusedMark(page), 'the cursor left the rail before Enter').toBe(0)
+    const oldestMark = page.locator(MARK).first()
+    await expectMarkNotCurrent(oldestMark, 'ENTER')
     await page.keyboard.press('Enter')
     await expect
       .poll(async () => (await scrollBox(page)).top, {
@@ -400,6 +539,12 @@ test.describe('Session Map — operable from the KEYBOARD alone (SSM-15)', () =>
         timeout: 10_000,
       })
       .toBeLessThan(from - 40)
+    await expectMarkLanded(page, oldestMark, 'ENTER')
+    // …and the ONE place a user-visible form of the same claim is structurally available, so it is
+    // kept rather than evened out: mark 0's turn is the transcript's first content and
+    // `block:'center'` on it clamps to offset 0, where its own text is on screen by construction.
+    // The newest mark has no twin for this — see `expectMarkLanded`'s 🪤 — and asserting one anyway
+    // is what made this test host-dependent.
     await expect(
       page.getByText(`${PROMPT} (1)`, { exact: false }).first(),
       'Enter moved the transcript but did not bring the oldest turn on screen',
@@ -408,9 +553,17 @@ test.describe('Session Map — operable from the KEYBOARD alone (SSM-15)', () =>
     // ── ACTIVATE (2): SPACE, on the NEWEST mark, travels back DOWN ────────────────────────────
     // The opposite direction from a DIFFERENT key, so neither activation can be satisfied by the
     // other's scroll: Enter's pass requires the offset to fall, Space's requires it to rise.
-    const landed = (await scrollBox(page)).top
+    //
+    // 🪤 `landed` IS READ AT REST, NOT AT THE INSTANT THE VIEWPORT CHECK ABOVE PASSED, and that was
+    // the second half of this test's timing dependence. `toBeInViewport` resolves the moment the
+    // element ENTERS the viewport, which during a smooth scroll is well before the scroll ends — so
+    // Space's `> landed + 40` was measured against a baseline that was still moving, and on a
+    // loaded runner the two could be samples of the same animation.
+    const landed = await restingOffset(page, 'after ENTER')
     await page.keyboard.press('End')
-    expect(await focusedMark(page), 'the cursor left the rail before Space').toBe(total - 1)
+    const newestIndex = await expectEndLandsOnLastMark(page, 'before SPACE')
+    const newestMark = page.locator(MARK).nth(newestIndex)
+    await expectMarkNotCurrent(newestMark, 'SPACE')
     await page.keyboard.press(' ')
     await expect
       .poll(async () => (await scrollBox(page)).top, {
@@ -419,10 +572,7 @@ test.describe('Session Map — operable from the KEYBOARD alone (SSM-15)', () =>
         timeout: 10_000,
       })
       .toBeGreaterThan(landed + 40)
-    await expect(
-      page.getByText(`${PROMPT} (6)`, { exact: false }).first(),
-      'Space moved the transcript but did not bring the newest turn on screen',
-    ).toBeInViewport({ timeout: 10_000 })
+    await expectMarkLanded(page, newestMark, 'SPACE')
 
     // ── AND NOT ONE POINTER EVENT HAPPENED ────────────────────────────────────────────────────
     // The assertion that makes every step above mean "by keyboard" rather than "somehow". Read as
@@ -549,10 +699,16 @@ test.describe('Session Map — it is the session\'s ONLY index (SSM-13)', () => 
     const markCount = await userMarks.count()
     expect(markCount, 'the rail carries no user marks, so it is not indexing the turns the Index tab listed').toBeGreaterThan(1)
 
-    // The MIDDLE user turn, never the first: `scrollIntoView({block:'center'})` clamps the oldest
+    // The MIDDLE user mark, never the first: `scrollIntoView({block:'center'})` clamps the oldest
     // turn to offset 0, where a wrong coordinate lands in the same place.
+    //
+    // 🪤 THE SUBJECT IS THE MARK, NOT `${PROMPT} (nth + 1)`. This line used to derive the expected
+    // turn from the loop index, which assumes the Nth send became the Nth turn. In run 35949502119
+    // it had not — see `expectMarkLanded`'s 🪤 — and the test failed naming the rail for a turn that
+    // was never sent. `driveScriptedTurns` now reds on that loss at the send that lost it; this
+    // site additionally stops depending on the numbering at all.
     const nth = 1
-    const target = page.getByText(`${PROMPT} (${nth + 1})`, { exact: false }).first()
+    const targetMark = userMarks.nth(nth)
 
     /** Park at the newest turn and return that offset — the "from" the jump travels out of. */
     const from = await (async () => {
@@ -560,8 +716,7 @@ test.describe('Session Map — it is the session\'s ONLY index (SSM-13)', () => 
         const el = document.querySelector(sel)
         if (el) el.scrollTop = el.scrollHeight
       }, SCROLLER)
-      await page.waitForTimeout(250)
-      return (await scrollBox(page)).top
+      return restingOffset(page, 'parking the transcript at its newest turn')
     })()
     expect(
       from,
@@ -569,13 +724,14 @@ test.describe('Session Map — it is the session\'s ONLY index (SSM-13)', () => 
         'this whole test is vacuous. Drive more turns or shorten the viewport rather than letting it pass.',
     ).toBeGreaterThan(40)
 
-    await userMarks.nth(nth).click()
+    await expectMarkNotCurrent(targetMark, 'the rail tick')
+    await targetMark.click()
 
     // 🪤 POLLING FOR QUIET ALONE READS THE OFFSET THE JUMP HAS NOT LEFT YET, and that mode is
     // invisible: `scrollIntoView({behavior:'smooth'})` animates, so the first two samples after the
     // click can both be the PARKED value, "settle" on it, and report a landing of `from`. Measured
     // twice while SSM-12 was built — both runs reported a landing exactly at the bottom while the
-    // following `toBeInViewport` (which waits) passed, i.e. the scroll was real and the reading was
+    // following viewport check (which waits) passed, i.e. the scroll was real and the reading was
     // early. So movement is awaited FIRST and quiet second.
     await expect
       .poll(async () => (await scrollBox(page)).top, {
@@ -584,17 +740,9 @@ test.describe('Session Map — it is the session\'s ONLY index (SSM-13)', () => 
         timeout: 10_000,
       })
       .not.toBe(from)
-    let last = -1
-    await expect
-      .poll(async () => {
-        const now = (await scrollBox(page)).top
-        const quiet = now === last
-        last = now
-        return quiet
-      }, { message: 'the transcript never stopped scrolling', timeout: 10_000 })
-      .toBe(true)
+    const last = await restingOffset(page, 'the rail tick')
 
-    await expect(target, 'the rail tick did not bring its turn on screen').toBeInViewport({ timeout: 10_000 })
+    await expectMarkLanded(page, targetMark, 'the rail tick')
     const { scrollable } = await scrollBox(page)
     // Neither end. A landing pinned to 0 or to the maximum is reachable by a WRONG coordinate too,
     // so it is a vacuity failure rather than a pass.
