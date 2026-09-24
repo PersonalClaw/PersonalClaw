@@ -323,7 +323,17 @@ export function Onboarding() {
                 silently removed the announcement this screen already relies on. */}
             <ol className="flex w-full list-none flex-col gap-2 p-0">
               <StepRow ref={rowRefs.name} index={ORDER.indexOf('name')} icon={User} title={TITLES.name}
-                subtitle="How the system addresses you, plus the handle your records carry. Saved on the server, so it follows you across devices."
+                /* NOT "Saved on the server, so it follows you across devices" — that is
+                   `AccountPanel`'s sentence, where it is true because the panel writes on
+                   change. HERE the write is deliberately the last thing the flow does
+                   (`finish()`, see `commitName` above and OU-1's one-source-of-truth note),
+                   so past-tense "Saved" was a claim about a write that had not happened, on
+                   the product's very first screen. Measured on a fresh container: advancing
+                   off this step issues NO write, `GET /api/onboarding` still answers
+                   `step: "name"`, and a reload returned an empty field — after the screen had
+                   already shown the name back as a completed step. Say WHEN the promise is
+                   kept instead of implying it already was. */
+                subtitle="How the system addresses you, plus the handle your records carry. Saved when you finish setup, so it then follows you across devices."
                 state={stateOf('name')} doneSummary={savedName ? (savedHandle ? `${savedName} · @${savedHandle}` : savedName) : undefined}
                 onActivate={() => setStep('name')}>
                 {/* An untouched handle field DISPLAYS the suggestion rather than storing it,
