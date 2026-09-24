@@ -267,7 +267,10 @@ hand. This is a separate switch from `updates.auto`: one governs whether Persona
 - [Configuration reference](../reference/configuration.md) — every config field,
   its default, and where to set it.
 - [CLI reference](../reference/cli.md) — every command and flag.
-- [API overview](../reference/api-overview.md) — the full REST/WS surface.
+- [API overview](../reference/api-overview.md) — auth, conventions, and the behaviours
+  that are easy to get wrong.
+- [HTTP route reference](../reference/api-routes.md) — every registered route, generated
+  from the gateway's own route table.
 - Roadmap — where the project is heading.
 
 ## Troubleshooting
