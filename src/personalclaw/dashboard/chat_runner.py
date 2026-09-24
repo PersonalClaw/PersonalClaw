@@ -52,7 +52,6 @@ from personalclaw.dashboard.chat_utils import (
     strip_status_sentinel,
     task_mode_denies,
     task_mode_framing,
-    tool_input_to_str,
 )
 from personalclaw.dashboard.handlers import MAX_PROMPT_BYTES, _list_provider_prompts
 from personalclaw.dashboard.state import (
@@ -63,6 +62,7 @@ from personalclaw.dashboard.state import (
     _ChatSession,
     read_only_command,
     resolve_effective_risk,
+    tool_input_to_str,
 )
 from personalclaw.guardrails.loop_breaker import (
     BLOCK_THRESHOLD,

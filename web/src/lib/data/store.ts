@@ -164,6 +164,52 @@ export function invalidateSpecs(specs: readonly CacheKeySpec[]): void {
   }
 }
 
+/** How long a READER waits for a key before its wait becomes an error it can render.
+ *
+ *  Chosen against the acceptance bar for the first-run defects: a surface still spinning after
+ *  10s is a failure, so the wait must end before then with something a user can read and act on.
+ */
+export const REQUEST_DEADLINE_MS = 8000
+
+/** The reader's wait ran out. A distinct type so a surface can say "not responding" rather than
+ *  inventing a cause, and so `dataLayer.test.ts` can assert the deadline fired rather than
+ *  matching on a sentence. */
+export class RequestDeadlineError extends Error {
+  key: string
+  constructor(key: string) {
+    super(`The server did not respond within ${Math.round(REQUEST_DEADLINE_MS / 1000)}s.`)
+    this.name = 'RequestDeadlineError'
+    this.key = key
+  }
+}
+
+/** Bound the CALLER's wait — not the request.
+ *
+ *  🔴 This is the fix for the first-run "spinner forever" on Inbox, Apps and Settings. The hook's
+ *  `error` contract was defeated here, one layer BELOW the hook: a fetch that REJECTS reaches
+ *  `error` and every one of those three surfaces already renders a legible failure with a Retry
+ *  (measured, by answering every `/api` with a 500). A fetch that never SETTLES reached
+ *  nothing — `inFlight` stayed true and `data` stayed undefined, so `loading` was permanently
+ *  true and the error branch was structurally unreachable. Measured on a fresh home with every
+ *  `/api` read held open: Inbox sat on "Loading inbox items…", Apps on "Loading apps…",
+ *  Settings on 34 busy regions and 72 skeletons, still spinning at 15s.
+ *
+ *  The deadline does NOT abort the request and does NOT drop it from the dedup table:
+ *  · a slow-but-successful response still lands, still calls `writeQuery`, and still repaints
+ *    every mounted reader — no work is thrown away for being late;
+ *  · the dedup guarantee this module exists for is untouched, so a Retry joins the request
+ *    already on the wire instead of adding a second one to a backend that is already struggling.
+ */
+function _withDeadline<T>(key: string, p: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new RequestDeadlineError(key)), REQUEST_DEADLINE_MS)
+    p.then(
+      (v) => { clearTimeout(timer); resolve(v) },
+      (e) => { clearTimeout(timer); reject(e) },
+    )
+  })
+}
+
 /** Run `fetcher` for `key`, collapsing concurrent callers onto ONE request.
  *
  *  This is the dedup. It is keyed on the cache key alone — deliberately not on the fetcher's
@@ -171,15 +217,18 @@ export function invalidateSpecs(specs: readonly CacheKeySpec[]): void {
  *  on a per-render identity is how a dedup table degenerates into no dedup at all, and how a
  *  `useEffect` that looks correctly dependency-listed becomes an unbounded fetch loop: 289k
  *  requests and `net::ERR_INSUFFICIENT_RESOURCES`, measured in a browser, from exactly that
- *  shape. `dataLayer.test.ts` bounds the request count for both cases. */
+ *  shape. `dataLayer.test.ts` bounds the request count for both cases.
+ *
+ *  Every caller — the one that starts the request and every one that joins it — gets a
+ *  DEADLINED view of it (see `_withDeadline`), so no reader can wait forever. */
 export function fetchKey<T>(key: string, fetcher: () => Promise<T>, persist = false): Promise<T> {
   const joined = _inflight.get(key) as Promise<T> | undefined
-  if (joined) return joined
+  if (joined) return _withDeadline(key, joined)
   const p = fetcher()
     .then((res) => { writeQuery(key, res, persist); return res })
     .finally(() => { if (_inflight.get(key) === p) _inflight.delete(key) })
   _inflight.set(key, p as Promise<unknown>)
-  return p
+  return _withDeadline(key, p)
 }
 
 /** Is a request for this key on the wire right now? */

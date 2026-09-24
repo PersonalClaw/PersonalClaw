@@ -31,6 +31,7 @@ from personalclaw.task_modes import (  # noqa: F401,E501 — re-exported for das
     read_only_command,
     resolve_effective_risk,
     shell_command,
+    tool_input_to_str,
 )
 
 
@@ -1224,7 +1225,7 @@ class DashboardState(DashboardWebSocketState):
         source: str,
         tool: str,
         *,
-        tool_input: str = "",
+        tool_input: object = "",
         tool_purpose: str = "",
         session: str = "",
     ) -> bool:
@@ -1233,15 +1234,41 @@ class DashboardState(DashboardWebSocketState):
         The timeout is origin-aware (see :meth:`_approval_timeout_for`): unattended
         sources deny fast, interactive sources wait longer. Timeout always fails
         closed to deny.
+
+        ``tool_input`` is ``object`` because that is what the approval path actually carries.
+        It is ``AgentEvent.tool_input``, typed ``Any`` — the native loop puts a dict there and
+        an ACP frame puts a pretty-printed string — and the gateway hands it straight over
+        (``gateway.py`` ``_approve``, both call sites). Declaring ``str`` here did not make it
+        one; it only hid the mismatch until a dict reached the redactor and raised
+        ``TypeError: expected string or bytes-like object, got 'dict'`` out of
+        ``security.scan_exfiltration_urls``, from inside the approval path, killing the
+        subagent that was waiting on the answer.
         """
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[bool] = loop.create_future()
         self._approval_futures[approval_id] = fut
 
+        # 🔴 COERCED ONCE, HERE, BEFORE ANY REDACTION — the one boundary that mints the string a
+        # human will read. The posture is deliberate and it is NOT a defensive `or ""`:
+        #
+        # · The scanner keeps its `str` contract and keeps raising on a non-`str`. A redactor that
+        #   quietly accepted anything would let the string it SCANS diverge from the string a
+        #   surface SHOWS, and a divergence there is how an unredacted secret reaches a user. A
+        #   `TypeError` at the chokepoint is a loud bug report about a caller; it is the right
+        #   behaviour, and what was wrong was that the approval path could produce one.
+        # · Nothing is skipped. `tool_input_to_str` JSON-encodes a dict, so every URL and
+        #   credential inside a structured argument is now scanned — strictly more than before,
+        #   never less. Wrapping the call in `except` would have converted a dead subagent into a
+        #   silently skipped exfiltration scan, which is worse than the crash.
+        # · One implementation, shared with the chat card's `input_preview`
+        #   (`chat_runner`/`chat_utils`), so the approval prompt and the tool pill cannot describe
+        #   one call differently.
+        display_input = tool_input_to_str(tool_input)
+
         # Sanitize LLM-sourced fields before broadcasting to dashboard clients
         safe_tool, _ = redact_exfiltration_urls(tool)
         safe_tool, _ = redact_credentials(safe_tool)
-        safe_input, _ = redact_exfiltration_urls(tool_input)
+        safe_input, _ = redact_exfiltration_urls(display_input)
         safe_input, _ = redact_credentials(safe_input)
         safe_purpose, _ = redact_exfiltration_urls(tool_purpose)
         safe_purpose, _ = redact_credentials(safe_purpose)
@@ -1259,9 +1286,12 @@ class DashboardState(DashboardWebSocketState):
             # one call differently. This entry is BOTH the `approval` WS payload and the
             # `GET /api/approvals` row, so supplying it here reaches both doors at once.
             #
-            # Screened on the RAW `tool_input`: `safe_input` has had URLs and credentials
-            # rewritten, and screening a string the shell will never see is how a verdict
-            # stops describing the actual call. `None` when this is not a shell call.
+            # Screened on the RAW `tool_input`, NOT on `display_input`: `safe_input` has had
+            # URLs and credentials rewritten, and screening a string the shell will never see
+            # is how a verdict stops describing the actual call. The raw object is also the
+            # more precise input — `read_only_command` is typed `object` precisely so it can
+            # read a native dict's `command` key instead of re-parsing a serialized copy.
+            # `None` when this is not a shell call.
             "is_read_only": read_only_command(tool, "", tool_input),
         }
         self.broadcast_ws("approval", self._pending_approvals[approval_id])

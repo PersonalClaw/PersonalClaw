@@ -212,10 +212,21 @@ export function ModelsPanel() {
   // catalog and use-case bindings barely change, so on revisit (and after a full
   // reload) the page paints instantly from cache and revalidates in the background
   // — no "Loading…" flash. Both fetches batch into one cache key.
-  const { data, refresh } = useQuery('settings:models', async () => {
+  //
+  // 🔴 NEITHER READ SWALLOWS ITS REJECTION, AND THE SITE BINDS `error`. Both halves were wrong
+  // together, which is what made this panel the last surface in the first-run set with no terminal
+  // state: `api.modelsAvailable().catch(() => [])` + `api.modelsActive().catch(() => ({}))` made
+  // `error` structurally unreachable, and the call site read only `data` — so a read that failed
+  // painted "No models discovered" (a confident lie about a page that never loaded) and a read that
+  // never settled left `<ListSkeleton>` up forever. Measured on a fresh home with `/api` held
+  // open: `#/settings/models` was still on "Loading…" with `aria-busy=1` and no Retry at 9.5s,
+  // while Inbox, Apps, Settings-home and Providers had all reached a legible error. Both models
+  // reads are REQUIRED to render a binding, so failing the panel is the honest outcome; the two
+  // optional enrichments below (`health`, `judgeRecs`) keep their catches on purpose and say why.
+  const { data, error: modelsErr, refresh } = useQuery('settings:models', async () => {
     const [rows, active] = await Promise.all([
-      api.modelsAvailable().catch(() => [] as { name: string; models?: AvailableModel[] }[]),
-      api.modelsActive().catch(() => ({} as Record<string, string[]>)),
+      api.modelsAvailable(),
+      api.modelsActive(),
     ])
     return { allModels: rows.flatMap((r) => r.models ?? []), active }
   }, { persist: true })
@@ -238,7 +249,8 @@ export function ModelsPanel() {
   // against the changed state instead of a stale snapshot.
   const reloadActive = () => { invalidateKeys('settings:models'); refresh() }
 
-  if (!allModels) return <ListSkeleton rows={6} />
+  if (!allModels && modelsErr) return <LoadError what="models" error={modelsErr} onRetry={refresh} />
+  if (!allModels) return <ListSkeleton rows={6} what="models" />
 
   return (
     <div>

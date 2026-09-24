@@ -262,108 +262,135 @@ export function Onboarding() {
     <div className="fixed inset-0 z-[var(--z-modal)] overflow-hidden" style={{ background: 'var(--color-canvas)' }}>
       <DotGlow intensity={1.15} composerRef={activeRef} />
 
-      <div className="relative flex h-full items-center justify-center overflow-y-auto px-l py-3xl">
-        <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={spring.spatialSlow}
-          className="relative w-full" style={{ maxWidth: 540 }}>
-          {/* hero — floats ABOVE the stepper (absolute, so it doesn't affect the
-              stepper's vertical centering; the STEPPER is what sits mid-screen) */}
-          <div className="absolute bottom-full left-0 right-0 mb-2xl flex flex-col items-center">
-            <ClawMark size={52} animated blob />
-            <h1 data-type="headline-m" className="mt-l text-on-surface text-center">Welcome to {APP_NAME}</h1>
-            <p className="mt-2 text-center text-on-surface-low text-[0.9375rem]" style={{ maxWidth: 360 }}>Your self-hosted personal agent. A few moments to get set up.</p>
-          </div>
+      {/* 🔴 THE SCROLL BOX IS A PLAIN BLOCK, AND THE CENTRING LIVES ON THE BOX INSIDE IT.
+          Both halves are load-bearing; the previous shape had them on the same element
+          (`flex h-full items-center justify-center overflow-y-auto`) and lost content at both
+          edges of a short viewport.
 
-          {/* vertical collapsing stepper — the centered focal element */}
-          {/* Announces step progress to assistive tech: a step CHANGE is not a focus change, so
-              without this a screen-reader user is never told they advanced (WCAG 4.1.3). Always
-              mounted so the text change is observed; polite so it does not interrupt.
-              🪤 This comment used to justify itself with "the rows are not focusable" — true then,
-              FALSE now that a completed row's header is a real button, and it was never the reason
-              anyway: the live region is needed because advancing does not move focus, not because
-              focus was impossible. Keeping the stale clause would have argued for deleting a
-              still-necessary region the next time someone audited this file. */}
-          <p role="status" aria-live="polite" className="sr-only">
-            {`Step ${ORDER.indexOf(step) + 1} of ${ORDER.length}: ${TITLES[step]}`}
-          </p>
-          {/* 🔑 A REAL <ol>. Five numbered steps were a stack of divs, so `aria-current="step"` on a
-              row had no set to be current WITHIN, and a screen-reader user got no "list, 5 items" to
-              orient by. The live region is deliberately OUTSIDE it: only `<li>` may be an `<ol>`
-              child, and a `<p>` in there is invalid content an AT tree may drop — which would have
-              silently removed the announcement this screen already relies on. */}
-          <ol className="flex w-full list-none flex-col gap-2 p-0">
-            <StepRow ref={rowRefs.name} index={ORDER.indexOf('name')} icon={User} title={TITLES.name}
-              subtitle="How the system addresses you, plus the handle your records carry. Saved on the server, so it follows you across devices."
-              state={stateOf('name')} doneSummary={savedName ? (savedHandle ? `${savedName} · @${savedHandle}` : savedName) : undefined}
-              onActivate={() => setStep('name')}>
-              {/* An untouched handle field DISPLAYS the suggestion rather than storing it,
-                  so it tracks the name as it is typed; the first edit (clearing included)
-                  makes it the operator's and stops the tracking. */}
-              <NameStep value={name} onChange={setNameDraft} onSubmit={commitName}
-                handle={handleTouched ? handle : suggestHandle(name)}
-                onHandleChange={(v) => { setHandleTouched(true); setHandleDraft(v) }} />
-            </StepRow>
+          · `items-center` on a scroller CLIPS THE START EDGE UNRECOVERABLY. When the flex item is
+            taller than the box, `align-items: center` distributes the overflow to BOTH ends, and
+            the part above the start edge cannot be scrolled to: `scrollTop` is clamped at 0 and
+            `scrollHeight` does not count it. Measured on a fresh home at 1280×700, step 2
+            ("Bring your setup over", the longest step): at `scrollTop: 0` — already the top of the
+            range — the panel's top sat at **-96.5px** and the `<h1>` at **-201.5px**, so "Welcome
+            to PersonalClaw" was simply gone. Scrolling to the bottom took the h1 to -326.
+          · `min-h-full` + `justify-center` on the INNER box gives the same centred look while
+            there is room, and degrades to top-aligned + fully scrollable when there is not:
+            `justify-content` has no spare space to distribute once the content grows, so nothing
+            is pushed past the start edge.
 
-            {/* PEP-5 — adopt another local agent tool's setup. It sits BEFORE essentials
-                because the work a user already did elsewhere is theirs before anything is
-                installed here, and because none of what it writes (memories, MCP entries,
-                skills) needs a model provider to land. */}
-            <StepRow ref={rowRefs.import} index={ORDER.indexOf('import')} icon={FolderInput} title={TITLES.import}
-              subtitle="Already use another local agent tool? Bring its instructions, MCP servers and skills across."
-              state={stateOf('import')} doneSummary={importSummary || undefined}
-              onActivate={() => setStep('import')}>
-              <ImportStep onDone={leaveImport} onSkip={() => leaveImport('Skipped')} />
-            </StepRow>
-
-            <StepRow ref={rowRefs.essentials} index={ORDER.indexOf('essentials')} icon={Boxes} title={TITLES.essentials}
-              subtitle="Install what the agent needs to work. A model provider is required; the rest are optional."
-              state={stateOf('essentials')} doneSummary={modelDone || undefined}
-              onActivate={() => setStep('essentials')}>
-              {readiness
-                ? <EssentialsStep readiness={readiness} onProgress={progress}
-                    onDone={leaveEssentials}
-                    onSkip={() => leaveEssentials('Set up later')} />
-                : <div role="status" aria-busy="true" className="flex items-center py-2">
-                    <LoadingStatus what="what's already set up" />
-                    <Loader2 size={18} className="animate-spin text-on-surface-low" aria-hidden="true" />
-                  </div>}
-            </StepRow>
-
-            <StepRow ref={rowRefs.try} index={ORDER.indexOf('try')} icon={Rocket} title={TITLES.try}
-              subtitle="Watch it actually do something. Each one runs for real — and none of them is required."
-              state={stateOf('try')} doneSummary={triedSummary || undefined}
-              onActivate={() => setStep('try')}>
-              <TryOneStep onProgress={progress} onDone={leaveTryOne}
-                onSkip={() => leaveTryOne('Skipped')} onExitTo={exitTo} />
-            </StepRow>
-
-            <StepRow ref={rowRefs.ready} index={ORDER.indexOf('ready')} icon={Sparkles} title={TITLES.ready}
-              subtitle={`You're ready, ${firstNameOf(savedName)}.`}
-              state={stateOf('ready')}>
-              <DoneScreen name={savedName} modelSummary={modelDone} triedSummary={triedSummary}
-                showEverything={showEverything} onShowEverything={setShowEverything}
-                onFinish={finish} onTakeTour={takeTour} onExitTo={exitTo} />
-            </StepRow>
-          </ol>
-
-          {/* The one door out, on every step but the last — where "Start using" IS the door.
-              Guidance never gates: this is what makes "skip at any step" land somewhere real.
-
-              `ink="emphasis"` because this link sits OUTSIDE the step card, on `--color-canvas`
-              (measured off the node: rgb(240,244,248)). There, the base accent is **4.37:1** against a
-              4.5 floor at 13px/400 — axe and ux-audit agreeing, the same number the canvas ground has
-              carried since the accent-on-canvas family was named. The emphasis shade measures 6.0 in
-              coral and passes in all 12 schemes. Its three siblings inside the card keep the base ink
-              and pass at 4.83, because they are painted on `--color-surface`: the ground decides. */}
-          {step !== 'ready' && (
-            <div className="mt-l flex justify-center">
-              <TextLink size="sm" ink="emphasis" onClick={skipSetup}>
-                {step === 'name'
-                  ? `Skip setup — start as ${DEFAULT_USER_NAME}, rename yourself in Settings`
-                  : 'Skip setup and go to the dashboard'}
-              </TextLink>
+          `design/onboardingScrollable.test.tsx` is the rail; it also explains why jsdom cannot
+          measure this and what it asserts instead. */}
+      <div className="relative h-full overflow-y-auto px-l py-3xl">
+        <div className="flex min-h-full flex-col items-center justify-center">
+          <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={spring.spatialSlow}
+            className="relative w-full" style={{ maxWidth: 540 }}>
+            {/* hero — ABOVE the stepper, IN FLOW.
+                🪤 It used to be positioned out of flow (`absolute` against the panel's top edge),
+                "so it doesn't affect the stepper's vertical centering; the STEPPER is what sits
+                mid-screen". That bought the centring by putting the product's title outside the
+                scrollable range: out of flow and above the flow origin, it could not be scrolled to
+                at ANY viewport height once the panel filled the screen — it was the first thing
+                lost in the measurement above. In flow, the hero and the stepper centre as one group
+                (the stepper sits a little lower when there is room) and both scroll. */}
+            <div className="mb-2xl flex flex-col items-center">
+              <ClawMark size={52} animated blob />
+              <h1 data-type="headline-m" className="mt-l text-on-surface text-center">Welcome to {APP_NAME}</h1>
+              <p className="mt-2 text-center text-on-surface-low text-[0.9375rem]" style={{ maxWidth: 360 }}>Your self-hosted personal agent. A few moments to get set up.</p>
             </div>
-          )}
-        </motion.div>
+
+            {/* vertical collapsing stepper — the centered focal element */}
+            {/* Announces step progress to assistive tech: a step CHANGE is not a focus change, so
+                without this a screen-reader user is never told they advanced (WCAG 4.1.3). Always
+                mounted so the text change is observed; polite so it does not interrupt.
+                🪤 This comment used to justify itself with "the rows are not focusable" — true then,
+                FALSE now that a completed row's header is a real button, and it was never the reason
+                anyway: the live region is needed because advancing does not move focus, not because
+                focus was impossible. Keeping the stale clause would have argued for deleting a
+                still-necessary region the next time someone audited this file. */}
+            <p role="status" aria-live="polite" className="sr-only">
+              {`Step ${ORDER.indexOf(step) + 1} of ${ORDER.length}: ${TITLES[step]}`}
+            </p>
+            {/* 🔑 A REAL <ol>. Five numbered steps were a stack of divs, so `aria-current="step"` on a
+                row had no set to be current WITHIN, and a screen-reader user got no "list, 5 items" to
+                orient by. The live region is deliberately OUTSIDE it: only `<li>` may be an `<ol>`
+                child, and a `<p>` in there is invalid content an AT tree may drop — which would have
+                silently removed the announcement this screen already relies on. */}
+            <ol className="flex w-full list-none flex-col gap-2 p-0">
+              <StepRow ref={rowRefs.name} index={ORDER.indexOf('name')} icon={User} title={TITLES.name}
+                subtitle="How the system addresses you, plus the handle your records carry. Saved on the server, so it follows you across devices."
+                state={stateOf('name')} doneSummary={savedName ? (savedHandle ? `${savedName} · @${savedHandle}` : savedName) : undefined}
+                onActivate={() => setStep('name')}>
+                {/* An untouched handle field DISPLAYS the suggestion rather than storing it,
+                    so it tracks the name as it is typed; the first edit (clearing included)
+                    makes it the operator's and stops the tracking. */}
+                <NameStep value={name} onChange={setNameDraft} onSubmit={commitName}
+                  handle={handleTouched ? handle : suggestHandle(name)}
+                  onHandleChange={(v) => { setHandleTouched(true); setHandleDraft(v) }} />
+              </StepRow>
+
+              {/* PEP-5 — adopt another local agent tool's setup. It sits BEFORE essentials
+                  because the work a user already did elsewhere is theirs before anything is
+                  installed here, and because none of what it writes (memories, MCP entries,
+                  skills) needs a model provider to land. */}
+              <StepRow ref={rowRefs.import} index={ORDER.indexOf('import')} icon={FolderInput} title={TITLES.import}
+                subtitle="Already use another local agent tool? Bring its instructions, MCP servers and skills across."
+                state={stateOf('import')} doneSummary={importSummary || undefined}
+                onActivate={() => setStep('import')}>
+                <ImportStep onDone={leaveImport} onSkip={() => leaveImport('Skipped')} />
+              </StepRow>
+
+              <StepRow ref={rowRefs.essentials} index={ORDER.indexOf('essentials')} icon={Boxes} title={TITLES.essentials}
+                subtitle="Install what the agent needs to work. A model provider is required; the rest are optional."
+                state={stateOf('essentials')} doneSummary={modelDone || undefined}
+                onActivate={() => setStep('essentials')}>
+                {readiness
+                  ? <EssentialsStep readiness={readiness} onProgress={progress}
+                      onDone={leaveEssentials}
+                      onSkip={() => leaveEssentials('Set up later')} />
+                  : <div role="status" aria-busy="true" className="flex items-center py-2">
+                      <LoadingStatus what="what's already set up" />
+                      <Loader2 size={18} className="animate-spin text-on-surface-low" aria-hidden="true" />
+                    </div>}
+              </StepRow>
+
+              <StepRow ref={rowRefs.try} index={ORDER.indexOf('try')} icon={Rocket} title={TITLES.try}
+                subtitle="Watch it actually do something. Each one runs for real — and none of them is required."
+                state={stateOf('try')} doneSummary={triedSummary || undefined}
+                onActivate={() => setStep('try')}>
+                <TryOneStep onProgress={progress} onDone={leaveTryOne}
+                  onSkip={() => leaveTryOne('Skipped')} onExitTo={exitTo} />
+              </StepRow>
+
+              <StepRow ref={rowRefs.ready} index={ORDER.indexOf('ready')} icon={Sparkles} title={TITLES.ready}
+                subtitle={`You're ready, ${firstNameOf(savedName)}.`}
+                state={stateOf('ready')}>
+                <DoneScreen name={savedName} modelSummary={modelDone} triedSummary={triedSummary}
+                  showEverything={showEverything} onShowEverything={setShowEverything}
+                  onFinish={finish} onTakeTour={takeTour} onExitTo={exitTo} />
+              </StepRow>
+            </ol>
+
+            {/* The one door out, on every step but the last — where "Start using" IS the door.
+                Guidance never gates: this is what makes "skip at any step" land somewhere real.
+
+                `ink="emphasis"` because this link sits OUTSIDE the step card, on `--color-canvas`
+                (measured off the node: rgb(240,244,248)). There, the base accent is **4.37:1** against a
+                4.5 floor at 13px/400 — axe and ux-audit agreeing, the same number the canvas ground has
+                carried since the accent-on-canvas family was named. The emphasis shade measures 6.0 in
+                coral and passes in all 12 schemes. Its three siblings inside the card keep the base ink
+                and pass at 4.83, because they are painted on `--color-surface`: the ground decides. */}
+            {step !== 'ready' && (
+              <div className="mt-l flex justify-center">
+                <TextLink size="sm" ink="emphasis" onClick={skipSetup}>
+                  {step === 'name'
+                    ? `Skip setup — start as ${DEFAULT_USER_NAME}, rename yourself in Settings`
+                    : 'Skip setup and go to the dashboard'}
+                </TextLink>
+              </div>
+            )}
+          </motion.div>
+        </div>
       </div>
     </div>
   )
