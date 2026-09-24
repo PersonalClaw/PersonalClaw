@@ -243,6 +243,11 @@ def test_a_loop_shaped_step_reads_absent_not_zero_for_money(run_home):
     assert totals["tokens"] is None
     # The count is still real: a step DID complete, and that fact needs no cost key.
     assert totals["steps_completed"] == 1
+    # The disclosure (#3400): mirrors `RunStats.priced`/`.tokens_recorded` exactly, so it flips on
+    # this absence even though there is no partial sum here for it to qualify — same as `RunStats`
+    # reports for an all-loop-shaped run (recorded=False, not just tokens=None).
+    assert totals["cost_recorded"] is False
+    assert totals["tokens_recorded"] is False
 
 
 def test_a_genuinely_free_step_reads_zero_not_absent(run_home):
@@ -260,6 +265,9 @@ def test_a_genuinely_free_step_reads_zero_not_absent(run_home):
     totals = rail_totals(rows, []).to_dict()
     assert totals["cost_usd"] == 0.0, "a measured zero must not be reported as absent"
     assert totals["tokens"] == 0
+    # A measured zero is not a floor: nothing here was absent, so the disclosure stays True.
+    assert totals["cost_recorded"] is True
+    assert totals["tokens_recorded"] is True
 
 
 def test_a_kind_with_no_run_side_producer_reports_absent_never_zero(run_home):
@@ -348,6 +356,100 @@ def test_an_uncoercible_value_reads_absent_rather_than_zero(run_home):
     assert len(rows) == 1, "vacuity floor: no row was projected"
     assert rows[0]["cost_usd"] is None
     assert rail_totals(rows, []).to_dict()["cost_usd"] is None
+
+
+# ── the tokens/cost disclosure, #3400 ──
+#
+# `RailTotals` used to have no `tokens_recorded`/`cost_recorded` at all, so a MIXED run — one step
+# that carried the key, one that did not — summed only the carrying rows and handed back a floor
+# with nothing beside it. `LedgerRailsPanel` rendered that floor as a bare number on the same run
+# page where `IntrospectPanel` correctly disclosed the identical fact over the identical
+# `step_completed` rows as `≥N` (#3218). These tests are the case #3218's own coverage could not
+# catch here, because `RailTotals` had no flag for them to exercise.
+
+
+def test_a_mixed_run_discloses_the_floor_instead_of_reporting_it_as_a_total(run_home):
+    """The defect itself: one step carries the key, the next does not.
+
+    The summed FIGURE was already right before this change — `rail_totals` has always kept only the
+    rows that carry a count, which is the same net effect as `RunStats`'s `+= .get(key, 0)` — so
+    this pins that the number does not move. What moves is that it now says it is a floor.
+    """
+    mixed = [
+        {"kind": "step_completed", "ts": "t1", **dict(_RUN_STEP, tokens=100, cost_usd=0.1)},
+        {"kind": "step_completed", "ts": "t2", **_LOOP_STEP},  # carries neither key
+    ]
+    rows = findings_rail(mixed)
+    assert len(rows) == 2, "vacuity floor: both step_completed rows must be projected"
+    totals = rail_totals(rows, []).to_dict()
+    # The one step that COULD contribute money is still the right figure.
+    assert totals["tokens"] == 100
+    assert totals["cost_usd"] == pytest.approx(0.1)
+    # And now, unlike before, both say the figure is a floor, not a total.
+    assert totals["tokens_recorded"] is False
+    assert totals["cost_recorded"] is False
+
+
+def test_a_fully_measured_run_is_not_reported_as_a_floor(run_home):
+    """The other direction, which is what stops the flag from being a permanent False.
+
+    Every step here carries both keys, so nothing is missing — the disclosure must not cry wolf on
+    a run that has nothing to disclose.
+    """
+    both = [
+        {"kind": "step_completed", "ts": "t1", **dict(_RUN_STEP, tokens=100, cost_usd=0.1)},
+        {"kind": "step_completed", "ts": "t2", **dict(_RUN_STEP, tokens=50, cost_usd=0.2)},
+    ]
+    rows = findings_rail(both)
+    totals = rail_totals(rows, []).to_dict()
+    assert totals["tokens"] == 150
+    assert totals["cost_usd"] == pytest.approx(0.3)
+    assert totals["tokens_recorded"] is True
+    assert totals["cost_recorded"] is True
+
+
+def test_the_totals_payload_carries_the_disclosure_keys(run_home):
+    """Pins the exact key set, so a rename or a drop reds here instead of silently reaching the FE.
+
+    #3400 was filed against exactly this list (minus the two new keys) measured off a live route.
+    """
+    keys = set(rail_totals([], []).to_dict())
+    assert keys == {
+        "absent_scores",
+        "cost_usd",
+        "cost_recorded",
+        "duration_secs",
+        "overall_series",
+        "steps_completed",
+        "tokens",
+        "tokens_recorded",
+        "verdicts",
+        "verdicts_by_word",
+    }
+
+
+def test_the_disclosure_reaches_the_service_payload_on_a_real_mixed_run(run_home):
+    """End-to-end floor: the flag survives the route, not just the dataclass.
+
+    `rail_totals` agreeing with itself is worth nothing if `service.ledger_rails` — what the HTTP
+    route and `LedgerRailsPanel` actually see — drops the field on the way out.
+    """
+    from personalclaw.workflows import service
+
+    run_id = _run_with(
+        "rails-mixed-tokens",
+        [
+            ("step_completed", dict(_RUN_STEP, tokens=100, cost_usd=0.1)),
+            ("step_completed", _LOOP_STEP),
+        ],
+    )
+    payload = service.ledger_rails(run_id)
+    assert payload["ok"] is True
+    totals = payload["totals"]
+    assert totals["tokens"] == 100
+    assert totals["cost_usd"] == pytest.approx(0.1)
+    assert totals["tokens_recorded"] is False
+    assert totals["cost_recorded"] is False
 
 
 # ── the declaration cannot rot ──

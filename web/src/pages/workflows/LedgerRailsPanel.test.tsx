@@ -54,10 +54,11 @@ function payload(over: Partial<WorkflowLedgerRails> = {}): WorkflowLedgerRails {
       sample_count: 3, shortfalls: null, marginal_value: null, quality_score: null,
     }],
     totals: {
-      steps_completed: 1, verdicts: 1, cost_usd: 0.0234, tokens: 900, duration_secs: 8,
+      steps_completed: 1, verdicts: 1, cost_usd: 0.0234, cost_recorded: true,
+      tokens: 900, tokens_recorded: true, duration_secs: 8,
       verdicts_by_word: { PASS: 1 }, overall_series: [4.25],
       absent_scores: ['marginal_value', 'quality_score'],
-    },
+    } as WorkflowLedgerRails['totals'],
     coverage: [
       { kind: 'breaker_trip', producer: 'none', events: null },
       { kind: 'judge_verdict', producer: 'engine', events: 1 },
@@ -86,10 +87,11 @@ describe('the run-side ledger rails panel', () => {
     rails = async () => payload({
       findings: [loopFinding()],
       totals: {
-        steps_completed: 1, verdicts: 0, cost_usd: null, tokens: null, duration_secs: null,
+        steps_completed: 1, verdicts: 0, cost_usd: null, cost_recorded: false,
+        tokens: null, tokens_recorded: false, duration_secs: null,
         verdicts_by_word: {}, overall_series: null,
         absent_scores: ['marginal_value', 'quality_score'],
-      },
+      } as WorkflowLedgerRails['totals'],
     })
     const { container } = render(<LedgerRailsPanel runId="r1" />)
     await waitFor(() => expect(screen.getByText('Cost (est.)')).toBeTruthy())
@@ -109,14 +111,39 @@ describe('the run-side ledger rails panel', () => {
     rails = async () => payload({
       findings: [runFinding({ cost_usd: 0, tokens: 0 })],
       totals: {
-        steps_completed: 1, verdicts: 0, cost_usd: 0, tokens: 0, duration_secs: 0,
+        steps_completed: 1, verdicts: 0, cost_usd: 0, cost_recorded: true,
+        tokens: 0, tokens_recorded: true, duration_secs: 0,
         verdicts_by_word: {}, overall_series: null,
         absent_scores: ['marginal_value', 'quality_score'],
-      },
+      } as WorkflowLedgerRails['totals'],
     })
     const { container } = render(<LedgerRailsPanel runId="r1" />)
     await waitFor(() => expect(screen.getByText('Cost (est.)')).toBeTruthy())
     expect(container.textContent ?? '').toContain('~$0.0000')
+  })
+
+  it('renders a MIXED run’s tokens/cost as a disclosed floor, never a bare number (#3400)', async () => {
+    // The defect: one step carried the key, one did not — the same fact `IntrospectPanel`'s Tokens
+    // cell already discloses as `≥N` (#3218) over the identical `step_completed` rows. Before this
+    // fix, `RailTotals` had no flag at all, so this same total rendered here as a bare "100" one
+    // panel over from the "≥100" on the SAME run page.
+    rails = async () => payload({
+      totals: {
+        steps_completed: 2, verdicts: 0, cost_usd: 0.1, cost_recorded: false,
+        tokens: 100, tokens_recorded: false, duration_secs: 8,
+        verdicts_by_word: {}, overall_series: null,
+        absent_scores: ['marginal_value', 'quality_score'],
+      } as WorkflowLedgerRails['totals'],
+    })
+    render(<LedgerRailsPanel runId="r1" />)
+    await waitFor(() => expect(screen.getByText('Cost (est.)')).toBeTruthy())
+    // The disclosed floor — routed through the SAME helpers `IntrospectPanel` uses.
+    expect(screen.getByText('≥100')).toBeTruthy()
+    expect(screen.getByText('≥~$0.1000')).toBeTruthy()
+    // The precise defect: neither figure may ALSO render bare, with no `≥` disclosing it as a
+    // floor — `getByText` is exact-match, so a "100" node distinct from "≥100" would be the bug.
+    expect(screen.queryByText('100')).toBeNull()
+    expect(screen.queryByText('~$0.1000')).toBeNull()
   })
 
   it('names a kind with no run-side producer instead of showing it as zero events', async () => {
@@ -139,10 +166,11 @@ describe('the run-side ledger rails panel', () => {
     rails = async () => payload({
       verdicts: [],
       totals: {
-        steps_completed: 1, verdicts: 0, cost_usd: 0.02, tokens: 900, duration_secs: 8,
+        steps_completed: 1, verdicts: 0, cost_usd: 0.02, cost_recorded: true,
+        tokens: 900, tokens_recorded: true, duration_secs: 8,
         verdicts_by_word: {}, overall_series: null,
         absent_scores: ['marginal_value', 'quality_score'],
-      },
+      } as WorkflowLedgerRails['totals'],
     })
     render(<LedgerRailsPanel runId="r1" />)
     await waitFor(() => expect(screen.getByRole('tab', { name: /Verdict \/ ROI/ })).toBeTruthy())
@@ -156,10 +184,11 @@ describe('the run-side ledger rails panel', () => {
     rails = async () => payload({
       findings: [],
       totals: {
-        steps_completed: 0, verdicts: 0, cost_usd: null, tokens: null, duration_secs: null,
+        steps_completed: 0, verdicts: 0, cost_usd: null, cost_recorded: true,
+        tokens: null, tokens_recorded: true, duration_secs: null,
         verdicts_by_word: {}, overall_series: null,
         absent_scores: ['marginal_value', 'quality_score'],
-      },
+      } as WorkflowLedgerRails['totals'],
     })
     render(<LedgerRailsPanel runId="r1" />)
     // A young run is not a broken panel, and blank space cannot say which it is.

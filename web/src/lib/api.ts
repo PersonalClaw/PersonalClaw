@@ -1825,6 +1825,14 @@ export interface WorkflowLedgerRails {
     // `null` until some step carried the key — see `WorkflowFindingRow`.
     cost_usd: number | null
     tokens: number | null
+    // 🔑 ABSENCE HAS TWO SHAPES AND ONLY ONE OF THEM IS `null`. `null` means nothing was EVER
+    // measured; a number with its `*_recorded` flag `false` means at least one step carried the key
+    // and at least one did not, so the number is a FLOOR and must render as `≥N`. Without these two
+    // flags `LedgerRailsPanel` presented a partial sum as a total on the same run page where
+    // `IntrospectPanel` correctly disclosed it — two aggregates over one journal, visibly
+    // disagreeing (#3400). Mirrors `RunStats.tokens_recorded`/`.priced` exactly.
+    tokens_recorded: boolean
+    cost_recorded: boolean
     duration_secs: number | null
     verdicts_by_word: Record<string, number>
     // `null` (not `[]`) when no verdict carried a score: an empty series says the judge scored

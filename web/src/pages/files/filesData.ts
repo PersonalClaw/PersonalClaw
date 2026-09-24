@@ -1,16 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError, api, type FsEntry, type FsRoot } from '../../lib/api'
 
-/** Load the allowed root directories the explorer may browse. */
+/** Load the allowed root directories the explorer may browse.
+ *
+ *  🔴 The rejection used to be discarded (`.catch(() => setLoading(false))`), which left `roots` at
+ *  `[]` with `loading` false — so a failed `/api/files/roots` rendered a file explorer with NO roots,
+ *  indistinguishable from a gateway that genuinely allows none, and the user's only read of it was
+ *  "there is nothing here". `error` is captured so the page can say the roots are unreachable and
+ *  offer a retry instead of an empty tree. */
 export function useFileRoots() {
   const [roots, setRoots] = useState<FsRoot[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<unknown>(null)
+  const [tick, setTick] = useState(0)
+  const refresh = useCallback(() => setTick((t) => t + 1), [])
   useEffect(() => {
     let alive = true
-    api.fileRoots().then((r) => { if (alive) { setRoots(r.roots); setLoading(false) } }).catch(() => { if (alive) setLoading(false) })
+    setLoading(true)
+    api.fileRoots()
+      .then((r) => { if (alive) { setRoots(r.roots); setError(null); setLoading(false) } })
+      .catch((e) => { if (alive) { setError(e); setLoading(false) } })
     return () => { alive = false }
-  }, [])
-  return { roots, loading }
+  }, [tick])
+  return { roots, loading, error, refresh }
 }
 
 // Session-persisted dir cache: survives a page refresh so the tree paints its last-known

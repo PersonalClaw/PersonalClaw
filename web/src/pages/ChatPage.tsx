@@ -5112,12 +5112,19 @@ function AutoNudgeMenuItem({ session, onOpen }: { session: string; onOpen: () =>
   const [maxCycles, setMaxCycles] = useState(0)
   const [busy, setBusy] = useState(false)
 
+  // 🔴 THE CATCH USED TO `setEnabled(false)`, and the `!enabled` branch below names a specific
+  // environment variable as the cause — so an unreachable `/api/autonudge` told the user
+  // "Disabled on this server (PERSONALCLAW_AUTONUDGE=0)" about a server that might have it on.
+  // A confident wrong answer about a setting is worse than a silent one; the rejection is recorded
+  // and rendered as itself.
+  const [cfgErr, setCfgErr] = useState<unknown>(null)
   const load = useCallback(() => {
     api.autonudgeGet(session).then((r) => {
+      setCfgErr(null)
       setEnabled(r.enabled)
       setLoop(r.loop)
       if (r.loop) { setMsg(r.loop.message); setIdle(r.loop.idle_secs); setMaxCycles(r.loop.max_cycles) }
-    }).catch(() => setEnabled(false))
+    }).catch((e) => setCfgErr(e))
   }, [session])
   useEffect(load, [load])
 
@@ -5143,7 +5150,11 @@ function AutoNudgeMenuItem({ session, onOpen }: { session: string; onOpen: () =>
       {open && (
         <Modal title="Auto-nudge" icon={<Repeat size={18} className="text-primary" />} onClose={() => setOpen(false)}>
           <div className="flex flex-col gap-2">
-            {!enabled ? (
+            {cfgErr ? (
+              // Tested BEFORE `!enabled`: `enabled` is unchanged by a failed read, so an error
+              // branch after it would be unreachable for whichever value it happens to hold.
+              <FieldError>Couldn't load your auto-nudge setting — {(cfgErr as Error)?.message || 'the server did not respond'}. Reopen this panel to try again.</FieldError>
+            ) : !enabled ? (
               <p className="text-[0.8125rem] text-on-surface-low">Disabled on this server (<code className="font-mono">PERSONALCLAW_AUTONUDGE=0</code>).</p>
             ) : (<>
               <p className="text-[0.8125rem] text-on-surface-low">When a turn finishes and you're idle, this message is re-injected into this chat to keep it working on its own.</p>
