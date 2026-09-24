@@ -368,3 +368,74 @@ def test_a_recovered_default_warns_again_on_its_next_streak(tmp_path, monkeypatc
         r for r in caplog.records if r.levelno >= logging.WARNING and url in r.getMessage()
     ]
     assert len(on_default) == 2, f"expected one warning per streak over two streaks: {on_default}"
+
+
+# ── The REASON a git source failed, not just that it did ─────────────────────────────
+#
+# Measured on a fresh `python:3.13-slim` container installed from the published wheel —
+# which is what `pip install personalclaw` on a minimal machine looks like. `github.com`
+# resolved and an HTTPS GET of the repository's `info/refs` returned **200**, yet
+# `GET /api/apps/catalog` reported both shipped sources as `reason: "unreachable"`. The
+# machine simply had no `git`, and every git source is read by shelling out to it.
+#
+# That mattered twice over: the Store's badge promises "it will be retried automatically"
+# (no retry can ever help), and first-run setup's REQUIRED model lane rendered "No model
+# provider app is available…" — an assertion of absence from a read that never happened.
+# So the reason has to distinguish a missing dependency from a network fact.
+
+
+def test_a_machine_with_no_git_says_so_instead_of_calling_the_source_unreachable(
+    tmp_path, monkeypatch
+):
+    url = "https://example.invalid/apps.git"
+    _sources(tmp_path, url)
+    monkeypatch.setattr(subprocess, "run", _Blackhole())
+    monkeypatch.setattr(
+        catalog.shutil, "which", lambda name: None if name == "git" else "/bin/" + name
+    )
+
+    unavailable: list[dict[str, str]] = []
+    catalog._scan_registries(
+        now=time.time(), deadline=time.monotonic() + 30.0, unavailable=unavailable
+    )
+
+    assert unavailable, "premise: the source did not fail, so this rail proves nothing"
+    assert [u["reason"] for u in unavailable] == ["no-git"], unavailable
+
+
+def test_with_git_present_a_failing_source_is_still_reported_unreachable(tmp_path, monkeypatch):
+    """The control. Without this, `no-git` could be returned unconditionally and the test
+    above would still pass while every network failure lost its correct reason."""
+    url = "https://example.invalid/apps.git"
+    _sources(tmp_path, url)
+    monkeypatch.setattr(subprocess, "run", _Blackhole())
+    monkeypatch.setattr(catalog.shutil, "which", lambda name: "/usr/bin/" + name)
+
+    unavailable: list[dict[str, str]] = []
+    catalog._scan_registries(
+        now=time.time(), deadline=time.monotonic() + 30.0, unavailable=unavailable
+    )
+
+    assert [u["reason"] for u in unavailable] == ["unreachable"], unavailable
+
+
+def test_the_budget_reason_survives_a_missing_git(tmp_path, monkeypatch):
+    """The two reasons are about different events and must not collapse into one. A source
+    the scan ATTEMPTED failed for a knowable reason (`no-git`); a source it never reached
+    was not attempted at all, so `no-git` would be a guess about a read that never
+    happened — "budget" stays the honest word for that one, on the same machine, in the
+    same build."""
+    _sources(tmp_path, "https://example.invalid/a.git", "https://example.invalid/b.git")
+    monkeypatch.setattr(subprocess, "run", _Blackhole(cost=0.5))
+    monkeypatch.setattr(catalog.shutil, "which", lambda name: None if name == "git" else "/bin/x")
+
+    unavailable: list[dict[str, str]] = []
+    catalog._scan_registries(
+        now=time.time(), deadline=time.monotonic() + 0.2, unavailable=unavailable
+    )
+
+    by_source = {u["source"]: u["reason"] for u in unavailable}
+    assert by_source == {
+        "https://example.invalid/a.git": "no-git",
+        "https://example.invalid/b.git": "budget",
+    }, unavailable

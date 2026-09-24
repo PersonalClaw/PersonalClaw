@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -676,6 +677,25 @@ def _mark_unavailable(sink: list[dict[str, str]] | None, source: str, reason: st
         sink.append({"source": source, "reason": reason})
 
 
+def _git_source_failure_reason() -> str:
+    """Why a git source failed: ``"no-git"`` when this machine has no ``git``, else
+    ``"unreachable"``.
+
+    Every git source is read by shelling out to ``git clone`` (:func:`_fetch_registry_index`,
+    :func:`_scan_git_source`), so on a machine with no ``git`` on PATH the failure is not a
+    network fact at all — it is certain, it applies to every git source, and retrying will
+    never fix it. Measured on a minimal ``python:3.13-slim`` container, which is what a
+    ``pip install personalclaw`` on a fresh machine can look like: ``github.com`` resolved
+    and an HTTPS ``GET`` of the repository's ``info/refs`` returned **200**, while the whole
+    catalog reported ``reason: "unreachable"`` — so the one reason a user could act on was
+    reported as the one thing they could do nothing about.
+
+    Distinguishing them is what lets the Store drop "it will be retried automatically" (it
+    will not help) and lets first-run setup name a missing dependency instead of asserting
+    that no app exists."""
+    return "unreachable" if shutil.which("git") else "no-git"
+
+
 def _scan_registries(
     *, now: float, deadline: float | None = None, unavailable: list[dict[str, str]] | None = None
 ) -> list[CatalogEntry]:
@@ -707,7 +727,7 @@ def _scan_registries(
         # at all is not a failure (it falls through to the subdir scan), so only an actual
         # failure record counts — including one we just inherited from a previous round.
         if backed_off or url in _registry_failures:
-            _mark_unavailable(unavailable, url, "unreachable")
+            _mark_unavailable(unavailable, url, _git_source_failure_reason())
     for root in list_local_sources():
         for p in _fetch_registry_index(root, is_git=False, now=now, deadline=deadline) or []:
             out.append(_pointer_to_entry(root, p, is_git=False))
@@ -860,7 +880,7 @@ def _scan_git_sources(
             # legitimately contributes nothing here. Only flag one the registry pass also
             # failed on, so a healthy single-app repo is never reported as unavailable.
             if url in _registry_failures:
-                _mark_unavailable(unavailable, url, "unreachable")
+                _mark_unavailable(unavailable, url, _git_source_failure_reason())
         out.extend(entries)
     return out
 
@@ -1712,6 +1732,8 @@ def available_catalog() -> dict[str, Any]:
         # Sources that contributed nothing THIS build because they were unreachable or the
         # scan budget ran out (#408). The information used to be discarded, which is why a
         # single typo'd source read as "the Store is broken" rather than "remove that one".
-        # ``reason`` is "unreachable" (git failed → backed off) or "budget" (cut off).
+        # ``reason`` is "unreachable" (git failed → backed off), "no-git" (this machine has
+        # no ``git``, so every git source fails and no retry can help — see
+        # :func:`_git_source_failure_reason`) or "budget" (cut off).
         "unavailableSources": unavailable,
     }
