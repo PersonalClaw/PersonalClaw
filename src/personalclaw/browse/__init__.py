@@ -19,6 +19,13 @@ BA-3 adds the driver that consumes all three:
   * ``page`` — ``CdpPageDriver``: the non-navigation half of the wire (click / fill / submit /
     scroll / back / screenshot-to-a-PATH), addressing elements by BA-1's stable identity.
 
+BA-10 adds the one action that is NOT addressed by identity, for the page shape that has none:
+
+  * ``vision`` — grounding a described control to a point on the step's screenshot through the
+    EXISTING ``image_modality`` capability, so a ``<canvas>`` or image-map becomes clickable via a
+    located ``Input.dispatchMouseEvent``. Explicitly opted into per run, never auto-selected, and
+    honestly refused (with a typed reason) when no vision model is bound.
+
 ``action_providers.browse_provider`` is the ActionProvider that supplies the loop with a real
 model and a real browser; nothing in this package knows about a provider or a gateway.
 """
@@ -40,13 +47,17 @@ from personalclaw.browse.extraction import (
 from personalclaw.browse.loop import (
     MAX_STEPS_DEFAULT,
     PARK_BUDGET_EXHAUSTED,
+    PARK_HUMAN_CHALLENGE,
     PARK_NAVIGATION_BLOCKED,
     PARK_STEP_EXHAUSTED,
     PARK_STUCK,
+    PARK_VISION_UNAVAILABLE,
+    SEL_OPERATION_VISION_CLICK,
     STUCK_REPEAT_LIMIT,
     BrowseLoopResult,
     BrowseStep,
     PageDriver,
+    action_vocabulary,
     run_browse_loop,
     verify_submission,
 )
@@ -54,6 +65,7 @@ from personalclaw.browse.page import CdpPageDriver, PageActionError
 from personalclaw.browse.sentinels import (
     Action,
     ClickAction,
+    ClickVisionAction,
     DoneAction,
     GoBackAction,
     NavigateAction,
@@ -85,6 +97,15 @@ from personalclaw.browse.target import (
     unknown_target_error,
     user_browser_enabled,
 )
+from personalclaw.browse.vision import (
+    DEFAULT_MODEL_REF,
+    REASON_NO_VISION_MODEL,
+    RECOMMENDED_MODELS,
+    VISION_USE_CASE,
+    GroundedPoint,
+    GroundingModel,
+    GroundingResult,
+)
 
 __all__ = [
     "ElementRef",
@@ -100,6 +121,7 @@ __all__ = [
     "Action",
     "NavigateAction",
     "ClickAction",
+    "ClickVisionAction",
     "TypeAction",
     "SubmitAction",
     "ScrollAction",
@@ -121,6 +143,18 @@ __all__ = [
     "PARK_NAVIGATION_BLOCKED",
     "CdpPageDriver",
     "PageActionError",
+    # BA-10 — the located vision-grounding path (opt-in, pull-only, never bundled).
+    "action_vocabulary",
+    "PARK_VISION_UNAVAILABLE",
+    "PARK_HUMAN_CHALLENGE",
+    "SEL_OPERATION_VISION_CLICK",
+    "VISION_USE_CASE",
+    "REASON_NO_VISION_MODEL",
+    "RECOMMENDED_MODELS",
+    "DEFAULT_MODEL_REF",
+    "GroundingModel",
+    "GroundingResult",
+    "GroundedPoint",
     # BA-7 — the execution-target selector.
     "TARGET_KEY",
     "TARGET_GATEWAY",
