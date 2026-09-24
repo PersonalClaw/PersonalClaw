@@ -1306,19 +1306,27 @@ Examples:
     cfg_parser = sub.add_parser(
         "config",
         help="Get or set configuration values",
+        # 🔴 EVERY DOTTED KEY HERE IS A PROMISE THE COMMAND HAS TO KEEP. These examples used to
+        # advertise `dashboard.port`, which has never existed in the model — both of them exited 1
+        # with `❌ Unknown key`, on the first surface a new operator reads (#3395). The persisted
+        # gateway port is the port inside `dashboard.url`, which `parse_dashboard_url()` reads and
+        # `--port` overrides, so `dashboard.url` is the honest port-shaped example rather than a
+        # near-miss. `tests/test_cli_help_surface.py` now resolves every key advertised anywhere in
+        # the tree against the model, so the next example cannot drift off the config again.
         epilog="""
 Examples:
   personalclaw config get                   # Show all config (credentials withheld)
-  personalclaw config get dashboard.port    # Get specific value
+  personalclaw config get dashboard.url     # Get specific value
   personalclaw config get --reveal          # …including credentials, in the clear
-  personalclaw config set dashboard.port 8888
+  personalclaw config set dashboard.url http://localhost:8888
+  personalclaw config unset slack           # Remove a block outright
   personalclaw config edit                  # Open in $EDITOR
 """,
         formatter_class=_fmt,
     )
     cfg_sub = cfg_parser.add_subparsers(dest="config_action")
     cfg_get = cfg_sub.add_parser("get", help="Get a config value (or all if no key)")
-    cfg_get.add_argument("key", nargs="?", help="Dot-separated key (e.g. dashboard.port)")
+    cfg_get.add_argument("key", nargs="?", help="Dot-separated key (e.g. dashboard.url)")
     cfg_get.add_argument(
         "--reveal",
         action="store_true",
@@ -1328,9 +1336,23 @@ Examples:
         ),
     )
     cfg_set = cfg_sub.add_parser("set", help="Set a config value")
-    cfg_set.add_argument("key", nargs="?", help="Dot-separated key (e.g. dashboard.port)")
+    cfg_set.add_argument("key", nargs="?", help="Dot-separated key (e.g. dashboard.url)")
     cfg_set.add_argument("value", nargs="?", help="Value to set")
-    cfg_set.add_argument("--file", "-f", dest="file", help="Load full config from a JSON file")
+    cfg_set.add_argument(
+        "--file",
+        "-f",
+        dest="file",
+        # Not "load": the write merges the file's unmodeled top-level blocks forward so a document
+        # `config get` printed cannot delete `providers[]` by omission (#951). That makes omission
+        # unable to express removal, so a document missing a block is now REFUSED rather than
+        # silently merged at ✅ (#3125) — `config unset` is the way to remove one.
+        help="Apply a full config from a JSON file (refuses if it would drop a block)",
+    )
+    cfg_unset = cfg_sub.add_parser(
+        "unset",
+        help="Remove a config key or block from config.json",
+    )
+    cfg_unset.add_argument("key", help="Dot-separated key or top-level block (e.g. slack)")
     cfg_sub.add_parser("edit", help="Open config in $EDITOR")
 
     # app — scaffold a third-party app (types derived from the provider registry)
