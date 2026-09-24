@@ -476,3 +476,69 @@ def test_the_harness_drives_only_the_dispatch():
         node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and node.value
     }
     assert "osascript" not in literals, "osascript needs the Apple Events grant; it blocks"
+
+
+def test_the_acting_helper_ignores_driver_ops_from_before_its_own_dispatch(monkeypatch):
+    """``_write_by_index``'s op-count guard must measure ITS dispatch, not the whole run.
+
+    The guard's own message says *"an acting dispatch should re-walk then act"*, but it compared
+    ``["snapshot", "set_value"]`` against a window that nothing had reset — so it also counted the
+    launch-wait poll and the caller's own ``computer_snapshot``, both of which spawn a driver
+    ``snapshot`` before the acting dispatch is ever made. The comparison was therefore unreachable
+    at every call site, and by how much varied with how long TextEdit took to launch.
+
+    Nobody could have known: the live harness had never got past ``_preflight`` on any host, so
+    this was the first assertion in the file to execute and it was wrong by construction. The
+    first run to reach it reported ``['snapshot', 'snapshot', 'snapshot', 'set_value']``.
+
+    The two stale ops below are exactly that leading noise. A drain-less helper counts four ops
+    and raises; the helper must count the two its own dispatch caused.
+    """
+    harness = _harness()
+    harness._DRIVER_OPS[:] = ["snapshot", "snapshot"]
+
+    def fake_dispatch(tool, params):
+        assert tool == "computer_set_value"
+        harness._DRIVER_OPS.extend(["snapshot", "set_value"])
+        return "ok", {}
+
+    monkeypatch.setattr(harness, "_dispatch", fake_dispatch)
+    monkeypatch.setattr(
+        harness, "_snapshot", lambda clause: {"elements": [dict(TEXT_AREA, value="marker")]}
+    )
+
+    written = harness._write_by_index(
+        {"snapshot_id": "s1", "elements": [TEXT_AREA]}, "marker", "clause"
+    )
+    assert written["driver_ops"] == ["snapshot", "set_value"]
+
+
+def test_teardown_runs_when_a_clause_fails(monkeypatch, tmp_path):
+    """A failing clause must still quit what the run launched.
+
+    The quit used to sit at the end of the happy path, so the first run ever to get past preflight
+    failed mid-phase and left TextEdit running on the operator's screen with an unsaved scratch
+    document in it. Teardown belongs in a ``finally``: a validator that litters when it fails is a
+    validator nobody runs a second time, and this harness's whole standing is that it touches the
+    operator's desktop only as much as the clause requires.
+    """
+    from personalclaw.computer_use import macos_ffi
+
+    harness = _harness()
+    monkeypatch.setattr(macos_ffi, "list_gui_apps", lambda: [])
+    monkeypatch.setattr(harness, "_install_driver_counter", lambda: None)
+    monkeypatch.setattr(harness, "_write_enable", lambda home, apps: None)
+
+    def boom(*_args, **_kwargs):
+        raise harness.Failure("past-ttl", "the clause failed")
+
+    monkeypatch.setattr(harness, "_phase_stale_body", boom)
+    torn_down = []
+    monkeypatch.setattr(
+        harness, "_teardown", lambda launched: torn_down.append(sorted(launched)) or {}
+    )
+
+    with pytest.raises(harness.Failure):
+        harness.phase_stale(tmp_path)
+
+    assert torn_down == [[ARMED_APP]], "a failed clause skipped teardown and left the app running"
