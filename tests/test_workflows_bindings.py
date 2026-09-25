@@ -185,7 +185,7 @@ class TestFirstIterationLast:
 
     def test_a_bare_first_iteration_last_is_a_value_not_a_raise(self) -> None:
         """Same short-circuit as `previous`: None, which interpolates empty. Templates are
-        held to carrying the default by `test_first_iteration_last_refs_carry_a_default`; the
+        held to carrying the default by `test_last_refs_carry_a_default`; the
         resolver does not additionally require it, or the two rails would disagree."""
         assert resolve("{{last.output.summary}}", BindingContext(iter_index=0)) is None
 
@@ -212,16 +212,203 @@ class TestFirstIterationLast:
         with pytest.raises(BindingError):
             resolve('{{last.output.summary | default("(first pass)")}}', c)
 
-    def test_a_supplied_last_still_validates_its_path(self) -> None:
-        """Once `last` IS supplied, a wrong field under it is an authoring error again."""
+    def test_a_supplied_last_resolves_the_field_it_does_carry(self) -> None:
+        """A real value always wins over the default — the rescue below must not shadow it."""
         c = BindingContext(iter_index=3, last_output={"summary": "did a thing"}, has_last=True)
         assert resolve("{{last.output.summary}}", c) == "did a thing"
-        with pytest.raises(BindingError):
-            resolve('{{last.output.typo | default("x")}}', c)
+        assert resolve('{{last.output.summary | default("x")}}', c) == "did a thing"
 
     def test_a_misspelled_root_still_raises(self) -> None:
         with pytest.raises(BindingError):
             resolve('{{lastt.output.summary | default("x")}}', BindingContext(iter_index=0))
+
+
+class TestPriorCycleFieldMiss:
+    """A field the prior cycle's output does not carry, in an expression that says what to use.
+
+    The defect, measured on the owner's own escalated `general-project` run (`61899886`, 26
+    minutes, `status escalated`): iteration 1 needs no `last` and completed; from iteration 2 on,
+    every `work` stage died before dispatch on
+    `binding failed: unresolved reference at 'summary' (in {{last.output.summary | default(…)}})`
+    — 1 escalated, 8 done, **4 failed** across 13 nodes. The cause is one level below the root:
+    `last` resolved, `last.output` resolved, and `.summary` was absent because the stage declaring
+    `schema {summary, meaningful_progress, evidence}` got prose back from the model and kept the
+    unstructured `{"result": "<text>"}` envelope. With a small local model that is the COMMON
+    case, and the template had already written the fallback for it — a `default` that
+    `_pipe_default`'s contract ("an unresolvable *reference* still raises") could never fire.
+
+    The rescue is the same argument `TestFirstIterationLast` above records for an absent ROOT,
+    applied one segment deeper: a prior cycle legitimately may not carry a field, and raising
+    there makes a diff-aware template fail on a model's mood. What keeps it from being a blanket
+    softening is that it is keyed on FIVE conditions, and each of the tests below removes exactly
+    one and asserts the raise comes back.
+    """
+
+    #: The owner's shape: `last` supplied, the previous iteration's output unstructured.
+    def _ctx(self, **kw: object) -> BindingContext:
+        base = dict(iter_index=1, has_last=True, last_output={"result": "I renamed three strings."})
+        base.update(kw)
+        return BindingContext(**base)  # type: ignore[arg-type]
+
+    def test_a_missing_prior_iteration_field_yields_the_declared_default(self) -> None:
+        """THE clause. Fails on `origin/main` with `unresolved reference at 'summary'`."""
+        assert (
+            resolve('{{last.output.summary | default("(first pass)")}}', self._ctx())
+            == "(first pass)"
+        )
+
+    def test_the_same_miss_with_NO_default_still_raises(self) -> None:
+        """Nobody has said what to use instead, so the engine must not invent one. This is why
+        the four bundled loop `condition`s reading `{{last.output.<field>}}` carry
+        `| default(false)` rather than leaning on the rescue."""
+        with pytest.raises(BindingError) as exc:
+            resolve("{{last.output.summary}}", self._ctx())
+        assert "unresolved reference at 'summary'" in str(exc.value)
+
+    def test_a_node_typo_still_raises_even_carrying_a_default(self) -> None:
+        """🔴 The assertion that keeps the rescue from being a hole.
+
+        A node id is statically knowable — `validator._validate_binding_targets` rejects a typo'd
+        one before any run — so a miss under `nodes.*` is an authoring error and stays one. Both
+        depths are checked: the id itself, and a field under a real id.
+        """
+        c = BindingContext(node_outputs={"real": {"findings": []}})
+        with pytest.raises(BindingError) as exc:
+            resolve('{{nodes.typo.output | default("x")}}', c)
+        assert "unresolved reference at 'typo'" in str(exc.value)
+        with pytest.raises(BindingError):
+            resolve('{{nodes.real.output.typo | default("x")}}', c)
+
+    def test_a_wrong_second_segment_still_raises(self) -> None:
+        """The miss must be strictly INSIDE the produced value. `last.typo.summary` is not a
+        field of the previous iteration's output — it is a misspelling of the envelope."""
+        with pytest.raises(BindingError) as exc:
+            resolve('{{last.typo.summary | default("x")}}', self._ctx())
+        assert "unresolved reference at 'typo'" in str(exc.value)
+
+    def test_an_unwired_last_still_raises_on_a_later_iteration(self) -> None:
+        """`absent-is-not-zero`, preserved. The rescue demands the root be PRESENT, so a `last`
+        the engine failed to supply on iteration 5 is still the real gap it was — it does not
+        decay into "(first pass)" forever, which is the failure `_first_cycle_miss` refuses."""
+        with pytest.raises(BindingError) as exc:
+            resolve('{{last.output.summary | default("x")}}', BindingContext(iter_index=5))
+        assert "unresolved reference at 'last'" in str(exc.value)
+
+    def test_a_foreach_is_excluded(self) -> None:
+        """`last` means nothing over an ITEM index — the same exclusion `_first_cycle_miss` draws
+        for item 0, drawn here for item N."""
+        with pytest.raises(BindingError):
+            resolve(
+                '{{last.output.summary | default("x")}}',
+                self._ctx(item={"id": 1}, has_item=True),
+            )
+
+    def test_previous_gets_the_same_rule(self) -> None:
+        """`previous` is the other prior-cycle root, and a second dialect for one fact is how
+        two rules drift. Both directions: rescued with a default, raising without one."""
+        c = BindingContext(has_previous=True, previous_output={"other": 1})
+        assert resolve('{{previous.output.summary | default("x")}}', c) == "x"
+        with pytest.raises(BindingError):
+            resolve("{{previous.output.summary}}", c)
+
+    def test_a_falsy_prior_value_is_not_a_miss(self) -> None:
+        """A present `false` must not be silently rewritten by `default(true)` — the two are
+        different facts, and a loop condition reading `halt` depends on the difference."""
+        c = BindingContext(iter_index=1, has_last=True, last_output={"halt": False})
+        assert resolve("{{last.output.halt | default(true)}}", c) is False
+
+    def test_the_no_default_remediation_asks_for_the_default(self) -> None:
+        """The remediation for this miss INVERTS the module's usual advice, so it has to say so
+        — the generic "a `| default(...)` pipe does not rescue a missing path" would send an
+        author hunting a typo that is not there."""
+        with pytest.raises(BindingError) as exc:
+            resolve("{{last.output.summary}}", self._ctx())
+        fix = exc.value.remediation
+        assert "add a `| default(...)` pipe" in fix, fix
+        assert "declared schema" in fix, fix
+
+
+class TestBindingFailureReachesTheRightAudience:
+    """Which `FailureClass` a binding failure carries, and what that drives.
+
+    The owner's escalated run filed
+    `{'class': 'user', 'cause_plain': "binding failed: unresolved reference at 'summary' …"}`.
+    They chose a model and typed a task; they did not author `general-project` and did not write
+    the model's output. `USER` is the class for something the CALLER supplied.
+
+    **What the class drives, censused rather than assumed** — this is the honest finding, and it
+    is narrower than "reclassifying changes the routing":
+
+    | reader | `user` | `internal` |
+    |---|---|---|
+    | `RETRYABLE_CLASSES` / `_should_retry` | no retry | no retry |
+    | `needs_input.classify_block` | `NEEDS_INPUT` (fallback) | `NEEDS_INPUT` (fallback) |
+    | `materialize.FAILURE_TO_BLOCKED_KIND` | absent → plain `blocked` | absent → plain `blocked` |
+    | `resilience.MUTATION_HINTS` | unreachable — `resolve_config` always sets a non-empty
+      `remediation`, and `build_attempt` prefers it | unreachable, same reason |
+    | `EscalationPanel.tsx` | renders the class **verbatim**: *"user error"* | *"internal error"* |
+
+    So the card still reaches the user, still unretried, still under the same badge kind — and
+    the one thing that changes is the sentence blaming them. Both halves are asserted below: the
+    class moves, AND the surface does not, because a reclassification that quietly stopped
+    routing the run to a human would be a worse defect than the wrong word.
+    """
+
+    def _class_of(self, expr: str, ctx: BindingContext) -> object:
+        from personalclaw.workflows.engine_support import resolve_config
+        from personalclaw.workflows.models import Node
+
+        node = Node.from_dict({"kind": "stage", "id": "work", "config": {"prompt": f"x {expr}"}})
+        _, failure = resolve_config(node, ctx)
+        assert failure is not None, f"{expr} was expected to fail binding"
+        return failure
+
+    def test_each_kind_of_binding_failure_carries_its_own_class(self) -> None:
+        from personalclaw.workflows.models import FailureClass
+
+        prior = BindingContext(iter_index=1, has_last=True, last_output={"result": "prose"})
+        assert (
+            self._class_of("{{last.output.summary}}", prior).failure_class is FailureClass.INTERNAL
+        ), "a prior-cycle field miss is an engine/authoring fault, not the caller's"
+        assert (
+            self._class_of(
+                "{{previous.output.summary}}",
+                BindingContext(has_previous=True, previous_output={"other": 1}),
+            ).failure_class
+            is FailureClass.INTERNAL
+        )
+        # The narrow scope IS the design. These three are separate faults with separate
+        # arguments, and sweeping them in would change four behaviours to justify one.
+        assert (
+            self._class_of("{{nodes.typo.output}}", BindingContext()).failure_class
+            is FailureClass.USER
+        ), "a node-id typo is statically knowable and keeps its class"
+        assert (
+            self._class_of("{{inputs.missing}}", BindingContext(inputs={})).failure_class
+            is FailureClass.USER
+        ), "an input IS what the caller supplies — the one root USER is right for"
+
+    def test_the_reclassified_failure_still_reaches_the_user(self) -> None:
+        """The control on the change. `classify_block` routes on the class, so the reclassification
+        had to be checked against it — a prior-cycle failure that stopped producing a
+        user-actionable block would be a run that died silently, which is worse than a bad label.
+        """
+        from personalclaw.workflows.needs_input import USER_ACTIONABLE, BlockKind, classify_block
+
+        prior = BindingContext(iter_index=1, has_last=True, last_output={"result": "prose"})
+        for expr in ("{{last.output.summary}}", "{{nodes.typo.output}}"):
+            failure = self._class_of(expr, prior if "last" in expr else BindingContext())
+            kind = classify_block(None, failure.to_dict())
+            assert kind is BlockKind.NEEDS_INPUT, f"{expr} routed to {kind}"
+            assert kind in USER_ACTIONABLE
+
+    def test_neither_class_becomes_retryable(self) -> None:
+        """Retrying a binding failure burns budget to reach the same failure. Asserted because
+        `INTERNAL` is a different member of the enum and `RETRYABLE_CLASSES` is where that would
+        have leaked."""
+        prior = BindingContext(iter_index=1, has_last=True, last_output={"result": "prose"})
+        assert not self._class_of("{{last.output.summary}}", prior).retryable
+        assert not self._class_of("{{nodes.typo.output}}", BindingContext()).retryable
 
 
 class TestFailureRemediation:
@@ -278,7 +465,9 @@ class TestFailureRemediation:
         )
         resolved, failure = resolve_config(node, BindingContext(iter_index=2))
         assert resolved == {}
-        assert failure is not None and failure.failure_class is FailureClass.USER
+        # INTERNAL, not USER: the head reads a prior cycle's output, and the reader is not the
+        # person who wrote the template. See `TestBindingFailureReachesTheRightAudience`.
+        assert failure is not None and failure.failure_class is FailureClass.INTERNAL
         assert "cannot rescue" in failure.remediation, failure.remediation
         assert "genuinely optional" not in failure.remediation, failure.remediation
 

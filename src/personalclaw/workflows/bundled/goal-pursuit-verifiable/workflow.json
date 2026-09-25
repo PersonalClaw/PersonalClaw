@@ -128,7 +128,7 @@
         "id": "work",
         "config": {
           "mode": "until",
-          "condition": "{{last.output.command_passed}}",
+          "condition": "{{last.output.command_passed | default(false)}}",
           "max_iterations": 8,
           "timeout_stall_secs": 1200
         },

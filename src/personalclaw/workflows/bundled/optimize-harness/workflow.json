@@ -130,7 +130,7 @@
         "label": "Propose, scope-check, score, keep or discard",
         "config": {
           "mode": "until",
-          "condition": "{{last.output.halt}}",
+          "condition": "{{last.output.halt | default(false)}}",
           "max_iterations": 12,
           "timeout_stall_secs": 1800
         },

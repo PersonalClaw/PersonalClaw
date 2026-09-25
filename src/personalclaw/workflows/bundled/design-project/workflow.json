@@ -162,7 +162,7 @@
         "id": "refine",
         "config": {
           "mode": "until",
-          "condition": "{{last.output.issues_resolved}}",
+          "condition": "{{last.output.issues_resolved | default(false)}}",
           "max_iterations": 6,
           "timeout_stall_secs": 600
         },
