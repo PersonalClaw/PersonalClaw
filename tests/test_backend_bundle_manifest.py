@@ -41,7 +41,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SPEC_FILE = _REPO_ROOT / "personalclaw-backend.spec"
 _MANIFEST_FILE = _REPO_ROOT / "scripts" / "backend_bundle_manifest.py"
 
-#: The two data files the Chairman's 2026-09-23 install logged `FileNotFoundError` for,
+#: The two data files the owner's 2026-09-23 install logged `FileNotFoundError` for,
 #: eight times in one browsing session.
 _OBSERVED_MISSING_DATA = (
     "src/personalclaw/agents/runner_catalog.json",

@@ -233,9 +233,16 @@ something away and the row above cannot say what:
   `nix/personalclaw.nix`, not your working tree; for that, use the development install in
   [CONTRIBUTING](CONTRIBUTING.md#development-setup).
 
-Every install path is exercised on a genuinely clean machine rather than a dev box, in a
-throwaway container — `scripts/fresh_install_validate.sh`, and the per-release checklist in
-the [release runbook](docs/maintainers/release-runbook.md#convenience-channel-smoke-homebrew--nix).
+These are exercised on a genuinely clean machine rather than a dev box, and no single harness
+covers them all, so here is which one covers what: `scripts/fresh_install_validate.sh` drives
+**pip, Homebrew and Nix** in a throwaway container; the `install-smoke` job in
+`.github/workflows/full.yml` drives the **bootstrap one-liner** on a bare `ubuntu:latest` with
+neither curl nor CA roots preinstalled; `.github/workflows/docker-single-container.yml` builds
+the image and drives the **Docker** one-liner all the way to a *rendered dashboard*, not just a
+`200` from `/api/healthz`; and the per-release checklist in the
+[release runbook](docs/maintainers/release-runbook.md#convenience-channel-smoke-homebrew--nix)
+walks Homebrew and Nix by hand. **pipx has no leg of its own** — it installs the same wheel
+every other Python path installs, which is what "the same release artifact" above buys.
 
 ### Docker
 
@@ -280,9 +287,12 @@ checks out the resolved tag rather than fast-forwarding a branch.
 ```bash
 personalclaw snapshot                        # pre-1.0: no automatic data migration
 personalclaw update                          # → the newest release on your channel
-personalclaw config set updates.pin 0.2.1    # …or stay exactly here
-personalclaw update --to 0.2.0               # roll back: pins that release and installs it
+personalclaw config set updates.pin 0.2.0    # …or stay on exactly 0.2.0
+personalclaw update --to 0.1.3               # roll back: pins that release and installs it
 ```
+
+A pin must name a release that actually exists: one that names no published release is
+refused rather than quietly upgrading you (`select_target`, `src/personalclaw/self_update.py`).
 
 Everything is in **Settings → Updates** too: the **channel** (`stable` · `beta` ·
 `nightly` for contributors), a **version pin**, **automatic applies**
@@ -293,7 +303,7 @@ it can be switched off — see [Privacy](#privacy). Per-platform details:
 [containers](docs/guides/containers.md#updates) ·
 [desktop](docs/guides/desktop.md#updating).
 
-> **Tech stack:** Python 3.12 · aiohttp gateway · React + Vite SPA · SQLite · MIT.
+> **Tech stack:** Python 3.12–3.13 · aiohttp gateway · React + Vite SPA · SQLite · MIT.
 > **Run modes:** local process · Docker Compose · systemd/launchd service. (A macOS-only
 > Electron desktop shell exists but is experimental — not built, signed, or released by CI,
 > and has no auto-update channel.)

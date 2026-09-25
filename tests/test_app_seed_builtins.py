@@ -220,7 +220,7 @@ def test_de_bundled_app_is_demoted_from_builtin_to_local(tmp_path):
     name from the marker, so the user can manage it like any other installed app.
 
     Deliberately a NEUTRAL fixture name. `ollama-models` was the historical precedent
-    (`retire_orphaned_builtins`' docstring cites it), but Chairman ruling R1 (2026-09-21)
+    (`retire_orphaned_builtins`' docstring cites it), but an owner ruling (2026-09-21)
     re-bundles that app, so naming the fixture after it would have this rail assert a
     story the tree no longer tells. The MECHANISM is what is railed, and it is generic.
     """

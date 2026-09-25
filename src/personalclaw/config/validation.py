@@ -128,7 +128,7 @@ def _fold_legacy_update_flags(data: dict) -> None:
     while the validator, one call earlier, had never heard of them. So a home carrying
     ``auto_update`` was simultaneously migrated correctly and reported as containing an
     unrecognized top-level key, on every single load: 1144 of the ~2000 lines in the
-    Chairman's 2026-09-23 gateway.log were that one warning.
+    owner's 2026-09-23 gateway.log were that one warning.
 
     Folding here instead fixes both halves with one mechanism. The keys are consumed and
     REMOVED, so nothing downstream sees an unknown key, the warning cannot be emitted, and
@@ -317,7 +317,7 @@ def validate_config_data_cached(data: dict, fingerprint: str) -> dict:
 
     ``AppConfig.load()`` is a pure read called from ~300 sites, so it re-parsed and
     re-validated ``config.json`` on essentially every request. Two costs, both measured on
-    the Chairman's 2026-09-23 session: jsonschema ran over the whole sixty-section schema on
+    the owner's 2026-09-23 session: jsonschema ran over the whole sixty-section schema on
     the hot path, and a single legitimate warning was emitted 1144 times in one browsing
     window — 1144 of ~2000 log lines, which is how eight ``FileNotFoundError`` tracebacks in
     the same window went unnoticed. A warning repeated a thousand times is not a louder

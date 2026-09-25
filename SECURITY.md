@@ -75,9 +75,15 @@ hold:
 - **Hardening requests** — "you should also add control X." These are valuable and
   welcome, but file them as a normal issue, not a private advisory.
 - **Declaration-only surfaces documented as such**, e.g. an app's `network`
-  permission (an app backend is its own OS process with its own network stack;
-  the declaration is surfaced honestly at install consent but is not a
-  gateway-enforced boundary — see the threat model's limitations section).
+  permission. There is no per-app egress chokepoint to enforce it at, for two
+  separate reasons: an app's **provider** code is imported *in-process* by the
+  gateway (`providers/loader.py`), so its outbound calls simply *are* the
+  gateway's; and an app that ships a **backend** gets its own OS process with its
+  own network stack. The declaration is surfaced honestly at install consent,
+  labelled advisory and shown whether or not the app declares it, but it is not a
+  gateway-enforced boundary — see `src/personalclaw/apps/permissions.py` and the
+  threat model's limitations section. Treat installing an app as running a program
+  as yourself.
 - **What an installed app's frontend reaches in the dashboard page.** An app's UI
   bundle is imported into the dashboard's own origin, so it has the host DOM, the
   owner's session and same-origin `/api/*` access; the `api` allowlist binds the app's

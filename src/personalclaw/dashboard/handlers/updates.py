@@ -137,7 +137,7 @@ async def _do_update_check() -> None:
     **Why the kind gate is here and not just the project-dir probe.** ``PERSONALCLAW_PROJECT_DIR``
     is not a proxy for "this is a checkout": the Electron shell sets it to ``…/Resources``
     inside the app bundle (``desktop/gatewayEnv.js``), which carries no ``.git``. So on the
-    Chairman's 2026-09-23 desktop install this function ran ``git fetch`` in a directory that
+    owner's 2026-09-23 desktop install this function ran ``git fetch`` in a directory that
     is not a repository, twelve times in one session, each logging
     ``git fetch failed (rc=128): fatal: not a git repository`` and returning before it
     reached anything useful. The kind is what decides whether git means anything here, and

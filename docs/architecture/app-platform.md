@@ -306,7 +306,7 @@ implementation — but it does mean "no core edits" is exact for provider behavi
 yet exact for tool *metadata*.
 
 **The second bundle that owns code: `apps/native/ollama-models/`** — the local Ollama model
-provider, bundled under Chairman ruling R1 (2026-09-21) so that a fresh install has a chat
+provider, bundled under an owner ruling (2026-09-21) so that a fresh install has a chat
 **and** embedding provider without a credential and without cloning a second repository. It
 is the contract's first non-`tool` user, and it demonstrates the two things the exemplar
 could not:

@@ -179,7 +179,7 @@ def verdict(observation: dict[str, object]) -> tuple[bool, str, str]:
             f"no model is signed off, and chat correctly raised {code} on an unbound home — "
             "the calm OU-12 setup state, which is exactly the state OU-14 exists to eliminate. "
             "This is the honest reading of an empty sign-off record, not a rig limitation: the "
-            "bundle CHOICE and its licence sign-off are owner-gated (Chairman C9)."
+            "bundle CHOICE and its licence sign-off are owner-gated."
         ),
     )
 

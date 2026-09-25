@@ -6,7 +6,7 @@
 # that executed real code, and `--version` is argparse: it prints and exits BEFORE the
 # runner catalogue is read, before any `personalclaw.sdk.*` submodule is imported, and
 # before an MCP server command is resolved. So the 2026-09-23 dmg passed this smoke while
-# being, in the packaged form the Chairman installed, unable to enable a single extension
+# being, in the packaged form the owner installed, unable to enable a single extension
 # and running its agent with no core tools.
 #
 # This boots the packaged gateway on a THROWAWAY home, drives the API surfaces that force
@@ -112,7 +112,7 @@ LOG="$SMOKE_HOME/gateway.log"
 test -f "$LOG" || { echo "smoke: FAIL — no gateway.log was written"; exit 1; }
 echo "smoke: gateway.log is $(wc -l <"$LOG") lines"
 
-# Every one of these was in the Chairman's 2026-09-23 log. A packaged bundle that produces
+# Every one of these was in the owner's 2026-09-23 log. A packaged bundle that produces
 # any of them is broken in a way no source-tree test can see, because in a checkout the
 # files these name are simply on disk.
 SIGNATURES=(
