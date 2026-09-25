@@ -138,9 +138,15 @@ describe('no surface flips local state on a write it discarded', () => {
       // A UI preference. A failed persist means the panel simply is not remembered next time;
       // nothing on screen claims otherwise and there is no server-side resource involved.
       'pages/ChatPage.tsx:sideOpen',
-      // Reconciles instead of asserting: the delete is followed by `reloadAnnotations()`, so a
-      // failed one brings the row back. The canonical "optimistic + reconcile" form.
-      'pages/knowledge/KnowledgeDetailPage.tsx:deleteKnowledgeAnnotation',
+      // `KnowledgeDetailPage.deleteKnowledgeAnnotation` is GONE from this list, and the row it used
+      // to carry was wrong rather than merely stale. It read: "Reconciles instead of asserting: the
+      // delete is followed by `reloadAnnotations()`, so a failed one brings the row back. The
+      // canonical optimistic + reconcile form." Reconciling is the right STATE decision and is kept
+      // — but `settings/settingsWriteReported` had already ruled on this exact argument one
+      // directory over: "Reconciling makes the state honest; it does not make the outcome legible…
+      // A toggle that flips itself back with nothing said reads as a glitchy UI, not as a refusal."
+      // A highlight that reappears is indistinguishable from a click the app never received, so the
+      // delete now reports through `app/reportingWrite` and still reloads. See #3547.
       // 🔑 `app/identity.tsx` USED TO HAVE TWO ENTRIES HERE, described as "the owner-taste-call
       // file" and deferred "with the onboarding-swallow question it belongs to". That question got
       // an answer, and it was not a taste call. Driven on a fresh home with the gateway killed, the

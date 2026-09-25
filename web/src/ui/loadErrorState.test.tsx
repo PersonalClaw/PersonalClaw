@@ -812,7 +812,17 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // `FeedbackPanel` is GONE from this map, not zeroed: its producers table printed "No feedback yet —
   // 👍/👎 appear on inbox classifications…" at a user whose every verdict was recorded and unreadable,
   // and the file's own docstring had written the swallow down as deliberate. It was the defect.
-  'pages/settings/InboxSettingsPanel.tsx': 1,
+  //
+  // `InboxSettingsPanel` is GONE the same way (1 → 0), and the site it held is worth reading because
+  // it is the WRITE half of this file's own property. `setTriage` patched `proactive.triage_enabled`
+  // and then reconciled the schedule row with `api.proactiveInstall().catch(() => undefined)` — under
+  // a `.then(flash)`, so a refused reconcile fell straight through to a SUCCESS confirmation, over
+  // exactly the state the panel's own comment calls wrong (a cron still firing for a disabled
+  // digest). The reconcile now reports through `app/reportingWrite`'s `reportActionFailure` and
+  // `flash` fires only when the pair completes. Its budget lives in `app/writeFailureState.test.tsx`
+  // — the write half of this contract — not here: a read census counting a fabricated value and a
+  // write census counting a discarded failure are two properties, and #3547 records why they are two
+  // files. See also the FIVE named-list write rails that file supersedes.
   // 8 → 7. The daily-digest read is fixed; it printed "No digests yet" out of a failed fetch. The
   // seven left are stats/lint/observability decorations and a settings read with its own branch.
   'pages/settings/MemoryPanel.tsx': 7,

@@ -39,6 +39,8 @@ import {
   type GuardedResult, type GuardedInstall,
 } from '../../lib/useGuardedInstall'
 import { catalogApps } from '../../lib/appCatalog'
+import { readableErrText } from '../../lib/errText'
+import { reportingWrite } from '../../app/reportingWrite'
 import { provenance, registryListing } from '../../lib/provenance'
 import { dayStamp } from '../../lib/epoch'
 import { AppIcon } from './appIcon'
@@ -214,9 +216,17 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
       case 'uninstall': setRemoveFor(app.name); return
       case 'force-uninstall': setUninstallFor(app.name); return
       case 'toggle': {
+        // The CARD/menu twin of `AppDetailPanel.toggle()` below, and it had the same defect in a
+        // different syntactic dress: `p.then(reload).finally(clear)` attaches no rejection handler
+        // at all, so a refused activate/deactivate was an unhandled rejection — the row stopped
+        // spinning with its old label and nothing said why. Reported and gated, same sentence, so
+        // the two routes to one action cannot answer differently.
         setBusyName(app.name)
-        const p = app.enabled ? api.disableApp(app.name) : api.enableApp(app.name)
-        p.then(() => reload()).finally(() => setBusyName(null))
+        const verb = app.enabled ? 'deactivate' : 'activate'
+        const run = () => (app.enabled ? api.disableApp(app.name) : api.enableApp(app.name))
+        void reportingWrite(`${verb} ${app.name}`, run)
+          .then((ok) => { if (ok) reload() })
+          .finally(() => setBusyName(null))
         return
       }
     }
@@ -1617,8 +1627,18 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
 
   async function toggle() {
     setBusy(true)
-    try { app.enabled ? await api.disableApp(app.name) : await api.enableApp(app.name); onChanged() }
-    finally { setBusy(false) }
+    try {
+      // Reported, and the repaint GATED on the answer. This was a bare `try { … } finally { … }`
+      // with no catch: a refused activate/deactivate rejected unhandled, the spinner stopped, the
+      // Activate/Deactivate button kept its old label and nothing named the reason — which is
+      // exactly what a successful no-op would look like. Toast rather than an inline slot because
+      // this is a button ROW with nowhere to put a sentence (the two dialogs below report inline,
+      // where they do have somewhere); the same split `dashboard/PinnedTiles` already draws.
+      const verb = app.enabled ? 'deactivate' : 'activate'
+      const run = () => (app.enabled ? api.disableApp(app.name) : api.enableApp(app.name))
+      if (!(await reportingWrite(`${verb} ${app.name}`, run))) return
+      onChanged()
+    } finally { setBusy(false) }
   }
 
   const toggleNav = () => { const next = !inNav; setInNav(app.name, next); setInNavState(next) }
@@ -1935,9 +1955,10 @@ function KeptDepsList({ kept }: { kept: AppDepClassification[] }) {
  *  because "we kept your 4 notes" and "this app had nothing stored" and "it had a
  *  data folder and it was empty" are three different promises, and a dialog that
  *  makes the same one in all three cases is wrong in two of them. */
-function RemoveAppModal({ name, onClose, onDone }: { name: string; onClose: () => void; onDone: () => void }) {
+export function RemoveAppModal({ name, onClose, onDone }: { name: string; onClose: () => void; onDone: () => void }) {
   const { data } = useQuery(`app-uninstall:${name}`, () => api.appUninstallPreview(name), { persist: false })
   const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
   const kept = (data?.dependencies ?? []).filter((d) => d.disposition !== 'removable')
   const facts = data?.data
   // Issue 2585. An earlier copy of this app's data/ still on disk makes the backend REFUSE
@@ -1952,7 +1973,18 @@ function RemoveAppModal({ name, onClose, onDone }: { name: string; onClose: () =
 
   async function remove() {
     setBusy(true)
+    setErr('')
+    // 🔑 REPORTED INSIDE THE DIALOG, and the dialog deliberately STAYS OPEN. This was a bare
+    // `try { … } finally { setBusy(false) }`: a refused uninstall rejected unhandled, so the
+    // spinner stopped, the dialog sat there, `onDone()` never ran and nothing said why — the
+    // #3540 symptom on the uninstall path. And the refusal it hides is one this very dialog
+    // documents above: the backend fails CLOSED on an earlier data/ copy and renders that as
+    // `404 app not installed`, which a user can only act on if they are shown it.
+    // Not a toast: the eye is on the dialog, and `refusedWriteVisible`'s ruling is that a
+    // surface with a place to put the sentence puts it there. Not closing either — closing is
+    // this dialog's success signal, and the app is still installed.
     try { await api.removeApp(name); onDone() }
+    catch (e) { setErr(readableErrText(e) || 'That uninstall did not go through, and the app is still installed.') }
     finally { setBusy(false) }
   }
 
@@ -1997,6 +2029,7 @@ function RemoveAppModal({ name, onClose, onDone }: { name: string; onClose: () =
           </div>
         </div>
         <KeptDepsList kept={kept} />
+        {err && <FieldError>{err}</FieldError>}
         <div className="flex justify-end gap-2">
           {/* Cancel first in tab order — the safe option gets the focus, not the one
               that removes things.
@@ -2026,16 +2059,22 @@ function RemoveAppModal({ name, onClose, onDone }: { name: string; onClose: () =
   )
 }
 
-function UninstallModal({ name, onClose, onDone }: { name: string; onClose: () => void; onDone: () => void }) {
+export function UninstallModal({ name, onClose, onDone }: { name: string; onClose: () => void; onDone: () => void }) {
   const { data } = useQuery(`app-uninstall:${name}`, () => api.appUninstallPreview(name), { persist: false })
   const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
   const deps: AppDepClassification[] = data?.dependencies ?? []
   const kept = deps.filter((d) => d.disposition !== 'removable')
   const facts = data?.data
 
   async function forceUninstall() {
     setBusy(true)
+    setErr('')
+    // Same fix and same reasoning as `RemoveAppModal.remove()` above — and it matters more here,
+    // because this dialog's own copy promises "it cannot be undone": a silent failure leaves the
+    // user unable to tell a deletion that happened from one that did not.
     try { await api.uninstallApp(name, true); onDone() }  // force=true → delete files
+    catch (e) { setErr(readableErrText(e) || 'That force uninstall did not go through, and nothing was deleted.') }
     finally { setBusy(false) }
   }
 
@@ -2057,6 +2096,7 @@ function UninstallModal({ name, onClose, onDone }: { name: string; onClose: () =
           {kept.length > 0 && ' Shared dependencies still used by other apps will be kept.'}
         </div>
         <KeptDepsList kept={kept} />
+        {err && <FieldError>{err}</FieldError>}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button variant="danger" loading={busy} onClick={forceUninstall}><Trash2 size={16} /> Force uninstall
