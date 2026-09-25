@@ -1,6 +1,6 @@
 """``ollama-models`` is BUNDLED, and bundling it re-coupled nothing to core.
 
-Chairman ruling R1 (2026-09-21): an app essential to the platform offering ships in core
+an owner ruling (2026-09-21): an app essential to the platform offering ships in core
 and auto-installs at gateway install, **through the app mechanism** — `apps/native/` plus
 the app loader. What was deliberately removed when Ollama was de-cored was *hardcoded
 integration inside core*: an `llm/*.py` self-register, a special case in the registry.

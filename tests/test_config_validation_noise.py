@@ -1,6 +1,6 @@
 """A legitimate warning repeated a thousand times is not a louder warning — it is a quieter log.
 
-Both findings here were measured off the Chairman's 2026-09-23 `gateway.log`: 1144 of ~2000 lines
+Both findings here were measured off the owner's 2026-09-23 `gateway.log`: 1144 of ~2000 lines
 in one browsing session were the SAME warning, `Config: unrecognized top-level keys: auto_update`.
 Two independent defects produced that number, and fixing either alone leaves the other:
 
@@ -49,7 +49,7 @@ def _unknown_key_warnings(records) -> list[str]:
 
 class TestTheLegacyAutoUpdateKeyIsConsumed:
     def test_a_legacy_home_does_not_warn(self, home, caplog):
-        """🔴 THE REGRESSION, in the exact shape the Chairman's home has it."""
+        """🔴 THE REGRESSION, in the exact shape the owner's home has it."""
         _write(home, {"auto_update": True})
         with caplog.at_level(logging.WARNING):
             AppConfig.load()

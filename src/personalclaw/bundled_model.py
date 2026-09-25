@@ -12,7 +12,7 @@ paragraph. This module is those two controls:
   names the measured size AND the budget.
 
 What is NOT here, by design, is the bundle CHOICE: which model ships and the sign-off on its
-licence are the owner's (Chairman C9). ``docs/architecture/bundled-model-signoff.txt`` is the
+licence are the owner's. ``docs/architecture/bundled-model-signoff.txt`` is the
 form that decision gets recorded in, and it is empty today. So :func:`gate_wheel` has a third
 state besides admitted/refused — ``no-bundle`` — and the whole point of naming it is that a
 release log must not print a bare ``OK`` for a gate that measured nothing.
@@ -47,7 +47,7 @@ from typing import Iterable
 
 from personalclaw.local_models.layouts import DIRECT_FILE_EXTENSIONS
 
-#: The ONLY licence identifiers a bundled weight may carry (Chairman C9: "genuinely
+#: The ONLY licence identifiers a bundled weight may carry (the owner's sign-off: "genuinely
 #: OSI-permissive — Apache-2.0 or MIT"). Compared exactly, lowercased. Widening this set is a
 #: governance change, not a maintenance one: ``tests/test_bundled_model_gate.py`` pins the set
 #: member-for-member so adding an entry reds until the pin is edited in the same reviewable
@@ -211,7 +211,7 @@ def licence_decision(raw: str) -> LicenceDecision:
         reason=(
             f"licence {raw.strip()!r} is NOT on the permitted allowlist {permitted} — refused. "
             "Only a genuinely OSI-permissive licence may be redistributed in the wheel "
-            "(Chairman C9); a custom, community, non-commercial, research-only or "
+            "(an owner ruling); a custom, community, non-commercial, research-only or "
             "'open'-in-name-only licence is not one, whatever the model card calls it. If this "
             "IS one of the permitted licences, declare its SPDX identifier exactly — this rail "
             "does not match prose, because a matcher loose enough to accept prose accepts a "
@@ -455,7 +455,7 @@ def admit_bundle(
                 f"{DECLARATION_RELPATH} and the wheel carries no weight-shaped member above "
                 f"{_mib(WEIGHT_FLOOR_BYTES)}. This gate measured NO artifact, so it is not "
                 "evidence about one: the zero-config first chat turn is UNMET until a model is "
-                "chosen and its licence signed off (owner-gated, Chairman C9)."
+                "chosen and its licence signed off (owner-gated)."
             ),
         )
     if declaration is None and measured is not None:

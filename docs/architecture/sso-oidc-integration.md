@@ -317,14 +317,16 @@ reworded; SSO adds its own (`auth_sso_not_enabled`, `auth_sso_state_invalid`,
 
 ---
 
-## 5. Follow-on atom set
+## 5. The work this would take, in order
 
-Named here for the PM to register. **This note registers nothing** — Chairman directive #31 forbids
-growing the denominator, and registration is the PM's call. Ordering is dependency-real: each atom
-is completable start-to-finish once the ones above it are done, and every one of them is fenced
-behind at least one §4 escalation, so **none is startable until the corresponding ruling lands.**
+**Nothing below is scheduled.** This section exists so that a reader can see the size and the
+shape of the change rather than guess at it, and so that a contributor who wants to argue for
+it has something concrete to argue about. The ordering is dependency-real: each step is
+completable start-to-finish once the ones above it are done, and every one is gated behind at
+least one §4 owner decision, so **none of it is startable until that decision is made.** To
+propose it, open an issue — see [CONTRIBUTING](../../CONTRIBUTING.md#the-model).
 
-| Proposed atom | Scope | Gated on |
+| Step | Scope | Gated on |
 |---|---|---|
 | **SSO-1** — OIDC discovery + JWKS URI | `oidc.py` reads `{issuer}/.well-known/openid-configuration` and takes `jwks_uri`, `authorization_endpoint`, `token_endpoint` from it, replacing the hardcoded `:71`. Non-cheatable: a fixture IdP publishing a JWKS at a non-default path must verify. | none (pure defect fix, §1.4 gap 2) |
 | **SSO-2** — the plugin boundary, no provider | `auth/sso/protocol.py`: `SsoProvider` protocol + frozen `SsoIdentity(subject, issuer, claims)`, plus a registry. No routes, no config, no session. Non-cheatable: a fixture provider satisfies the protocol without importing anything from `dashboard/`. | C5 (what `SsoIdentity` may carry) |

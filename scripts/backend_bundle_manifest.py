@@ -3,7 +3,7 @@
 `personalclaw-backend.spec` used to hand-transcribe the wheel's package-data globs into its
 own `datas` list, with a comment saying so ("Replicate the package-data globs from
 pyproject.toml"). A transcription of a list that grows is a list that rots, and on
-2026-09-23 the rot was measured from the Chairman's own macOS install: the shipped
+2026-09-23 the rot was measured from the owner's own macOS install: the shipped
 `.app` had no `personalclaw/agents/runner_catalog.json` and no
 `personalclaw/tool_providers/rules_builtin.json`, so the agent-runner catalogue and the
 builtin tool-projection rule pack were both unavailable in the installed product while

@@ -192,7 +192,7 @@ def _resolve_personalclaw_bin() -> str:
        ``sys.executable mcp-core`` is the same command a console script would run.
        There is no ``bin/personalclaw`` inside an ``.app`` and no interpreter to put
        a console script beside, so every probe below misses and the bare-name
-       fallback resolves to nothing: on the Chairman's 2026-09-23 macOS install the
+       fallback resolves to nothing: on the owner's 2026-09-23 macOS install the
        gateway logged "Could not resolve personalclaw binary to an existing file"
        and then "Dropping MCP server 'personalclaw-core'", leaving the agent with no
        core tool surface and one WARNING as the only evidence. This clause is FIRST

@@ -220,14 +220,14 @@ container. Everything below is the same on every install kind, and all of it liv
 **Pinning** (`updates.pin`) — stay on an exact release, whatever the channel says:
 
 ```bash
-personalclaw config set updates.pin 0.2.1     # stay here
+personalclaw config set updates.pin 0.2.0     # stay on exactly 0.2.0
 personalclaw config set updates.pin ""        # follow the channel again
 ```
 
 A pin overrides the channel everywhere — the update check, the apply, and the container
 image tag. A pin naming no published release is *refused* rather than quietly upgrading you.
 
-**Rolling back.** `personalclaw update --to 0.2.0` pins that version and installs it, so a
+**Rolling back.** `personalclaw update --to 0.1.3` pins that version and installs it, so a
 later check cannot pull you forward again. Settings → Updates offers the same thing as
 **Roll back to v&lt;previous&gt;** once PersonalClaw has seen your version change at least
 once. Take a snapshot first — pre-1.0 releases carry no data migrations in either
@@ -235,7 +235,7 @@ direction:
 
 ```bash
 personalclaw snapshot
-personalclaw update --to 0.2.0
+personalclaw update --to 0.1.3
 ```
 
 **Applying automatically is opt-in** (`updates.auto`). The default `off` only notifies
@@ -271,7 +271,9 @@ hand. This is a separate switch from `updates.auto`: one governs whether Persona
   that are easy to get wrong.
 - [HTTP route reference](../reference/api-routes.md) — every registered route, generated
   from the gateway's own route table.
-- Roadmap — where the project is heading.
+- Roadmap — maintainer-owned and deliberately not in this repository. The written way in is
+  the [contribution intake path](../../CONTRIBUTING.md#the-model): open an issue, discuss it,
+  and the maintainer files or updates a plan.
 
 ## Troubleshooting
 

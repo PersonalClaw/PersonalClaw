@@ -1,7 +1,7 @@
 """OU-14 — the bundled-model admission rails, and the zero-config drive that ties them down.
 
 Three clauses of OU-14 are engineering and are built here; the fourth — **which model ships and
-the sign-off on its licence** — is the Chairman's (C9) and is deliberately absent. Nothing in
+the sign-off on its licence** — is the owner's and is deliberately absent. Nothing in
 this file signs a model off, vendors a weight, or adds a real model's licence to the allowlist
 as if the call were made. What it does is prove the rails have teeth, so the moment the record
 is filled in the gate admits the model and the drive flips to MET on its own.
@@ -99,7 +99,7 @@ def _record(**overrides: object) -> str:
 
     The values are obvious placeholders (``example-org/example-model``, a link to
     ``example.com``) and are never a real model: this fixture exists to prove the rail's teeth,
-    not to stand in for the Chairman's choice.
+    not to stand in for the owner's choice.
     """
     fields: dict[str, object] = {
         "model_id": "example-org/example-model",
@@ -128,14 +128,15 @@ def _wheel(tmp_path: Path, members: dict[str, bytes], name: str = "demo-0.0.1-py
 def test_the_permitted_allowlist_is_pinned_member_for_member() -> None:
     """Widening the allowlist must be an explicit, reviewable edit in the same commit.
 
-    Chairman C9 binds the set to genuinely OSI-permissive licences — Apache-2.0 or MIT. Pinning
-    it here means a PR that quietly adds a third entry reds with this test naming it, rather
-    than shipping a licence nobody ruled on.
+    The owner's sign-off binds the set to genuinely OSI-permissive licences — Apache-2.0 or
+    MIT. Pinning it here means a PR that quietly adds a third entry reds with this test
+    naming it, rather than shipping a licence nobody ruled on.
     """
     assert set(PERMITTED_LICENCES) == {"apache-2.0", "mit"}, (
-        f"the permitted-licence allowlist is {sorted(PERMITTED_LICENCES)}. Chairman C9 binds it "
-        "to Apache-2.0 or MIT. Changing it is a governance decision: say what was added, why it "
-        "is genuinely OSI-permissive, and update this pin in the same commit."
+        f"the permitted-licence allowlist is {sorted(PERMITTED_LICENCES)}. The owner's "
+        "sign-off binds it to Apache-2.0 or MIT. Changing it is a governance decision: say "
+        "what was added, why it is genuinely OSI-permissive, and update this pin in the "
+        "same commit."
     )
 
 

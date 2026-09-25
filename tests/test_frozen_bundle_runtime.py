@@ -2,7 +2,7 @@
 
 Before 2026-09-23 nothing under `src/personalclaw` asked whether it was running frozen — a
 `grep` for `sys.frozen` / `_MEIPASS` over the whole package returned zero. That is the root of
-two of the high-severity findings from the Chairman's macOS install, because both are decisions
+two of the high-severity findings from the owner's macOS install, because both are decisions
 that are only wrong inside a bundle:
 
 * **the core MCP server was dropped.** `_resolve_personalclaw_bin` looks for a `bin/personalclaw`

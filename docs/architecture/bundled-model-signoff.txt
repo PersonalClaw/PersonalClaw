@@ -7,7 +7,7 @@
 # installer under its own name.
 #
 # THIS FILE IS THE FORM, NOT THE DECISION. It is deliberately EMPTY of a bundle today. Which
-# model ships, and the sign-off on its licence, are the owner's (Chairman C9) — an agent must
+# model ships, and the sign-off on its licence, are the owner's — an agent must
 # not pick a model, must not add a real model's licence as if the call were made, and must not
 # vendor a weight. What IS built is the pair of admission rails that read this file:
 #
@@ -33,7 +33,7 @@
 #
 #   model_id           the exact upstream model id, as published (e.g. `<org>/<name>`).
 #   licence            the SPDX identifier, exactly. `Apache-2.0` and `MIT` are the only
-#                      permitted values (Chairman C9). There is NO fuzzy matching: prose such
+#                      permitted values, by owner sign-off. There is NO fuzzy matching: prose such
 #                      as "Apache License 2.0" is refused, because a matcher loose enough to
 #                      accept prose is loose enough to accept "Gemma Terms (Apache-2.0-style)".
 #   licence_url        a link to the licence text for THIS model, as published.
