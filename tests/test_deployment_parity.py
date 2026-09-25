@@ -11,6 +11,7 @@ The Compose path auto-detects the container runtime (docker preferred, then
 finch); there is no command-line selector.
 """
 
+import ast
 import json
 import os
 import shutil
@@ -37,6 +38,40 @@ _REQUIRED_ENDPOINTS = [
 _PORT = 17777  # test port (avoid colliding with production 10000)
 _BASE_URL = f"http://127.0.0.1:{_PORT}"
 _STARTUP_TIMEOUT = 30  # seconds
+
+# ── The Compose fixture's share of one item's pytest-timeout ──────────────────
+# pytest-timeout charges `--timeout` PER TEST ITEM, and a module-scoped fixture's
+# setup is charged to the first item that requests it. So the image build, the
+# readiness poll, AND the teardown that runs on the way back out all have to fit
+# inside ONE item's budget — otherwise pytest-timeout kills setup part-way through
+# and the clean skip this module promises is simply unreachable.
+#
+# The build gets whatever is left over, derived from the live `--timeout` rather
+# than hardcoded beside it so the two cannot drift apart again:
+#
+#     build = --timeout - _STARTUP_TIMEOUT - _COMPOSE_DOWN_TIMEOUT - _TIMEOUT_MARGIN
+#
+# At this repo's `--timeout=120` that is 120 - 30 - 15 - 20 = 55s, and every way
+# setup can end lands inside 120s:
+#
+#     build blows its budget   55 + 15 (down)              =  70s
+#     built, never came up     55 + 30 (poll) + 15 (down)  = 100s
+#     healthy                  55 + 30 (poll) + the test itself
+#
+# leaving >= 20s for interpreter start-up, the container CLI's own latency and
+# raising the skip. A cold from-scratch build (npm+vite, then pip with the heavy
+# extras) does NOT fit in 55s and is not meant to: a host that cannot build the
+# image inside one test's budget is exactly the "Compose stack cannot be
+# built/started" case this module skips.
+_COMPOSE_DOWN_TIMEOUT = 15  # `compose down` of a partial or a running stack
+_TIMEOUT_MARGIN = 20  # reserved so pytest-timeout is never the thing that fires
+_DEFAULT_GLOBAL_TIMEOUT = 120.0  # pyproject's addopts value, if --timeout is unset
+
+
+def _compose_build_timeout(config: pytest.Config) -> int:
+    """Seconds the image build may take without putting the clean skip out of reach."""
+    global_timeout = config.getoption("timeout", None) or _DEFAULT_GLOBAL_TIMEOUT
+    return int(global_timeout) - _STARTUP_TIMEOUT - _COMPOSE_DOWN_TIMEOUT - _TIMEOUT_MARGIN
 
 
 def _wait_for_gateway(base_url: str, timeout: float = _STARTUP_TIMEOUT) -> bool:
@@ -113,7 +148,7 @@ def _container_runtime() -> str | None:
 
 
 @pytest.fixture(scope="module")
-def compose_gateway():
+def compose_gateway(request: pytest.FixtureRequest):
     """Start the gateway via `docker/finch compose up` using the build overlay."""
     runtime = _container_runtime()
     if not runtime:
@@ -125,6 +160,12 @@ def compose_gateway():
     build_overlay = compose_dir / "compose.build.yaml"
     if not compose_file.exists():
         pytest.skip("deploy/compose/compose.yaml not found")
+
+    # See the budget note above: a build share this small cannot be attempted at all
+    # without pytest-timeout, not us, deciding how setup ends.
+    build_timeout = _compose_build_timeout(request.config)
+    if build_timeout <= 0:
+        pytest.skip(f"--timeout leaves {build_timeout}s for the image build — too small to attempt")
 
     # The stack reads repo-root ../../.env via each service's env_file. Seed it
     # from .env.example only when absent, so a developer's real .env is never
@@ -140,39 +181,40 @@ def compose_gateway():
     base_url = "http://127.0.0.1:10000"
     compose_args = [runtime, "compose", "-f", str(compose_file), "-f", str(build_overlay)]
 
-    # Build timeout is deliberately below the global pytest-timeout (--timeout=120):
-    # a from-scratch image build (npm+vite, pip with heavy extras) can legitimately
-    # exceed the budget on a loaded runner. If it does, this is an environment
-    # constraint, not a product failure — skip cleanly (the fixture's contract),
-    # the same as a build error. Landing UNDER pytest-timeout guarantees OUR
-    # timeout fires first and tears the compose process down, rather than
-    # pytest-timeout killing setup and reporting 7 ERRORs.
-    build_timeout = 90
+    # ONE cleanup path for every way out — build error, build over budget, gateway
+    # never came up, or a clean run. It used to be copy-pasted into each of those
+    # branches, and the copy in the over-budget branch never ran: the budget was
+    # 90s build + 60s teardown against a 120s per-item timeout, so pytest-timeout
+    # killed setup mid-teardown, the module reported 7 setup ERRORs instead of the
+    # promised skip, and the seeded .env was left behind on disk. A `finally` is
+    # what makes that unrepeatable — it does not depend on the arithmetic above
+    # being right.
     try:
-        subprocess.run(
-            compose_args + ["up", "-d", "--build"],
-            check=True,
-            capture_output=True,
-            timeout=build_timeout,
-        )
-    except subprocess.CalledProcessError as exc:
-        subprocess.run(compose_args + ["down"], capture_output=True, timeout=60)
-        if seeded_env:
-            root_env.unlink(missing_ok=True)
-        pytest.skip(f"compose up failed: {exc.stderr.decode()[:200]}")
-    except subprocess.TimeoutExpired:
-        # Best-effort teardown of anything the interrupted build/up left behind.
-        subprocess.run(compose_args + ["down"], capture_output=True, timeout=60)
-        if seeded_env:
-            root_env.unlink(missing_ok=True)
-        pytest.skip(f"compose up exceeded {build_timeout}s to build — skipping Compose path")
+        try:
+            subprocess.run(
+                compose_args + ["up", "-d", "--build"],
+                check=True,
+                capture_output=True,
+                timeout=build_timeout,
+            )
+        except subprocess.CalledProcessError as exc:
+            pytest.skip(f"compose up failed: {exc.stderr.decode()[:200]}")
+        except subprocess.TimeoutExpired:
+            pytest.skip(f"compose up exceeded {build_timeout}s to build — skipping Compose path")
 
-    try:
-        if not _wait_for_gateway(base_url, timeout=60):
-            pytest.skip("Compose gateway did not start within 60s")
+        if not _wait_for_gateway(base_url, timeout=_STARTUP_TIMEOUT):
+            pytest.skip(f"Compose gateway did not start within {_STARTUP_TIMEOUT}s")
         yield base_url
     finally:
-        subprocess.run(compose_args + ["down"], capture_output=True, timeout=60)
+        try:
+            subprocess.run(
+                compose_args + ["down"], capture_output=True, timeout=_COMPOSE_DOWN_TIMEOUT
+            )
+        except (subprocess.SubprocessError, OSError) as exc:
+            # Teardown is best-effort BY DESIGN: a hung or broken container CLI must
+            # not convert this module's clean skip into an ERROR, and must not be able
+            # to skip the .env removal below.
+            print(f"compose down did not complete cleanly: {exc!r}")
         if seeded_env:
             root_env.unlink(missing_ok=True)
 
@@ -196,3 +238,82 @@ def test_compose_path_endpoint_responds(compose_gateway, endpoint):
     assert "_error" not in data or data.get(
         "_auth_required"
     ), f"Endpoint {endpoint} returned error on Compose path: {data}"
+
+
+# ── The Compose fixture's own contract ────────────────────────────────────────
+# The tests above need a container runtime, so on a host without one they skip and
+# say nothing about the fixture itself. These two need nothing: they pin the budget
+# and the cleanup shape that made `compose_gateway`'s advertised clean skip
+# unreachable, on every host and in CI.
+
+
+def _compose_fixture_ast() -> ast.FunctionDef:
+    """The `compose_gateway` fixture as source, so its SHAPE can be asserted."""
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    return next(
+        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "compose_gateway"
+    )
+
+
+def _cleanup_actions(node: ast.AST) -> list[ast.AST]:
+    """Both of the fixture's cleanup actions: `compose down`, and removing our .env."""
+    return [
+        n
+        for n in ast.walk(node)
+        if (isinstance(n, ast.Constant) and n.value == "down")
+        or (
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "unlink"
+        )
+    ]
+
+
+def test_the_whole_fixture_fits_inside_one_items_pytest_timeout(
+    request: pytest.FixtureRequest,
+) -> None:
+    """The arithmetic that put the fixture's own clean skip out of reach.
+
+    It budgeted a 90s build and then a 60s `compose down` on the way out — 150s of
+    setup against a 120s per-item `--timeout`. pytest-timeout therefore killed setup
+    part-way through the teardown, so `pytest.skip()` was never reached and the
+    module reported 7 setup ERRORs instead. The old comment claimed the opposite was
+    guaranteed; this asserts it instead of claiming it.
+    """
+    global_timeout = request.config.getoption("timeout", None) or _DEFAULT_GLOBAL_TIMEOUT
+    build = _compose_build_timeout(request.config)
+    assert build > 0, f"no budget left for the image build (--timeout={global_timeout})"
+
+    slowest_setup = build + _STARTUP_TIMEOUT + _COMPOSE_DOWN_TIMEOUT
+    assert slowest_setup + _TIMEOUT_MARGIN <= global_timeout, (
+        f"the fixture's slowest setup path is {build}s build + {_STARTUP_TIMEOUT}s poll "
+        f"+ {_COMPOSE_DOWN_TIMEOUT}s down = {slowest_setup}s, which leaves less than "
+        f"{_TIMEOUT_MARGIN}s of the {global_timeout}s per-item budget — pytest-timeout "
+        "will fire before the fixture can skip cleanly"
+    )
+
+
+def test_every_cleanup_action_lives_in_a_finally() -> None:
+    """A budget mistake must not be able to leak a seeded .env again.
+
+    The cleanup used to be copy-pasted into three branches. The copy in the
+    over-budget branch never ran, and the proof was physical: a `.env` seeded from
+    `.env.example` was left behind in the repo root (gitignored, so the tree still
+    read clean). Keeping both cleanup actions in a `finally` — and NOWHERE else —
+    is what makes that independent of the arithmetic being right.
+    """
+    fixture = _compose_fixture_ast()
+    everywhere = _cleanup_actions(fixture)
+    assert everywhere, "the fixture no longer tears the stack down or removes its .env"
+
+    in_finally = [
+        action
+        for node in ast.walk(fixture)
+        if isinstance(node, ast.Try)
+        for stmt in node.finalbody
+        for action in _cleanup_actions(stmt)
+    ]
+    assert len(in_finally) == len(everywhere), (
+        f"{len(everywhere) - len(in_finally)} of {len(everywhere)} cleanup actions sit "
+        "outside a `finally`, so a path that exits early skips them"
+    )
