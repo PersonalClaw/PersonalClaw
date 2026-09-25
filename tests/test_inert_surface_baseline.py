@@ -61,12 +61,24 @@ asserts every per-file inert counter **may only shrink** versus the committed ba
     cleanup: nothing was wired, the census simply stopped scoring the API as inert. Recorded
     here because "a counter fell" normally means "a writer/reader landed", and reading this
     one that way would send someone looking for a commit that does not exist.
+
+    That second case recurred once more, same day (#3511), when the same reader shape was
+    widened from "another export's field or method" to "another export's field, method OR
+    exported FUNCTION signature": ``sdk_export`` 170 → 159 across eight files, ROSE on none.
+    Twenty-two types became newly owed; NINETEEN were exported in the same change and every one
+    of them cleared on the signature that owed it — which is why a tranche of 19 new published
+    names moved the counter DOWN rather than up. The other three are a declared
+    ``personalclaw.dashboard.`` exemption (see ``CLOSURE_EXEMPT_PREFIX``) whose reason is the
+    structural import-direction ratchet, not this one. Read that arithmetic before trusting the
+    direction: a widening that clears more than it adds is legitimate, a widening that adds a
+    surface nothing names is the defect the counter exists to catch.
 """
 
 from __future__ import annotations
 
 import json
 import textwrap
+import typing
 from pathlib import Path
 
 import pytest
@@ -703,7 +715,12 @@ def test_the_value_lookup_ruling_is_recorded_in_the_generator():
 # this census scored all 26 surfaces as new declared-but-inert ones — which made "stop exporting
 # the type apps need" the cheapest way to go green, i.e. the census pushing for the defect. A
 # published signature is a reader, and unlike an out-of-repo app it is mechanically checkable,
-# so it clears. These four tests pin both directions and the two narrowings the rule rests on.
+# so it clears. These four tests pin both directions and the two rulings the rule rests on.
+#
+# #3511 widened "published signature" from a class's fields and methods to include an exported
+# FUNCTION's parameters and return, in the SAME walk, so the census clear and the
+# `test_sdk_surface_is_public` gap rail could not end up with two definitions of the phrase.
+# That cleared 11 more and opened 22 new gaps, all 22 exported in that change.
 
 #: The 26 surfaces the API-closure clear removed, each with the published field or signature
 #: that requires it. Pinned by name rather than counted: the value of the finding is WHICH
@@ -739,6 +756,55 @@ _API_CLOSURE_CLEARED = frozenset(
     }
 )
 
+#: #3511's tranche, pinned the same way and for the same reason. Two groups in one set because
+#: the census cannot tell them apart and neither may silently stop clearing:
+#:
+#: * the 11 ALREADY-EXPORTED surfaces that an exported function's signature cleared — 9 named
+#:   by a function directly, plus ``model.ModelCatalog`` and ``skill.SkillsMarketplace``, which
+#:   clear only because a function root drags a NEW class (``ProviderRegistry``,
+#:   ``SkillsRegistry``) into the frontier whose own methods then name them. That indirection is
+#:   the reason the count is 11 and not the 9 #3496 predicted, and it is worth a comment: the
+#:   two root kinds compose, so admitting one can clear a surface neither reaches alone.
+#: * the 19 NEWLY-EXPORTED types the widening owed an app (22 owed, minus the three the
+#:   ``personalclaw.dashboard.`` closure exemption covers). Every one clears on the signature
+#:   that owed it, which is why 19 new published names moved the counter DOWN.
+_FUNCTION_ROOT_CLOSURE_CLEARED = frozenset(
+    {
+        # ── cleared by a function signature (the 11) ──
+        "channel.ChannelTransportProvider",  # assert_channel_contract(provider)
+        "channel.TrustVerdict",  # guard_inbound() return
+        "feedback.FeedbackRecord",  # current_verdict() / record_feedback() return
+        "image.ImageGenProvider",  # active_image_gen() return
+        "model.MediaCatalog",  # register_media_catalog(catalog)
+        "model.ModelCatalog",  # ProviderRegistry.build_catalog() return — via get_default_registry
+        "net.EgressPolicy",  # egress_policy_for() / evaluate(policy) / fetch(policy)
+        "net.GuardDecision",  # evaluate() return
+        "skill.SkillsMarketplace",  # SkillsRegistry.get() return — via get_default_skills_registry
+        "tts.TtsProvider",  # channel.voice_reply(provider)
+        "video.VideoGenProvider",  # active_video_gen() return
+        # ── newly exported because a published function owed them (19 of the 22) ──
+        "channel.AuthConfig",  # resolve_bind_host(auth_cfg)
+        "channel.AuthMode",  # AuthConfig.mode
+        "channel.AutomationToolResult",  # delete_automation() / delete_all_automations() return
+        "channel.McpServerInfo",  # list_servers() return
+        "channel.ScheduleDefinition",  # format_schedule(schedule) / ScheduleJob.schedule
+        "channel.ScheduleJob",  # compute_next_run_ts(job)
+        "channel.SecurityEvent",  # SecurityEventLog.log(event)
+        "channel.SecurityEventLog",  # sel() return
+        "mcp.McpClientRegistry",  # get_mcp_client_registry() return
+        "mcp.McpServerConn",  # McpClientRegistry.get() return
+        "mcp.McpToolSpec",  # McpServerConn.list_tools() return
+        "model.ProviderRegistry",  # get_default_registry() return
+        "model.Segment",  # StreamingTagSplitter.feed() / flush() return
+        "model.StreamingTagSplitter",  # make_think_splitter() return
+        "net.ExtractOutcome",  # web_extract() return
+        "net.FetchOutcome",  # web_fetch() return
+        "net.FetchResponse",  # fetch() return
+        "skill.InstallResult",  # SkillsRegistry.install_guarded() return
+        "skill.SkillsRegistry",  # get_default_skills_registry() return
+    }
+)
+
 
 def _reported_sdk_exports() -> set[str]:
     """``{"<sdk submodule>.<name>"}`` the census currently reports as inert."""
@@ -751,26 +817,39 @@ def _reported_sdk_exports() -> set[str]:
 
 
 @pytest.mark.timeout(300)
-def test_an_export_named_by_another_exports_signature_is_not_inert():
-    """Direction one: the API closure clears, and it clears exactly the 26 measured surfaces.
+@pytest.mark.parametrize(
+    "tranche,pinned",
+    [
+        ("#3496 fields+methods", _API_CLOSURE_CLEARED),
+        ("#3511 functions", _FUNCTION_ROOT_CLOSURE_CLEARED),
+    ],
+)
+def test_an_export_named_by_another_exports_signature_is_not_inert(tranche, pinned):
+    """Direction one: the API closure clears, and it clears exactly the measured surfaces.
 
     Both halves are needed. ``consumed_exports()`` proves the closure SEES each one (a rule
     that resolved nothing would satisfy the census half trivially), and the census render
     proves the clear actually reaches the counter.
+
+    Parametrized by tranche so a regression names WHICH widening broke: the #3496 set is
+    reachable from class roots alone, the #3511 set needs exported functions seeded too. Merged
+    into one set they would be indistinguishable, and un-seeding functions would read as a
+    generic "the walk regressed" on 33 names instead of "the function half is gone".
     """
     from scripts.sdk_surface_closure import consumed_exports
 
     consumed = consumed_exports()
-    missing = sorted(_API_CLOSURE_CLEARED - consumed)
+    missing = sorted(pinned - consumed)
     assert not missing, (
-        f"{missing} is exported so an app can fill a PUBLISHED field or call a PUBLISHED "
-        "method, but the API-closure walk no longer finds the signature that requires it — "
-        "either the signature moved or the walk regressed; read the code before regenerating"
+        f"[{tranche}] {missing} is exported so an app can fill a PUBLISHED field or call a "
+        "PUBLISHED method or function, but the API-closure walk no longer finds the signature "
+        "that requires it — either the signature moved or the walk regressed; read the code "
+        "before regenerating"
     )
-    still_reported = sorted(_API_CLOSURE_CLEARED & _reported_sdk_exports())
+    still_reported = sorted(pinned & _reported_sdk_exports())
     assert not still_reported, (
-        f"{still_reported} is required by another export's signature yet the census still "
-        "reports it inert — the clear is not reaching _inert_sdk_export_surfaces()"
+        f"[{tranche}] {still_reported} is required by another export's signature yet the census "
+        "still reports it inert — the clear is not reaching _inert_sdk_export_surfaces()"
     )
 
 
@@ -780,10 +859,12 @@ def test_an_export_reachable_from_no_published_signature_is_still_inert():
 
     This is the case worth keeping, and the rule must not have eaten it: the provider protocols
     an app subclasses, the service objects it is handed and the error classes it catches are
-    named by NO published signature, so they stay reported. Measured when the rule landed: 170
-    of 229 surfaces survive, 54 of them exported types. The floor sits below that with headroom
-    — a legitimate future wiring may clear a few — but far above zero, because a rule that
-    cleared every type would pass the test above and guard nothing.
+    named by NO published signature, so they stay reported. Measured when the class half landed:
+    170 of 229 surfaces survive, 54 of them exported types. After #3511 admitted exported
+    functions as roots: **159 of 248, 43 of them exported types**. So the headroom over the floor
+    below is now THREE, not fourteen — a future clear that drops it under 40 must re-examine the
+    floor against a fresh measurement rather than nudge the number, because the floor's whole job
+    is that a rule which cleared every type would pass the test above and guard nothing.
 
     A named export that leaves this set has been wired, not excused: re-pin it here with the
     signature that now names it.
@@ -799,67 +880,187 @@ def test_an_export_reachable_from_no_published_signature_is_still_inert():
             types_only.add(label)
     assert len(types_only) >= 40, (
         f"only {len(types_only)} exported TYPES are still reported inert (54 when the "
-        "API-closure clear landed) — the clear has over-reached; narrow it rather than "
-        "trusting a suspiciously clean census"
+        "API-closure clear landed, 43 after function roots) — the clear has over-reached; "
+        "narrow it rather than trusting a suspiciously clean census"
     )
     for orphan in (
-        "action.ActionProvider",
-        "channel.SessionManager",
-        "manifest.AppManifest",
-        "model.ModelCatalog",
+        "action.ActionProvider",  # a provider protocol an app subclasses
+        "channel.SessionManager",  # a service object an app is handed
+        "manifest.AppManifest",  # cleared by nothing but its own self-edge
+        "tool.ProjectionRule",  # a data type no published signature names
     ):
         assert orphan in types_only, f"{orphan} left the census — say what now names it"
+    # `model.ModelCatalog` stood in the slot `tool.ProjectionRule` now holds until #3511, when
+    # `get_default_registry() -> ProviderRegistry` made `ProviderRegistry.build_catalog()`
+    # reachable and cleared it. `ProjectionRule` replaces it with a CONTROL the old pin lacked:
+    # `project_and_retain` is the exported function that ought to name the rule, and its hints
+    # RESOLVE — so "still reported" is a real finding about that signature (it returns a bare
+    # `tuple[str, dict]`) and not a swallowed `get_type_hints` failure quietly faking a pin.
+    #
+    # 🔴 `getattr`, NOT `from personalclaw.sdk.tool import project_and_retain`. Measured while
+    # writing this control: `_sdk_imported_names()` clears an export when an `ImportFrom` names
+    # it ANYWHERE in `src/`, `tests/` or `apps/`, so spelling the import here cleared
+    # `sdk_export:project_and_retain` and dropped the committed counter by one. A test that
+    # imports a name in order to reason about whether it is inert makes it not-inert — the
+    # control refutes itself, and it does so silently, as a plausible-looking extra shrink. The
+    # same trap waits for any future assertion about a specific `sdk_export` surface.
+    from scripts.sdk_surface_closure import signature_requirements
+
+    project_and_retain = getattr(
+        importlib.import_module("personalclaw.sdk.tool"), "project_and_retain"
+    )
+    assert typing.get_type_hints(project_and_retain), (
+        "project_and_retain's hints no longer resolve, so `tool.ProjectionRule` being reported "
+        "proves nothing — pick an orphan whose would-be namer still type-checks"
+    )
+    assert not signature_requirements(project_and_retain), (
+        "project_and_retain now names a core type; if that type is ProjectionRule the pin above "
+        "is wired and must move, with the signature recorded"
+    )
 
 
 @pytest.mark.timeout(300)
 def test_a_type_that_names_only_itself_does_not_clear_itself():
-    """Narrowing one: a self-edge is not a reader.
+    """Ruling one, UNCHANGED by #3511: a self-edge is not a reader.
 
     ``AppManifest.from_dict()`` returns ``AppManifest``; a self-referential constructor or
     ``with_overrides``-style method sits on most dataclasses in this tree, so counting it would
     clear nearly everything and leave the counter meaning nothing. The self-edge is asserted
     PRESENT first — without that control this test would pass just as well on a type with no
     methods at all, which is the shape of a rail that cannot fire.
+
+    Thirty-four exports carry a self-edge; the ruling is LOAD-BEARING for the three below, i.e.
+    the self-edge is the only thing that would have cleared them and they are all still reported.
+    The other thirty-one clear on a real reader as well, so they would stay cleared whichever way
+    this ruling went and prove nothing about it.
+
+    ``net.EgressPolicy`` was the fourth until #3511 and is the reason this list is pinned rather
+    than counted: admitting exported functions as roots gave it three genuine readers
+    (``net.evaluate(policy)``, ``net.fetch(policy)``, ``net.egress_policy_for() -> EgressPolicy``),
+    so it left the load-bearing set WITHOUT the ruling changing. A count would have read that as
+    the ruling weakening. Two self-edge SHAPES are covered deliberately — a classmethod returning
+    its own class (``AppManifest``, ``AppConfig``) and a singleton field typed as its own class
+    (``Stats._instance``) — because the walk reaches them through different branches of
+    ``types_an_app_must_name``.
     """
     from personalclaw.apps.manifest import AppManifest
-    from personalclaw.net import EgressPolicy
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.stats import Stats
     from scripts.sdk_surface_closure import consumed_exports, types_an_app_must_name
 
     consumed = consumed_exports()
     reported = _reported_sdk_exports()
-    for label, cls in (("manifest.AppManifest", AppManifest), ("net.EgressPolicy", EgressPolicy)):
+    for label, cls in (
+        ("manifest.AppManifest", AppManifest),  # from_dict() / from_json_file() return
+        ("channel.AppConfig", AppConfig),  # load() / load_with_migration_state() return
+        ("channel.Stats", Stats),  # field _instance
+    ):
         self_edges = [where for where, t in types_an_app_must_name(cls) if t is cls]
         assert self_edges, (
             f"{cls.__qualname__} no longer names itself in any field or signature, so this "
             "test's control is gone — pick another self-referential export"
         )
         assert label not in consumed, f"{label} cleared itself through {self_edges}"
-        assert label in reported, f"{label} left the census with only a self-edge to clear it"
+        assert label in reported, (
+            f"{label} left the census with only a self-edge to clear it. If a real reader now "
+            "names it (as net.EgressPolicy gained one in #3511), move it out of this list and "
+            "say which signature — do NOT relax the self-edge ruling to match"
+        )
 
 
 @pytest.mark.timeout(300)
-def test_an_exported_functions_signature_does_not_clear_an_export():
-    """Narrowing two: only exported CLASSES are owners — a ruling, measured before it was made.
+def test_the_dashboard_closure_exemption_is_declared_load_bearing_and_still_justified():
+    """The one exclusion from #3511's 22, and the three things that keep it from rotting.
 
-    Nine residual types would clear if an exported function's parameters and return counted
-    (``net.evaluate() -> GuardDecision``, ``channel.guard_inbound() -> TrustVerdict``, …), and
-    on its own that reads like a free generalisation. It is not: the census's clear and the
-    ``test_sdk_surface_is_public`` gap rail are ONE walk on purpose, and admitting function
-    roots to that walk opens **22 new gaps** — ``AuthConfig``, ``ScheduleJob``,
-    ``FetchResponse``, ``McpClientRegistry`` and eighteen more become types the facade owes an
-    app, one of them (``triggers.tools.ToolResult``) colliding by name with an already-exported
-    type. That is a second tranche of the same defect class and a separate change; widening only
-    the census half would give the two directions different definitions of "published
-    signature", which is exactly what sharing one walk prevents.
+    Admitting function roots made ``DashboardState`` owed (it types the first parameter of the
+    published ``channel.save_session_to_history``) and ``SseRegistry``/``SseHub`` owed through it.
+    Exporting them means ``sdk/channel.py`` importing ``personalclaw.dashboard.state`` and
+    ``.sse`` — the FIFTH and SIXTH ``core-must-not-import-the-http-surface`` edges on a file the
+    structural ratchet pins at four. That rule's own rationale is why the closure yields rather
+    than the layering: *"Shrink-only GRANDFATHERS those instead of an exemption list — an
+    allowlist is a thing that rots, a measured floor is not."*
 
-    Pinned with its own control: the function really does name the type, and the type really is
-    still reported.
+    An exclusion with a reason in prose is a silent skip with extra words, so all three legs are
+    asserted:
+
+    1. **DECLARED** — the prefix is in ``CLOSURE_EXEMPT_PREFIX``, not dropped by an incidental
+       filter somewhere in the walk.
+    2. **LOAD-BEARING** — without it the gap rail really does red, and on exactly these three
+       types. If a refactor moves them out of ``dashboard/``, this leg fails and the exemption
+       should be deleted rather than kept for free.
+    3. **STILL JUSTIFIED** — the structural baseline still pins ``sdk/channel.py`` at four
+       HTTP-surface edges. If that file's floor ever rises for an unrelated reason, the
+       "a fifth cannot be added" argument has changed and this exemption must be re-argued.
     """
-    import typing
+    import scripts.sdk_surface_closure as closure
 
+    assert "personalclaw.dashboard." in closure.CLOSURE_EXEMPT_PREFIX, (
+        "the dashboard closure exemption is not declared in CLOSURE_EXEMPT_PREFIX — if the "
+        "dashboard types are being skipped by something else, that is a silent skip"
+    )
+
+    # Leg 2: re-render the walk with ONLY this prefix removed.
+    original = closure.CLOSURE_EXEMPT_PREFIX
+    closure.surface_closure.cache_clear()
+    try:
+        closure.CLOSURE_EXEMPT_PREFIX = tuple(p for p in original if p != "personalclaw.dashboard.")
+        would_gap = set(closure.surface_closure().gaps)
+    finally:
+        closure.CLOSURE_EXEMPT_PREFIX = original
+        closure.surface_closure.cache_clear()
+    assert would_gap == {
+        "personalclaw.dashboard.sse.SseHub",
+        "personalclaw.dashboard.sse.SseRegistry",
+        "personalclaw.dashboard.state.DashboardState",
+    }, (
+        "without the dashboard exemption the gap rail reports "
+        f"{sorted(would_gap)}. If that set is EMPTY the exemption is dead and must be deleted; "
+        "if it names something outside dashboard/ the exemption is hiding an unrelated gap"
+    )
+    assert not closure.surface_closure().gaps, "the exemption must leave the gap rail closed"
+
+    # Leg 3: the structural floor the argument rests on.
+    structural = json.loads(
+        (baseline_path().parent / "structural-baseline.json").read_text(encoding="utf-8")
+    )
+    entry = structural["structural-import-direction"]["per_file"]["src/personalclaw/sdk/channel.py"]
+    assert entry["edges"] == 4 and all("dashboard" in v for v in entry["violations"]), (
+        "sdk/channel.py's committed HTTP-surface edge count is no longer the four grandfathered "
+        f"dashboard imports ({entry}) — the 'a fifth cannot be added' argument for the dashboard "
+        "closure exemption has changed and must be re-argued, not inherited"
+    )
+
+
+@pytest.mark.timeout(300)
+def test_an_exported_functions_signature_clears_an_export_in_both_directions():
+    """Ruling two, INVERTED by #3511: an exported FUNCTION is an owner, in ONE walk.
+
+    #3496 deliberately stopped at class roots and wrote the precondition for reversing itself:
+    *"If that was intended, widen the gap rail in the same change and export the 22 types it then
+    requires — do not widen one direction of the walk alone."* This test is that precondition,
+    kept executable. The argument for widening is the argument that justified #3496 with one word
+    changed: an app calling a published FUNCTION cannot name its parameter or return type either,
+    so a typed integration is impossible and the failure surfaces as prose or ``Any``. A surface
+    closed under fields and methods but not functions is closed against one caller and open
+    against another, and nothing in the boundary's intent drew that line.
+
+    What must hold is BOTH directions at once, because sharing one walk is the whole mechanism:
+
+    1. the census half clears — ``net.evaluate() -> GuardDecision`` is a reader, so
+       ``net.GuardDecision`` is no longer reported; and
+    2. the gap half is closed — the 22 types the widening then owes an app ARE exported, so
+       ``surface_closure().gaps`` is empty.
+
+    Asserting (1) alone is what #3496 forbade: it would let the census go quiet while the facade
+    still owed an app twenty-two unnameable types, which is the incoherence one walk prevents.
+
+    Each half carries its own control, because both assertions are satisfiable by a walk that
+    resolved nothing: the function really does name the type, and the walk really did seed
+    functions (``function_roots`` non-zero) rather than reach ``GuardDecision`` some other way.
+    """
     from personalclaw.net import GuardDecision
     from personalclaw.sdk import net as sdk_net
-    from scripts.sdk_surface_closure import core_types_in
+    from scripts.sdk_surface_closure import core_types_in, surface_closure
 
     named = [
         arg
@@ -870,10 +1071,21 @@ def test_an_exported_functions_signature_does_not_clear_an_export():
         "sdk.net.evaluate no longer names GuardDecision, so this test's control is gone — "
         "pick another exported function whose signature names an exported type"
     )
-    assert "net.GuardDecision" in _reported_sdk_exports(), (
-        "net.GuardDecision cleared, so an exported FUNCTION's signature is now a reader. If "
-        "that was intended, widen the gap rail in the same change and export the 22 types it "
-        "then requires — do not widen one direction of the walk alone"
+    closure = surface_closure()
+    assert closure.function_roots, (
+        "the closure walk seeded ZERO exported functions, so nothing below measures the function "
+        "half — GuardDecision clearing would prove only that some class names it"
+    )
+    assert "net.GuardDecision" not in _reported_sdk_exports(), (
+        f"sdk.net.evaluate({named[0]}) names GuardDecision and functions are roots "
+        f"({closure.function_roots} of them), yet the census still reports net.GuardDecision — "
+        "the function half of the clear is not reaching _inert_sdk_export_surfaces()"
+    )
+    assert not closure.gaps, (
+        "an exported function's signature now CLEARS for the census, but the gap rail is open: "
+        f"{sorted(closure.gaps)} are named by a published signature and exported by no sdk "
+        "module. One walk serves both directions — widening only the census half is the exact "
+        "incoherence #3496 refused to ship"
     )
 
 

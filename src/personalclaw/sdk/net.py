@@ -20,6 +20,7 @@ from personalclaw.net import (  # noqa: F401
     WEBHOOK,
     EgressBlocked,
     EgressPolicy,
+    FetchResponse,
     GuardDecision,
     SyncEndpointRefused,
     egress_policy_for,
@@ -28,6 +29,8 @@ from personalclaw.net import (  # noqa: F401
     sync_egress_policy,
 )
 from personalclaw.web.fetch import (  # noqa: F401
+    ExtractOutcome,
+    FetchOutcome,
     record_seen_urls,
     web_extract,
     web_fetch,
@@ -58,6 +61,14 @@ __all__ = [
     "web_fetch",
     "web_extract",
     "record_seen_urls",
+    # #3511: the three RETURN types of the three fetch/extract entry points above. All three
+    # published functions were uncallable type-safely — an app could `await fetch(...)` and then
+    # not name what it was holding, so every consumer of a guarded fetch read `.status`/`.text`
+    # off an `Any`. `FetchResponse` is `fetch`'s; `FetchOutcome`/`ExtractOutcome` are the
+    # higher-level pipeline's, which also carry the refusal reason a caller has to branch on.
+    "FetchResponse",
+    "FetchOutcome",
+    "ExtractOutcome",
     # EA-8: see the import comment above — exported so `a2a-action` consumes core's
     # deny-by-default posture instead of composing its own.
     "a2a_outbound_policy",

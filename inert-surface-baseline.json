@@ -58,7 +58,7 @@
       ]
     },
     "src/personalclaw/sdk/channel.py": {
-      "inert": 97,
+      "inert": 95,
       "surfaces": [
         "sdk_export:AcpError",
         "sdk_export:AcpProcessDied",
@@ -71,7 +71,6 @@
         "sdk_export:CRED_SLACK_APP_TOKEN",
         "sdk_export:CRED_SLACK_BOT_TOKEN",
         "sdk_export:ChannelDelivery",
-        "sdk_export:ChannelTransportProvider",
         "sdk_export:ContextBuilder",
         "sdk_export:ConversationLog",
         "sdk_export:EVENT_COMPACTION_STATUS",
@@ -95,7 +94,6 @@
         "sdk_export:TOOL_DENY",
         "sdk_export:Task",
         "sdk_export:TriggerStore",
-        "sdk_export:TrustVerdict",
         "sdk_export:__version__",
         "sdk_export:active_voice_params",
         "sdk_export:allow_sender",
@@ -188,9 +186,8 @@
       ]
     },
     "src/personalclaw/sdk/feedback.py": {
-      "inert": 5,
+      "inert": 4,
       "surfaces": [
-        "sdk_export:FeedbackRecord",
         "sdk_export:PRODUCER_KINDS",
         "sdk_export:TARGET_KINDS",
         "sdk_export:current_verdict",
@@ -198,10 +195,9 @@
       ]
     },
     "src/personalclaw/sdk/image.py": {
-      "inert": 3,
+      "inert": 2,
       "surfaces": [
         "sdk_export:ImageGenError",
-        "sdk_export:ImageGenProvider",
         "sdk_export:active_image_gen"
       ]
     },
@@ -244,12 +240,10 @@
       ]
     },
     "src/personalclaw/sdk/model.py": {
-      "inert": 8,
+      "inert": 6,
       "surfaces": [
         "sdk_export:AnthropicProvider",
         "sdk_export:CredentialMissing",
-        "sdk_export:MediaCatalog",
-        "sdk_export:ModelCatalog",
         "sdk_export:OpenAIProvider",
         "sdk_export:openai_compatible_list_models",
         "sdk_export:register_media_catalog",
@@ -257,10 +251,8 @@
       ]
     },
     "src/personalclaw/sdk/net.py": {
-      "inert": 7,
+      "inert": 5,
       "surfaces": [
-        "sdk_export:EgressPolicy",
-        "sdk_export:GuardDecision",
         "sdk_export:WEBHOOK",
         "sdk_export:evaluate",
         "sdk_export:record_seen_urls",
@@ -305,9 +297,8 @@
       ]
     },
     "src/personalclaw/sdk/skill.py": {
-      "inert": 3,
+      "inert": 2,
       "surfaces": [
-        "sdk_export:SkillsMarketplace",
         "sdk_export:get_default_skills_registry",
         "sdk_export:read_skill_file_entry"
       ]
@@ -329,10 +320,9 @@
       ]
     },
     "src/personalclaw/sdk/tts.py": {
-      "inert": 2,
+      "inert": 1,
       "surfaces": [
-        "sdk_export:LocalTtsProvider",
-        "sdk_export:TtsProvider"
+        "sdk_export:LocalTtsProvider"
       ]
     },
     "src/personalclaw/sdk/util.py": {
@@ -345,10 +335,9 @@
       ]
     },
     "src/personalclaw/sdk/video.py": {
-      "inert": 3,
+      "inert": 2,
       "surfaces": [
         "sdk_export:VideoGenError",
-        "sdk_export:VideoGenProvider",
         "sdk_export:active_video_gen"
       ]
     },
@@ -389,9 +378,9 @@
       "config_reader": 13,
       "editable_config": 0,
       "enum": 8,
-      "sdk_export": 170,
+      "sdk_export": 159,
       "trigger_kind": 0
     },
-    "inert": 191
+    "inert": 180
   }
 }

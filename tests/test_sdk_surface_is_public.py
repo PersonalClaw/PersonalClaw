@@ -139,9 +139,23 @@ def test_the_sdk_surface_is_closed_under_its_own_signatures():
     the twenty-one `apps.manifest` types on a facade whose docstring offers itself as "the
     typed contract for tooling that validates or generates a manifest".
 
+    Closed under exported FUNCTIONS too since #3511, which is the same argument reaching the
+    other kind of caller: an app that calls `net.fetch` cannot annotate what it got back, and
+    one that calls `channel.resolve_bind_host` cannot construct the argument. Twenty-two more
+    types were owed once functions became roots — `AuthConfig`, `ScheduleJob`, `FetchResponse`,
+    `McpClientRegistry` and eighteen others. Nineteen are exported; the three under
+    `personalclaw.dashboard.` are a DECLARED exemption, because exporting them would add the
+    fifth and sixth `core-must-not-import-the-http-surface` edge to `sdk/channel.py` and that
+    rule grandfathers the four it has precisely so a fifth cannot be added. One of the
+    twenty-two collided by name with the already-published `ToolResult`, which is why
+    `triggers.tools.ToolResult` is now `AutomationToolResult`. A surface closed under fields and
+    methods but not functions is closed against one caller and open against another, and nothing
+    in the boundary's intent drew that line.
+
     Stated as a rail rather than a one-time cleanup because the gap reopens silently: adding
-    a field to an already-exported dataclass is a normal core change that quietly makes the
-    app surface unusable, and nothing else in this file would notice.
+    a field to an already-exported dataclass, or a typed parameter to an already-exported
+    function, is a normal core change that quietly makes the app surface unusable, and nothing
+    else in this file would notice.
 
     The walk lives in `scripts/sdk_surface_closure.py` because the inert-surface census needs
     the OTHER direction of the same relation — which of the exports a published signature
@@ -159,14 +173,24 @@ def test_the_sdk_surface_is_closed_under_its_own_signatures():
 
 
 def test_the_closure_scan_is_not_vacuous():
-    """Both counters, because either one at zero passes the assertion above trivially.
+    """All THREE counters, because any one at zero passes the assertion above trivially.
 
     `get_type_hints` raises on an unresolvable forward reference and the walk swallows that,
     so a resolution regression would empty the requirement graph rather than fail loudly —
     the `edges` floor is what makes that visible.
+
+    `function_roots` is counted separately from `roots` (#3511) because the two root kinds are
+    found by different predicates: a class by `isinstance(obj, type)`, a function by
+    `inspect.isfunction`. A decorator that returns a callable OBJECT rather than a function
+    would silently stop rooting whatever it wraps, and a combined count would hide that behind
+    198 healthy classes. Measured when it landed: 220 classes, 136 functions, 348 edges.
     """
     closure = surface_closure()
     assert closure.roots >= 100, f"the closure scan found only {closure.roots} exported classes"
+    assert closure.function_roots >= 100, (
+        f"the closure scan found only {closure.function_roots} exported functions (136 when "
+        "function roots landed) — check whether a decorator made inspect.isfunction false"
+    )
     assert closure.edges >= 200, f"the closure scan resolved only {closure.edges} type references"
 
 
@@ -176,15 +200,21 @@ def test_the_closure_scan_is_not_vacuous():
         ("personalclaw.task.TaskState", "Task."),
         ("personalclaw.errors.AgentError", "Result."),
         ("personalclaw.apps.manifest.UIConfig", "AppManifest."),
+        ("personalclaw.net.client.FetchResponse", "net.fetch() return"),
+        ("personalclaw.schedule.ScheduleJob", "channel.compute_next_run_ts() job"),
     ],
 )
 def test_the_closure_scan_can_actually_fail(dropped, expected_reason):
     """The falsification, run against REAL code rather than a synthetic tree.
 
     Un-export one name and the walk must name it again, with the field or signature that
-    requires it. Three cases because the three shapes reach the walk by different paths: an
-    enum used as a method parameter, a dataclass field on two different result types, and a
-    nested schema type two hops from the root (`AppManifest.ui` → `UIConfig`).
+    requires it. Five cases because the shapes reach the walk by different paths: an enum used
+    as a method parameter, a dataclass field on two different result types, a nested schema type
+    two hops from a class root (`AppManifest.ui` → `UIConfig`), an exported function's RETURN
+    (`net.fetch`) and an exported function's PARAMETER (`channel.compute_next_run_ts`). The last
+    two are the #3511 half and they are what stops the function-root admission from being a walk
+    that merely runs — each names a type reachable through NO class root, so dropping it can
+    only be caught if functions really are seeded.
 
     A synthetic-class control could not do this job: `core_types_in` filters on
     ``__module__.startswith("personalclaw")``, so a stand-in defined in this test file is
