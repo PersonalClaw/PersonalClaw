@@ -721,14 +721,17 @@ const SWALLOW_BUDGET: Record<string, number> = {
   'pages/inbox/InboxPage.tsx': 1,
   'pages/knowledge/KnowledgeCreatePage.tsx': 1,
   'pages/knowledge/KnowledgeListPage.tsx': 1,
-  // 🪤 Two of these three are the reason the `RECORDS_THE_ERROR` veto was NOT extended to form A when
+  // 3 → 2: the classify `.catch(() => null)` now records the rejection (#3470), so the
+  // RECORDS veto exempts it. The remaining two are `validateULoop` (whose 200-with-`errors`
+  // body is already rendered) and the design-attachment upload (best-effort by design).
+  // 🪤 Both of those two are the reason the `RECORDS_THE_ERROR` veto was NOT extended to form A when
   // the scalar member landed. Form A scores a 64-char slice after `=>`, which is safe only because
   // `FABRICATES` is `^`-anchored; an UNANCHORED veto over the same slice matches a setter up to 60
   // characters DOWNSTREAM in unrelated code, and measured here it "cleared" both of this file's
   // `.catch(() => null)` sites that way. That is the character-window bug this file's header already
   // records fixing once. A correct form-A veto needs the catch's argument paren-matched; until then
   // the veto stays form-B-only and `ui/SystemWidget.tsx` below carries its reason by hand.
-  'pages/loop/LoopComposer.tsx': 3,
+  'pages/loop/LoopComposer.tsx': 2,
   // 2nd (SCALAR widening): `if (e?.status === 404) setNotFound(true)` — the same
   // status-DISCRIMINATING shape already budgeted at `pages/code/CodeSection.tsx`, where a 404 IS the
   // answer "this loop does not exist". Left as debt for the identical reason stated there: the
