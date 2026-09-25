@@ -173,7 +173,6 @@ _SSE_INTERVAL_SECS = 5
 _NOTIFICATIONS_FILE = "notifications.jsonl"
 _MAX_PERSISTED_NOTIFICATIONS = 200
 _AUTO_COMPACT_NOTICE = "🔄 Auto-compacted at {pct:.0f}%."
-_MAX_SESSION_MESSAGES = 10000  # Keep all messages — virtual scrolling handles performance
 
 # Bare chat-N label matcher used by DashboardState.resolve_session() for prefix fallback.
 # Gates the prefix lookup to prevent broad matches (e.g. bare "chat" binding to any session).
@@ -230,7 +229,7 @@ class _ChatSession:
         "project_id",
         "created_at",
         "messages",
-        "total_messages",
+        "_stream",
         "task",
         "event",
         "_pending",
@@ -359,8 +358,15 @@ class _ChatSession:
         # this closes the tool-availability layer the watchdog can't reach.
         self._unattended: bool = False
         self.created_at: str = datetime.now(timezone.utc).isoformat()
+        # The transcript: one entry per thing the user wrote or saw, and nothing else.
+        # It is never trimmed — the whole-file save rewrites the transcript FROM this
+        # list, so an entry missing here is an entry deleted from disk (see
+        # `chat_persistence._seed_transcript`, which loads the whole file, never a window).
         self.messages: list[dict[str, Any]] = []
-        self.total_messages: int = 0  # lifetime count (survives trimming)
+        # The answer being streamed right now, while it is still being written: ONE
+        # `streaming` entry in `messages`, grown in place by `stream_chunk` and settled
+        # into an `assistant` entry by `finish_stream`. None between answers.
+        self._stream: dict[str, Any] | None = None
         self.task: asyncio.Task | None = None  # type: ignore[type-arg]
         self.event = asyncio.Event()
         self._pending: list[dict[str, str]] = []
@@ -462,9 +468,10 @@ class _ChatSession:
             asyncio.Lock()
         )  # serialises concurrent forks on this session
         self._tab_id: str = ""  # permanent tab identity for cross-restart session chaining
-        self._disk_older_count: int = (
-            0  # count of disk messages OLDER than in-memory window (stable, set at restore/resume)
-        )
+        # Messages in OLDER sibling files of this tab (legacy cross-restart chaining), which
+        # the conversation shows before this buffer but which this session never writes.
+        # Set when the transcript is seeded; the session's own file is always loaded whole.
+        self._disk_older_count: int = 0
         # Per-turn file-change accumulator [{path, before, after}], reset at the
         # top of each run_chat and flushed onto the assistant message's meta at turn end.
         self._file_changes: list[dict[str, str]] = []
@@ -523,6 +530,13 @@ class _ChatSession:
         broadcast: bool = True,
         meta: dict | None = None,
     ) -> None:
+        """Add one transcript entry — something the user wrote or saw.
+
+        Stream bookkeeping never comes through here. A streamed chunk grows the one open
+        answer (:meth:`stream_chunk`) and the end-of-turn marker goes to live readers only
+        (:meth:`signal_done`), because every entry in ``messages`` is served, counted and
+        persisted as a message.
+        """
         msg: dict[str, Any] = {
             "role": role,
             "content": content,
@@ -532,19 +546,21 @@ class _ChatSession:
         if meta:
             msg["meta"] = meta
         self.messages.append(msg)
-        self.total_messages += 1
-        # Stamp real activity for the auto-archive rule. Only user/assistant turns
-        # count: `chunk`/`done` are stream bookkeeping that would keep a session
-        # "active" for its own streaming, and system notices are not the user using
-        # it. Recording here — the one canonical append — means every producer
-        # (web, channel, resume) is covered without touching any of them.
+        # `ts` is the live-vs-replay discriminator. A live turn passes no timestamp (it is
+        # "now"); history REPLAY passes each message's stored ts.
+        self._announce(msg, replay=bool(ts), broadcast=broadcast)
+
+    def _announce(self, msg: dict[str, Any], *, replay: bool, broadcast: bool) -> None:
+        """What a new — or newly settled — transcript entry owes the rest of the system."""
+        # Stamp real activity for the auto-archive rule. Only user/assistant turns count:
+        # system notices are not the user using the chat. Recording here — the one place
+        # every entry is announced — covers every producer (web, channel, resume) without
+        # touching any of them.
         #
-        # `ts` is the live-vs-replay discriminator. A live turn passes no timestamp
-        # (it is "now"); history REPLAY passes each message's stored ts. Without this
-        # check, rehydrating an archived session would replay its transcript through
-        # here and un-archive it on load — so an archived chat would silently
-        # un-archive itself just by being opened, or by a restart restoring it.
-        if role in ("user", "assistant") and not ts:
+        # A replay must not stamp: rehydrating an archived session replays its transcript
+        # through `append`, and stamping would un-archive a chat just by opening it, or by
+        # a restart restoring it.
+        if msg["role"] in ("user", "assistant") and not replay:
             self.last_activity_at = time.time()
             # A real turn un-archives: using an archived chat is the clearest possible
             # signal that it is active again.
@@ -553,19 +569,96 @@ class _ChatSession:
         self._dirty = True
         self._pending.append(msg)
         self.event.set()
-        # Broadcast via global SSE when no HTTP stream reader is active
-        # Skip: chunk (too noisy), done (internal), user (frontend adds optimistically)
-        if (
-            broadcast
-            and self._on_message
-            and role not in ("chunk", "done", "user")
-            and not self._has_reader
-        ):
+        # Broadcast via global SSE when no HTTP stream reader is active. A user entry is
+        # not echoed: the frontend adds it optimistically.
+        if broadcast and self._on_message and msg["role"] != "user" and not self._has_reader:
             self._on_message(self.key, msg)  # type: ignore[operator]
-        # Trim old messages to bound memory usage
-        if len(self.messages) > _MAX_SESSION_MESSAGES:
-            excess = len(self.messages) - _MAX_SESSION_MESSAGES
-            del self.messages[:excess]
+
+    def _stream_index(self) -> int | None:
+        """Where the open streaming entry sits in ``messages`` — found by IDENTITY.
+
+        ``None`` when nothing is streaming, and also when the buffer was rebuilt without
+        the entry (a ``/clear``, a purge): the stream is then forgotten rather than grown
+        in a dict nothing will ever persist. The entry is the last or next-to-last row
+        while it streams, so the scan from the end stops at once.
+        """
+        entry = self._stream
+        if entry is not None:
+            for i in range(len(self.messages) - 1, -1, -1):
+                if self.messages[i] is entry:
+                    return i
+            self._stream = None
+        return None
+
+    @property
+    def streaming_text(self) -> str | None:
+        """The answer being streamed, as far as it has arrived — ``None`` when none is."""
+        idx = self._stream_index()
+        return None if idx is None else self.messages[idx]["content"]
+
+    def stream_chunk(self, text: str) -> None:
+        """Grow the answer being streamed by *text*.
+
+        A chunk is not a transcript entry. However many chunks an answer arrives in, it
+        is ONE ``streaming`` entry until it settles — ten thousand chunks used to be ten
+        thousand entries, and the buffer then pushed the user's own prompt out to make
+        room for them. A live reader still gets every delta as a ``chunk`` frame on
+        ``_pending`` (the HTTP SSE stream and the OpenAI dialect each claim
+        ``_has_reader`` before the turn starts); the WS path gets ``chat_chunk`` from the
+        runner. Without a reader nothing drains ``_pending``, so no frame is queued.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        idx = self._stream_index()
+        if idx is None:
+            self._stream = {"role": "streaming", "content": text, "cls": "msg msg-a", "ts": now}
+            self.messages.append(self._stream)
+        else:
+            self.messages[idx]["content"] += text
+        self._dirty = True
+        if self._has_reader:
+            self._pending.append({"role": "chunk", "content": text, "cls": "chunk", "ts": now})
+            self.event.set()
+
+    def finish_stream(self, content: str) -> dict[str, Any]:
+        """Settle the answer being streamed as an ``assistant`` entry, where it streamed.
+
+        Settled IN PLACE, so a stop card appended while the answer was still arriving
+        stays after the prose. With no open stream (none started, or the buffer was
+        rebuilt under it) the answer is appended instead. Returns the settled entry.
+        """
+        idx = self._stream_index()
+        self._stream = None
+        if idx is None:
+            self.append("assistant", content, "msg msg-a")
+            return self.messages[-1]
+        entry = self.messages[idx]
+        entry["role"] = "assistant"
+        entry["content"] = content
+        entry["ts"] = datetime.now(timezone.utc).isoformat()
+        self._announce(entry, replay=False, broadcast=True)
+        return entry
+
+    def discard_stream(self) -> None:
+        """Drop the answer being streamed without settling it."""
+        idx = self._stream_index()
+        self._stream = None
+        if idx is not None:
+            del self.messages[idx]
+            self._dirty = True
+
+    def signal_done(self) -> None:
+        """Tell a live reader the turn is over.
+
+        Not a transcript entry: it goes to ``_pending`` only, so nothing serves, counts
+        or persists it. (As a ``done`` row in ``messages`` it made the detail ``total``
+        and the paginated tail count one phantom message per turn.) Queued only for a
+        reader that is attached — a marker left in an undrained queue would end the NEXT
+        reader's stream before its turn began.
+        """
+        if self._has_reader:
+            now = datetime.now(timezone.utc).isoformat()
+            self._pending.append({"role": "done", "content": "", "cls": "done", "ts": now})
+            self.event.set()
 
     def drain(self) -> list[dict[str, str]]:
         """Return and clear pending messages."""
@@ -664,14 +757,18 @@ class _ChatSession:
         task.add_done_callback(_log_task_exception)
         return True
 
-    def to_dict(self) -> dict:
-        # Import locally: chat_utils imports state at module load, so a top-level
-        # import here would be circular. The list message count MUST run the same
-        # exclusion/collapse rule the detail view serves (_prepare_messages skips the
-        # per-turn `done` sentinel and collapses `chunk` runs), or the sidebar count
-        # and the open conversation disagree on the same session (#2862).
-        from personalclaw.dashboard.chat_utils import _prepare_messages
+    @property
+    def message_count(self) -> int:
+        """How many messages the open conversation serves.
 
+        The persisted head older than this buffer (``_disk_older_count``) plus every entry
+        in it — the buffer holds transcript entries only, and the detail view serves each
+        one once. The chat list reads this, so the sidebar and the open conversation cannot
+        disagree about one session (#2862).
+        """
+        return self._disk_older_count + len(self.messages)
+
+    def to_dict(self) -> dict:
         last_ts = self.messages[-1].get("ts", "") if self.messages else ""
         # Single reverse scan for last_msg, options, and last_activity_ts.
         last_msg = ""
@@ -750,7 +847,7 @@ class _ChatSession:
             "mode": self.mode,
             "workspace_dir": self.workspace_dir,
             "project_id": self.project_id,
-            "messages": len(_prepare_messages(self.messages, self.running)),
+            "messages": self.message_count,
             "running": self.running,
             "stopping": self._stopping,
             "pending_approval": pending_approval,

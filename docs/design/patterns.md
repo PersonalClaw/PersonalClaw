@@ -288,10 +288,10 @@ not index-worthy.
 >
 > - **The durable half can only witness FIVE of the seven kinds** (`PERSISTED_MARK_KINDS` — `user ·
 >   assistant · tool · approval · error`). `subagent` rides a WS stream never written to the
->   conversation log, `activity` segments are live-only, and `approval` survives only while the
->   permission row is in the live buffer. Run the frontend's own `sessionMapMarks()`
->   (`web/src/pages/chat/sessionMap.ts:156`) over the hydrated turns when you need the live kinds;
->   read the endpoint when you need durability.
+>   conversation log, `activity` segments are live-only, and `approval` survives a restart once
+>   it is decided (a pending one is held back from the save). Run the frontend's own
+>   `sessionMapMarks()` (`web/src/pages/chat/sessionMap.ts:156`) over the hydrated turns when you
+>   need the live kinds; read the endpoint when you need durability.
 > - **The endpoint's `preview` is not always the first 140 characters.** It prefers a persisted
 >   per-turn *summary label* when one is present, because an assistant mark's raw opening is usually
 >   a preamble; the client derivation has no such label and always previews the text.

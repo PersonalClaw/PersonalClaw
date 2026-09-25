@@ -174,13 +174,14 @@ def test_real_session_stamps_activity_on_user_and_assistant_turns():
 
 
 def test_stream_bookkeeping_does_not_count_as_activity():
-    """`chunk`/`done` are stream mechanics — if they stamped activity, a session would
-    keep itself perpetually 'active' by virtue of its own streaming."""
+    """Streamed chunks and the end-of-turn signal are stream mechanics — if they stamped
+    activity, a session would keep itself perpetually 'active' by virtue of its own
+    streaming."""
     from personalclaw.dashboard.state import _ChatSession
 
     s = _ChatSession("chat-1-test", "test")
-    s.append("chunk", "partial", broadcast=False)
-    s.append("done", "", broadcast=False)
+    s.stream_chunk("partial")
+    s.signal_done()
     s.append("system", "a notice", broadcast=False)
     assert s.last_activity_at == 0.0
 

@@ -74,10 +74,11 @@ async def test_no_provider_turn_runs_cleanup_without_unbound_error(tmp_path):
     state.sessions.record_failure.assert_awaited_once()
 
     # End-of-turn cleanup ran to completion: the done-branch reached the offer with the
-    # initialized counter (no tools ran on a failed turn), appended the "done" marker,
-    # broadcast chat_done, and cleared the task handle.
+    # initialized counter (no tools ran on a failed turn), broadcast chat_done, and cleared
+    # the task handle. The end-of-turn marker is a live-reader signal, never a transcript
+    # entry.
     offer.assert_called_once()
     assert offer.call_args.args[2] == 0
-    assert any(m.get("role") == "done" for m in session.messages)
+    assert not any(m.get("role") == "done" for m in session.messages)
     state.broadcast_ws.assert_any_call("chat_done", {"session": session.key})
     assert session.task is None

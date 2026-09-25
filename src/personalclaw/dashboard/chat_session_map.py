@@ -34,11 +34,12 @@ transcript is hydrated.
 **What the persisted transcript can and cannot say.** The closed vocabulary has seven
 kinds; a PERSISTED transcript can only witness five of them (:data:`PERSISTED_MARK_KINDS`).
 ``subagent`` rides a parallel WS stream that is never written to the conversation log,
-and ``activity`` segments are live-only for the same reason. ``approval`` is emitted
-when the permission row is still in the live buffer — ``chat_persistence``'s
-``_NON_TRANSCRIPT_ROLES`` drops ``permission`` on save, so it does not survive a
-restart. This is stated rather than papered over: a consumer that needs the live kinds
-reads SSM-1 over the hydrated turns; one that needs durability reads this endpoint.
+and ``activity`` segments are live-only for the same reason. ``approval`` survives a
+restart once it is decided: ``chat_persistence``'s ``_persistable`` writes a resolved
+``permission`` row and holds back one still waiting for an answer, so a pending approval
+is marked only while it is in the live buffer. This is stated rather than papered over:
+a consumer that needs the live kinds reads SSM-1 over the hydrated turns; one that needs
+durability reads this endpoint.
 """
 
 from __future__ import annotations
