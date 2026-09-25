@@ -2428,7 +2428,10 @@ def schema_shortfall(schema: Any, value: Any) -> str:
         if parsed is not None:
             target = parsed
     if not isinstance(target, dict):
-        kind = _ARRIVED_KIND.get(type(target), f"a {type(target).__name__}")
+        # A blank answer is not "text": a stage whose subagent returned nothing would otherwise
+        # read as one that answered in prose.
+        blank = isinstance(target, str) and not target.strip()
+        kind = "nothing" if blank else _ARRIVED_KIND.get(type(target), f"a {type(target).__name__}")
         return (
             f"the output ignored its declared schema: it asked for "
             f"{_name_list(declared)} and got {kind}, not an object"
@@ -2446,45 +2449,39 @@ def schema_shortfall(schema: Any, value: Any) -> str:
     )
 
 
-def apply_schema_notice(node: Node, result: NodeResult) -> NodeResult:
-    """Name a declared schema the output ignored, on the step that produced it (#3545).
+def apply_schema_notice(node: Node, result: NodeResult, observed: Any) -> NodeResult:
+    """Name a declared schema the node's work ignored, on the step that produced it (#3545).
 
-    ONE seam, beside the artifact gate / judge contract / publish, and LAST among them so what it
-    observes is the output a binding will actually read — `apply_judge_contract` recomputes a
-    judge's `overall`/`valid`/`shortfalls` onto the output, and observing before it ran would
-    report keys as absent that the contract was about to add.
+    `observed` is what the node's own work returned (a dispatcher's output, or a spawned stage's
+    text), taken BEFORE the engine's seams add keys to it. The final output cannot answer the
+    question: `apply_judge_contract` writes every key a judge schema declares whatever the model
+    said, so a judge that answered in prose settles with `verdict="REJECT"`, `reasoning=""`,
+    `scores={}` and the rest. Measured over the bundled library, a check on the settled output is
+    silent on all 7 judge stages whose model answered in prose. The artifact gate adds `artifacts`
+    the same way. A key the engine supplied is not the worker honouring its schema.
 
-    Never changes `state`, `output` or `failure`: the run must complete exactly as it does today
-    with only the notice added.
-
-    Three gates, and each is load-bearing:
+    The gates read the FINAL `result`, because a seam can still fail the node:
 
     * **A non-empty dict `schema`.** Nothing is declared otherwise, so there is nothing to ignore.
     * **A SUCCESS state.** A FAILED step already carries a `Failure` saying why, and `infer`'s own
-      unparseable-output branch is that case — a notice there would restate a legible failure.
-    * **An output that exists.** `dispatch_stage`'s two DEGRADED paths (a restricted-origin skip,
-      a claim already held) return `output=None`; the reason they produced nothing is already in
+      unparseable-output branch is that case — a notice there would restate a legible failure. A
+      spawned stage is still RUNNING at the dispatch seam, so it is named at its settle instead
+      (`RunController._settled_stage_output`), through this same helper.
+    * **Something observed.** `dispatch_stage`'s two DEGRADED paths (a restricted-origin skip, a
+      claim already held) produce `output=None`; why they produced nothing is already in
       `degraded_reason`, and re-reading it as "the schema was ignored" would be false.
 
-    🔴 A spawned `stage` is excluded here STRUCTURALLY, not by a kind test, and that is the point.
-    On `main` no stage output is ever compared against its declared schema:
-    `RunController._reconcile_dispatched_stages` stores `{"result": "<raw text>"}` for every stage
-    regardless of `schema`, so measured over the bundled library a check reaching that settle would
-    fire on **47 of 47** schema-declaring stage nodes — it would be measuring the absence of the
-    feature rather than a model's behaviour. `dispatch_stage` returns RUNNING at the spawn and
-    RUNNING is not in `SUCCESS_STATES`, so a stage never reaches the comparison below, and the
-    out-of-band settle that produces its output does not pass through this seam at all. The seam
-    that applies a declared schema to a stage output is #3531's second one; the stage half of this
-    notice belongs with it, on or after it, and not before.
+    Never changes `state`, `output` or `failure`: the run completes exactly as it would without the
+    notice.
     """
     from personalclaw.workflows.models import SUCCESS_STATES
 
     schema = (node.config or {}).get("schema")
     if not isinstance(schema, dict) or not schema:
         return result
-    if result.state not in SUCCESS_STATES or result.output is None:
+    if result.state not in SUCCESS_STATES or observed is None:
         return result
-    shortfall = schema_shortfall(schema, result.output)
+    shortfall = schema_shortfall(schema, observed)
     if shortfall:
         result.schema_shortfall = shortfall
     return result
@@ -2645,6 +2642,11 @@ async def dispatch(
         compaction_saves=compaction_saves,
         judge_hints=judge_hints,
     )
+    # What the node's own work returned, BEFORE the seams below add keys to it: the only value the
+    # schema notice may compare (#3545). The judge contract writes every key a judge schema
+    # declares whatever the model said, so the final output cannot tell "the model answered in the
+    # declared shape" from "the engine filled it in".
+    observed = result.output
     # One seam, so a new node kind cannot silently skip the artifact gate.
     result = apply_artifact_gate(node, result, cwd or None)
     # The SAME seam for the judge contract (WF2LOO-13): a node declaring `judge_contract: true`
@@ -2655,10 +2657,10 @@ async def dispatch(
     # deliberately — publishing the output of a node that failed its own artifact gate would
     # store a deliverable the run does not stand behind.
     result = apply_publish(node, result, run_id=run_id, cwd=cwd or None)
-    # The SAME seam for the declared-schema notice (#3545), LAST so it observes the output a
-    # binding will actually read — after the judge contract has recomputed its keys onto it. An
-    # observation only: it never changes `state`, `output` or `failure`.
-    return apply_schema_notice(node, result)
+    # The SAME seam for the declared-schema notice (#3545): after the gates, so it reads the final
+    # state (a gate can still fail the node), but comparing `observed` rather than the output the
+    # gates rebuilt. An observation only: it never changes `state`, `output` or `failure`.
+    return apply_schema_notice(node, result, observed)
 
 
 _LEAF_DISPATCHERS = {

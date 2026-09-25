@@ -221,12 +221,11 @@ class Journal(LedgerWriter):
         should not need a second channel to learn that the `done` beside it was reached without the
         declared shape.
 
-        🔴 WRITTEN ONLY WHEN NON-EMPTY, unlike every other field here, and the asymmetry is the
-        point. A spawned stage settles through this writer too, and on `main` no stage output is
-        ever compared against its schema — so an always-written `"schema_shortfall": ""` would put
-        a positive all-clear on every `general-project` worker row, the exact rows #3545 is about,
-        asserting a conformance nothing measured. Absent claims nothing. It also keeps every row
-        without a shortfall byte-identical to what this writer wrote before the field existed.
+        🔴 WRITTEN ONLY WHEN NON-EMPTY, unlike every other field here. Most steps declare no schema
+        and are never checked, so an always-written `"schema_shortfall": ""` would claim a
+        conformance on rows nothing examined; absent claims nothing. It also keeps every row without
+        a shortfall byte-identical to what this writer wrote before the field existed, which is what
+        lets the ledger golden prove a conforming run is unchanged.
         """
         self.write(
             STEP_COMPLETED,
