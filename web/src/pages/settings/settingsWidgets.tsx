@@ -762,8 +762,8 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   // 🪤 AND NONE OF THE FOUR CARRIES A LIVE SWITCH, unlike Inbox/Notifications/Legibility. Not an
   // omission: each of these master toggles spends something the card cannot explain — LAN
   // discovery ANNOUNCES this gateway on your network, watched sources starts FETCHING third-party
-  // URLs on a schedule, fingerprinting SCANS your project directories, and `surfaces_max_layer`
-  // is the panel's own "safe-mode knob". A one-click flip on a hub tile, with the consent
+  // URLs on a schedule, fingerprinting SCANS your project directories, and the composable home
+  // decides what the DASHBOARD composes. A one-click flip on a hub tile, with the consent
   // sentence one navigation away, is the wrong trade for all four. They report state and open the
   // page that explains it — the `Documents`/`Diagnostics` shape, which is also a shipped one.
   {
@@ -835,9 +835,9 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     useSearchText() {
       const { data: s } = useSourcesCfg()
       const live = s
-        ? `${s.enabled ? 'on enabled polling' : 'off disabled parked'} interval ${s.poll_interval_default_secs} floor ${s.network_floor_secs} max ${s.max_sources} sources ${s.max_items_per_poll} items budget ${s.daily_request_budget}`
+        ? `${s.enabled ? 'on enabled polling' : 'off disabled parked'} interval ${s.poll_interval_default_secs} floor ${s.network_floor_secs} max ${s.max_sources} sources ${s.max_items_per_poll} items`
         : ''
-      return `watched sources poll polling feeds rss pages directories folders ingest knowledge library schedule interval network floor rate limit budget artifacts scratchpad ${live}`
+      return `watched sources poll polling feeds rss pages directories folders ingest knowledge library schedule interval network floor rate limit artifacts scratchpad ${live}`
     },
     render(query, go) {
       const { data: s, error: srcErr, stale: sStale, status: sStatus, refresh: sRefresh } = useSourcesCfg()
@@ -907,26 +907,28 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   },
   {
     id: 'ambient', group: 'Workspace', label: 'Ambient surfaces', icon: LayoutDashboard, size: 'sm',
-    description: 'Your composable home, agent-authored widgets, and the menu-bar companion.',
+    description: 'Your composable home and agent-authored widgets.',
     useSearchText() {
       const { data: a } = useAmbient()
       const live = a
-        ? `tiles ${a.tiles_enabled ? 'on' : 'off'} max ${a.max_tiles} refresh ${a.default_refresh_ttl_secs} genui ${a.genui_enabled ? 'on' : 'off'} layers ${a.surfaces_max_layer} tray ${a.tray_enabled ? 'on' : 'off'}`
+        ? `tiles ${a.tiles_enabled ? 'on' : 'off'} max ${a.max_tiles} refresh ${a.default_refresh_ttl_secs} genui ${a.genui_enabled ? 'on' : 'off'}`
         : ''
-      return `ambient surfaces composable home dashboard tiles pinned artifacts refresh generative ui genui agent-authored widgets surface layers safe mode menu-bar menubar companion tray macos ${live}`
+      // No `surface layers` / `menu-bar` / `tray` terms: their controls and config leaves are
+      // gone (issue #3490), and a search term that routes to a panel with no matching row is
+      // the same broken promise one level up.
+      return `ambient surfaces composable home dashboard tiles pinned artifacts refresh generative ui genui agent-authored widgets ${live}`
     },
     render(query, go) {
       const { data: a, error: ambErr, stale: aStale, status: aStatus, refresh: aRefresh } = useAmbient()
-      // Three independent switches and no headline among them, so the tile lists all three by the
-      // labels the panel gives them. On/Off in WORDS, not by tone: three coral-vs-grey pills would
-      // carry the whole state in hue (WCAG 1.4.1) on the one card whose content IS three booleans.
+      // Two independent switches and no headline between them, so the tile lists both by the
+      // labels the panel gives them. On/Off in WORDS, not by tone: coral-vs-grey pills would
+      // carry the whole state in hue (WCAG 1.4.1) on the one card whose content IS booleans.
       const onOff = (v: unknown) => (v ? 'On' : 'Off')
       return (
-        <BentoCard icon={LayoutDashboard} title="Ambient surfaces" query={query} onClick={() => go('ambient')} loading={a === undefined} rows={3} stale={aStale} failed={aStatus === 'error'} error={ambErr} onRetry={aRefresh}>
+        <BentoCard icon={LayoutDashboard} title="Ambient surfaces" query={query} onClick={() => go('ambient')} loading={a === undefined} rows={2} stale={aStale} failed={aStatus === 'error'} error={ambErr} onRetry={aRefresh}>
           {a && <KVList query={query} rows={[
             { k: 'Composable home', v: onOff(a.tiles_enabled), vText: onOff(a.tiles_enabled) },
             { k: 'Generative UI', v: onOff(a.genui_enabled), vText: onOff(a.genui_enabled) },
-            { k: 'Menu-bar companion', v: onOff(a.tray_enabled), vText: onOff(a.tray_enabled) },
           ]} />}
         </BentoCard>
       )

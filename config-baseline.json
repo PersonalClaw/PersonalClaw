@@ -177,20 +177,8 @@
     "type": "int"
   },
   {
-    "default": 2,
-    "path": "ambient.surfaces_max_layer",
-    "sensitive": false,
-    "type": "int"
-  },
-  {
     "default": true,
     "path": "ambient.tiles_enabled",
-    "sensitive": false,
-    "type": "bool"
-  },
-  {
-    "default": false,
-    "path": "ambient.tray_enabled",
     "sensitive": false,
     "type": "bool"
   },
@@ -1283,12 +1271,6 @@
     "type": "float"
   },
   {
-    "default": "",
-    "path": "packs.connector_catalog_url",
-    "sensitive": false,
-    "type": "str"
-  },
-  {
     "default": true,
     "path": "packs.fingerprint_enabled",
     "sensitive": false,
@@ -1623,12 +1605,6 @@
     "path": "snapshot_dir",
     "sensitive": false,
     "type": "str"
-  },
-  {
-    "default": 288,
-    "path": "sources.daily_request_budget",
-    "sensitive": false,
-    "type": "int"
   },
   {
     "default": true,

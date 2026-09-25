@@ -20,6 +20,9 @@ What a fire means is unchanged from the script, clause for clause:
 - **At most :data:`MAX_COMMITS_PER_FIRE` SHAs per fire, newest kept** — a watcher that was
   off for a week should not open a hundred-commit run; the state still advances past the
   backlog so it cannot re-fire.
+- **The fire carries the fix-branch decision** (:func:`fix_branch_enabled`) — the template
+  declares that input and branches on it, so a fire that omitted it left the user's switch
+  unreachable no matter what they set.
 """
 
 from __future__ import annotations
@@ -105,11 +108,37 @@ def new_commits(repo: Path, last_sha: str, head: str) -> list[str]:
     return shas[-MAX_COMMITS_PER_FIRE:]
 
 
+def fix_branch_enabled() -> bool:
+    """``agent.self_qa.fix_branch_enabled`` — the template input, read at FIRE time.
+
+    The `self-qa` template declares ``fix_branch_enabled`` as an input and routes its
+    ``fix-route`` branch on it, and the config leaf has had a Settings control (behind a
+    confirmation dialog) since SV-10. Nothing joined the two: :func:`check` supplied only
+    ``{"repo", "commits"}``, so ``_with_declared_defaults`` filled the template's own
+    ``false`` and the switch could never reach the gate — issue #3490. This is that join.
+
+    Read HERE rather than baked into the trigger's action config (``selfqa/install.py``
+    writes that once, at reconcile time), because a user who flips the switch afterwards
+    must not need a re-registration for it to take effect.
+
+    Unreadable config degrades to OFF. This decides whether an unattended run writes a git
+    ref, so it is the one direction that must fail closed.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return bool(AppConfig.load().agent.self_qa.fix_branch_enabled)
+    except Exception:
+        logger.debug("selfqa: fix-branch switch unreadable — treating it as off", exc_info=True)
+        return False
+
+
 @dataclass(frozen=True)
 class WatchFire:
     """What one vcs-trigger fire resolved to."""
 
-    #: Inputs for the `self-qa` template ({"repo", "commits"}), or None when quiet.
+    #: Inputs for the `self-qa` template ({"repo", "commits", "fix_branch_enabled"}), or
+    #: None when quiet.
     inputs: dict | None
     #: Dedupe key on the head SHA — two fires seeing the same frontier produce ONE run.
     idempotency_key: str
@@ -149,6 +178,10 @@ def check(repo_raw: str) -> WatchFire:
         return WatchFire(None, "", quiet_reason="first sight — recorded HEAD, not reporting")
 
     return WatchFire(
-        inputs={"repo": str(repo), "commits": shas},
+        inputs={
+            "repo": str(repo),
+            "commits": shas,
+            "fix_branch_enabled": fix_branch_enabled(),
+        },
         idempotency_key=f"selfqa-{head}",
     )

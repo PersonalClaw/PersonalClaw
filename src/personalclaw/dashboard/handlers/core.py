@@ -1199,14 +1199,14 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # context_adapters gates writing adapter files into opted-in project workspaces.
     "legibility.discover_tips": {"type": "bool"},
     "legibility.context_adapters": {"type": "bool"},
-    # Ambient surfaces (AMBIENT-SURFACES) — the composable home + generative-UI +
-    # surface-layer + tray knobs. surfaces_max_layer is the safe-mode ceiling.
+    # Ambient surfaces (AMBIENT-SURFACES) — the composable home + generative-UI knobs.
+    # `surfaces_max_layer` and `tray_enabled` were allowlisted here with no reader anywhere
+    # (issue #3490) and are gone: the layer ceiling is `surface_layers.py`'s process latch,
+    # and menu-bar presence is the Electron shell's, reported through `desktop_registry`.
     "ambient.tiles_enabled": {"type": "bool"},
     "ambient.max_tiles": {"type": "int", "min": 1, "max": 48},
     "ambient.default_refresh_ttl_secs": {"type": "int", "min": 30, "max": 86400},
     "ambient.genui_enabled": {"type": "bool"},
-    "ambient.surfaces_max_layer": {"type": "int", "min": 0, "max": 2},
-    "ambient.tray_enabled": {"type": "bool"},
     # Companion apps (COMPANION-APPS CA-4) — LAN discovery advertisement + the friendly
     # instance name a client shows. discovery_enabled is off by default; toggling it here
     # is the opt-in to announcing this gateway on the local network.
@@ -1242,19 +1242,20 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "local_models.selftest_timeout_s": {"type": "int", "min": 5, "max": 600},
     # Watched sources (WATCHED-SOURCES SC#12) — the poll engine's runtime knobs. The
     # network floor is bounded at 300s (the R1-class rate floor) so a UI edit cannot make
-    # the engine poll a third party abusively.
+    # the engine poll a third party abusively. `daily_request_budget` was allowlisted here
+    # with nothing counting requests against it (issue #3490) and is gone; the allowance that
+    # IS enforced is the per-source, per-poll `budget.max_requests` on the source row.
     "sources.enabled": {"type": "bool"},
     "sources.poll_interval_default_secs": {"type": "int", "min": 300, "max": 604800},
     "sources.network_floor_secs": {"type": "int", "min": 300, "max": 604800},
     "sources.max_sources": {"type": "int", "min": 1, "max": 1000},
     "sources.max_items_per_poll": {"type": "int", "min": 1, "max": 1000},
-    "sources.daily_request_budget": {"type": "int", "min": 1, "max": 100000},
-    # Packs (AGENT-PACKS §8) — the runtime-editable subset. The fingerprint toggle and the
-    # skill-catalog list are the knobs a user reaches for from Settings; the catalog-refresh
-    # URL is a plain string. No credential rides any of these (a connector credential goes to
-    # the credential store, never a config field).
+    # Packs (AGENT-PACKS §8) — the runtime-editable subset: the fingerprint toggle and the
+    # skill-catalog list are the knobs a user reaches for from Settings. No credential rides
+    # either (a connector credential goes to the credential store, never a config field).
+    # `packs.connector_catalog_url` was allowlisted here for a catalog refresh nothing
+    # implements (issue #3490) and is gone.
     "packs.fingerprint_enabled": {"type": "bool"},
-    "packs.connector_catalog_url": {"type": "str", "max_len": 512},
     "packs.skill_catalogs": {"type": "skill_catalogs"},
     # Apps (ECOSYSTEM-TOOLING T2.2) — whether the curated registry ships as a default Store
     # source. Editable because it is the operator's opt-out for a shipped NETWORK source; it

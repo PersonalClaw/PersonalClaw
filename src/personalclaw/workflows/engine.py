@@ -484,12 +484,18 @@ async def dispatch_visualize(
         )
     hint = str(cfg.get("hint", "") or "")
     title = str(cfg.get("title", "") or "Visualization")
+    from personalclaw.visualize import GenUiDisabled
     from personalclaw.visualize import visualize as _visualize_primitive
 
     try:
         result = await _visualize_primitive(cfg["data"], hint, title=title, completion=completion)
     except asyncio.CancelledError:
         raise
+    except GenUiDisabled as exc:
+        # USER, not the transport class `classify_exception` would assign: the run is
+        # refused because the operator turned generative UI off, and only they can change
+        # it — so the failure must carry the fix rather than read as a provider fault.
+        return _fail(FailureClass.USER, str(exc), "turn on Generative UI, or drop this node")
     except Exception as exc:  # provider/transport failures
         return NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
     if not result.dsl.strip():

@@ -131,7 +131,6 @@ def _cfg():
         network_floor_secs=0,
         max_sources=100,
         max_items_per_poll=50,
-        daily_request_budget=288,
     )
 
 
