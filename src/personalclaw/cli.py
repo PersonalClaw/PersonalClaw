@@ -178,13 +178,34 @@ def _resolve_gateway_args(args: argparse.Namespace) -> dict:
     }
 
 
-# Commands that build a REAL embedding/chat provider (the eval family) and so must
-# bootstrap installed provider apps into this standalone process first — the same
-# provider init the gateway runs at boot (see ``providers.loader.bootstrap_cli_providers``).
-# ``eval-harvest`` is excluded: it reads terminal runs into scenario cases and resolves
-# no live provider.
+# Commands that resolve a model — chat or embedding — IN THIS PROCESS, and so must bootstrap
+# the installed provider apps first: the same provider init the gateway runs at boot (see
+# ``providers.loader.bootstrap_cli_providers``). Every model provider is an app (the bundled
+# default model and ``ollama-models`` included), so a command left out of this set cannot
+# reach one — ``chat`` was, and exited 1 telling the user to restart a gateway it never used.
+#
+# * the eval family builds real chat/embedding providers;
+# * ``chat`` builds the chat model through the provider factory;
+# * ``consolidate`` runs model extraction and embeds what it stores;
+# * ``learn`` / ``memory`` size their vector store by probing the bound embedding model;
+# * ``doctor``'s Provider Health lists the registry, which is empty until this runs.
+#
+# Excluded: ``eval-harvest`` (reads terminal runs, resolves no live provider) and the gateway
+# clients ``run`` / ``spawn``, whose turns resolve inside the gateway.
 _PROVIDER_BOOTSTRAP_COMMANDS = frozenset(
-    {"eval", "judge-bench", "study", "ablation", "eval-gate", "retrieval-eval"}
+    {
+        "eval",
+        "judge-bench",
+        "study",
+        "ablation",
+        "eval-gate",
+        "retrieval-eval",
+        "chat",
+        "consolidate",
+        "learn",
+        "memory",
+        "doctor",
+    }
 )
 
 #: Subcommands that ``--help`` must never mention: machine-facing entry points a human
@@ -1510,13 +1531,12 @@ def main() -> None:
     for _lname in _APP_LOGGER_ROOTS:
         logging.getLogger(_lname).addHandler(_fh)
 
-    # App-contributed providers (Bedrock embedding, …) register only when their app
-    # module is imported — work the gateway does at boot but a standalone CLI process
-    # otherwise never does, leaving its provider registry empty. The eval commands
-    # build REAL embedding/chat providers and run read-only over the local stores, so
-    # they must first bootstrap installed provider apps the same way the gateway does
-    # or an app-provided arm (e.g. retrieval-eval's vector arm) reads "no executor"
-    # even with the embedder bound (ES-3).
+    # App-contributed providers (every model provider, the bundled default model included)
+    # register only when their app module is imported — work the gateway does at boot but a
+    # standalone CLI process otherwise never does, leaving its provider registry empty. Each
+    # command in `_PROVIDER_BOOTSTRAP_COMMANDS` resolves a model in this process (the set's
+    # comment says which, and why), so it bootstraps the installed provider apps the same way
+    # the gateway does — or an app-provided model reads as unregistered (ES-3).
     if args.command in _PROVIDER_BOOTSTRAP_COMMANDS:
         from personalclaw.providers.loader import bootstrap_cli_providers
 

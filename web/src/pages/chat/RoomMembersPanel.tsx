@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
-import { Plus, Trash2, UserPlus } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { ArrowRight, Plus, Trash2, UserPlus } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
 import { Eyebrow } from '../../ui/Eyebrow'
 import { StatusPill } from '../../ui/StatusPill'
 import { EmptyState } from '../../ui/ListScaffold'
+import { TextLink } from '../../ui/TextLink'
 import { Field, FieldError, Select, TextInput } from '../../ui/forms'
 import { fvs } from '../../design/fontWeight'
 import {
@@ -78,20 +79,39 @@ export function RoomMembersPanel({ detail, owed, agents, agentsError, onRetryAge
   const views = useMemo(() => roomMemberViews(detail, owed), [detail, owed])
   const [adding, setAdding] = useState(false)
   const full = detail.room.members.length > 0 && !detail.room.archived
+  // The ceiling is the number the ADD ROUTE enforces (`rooms.max_members`, published on the wire),
+  // not a restated default. At it, adding is refused here with the reason, rather than offered and
+  // answered `room_member_limit` — the refusal every Retry would earn again.
+  const ceiling = detail.room.max_members
+  const atCeiling = !detail.room.archived && detail.room.members.length >= ceiling
+  const ceilingReason = `This room holds its maximum of ${ceiling} member${ceiling === 1 ? '' : 's'}`
+  // A room that fills while the form is open (another tab, a lowered ceiling) closes the form: the
+  // offer it makes can no longer be kept. `formOpen` covers the render before the effect lands.
+  useEffect(() => { if (atCeiling) setAdding(false) }, [atCeiling])
+  const formOpen = adding && !atCeiling
   return (
     <div className="flex flex-col gap-l">
-      <div className="flex items-center justify-between gap-s">
-        <Eyebrow as="h3" id="room-members-heading">
-          Members {views.length > 0 ? `(${views.length})` : ''}
-        </Eyebrow>
-        {!detail.room.archived && !adding && (
-          <Button size="xs" variant="secondary" onClick={() => setAdding(true)}>
-            <UserPlus size={13} aria-hidden /> Add
-          </Button>
+      <div className="flex flex-col gap-xs">
+        <div className="flex items-center justify-between gap-s">
+          <Eyebrow as="h3" id="room-members-heading">
+            Members {views.length > 0 ? `(${views.length})` : ''}
+          </Eyebrow>
+          {!detail.room.archived && !formOpen && (
+            <Button size="xs" variant="secondary" disabled={atCeiling} disabledReason={ceilingReason}
+              onClick={() => setAdding(true)}>
+              <UserPlus size={13} aria-hidden /> Add
+            </Button>
+          )}
+        </div>
+        {atCeiling && (
+          <p data-type="body-s" className="text-on-surface-var" style={fvs(400)}>
+            {ceilingReason}. Remove one to add another, or raise Members per room in{' '}
+            <TextLink href="#/settings/chat" ink="emphasis">Settings › Chat</TextLink>.
+          </p>
         )}
       </div>
 
-      {views.length === 0 && !adding ? (
+      {views.length === 0 && !formOpen ? (
         <EmptyState
           icon={UserPlus}
           title="No members yet"
@@ -111,7 +131,7 @@ export function RoomMembersPanel({ detail, owed, agents, agentsError, onRetryAge
         </ul>
       )}
 
-      {adding && (
+      {formOpen && (
         <AddMemberForm
           agents={agents}
           agentsError={agentsError}
@@ -274,10 +294,15 @@ function AddMemberForm({ agents, agentsError, onRetryAgents, taken, busy, onAdd,
   return (
     <div className="rounded-lg bg-surface-container px-m py-m">
       <Eyebrow as="h3">Add a member</Eyebrow>
+      {/* Agents are created on the Agents page (`#/agents/new`), NOT in Settings — Settings ›
+          Agent holds defaults, runners and subagents and has no create control, so the old
+          "Create another agent in Settings" sent the user somewhere that cannot do it. */}
       {noneFree ? (
         <p data-type="body-s" className="mt-xs text-on-surface-var" style={fvs(400)}>
-          Every agent you have configured is already in this room. Create another agent in
-          Settings to add one.
+          Every agent you have configured is already in this room.{' '}
+          <TextLink href="#/agents/new" ink="emphasis" icon={ArrowRight} iconPosition="trailing">
+            Create another agent
+          </TextLink>
         </p>
       ) : (
         <div className="mt-s flex flex-col gap-m">

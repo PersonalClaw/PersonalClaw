@@ -153,10 +153,13 @@ def _llm_embed_fn(provider_name: str, model_id: str) -> Callable[[str], list[flo
     """
     from personalclaw.llm.registry import ProviderResolutionError, get_default_registry
 
+    # A provider that cannot be RESOLVED — no entry by that name, or an entry whose type no loaded
+    # app provides — is a state, not a crash, so it is logged as one sentence that says which. Only
+    # an unexpected exception (a factory that raised) keeps its traceback.
     try:
         registry = get_default_registry()
         provider = registry.build(provider_name, embedding_model=model_id)
-    except ProviderResolutionError:
+    except ProviderResolutionError as unresolved:
         # The entry isn't in the registry yet. Config-defined `providers[]` entries are
         # replayed into the process-wide registry by `sync_entries_from_config()`, which
         # only the GATEWAY boot path calls — so any other entry point (a CLI command, a
@@ -180,9 +183,10 @@ def _llm_embed_fn(provider_name: str, model_id: str) -> Callable[[str], list[flo
             return None
         if not synced:
             logger.warning(
-                "Embedding provider %r is not a configured provider entry "
-                "(config.json providers[] has nothing to sync)",
+                "Embedding provider %r cannot be built (%s), and replaying config.json's "
+                "providers added nothing — semantic embeddings stay off until it resolves",
                 provider_name,
+                unresolved,
             )
             return None
         logger.info(
@@ -193,6 +197,14 @@ def _llm_embed_fn(provider_name: str, model_id: str) -> Callable[[str], list[flo
         )
         try:
             provider = registry.build(provider_name, embedding_model=model_id)
+        except ProviderResolutionError as still_unresolved:
+            logger.warning(
+                "Embedding provider %r cannot be built (%s) — semantic embeddings stay off "
+                "until it resolves",
+                provider_name,
+                still_unresolved,
+            )
+            return None
         except Exception:
             logger.warning(
                 "Could not build embedding provider %r after config sync",

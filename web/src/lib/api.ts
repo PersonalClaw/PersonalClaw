@@ -60,6 +60,17 @@ export function hasApiCode(e: unknown, code: string): boolean {
   return e instanceof ApiError && e.code === code
 }
 
+/** True when sending the same request again could succeed — the one question a Retry must answer.
+ *
+ *  A 4xx is the gateway REFUSING this request (`room_member_limit`, `room_archived`, a validation
+ *  error): the same request earns the same refusal, so a Retry for it can never succeed. A 5xx or a
+ *  429 can clear on its own, and a rejection that is not an `ApiError` never got an answer at all
+ *  (the network dropped it). */
+export function isTransientFailure(e: unknown): boolean {
+  if (!(e instanceof ApiError)) return true
+  return e.status >= 500 || e.status === 429
+}
+
 async function j<T>(r: Response): Promise<T> {
   if (!r.ok) throw await apiError(r)
   return r.json() as Promise<T>
@@ -1030,7 +1041,9 @@ export interface RoomMemberRecord {
  *  `rooms.round_budget`" — which is why `effective_round_budget` travels beside it: a client
  *  reading 0 must not have to know the convention, or go read the config, to learn the real
  *  ceiling. `max_round_budget` is the writer's accepted ceiling, published so a stepper's
- *  bounds come from the save path instead of restating them.
+ *  bounds come from the save path instead of restating them. `max_members` is the same rule for
+ *  the roster — the configured `rooms.max_members` the add route enforces — so a full room
+ *  refuses the extra agent in the picker instead of offering it and answering `room_member_limit`.
  *
  *  `pending_queue` is the speaker queue's remainder at the moment the room paused — the
  *  members still OWED a turn, in the order they will take it. It is the field that makes a
@@ -1047,6 +1060,7 @@ export interface RoomRecord {
   members: RoomMemberRecord[]
   effective_round_budget: number
   max_round_budget: number
+  max_members: number
   transcript_path: string
 }
 

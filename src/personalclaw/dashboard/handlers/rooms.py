@@ -160,11 +160,14 @@ def _room_payload(room: store.Room) -> dict:
     would otherwise have to know that 0 means "inherit" and go read the config itself to
     learn the real number. ``max_round_budget`` travels with it so the UI's stepper takes
     its bounds from the save path rather than restating them — a control whose range
-    disagrees with the writer's is an offer the writer refuses.
+    disagrees with the writer's is an offer the writer refuses. ``max_members`` is the same
+    rule for the roster: without it a full room still offered an agent, and the add was
+    refused ``room_member_limit``.
     """
     payload = room.to_dict()
     payload["effective_round_budget"] = store.effective_round_budget(room)
     payload["max_round_budget"] = store.MAX_ROOM_ROUND_BUDGET
+    payload["max_members"] = store.max_members()
     payload["transcript_path"] = str(store.transcript_path(room.id))
     return payload
 

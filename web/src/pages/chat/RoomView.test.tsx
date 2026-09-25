@@ -25,6 +25,7 @@ import { RoomView } from './RoomView'
 const H = vi.hoisted(() => ({
   postRoomMessage: vi.fn(),
   archiveRoom: vi.fn(),
+  addRoomMember: vi.fn(),
   room: { fn: null as null | (() => Promise<unknown>) },
   // Indirected like `room` so a test can make the AGENT read reject. It used to be a fixed
   // `{ agents: [] }`, which meant no test could reach the failed-read branch of the member picker.
@@ -41,7 +42,7 @@ vi.mock('../../lib/api', async () => {
       agents: () => H.agents.fn!(),
       postRoomMessage: H.postRoomMessage,
       archiveRoom: H.archiveRoom,
-      addRoomMember: vi.fn(),
+      addRoomMember: H.addRoomMember,
       removeRoomMember: vi.fn(),
       setRoomRoundBudget: vi.fn(),
     },
@@ -70,6 +71,7 @@ function room(extra: Partial<RoomRecord> = {}): RoomRecord {
     members: [member('analyst', { role_blurb: 'argues from the numbers' }), member('skeptic')],
     effective_round_budget: 6,
     max_round_budget: 100,
+    max_members: 8,
     transcript_path: '/rooms/pricing-debate/transcript.jsonl',
     ...extra,
   }
@@ -105,6 +107,7 @@ function apiErr(code: string, status: number) {
 beforeEach(() => {
   H.postRoomMessage.mockReset()
   H.archiveRoom.mockReset()
+  H.addRoomMember.mockReset()
   H.room.fn = async () => detail()
   H.agents.fn = async () => ({ agents: [], default_agent: '' })
 })
@@ -282,5 +285,42 @@ describe('the member picker when the agent list cannot be read', () => {
     expect(await screen.findByText('No agents configured')).toBeTruthy()
     expect(screen.queryByText(/Couldn't load your agents/)).toBeNull()
     expect(screen.queryByRole('button', { name: /^Retry$/ })).toBeNull()
+  })
+})
+
+/** The action banner's Retry used to be `refresh` — a re-read of the room — for EVERY failed write.
+ *  It never re-ran the write, and for a refusal nothing could succeed: at 8/8 the validator saw
+ *  "This room already holds the configured maximum of 8 members. Retry", a control that could only
+ *  ever earn the same 400. A Retry now exists only when the same write could succeed, and it
+ *  re-runs THAT write. */
+describe('🔴 a failed write offers a Retry only when running it again could succeed', () => {
+  async function tryToAdd() {
+    H.room.fn = async () => detail({ room: room({ members: [] }) })
+    H.agents.fn = async () => ({ agents: [{ name: 'writer', provider: 'native', model: 'x' }], default_agent: '' })
+    mount()
+    await userEvent.click(await screen.findByRole('button', { name: /Open members/ }))
+    await userEvent.click(await screen.findByRole('button', { name: /Add a member/ }))
+    await userEvent.click(await screen.findByRole('button', { name: /Add to the room/ }))
+  }
+
+  it('a refusal says why and offers NO Retry', async () => {
+    // The race the panel's own ceiling cannot see: another tab filled the room first.
+    H.addRoomMember.mockRejectedValue(
+      new ApiError('This room already holds the configured maximum of 8 members.', 400, 'room_member_limit'),
+    )
+    await tryToAdd()
+    expect((await screen.findByRole('alert')).textContent).toMatch(/maximum of 8 members/)
+    expect(screen.queryByRole('button', { name: /^Retry$/ })).toBeNull()
+    expect(H.addRoomMember).toHaveBeenCalledTimes(1)
+  })
+
+  it('a transient failure offers a Retry that RE-RUNS the same add', async () => {
+    H.addRoomMember
+      .mockRejectedValueOnce(new ApiError('The gateway hit an error.', 503, 'unavailable'))
+      .mockResolvedValueOnce({ room: room() })
+    await tryToAdd()
+    await userEvent.click(await screen.findByRole('button', { name: /^Retry$/ }))
+    await waitFor(() => expect(H.addRoomMember).toHaveBeenCalledTimes(2))
+    expect(H.addRoomMember.mock.calls[1]).toEqual(H.addRoomMember.mock.calls[0])
   })
 })

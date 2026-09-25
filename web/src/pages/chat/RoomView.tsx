@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Archive, ArrowLeft, Download, PanelRight, Send, Users } from 'lucide-react'
-import { api, hasApiCode, type RoomListenPolicy } from '../../lib/api'
+import { api, hasApiCode, isTransientFailure, type RoomListenPolicy } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { notify } from '../../app/appSdk'
 import { confirm } from '../../ui/dialog'
@@ -100,7 +100,10 @@ export function RoomView({ roomId, navigate, setQuery }: {
   // Which member's removal is in flight. A name, not a boolean: the remove control has to say
   // "working" about itself rather than dimming every peer — see `RoomMembersPanel`'s `removing`.
   const [removing, setRemoving] = useState('')
-  const [actionError, setActionError] = useState<unknown>(null)
+  // The last write that failed, and — only when running it AGAIN could succeed — how to. The banner
+  // used to offer a Retry that re-read the room for every failure: it never re-ran the write, and
+  // for a refusal (`room_member_limit` at 8/8) no retry of anything could succeed.
+  const [actionError, setActionError] = useState<{ error: unknown; retry?: () => void } | null>(null)
   const [membersOpen, setMembersOpen] = useState(false)
   // The queue the LAST message produced, held client-side. It is not room state: the backend
   // persists only the queue a PAUSE parked, so while a round is running this is the one record
@@ -158,13 +161,15 @@ export function RoomView({ roomId, navigate, setQuery }: {
       setInFlight(res.speaking)
       refresh()
     } catch (e) {
-      setActionError(e)
+      // No banner Retry: the draft is kept, so Send right below IS the retry, and it sends what
+      // the composer holds now rather than a copy captured when this failed.
+      setActionError({ error: e })
     } finally {
       setSending(false)
     }
   }, [draft, sending, roomId, refresh])
 
-  const act = useCallback(async (run: () => Promise<unknown>, what: string) => {
+  const act = useCallback(async function act(run: () => Promise<unknown>, what: string) {
     setBusy(true)
     setActionError(null)
     try {
@@ -172,7 +177,10 @@ export function RoomView({ roomId, navigate, setQuery }: {
       refresh()
     } catch (e) {
       notify(`Couldn't ${what}: ${String((e as Error)?.message || e)}`, 'error')
-      setActionError(e)
+      setActionError({ error: e, retry: isTransientFailure(e) ? () => void act(run, what) : undefined })
+      // A refusal can mean this view of the room is stale (it filled up in another tab), so it is
+      // re-read: the panel then shows the room as it is — at its ceiling, archived — not as it was.
+      refresh()
     } finally {
       setBusy(false)
     }
@@ -351,7 +359,7 @@ export function RoomView({ roomId, navigate, setQuery }: {
         <div className="border-t border-outline-variant/40">
           <div className="mx-auto flex flex-col gap-s px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
             {actionError !== null && (
-              <InlineLoadError what="that" error={actionError} onRetry={refresh} />
+              <InlineLoadError what="that" error={actionError.error} onRetry={actionError.retry} />
             )}
             <div className="flex flex-wrap items-center justify-between gap-s">
               <Eyebrow as="span">{roundBudgetLabel(room)} since your last message</Eyebrow>
