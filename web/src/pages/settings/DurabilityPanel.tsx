@@ -241,6 +241,15 @@ function TimeTravelSection({ cfg, setCfg }: {
 
   const roots = status.data?.roots ?? []
   const gitMissing = status.data ? status.data.git === false : false
+  // 🔴 `status` IS BOUND WHOLE (`const status = useQuery(…)`), WHICH IS WHY ITS FAILURE WENT
+  // UNSAID FOR SO LONG. Binding the whole result keeps `error` reachable as `status.error` — but
+  // reachable is not read, and nothing here read it (#3394's third form, invisible to a rail that
+  // only inspects destructuring patterns). The consequence is specific and worse than a blank:
+  // `roots` fell to `[]`, so "What to look through" rendered an EMPTY picker, and `gitMissing`
+  // fell to `false`, so the git warning that explains an empty history was suppressed at the same
+  // moment. The sibling `timeline` read does announce its own failure two branches down — so the
+  // page half-explained itself, which reads as "your history is empty" rather than "unreadable".
+  const rootsFailed = !status.data && status.error != null
 
   // `iconTone="muted"` — a category glyph, not a live thing; see settingsUI's iconTone doc and
   // ProvidersPanel's nine muted entity glyphs.
@@ -262,7 +271,16 @@ function TimeTravelSection({ cfg, setCfg }: {
         </div>
       )}
 
-      {on && !gitMissing && (
+      {/* Before the picker, not inside it: with the roots read unanswered there is no universe to
+          pick from, and an empty Select beside a live "Only what changed while I slept" toggle
+          invites the reader to conclude there is nothing recorded. */}
+      {on && rootsFailed && (
+        <div className="mt-m">
+          <LoadError what="edit history" error={status.error} onRetry={status.refresh} />
+        </div>
+      )}
+
+      {on && !gitMissing && !rootsFailed && (
         <div className="mt-3 rounded-lg bg-surface-container px-4 py-3">
           <div className="flex flex-wrap items-end gap-4">
             <label data-type="caption" className="flex min-w-0 flex-col gap-1 text-on-surface-low">
