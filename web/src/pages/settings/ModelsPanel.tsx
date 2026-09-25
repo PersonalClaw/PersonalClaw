@@ -11,6 +11,7 @@ import {
   type HfTokenSource, type LocalModelHealth, type LocalModelSelftest,
 } from '../../lib/api'
 import { humanBytes } from '../../lib/chunkedUpload'
+import { splitModelRef } from '../../lib/modelRef'
 import {
   occupantDetail, pressureDetail, pressureTone, reclaimableCount, sortOccupants,
 } from '../../lib/residency'
@@ -94,9 +95,7 @@ export function capableModels(useCase: string, allModels: AvailableModel[], acti
   for (const ref of activeModels) {
     if (seen.has(ref)) continue
     seen.add(ref)
-    const sep = ref.indexOf(':')
-    const provider = sep >= 0 ? ref.slice(0, sep) : ''
-    const id = sep >= 0 ? ref.slice(sep + 1) : ref
+    const { provider, model: id } = splitModelRef(ref)
     out.push({ id, name: id, provider, capabilities: [useCase], downloaded: false } as AvailableModel)
   }
   return out
@@ -831,9 +830,7 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
       {meta.chain && activeModels.length > 0 && (
         <div className="flex flex-col gap-1 rounded-lg bg-surface p-2">
           {activeModels.map((ref, i) => {
-            const sep = ref.indexOf(':')
-            const provider = sep >= 0 ? ref.slice(0, sep) : ''
-            const id = sep >= 0 ? ref.slice(sep + 1) : ref
+            const { provider, model: id } = splitModelRef(ref)
             return (
               <div key={ref} className="flex items-center gap-2 rounded-md bg-surface-container px-2.5 py-1.5">
                 <span data-type="caption" className="w-16 shrink-0 text-on-surface-low uppercase tracking-wide">

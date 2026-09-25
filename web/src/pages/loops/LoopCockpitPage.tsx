@@ -43,6 +43,7 @@ import { SURFACE_WIDTHS } from '../../app/appearance'
 import { accentChip } from '../../design/accent'
 import { tabListKeys } from '../../lib/tabListKeys'
 import { loopStatusLabel, effectiveLoopStatus, shownCycle, ACTIVE_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES } from '../../lib/loopStatus'
+import { modelIdOf } from '../../lib/modelRef'
 import { notify } from '../../app/appSdk'
 import { copyText } from '../../app/clipboard'
 
@@ -126,14 +127,6 @@ function RoiRail({ points, granularity }: { points: RoiPoint[]; granularity: str
       </div>
     </div>
   )
-}
-
-/** Strip a verbose model id to its readable tail (e.g.
- *  "Bedrock:global.anthropic.claude-opus-4-8" → "claude-opus-4-8"). */
-function shortModel(m: string): string {
-  const afterColon = m.includes(':') ? m.split(':').pop()! : m
-  const parts = afterColon.split('.')
-  return (parts.pop() || afterColon).replace(/\[.*\]$/, '')
 }
 
 /** The role-phased execution plan as a left-to-right pill trail — the single
@@ -594,6 +587,10 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   // of the prompt card. The title sub-line keeps only the status dot + label; this
   // bar is the single place to read "where the loop is right now". ──
   const wsDir = (c as { workspace_dir?: string }).workspace_dir || ''
+  // The model half of the `provider:model` ref, split on its FIRST colon by the one shared reading.
+  // Keeping the text after the LAST colon, then the last dot, cut `ollama:qwen2.5vl:7b` to `7b`
+  // and `…claude-3.5-sonnet` to `5-sonnet`. The pill's title keeps the whole ref.
+  const modelLabel = c.model ? modelIdOf(c.model) : ''
   const cycleLabel = (() => {
     const shown = shownCycle(c.status, c.total_cycles)
     return c.max_cycles === 0 ? `cycle ${shown} · ongoing` : `cycle ${shown}/${c.max_cycles}`
@@ -631,7 +628,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
         : <MetaPill icon={<FolderKanban size={11} />} text={projName} tone="primary" title="Project" />)}
       {wsDir && <MetaPill icon={<FolderOpen size={11} />} text={wsDir.split('/').pop() || wsDir} title={`Workspace: ${wsDir}`} />}
       <MetaPill icon={<Bot size={11} />} text={c.agent || 'default'} title="Worker agent" />
-      {c.model && <MetaPill icon={<Cpu size={11} />} text={shortModel(c.model)} title={c.model} />}
+      {modelLabel && <MetaPill icon={<Cpu size={11} />} text={modelLabel} title={c.model} />}
       <MetaPill text={c.attended ? 'Attended' : 'Unattended'} title="Mode" />
       {(c as { kind?: string }).kind === 'goal' && <>
         <MetaPill text={GOAL_TYPE_LABEL[c.goal_type] ?? c.goal_type} tone="primary" title="Goal type" />

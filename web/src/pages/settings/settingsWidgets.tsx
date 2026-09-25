@@ -13,6 +13,7 @@ import { notify } from '../../app/appSdk'
 // So the import list shrinking by fourteen names is not tidying, it is the measure of how much of
 // this file existed to describe data the server never sent.
 import { api, type SavedAgent } from '../../lib/api'
+import { modelIdOf } from '../../lib/modelRef'
 // One spelling for a poll cadence: `#/knowledge/sources` renders every source row's cadence
 // through THIS function (`SourcesPage.tsx:177`, `· every {fmtInterval(poll_interval_secs)}`), and
 // the number this tile shows is the DEFAULT those rows fall back to. A second formatter here would
@@ -45,8 +46,6 @@ export interface SettingsWidget {
   /** Render the card. `query` drives highlight; `go` opens the subpage. */
   render: (query: string, go: (id: string) => void) => React.ReactNode
 }
-
-const shortModel = (ref: string) => { const i = ref.indexOf(':'); return i >= 0 ? ref.slice(i + 1) : ref }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-subpage data hooks (cache keys mirror each panel so paint is shared/instant)
@@ -430,7 +429,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     description: 'Which model serves each use case (chat, embeddings, voice).',
     useSearchText() {
       const { data: a } = useModelsActive()
-      const parts = ['chat', 'embedding', 'stt', 'tts'].map((uc) => `${uc} ${(a?.[uc] ?? []).map(shortModel).join(' ')}`)
+      const parts = ['chat', 'embedding', 'stt', 'tts'].map((uc) => `${uc} ${(a?.[uc] ?? []).map(modelIdOf).join(' ')}`)
       return `models bindings use case ${parts.join(' ')}`
     },
     render(query, go) {
@@ -448,8 +447,8 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
         <BentoCard icon={Cpu} title="Models" query={query} onClick={() => go('models')} loading={active === undefined} stale={activeStale} failed={activeStatus === 'error'} error={activeErr} onRetry={activeRefresh}>
           {active && (anyBound ? <KVList query={query} rows={CORE.map(([uc, label]) => {
             const bound = (active[uc] ?? [])[0]
-            return { k: label, mono: true, vText: bound ? shortModel(bound) : '—', v: bound
-              ? <span className="inline-flex items-center gap-1"><CheckCircle2 size={11} className="shrink-0 text-ok" /> <span className="truncate">{shortModel(bound)}</span></span>
+            return { k: label, mono: true, vText: bound ? modelIdOf(bound) : '—', v: bound
+              ? <span className="inline-flex items-center gap-1"><CheckCircle2 size={11} className="shrink-0 text-ok" /> <span className="truncate">{modelIdOf(bound)}</span></span>
               : <span className="text-on-surface-low">—</span> }
           })} /> : <div data-type="body-s" className="text-on-surface-low">No models bound yet. Set up a model provider and the bindings for chat, embeddings, and voice appear here.</div>)}
         </BentoCard>

@@ -1,9 +1,30 @@
 import { describe, it, expect } from 'vitest'
-import { modelIdOf, boundModelLabel } from './modelRef'
+import { modelIdOf, boundModelLabel, splitModelRef } from './modelRef'
 
 // #3528 — the reading behind "Chat model: …" on the first-run recap. The value it turns into
 // words is `active_models.json`'s chat chain, so the two traps are: a model id that contains
 // colons of its own, and an empty chain that must NOT be turned into a model name.
+
+describe('splitModelRef', () => {
+  it('splits on the FIRST colon, so both halves survive their own punctuation', () => {
+    expect(splitModelRef('Local Ollama:qwen2.5vl:7b')).toEqual({ provider: 'Local Ollama', model: 'qwen2.5vl:7b' })
+    expect(splitModelRef('openrouter:anthropic/claude-3.5-sonnet'))
+      .toEqual({ provider: 'openrouter', model: 'anthropic/claude-3.5-sonnet' })
+  })
+
+  it('is lossless — the halves rebuild the ref, so a caller may use them as identity', () => {
+    // The Models picker unbinds a row it synthesised from these halves by re-joining them, so a
+    // split that trimmed or dropped a segment would leave a binding the user cannot clear.
+    for (const ref of ['ollama:gpt-oss:20b', 'My Work OpenAI:gpt-5', 'p: padded ', 'openai:']) {
+      const { provider, model } = splitModelRef(ref)
+      expect(`${provider}:${model}`).toBe(ref)
+    }
+  })
+
+  it('gives an unqualified ref no provider, and the whole ref as its model', () => {
+    expect(splitModelRef('claude-sonnet-4-5')).toEqual({ provider: '', model: 'claude-sonnet-4-5' })
+  })
+})
 
 describe('modelIdOf', () => {
   it('splits on the FIRST colon, so a colon inside the model id survives', () => {
