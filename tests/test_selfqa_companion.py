@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -346,6 +347,33 @@ class TestClauseTwoLedgerOnlySkip:
     is asserted only alongside it.
     """
 
+    @pytest.fixture(autouse=True)
+    def _ledger_home(self, tmp_path, monkeypatch):
+        """Redirect the run ledger to a per-test tmp dir (#3546).
+
+        `record_triage`/`Journal` resolve their file through
+        `personalclaw.workflows.store.config_dir()`. `conftest.py`'s session-wide
+        `_isolate_real_home_writers` guard only substitutes a tmp dir there when the caller chose
+        NEITHER `$PERSONALCLAW_HOME` nor a repointed `$HOME` — it deliberately backs off the moment
+        either is set, which is the ordinary shape of a contributor's local loop. Left unpatched,
+        every test below appends to whichever ledger that chosen home already has, and the hard-
+        coded run ids this class used to carry (`selfqa-clause2`, …) made a SECOND invocation in
+        that same home count a running total instead of this run's own rows — measured as
+        `assert 4 == 1` on the second run. Redirecting `config_dir` here removes the dependence on
+        the ambient home entirely.
+
+        `autouse` rather than opt-in per test: two of the tests below (the provider tests that
+        check `output[...]` rather than calling `ledger()` themselves) still write real rows
+        through this same seam even though their own assertions never count them, so a redirect
+        that only covered the count-sensitive tests would still leave this class writing into
+        whatever home the invoking shell happens to have chosen.
+        """
+        from personalclaw.workflows import store
+
+        home = tmp_path / "ledger-home"
+        home.mkdir()
+        monkeypatch.setattr(store, "config_dir", lambda: home)
+
     def test_a_test_only_commit_classifies_as_test_with_a_reason(self, repo):
         sha = commit(repo, "tests/test_thing.py", "def test_x():\n    pass\n", "test: assertion")
         verdict = triage_commit(repo, sha)
@@ -358,7 +386,7 @@ class TestClauseTwoLedgerOnlySkip:
         """The clause. Read back through the real ledger reader, not the writer's return value."""
         sha = commit(repo, "tests/test_thing.py", "def test_x():\n    pass\n", "test: assertion")
         verdict = triage_commit(repo, sha)
-        run_id = "selfqa-clause2"
+        run_id = f"selfqa-clause2-{uuid.uuid4().hex}"
         record_triage(Journal(run_id=run_id), verdict, instance_path=TRIAGE_PATH)
 
         rows = ledger(run_id, kinds={STEP_SKIPPED})
@@ -378,7 +406,7 @@ class TestClauseTwoLedgerOnlySkip:
         sha = commit(repo, "src/personalclaw/thing.py", "x = 1\n", "feat: a thing")
         verdict = triage_commit(repo, sha)
         assert verdict.impact == IMPACT_USER
-        run_id = "selfqa-clause2-floor"
+        run_id = f"selfqa-clause2-floor-{uuid.uuid4().hex}"
         record_triage(Journal(run_id=run_id), verdict, instance_path=TRIAGE_PATH)
         assert ledger(run_id, kinds={STEP_SKIPPED}) == []
         assert len(ledger(run_id, kinds={DECISION})) == 1
@@ -431,7 +459,7 @@ class TestClauseTwoLedgerOnlySkip:
         """
         test_sha = commit(repo, "tests/test_a.py", "def test_a():\n    pass\n", "test: a")
         doc_sha = commit(repo, "docs/guide.md", "# guide\n", "docs: guide")
-        run_id = "selfqa-clause2-provider"
+        run_id = f"selfqa-clause2-provider-{uuid.uuid4().hex}"
 
         assert len(inbox_items(inbox_state)) == 0, "the inbox was not empty before the run"
 
@@ -462,7 +490,10 @@ class TestClauseTwoLedgerOnlySkip:
                 {"repo": str(repo), "commits": [sha]},
                 ActionContext(
                     event="workflow_node",
-                    payload={"run_id": "selfqa-c2-fwd", "instance_path": TRIAGE_PATH},
+                    payload={
+                        "run_id": f"selfqa-c2-fwd-{uuid.uuid4().hex}",
+                        "instance_path": TRIAGE_PATH,
+                    },
                 ),
             )
         )
@@ -478,7 +509,10 @@ class TestClauseTwoLedgerOnlySkip:
                 {"repo": str(repo), "commits": shas, "max_scenarios": 2},
                 ActionContext(
                     event="workflow_node",
-                    payload={"run_id": "selfqa-c2-cap", "instance_path": TRIAGE_PATH},
+                    payload={
+                        "run_id": f"selfqa-c2-cap-{uuid.uuid4().hex}",
+                        "instance_path": TRIAGE_PATH,
+                    },
                 ),
             )
         )
