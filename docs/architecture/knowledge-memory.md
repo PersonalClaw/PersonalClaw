@@ -101,7 +101,7 @@ plus the typed reasons the library could not answer.
 ### Searchability
 
 `knowledge/searchability.py` owns ONE vocabulary for "this item persisted and
-nothing can find it" (RET-2). Two failures used to persist as
+nothing can find it". Two failures used to persist as
 `processing_status: "done"` with no error: an image-only PDF, where
 `document_read` reported success and extracted no text (leaving only the
 synthesized structural descriptor — none of the document's words), and any

@@ -5,7 +5,7 @@ that buys. This is provenance, not content safety — the [supply-chain
 scanner](./scanner-testing.md) is the separate question of whether the code is malicious.
 A bundle can be validly signed and dangerous, or unsigned and harmless.
 
-## The decision (SH-3)
+## The decision
 
 **Detached Ed25519 signatures, in [minisign](https://jedisct1.github.io/minisign/)'s
 on-wire format, over a whole-tree digest manifest.** One keypair, one public key shipped
@@ -157,8 +157,10 @@ minisign -Vm apps/my-app/.pclaw-signature.sha256 -p src/personalclaw/trusted_key
 The mechanism is live on every app install and update. The trust store ships **empty**
 until the maintainer signing key is generated (SECURITY-HARDENING owner task 2), which is
 the safe direction: no signature verifies, so nothing is falsely attributed, and unsigned
-bundles keep installing at community tier exactly as before. Wiring the release pipeline
-to sign first-party bundles is `SH-4`.
+bundles keep installing at community tier exactly as before. **No release workflow signs a
+bundle today**: nothing under `.github/workflows/` invokes `scripts/sign_app.py`, and
+`src/personalclaw/trusted_keys/` holds only a `README.md` — no public key. So first-party
+bundles verify exactly as a third-party one does, which is to say not at all.
 
 ## What this does not do
 

@@ -116,7 +116,7 @@ parameter would turn "auto-send this prompt" into a link anyone could hand the u
 keeping the authority in-process means only a real widget action can arm it, and the
 handoff expires so a navigation that never reached chat cannot fire a stale turn later.
 
-## Genui actions: dual payloads and the producer (AS-6)
+## Genui actions: dual payloads and the producer
 
 A `<widget kind="genui">` block renders in the HOST React tree, so its controls do not cross
 the postMessage boundary at all. What they share with the iframe path is the TURN DIALECT —
@@ -158,7 +158,7 @@ unattended gates. The trigger fence's read-only default is deliberately NOT appl
 tile's set is derived from its own nodes, so it is never empty-by-omission, and the default
 would let a button reach a read-only provider the tile never declared.
 
-## The layered surface overlay (L0/L1/L2) + safe mode (AS-6 §6)
+## The layered surface overlay (L0/L1/L2) + safe mode
 
 | layer | what | removable by |
 | --- | --- | --- |

@@ -38,7 +38,7 @@ a monitor keeps `MONITOR_LOG.md`; code has no document — the code itself is
 the deliverable), and readiness prerequisites (a brownfield code loop with no
 bound workspace cannot start).
 
-**The supervisor is NOT part of that plugin seam** (`PP-16` seam 3). How a loop
+**The supervisor is NOT part of that plugin seam.** How a loop
 converges is *declared*, not coded: `workflows/supervisor_policy.py` holds the
 `ConvergenceSpec` type, the closed `DONE_SIGNALS` vocabulary
 (`orchestrated` | `never` | `verify_command` | `judge_assessment`) and the
@@ -106,7 +106,7 @@ The supervisor does not take the worker's word for it:
   RUNNING/PLANNING by a gateway restart so an interrupted loop resumes rather than
   zombifying (`LoopWatchdog._boot_sweep`). That sweep runs through
   `concurrency.boot_sweep`, the ONE boot-adoption path it shares with
-  `workflows/watchdog.py` (`PP-16`). There is deliberately **no gateway boot hook**: a
+  `workflows/watchdog.py`. There is deliberately **no gateway boot hook**: a
   hook cannot be retried when it raises, and awaiting it delays startup by however long
   N stranded planner passes take.
 

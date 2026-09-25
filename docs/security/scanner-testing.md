@@ -74,7 +74,7 @@ corpus pins **both halves**, so removing the second one — the only control tha
 actually stops it — reds immediately instead of leaving a size-gated bypass.
 
 `baseline-tamper` is the odd one out and deliberately so: the other five attack an
-incoming *artifact*, this one attacks the *denylist that judges it*. Added by **SH-7**
+incoming *artifact*, this one attacks the *denylist that judges it*. Added
 alongside the mode-independence matrix in `tests/security/test_mode_independence.py`,
 which proves no approval mode — `default`, `auto`, `yolo`, `acceptEdits` — and no trust
 simulator can let a baseline-matched command run. That matrix is worthless if the

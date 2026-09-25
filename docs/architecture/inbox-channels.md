@@ -15,7 +15,7 @@ against core protocols). Paths are relative to
   `notify_inbox_alert`), so an alerting item notifies immediately rather than
   on the next page view. **Maintenance** — retention cleanup, dismissed-set
   pruning, and the feedback retire-candidate check — is no longer a second
-  cadence in this loop: since PR2-11 it is the remediation engine's
+  cadence in this loop: it is the remediation engine's
   `inbox.maintenance` job, driven by a measured `inbox_maintenance_backlog`
   deficit off the live store (`resilience/remediation.py`). `run_maintenance`
   is the implementation the engine drives, bounced onto the loop that owns the
@@ -130,8 +130,8 @@ to a rule:
   (persist, broadcast, and raise a toast in the SPA — `lib/notificationToasts.ts`), `digest`
   (batch into `digest_queue.jsonl` for the scheduled summary);
 - **targets** — `dashboard` today; `native` raises a real OS notification whenever the
-  desktop shell reports the capability (DC-5); `push` sends a content-free `{kind, item_id}`
-  ping to a registered device (MC-5); `channel_dm` is the one target still accepted and
+  desktop shell reports the capability; `push` sends a content-free `{kind, item_id}`
+  ping to a registered device; `channel_dm` is the one target still accepted and
   persisted but **inert** — nothing in `notify()` consumes it, and the matrix dims it
   accordingly. (`ChannelDelivery.deliver_notification` exists and is live, but the heartbeat
   path in `gateway.py` calls it directly; it is not wired to this target.)
@@ -152,8 +152,9 @@ raising.
 **3. The addressee** — `notification_addressing.py`. The first two layers answer
 *should this be delivered* and *how loudly*; neither could answer *to whom*, so
 every note went to **this** dashboard by construction. Once a shared store
-contributes rows somebody else owns (`TSE2-1`/`TSE2-2`/`TSE2-3` stamp
-`owner_username` on runs, entities and inbox items), that is wrong: a teammate's
+contributes rows somebody else owns — a workflow run
+(`workflows/models.py:1021`, a `TEXT NOT NULL` column at `workflows/store.py:141`) and an
+inbox item (`inbox.py:355`) each carry an `owner_username` — that is wrong: a teammate's
 inbox item wanting attention fired a toast at whoever was sitting here.
 
 - a note's `addressee` is the same `owner_username` slug everything else

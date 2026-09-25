@@ -1,4 +1,4 @@
-# Tool-name wire fidelity (SM-12)
+# Tool-name wire fidelity
 
 What happens to a tool's name between its `ToolDefinition` and the moment the
 runtime dispatches a call back to it. The invariant this page (and the census

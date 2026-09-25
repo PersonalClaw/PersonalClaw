@@ -172,7 +172,7 @@ testing propagates in minutes and needs no review.
 
 ## The push leg, end to end
 
-The store build is what finally exercises MC-9's on-device vendor leg (no rail
+The store build is what finally exercises the on-device vendor leg (no rail
 in this repo can): shell registers via `@capacitor/push-notifications` → the
 served companion POSTs the token to the user's gateway
 (`/api/push/relay-register`, `web/src/app/nativePush.ts`) → the gateway's

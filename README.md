@@ -370,7 +370,11 @@ push to `main`.
 - [Architecture overview](docs/architecture/overview.md) — the system map (with diagrams).
 - [Configuration reference](docs/reference/configuration.md) · [CLI](docs/reference/cli.md) · [API](docs/reference/api-overview.md) · [HTTP routes](docs/reference/api-routes.md)
 - Roadmap — maintainer-owned and deliberately not in this repo; the written way in is the
-  [contribution intake path](CONTRIBUTING.md#the-model).
+  [contribution intake path](CONTRIBUTING.md#the-model). **The short uppercase codes these
+  pages sometimes cite** — `PP-16`, `AAP-5`, `CHANNEL-EXPANSION` — are identifiers from that
+  unpublished plan set, kept only where they record *why* a behaviour exists. Nothing asks
+  you to resolve them and nothing depends on your doing so: each page cites the code that
+  actually decides, and the code is the authority.
 - [Visual showcase](SHOWCASE.md) — every screen, light and dark.
 
 ## Contributing
