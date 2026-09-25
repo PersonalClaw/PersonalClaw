@@ -275,7 +275,7 @@ def test_the_loop_bodys_first_iteration_binds() -> None:
     to :func:`test_a_loop_body_still_gets_no_real_previous_iteration`.
 
     **Why every assertion here is runtime.** The rail that certified this fixed once
-    (`test_first_iteration_last_refs_carry_a_default`) scanned the template's JSON source text for
+    (`test_last_refs_carry_a_default`) scanned the template's JSON source text for
     the pipe and never ran it, so it could only confirm the idiom was PRESENT — and the idiom did
     not work, because `_walk_path` raised before any pipe. A source-text assertion is exactly what
     must not be trusted at this seam.

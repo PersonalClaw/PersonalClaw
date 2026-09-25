@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
+from personalclaw.workflows.bindings import (
+    BindingContext,
+    BindingError,
+    reads_prior_cycle_output,
+    resolve,
+)
 from personalclaw.workflows.models import Failure, FailureClass, Node, NodeKind
 
 #: node `model_tier` → model use case. A tier is an INTENT; the use-case bridge owns the
@@ -43,9 +48,30 @@ def _condition_keys(node: Node) -> frozenset[str]:
 def resolve_config(node: Node, ctx: BindingContext) -> tuple[dict[str, Any], Failure | None]:
     """Resolve every binding in a node's config, except its conditions.
 
-    A `BindingError` becomes a USER failure rather than an exception: the spec is wrong,
+    A `BindingError` becomes a typed failure rather than an exception: the spec is wrong,
     the run should say so precisely, and a traceback in a run log tells a non-developer
     nothing actionable.
+
+    **A failure reading a PRIOR CYCLE's output is INTERNAL, not USER**, and the distinction is
+    the difference between telling a user what to fix and blaming them for something they did
+    not do. Measured on a real escalated run (`general-project`, 26 minutes, four failed
+    iterations): `binding failed: unresolved reference at 'summary' (in {{last.output.summary |
+    default(…)}})` was filed `class: user`. The user chose a model and typed a task; they did
+    not author the template, and the missing key came from a model that ignored its step's
+    declared `schema`. `USER` is for something the CALLER supplied — an input, a credential —
+    and `inputs.*` / `secret:` keep it for exactly that reason.
+
+    Deliberately narrow. The other binding failures this path files as USER (a `{{nodes.…}}`
+    typo, a `subworkflow` with no `ref`, a pipe misuse) are separate faults with separate
+    arguments, and sweeping them all inside a loop-binding fix would change four behaviours to
+    justify one. **Routing is unaffected either way**, which is what makes the narrow move safe:
+    `needs_input.classify_block` reads `permission|budget` → CAPABILITY and
+    `transient|network|timeout` → TRANSIENT, so `user` and `internal` BOTH fall through to
+    `NEEDS_INPUT`; `RETRYABLE_CLASSES` holds neither, and `_should_retry` refuses both before it
+    ever consults `no_retry_modes`. What changes is what the reader is told —
+    `EscalationPanel.tsx` renders the class verbatim, so this run's card literally said
+    "user error" — and `resilience.MUTATION_HINTS`, whose USER text ("an input was missing or
+    malformed … do not invent values") instructs a model that had not run yet.
 
     The error's OWN `remediation` wins when it carries one. The fallback below is generic by
     necessity and was actively misleading on the commonest failure: it asked for a
@@ -61,7 +87,9 @@ def resolve_config(node: Node, ctx: BindingContext) -> tuple[dict[str, Any], Fai
         return resolved, None
     except BindingError as exc:
         return {}, Failure(
-            failure_class=FailureClass.USER,
+            failure_class=(
+                FailureClass.INTERNAL if reads_prior_cycle_output(exc.expr) else FailureClass.USER
+            ),
             cause_plain=f"binding failed: {exc}",
             remediation=(exc.remediation or "check the referenced node id and field exist"),
         )

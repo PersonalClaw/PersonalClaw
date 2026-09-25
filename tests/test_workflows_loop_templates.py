@@ -528,13 +528,26 @@ def test_the_design_evaluator_is_not_either_generator():
 
 def test_the_design_refinement_loop_has_a_reachable_exit():
     """A `remaining_issues | length == 0` style condition over a field the body never
-    sets is an infinite loop with extra steps."""
+    sets is an infinite loop with extra steps.
+
+    The field is extracted through `bindings.refs_in` and the same `|` split `resolve_expr`
+    performs, rather than by stripping braces and taking the last dotted segment. The naive
+    version read `'issues_resolved | default(false)'` as the field name the moment the condition
+    grew a pipe, so it would have failed on a template that was correct — and the pipe it choked
+    on is the one that keeps this loop from stopping on `condition_unresolvable` when the body's
+    model omits the key. A parser that cannot read the shipped spec is not a gate.
+    """
+    from personalclaw.workflows.bindings import refs_in
+
     spec = _spec("design-project")
     refine = next(n for n in _nodes(spec["root"]) if n.get("id") == "refine")
     condition = (refine.get("config") or {}).get("condition") or ""
     body_schema = ((refine.get("body") or {}).get("config") or {}).get("schema") or {}
-    field = condition.replace("{{", "").replace("}}", "").strip().split(".")[-1]
-    assert field in body_schema, f"condition reads {field!r}, body sets {sorted(body_schema)}"
+    refs = refs_in(condition)
+    assert refs, f"the refinement loop's condition reads no binding at all: {condition!r}"
+    for ref in refs:
+        field = ref.split("|")[0].strip().split(".")[-1]
+        assert field in body_schema, f"condition reads {field!r}, body sets {sorted(body_schema)}"
 
 
 # ── the diagnose template's own contract ──
@@ -654,7 +667,7 @@ def test_the_validated_verdict_is_bound_by_the_templates_that_produce_it():
     """
     # Matched as an OPEN PREFIX (no closing `}}`) so a binding that carries a pipe still
     # counts. `{{last.output.verdict | default("...")}}` binds the same value; the pipe is
-    # the first-iteration guard `test_first_iteration_last_refs_carry_a_default` requires,
+    # the `last`-reference guard `test_last_refs_carry_a_default` requires,
     # and asserting the unpiped spelling here would make the two rails contradict each other.
     bound = {
         "code-project": "{{nodes.judge.output.verdict",
@@ -671,27 +684,34 @@ def test_the_validated_verdict_is_bound_by_the_templates_that_produce_it():
         assert "shortfalls" in raw, f"{name} stopped carrying the judge's shortfalls"
 
 
-#: A `{{last.*}}` reference is only resolvable once an iteration has completed:
-#: `loop_should_continue` is called AFTER a body run (controller.py, `has_last=True`), so a
-#: loop's own `config.condition` may reference `last` safely. Everywhere ELSE inside a loop
-#: body, the FIRST iteration has no `last` at all.
+#: A bare `{{last.*}}` — no `| default(...)` anywhere in its pipe chain.
+#:
+#: 🔴 **A loop's own `config.condition` used to be EXEMPT here, and that exemption's premise was
+#: false.** It read: "`loop_should_continue` is called AFTER a body run (`has_last=True`), so a
+#: loop's own condition may reference `last` safely." `has_last` is true there — but it says the
+#: previous iteration's output EXISTS, not that it carries the field the condition names.
+#: Measured: all four bundled conditions reading `{{last.output.<field>}}` bare
+#: (`goal-pursuit-verifiable.command_passed`, `goal-pursuit-monitor.goal_met`,
+#: `optimize-harness.halt`, `design-project.issues_resolved`) named a key that is absent whenever
+#: the body's model ignored its declared `schema` — and `tick.loop_should_continue` catches the
+#: `BindingError` as `condition_unresolvable`, which STOPS the loop. So the exemption did not make
+#: those four safe, it made them fail silently in a different place: a loop that exits after one
+#: iteration reporting a reason no user can act on. All four now carry `| default(false)` — keep
+#: going when the previous iteration did not say to stop — and the exemption is gone.
 _LAST_REF = re.compile(r"\{\{\s*last\.[A-Za-z0-9_.]+\s*\}\}")
 
 
 def _unguarded_last_refs(node: object) -> list[str]:
-    """Every bare `{{last.*}}` (no `| default(...)`) reachable on iteration 1.
+    """Every bare `{{last.*}}` (no `| default(...)`) anywhere in a loop.
 
     Walks the WHOLE node tree of every bundled template rather than a hand-listed set of
     templates or node ids: an enumerated rail cannot see a template added after it was
     written, and this defect is exactly the kind an author reintroduces by copying a
-    neighbouring prompt. A loop's `config.condition` is skipped for the reason above.
+    neighbouring prompt. Nothing is skipped — see the note on `_LAST_REF`.
     """
     found: list[str] = []
     if isinstance(node, dict):
-        is_loop = node.get("kind") == "loop"
-        for key, value in (node.get("config") or {}).items():
-            if is_loop and key == "condition":
-                continue
+        for value in (node.get("config") or {}).values():
             found += _LAST_REF.findall(json.dumps(value))
         for key, value in node.items():
             if key == "config":
@@ -704,8 +724,8 @@ def _unguarded_last_refs(node: object) -> list[str]:
 
 
 @pytest.mark.parametrize("name", sorted(template_names()))
-def test_first_iteration_last_refs_carry_a_default(name: str) -> None:
-    """A loop-body prompt may not reference `last` without a `default(...)` fallback.
+def test_last_refs_carry_a_default(name: str) -> None:
+    """No `{{last.*}}` reference anywhere in a loop may go without a `default(...)` fallback.
 
     Measured live on the standing validation instance 2026-09-18: `general-project` failed its
     very first iteration with `binding failed: unresolved reference at 'last' (in
@@ -727,11 +747,18 @@ def test_first_iteration_last_refs_carry_a_default(name: str) -> None:
     `test_pp16_general_kind_as_run.py::test_the_loop_bodys_first_iteration_binds`. Keep this rail
     for what it is genuinely good at (a new template copying a neighbour's prompt), and do not
     read a green here as evidence that a template runs.
+
+    **The rail widened to cover a loop's `condition` too**, because the first iteration is not the
+    only cycle that can lack the field — a LATER one lacks it whenever the body's model ignored
+    its declared `schema`, which with a small local model is the common case. See the note on
+    `_LAST_REF` for the measurement, and
+    `test_workflows_bindings.py::TestPriorCycleFieldMiss` for the executing counterpart.
     """
     refs = _unguarded_last_refs(_spec(name).get("root"))
     assert not refs, (
         f"{name} references {sorted(set(refs))} with no `| default(...)`. A loop body's FIRST "
-        "iteration has no `last`, so the reference resolves to nothing: without a default the "
-        "prompt silently loses its input instead of saying so. Add a default, or move the "
-        "reference into the loop's `config.condition` (evaluated only after an iteration)."
+        "iteration has no `last`, and a LATER one has no `last.output.<field>` whenever the "
+        "body's model ignored its declared schema — so without a default the prompt silently "
+        "loses its input, or the loop stops on `condition_unresolvable`, instead of saying so. "
+        "Add a default naming what to use when the previous iteration did not supply the field."
     )
