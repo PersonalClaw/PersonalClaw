@@ -1,10 +1,23 @@
 # Provider-boundary keeps — the machine-checked allowlist of DELIBERATE vendor
 # residue in core (plan 32: PROVIDER-BOUNDARY-COMPLETION). Each line is a core file
 # that the residue-sweep test (tests/test_provider_boundary_residue.py) would
-# otherwise flag for a vendor credential-key / secret-detection literal, plus a
-# one-line judgment for why it stays. This file IS the keeps table — the test fails
-# if a listed file no longer contains a marker (stale entry) or if a marker appears
+# otherwise flag for a vendor SDK import or a vendor credential-key / secret-detection
+# literal, plus a one-line judgment for why it stays. This file IS the keeps table — the
+# test fails if a listed file no longer contains a marker (stale entry) or if a marker appears
 # in a file NOT listed here (un-approved regrowth). See docs/architecture/provider-boundary.md.
+#
+# #3500: until the sweep's vendor set was widened it knew only the channel SDKs, so the
+# four OpenAI-protocol clients below — rows 1–2 of the architecture doc's judgment table,
+# eight `import openai` statements — were DECLARED exceptions that nothing enforced, and
+# the sweep was green on a tree it could not see. Adding them here is what turns those two
+# declared rows into an enforced allowlist: a ninth vendor SDK import, in a module the doc
+# does not cover, now goes red. It does NOT relocate anything — that is roadmap work, and
+# this table is the baseline it would move against.
+#
+# NOT listed, deliberately: llm/anthropic.py. Row 1 names it beside llm/openai.py, but it
+# imports no SDK (it speaks the Anthropic message format over httpx), so it carries no
+# marker and the stale-entry rail would reject an entry for it. A keep is a record of
+# residue that EXISTS, not of an exception that was granted.
 #
 # Format: <repo-relative path> — <judgment>
 #
@@ -17,3 +30,7 @@ src/personalclaw/gateway.py — reads the CRED_SLACK_* keys (imported from confi
 src/personalclaw/cli_setup.py — the remote dashboard-URL prompt reads the CRED_SLACK_* keep key names to detect whether a channel is configured (a channel delivers the remote token). Reads the documented keep, not vendor logic. DISCOVERY: a generic "is any channel configured" helper would remove this reference — future work with the channel-abstraction seam (plan 40 CHANNEL-EXPANSION), out of scope for plan 32's enumerated residue.
 src/personalclaw/cli_doctor.py — the auth-mode section reads the CRED_SLACK_* keep key names to warn when a non-loopback bind has no channel to deliver a token. Same class + same DISCOVERY as cli_setup.py above.
 src/personalclaw/workflows/secrets.py — the inline-credential lint's token SHAPE regexes (sk-/sk-ant-/ghp_/gho_/github_pat_/hf_/xox[baprs]-/AKIA/AIza/JWT/PEM): the ONE credential-shape list in the workflows package, which validator.py's save-time lint now reads instead of keeping a second copy. Same class as security.py's xox[bpas]- regexes — recognizing a vendor's key SHAPE is secret-DETECTION data, not vendor logic, and narrowing the list would silently stop catching those providers' keys.
+src/personalclaw/llm/openai.py — ROW 1 of the judgment table: a WIRE-PROTOCOL client only, lazily importing the `openai` SDK twice (a stream-options 400 retry and the non-streaming path) to read its typed error classes. The /v1/chat/completions shape is a de-facto multi-vendor protocol, the SDK is NOT a core dependency (pyproject's `[openai]` extra + the openai-models app's pythonDependencies install it; MissingSDKError names the remedy when absent), and this module calls no `register_type` at import — `apps/openai-models/provider.py` decides the client is USED. Core ships the client; an app decides it runs.
+src/personalclaw/stt/openai_provider.py — ROW 2: an OpenAI-*compatible* `/v1/audio/transcriptions` client. Same lazy-import contract as llm/openai.py (one importability probe in `is_available`, one in `transcribe`), and the vendor CATALOG — which model ids exist — is contributed by `apps/openai-models` through the media_catalogs.py seam, not held here. Remote inference only: no LocalModelProvider surface, so nothing vendor-specific about download/delete lands in core.
+src/personalclaw/tts/openai_provider.py — ROW 2: the `/v1/audio/speech` half of the same OpenAI-compatible media protocol, with the same two lazy imports and the same app-contributed catalog. Listed separately rather than folded into stt because the keeps table is a per-FILE mirror of measured residue, and a per-directory entry could not detect a clean file going stale.
+src/personalclaw/image_gen/openai_provider.py — ROW 2: the `/v1/images` half. Same protocol judgment, same two lazy imports, same app-owned catalog. Together with the two above this is the whole `stt/`, `tts/`, `image_gen/` `openai_provider.py` row the architecture doc states once.

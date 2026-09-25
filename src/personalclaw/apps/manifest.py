@@ -556,13 +556,20 @@ class Permissions:
     proposals: list["ProposalKind"] = field(default_factory=list)
     # APE-1: this app may register a long-lived supervised worker (APE-3's
     # ``sdk/background.py`` hosted by ``backend_runtime``) — richer than ``cron``, which
-    # is N discrete agent runs on a clock. NOT ENFORCED TODAY, and honestly so: nothing in
-    # core hosts an app worker yet, so the flag grants nothing and denies nothing. It is a
-    # DECLARATION that reaches install consent and goes live — with no second prompt —
-    # when APE-3 ships the host, which is precisely why it is disclosed at install time.
-    # The consent surface therefore lists it under "declared, not yet in effect", NOT
-    # among the permissions the gateway enforces: claiming an enforcement the gateway
-    # cannot perform is the EI-12 D2 defect (``PermissionList``, web/src/pages/apps).
+    # is N discrete agent runs on a clock. ENFORCED since APE-3 shipped the host:
+    # ``worker_runtime.py`` consults ``permissions.can_run_background_tasks()`` before it
+    # will spawn OR revive a worker, and it re-asks at every spawn, so revoking the grant
+    # in an app update stops the next revival rather than only the first launch. The
+    # consent surface lists it among the permissions the gateway enforces ("Run a
+    # long-lived background worker", ``PermissionList``, web/src/pages/apps), which is the
+    # move APE-2 already made for ``eventSubscriptions``.
+    #
+    # #3500: this comment used to say "NOT ENFORCED TODAY … the flag grants nothing and
+    # denies nothing" and that consent listed it under "declared, not yet in effect". Stale
+    # in both halves once the host landed, and stale in the direction that matters most —
+    # a comment asserting a permission is unenforced, while the gateway enforces it, invites
+    # the next reader to build on a model the code does not implement. That is the EI-12 D2
+    # defect inverted, and just as wrong.
     backgroundTasks: bool = False  # noqa: N815
     # APE-1: typed PLATFORM events this app subscribes to (APE-2's ``app_events.py``
     # registry — ``session.created``, ``knowledge.ingested``, ``task.completed``). A
