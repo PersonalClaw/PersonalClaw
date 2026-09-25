@@ -15,13 +15,15 @@
  *     channel-shaped kinds a message source may claim. `BASE_LANE` below is keyed off that same
  *     split: the three channel-shaped kinds map to `null`, the six attention kinds map to a lane.
  *
- *  2. **A pending approval already appears TWICE on the wire, so a naive concat double-counts it.**
- *     `chat_runner._mirror_approval_to_inbox()` raises an `agent_request` item carrying
- *     `refs = {session, approval: <request_id>}` for any approval that outlives its prompt — and
- *     `PendingApproval.id` IS that `request_id`. So one blocked decision is one row in
- *     `GET /api/approvals` and a second row in `GET /api/inbox`. `toLanes` suppresses the mirror
- *     when its `refs.approval` matches an approval in the same snapshot. This is not a hypothetical
- *     precedence puzzle; it is the shipped behaviour of the two endpoints Mission Control reads.
+ *  2. **A pending approval appears TWICE on the wire, so a naive concat double-counts it.**
+ *     The pending-approval registry (`DashboardState._hold_approval`) raises an `agent_request`
+ *     Inbox row carrying `refs = {session, approval: <registry id>}` for every pending approval,
+ *     the moment it is pending — and `PendingApproval.id` IS that registry id. So one blocked
+ *     decision is one row in `GET /api/approvals` and a second row in `GET /api/inbox`. `toLanes`
+ *     suppresses the row when its `refs.approval` matches an approval in the same snapshot, and
+ *     Home's To triage and approvals count apply the same rule through `mirroredApprovalId`. This
+ *     is not a hypothetical precedence puzzle; it is the shipped behaviour of the two endpoints
+ *     every attention surface reads.
  *
  *  3. **🔴 "Working" is NOT derivable from the attention store. Nothing in the inbox says
  *     "in flight".** `ItemStatus`'s own docstring (inbox.py:49) declares the lifecycle as
@@ -53,7 +55,9 @@
  *  item wrongly hidden is a worse failure on an attention surface than a resolved item wrongly
  *  shown. Neither is a fallthrough — both branches are written out.
  */
-import type { ChatSession, InboxItem, InboxItemKind, InboxItemStatus, PendingApproval } from './api'
+import type { ChatSession, InboxItem, InboxItemKind, InboxItemStatus, Loop, PendingApproval } from './api'
+import { loopRoute } from './loopKind'
+import { shownCycle } from './loopStatus'
 
 export const LANES = ['needs-approval', 'your-turn', 'working', 'idle'] as const
 export type Lane = (typeof LANES)[number]
@@ -74,6 +78,11 @@ export type ApprovalInput = Pick<PendingApproval, 'id' | 'source' | 'tool' | 'to
  *  inferred. Optional: omit it and Working is empty rather than guessed. */
 export type ActivityInput = Pick<ChatSession, 'key' | 'title' | 'running' | 'stopping' | 'pending_approval'>
 
+/** `GET /api/loops` rows — the second in-flight evidence (see `toLanes`). A RUN-BACKED loop (one
+ *  carrying `run_id`, PP-16) has no chat session at all: its stages are subagents, so the sessions
+ *  above never see it. Optional, like `activity`. */
+export type LoopInput = Pick<Loop, 'id' | 'kind' | 'name' | 'task' | 'status' | 'total_cycles' | 'max_cycles' | 'started_at' | 'session_key' | 'run_id'>
+
 /** One card, normalised across the three sources so a lane renders uniformly.
  *  `at` is epoch **seconds** — the unit both `InboxItem.created_at` and `PendingApproval.ts` arrive
  *  in (`time.time()` on the backend) — or `null` when the source carried no timestamp at all. */
@@ -81,7 +90,7 @@ export interface LaneCard {
   /** Unique across all three sources: `${origin}:${id}`. Two sources can mint the same id. */
   key: string
   lane: Lane
-  origin: 'approval' | 'inbox' | 'session'
+  origin: 'approval' | 'inbox' | 'session' | 'loop'
   id: string
   title: string
   subtitle?: string
@@ -185,9 +194,13 @@ function timeOf(item: AttentionInput): number | null {
   return null
 }
 
-/** True when this item is the inbox MIRROR of a tool approval (fact 2), rather than an agent's own
- *  question. `refs.approval` holds the approval's `request_id`, which is `PendingApproval.id`. */
-function mirroredApprovalId(item: AttentionInput): string {
+/** The registry id of the pending approval this Inbox row is the listing of, or '' when it is an
+ *  agent's own question (fact 2). `refs.approval` holds `PendingApproval.id`.
+ *
+ *  THE one test for "this Inbox row and that approval are the same item" — every surface that
+ *  lists both (Mission Control's lanes, Home's To triage, Home's inbox count) asks it here, so none
+ *  of them can count one blocked decision twice. */
+export function mirroredApprovalId(item: Pick<InboxItem, 'refs'>): string {
   const raw = item.refs?.approval
   return typeof raw === 'string' && raw !== '' ? raw : ''
 }
@@ -272,6 +285,7 @@ export function toLanes(
   items: AttentionInput[],
   approvals: ApprovalInput[],
   activity: ActivityInput[] = [],
+  loops: LoopInput[] = [],
 ): Record<Lane, LaneCard[]> {
   const out = emptyLanes()
 
@@ -319,6 +333,30 @@ export function toLanes(
     })
   }
 
+  // ── Running LOOPS. A General loop was working while this lane said "Nothing
+  // is running right now" — it is run-backed, so no chat session carried it. A loop is carded when
+  // it is `running` (a parked loop is not working, and one waiting on the user is already an inbox
+  // row). A loops-table loop's worker IS a chat session, so that session is skipped below: one
+  // worker, one card, and the loop's card is the one that names it and opens its cockpit.
+  const loopSessions = new Set<string>()
+  for (const l of Array.isArray(loops) ? loops : []) {
+    if (l === null || typeof l !== 'object') continue
+    const id = typeof l.id === 'string' ? l.id : ''
+    if (id === '' || l.status !== 'running') continue
+    if (typeof l.session_key === 'string' && l.session_key !== '') loopSessions.add(l.session_key)
+    const cycle = shownCycle(l.status, Number(l.total_cycles) || 0)
+    out['working'].push({
+      key: `loop:${id}`,
+      lane: 'working',
+      origin: 'loop',
+      id,
+      title: firstLine(l.name) || firstLine(l.task) || 'Loop',
+      subtitle: l.max_cycles > 0 ? `running · cycle ${cycle}/${l.max_cycles}` : `running · cycle ${cycle}`,
+      at: typeof l.started_at === 'number' && Number.isFinite(l.started_at) ? l.started_at : null,
+      refs: { link: `#/${loopRoute(l)}` },
+    })
+  }
+
   // ── Running work. `pending_approval` sessions are deliberately NOT mirrored into Needs-approval:
   // `GET /api/approvals` already carries that row with the `tool_input` needed to decide, and a
   // boolean cannot say WHICH tool is waiting. A session that is neither running nor stopping
@@ -329,6 +367,7 @@ export function toLanes(
     const key = typeof s.key === 'string' ? s.key : ''
     if (key === '') continue
     if (s.running !== true && s.stopping !== true) continue
+    if (loopSessions.has(key)) continue // carded as its loop, above
     out['working'].push({
       key: `session:${key}`,
       lane: 'working',

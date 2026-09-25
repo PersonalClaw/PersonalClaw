@@ -16,11 +16,17 @@ class ActionContext:
     most providers should prefer `payload` for structured access.
     `payload` is the structured event dict (written to bash STDIN as JSON;
     webhooks send it as the request body).
+    `status_url` is the in-app route (`#/…`) to the automation that dispatched this
+    action, when the dispatching seam knows it — the store-trigger fire path sets it
+    to the trigger's own row. A provider whose effect IS a notification attaches it, so
+    the note links back to what produced it. Kept out of `payload` on purpose: payload
+    is the event itself, and it reaches bash stdin and webhook bodies verbatim.
     """
 
     event: str
     context: str = ""
     payload: dict[str, Any] = field(default_factory=dict)
+    status_url: str = ""
 
 
 @dataclass
@@ -122,6 +128,19 @@ class ActionProvider(ABC):
     @property
     def supports_blocking(self) -> bool:
         """Whether the provider can short-circuit a tool call (PreToolUse)."""
+        return False
+
+    @property
+    def internal(self) -> bool:
+        """Whether this provider is one step of a system-owned automation rather than an action a
+        person picks for a trigger of their own.
+
+        An internal provider stays registered and dispatchable — the automation that names it has
+        to keep firing — and stays in `/api/action-providers`, so a row already naming it still
+        renders its label. What it is kept out of is the create form's picker: the Self-QA steps
+        take config a reconciler writes (a commit sha, a run workspace, a scenario id), so offering
+        them to a person offers an action they cannot configure.
+        """
         return False
 
     @property

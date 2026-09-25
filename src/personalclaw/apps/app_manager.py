@@ -40,11 +40,14 @@ import json
 import logging
 import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from personalclaw.apps import disclosure as app_disclosure
+from personalclaw.apps import staging as app_staging
 from personalclaw.apps.manager import (
     APP_MANIFEST_FILENAME,
     INSTALLED_META_FILENAME,
@@ -94,15 +97,17 @@ class AppLifecycleError(Exception):
 
 @dataclass
 class InstallResult:
-    """Outcome of an install attempt — surfaced to the API/UI."""
+    """Outcome of an install attempt, or of a :func:`preview` — surfaced to the API/UI."""
 
     ok: bool
     name: str = ""
     scan: ScanReport | None = None
     error: str = ""
-    needs_consent: bool = False  # a warning verdict the caller must confirm
+    # Nothing was committed: the owner must review `disclosure` + `scan` and consent to
+    # exactly the bundle whose digest is `consent`.
+    needs_consent: bool = False
     restart_required: bool = (
-        False  # a new python dep was installed; gateway must restart to import it
+        False  # an app package the gateway had already loaded was replaced; restart to reload it
     )
     # P21 platform gate: set when the app can't be server-installed here (installMode=client,
     # or this OS isn't in the app's `os` list). The install did NOT commit; the UI shows the
@@ -114,6 +119,15 @@ class InstallResult:
     # UNTRUSTED — a malicious app's build can emit attacker-controlled text — so it is
     # never dropped raw into a prompt; `fix_prompt` fences it (see the property).
     log_excerpt: str = ""
+    # What the owner consents OVER, read from the staged bytes (never from the catalog):
+    # the manifest's own name and version, `disclosure.describe` of it, and — for an update —
+    # the installed version's disclosure to compare against. `consent` is the staged bundle's
+    # digest: echo it back and the install commits only if the bytes are still those.
+    display_name: str = ""
+    version: str = ""
+    disclosure: dict[str, Any] | None = None
+    previous: dict[str, Any] | None = None
+    consent: str = ""
 
     @property
     def fix_prompt(self) -> str:
@@ -153,6 +167,11 @@ class InstallResult:
             "scan": self.scan.to_dict() if self.scan else None,
             "log_excerpt": self.log_excerpt,
             "fix_prompt": self.fix_prompt,
+            "displayName": self.display_name,
+            "version": self.version,
+            "disclosure": self.disclosure,
+            "previous": self.previous,
+            "consent": self.consent,
         }
 
 
@@ -254,9 +273,15 @@ def _run_hook(cmd: str, *, cwd: Path, timeout: int, env_name: str) -> None:
     Mirrors the run-script/bash bounded discipline: a timeout-bounded subprocess
     in the app's own dir. The scanner has already vetted the staged content
     before this ever runs (install gate); a hook that errors aborts the op.
+
+    The hook's environment names the app packages on ``PYTHONPATH``
+    (``app_python.hook_env``), so a hook that runs Python can import what the app
+    declared — the dependency step runs before ``onInstall``/``onUpdate`` for that.
     """
     if not cmd.strip():
         return
+    from personalclaw.apps import app_python
+
     try:
         proc = subprocess.run(  # noqa: S602 — intentional: vetted third-party setup hook
             cmd,
@@ -265,6 +290,7 @@ def _run_hook(cmd: str, *, cwd: Path, timeout: int, env_name: str) -> None:
             timeout=max(1, timeout),
             capture_output=True,
             text=True,
+            env=app_python.hook_env(),
         )
     except subprocess.TimeoutExpired as exc:
         raise AppLifecycleError(f"{env_name} hook timed out after {timeout}s") from exc
@@ -273,9 +299,6 @@ def _run_hook(cmd: str, *, cwd: Path, timeout: int, env_name: str) -> None:
         raise AppLifecycleError(
             f"{env_name} hook exited {proc.returncode}: {tail}", log_excerpt=tail
         )
-
-
-_PIP_TIMEOUT = 600  # seconds — a heavy wheel (torch) can take minutes
 
 
 def _core_requirement_pins() -> dict[str, "Requirement"]:
@@ -307,18 +330,20 @@ def _core_requirement_pins() -> dict[str, "Requirement"]:
 
 
 def _reject_core_dependency_conflicts(manifest: AppManifest, reqs: list[str]) -> None:
-    """Refuse an app whose declared deps would MOVE a core gateway dependency (EI-12 D3).
+    """Refuse an app that pins a core gateway dependency to a version core does not run (EI-12 D3).
 
-    The deps land in the **shared** venv the gateway is running out of, so a pin
-    that pip must resolve by changing a core dependency changes the gateway's own
-    dependency set — under a live process that has already imported those modules.
-    The rule is exactly that property: for any app requirement naming a
-    core-declared dependency, the version **currently installed** must satisfy the
-    app's specifier, so pip has nothing to move. Anything else is refused before a
-    single byte is installed.
+    App packages install into ``<home>/app-python`` (``apps/app_python.py``), which the gateway
+    loads AFTER its own environment — so core's installed copy of a package always wins the
+    import, and a pin it does not satisfy could never take effect: the app would run on core's
+    version whatever it asked for. The rule is exactly that property: for any app requirement
+    naming a core-declared dependency, the version **currently installed** must satisfy the
+    app's specifier. Anything else is refused before pip runs, with the reason in the sentence.
+    (pip itself runs with every distribution the gateway can import pinned, so a TRANSITIVE
+    dependency that needs another version of one is refused too — by the resolver, named in
+    ``app_python.explain_failure``.)
 
     Fail-closed on purpose. A requirement that names a core dependency and cannot
-    be *proven* harmless is refused, not installed: an unparseable specifier (which
+    be *proven* compatible is refused, not installed: an unparseable specifier (which
     ``AppManifest.validate()`` does not vet) and a core name whose installed version
     cannot be read both deny. Requirements that do not collide with a core name are
     untouched — the guard's whole population is the collision set.
@@ -333,7 +358,7 @@ def _reject_core_dependency_conflicts(manifest: AppManifest, reqs: list[str]) ->
     except Exception as exc:  # noqa: BLE001 — no evaluator ⇒ cannot clear a core pin
         raise AppLifecycleError(
             f"cannot verify app {manifest.name}'s python dependencies against core's "
-            f"({exc}); refusing rather than risk moving a gateway dependency"
+            f"({exc}); refusing rather than install packages the gateway cannot check"
         ) from exc
 
     from importlib.metadata import PackageNotFoundError
@@ -360,9 +385,9 @@ def _reject_core_dependency_conflicts(manifest: AppManifest, reqs: list[str]) ->
         if not req.specifier.contains(have, prereleases=True):
             raise AppLifecycleError(
                 f"app {manifest.name} pins {spec!r}, which conflicts with the "
-                f"{req.name} {have} this gateway runs (core declares {pin}). Installing "
-                f"it would change a core dependency under the running gateway, so the "
-                f"install is refused."
+                f"{req.name} {have} this gateway runs (core declares {pin}). An app's "
+                f"packages load after PersonalClaw's own, so that pin could never take "
+                f"effect, and the install is refused. A newer version of the app may fix this."
             )
 
 
@@ -370,10 +395,10 @@ def describe_python_dependencies(manifest: AppManifest) -> list[dict[str, Any]]:
     """The app's declared ``pythonDependencies``, each tagged with whether CORE owns it —
     the install-consent disclosure for :func:`_install_python_deps`.
 
-    Installing an app runs ``pip install`` into the **shared** venv the gateway is
-    running out of, under a live process that has already imported those modules. That
-    is materially more consequential than most of what the consent dialog already
-    enumerates, and the dialog said nothing about it: it listed gateway permissions,
+    Installing an app runs ``pip install`` into ``<home>/app-python``, and the gateway loads
+    what lands there into its OWN process (after its own packages, so nothing it already uses
+    is replaced). That is materially more consequential than most of what the consent dialog
+    already enumerates, and the dialog said nothing about it: it listed gateway permissions,
     app messaging, desktop and network reach and dashboard code, and never that a
     third-party package lands in the interpreter holding the owner's credentials,
     filesystem and network. ``docs/security/limitations.md`` §3 documents the
@@ -385,8 +410,8 @@ def describe_python_dependencies(manifest: AppManifest) -> list[dict[str, Any]]:
     alarming, and it is read from :func:`_core_requirement_pins` — the SAME authority
     :func:`_reject_core_dependency_conflicts` gates on, never a hand-kept list:
 
-      * ``False`` — core does not declare this name, so pip genuinely installs new code
-        into the gateway's interpreter. The provider SDKs (``openai``, ``anthropic``,
+      * ``False`` — core does not declare this name, so pip may genuinely install new code
+        the gateway's interpreter will load. The provider SDKs (``openai``, ``anthropic``,
         ``slack-sdk``) land here: they are core *extras*, which
         :func:`_core_requirement_pins` excludes on purpose.
       * ``True`` — core declares it (``Pillow``, ``numpy``). Nothing new enters: the
@@ -425,83 +450,45 @@ def describe_python_dependencies(manifest: AppManifest) -> list[dict[str, Any]]:
 
 
 def _install_python_deps(manifest: AppManifest) -> bool:
-    """Pip-install an app's declared ``pythonDependencies`` into the shared core
-    venv. Core ships lean; the app that needs a heavy lib brings it.
+    """Make an app's declared ``pythonDependencies`` importable. Core ships lean; the app that
+    needs a heavy lib brings it — into ``<home>/app-python``, never into the environment the
+    gateway runs from (``apps/app_python.py`` owns where, how, and why).
 
-    The venv is shared with the running gateway, so this is admission-gated:
-    :func:`_reject_core_dependency_conflicts` refuses a pin that would move a
-    dependency core itself declares before anything is installed. An app may bring
-    any library core does not own; it may not re-pin one core does.
+    Admission-gated before pip runs: :func:`_reject_core_dependency_conflicts` refuses a pin on
+    a dependency core itself declares that the installed version does not satisfy. An app may
+    bring any library core does not own; it may not re-pin one core does.
 
-    Returns True iff a package was actually installed (⇒ the gateway must RESTART
-    to import it — the running process already imported its module set). If every
-    requirement is already satisfied, this is a no-op and returns False. Best-effort
-    on already-satisfied detection; when unsure it installs (pip itself is the
-    final arbiter and skips already-present pins fast).
+    A no-op — no pip, no network — when the gateway or an installed app already provides every
+    requirement. Returns True iff the gateway must RESTART for the change to take effect (a
+    package it had already loaded was replaced); a first install is importable in place.
+    Failures raise :class:`AppLifecycleError` whose message is the sentence the user reads and
+    whose ``log_excerpt`` is set only when pip's log is the useful next step.
     """
     reqs = list(manifest.dependencies.pythonDependencies)
     if not reqs:
         return False
 
-    # Before anything is installed: refuse a pin that would move a CORE dependency
-    # out from under the running gateway (EI-12 D3).
+    # Before anything is installed: refuse a pin on a CORE dependency that core's installed
+    # version does not satisfy — it could never take effect (EI-12 D3).
     _reject_core_dependency_conflicts(manifest, reqs)
 
-    # Which requirements are already satisfied? Only then can we skip the restart.
-    try:
-        from importlib.metadata import PackageNotFoundError
-        from importlib.metadata import version as _dist_version
-
-        from packaging.requirements import Requirement  # bundled via pip
-
-        missing: list[str] = []
-        for spec in reqs:
-            try:
-                req = Requirement(spec)
-                have = _dist_version(req.name)
-                if req.specifier and not req.specifier.contains(have, prereleases=True):
-                    missing.append(spec)
-            except PackageNotFoundError:
-                missing.append(spec)
-            except Exception:  # noqa: BLE001 — unparseable spec → let pip decide
-                missing.append(spec)
-    except Exception:  # noqa: BLE001 — packaging/metadata unavailable → install all
-        missing = reqs
-
-    if not missing:
-        logger.info("app %s: all %d python deps already satisfied", manifest.name, len(reqs))
-        return False
-
-    # Resolve the installer rather than assuming stdlib pip: a uv-created venv
-    # ships none, which made every dep-declaring app un-installable on the
-    # project's own documented dev setup (issue #46).
-    from personalclaw._installer import NoInstallerError, install_argv, installer_name
+    from personalclaw.apps import app_python
 
     try:
-        argv = install_argv(["--disable-pip-version-check", *missing])
-    except NoInstallerError as exc:
-        raise AppLifecycleError(str(exc)) from exc
+        return app_python.ensure(manifest.name, reqs, label=manifest.displayName or manifest.name)
+    except app_python.PackageInstallError as exc:
+        raise AppLifecycleError(str(exc), log_excerpt=exc.log_excerpt) from exc
 
-    logger.info(
-        "app %s: installing python deps %s via %s", manifest.name, missing, installer_name()
-    )
+
+def _collect_app_packages() -> None:
+    """Drop app packages no installed app still needs. Best-effort: a lifecycle step that
+    already succeeded (or already failed for its own reason) must not fail on the cleanup."""
     try:
-        proc = subprocess.run(  # noqa: S603 — deps come from a scanned+vetted manifest
-            argv,
-            timeout=_PIP_TIMEOUT,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise AppLifecycleError(
-            f"python dependency install timed out after {_PIP_TIMEOUT}s: {missing}"
-        ) from exc
-    if proc.returncode != 0:
-        tail = (proc.stderr or proc.stdout or "").strip()[-400:]
-        raise AppLifecycleError(
-            f"dependency install failed for {missing}: {tail}", log_excerpt=tail
-        )
-    return True
+        from personalclaw.apps import app_python
+
+        app_python.collect()
+    except Exception:  # noqa: BLE001 — the next collection (at boot, at latest) retries it
+        logger.warning("collecting unused app packages failed", exc_info=True)
 
 
 def _core_version_gate(manifest: AppManifest, *, action: str) -> None:
@@ -522,12 +509,37 @@ def _core_version_gate(manifest: AppManifest, *, action: str) -> None:
         logger.warning("app %s: %s", manifest.name, compat.reason)
 
 
+def _survey(src: Path, *, action: str) -> app_staging.Survey:
+    """Check the whole bundle at ``src`` against the staging link policy
+    (:mod:`apps.staging`), before ANYTHING reads it — the manifest peek included, so not
+    even that follows a link out of the bundle. Raises :class:`AppLifecycleError` with the
+    refusal sentence, which names the offending path."""
+    try:
+        return app_staging.survey(src)
+    except app_staging.UnsafeBundleError as exc:
+        raise AppLifecycleError(f"{action} refused: {exc}") from exc
+
+
+def _stage(bundle: app_staging.Survey, staged: Path, *, action: str) -> None:
+    """Copy a surveyed bundle into quarantine at ``staged`` — the entries the survey passed
+    and nothing else, a link to one of the bundle's own files as that link, never through
+    one. The ONE way install, update and preview copy a bundle, so the tree every later gate
+    reads (signature, scan, consent digest) is the tree the policy checked."""
+    if staged.exists():
+        shutil.rmtree(staged, ignore_errors=True)
+    try:
+        bundle.copy_to(staged)
+    except app_staging.UnsafeBundleError as exc:
+        raise AppLifecycleError(f"{action} refused: {exc}") from exc
+
+
 def _load_staged_manifest(staged: Path, *, action: str = "install") -> AppManifest:
     """Parse + gate the manifest at ``staged``. THE chokepoint every write path crosses.
 
     ``install`` calls this for the source peek AND the staged copy; ``update`` does the
     same — so the core-version gate lives here rather than as a per-entry-point copy that
-    can drift. ``enable`` and the boot backend launcher ask
+    can drift. The peek runs only after :func:`_survey` has passed the source, so it reads a
+    tree whose every link stays inside it. ``enable`` and the boot backend launcher ask
     :meth:`AppManifest.core_compatibility` directly (their manifest is already installed,
     so there is nothing to stage)."""
     mpath = staged / APP_MANIFEST_FILENAME
@@ -723,19 +735,228 @@ def _remove_app_skills(manifest: AppManifest, name: str) -> None:
         logger.debug("app %s: skill remove failed", name, exc_info=True)
 
 
+@dataclass
+class _Reviewed:
+    """A staged bundle past the terminal gates, with everything consent is given over."""
+
+    manifest: AppManifest
+    report: ScanReport
+    digest: str
+    disclosure: dict[str, Any]
+
+
+@dataclass
+class _Refused:
+    """A terminal gate outcome no consent overrides, and what the audit row should say."""
+
+    result: InstallResult
+    audit_error: str
+    #: The refusal came from the SCAN, so its report belongs in the audit detail. An
+    #: invalid signature never reached the scanner, and a verdict it never computed must
+    #: not be logged as if it had.
+    scanned: bool
+
+
+def _review(staged: Path, *, origin: str, action: str) -> "_Reviewed | _Refused":
+    """Gate ``staged`` up to the point of consent — manifest, signature, scan — the ONE
+    way :func:`install`, :func:`update` and :func:`preview` read a bundle, so the review
+    a consent dialog shows and the check a commit makes cannot disagree about it.
+
+    Audits nothing: whether this was a real attempt is the caller's to say. Raises
+    :class:`AppLifecycleError` for an unusable manifest."""
+    manifest = _load_staged_manifest(staged, action=action)
+    what = app_disclosure.describe(manifest)
+    facts: dict[str, Any] = {
+        "name": manifest.name,
+        "display_name": manifest.displayName or manifest.name,
+        "version": manifest.version,
+        "disclosure": what,
+    }
+    # The signature BEFORE the scan: "someone tampered with a signed artifact" is
+    # not a risk the user is in a position to accept, so nothing overrides it. Unsigned is
+    # not invalid — it installs at community tier.
+    signature, tier = _signature_gate(staged, origin)
+    if signature.is_invalid:
+        return _Refused(
+            InstallResult(
+                ok=False,
+                scan=ScanReport(tier=tier, signature=signature),
+                error=f"{action} refused: invalid signature — {signature.reason}",
+                **facts,
+            ),
+            audit_error=f"signature: {signature.reason}",
+            scanned=False,
+        )
+    report = default_scanner.scan(staged, tier)
+    report.signature = signature
+    if report.verdict is Verdict.DANGEROUS:
+        return _Refused(
+            InstallResult(
+                ok=False,
+                scan=report,
+                error=f"{action} refused: scanner flagged dangerous content",
+                **facts,
+            ),
+            audit_error="scan: dangerous",
+            scanned=True,
+        )
+    return _Reviewed(manifest, report, app_disclosure.bundle_digest(staged), what)
+
+
+def _awaiting_consent(
+    r: _Reviewed, *, error: str, needed: bool = True, previous: dict[str, Any] | None = None
+) -> InstallResult:
+    """What the owner is asked to consent to — nothing committed. ``needed`` is whether a
+    commit will require it (an update that changes nothing it gets does not)."""
+    return InstallResult(
+        ok=False,
+        name=r.manifest.name,
+        scan=r.report,
+        needs_consent=needed,
+        error=error,
+        display_name=r.manifest.displayName or r.manifest.name,
+        version=r.manifest.version,
+        disclosure=r.disclosure,
+        previous=previous,
+        consent=r.digest,
+    )
+
+
+def _consent_error(action: str, report: ScanReport, *, stale: bool) -> str:
+    """The API ``error`` for a commit refused for want of consent — one clause per cause."""
+    if stale:
+        return f"{action} needs consent again: the app changed after it was reviewed"
+    if report.verdict is Verdict.WARNING:
+        return f"{action} needs consent: scanner raised warnings"
+    if action == "update":
+        return "update needs consent: it changes what the app gets"
+    return "install needs consent: review what the app gets first"
+
+
+def _client_install_directive(r: _Reviewed) -> InstallResult | None:
+    """P21 Gap B: an app that must be installed on the user's own machine
+    (``installMode="client"``), or that does not support THIS server's OS, cannot be
+    server-installed here — hand back the copy-paste one-liner instead, committing nothing.
+    That shell runs on the user's machine, OUTSIDE the scanner, so it is surfaced as
+    trusted-by-inspection copy-paste and never auto-run. ``None`` for a server-installable app."""
+    import sys as _sys
+
+    platform_cfg = r.manifest.platform
+    if platform_cfg is None or (
+        platform_cfg.installMode != "client" and platform_cfg.supports_platform(_sys.platform)
+    ):
+        return None
+    name = r.manifest.name
+    return InstallResult(
+        ok=False,
+        name=name,
+        scan=r.report,
+        needs_client_install=True,
+        client_install=platform_cfg.clientInstall.to_dict() or {},
+        error=(
+            f"'{name}' installs on your local machine, not this server"
+            if platform_cfg.installMode == "client"
+            else f"'{name}' does not support this server's platform ({_sys.platform})"
+        ),
+        display_name=r.manifest.displayName or name,
+        version=r.manifest.version,
+        disclosure=r.disclosure,
+    )
+
+
+def _installed_disclosure(name: str) -> dict[str, Any] | None:
+    """What the INSTALLED copy of ``name`` gets, or ``None`` when its manifest is unreadable."""
+    manifest = _manifest_of(name)
+    return app_disclosure.describe(manifest) if manifest is not None else None
+
+
+def preview(source: str | Path, *, origin: str = "local", name: str | None = None) -> InstallResult:
+    """What installing ``source`` — or, given ``name``, updating that installed app to it —
+    puts in front of the owner, WITHOUT committing, auditing or running anything it ships.
+
+    The same staging and gates as :func:`install` / :func:`update` (:func:`_review`), so
+    the review a consent dialog shows is the one the commit checks: ``disclosure`` comes
+    from the staged manifest, ``scan`` from the staged bytes, and ``consent`` is their
+    digest. ``needs_consent`` says whether a commit will require it — always for an
+    install; for an update only when it changes what the app gets, or the scan warns.
+
+    A terminal outcome (invalid signature, ``dangerous``) comes back as its refusal with
+    the scan; a P21 client-install app as its directive; a bundle that cannot be offered at
+    all (bad manifest, too-new core, already installed / not installed) as ``ok=False``
+    with only ``error`` set."""
+    src = Path(source)
+    if not src.is_dir():
+        return InstallResult(ok=False, error=f"source is not a directory: {source}")
+    action = "update" if name else "install"
+    try:
+        bundle = _survey(src, action=action)
+        peek = _load_staged_manifest(src, action=action)
+    except AppLifecycleError as exc:
+        return InstallResult(ok=False, error=str(exc))
+    target = name or peek.name
+    if name:
+        if _read_installed(name) is None:
+            return InstallResult(
+                ok=False, name=name, error=f"app {name!r} is not installed (use install)"
+            )
+        if peek.name != name:
+            return InstallResult(
+                ok=False, name=name, error=f"manifest name {peek.name!r} ≠ target {name!r}"
+            )
+    elif app_dir(target).exists():
+        return InstallResult(
+            ok=False, name=target, error=f"app {target!r} already installed (use update)"
+        )
+    # A slot of its own, so a preview never collides with a concurrent install's staging.
+    slot = Path(tempfile.mkdtemp(prefix=f"{target}.preview-", dir=_quarantine_dir()))
+    staged = slot / target
+    try:
+        _stage(bundle, staged, action=action)
+        gate = _review(staged, origin=origin, action=action)
+        if isinstance(gate, _Refused):
+            return gate.result
+        if not name:
+            directive = _client_install_directive(gate)
+            if directive is not None:
+                return directive
+            return _awaiting_consent(gate, error="")
+        previous = _installed_disclosure(name)
+        needed = gate.report.verdict is Verdict.WARNING or app_disclosure.changed(
+            previous, gate.disclosure
+        )
+        return _awaiting_consent(gate, error="", needed=needed, previous=previous)
+    except AppLifecycleError as exc:
+        return InstallResult(ok=False, name=target, error=str(exc))
+    finally:
+        shutil.rmtree(slot, ignore_errors=True)
+
+
 def install(
     source: str | Path,
     *,
     origin: str = "local",
     confirm: bool = False,
+    consent: str = "",
     caller: str = "app_manager",
     source_ref: str | None = None,
 ) -> InstallResult:
     """Install an app from a local directory ``source`` (path/git → A4 fetch).
 
-    Staged → scanned → (consent) → onInstall → registered. A ``dangerous`` scan
-    verdict is terminal: never installs, ``confirm`` does NOT override it. A
-    ``warning`` requires ``confirm=True`` (the install UI's explicit consent).
+    Staged → gated (signature, scan) → CONSENT → onInstall → registered.
+
+    🔑 EVERY install needs consent. A clean scan says the content looks safe; it does not
+    say the owner agreed to what the app is granted and will run — and treating it as if
+    it did is how an app with API reach, an agent grant and a daily cron installed in one
+    click while the consent screen appeared only for scanner warnings. ``confirm=True`` is
+    the owner's agreement, to the grants and to any scanner warning alike. ``consent`` is
+    that agreement bound to BYTES: the digest :func:`preview` returned for the copy the
+    owner reviewed. A non-empty ``consent`` is itself the agreement, and it commits only if
+    the staged bundle still has that digest — a source that changed after review (a git
+    remote serving a different tree on the second fetch) gets a fresh review, never the
+    first one's yes. Without either, the result carries the disclosure, scan and digest —
+    the review :func:`preview` returns — and nothing is committed.
+
+    A ``dangerous`` verdict or an invalid signature is terminal: nothing overrides it.
 
     ``source_ref`` is the provenance recorded in ``installed.json`` — the ORIGINAL
     source string (e.g. the git URL), not the resolved local dir. A git clone
@@ -747,8 +968,14 @@ def install(
         _audit("install", "error", str(source), caller=caller, error="source not a directory")
         return InstallResult(ok=False, error=f"source is not a directory: {source}")
 
-    # 1. Stage in quarantine FIRST — dangerous content never touches the live tree.
+    # 1. The link policy over the whole source before anything reads it, then stage in
+    # quarantine — dangerous content never touches the live tree.
     staged_root = _quarantine_dir()
+    try:
+        bundle = _survey(src, action="install")
+    except AppLifecycleError as exc:
+        _audit("install", "refused", str(source), caller=caller, error=str(exc))
+        return InstallResult(ok=False, error=str(exc))
     try:
         manifest_peek = _load_staged_manifest(src)
     except AppLifecycleError as exc:
@@ -756,78 +983,30 @@ def install(
         return InstallResult(ok=False, error=str(exc))
     name = manifest_peek.name
     staged = staged_root / name
-    if staged.exists():
-        shutil.rmtree(staged, ignore_errors=True)
-    shutil.copytree(src, staged)
 
+    granted = confirm or bool(consent)
     try:
-        # 2. Re-validate the staged manifest (source-of-truth is the staged copy).
-        manifest = _load_staged_manifest(staged)
-
-        # 3. Verify the signature BEFORE the scan and before anything is committed
-        # (SH-3). An invalid signature is terminal: `confirm` does not override it,
-        # because "someone tampered with a signed artifact" is not a risk the user is in
-        # a position to accept. Unsigned is not invalid — it installs at community tier.
-        signature, tier = _signature_gate(staged, origin)
-        if signature.is_invalid:
-            _audit(
-                "install", "refused", name, caller=caller, error=f"signature: {signature.reason}"
-            )
-            return InstallResult(
-                ok=False,
-                name=name,
-                scan=ScanReport(tier=tier, signature=signature),
-                error=f"install refused: invalid signature — {signature.reason}",
-            )
-
-        # 4. Scan the staged content — the gate.
-        report = default_scanner.scan(staged, tier)
-        report.signature = signature
-        if report.verdict is Verdict.DANGEROUS:
+        _stage(bundle, staged, action="install")
+        # 2-4. Manifest (source of truth is the staged copy), signature, scan — terminal
+        # refusals first, before anything the owner could be asked to accept.
+        gate = _review(staged, origin=origin, action="install")
+        if isinstance(gate, _Refused):
             _audit(
                 "install",
                 "refused",
                 name,
                 caller=caller,
-                error="scan: dangerous",
-                detail=_scan_detail(report, consent=confirm),
+                error=gate.audit_error,
+                detail=_scan_detail(gate.result.scan, consent=granted) if gate.scanned else "",
             )
-            return InstallResult(
-                ok=False,
-                name=name,
-                scan=report,
-                error="install refused: scanner flagged dangerous content",
-            )
-        if report.verdict is Verdict.WARNING and not confirm:
-            _audit(
-                "install",
-                "needs_consent",
-                name,
-                caller=caller,
-                detail=_scan_detail(report, consent=False),
-            )
-            return InstallResult(
-                ok=False,
-                name=name,
-                scan=report,
-                needs_consent=True,
-                error="install needs consent: scanner raised warnings",
-            )
+            return gate.result
+        manifest = gate.manifest
+        report = gate.report
 
-        # 4.5 Platform gate (P21 Gap B). An app that must be installed on the user's
-        # local machine (installMode="client") or that doesn't support THIS server's OS
-        # can't be server-installed here — short-circuit to a client-install result
-        # (the copy-paste one-liner) WITHOUT committing anything to the live tree. The
-        # client-install shell runs on the user's machine, OUTSIDE the scanner, so it's
-        # surfaced as trusted-by-inspection copy-paste, never auto-run.
-        import sys as _sys
-
-        platform_cfg = manifest.platform
-        if platform_cfg is not None and (
-            platform_cfg.installMode == "client"
-            or not platform_cfg.supports_platform(_sys.platform)
-        ):
-            ci = platform_cfg.clientInstall.to_dict()
+        # 4.5 Platform gate (P21 Gap B) — a directive, not an install, so it needs no consent.
+        directive = _client_install_directive(gate)
+        if directive is not None:
+            platform_cfg = manifest.platform
             _audit(
                 "install",
                 "client_install_required",
@@ -835,21 +1014,8 @@ def install(
                 caller=caller,
                 error=f"installMode={platform_cfg.installMode} os={platform_cfg.os}",
             )
-            return InstallResult(
-                ok=False,
-                name=name,
-                scan=report,
-                needs_client_install=True,
-                client_install=ci or {},
-                error=(
-                    f"'{name}' installs on your local machine, not this server"
-                    if platform_cfg.installMode == "client"
-                    else f"'{name}' does not support this server's platform ({_sys.platform})"
-                ),
-            )
+            return directive
 
-        # 5. Commit: move staged → live app dir. These are the exact bytes the signature
-        # covered and the scanner read — nothing re-fetches between the gate and here.
         dest = app_dir(name)
         if dest.exists():
             _audit("install", "error", name, caller=caller, error="already installed")
@@ -859,6 +1025,21 @@ def install(
                 scan=report,
                 error=f"app {name!r} already installed (use update)",
             )
+
+        # 4.9 Consent — for EVERY install, and bound to these bytes when a digest was given.
+        stale = bool(consent) and consent != gate.digest
+        if stale or not granted:
+            _audit(
+                "install",
+                "needs_consent",
+                name,
+                caller=caller,
+                detail=_scan_detail(report, consent=False),
+            )
+            return _awaiting_consent(gate, error=_consent_error("install", report, stale=stale))
+
+        # 5. Commit: move staged → live app dir. These are the exact bytes the signature
+        # covered, the scanner read and the owner consented to — nothing re-fetches between.
         shutil.move(str(staged), str(dest))
 
         # Put back a data/ that an earlier keep-data uninstall parked for this name,
@@ -873,13 +1054,14 @@ def install(
         # hook commonly seeds it.
         (dest / _APP_DATA_DIRNAME).mkdir(parents=True, exist_ok=True)
 
-        # 5a. Install declared python deps into the shared venv (core is lean; the
+        # 5a. Install declared python deps into <home>/app-python (core is lean; the
         # app brings its heavy libs). Before the onInstall hook so a hook can import
-        # them. A newly-installed dep needs a gateway restart to become importable.
+        # them. The rollback collects whatever a half-finished pip run left behind.
         try:
             restart_required = _install_python_deps(manifest)
         except AppLifecycleError as exc:
             shutil.rmtree(dest, ignore_errors=True)  # roll back the commit
+            _collect_app_packages()
             _audit("install", "error", name, caller=caller, error=str(exc))
             return InstallResult(
                 ok=False, name=name, scan=report, error=str(exc), log_excerpt=exc.log_excerpt
@@ -895,6 +1077,7 @@ def install(
             )
         except AppLifecycleError as exc:
             shutil.rmtree(dest, ignore_errors=True)  # roll back the commit
+            _collect_app_packages()  # …and the packages only this app needed
             _audit("install", "error", name, caller=caller, error=str(exc))
             return InstallResult(
                 ok=False, name=name, scan=report, error=str(exc), log_excerpt=exc.log_excerpt
@@ -913,7 +1096,7 @@ def install(
             # The tier the gate above settled on for these exact bytes — recorded so
             # every later provenance surface (the Tools badge, #2627) reads the SAME
             # value the install dialog just disclosed, rather than re-deriving one.
-            tier=tier.value,
+            tier=report.tier.value,
         )
         _write_installed(name, meta)
         if manifest.all_providers():
@@ -952,9 +1135,18 @@ def install(
             "ok",
             name,
             caller=caller,
-            detail=" ".join(x for x in (_scan_detail(report, consent=confirm), data_fact) if x),
+            detail=" ".join(x for x in (_scan_detail(report, consent=granted), data_fact) if x),
         )
-        return InstallResult(ok=True, name=name, scan=report, restart_required=restart_required)
+        # Named for the person told about it: "Installed Growth Tracker." — not the slug, and
+        # not whatever the install surface had to go on (a pasted URL, for one).
+        return InstallResult(
+            ok=True,
+            name=name,
+            scan=report,
+            restart_required=restart_required,
+            display_name=manifest.displayName or name,
+            version=manifest.version,
+        )
     except AppLifecycleError as exc:
         _audit("install", "error", name, caller=caller, error=str(exc))
         return InstallResult(ok=False, name=name, error=str(exc))
@@ -1098,12 +1290,18 @@ def _only_vanished_sources(exc: shutil.Error) -> bool:
 def _copy_live_tree(src: Path, dst: Path) -> None:
     """``shutil.copytree``, retried while the source tree is still settling.
 
+    Links are copied AS links (``symlinks=True``), never read through. ``src`` is an app's
+    ``data/`` — the one folder a confined app may write — and this copy runs with the
+    gateway's authority, so following a link the app planted there (``data/key ->
+    ~/.ssh/id_ed25519``) would hand it the bytes of whatever the link names on its next
+    update or keep-data uninstall. The user's data is carried forward exactly as it is.
+
     Re-raises the last error once the attempts run out, so every caller's fail-closed
     branch stays exactly as loud as it was.
     """
     for attempt in range(_LIVE_COPY_ATTEMPTS):
         try:
-            shutil.copytree(src, dst)
+            shutil.copytree(src, dst, symlinks=True)
             return
         except shutil.Error as exc:
             if attempt == _LIVE_COPY_ATTEMPTS - 1 or not _only_vanished_sources(exc):
@@ -1182,7 +1380,9 @@ def _restore_preserved_data(name: str, dest: Path) -> tuple[str, Path | None]:
     try:
         if target.exists():
             shutil.rmtree(target, ignore_errors=True)
-        shutil.copytree(parked, target)
+        # Links as links, for the reason `_copy_live_tree` gives: the parked copy is the
+        # app's own data/, links it planted included, and restoring it must not read them.
+        shutil.copytree(parked, target, symlinks=True)
     except OSError:
         logger.warning("app %s: could not restore preserved data/", name, exc_info=True)
         return "preserved_data=restore_failed", None
@@ -1196,9 +1396,16 @@ def update(
     *,
     origin: str = "local",
     confirm: bool = False,
+    consent: str = "",
     caller: str = "app_manager",
 ) -> InstallResult:
     """Atomically update an installed app to new code at ``source`` (A2).
+
+    Consent is the same contract as :func:`install` (``confirm``, or a ``consent`` digest
+    bound to the reviewed bytes), required when the update CHANGES what the app gets —
+    any grant, scheduled job, package, hook, server or dashboard code
+    (:func:`disclosure.changed` against the installed copy) — or the scan warns. An update
+    that changes none of that needs none: nothing new is being agreed to.
 
     State machine, rollback on ANY failure:
 
@@ -1216,6 +1423,11 @@ def update(
     if not src.is_dir():
         return InstallResult(ok=False, error=f"source is not a directory: {source}")
     try:
+        bundle = _survey(src, action="update")
+    except AppLifecycleError as exc:
+        _audit("update", "refused", name or str(source), caller=caller, error=str(exc))
+        return InstallResult(ok=False, name=name or "", error=str(exc))
+    try:
         peek = _load_staged_manifest(src, action="update")
     except AppLifecycleError as exc:
         return InstallResult(ok=False, error=str(exc))
@@ -1227,13 +1439,11 @@ def update(
 
     staged_root = _quarantine_dir()
     staged = staged_root / f"{name}{_ROLLBACK_SUFFIX}.new"
-    if staged.exists():
-        shutil.rmtree(staged, ignore_errors=True)
-    shutil.copytree(src, staged)
 
     live = app_dir(name)
     rollback = _rollback_dir(name)
     try:
+        _stage(bundle, staged, action="update")
         manifest = _load_staged_manifest(staged, action="update")
         if manifest.name != name:
             return InstallResult(
@@ -1242,38 +1452,28 @@ def update(
                 scan=None,
                 error=f"manifest name {manifest.name!r} ≠ target {name!r}",
             )
-        # Verify the new content's signature before the scan and before the swap — an
-        # update is a fresh fetch of mutable content, so it re-passes the FULL install
-        # gate. Skipping it here would make "update" the way around signing.
-        signature, tier = _signature_gate(staged, origin)
-        if signature.is_invalid:
-            _audit("update", "refused", name, caller=caller, error=f"signature: {signature.reason}")
-            return InstallResult(
-                ok=False,
-                name=name,
-                scan=ScanReport(tier=tier, signature=signature),
-                error=f"update refused: invalid signature — {signature.reason}",
-            )
-
-        # Scan the new content (fresh fetch → re-scan; same gate as install).
-        report = default_scanner.scan(staged, tier)
-        report.signature = signature
-        if report.verdict is Verdict.DANGEROUS:
+        # The FULL install gate on the new content — an update is a fresh fetch of mutable
+        # content, so skipping the signature or the scan here would make "update" the way
+        # around both.
+        granted = confirm or bool(consent)
+        gate = _review(staged, origin=origin, action="update")
+        if isinstance(gate, _Refused):
             _audit(
                 "update",
                 "refused",
                 name,
                 caller=caller,
-                error="scan: dangerous",
-                detail=_scan_detail(report, consent=confirm),
+                error=gate.audit_error,
+                detail=_scan_detail(gate.result.scan, consent=granted) if gate.scanned else "",
             )
-            return InstallResult(
-                ok=False,
-                name=name,
-                scan=report,
-                error="update refused: scanner flagged dangerous content",
-            )
-        if report.verdict is Verdict.WARNING and not confirm:
+            return gate.result
+        report = gate.report
+        previous = _installed_disclosure(name)
+        needed = report.verdict is Verdict.WARNING or app_disclosure.changed(
+            previous, gate.disclosure
+        )
+        stale = bool(consent) and consent != gate.digest
+        if stale or (needed and not granted):
             _audit(
                 "update",
                 "needs_consent",
@@ -1281,12 +1481,23 @@ def update(
                 caller=caller,
                 detail=_scan_detail(report, consent=False),
             )
+            return _awaiting_consent(
+                gate,
+                error=_consent_error("update", report, stale=stale),
+                previous=previous,
+            )
+
+        # The new version's python deps, BEFORE anything of the installed version is touched.
+        # This used to run after the swap, with the rollback already dropped, so a dependency
+        # failure left the new code live, installed.json un-bumped and the result `ok=False`.
+        # Here a failure refuses the update and the installed version is exactly as it was.
+        try:
+            restart_required = _install_python_deps(manifest)
+        except AppLifecycleError as exc:
+            _collect_app_packages()
+            _audit("update", "error", name, caller=caller, error=str(exc))
             return InstallResult(
-                ok=False,
-                name=name,
-                scan=report,
-                needs_consent=True,
-                error="update needs consent: scanner raised warnings",
+                ok=False, name=name, scan=report, error=str(exc), log_excerpt=exc.log_excerpt
             )
 
         # Preserve the old app's data/ into the new tree (state survives updates).
@@ -1345,22 +1556,22 @@ def update(
                 _start_backend(old_manifest)  # bring the old backend back up
                 _seed_app_prompts(old_manifest, name)  # restore old app's prompts
                 _seed_app_skills(old_manifest, name)  # restore old app's skills
+            _collect_app_packages()  # what only the refused new version needed
             _audit("update", "error", name, caller=caller, error=str(exc))
             return InstallResult(
                 ok=False,
                 name=name,
                 scan=report,
                 error=f"update failed, rolled back: {exc}",
-                # onUpdate-hook / dep-install failures carry the subprocess tail; a
-                # swap OSError does not (getattr → ""). Surfaces the same Fix-with-AI seed.
+                # An onUpdate-hook failure carries the subprocess tail; a swap OSError
+                # does not (getattr → ""). Surfaces the same Fix-with-AI seed.
                 log_excerpt=getattr(exc, "log_excerpt", ""),
             )
 
         # Success: drop the rollback, re-register new, bump installed.json.
         shutil.rmtree(rollback, ignore_errors=True)
-        # Install any python deps the new version added (before provider re-register
-        # so a freshly-imported provider can see them). A new dep ⇒ restart needed.
-        restart_required = _install_python_deps(manifest)
+        # Only now: the old version's tree (and the packages only it needed) is gone.
+        _collect_app_packages()
         meta = _read_installed(name)
         if meta is not None:
             meta.version = manifest.version
@@ -1368,7 +1579,7 @@ def update(
             # The update re-ran the signature gate on the NEW bytes, so the tier it
             # produced is the one that now describes what is installed. Leaving the old
             # value would let a version that dropped its signature keep reading `official`.
-            meta.tier = tier.value
+            meta.tier = report.tier.value
             _write_installed(name, meta)
         if manifest.all_providers():
             _provider_registry().register(manifest, enabled=bool(meta and meta.enabled))
@@ -1381,8 +1592,15 @@ def update(
             _start_backend(manifest)  # launch the new backend (skip if disabled)
         # Same gap as install: an update that re-passed the gate only because the user
         # confirmed a warning has to say so on its success event.
-        _audit("update", "ok", name, caller=caller, detail=_scan_detail(report, consent=confirm))
-        return InstallResult(ok=True, name=name, scan=report, restart_required=restart_required)
+        _audit("update", "ok", name, caller=caller, detail=_scan_detail(report, consent=granted))
+        return InstallResult(
+            ok=True,
+            name=name,
+            scan=report,
+            restart_required=restart_required,
+            display_name=manifest.displayName or name,
+            version=manifest.version,
+        )
     except AppLifecycleError as exc:
         _audit("update", "error", name, caller=caller, error=str(exc))
         return InstallResult(ok=False, name=name, error=str(exc))
@@ -1785,6 +2003,67 @@ def recover_interrupted_updates() -> list[str]:
     return recovered
 
 
+def repair_app_packages() -> list[str]:
+    """Reinstall whatever the installed apps' Python packages are missing (called at boot).
+
+    ``<home>/app-python`` is a function of the installed apps' manifests AND of the running
+    interpreter, so an image upgrade can invalidate it without anything being uninstalled: a new
+    Python finds no packages in its own layout (``lib/python3.14`` after ``3.13``), and a core
+    dependency an app relied on can be dropped or moved. A restored snapshot carries the apps
+    but — deliberately — not their packages. So this reinstalls what is missing in one pip run
+    over every installed app, collects what nothing needs any more, and re-enables the providers
+    of the apps it repaired: their import failed during discovery, and it now succeeds in place.
+
+    Blocking (it can run pip for minutes), so the gateway calls it on a background thread; with
+    nothing missing — every boot of an unchanged image — it only collects, which is cheap.
+    Returns the names of the apps it repaired.
+    """
+    from personalclaw.apps import app_python
+
+    broken = app_python.broken_apps()
+    if not broken:
+        _collect_app_packages()
+        return []
+    logger.warning(
+        "app packages missing, reinstalling: %s",
+        {declared.name: missing for declared, missing in broken},
+    )
+    try:
+        app_python.install_everything()
+    except app_python.PackageInstallError as exc:
+        for declared, missing in broken:
+            reason = (
+                f"{declared.label}'s Python packages are missing (the gateway's Python or its own "
+                f"packages changed since it was installed), and reinstalling them failed: {exc}"
+            )
+            logger.error("app %s: %s (missing: %s)", declared.name, reason, ", ".join(missing))
+            _mark_provider_error(declared.name, reason)
+            _audit("repair_packages", "error", declared.name, error=str(exc))
+        _collect_app_packages()
+        return []
+    _collect_app_packages()
+    still_broken = {declared.name for declared, _ in app_python.broken_apps()}
+    repaired = [declared.name for declared, _ in broken if declared.name not in still_broken]
+    for name in repaired:
+        meta = _read_installed(name)
+        manifest = _manifest_of(name)
+        if meta is not None and meta.enabled and manifest is not None and manifest.all_providers():
+            _provider_registry().enable(name)
+        _audit("repair_packages", "ok", name)
+    return repaired
+
+
+def _mark_provider_error(name: str, message: str) -> None:
+    """Replace a not-enabled provider's raw import error with the sentence that explains it."""
+    try:
+        primary = _provider_registry().get(name)
+        for record in primary.chain() if primary is not None else []:
+            if not record.enabled:
+                record.error = message
+    except Exception:  # noqa: BLE001 — a status annotation must not break the repair
+        logger.debug("app %s: provider error annotation failed", name, exc_info=True)
+
+
 def enable(name: str, *, caller: str = "app_manager") -> bool:
     meta = _read_installed(name)
     if meta is None:
@@ -1904,19 +2183,26 @@ def describe_app_data(name: str) -> dict[str, Any]:
     empty means a keep-data uninstall will REFUSE (#2585), so the dialog states that and
     where the copies are instead of letting the user press a button whose only feedback is
     a ``False`` the HTTP layer renders as "not installed".
+
+    ``secrets`` counts the credentials this app keeps in the credential store (its settings'
+    tokens, its instances' keys). Both removal rungs delete them, the keep-data one included,
+    so the dialog can say so before the click. A count of key NAMES — no value is read.
     """
+    from personalclaw.config import secret_refs
+
     try:
         data = app_dir(name) / _APP_DATA_DIRNAME
         parked = str(_preserved_data_dir(name))
         unconsumed = [str(p) for p in _unconsumed_data_copies(name)]
     except ValueError:
-        return {"present": False, "entries": 0, "path": "", "unconsumed": []}
+        return {"present": False, "entries": 0, "path": "", "unconsumed": [], "secrets": 0}
     present = data.is_dir()
     return {
         "present": present,
         "entries": _dir_entry_count(data) if present else 0,
         "path": parked,
         "unconsumed": unconsumed,
+        "secrets": secret_refs.count_owned(secret_refs.app_owned_prefixes(name)),
     }
 
 
@@ -2189,7 +2475,11 @@ def force_uninstall(name: str, *, caller: str = "app_manager") -> bool:
     app) and user-installed ones are LEFT; only deps this app solely owned are
     eligible for removal (the caller/marketplace does the actual dep removal — the
     ledger decides *which*). A force-removed default-seeded app stays gone (the
-    seed-once marker is not cleared)."""
+    seed-once marker is not cleared).
+
+    The app's Python packages go with it: once its tree is removed, every package in
+    ``<home>/app-python`` that no remaining app needs is collected. Both removal rungs
+    arrive here — :func:`uninstall_keep_data` delegates its removal to this function."""
     meta = _read_installed(name)
     if meta is None:
         return False
@@ -2241,7 +2531,20 @@ def force_uninstall(name: str, *, caller: str = "app_manager") -> bool:
     # Unchanged for every caller: this path already deletes, and it now deletes the one
     # thing it could previously miss.
     _discard_preserved_data(name)
-    _audit("force_uninstall", "ok", name, caller=caller)
+    _collect_app_packages()
+    # The app's secrets — its settings' tokens and its instances' keys — live in the
+    # credential store, not in data/, so removing files alone would leave them behind with
+    # nothing referencing them. Both removal rungs end here (the keep-data rung delegates its
+    # removal to this function), so a keep-data uninstall keeps the user's data and still
+    # drops the credentials: its parked settings hold references that resolve to "unset",
+    # and a reinstall asks for the tokens again. Deactivate (`uninstall`) keeps them, like
+    # it keeps every file.
+    from personalclaw.config import secret_refs
+
+    secrets_removed = secret_refs.purge(secret_refs.app_owned_prefixes(name))
+    _audit(
+        "force_uninstall", "ok", name, caller=caller, detail=f"secrets_removed={secrets_removed}"
+    )
     return True
 
 

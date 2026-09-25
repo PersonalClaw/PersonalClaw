@@ -62,10 +62,13 @@ def scan(capability: str) -> list[Any]:
 
 
 def _config_provider_entries() -> list[dict[str, Any]]:
-    """The ``providers[]`` array from config.json (``[{name, type, options}]``)."""
+    """The ``providers[]`` array from config.json (``[{name, type, options}]``), options
+    RESOLVED — a scanner builds adapters that authenticate with the stored key, and a
+    ``{{secret:…}}`` reference in its place would reach the vendor as the credential."""
     import json
 
     from personalclaw.config.loader import config_path
+    from personalclaw.config.secret_refs import resolve_provider_records
 
     path = config_path()
     if not path.is_file():
@@ -74,5 +77,4 @@ def _config_provider_entries() -> list[dict[str, Any]]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return []
-    providers = data.get("providers") if isinstance(data, dict) else None
-    return [p for p in providers if isinstance(p, dict)] if isinstance(providers, list) else []
+    return resolve_provider_records(data.get("providers") if isinstance(data, dict) else None)

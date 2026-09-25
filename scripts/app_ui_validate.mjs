@@ -848,6 +848,17 @@ async function waitForToolInRegistry(api, page, tool, tries = 40) {
   return false
 }
 
+/** Install `source` the way the Store dialog does — review it, then consent to exactly the
+ *  reviewed bytes. A bare `POST /api/apps` installs nothing: it answers 409 with the review.
+ *  Returns the install response, or the review's own answer when there was nothing to
+ *  consent to (an unreadable source, a refusal). */
+async function consentedInstall(api, source) {
+  const review = await api.post('/api/apps/preview', { source })
+  const token = review.json?.consent
+  if (review.status !== 200 || !token) return review
+  return api.post('/api/apps', { source, consent: token })
+}
+
 /** Put the app back from the SAME source, and make sure it is enabled.
  *
  *  Through the API deliberately: `ui-install` already covers the browser install path, and
@@ -855,9 +866,9 @@ async function waitForToolInRegistry(api, page, tool, tries = 40) {
  *  part only a browser can cover — the removal control and its confirm dialog — stays in
  *  `clickRemovalInLibrary`. */
 async function reinstall({ page, api, appName, source }) {
-  const res = await api.post('/api/apps', { source, confirm: true })
+  const res = await consentedInstall(api, source)
   if (res.status !== 201 && !res.json?.ok) {
-    return { ok: false, reason: `POST /api/apps → ${res.status} ${res.json?.error ?? ''}`.trim() }
+    return { ok: false, reason: `POST /api/apps → ${res.status} ${res.json?.error?.message ?? res.json?.error ?? ''}`.trim() }
   }
   let nudged = false
   for (let i = 0; i < 40; i++) {
@@ -1104,9 +1115,9 @@ async function wireModel({ api, opts, appsRoot }) {
   if (!existsSync(path.join(appDir, 'app.json'))) {
     return { configured: false, endpoint: opts.modelEndpoint, reason: `the model provider app ${opts.modelApp} is not at ${appDir}` }
   }
-  const install = await api.post('/api/apps', { source: appDir, confirm: true })
+  const install = await consentedInstall(api, appDir)
   if (!install.json?.ok) {
-    return { configured: false, endpoint: opts.modelEndpoint, reason: `installing the model provider app failed: ${install.json?.error ?? install.status}` }
+    return { configured: false, endpoint: opts.modelEndpoint, reason: `installing the model provider app failed: ${install.json?.error?.message ?? install.json?.error ?? install.status}` }
   }
   return { configured: false, endpoint: opts.modelEndpoint, appDir, installed: true, reason: 'provider entry not created yet' }
 }

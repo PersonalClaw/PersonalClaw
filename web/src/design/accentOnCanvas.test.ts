@@ -380,8 +380,15 @@ describe('the first-run overlay inks its links by their ground', () => {
     expect(LINK).toMatch(/ink = 'primary'/)
   })
 
-  it('the canvas-painted skip link takes the emphasis ink', () => {
-    expect(ONB).toMatch(/<TextLink size="sm" ink="emphasis" onClick=\{skipSetup\}>/)
+  it('the skip door is no longer accent text on the canvas at all', () => {
+    // It was the canvas-painted link measured at 4.37 above, and took the emphasis ink for it. It
+    // is now a Button in the flow's navigation bar (`ui/FormFooter`, painted on the surface) — the
+    // owner asked for the flow's doors in one bar — so it carries the on-surface ink and there is
+    // no accent text left on the canvas to measure. Pinned so the fix is not re-applied to a link
+    // that no longer exists, and so a link does not come back to the canvas without its ink.
+    const bar = ONB.slice(ONB.indexOf('<FormFooter>'), ONB.indexOf('</FormFooter>'))
+    expect(bar).toMatch(/<Button variant="ghost" size="md" onClick=\{skipSetup\}>/)
+    expect(ONB).not.toMatch(/<TextLink[^>]*onClick=\{skipSetup\}/)
   })
 
   it('the surface-high Pointer link takes it too', () => {

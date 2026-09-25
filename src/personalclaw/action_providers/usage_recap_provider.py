@@ -40,6 +40,9 @@ logger = logging.getLogger(__name__)
 #: never a user's hand-made one.
 USAGE_RECAP_JOB_NAME = "system:usage-recap"
 
+#: What the Triggers page calls it. The id above is an identifier, not a label.
+USAGE_RECAP_DISPLAY_NAME = "Monthly usage recap"
+
 #: 09:00 on the 1st of the month. The 1st because the recap covers the month that CLOSED — on
 #: the 31st there is still a day of spend to come, and a recap that undercounts its own month is
 #: worse than one that arrives a few hours late.
@@ -164,12 +167,16 @@ def reconcile_usage_recap_cron(store: Any) -> None:
 
     Unlike the digest there is no user-facing schedule setting to converge: the recap's cadence
     is "monthly", which is the meaning of the feature rather than a preference. So an existing
-    row is left exactly as it is — including a schedule the user edited by hand.
+    row is left exactly as it is — including a schedule the user edited by hand — except for a
+    name that is still the machine id, which `converge_display_name` turns into the label.
     """
     from personalclaw.triggers import screen as _screen
     from personalclaw.triggers.arm import arm as _arm
     from personalclaw.triggers.models import Trigger
-    from personalclaw.triggers.system_singleton import converge_system_singleton
+    from personalclaw.triggers.system_singleton import (
+        converge_display_name,
+        converge_system_singleton,
+    )
 
     try:
         # An upgraded home can hold this same job under the RANDOM id the legacy
@@ -185,12 +192,14 @@ def reconcile_usage_recap_cron(store: Any) -> None:
         logger.debug("usage-recap cron: could not read the trigger store", exc_info=True)
         return
     if row is not None:
+        # The one thing converged on an existing row: a name that is still the machine id.
+        converge_display_name(store, row.trigger, name=USAGE_RECAP_DISPLAY_NAME)
         return
 
     try:
         trigger = Trigger(
             id=USAGE_RECAP_JOB_NAME,
-            name=USAGE_RECAP_JOB_NAME,
+            name=USAGE_RECAP_DISPLAY_NAME,
             kind="clock",
             # True unless a retired duplicate says the user had switched this off — see
             # `converge_system_singleton`. `None` means nothing was retired: a fresh install.

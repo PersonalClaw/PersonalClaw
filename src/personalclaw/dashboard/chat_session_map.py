@@ -34,11 +34,12 @@ transcript is hydrated.
 **What the persisted transcript can and cannot say.** The closed vocabulary has seven
 kinds; a PERSISTED transcript can only witness five of them (:data:`PERSISTED_MARK_KINDS`).
 ``subagent`` rides a parallel WS stream that is never written to the conversation log,
-and ``activity`` segments are live-only for the same reason. ``approval`` is emitted
-when the permission row is still in the live buffer — ``chat_persistence``'s
-``_NON_TRANSCRIPT_ROLES`` drops ``permission`` on save, so it does not survive a
-restart. This is stated rather than papered over: a consumer that needs the live kinds
-reads SSM-1 over the hydrated turns; one that needs durability reads this endpoint.
+and ``activity`` segments are live-only for the same reason. ``approval`` survives a
+restart once it is decided: ``chat_persistence``'s ``_persistable`` writes a resolved
+``permission`` row and holds back one still waiting for an answer, so a pending approval
+is marked only while it is in the live buffer. This is stated rather than papered over:
+a consumer that needs the live kinds reads SSM-1 over the hydrated turns; one that needs
+durability reads this endpoint.
 """
 
 from __future__ import annotations
@@ -53,6 +54,7 @@ from personalclaw.dashboard.chat_persistence import _rehydrate_session_from_hist
 from personalclaw.dashboard.chat_utils import _prepare_messages, full_session_messages
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
+from personalclaw.llm.events import is_length_stop
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
 logger = logging.getLogger(__name__)
@@ -87,6 +89,16 @@ TURN_TELEMETRY_KEY = "turn_telemetry"
 #: nothing to say that its own opening words do not already say, and the mark falls back
 #: to :func:`preview_text`. Absence is therefore a real answer, never an empty label.
 TURN_SUMMARY_KEY = "summary"
+
+#: The ``meta`` key that says HOW the turn's reply ended, on the same last assistant message —
+#: present only as ``"length"``: the reply reached the model's output cap and stopped
+#: mid-sentence. Named after OpenAI's ``finish_reason`` because that is the vocabulary a reader of
+#: the transcript already knows. Absent = the reply finished on its own, the common case, so a
+#: consumer never has to special-case an ``"end_turn"`` it would only ignore.
+FINISH_REASON_KEY = "finish_reason"
+
+#: The one value :data:`FINISH_REASON_KEY` carries.
+FINISH_REASON_LENGTH = "length"
 
 #: A summary is a RAIL LABEL, deliberately shorter than :data:`PREVIEW_CAP`: it occupies
 #: the same one-line slot the preview would, and a label that spends the whole preview
@@ -433,6 +445,18 @@ def _stamp_on_last_assistant(session: Any, key: str, value: Any) -> bool:
 def stamp_turn_telemetry(session: Any, telemetry: dict[str, Any] | None) -> bool:
     """Stamp *telemetry* onto the session's last assistant message ``meta`` (``SSM-2``)."""
     return _stamp_on_last_assistant(session, TURN_TELEMETRY_KEY, telemetry)
+
+
+def stamp_finish_reason(session: Any, stop_reason: str) -> bool:
+    """Mark the turn's reply as CUT when it stopped at the model's output cap.
+
+    Measured on the bundled model: a 320-token cap ended replies mid-sentence and nothing on the
+    screen said so, which reads as the model trailing off rather than as a limit the user can
+    raise. Same message, same before-the-save constraint as the telemetry.
+    """
+    if not is_length_stop(stop_reason):
+        return False
+    return _stamp_on_last_assistant(session, FINISH_REASON_KEY, FINISH_REASON_LENGTH)
 
 
 def stamp_turn_summary(session: Any, summary: str | None) -> bool:

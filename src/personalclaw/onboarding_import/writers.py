@@ -1,14 +1,19 @@
-"""Per-category writers — the only code in the import path that touches our home.
+"""Per-category planners and writers — the only code in the import path that touches our home.
 
-One writer per :class:`~.model.ImportCategory`, dispatched through an exhaustive
-``_WRITERS`` map (an unmapped category raises rather than silently importing
-nothing). Every writer obeys the same two rules:
+Each :class:`~.model.ImportCategory` has a PLANNER and a WRITER, dispatched through the
+exhaustive ``_PLANNERS`` / ``_WRITERS`` maps (an unmapped category raises rather than
+silently importing nothing). The planner only reads; the writer only writes, and is only
+reached when the planner found the destination free. Every category obeys the same rules:
 
-- **The destination is the source of truth.** Before writing, the writer asks the
-  destination whether this thing is already there. Identical → ``existing``.
-  Present and DIFFERENT → ``conflict``: the existing thing is left byte-identical
-  and the conflict is reported for review. No writer resolves a conflict by
-  overwriting the user's state.
+- **The destination is the source of truth.** The planner asks the destination whether
+  this thing is already there. Identical → ``existing``. Present and DIFFERENT →
+  ``conflict``: the existing thing is left byte-identical and the conflict is reported for
+  review. No writer resolves a conflict by overwriting the user's state.
+- **The scan and the write read the destination through ONE function.** The onboarding
+  step shows each item's :func:`plan_item` before anything is written, and
+  :func:`write_item` consults the very same planner, so "this is already here" on the
+  screen and ``existing`` in the report cannot come from two different checks. That is
+  also why each planner's ``detail`` is worded to be true both before and after an import.
 - **The import ledger answers "ours or theirs", not "is it there".**
   ``onboarding/import_state.json`` records the fingerprints WE wrote, which is how
   a skill dir we installed (``existing``) is told apart from a skill of the same
@@ -50,6 +55,8 @@ from personalclaw.onboarding_import.model import (
     ImportCategory,
     ImportItem,
     ImportReport,
+    ItemState,
+    Plan,
     WriteOutcome,
     WriteResult,
     withheld_notes,
@@ -124,12 +131,6 @@ def _record(item: ImportItem, destination: str) -> None:
     atomic_write(path, json.dumps(state, indent=2, sort_keys=True) + "\n")
 
 
-def imported_fingerprints() -> set[str]:
-    """Everything this importer has written — what the onboarding step shows as
-    already-imported on re-entry."""
-    return set(_load_state()["items"])
-
-
 # ── shared helpers ───────────────────────────────────────────────────────────
 
 
@@ -200,36 +201,42 @@ def _memory_doc_path(item: ImportItem) -> Path:
     return memory_dir() / _IMPORTED_DIRNAME / _slug(item.source) / name
 
 
-def _write_memory(item: ImportItem) -> WriteResult:
+def _memory_doc_text(item: ImportItem) -> str:
+    return item.text if item.text.endswith("\n") else item.text + "\n"
+
+
+def _plan_memory(item: ImportItem) -> Plan:
+    doc = _memory_doc_path(item)
+    dest = _rel_to_home(doc)
+    if doc.is_file():
+        try:
+            current = doc.read_text(encoding="utf-8")
+        except OSError:
+            current = ""
+        if current == _memory_doc_text(item):
+            return Plan(ItemState.EXISTING, dest, "already imported, unchanged")
+        return Plan(
+            ItemState.CONFLICT,
+            dest,
+            "an imported copy with different content is already here, and it is kept",
+        )
+    return Plan(ItemState.NEW, dest)
+
+
+def _write_memory(item: ImportItem, dest: str) -> WriteResult:
     """Write the redacted doc under the memory dir and add one memory record.
 
     The document keeps full fidelity on disk; the record is what makes it a
     *memory* (searchable through the store's own projection) rather than a loose
-    file. Both are idempotent: an identical doc is a no-op, and the provider's
-    append dedupes the record line.
+    file. Both are idempotent: an identical doc is a no-op (the planner answers
+    ``existing`` before this runs), and the provider's append dedupes the record line.
     """
     from personalclaw.memory import MemoryStore
     from personalclaw.memory_providers.filesystem import FilesystemMemoryProvider
     from personalclaw.memory_record import MemoryKind, MemoryRecord
 
     doc = _memory_doc_path(item)
-    dest = _rel_to_home(doc)
-    text = item.text if item.text.endswith("\n") else item.text + "\n"
-
-    if doc.is_file():
-        try:
-            current = doc.read_text(encoding="utf-8")
-        except OSError:
-            current = ""
-        if current == text:
-            return _result(item, WriteOutcome.EXISTING, dest, "already imported, unchanged")
-        return _result(
-            item,
-            WriteOutcome.CONFLICT,
-            dest,
-            "an imported document of this name already exists with different content; "
-            "the existing document was kept",
-        )
+    text = _memory_doc_text(item)
 
     store = MemoryStore()
     store.init()
@@ -259,38 +266,54 @@ def mcp_config_path() -> Path:
     return config_dir() / "mcp.json"
 
 
-def _write_mcp_server(item: ImportItem) -> WriteResult:
+def _load_mcp_config(path: Path) -> dict[str, Any] | None:
+    """``mcp.json`` as a dict: ``{}`` when absent, ``None`` when present but unparseable —
+    a file this importer never overwrites."""
+    if not path.is_file():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _mcp_plan(data: dict[str, Any] | None, item: ImportItem) -> Plan:
+    dest = f"{_rel_to_home(mcp_config_path())}#mcpServers.{item.key}"
+    if data is None:
+        return Plan(
+            ItemState.CONFLICT,
+            dest,
+            "the existing mcp.json could not be parsed, so it is left untouched",
+        )
+    servers = data.get("mcpServers")
+    existing = servers.get(item.key) if isinstance(servers, dict) else None
+    if isinstance(existing, dict):
+        if existing == item.payload:
+            return Plan(ItemState.EXISTING, dest, "already configured identically")
+        return Plan(
+            ItemState.CONFLICT,
+            dest,
+            "an MCP server of this name is already configured differently, and it is kept",
+        )
+    return Plan(ItemState.NEW, dest)
+
+
+def _plan_mcp_server(item: ImportItem) -> Plan:
+    return _mcp_plan(_load_mcp_config(mcp_config_path()), item)
+
+
+def _write_mcp_server(item: ImportItem, dest: str) -> WriteResult:
     path = mcp_config_path()
-    dest = f"{_rel_to_home(path)}#mcpServers.{item.key}"
-    data: dict[str, Any] = {}
-    if path.is_file():
-        try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                data = loaded
-        except (OSError, ValueError):
-            logger.warning("unreadable %s — refusing to overwrite it", path)
-            return _result(
-                item,
-                WriteOutcome.CONFLICT,
-                dest,
-                "the existing mcp.json could not be parsed; it was left untouched",
-            )
+    data = _load_mcp_config(path)
+    # A read-modify-write of a file other writers share, so the plan is re-asked of THIS
+    # read: a server that appeared since the scan is kept, never overwritten.
+    plan = _mcp_plan(data, item)
+    if data is None or plan.state is not ItemState.NEW:
+        return _result(item, WriteOutcome(plan.state.value), plan.destination, plan.detail)
     servers = data.get("mcpServers")
     if not isinstance(servers, dict):
         servers = {}
-    existing = servers.get(item.key)
-    if isinstance(existing, dict):
-        if existing == item.payload:
-            return _result(item, WriteOutcome.EXISTING, dest, "already configured identically")
-        return _result(
-            item,
-            WriteOutcome.CONFLICT,
-            dest,
-            "an MCP server of this name is already configured differently; "
-            "the existing entry was kept",
-        )
-
     servers[item.key] = dict(item.payload)
     data["mcpServers"] = servers
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -308,7 +331,32 @@ def imported_skills_dir(source: str) -> Path:
     return skills_dir() / _IMPORTED_DIRNAME / _slug(source)
 
 
-def _write_skill(item: ImportItem) -> WriteResult:
+def _plan_skill(item: ImportItem) -> Plan:
+    """Everything about a skill the destination can answer without installing it.
+
+    The supply-chain scan is not part of the plan — it needs the quarantine copy an
+    install makes — so a skill it would refuse still plans ``new``; the report then
+    carries the scanner's own reason as ``rejected``.
+    """
+    target = imported_skills_dir(item.source) / item.key
+    dest = _rel_to_home(target)
+    src_dir = Path(item.path) if item.path else None
+    if src_dir is None or not src_dir.is_dir():
+        return Plan(ItemState.REJECTED, dest, "the source skill directory is missing")
+    if refuses(src_dir):
+        return Plan(ItemState.REJECTED, dest, "the source path is a sensitive location")
+    if target.exists():
+        if _ours(item.fingerprint):
+            return Plan(ItemState.EXISTING, dest, "already imported")
+        return Plan(
+            ItemState.CONFLICT,
+            dest,
+            "a skill of this name that no import wrote is already here, and it is kept",
+        )
+    return Plan(ItemState.NEW, dest)
+
+
+def _write_skill(item: ImportItem, dest: str) -> WriteResult:
     """Install a foreign skill through the shared supply-chain gate.
 
     Namespaced under ``imported/<source>/`` so a re-import or a removal is scoped
@@ -319,27 +367,8 @@ def _write_skill(item: ImportItem) -> WriteResult:
     from personalclaw.skills.marketplace import SkillInstallRefused, install_scanned
 
     target = imported_skills_dir(item.source)
-    dest = _rel_to_home(target / item.key)
-    src_dir = Path(item.path) if item.path else None
-    if src_dir is None or not src_dir.is_dir():
-        return _result(item, WriteOutcome.REJECTED, dest, "source skill directory is missing")
-    if refuses(src_dir):
-        return _result(item, WriteOutcome.REJECTED, dest, "source path is a sensitive location")
-
-    existing = target / item.key
-    if existing.exists():
-        if _ours(item.fingerprint):
-            return _result(item, WriteOutcome.EXISTING, dest, "already imported")
-        return _result(
-            item,
-            WriteOutcome.CONFLICT,
-            dest,
-            "a skill of this name already exists here and was not written by an "
-            "import; it was kept",
-        )
-
     target.mkdir(parents=True, exist_ok=True)
-    marketplace = _ImportedSkillsMarketplace(src_dir)
+    marketplace = _ImportedSkillsMarketplace(Path(item.path))
     try:
         install_scanned(marketplace, f"import:{item.source}", item.key, target, force=False)
     except SkillInstallRefused as exc:
@@ -410,7 +439,37 @@ def staged_settings_path(source: str, key: str) -> Path:
     return config_dir() / _STAGED_REL / f"{_slug(source)}-{_slug(key)}.json"
 
 
-def _write_settings(item: ImportItem) -> WriteResult:
+def _staged_settings_text(item: ImportItem) -> str:
+    return (
+        json.dumps(
+            {"source": item.source, "key": item.key, "settings": item.payload},
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
+def _plan_settings(item: ImportItem) -> Plan:
+    path = staged_settings_path(item.source, item.key)
+    dest = _rel_to_home(path)
+    if path.is_file():
+        try:
+            current = path.read_text(encoding="utf-8")
+        except OSError:
+            current = ""
+        if current == _staged_settings_text(item):
+            return Plan(ItemState.EXISTING, dest, "already staged for review")
+        return Plan(
+            ItemState.CONFLICT,
+            dest,
+            "different settings from this source are already staged for review, "
+            "and they are kept",
+        )
+    return Plan(ItemState.NEW, dest)
+
+
+def _write_settings(item: ImportItem, dest: str) -> WriteResult:
     """Stage foreign settings for human review. Never merge them into config.
 
     Another tool's settings keys are not ours, so an automatic merge could only
@@ -419,38 +478,25 @@ def _write_settings(item: ImportItem) -> WriteResult:
     overwrite.
     """
     path = staged_settings_path(item.source, item.key)
-    dest = _rel_to_home(path)
-    payload = json.dumps(
-        {"source": item.source, "key": item.key, "settings": item.payload},
-        indent=2,
-        sort_keys=True,
-    )
-    payload += "\n"
-    if path.is_file():
-        try:
-            current = path.read_text(encoding="utf-8")
-        except OSError:
-            current = ""
-        if current == payload:
-            return _result(item, WriteOutcome.EXISTING, dest, "already staged for review")
-        return _result(
-            item,
-            WriteOutcome.CONFLICT,
-            dest,
-            "different settings from this source are already staged for review; "
-            "the staged copy was kept",
-        )
     path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(path, payload)
+    atomic_write(path, _staged_settings_text(item))
     _record(item, dest)
     return _result(item, WriteOutcome.IMPORTED, dest, "staged for review — not applied to config")
 
 
 # ── dispatch ─────────────────────────────────────────────────────────────────
 
-#: Exhaustive over ImportCategory on purpose (see model.ImportCategory). A new
-#: category without a writer must fail loudly, not import nothing quietly.
-_WRITERS: dict[ImportCategory, Callable[[ImportItem], WriteResult]] = {
+#: Both maps are exhaustive over ImportCategory on purpose (see model.ImportCategory).
+#: A new category without a planner or a writer must fail loudly, not import nothing
+#: quietly. A writer is only ever called with the destination its planner found free.
+_PLANNERS: dict[ImportCategory, Callable[[ImportItem], Plan]] = {
+    ImportCategory.INSTRUCTIONS: _plan_memory,
+    ImportCategory.MEMORIES: _plan_memory,
+    ImportCategory.MCP_SERVERS: _plan_mcp_server,
+    ImportCategory.SKILLS: _plan_skill,
+    ImportCategory.SETTINGS: _plan_settings,
+}
+_WRITERS: dict[ImportCategory, Callable[[ImportItem, str], WriteResult]] = {
     ImportCategory.INSTRUCTIONS: _write_memory,
     ImportCategory.MEMORIES: _write_memory,
     ImportCategory.MCP_SERVERS: _write_mcp_server,
@@ -459,12 +505,22 @@ _WRITERS: dict[ImportCategory, Callable[[ImportItem], WriteResult]] = {
 }
 
 
-def write_item(item: ImportItem) -> WriteResult:
+def plan_item(item: ImportItem) -> Plan:
+    """What importing ``item`` would do right now. Reads our home and writes nothing —
+    not a file, not an audit line — so a scan can ask it of every item it shows."""
     try:
-        writer = _WRITERS[item.category]
-    except KeyError:  # pragma: no cover - guarded by test_writers_cover_every_category
-        raise KeyError(f"no writer for import category {item.category!r}") from None
-    return writer(item)
+        planner = _PLANNERS[item.category]
+    except KeyError:  # pragma: no cover - guarded by test_a_writer_exists_for_every_category
+        raise KeyError(f"no planner for import category {item.category!r}") from None
+    return planner(item)
+
+
+def write_item(item: ImportItem) -> WriteResult:
+    """Import one item: ask its plan, and write only when the destination is free."""
+    plan = plan_item(item)
+    if plan.state is not ItemState.NEW:
+        return _result(item, WriteOutcome(plan.state.value), plan.destination, plan.detail)
+    return _WRITERS[item.category](item, plan.destination)
 
 
 def write_items(items: list[ImportItem]) -> list[WriteResult]:

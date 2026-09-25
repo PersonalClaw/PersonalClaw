@@ -24,10 +24,20 @@ the table short enough to actually read.
 
 Shaped after `test_provider_boundary_residue.py`: patterns + a judgment table + a
 stale-entry check + a teeth check.
+
+**The section an entry sits under is a claim, and it is cross-checked** against what the code
+can fetch. `huggingface.co` was filed under "Never fetched" (as a citation link in the voice
+bake-off) while the bundled-model download fetched it and `local_models/hf_token.py`'s token
+check did too. Every test above stayed green, because a host that appears SOMEWHERE in the
+table satisfies the census whatever the table says about it. So the fetch sites are derived
+two ways — the URL records a downloader reads (through the same parsers it uses) and the live
+URL literals of every module that can open a network connection — and a fetched host must be
+filed as fetched.
 """
 
 from __future__ import annotations
 
+import ast
 import ipaddress
 import re
 from pathlib import Path
@@ -118,12 +128,143 @@ def _table() -> dict[str, str]:
     return out
 
 
+#: The census's sections, by the start of their header text. The section an entry sits under
+#: IS its classification, so it is parsed rather than merely displayed.
+_SECTIONS = (
+    ("Fetched by the product, on its own initiative", "unprompted"),
+    ("Fetched, but only because the user asked", "user"),
+    ("Browser-side", "browser"),
+    ("Never fetched", "never"),
+)
+_FETCHED = frozenset({"unprompted", "user"})
+
+
+def _classes() -> dict[str, str]:
+    """host -> the class of the section it is listed under (``""`` before any header)."""
+    out: dict[str, str] = {}
+    current = ""
+    for line in _TABLE.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line.startswith("# ──"):
+            title = line.strip("# ─")
+            current = next((c for prefix, c in _SECTIONS if title.startswith(prefix)), title)
+            continue
+        if not line or line.startswith("#"):
+            continue
+        out[line.partition("—")[0].strip().lower()] = current
+    return out
+
+
+def _strings(value: object) -> list[str]:
+    """Every string inside a JSON-shaped value."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _strings(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings(v)]
+    return []
+
+
+def _record_fetches() -> dict[str, str]:
+    """host -> record, for URLs the product fetches that live in shipped DATA, not code.
+
+    Read through the parsers the fetchers use — `bundled_model.load_declaration` for the
+    bundled-chat app's own copy of the sign-off record (the file `download_weight` reads its
+    `source_url` from), `source_recipes.list_recipes` for the recipes' `spec` — so the rail
+    sees the URL a request will actually go to, not whatever a regex finds in the file.
+    """
+    from personalclaw.bundled_model import load_declaration
+    from personalclaw.knowledge.source_recipes import list_recipes, recipes_dir
+
+    out: dict[str, str] = {}
+    signoff = _CORE / "apps" / "native" / "bundled-chat" / "bundled-model-signoff.txt"
+    declaration = load_declaration(signoff)
+    assert declaration is not None, f"{signoff} did not parse — the downloader could not read it"
+    for host in hosts_in(declaration.source_url):
+        out.setdefault(host, str(signoff.relative_to(_ROOT)))
+    for recipe in list_recipes():
+        where = str((recipes_dir() / f"{recipe.id}.json").relative_to(_ROOT))
+        for text in _strings(recipe.spec):
+            for host in hosts_in(text):
+                out.setdefault(host, where)
+    return out
+
+
+#: Modules that open network connections. `aiohttp.web` is the SERVER framework every handler
+#: imports and opens nothing outbound, so it alone does not make a module network-capable.
+_NET_MODULES = (
+    "personalclaw.net",
+    "personalclaw.sdk.net",
+    "urllib.request",
+    "aiohttp",
+    "httpx",
+    "requests",
+    "http.client",
+)
+_NOT_NET = ("aiohttp.web", "aiohttp.test_utils")
+
+
+def _is_network_capable(tree: ast.AST) -> bool:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            names = [f"{node.module}.{alias.name}" for alias in node.names]
+        else:
+            continue
+        for name in names:
+            if name.startswith(_NOT_NET):
+                continue
+            if any(name == m or name.startswith(m + ".") for m in _NET_MODULES):
+                return True
+    return False
+
+
+def _live_strings(tree: ast.AST) -> list[str]:
+    """Every string constant that is DATA — docstrings excluded, f-string parts included."""
+    docstrings: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            first = node.body[0] if node.body else None
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+                docstrings.add(id(first.value))
+    return [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in docstrings
+    ]
+
+
+def live_hosts_in_network_module(source: str) -> set[str]:
+    """Hosts a module that can open a connection holds as live data (empty if it cannot)."""
+    tree = ast.parse(source)
+    if not _is_network_capable(tree):
+        return set()
+    return {h for text in _live_strings(tree) for h in hosts_in(text)}
+
+
+def _network_module_hosts() -> dict[str, list[str]]:
+    """host -> the network-capable core modules (paths under src/personalclaw) holding it live."""
+    out: dict[str, list[str]] = {}
+    for f in _shipped_files():
+        if f.suffix != ".py":
+            continue
+        for host in live_hosts_in_network_module(f.read_text(encoding="utf-8")):
+            out.setdefault(host, []).append(str(f.relative_to(_CORE)))
+    return out
+
+
 def _found() -> dict[str, str]:
-    """host -> first file it appears in."""
+    """host -> first file it appears in (a shipped fetch record counts as a file)."""
     out: dict[str, str] = {}
     for f in _shipped_files():
         for host in hosts_in(f.read_text(encoding="utf-8")):
             out.setdefault(host, str(f.relative_to(_ROOT)))
+    for host, where in _record_fetches().items():
+        out.setdefault(host, where)
     return out
 
 
@@ -189,6 +330,80 @@ def test_the_sweep_has_teeth(tmp_path):
     assert (
         hosts_in('placeholder="e.g. https://nas.local"\n') == set()
     ), "an mDNS `.local` name was treated as a vendor destination"
+
+
+def test_every_entry_sits_under_a_known_section():
+    """An entry before the first header, or under a header nobody classifies, claims nothing."""
+    known = {cls for _prefix, cls in _SECTIONS}
+    loose = sorted(
+        f"{h} ({c or 'before any header'})" for h, c in _classes().items() if c not in known
+    )
+    assert not loose, f"entries outside the four sections: {loose}"
+
+
+def test_a_host_a_shipped_record_fetches_is_filed_as_fetched():
+    """A URL in shipped DATA is fetched by the code that reads it — never "never fetched".
+
+    The bundled default model downloads from the sign-off record's `source_url`; a watched
+    source created from a recipe polls the recipe's `spec` URL. Neither literal is in a `.py`
+    file, so only reading the records says where those requests go.
+    """
+    classes = _classes()
+    misfiled = sorted(
+        f"{host} ({where}) is filed as {classes.get(host) or 'unlisted'!r}"
+        for host, where in _record_fetches().items()
+        if classes.get(host) not in _FETCHED
+    )
+    assert not misfiled, (
+        "a shipped record fetches these hosts, but the census does not say they are fetched:\n"
+        + "\n".join(f"  {m}" for m in misfiled)
+    )
+
+
+def test_a_never_fetched_host_held_live_by_a_network_module_names_that_module():
+    """A module that can open a connection and holds a URL as data is a fetch site until the
+    census says why it is not — so a "never fetched" judgment must name every such module.
+
+    This is what `huggingface.co` failed: `local_models/hf_token.py` sends the token to
+    `huggingface.co/api/whoami-v2` through `net.fetch`, and the entry said "citation urls".
+    """
+    table, classes = _table(), _classes()
+    unexplained = sorted(
+        f"{host}: {module}"
+        for host, modules in _network_module_hosts().items()
+        if classes.get(host) == "never"
+        for module in modules
+        if module not in table[host]
+    )
+    assert not unexplained, (
+        "a network-capable module holds these 'never fetched' hosts as live data, and the "
+        "judgment does not name the module or say why it is not a request:\n"
+        + "\n".join(f"  {u}" for u in unexplained)
+    )
+
+
+def test_the_fetch_site_derivation_has_teeth():
+    """Both derivations find what they must, so a green run means something."""
+    fetching = (
+        '"""See https://docs.vendor-example.net/guide for the API."""\n'
+        "from personalclaw.net import fetch\n"
+        'URL = "https://api.vendor-example.net/v1/whoami"\n'
+    )
+    assert live_hosts_in_network_module(fetching) == {
+        "api.vendor-example.net"
+    }, "a network module's live URL constant was missed, or its docstring was read as data"
+    server_only = 'from aiohttp import web\nLINK = "https://docs.vendor-example.net/x"\n'
+    assert (
+        live_hosts_in_network_module(server_only) == set()
+    ), "a server-only module fetches nothing"
+    # Positive controls on the real tree: the known fetch sites ARE found.
+    modules = _network_module_hosts()
+    assert "local_models/hf_token.py" in modules.get("huggingface.co", [])
+    assert "self_update.py" in modules.get("api.github.com", [])
+    assert "apps/native/ollama-models/provider.py" in modules.get("ollama.com", [])
+    records = _record_fetches()
+    assert records.get("huggingface.co", "").endswith("bundled-model-signoff.txt")
+    assert {"github.com", "pypi.org", "www.reddit.com"} <= set(records)
 
 
 def test_the_census_is_not_vacuous():

@@ -122,7 +122,8 @@ loop worker, a webhook run, or a subagent all get one:
   allowed). The registry is core because any surface (dashboard or channel) can
   request either mode.
 - `history.py` — one JSONL file per session under `~/.personalclaw/sessions/`,
-  with 2 MB rotation to `sessions/archive/` and 7-day archive retention.
+  never shortened by anything; readers take a window. Background compression
+  keeps a derived summary beside it for the model (`{key}.summary.json`).
 
 Details, including the chat turn pipeline and variant branching, are in
 [chat-sessions.md](chat-sessions.md).

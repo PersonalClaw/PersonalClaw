@@ -102,7 +102,7 @@ describe('bulkBlockedReason', () => {
 
 describe('the capture week panel', () => {
   it('keeps the first-pass day in scope and neutralizes the day before it', () => {
-    expect(dayState(day({ day: '2024-01-02', passes: 0 }), '2024-01-03')).toBe('out_of_scope')
+    expect(dayState(day({ day: '2024-01-02', passes: 0 }), '2024-01-03')).toBe('not_started')
     expect(dayState(day({ day: '2024-01-03', passes: 0 }), '2024-01-03')).toBe('silent')
   })
 
@@ -123,7 +123,7 @@ describe('the capture week panel', () => {
   })
 
   it('gives every state a distinct tone and a hint', () => {
-    const states = ['out_of_scope', 'silent', 'error', 'produced', 'ok'] as const
+    const states = ['not_started', 'silent', 'error', 'produced', 'ok'] as const
     expect(new Set(states.map((s) => DAY_TONE[s])).size).toBe(5)
     for (const s of states) expect(DAY_HINT[s]).toBeTruthy()
   })

@@ -100,6 +100,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "not_found": "The addressed resource does not exist.",
     "forbidden": "The caller is not permitted to touch this resource.",
     "confirmation_required": "The operation is destructive and needs an explicit confirm.",
+    # ── the owner's security posture (config/edit_spec.py) ──
+    # An app-scoped caller wrote a field holding a `SecurityControl`, or answered an approval
+    # with a standing grant. 403 in either direction: the field is the owner's to change, and
+    # the message names it so the app's developer reads a policy rather than a bug.
+    "security_setting_owner_only": (
+        "The field is a security setting only the owner can change; an app cannot, in either "
+        "direction."
+    ),
     # ── session deletion (dashboard/handlers/sessions.py) ──
     # A LIVE session carries no history file, so `delete_session` declines it. That is a
     # real resource this route refuses, which is a DIFFERENT fact from a key that never
@@ -670,6 +678,17 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The field is driven by the workflow run that owns this task; change what the run "
         "does and the task will follow."
     ),
+    # ── app install preview (dashboard/handlers/apps.py — api_app_preview) ──
+    # Split by remedy. `app_source_unresolved`: the path does not exist or the clone failed,
+    # so the fix is the source string. `app_preview_failed`: the bundle was fetched but
+    # cannot be offered for install — its manifest is unreadable or invalid, it needs a newer
+    # core, or it is already installed (or, for an update, not installed); the message says
+    # which. A bundle that WAS read always answers 200, refusals included: "the scanner found
+    # dangerous content" is a completed review whose answer is no, and the dialog shows it.
+    "app_source_unresolved": "The app source could not be read — the path does not exist or "
+    "the clone failed.",
+    "app_preview_failed": "The app was fetched but cannot be offered for install; the message "
+    "says why.",
 }
 
 

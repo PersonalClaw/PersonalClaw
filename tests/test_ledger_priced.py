@@ -335,14 +335,14 @@ def test_run_stats_carries_priced_and_agrees_with_the_primitive(ledger_home):
     from personalclaw.workflows.introspection import run_stats
 
     loop_id = _loop_ledger()
-    loop_stats = run_stats(loop_id, loop_ledger_read(loop_id))
+    loop_stats = run_stats(loop_id, loop_ledger_read(loop_id), elapsed_secs=0.0)
     assert loop_stats.steps_completed == 2, "vacuity floor"
     assert loop_stats.priced is False
     assert loop_stats.priced is _loop_totals(loop_id)["priced"]
     assert loop_stats.to_dict()["priced"] is False
 
     _run_ledger("run-free3", [{"tokens": 0, "cost_usd": 0.0}])
-    free_stats = run_stats("run-free3", J.ledger("run-free3"))
+    free_stats = run_stats("run-free3", J.ledger("run-free3"), elapsed_secs=0.0)
     assert free_stats.priced is True, "a measured zero must not be reported as unpriced"
     assert free_stats.priced is J.run_totals("run-free3")["priced"]
     assert free_stats.to_dict()["priced"] is True

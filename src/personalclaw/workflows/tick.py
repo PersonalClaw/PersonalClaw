@@ -39,13 +39,20 @@ inferring it would starve a sibling whose `needs` names a branch, since routing 
 cases says nothing about that sibling.
 
 Reachability is where the two directions are decided, and the asymmetry is deliberate. A
-SKIPPED predecessor SATISFIES a plain ordering edge (it is terminal — that is what keeps a
-join off an untaken leg), but a SKIPPED predecessor whose OUTPUT the reader binds makes the
-reader unreachable: the output will never exist, so waiting is a hang and running is a
-guaranteed binding failure. Only that reader is skipped, and only through a real dataflow
-edge. Skipping a reader whose producer is merely still pending would be the far worse bug — a
-join would then fire early on a live leg and the run would report a plausible wrong answer
-instead of waiting.
+SKIPPED or FAILED predecessor SATISFIES a plain ordering edge (it is terminal — that is what
+keeps a join off an untaken leg, and `needs` means AFTER, not after-success), but a terminal
+predecessor that produced NO OUTPUT makes a reader of that output unreachable: only a
+succeeded node ever enters the binding namespace (`RunController._load_outputs`), so the output
+will never exist, waiting is a hang and running is a guaranteed binding failure. Only that
+reader is skipped, and only through a real dataflow edge. Skipping a reader whose producer is
+merely still pending would be the far worse bug — a join would then fire early on a live leg and
+the run would report a plausible wrong answer instead of waiting.
+
+The FAILED half of that rule is what keeps a failure attributed to the step that failed. Before
+it, a reader of a failed producer RAN, failed its binding (`unresolved reference at 'sample'`,
+filed USER), and its escalation replaced the producer's on `run.attention` — so a best-of-n run
+whose sampling calls all hit a dead provider told the user it had "failed at `select` … check the
+referenced node id", blaming the one step that had done nothing wrong.
 
 The wait-entry subtlety still matters: a `wait`/`gate` enters WAITING rather than
 completing, and WAITING is not terminal, so a join behind it correctly keeps waiting
@@ -700,20 +707,21 @@ def _ordering_satisfied(
     Three outcomes, and the difference between the last two is the whole of WF2-R18:
 
     * **Satisfied** — every producer is TERMINAL (done, degraded, skipped, failed alike).
-      "After" is the whole contract; what a failure then MEANS is the reader's `on_error`
-      policy, not the scheduler's business.
+      "After" is the whole contract of an ordering edge.
     * **Not yet** — a producer is still live. Return False and visit nothing; the next tick
       re-derives. This branch must never skip anything: skipping a reader whose producer is
       merely pending would make a downstream join fire early on a live leg, and a join that
       fires early produces a plausible WRONG answer, which is worse than a hang.
-    * **Unreachable** — a producer whose OUTPUT this node binds went SKIPPED, or the edge was
+    * **Unreachable** — a producer whose OUTPUT this node binds ended without one (skipped,
+      failed, cancelled — any terminal state outside `SUCCESS_STATES`), or the edge was
       explicitly declined. The output will never exist, so the reader can neither wait (a
       hang) nor run (a certain binding failure). It is skipped, which makes it terminal, which
-      lets the join behind it proceed.
+      lets the join behind it proceed — and leaves the producer's own failure as the run's
+      account of what went wrong.
 
-    Only a DATAFLOW edge can make a reader unreachable. A plain `needs` onto a skipped node is
-    SATISFIED — that is precisely how a join stays off an untaken leg — and treating it as
-    unreachable instead would cascade a skip along every ordering edge in the run.
+    Only a DATAFLOW edge can make a reader unreachable. A plain `needs` onto a skipped or
+    failed node is SATISFIED — that is precisely how a join stays off an untaken leg — and
+    treating it as unreachable instead would cascade a skip along every ordering edge in the run.
     """
     deps = order.deps.get(spec)
     if not deps:
@@ -734,7 +742,7 @@ def _ordering_satisfied(
             if pnode is not None
             else _state_of(states, ppath)
         )
-        if pstate == InstanceState.SKIPPED and carries_data:
+        if carries_data and _is_terminal(pstate) and not _is_success(pstate):
             _mark_unreachable(path, states, fr)
             return False
         if not _is_terminal(pstate):

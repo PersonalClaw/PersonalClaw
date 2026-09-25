@@ -1,23 +1,28 @@
-"""The onboarding-import vocabulary — scan results, items, and write outcomes.
+"""The onboarding-import vocabulary — scan results, items, plans and write outcomes.
 
 One shape for "something another local agent tool has that PersonalClaw could adopt"
-(:class:`ImportItem`), one shape for what a scan found (:class:`ScanResult`), and one
-closed four-value outcome vocabulary for what a writer did (:class:`WriteOutcome`).
+(:class:`ImportItem`), one shape for what a scan found (:class:`ScanResult`), one closed
+four-value vocabulary for what importing an item WOULD do (:class:`ItemState`, asked
+before anything is written) and one for what a writer DID (:class:`WriteOutcome`).
 
-Two properties are load-bearing and live here rather than in each scanner:
+Three properties are load-bearing and live here rather than in each scanner:
 
 - **Fingerprint idempotence.** An item's identity is ``sha256(source\\0category\\0key)``
   — stable across re-scans and independent of the item's body, so re-importing an
   edited file updates nothing it already owns and never creates a second copy.
+- **The fingerprint is the only thing a choice carries.** The step picks items by
+  fingerprint and the import re-scans and keeps only the fingerprints ITS scan found, so
+  ids travel and content never does: a caller cannot name a path or supply a body.
 - **Secret-free payloads.** An item carries a redacted body and a secret-stripped
   structured payload. A scanner that finds a credential *counts* it
-  (``ScanResult.secrets_skipped``) and drops it; the value never reaches an item, a
-  note, a log line, or an error message.
+  (``ScanResult.secrets_skipped``, and the item's own share of it) and drops it; the
+  value never reaches an item, a note, a log line, or an error message.
 """
 
 from __future__ import annotations
 
 import hashlib
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
@@ -56,8 +61,44 @@ class WriteOutcome(str, Enum):
     REJECTED = "rejected"
 
 
+class ItemState(str, Enum):
+    """What importing ONE item would do right now — read off the destination, nothing written.
+
+    ``new`` — the destination is free; importing writes it. The only state a choice changes.
+    ``existing`` — this exact item is already there; importing writes nothing.
+    ``conflict`` — something different is there and is KEPT; importing writes nothing.
+    ``rejected`` — a floor refuses it before a byte is copied (a missing or sensitive source).
+
+    The same facts :class:`WriteOutcome` reports, asked BEFORE the write instead of after it.
+    ``new`` is deliberately not ``imported``: nothing has happened yet. A writer consults the
+    very :class:`Plan` the scan showed, so what the step said an item would do and what the
+    import then did cannot come from two different readings of the destination.
+    """
+
+    NEW = "new"
+    EXISTING = "existing"
+    CONFLICT = "conflict"
+    REJECTED = "rejected"
+
+
+@dataclass(frozen=True)
+class Plan:
+    """A writer's read-only answer for one item: what importing it would do, and where."""
+
+    state: ItemState
+    destination: str
+    #: Why — value-free, and worded to be true both before the import and after it, because
+    #: the scan and the report show the same sentence.
+    detail: str = ""
+
+
+#: The shape of every fingerprint :func:`fingerprint_of` mints — and so the only shape a
+#: selection may carry. Anything else in a request is refused before a scan runs.
+FINGERPRINT_RE = re.compile(r"[0-9a-f]{16}")
+
+
 def fingerprint_of(source: str, category: ImportCategory | str, key: str) -> str:
-    """``sha256(source\\0category\\0key)`` — the idempotence key.
+    """``sha256(source\\0category\\0key)`` — the idempotence key and the selection id.
 
     NUL-joined so no combination of source/category/key can collide with another by
     concatenation. Truncated to 16 hex chars: enough to be collision-free over a
@@ -87,6 +128,11 @@ class ImportItem:
     #: How many credential/exfiltration-URL redactions were applied to ``text``.
     #: A count, never the matched value.
     redactions: int = 0
+    #: How many credential values or files were left OUT of this item: a secret-named key
+    #: dropped from ``payload``, or a credential file inside a skill that is never installed.
+    #: This item's share of ``ScanResult.secrets_skipped``, which also counts what belongs
+    #: to no item (a credential file at the root). A count, never the value.
+    secrets_skipped: int = 0
 
     @property
     def fingerprint(self) -> str:
@@ -99,8 +145,23 @@ class ImportItem:
             "category": self.category.value,
             "key": self.key,
             "title": self.title or self.key,
+            "secrets_skipped": self.secrets_skipped,
             "redactions": self.redactions,
         }
+
+
+def offer(item: ImportItem, plan: Plan) -> dict:
+    """One item as the person choosing it sees it: what it is, and what importing it would do.
+
+    The one composer for that shape — the scan's items and the report's ``unselected`` rows
+    are both this, so the step reads a single item vocabulary on either side of the import.
+    """
+    return {
+        **item.to_dict(),
+        "state": plan.state.value,
+        "destination": plan.destination,
+        "detail": plan.detail,
+    }
 
 
 def withheld_notes(*, secrets_skipped: int, redactions: int) -> list[str]:
@@ -157,7 +218,8 @@ class ScanResult:
     present: bool
     items: list[ImportItem] = field(default_factory=list)
     #: Credential-bearing files refused unread + secret config keys dropped. A count
-    #: the user is shown so they learn something was withheld.
+    #: the user is shown so they learn something was withheld. Each item carries its own
+    #: share; the rest (:meth:`secrets_outside_items`) belongs to no item.
     secrets_skipped: int = 0
     #: Redactions applied to text that WAS imported (the body kept, the secret gone).
     redactions: int = 0
@@ -165,7 +227,8 @@ class ScanResult:
     notes: list[str] = field(default_factory=list)
 
     def counts(self) -> dict[str, int]:
-        """Per-category item counts — what the onboarding checkboxes show."""
+        """Per-category item counts. The step counts from ``items`` instead, because its
+        numbers follow the user's choice and a scan-time total cannot."""
         counter = Counter(item.category.value for item in self.items)
         return {cat.value: counter.get(cat.value, 0) for cat in ImportCategory}
 
@@ -174,6 +237,12 @@ class ScanResult:
 
     def fingerprints(self) -> set[str]:
         return {item.fingerprint for item in self.items}
+
+    def secrets_outside_items(self) -> int:
+        """What was withheld that belongs to no item — a credential file at the root, or an
+        entry dropped whole because its NAME was secret-shaped. Left behind whatever is
+        picked, so an import from this source always reports it."""
+        return self.secrets_skipped - sum(item.secrets_skipped for item in self.items)
 
     def note_withheld(self) -> None:
         """Say that something was withheld, and how much. Never what.
@@ -226,9 +295,20 @@ class WriteResult:
 
 @dataclass
 class ImportReport:
-    """The result of one import run — per-item outcomes plus the withheld counts."""
+    """The result of one import run — per-item outcomes, the rest of the choice, and the
+    withheld counts.
+
+    ``results`` is what happened to every CHOSEN item the run's own re-scan found. The other
+    two lists are what makes the report a record of the choice rather than of the writes
+    alone: ``unselected`` is everything that re-scan found and the caller did not pick, each
+    with the plan it had just before the writes (so "left out by you" and "already here" stay
+    distinguishable), and ``missing`` is every chosen fingerprint the re-scan could not find —
+    reported, never dropped in silence.
+    """
 
     results: list[WriteResult] = field(default_factory=list)
+    unselected: list[tuple[ImportItem, Plan]] = field(default_factory=list)
+    missing: list[str] = field(default_factory=list)
     secrets_skipped: int = 0
     redactions: int = 0
     notes: list[str] = field(default_factory=list)
@@ -244,6 +324,8 @@ class ImportReport:
         return {
             "counts": self.counts(),
             "results": [r.to_dict() for r in self.results],
+            "unselected": [offer(item, plan) for item, plan in self.unselected],
+            "missing": list(self.missing),
             "secrets_skipped": self.secrets_skipped,
             "redactions": self.redactions,
             "notes": list(self.notes),

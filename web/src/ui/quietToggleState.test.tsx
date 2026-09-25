@@ -121,7 +121,10 @@ describe('the call sites, classified per site', () => {
   it('a show/hide-secret button stays silent, because its NAME carries the state', () => {
     // The same ruling as `DiagnosticsPanel`'s pause in cycle 128: when the accessible name flips
     // ("Show" ⇄ "Hide"), the state is already announced and a second channel adds nothing.
-    for (const rel of ['pages/settings/ModelBackends.tsx', 'pages/settings/ProviderConfigForm.tsx']) {
+    // `ModelBackends.tsx` held a second copy of this toggle inside its own text-only field renderer,
+    // which is gone: Add instance now renders through `ProviderConfigForm`'s typed `SchemaField`, so
+    // there is ONE secret field and one toggle to keep silent.
+    for (const rel of ['pages/settings/ProviderConfigForm.tsx']) {
       const src = read(rel)
       const at = src.search(/<SquareIconButton label=\{show(Secret)? \? 'Hide' : 'Show'\}/)
       expect(at, `${rel} must still have the name-flipping secret toggle`).toBeGreaterThan(-1)

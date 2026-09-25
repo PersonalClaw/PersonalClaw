@@ -110,7 +110,7 @@ async def _client(tmp_path: Path):
     # `rebuild_agent_config()`, which writes through `agent.agents_dir()` / `agent._USER_DIR`,
     # module-level constants frozen at import (`agent.py:93`/`:135`). Patching `config_dir`
     # alone leaves them pointing at the real home, so the write escapes tmp_path and the
-    # conftest real-home rail fails the session (`agents/personalclaw.json` modified) —
+    # real-home guard refuses it and fails the test (`agents/personalclaw.json`) —
     # same seam `test_tool_provider_instances.py::_model_provider_client` redirects.
     with (
         patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
@@ -128,8 +128,15 @@ _BASE = "/api/providers/fake-models/instances"
 
 
 def _stored(tmp_path: Path, instance_id: str) -> dict:
+    """The instance's config as its provider reads it: the record on disk holds a reference for
+    each secret, resolved here from the same home's credential store (``config.secret_refs``)."""
+    from personalclaw.config.secret_refs import resolve
+
     path = tmp_path / "extensions" / "fake-models" / "instances" / f"{instance_id}.json"
-    return json.loads(path.read_text(encoding="utf-8"))["config"]
+    raw = path.read_text(encoding="utf-8")
+    assert _SECRET not in raw, "an instance's key reached its record on disk"
+    with patch("personalclaw.config.loader.config_dir", return_value=tmp_path):
+        return resolve(json.loads(raw)["config"])
 
 
 async def _create(client, **config) -> tuple[str, str]:

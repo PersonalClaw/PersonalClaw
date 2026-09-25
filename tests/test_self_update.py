@@ -1364,6 +1364,89 @@ async def test_status_pin_miss_reports_nothing_available(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_status_says_it_checked_when_it_compared_against_a_release(monkeypatch) -> None:
+    """The release-tag comparison IS the whole check on a pip/container/desktop install, and it
+    must say it ran. The dashboard's `checked` used to come only from the git half, so a pip
+    install that had just been compared with the newest release still read "No update check yet".
+    """
+    _latest_probe(monkeypatch)
+    _fake_container_config(monkeypatch, "stable")
+    monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
+    monkeypatch.delenv("PERSONALCLAW_PROJECT_DIR", raising=False)
+
+    status = await uk.build_update_status("0.2.1")
+    assert status["kind"] == "pip"
+    assert status["checked"] is True
+    assert status["update_available"] is False  # compared, and current
+    assert status["pin_miss"] is False
+
+
+@pytest.mark.asyncio
+async def test_status_with_nothing_fetched_and_nothing_cached_has_not_checked(monkeypatch) -> None:
+    """Vacuity floor for the test above: offline with no cache is NOT an answer."""
+
+    async def _nothing() -> dict:
+        return {}
+
+    monkeypatch.setattr(uk, "fetch_latest_release", _nothing)
+    _fake_container_config(monkeypatch, "stable")
+    monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
+
+    status = await uk.build_update_status("0.1.0")
+    assert status["checked"] is False
+    assert status["pin_miss"] is False
+
+
+@pytest.mark.asyncio
+async def test_status_reports_a_pin_naming_no_release_as_pin_miss(monkeypatch) -> None:
+    """`pin_miss` is the one "no release matches this pin" signal: the list was read and no
+    release in it carries the pinned version."""
+    _latest_probe(monkeypatch)
+    _fake_container_config(monkeypatch, "stable", "0.2.2")
+    monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
+
+    status = await uk.build_update_status("0.1.0")
+    assert status["pin_miss"] is True
+    assert status["checked"] is True  # the list WAS read; its answer is "no such release"
+    assert status["latest"] == ""
+
+
+@pytest.mark.asyncio
+async def test_a_pin_with_no_list_to_check_it_against_is_not_a_pin_miss(monkeypatch) -> None:
+    """Offline with nothing cached, `latest == ""` reads exactly like a pin-miss — which is why
+    `latest` alone cannot carry the signal. Telling that user their pin names no release would
+    be a guess."""
+
+    async def _rel() -> dict:
+        return {}
+
+    async def _no_list() -> list[dict[str, object]]:
+        return []
+
+    monkeypatch.setattr(uk, "fetch_latest_release", _rel)
+    monkeypatch.setattr(uk, "fetch_releases", _no_list)
+    _fake_container_config(monkeypatch, "stable", "0.2.2")
+    monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
+
+    status = await uk.build_update_status("0.1.0")
+    assert status["latest"] == ""
+    assert status["pin_miss"] is False
+    assert status["checked"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_pin_that_matches_is_neither_missed_nor_unchecked(monkeypatch) -> None:
+    _latest_probe(monkeypatch)
+    _fake_container_config(monkeypatch, "stable", "0.2.0")
+    monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
+
+    status = await uk.build_update_status("0.1.0")
+    assert status["latest"] == "0.2.0"
+    assert status["pin_miss"] is False
+    assert status["checked"] is True
+
+
+@pytest.mark.asyncio
 async def test_status_stable_needs_no_second_fetch(monkeypatch) -> None:
     """`stable` IS `releases/latest`, so the resolver must not pay for a list fetch.
 
@@ -1497,7 +1580,29 @@ def test_set_version_pin_normalizes_and_refuses_junk(monkeypatch, tmp_path) -> N
     assert AppConfig.load().updates.pin == "0.2.0"
     assert uk.set_version_pin("  ") is False
     assert uk.set_version_pin("9" * 65) is False
-    assert AppConfig.load().updates.pin == "0.2.0"  # neither refusal overwrote it
+    # The SHAPE rule the PATCH boundary applies (`normalize_pin`): `--to` cannot store a pin
+    # Settings would refuse, and vice versa.
+    for junk in ("not-a-version!!", "0.2", "0.2.x", ">=0.2", "latest", "v"):
+        assert uk.set_version_pin(junk) is False, junk
+    assert AppConfig.load().updates.pin == "0.2.0"  # no refusal overwrote it
+
+
+@pytest.mark.parametrize(
+    "pin, stored",
+    [("0.1.3", "0.1.3"), ("v0.1.3", "0.1.3"), (" 0.3.0-rc.1 ", "0.3.0-rc.1"), ("", ""), ("  ", "")],
+)
+def test_normalize_pin_accepts_release_versions_and_clearing(pin, stored) -> None:
+    assert uk.normalize_pin(pin) == stored
+
+
+@pytest.mark.parametrize(
+    "pin", ["not-a-version!!", "0.2", "0.2.x", ">=0.2,<0.3", "latest", "0.3.0rc1", "v", "1.2.3.4"]
+)
+def test_normalize_pin_refuses_what_can_never_name_a_release(pin) -> None:
+    """A pin is matched EXACTLY against release tags (`select_target`), so these never resolve —
+    and a stored one used to stop every update without a word."""
+    with pytest.raises(ValueError, match="not a release version"):
+        uk.normalize_pin(pin)
 
 
 @pytest.mark.asyncio

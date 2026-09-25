@@ -88,9 +88,7 @@ class _Prov(ToolProvider):
 
 
 def _defn() -> AgentRuntimeDefinition:
-    return AgentRuntimeDefinition(
-        name="a", provider="native", system_prompt="", model="m", tools=[], skills=[]
-    )
+    return AgentRuntimeDefinition(name="a", provider="native", model="m", tools=[], skills=[])
 
 
 def _providers() -> list[ToolProvider]:

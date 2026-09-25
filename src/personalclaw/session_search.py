@@ -223,22 +223,32 @@ def index_session(
         return False
 
 
-def index_turn(session_key: str, role: str, text: str, *, memory_mode: str = "") -> None:
+def index_turn(session_key: str, role: str, text: str, *, memory_mode: str = "", log=None) -> None:
     """Re-index a session after a turn lands (the §C1 hook).
 
     Signature kept as the plan specifies. The turn's own text is not what's stored —
     the whole transcript is re-read, so the index matches the file rather than an
     accumulation that could diverge from it. Best-effort and never raises: a search
     index must not be able to break a chat.
+
+    ``log`` is the store the transcript was just written to, and it is re-read from THAT
+    store. A log rooted outside the home (an explicit ``base_dir``) is not indexed at all:
+    this index is one home's, and the row would describe a transcript the home does not have.
+    Re-reading such a session through the home's own store instead found nothing, so the row
+    was written EMPTY — measured: three ``chars=0`` rows in a developer's real index, from
+    scripts that kept their ``ConversationLog`` in a temp dir but never set
+    ``PERSONALCLAW_HOME``, so the index alone escaped the isolation they had chosen.
     """
     key = (session_key or "").strip()
     if not key:
+        return
+    if log is not None and not log.is_home_log():
         return
     if is_restricted(key, memory_mode=memory_mode):
         forget_session(key)
         return
     try:
-        reindex_session(key)
+        reindex_session(key, log=log)
     except Exception:  # noqa: BLE001
         logger.debug("session_search: index_turn failed for %s", key, exc_info=True)
 

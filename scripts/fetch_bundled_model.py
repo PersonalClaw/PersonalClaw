@@ -14,8 +14,8 @@ cases want it without a browser:
 * **An offline container or image.** Run this against the home the image will ship with, and
   every container starts with the model already present and never reaches for the network. That
   is the documented one-line answer to "can the image work offline" — the project ships no
-  weight in the image itself (see ``docs/architecture/bundled-model-signoff.txt``), and this is
-  how anyone who needs that builds it without a second artifact pipeline.
+  weight in the image itself (see the app's ``bundled-model-signoff.txt``), and this is how
+  anyone who needs that builds it without a second artifact pipeline.
 * **A fleet.** Warm one home, copy it.
 * **A test rig.** ``scripts/ou14_zero_config_drive.py`` uses it to reach a first chat turn.
 
@@ -83,7 +83,7 @@ def main() -> int:
     if declaration is None:
         _fail(
             "no default chat model is signed off in this tree "
-            f"({app.DECLARATION_RELPATH}) — there is nothing to fetch."
+            f"({app.DECLARATION_PATH}) — there is nothing to fetch."
         )
     _log(f"signed off : {declaration.model_id} under {declaration.licence}")
     _log(f"target     : {app.weight_path()}")

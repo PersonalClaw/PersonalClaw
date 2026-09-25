@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ChevronDown, X } from 'lucide-react'
 import { cx } from './cx'
 import { Eyebrow } from './Eyebrow'
@@ -546,16 +546,30 @@ export function ChipInput({ values, onChange, placeholder, max, suggestions, ari
  *
  *  `stopPropagation` is built in, not left to callers: these live inside clickable
  *  rows, and every call site forgetting it would make ticking a row also open it. */
-export function Checkbox({ checked, onChange, ariaLabel, className }: {
+export function Checkbox({ checked, onChange, ariaLabel, className, indeterminate = false }: {
   checked: boolean
   onChange: (v: boolean) => void
   /** Required in practice — a bare tick has no accessible name of its own. */
   ariaLabel: string
   /** Extra classes for visibility rules (e.g. reveal-on-hover in a list row). */
   className?: string
+  /** The MIXED state, for a tick that stands for a group only partly chosen. Pass `checked`
+   *  false alongside it: a click on a mixed box then fires `onChange(true)`, which is the
+   *  convention (mixed → all) a tri-state parent is expected to follow. */
+  indeterminate?: boolean
 }) {
+  // 🔑 A DOM PROPERTY, NOT AN ATTRIBUTE. There is no `indeterminate` content attribute to render,
+  // and `aria-checked` on a native checkbox is non-conforming (ARIA in HTML) — the property is what
+  // browsers expose as "mixed" and what `:indeterminate` styles. Re-applied after EVERY render, not
+  // only when the prop changes: a click clears the property natively, so a parent that answers the
+  // click by staying mixed would otherwise leave the box showing a state the prop no longer says.
+  const ref = useRef<HTMLInputElement>(null)
+  useLayoutEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate
+  })
   return (
     <input
+      ref={ref}
       type="checkbox"
       checked={checked}
       aria-label={ariaLabel}

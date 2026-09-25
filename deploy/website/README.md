@@ -89,8 +89,8 @@ curl -fsSL https://personalclaw.dev/install | sh -s -- --container   # print com
 
 `openai` and `anthropic` are no longer core dependencies. The
 branded provider apps must declare their SDK so the app-install pipeline
-(`app_manager._install_python_deps`, verified) installs it into
-the shared venv. In each app's `app.json` / `manifest.json`, add (or extend) the
+(`app_manager._install_python_deps`, verified) installs it for the
+gateway to load (today into `<home>/app-python`). In each app's `app.json` / `manifest.json`, add (or extend) the
 top-level `dependencies` object — mirroring the slack-channel precedent
 (commit `7538b63`):
 

@@ -69,7 +69,7 @@ substituted.
 |---|---|---|---|---|
 | `agent.approval_mode` | enum: `auto`, `interactive`, `trust_reads` | `auto` | Settings → Agent defaults | Tool approval mode. `trust_reads` auto-approves read-only tools and asks for everything else. |
 | `agent.provider` | string | `native` | backend-only (restart) | Default agent runtime for agents that don't set their own: `native` (in-process loop, models governed by Settings → Models), `acp`, or `acp:<cli>` to pin a connected CLI runtime. Per-agent `provider` overrides this. File-only by design — switching it mid-flight would strand live sessions. |
-| `agent.yolo` | boolean | `false` | Settings → Agent defaults | Skip every tool-approval confirmation. Only use inside a sandbox or for trusted automation. |
+| `agent.yolo` | boolean | `false` | Settings → Agent defaults | Skip every tool-approval confirmation. Only use inside a sandbox or for trusted automation. Settings asks before turning it on, and `PATCH /api/config/personalclaw` refuses `true` without `"confirm": true` (`400 confirmation_required`); turning it off never needs consent. A security setting: no app can write it (see *Programmatic surfaces*). |
 | `agent.acp_concurrent_sessions` | boolean | `false` | Settings → Agent defaults | Run multiple ACP chat sessions on ONE backend process (multiplexing) instead of one process per session — for backends that support session interleaving. |
 | `agent.bot_name` | string (≤50 chars) | `""` | Settings → Account | Custom name the assistant identifies as. Letters and combining marks from any script, digits, spaces, apostrophes, `-`, `.` and `_`. A save carrying any other character (braces, markdown, symbols, control or invisible characters) is refused with a 400 naming it; `load()` strips the same characters from a hand-edited file. Empty = default. |
 | `agent.orchestrator_skill` | boolean | `false` | Settings → Agent defaults | Enable agent delegation — generates and loads the orchestrator skill with the agent roster. |
@@ -251,8 +251,8 @@ Alert keywords, name-mention alerts, and retention live in the Inbox settings pa
 | `tools.projection_rules[].name` | string | `""` | Settings → Tool output | Short label for the rule. |
 | `tools.projection_rules[].match_regex` | string | `""` | Settings → Tool output | Regex matched against the start of a tool's output. |
 | `tools.projection_rules[].strategy` | enum: `log`, `diff`, `json`, `test`, `csv` | `log` | Settings → Tool output | The builtin projector to apply. |
-| `tools.bg_compress_enabled` | boolean | `true` | Settings → Chat | Continuously compress old, idle conversation history in the background (topic-segmented, attention-weighted) so long sessions stay fast. Every dropped span is archived first and stays recoverable, and the summary names its archive. Incognito/temporary chats are never touched. |
-| `tools.bg_compress_idle_days` | number (0–365) | `7.0` | Settings → Chat | Only compress sessions untouched for at least this long — an active session is never compressed. |
+| `tools.bg_compress_enabled` | boolean | `true` | Settings → Chat | Summarize the older part of idle chats in the background (topic-segmented, attention-weighted), so the history handed to the model when one is picked up again opens with a short summary instead of every message. Chats are never changed: every message stays as you left it. The summary is kept beside the chat (`sessions/{key}.summary.json`), stops being used the moment a message it covers changes, and is deleted with the chat. Uses the background model. Incognito/temporary chats are never summarized. |
+| `tools.bg_compress_idle_days` | number (0–365) | `7.0` | Settings → Chat | Only summarize chats untouched for at least this long — an active chat is never summarized. |
 
 ## Voice (`voice.*`)
 
@@ -302,6 +302,7 @@ makes the voice loop noisier, never less safe.
 | `default_agent` | string | `""` | Settings → Agent defaults | Active agent name from the `agents` section (also `PUT /api/config/default-agent`). |
 | `memory_stores` | object | `{}` | backend-only | Named memory store definitions; `memory_stores.<name>.description` is a human-readable purpose. Stores are referenced by agent profiles. |
 | `updates.auto` | string | `"off"` | Settings → Updates | Opt-in unattended-apply mode (retired the legacy `auto_update` bool). `"off"` only notifies; `"staged"` applies at the next safe point — held while a session/subagent is in flight, and only ever the resolved channel/pin release tag, never raw `main`. |
+| `updates.pin` | string | `""` | Settings → Updates | Stay on one exact release (`0.1.3`, or `0.3.0-rc.1` for a release candidate), overriding the channel. Only a release version is accepted — a version line, range or typo is refused when saved, here and by `personalclaw update --to`. A pin no published release carries offers and installs nothing, and Settings → Updates says so. Empty follows the channel. |
 | `timezone` | string | `""` (system) | set by `personalclaw setup` | IANA timezone (e.g. `Asia/Tokyo`) for schedules and the clock the LLM sees. Per-job trigger timezones override it. |
 | `snapshot_dir` | string | `""` | backend-only | Where `personalclaw snapshot` writes/reads portability snapshots. Empty = `~/.personalclaw/snapshots`. |
 
@@ -337,7 +338,7 @@ Not config-file fields, but part of the same operator surface:
 |---|---|
 | `PERSONALCLAW_HOME` | Relocate the config/state directory (default `~/.personalclaw`). |
 | `PERSONALCLAW_PORT` | Override the dashboard/API port (default `10000`). Validated at CLI entry. A running gateway **overwrites** this in its own environment with the port it actually bound, so every child it spawns agrees with the live socket even under `--port` / `--port auto`. |
-| `PERSONALCLAW_WORKSPACE` | Workspace root for LLM working directories. |
+| `PERSONALCLAW_WORKSPACE` | Workspace root for LLM working directories: the default chat workspace, and where the folder picker opens. Default `~/workplace/personalclaw-workspace`; the container image sets `/data/workspace`, so it lives on the image's one volume. |
 | `PERSONALCLAW_BIND_HOST` | Bind address for the gateway (e.g. `0.0.0.0` for LAN access). |
 | `PERSONALCLAW_BYPASS_LOCAL_NETWORKS` | `1` = skip token auth for any client whose **resolved** address is private (loopback/RFC1918/link-local/ULA). Dev convenience for a trusted LAN. **Do not set it behind a reverse proxy:** the address the gateway resolves is then the proxy's own, which is private, so requests forwarded from anywhere are admitted with no token. `personalclaw doctor`'s `remote` row fails when this is set together with `dashboard.trusted_proxies` or `dashboard.public_url`. See [remote-access.md](../guides/remote-access.md). |
 | `PERSONALCLAW_FIRST_PARTY_APPS_DIR` | Point a packaged install at a first-party apps directory. |
@@ -361,7 +362,7 @@ instance's gateway — with its own home, config and state — so a guess is a c
 read or write, not a degraded local call.
 
 - `GET /api/config/personalclaw` — full config as JSON (owner-only).
-- `PATCH /api/config/personalclaw {path, value}` — single-field writes, allowlisted; non-editable paths return 400.
+- `PATCH /api/config/personalclaw {path, value}` — single-field writes, allowlisted; non-editable paths return 400. A field that is a **security setting** (its `_EDITABLE_CONFIG` entry declares a `SecurityControl` — approval mode and YOLO, sign-in and 2FA, egress, the keychain, the sandbox ceilings, guardrail budgets, external access, sync, and a few more) follows two more rules. A write that LOOSENS it needs `"confirm": true` in the body (the JSON literal), or it answers `400 confirmation_required` with `{field, consent}` in `error.detail` — the sentence Settings shows before it resends; tightening never needs it. And a request carrying an **app** identity is refused `403 security_setting_owner_only`, in either direction and whatever it sends. `config/edit_spec.py` holds the rules; the settings are exactly the entries that declare one.
 - `GET /api/config/schema` — the full field registry (labels, help, types, defaults, deprecations) auto-derived from the config dataclasses. This document is generated against it.
 - `personalclaw config get|set <key> [value]` — CLI equivalent; `set` validates through the same loader. `get` withholds credential-named fields (`api_key`, `bot_token`, …) unless `--reveal` is passed.
 

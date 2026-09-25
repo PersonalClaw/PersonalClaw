@@ -18,6 +18,7 @@ from typing import Any
 
 from personalclaw.mcp_core import _post
 from personalclaw.tool_providers.base import tool_failure
+from personalclaw.validation import decode_json_text
 
 
 def _list_tools() -> list[dict[str, Any]]:
@@ -41,9 +42,14 @@ def _list_tools() -> list[dict[str, Any]]:
                         "type": "string",
                         "description": "The saved prompt name to render.",
                     },
+                    # JSON TEXT: a name → value map has no portable schema, and a strict provider
+                    # rejects the whole request over one (tool_providers.portable_schema).
                     "vars": {
-                        "type": "object",
-                        "description": "Values for the prompt's {{variable}} placeholders (name → value).",  # noqa: E501
+                        "type": "string",
+                        "description": (
+                            "Values for the prompt's {{variable}} placeholders, as JSON text: an "
+                            "object mapping each variable name to its value."
+                        ),
                     },
                 },
                 "required": ["prompt_id"],
@@ -57,9 +63,9 @@ def _call_tool(name: str, args: dict[str, Any]) -> str:
         pid = (args.get("prompt_id") or "").strip()
         if not pid:
             return tool_failure("prompt_id is required.")
-        variables = args.get("vars") or {}
+        variables = decode_json_text(args.get("vars")) or {}
         if not isinstance(variables, dict):
-            return tool_failure("'vars' must be an object (variable name → value).")
+            return tool_failure("'vars' must be a JSON object (variable name → value).")
         d = _post(
             f"/api/prompts/{urllib.parse.quote(pid)}/render",
             {"variables": variables},

@@ -34,7 +34,10 @@ const sub = (over: Partial<SpawnedAgent> = {}): SpawnedAgent => ({
 })
 
 const approval = (session_: string): PendingApproval =>
-  ({ id: `ap-${session_}`, source: 'chat', tool: 'bash', session: session_, ts: 1 })
+  ({
+    id: `ap-${session_}`, request_id: `ap-${session_}`, source: 'chat', tool: 'bash', session: session_, ts: 1,
+    session_title: '', agent: '', risk: '', grant_agent: '',
+  })
 
 const SEEDED = {
   loops: [

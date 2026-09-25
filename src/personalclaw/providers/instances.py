@@ -6,6 +6,11 @@ multiple named instances, each with its own config dict. Storage is at:
 
 Singleton extensions (multiInstance: false) continue to use the single
 config at ``~/.personalclaw/apps/{extension_name}/config.json`` via ProviderSettings.
+
+An instance's secret fields are kept in the credential store under a key the instance owns,
+and the record on disk holds a ``{{secret:…}}`` reference (:mod:`personalclaw.config.secret_refs`).
+Every function here returns an :class:`ExtensionInstance` whose ``config`` holds the VALUES —
+the routes mask them for the wire — and every writer stores them back.
 """
 
 import json
@@ -16,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw.atomic_write import atomic_write
+from personalclaw.config import secret_refs
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +30,34 @@ def _instances_dir(extension_name: str) -> Path:
     from personalclaw.config.loader import config_dir
 
     return config_dir() / "extensions" / extension_name / "instances"
+
+
+def _read_record(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Failed to read instance %s: %s", path, exc)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _logical(extension_name: str, record: dict[str, Any]) -> "ExtensionInstance":
+    inst = ExtensionInstance.from_dict(record)
+    inst.extension_name = extension_name
+    inst.config = secret_refs.resolve(inst.config)
+    return inst
+
+
+def _write(inst: "ExtensionInstance", previous_config: dict[str, Any] | None) -> None:
+    """Persist ``inst`` with its secret values moved into the credential store."""
+    stored = secret_refs.store(
+        inst.config,
+        owner=secret_refs.instance_owner(inst.extension_name, inst.id),
+        declared=secret_refs.declared_app_fields(inst.extension_name),
+        previous=previous_config,
+    )
+    path = _instances_dir(inst.extension_name) / f"{inst.id}.json"
+    atomic_write(path, json.dumps({**inst.to_dict(), "config": stored}, indent=2) + "\n")
 
 
 @dataclass
@@ -65,13 +99,9 @@ def list_instances(extension_name: str) -> list[ExtensionInstance]:
     for f in sorted(instances_path.iterdir()):
         if not f.suffix == ".json":
             continue
-        try:
-            data = json.loads(f.read_text(encoding="utf-8"))
-            inst = ExtensionInstance.from_dict(data)
-            inst.extension_name = extension_name
-            results.append(inst)
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Failed to read instance %s: %s", f, exc)
+        record = _read_record(f)
+        if record is not None:
+            results.append(_logical(extension_name, record))
     return results
 
 
@@ -80,14 +110,8 @@ def get_instance(extension_name: str, instance_id: str) -> ExtensionInstance | N
     path = _instances_dir(extension_name) / f"{instance_id}.json"
     if not path.is_file():
         return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        inst = ExtensionInstance.from_dict(data)
-        inst.extension_name = extension_name
-        return inst
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("Failed to read instance %s: %s", path, exc)
-        return None
+    record = _read_record(path)
+    return None if record is None else _logical(extension_name, record)
 
 
 def create_instance(
@@ -106,9 +130,7 @@ def create_instance(
         config=config,
         enabled=True,
     )
-    path = _instances_dir(extension_name) / f"{iid}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(path, json.dumps(inst.to_dict(), indent=2) + "\n")
+    _write(inst, None)
     return inst
 
 
@@ -121,24 +143,26 @@ def update_instance(
     enabled: bool | None = None,
 ) -> ExtensionInstance | None:
     """Update an existing instance. Returns None if not found."""
-    inst = get_instance(extension_name, instance_id)
-    if inst is None:
+    path = _instances_dir(extension_name) / f"{instance_id}.json"
+    record = _read_record(path) if path.is_file() else None
+    if record is None:
         return None
+    inst = _logical(extension_name, record)
     if display_name is not None:
         inst.display_name = display_name
     if config is not None:
         inst.config = config
     if enabled is not None:
         inst.enabled = enabled
-    path = _instances_dir(extension_name) / f"{instance_id}.json"
-    atomic_write(path, json.dumps(inst.to_dict(), indent=2) + "\n")
+    _write(inst, record.get("config") if isinstance(record.get("config"), dict) else None)
     return inst
 
 
 def delete_instance(extension_name: str, instance_id: str) -> bool:
-    """Delete an instance. Returns True if it existed."""
+    """Delete an instance, and the secrets it kept in the credential store. True if it existed."""
     path = _instances_dir(extension_name) / f"{instance_id}.json"
     if not path.is_file():
         return False
     path.unlink()
+    secret_refs.purge([secret_refs.instance_owner(extension_name, instance_id).prefix])
     return True

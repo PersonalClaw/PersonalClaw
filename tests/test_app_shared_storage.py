@@ -47,7 +47,7 @@ def _install(tmp_path: Path, name: str, *, permissions: dict | None = None, back
         bd.mkdir()
         (bd / "server.py").write_text("print('x')\n", encoding="utf-8")
     (d / "app.json").write_text(json.dumps(mani), encoding="utf-8")
-    res = app_manager.install(d)
+    res = app_manager.install(d, confirm=True)
     assert res.ok, res.error
     return d
 
@@ -182,7 +182,7 @@ def test_backend_start_hands_reader_the_shared_dir_env(tmp_path, monkeypatch):
 
 
 def test_consent_surface_lists_the_grant():
-    from personalclaw.apps.catalog import _manifest_consent
+    from personalclaw.apps.disclosure import describe
 
     consumer = AppManifest.from_dict(
         {
@@ -193,7 +193,7 @@ def test_consent_surface_lists_the_grant():
             "permissions": {"storageRead": ["note-keeper", "mail-*"]},
         }
     )
-    perms, _crons, _deps = _manifest_consent(consumer)
+    perms = describe(consumer)["permissions"]
     assert perms["storageRead"] == ["note-keeper", "mail-*"]
 
     sharer = AppManifest.from_dict(
@@ -205,5 +205,5 @@ def test_consent_surface_lists_the_grant():
             "permissions": {"storageShared": True},
         }
     )
-    perms2, _crons2, _deps2 = _manifest_consent(sharer)
+    perms2 = describe(sharer)["permissions"]
     assert perms2["storageShared"] is True

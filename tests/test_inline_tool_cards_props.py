@@ -18,7 +18,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from personalclaw.dashboard.chat import _flush_segment, _prepare_messages
-from personalclaw.dashboard.state import DashboardState
+from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import ConversationLog
 
 # ── Helpers ──
@@ -93,7 +93,7 @@ class TestSegmentFlushOnInterrupt:
                     # Accumulate text chunks in the session
                     assistant_text = ""
                     for chunk in text_chunks:
-                        session.append("chunk", chunk, "chunk")
+                        session.stream_chunk(chunk)
                         assistant_text += chunk
 
                     # Record broadcasts
@@ -121,9 +121,9 @@ class TestSegmentFlushOnInterrupt:
                     # Verify: assistant_text is reset
                     assert assistant_text == ""
 
-                    # Verify: no chunk messages remain in session
-                    chunk_count = sum(1 for m in session.messages if m.get("role") == "chunk")
-                    assert chunk_count == 0, "chunks must be removed after flush"
+                    # Verify: the streamed answer is settled — no streaming entry remains
+                    assert session.streaming_text is None, "the flush must settle the stream"
+                    assert not any(m.get("role") == "streaming" for m in session.messages)
 
                     # Verify: an assistant message was persisted
                     assistant_msgs = [m for m in session.messages if m.get("role") == "assistant"]
@@ -145,7 +145,7 @@ class TestSegmentFlushOnInterrupt:
 
                     assistant_text = ""
                     for chunk in text_chunks:
-                        session.append("chunk", chunk, "chunk")
+                        session.stream_chunk(chunk)
                         assistant_text += chunk
 
                     broadcasts: list[tuple[str, dict]] = []
@@ -238,16 +238,15 @@ class TestPersistedMessageStructure:
                     session = state.get_or_create_session("prop6")
 
                     for text, tool_name in segments:
-                        session.append("chunk", text, "chunk")
+                        session.stream_chunk(text)
                         _flush_segment(state, session, text)
                         session.append("tool", f"🔧 {tool_name}", "msg msg-tool")
 
-                    session.append("chunk", final_text, "chunk")
-                    session.messages = [m for m in session.messages if m.get("role") != "chunk"]
-                    session.append("assistant", final_text, "msg msg-a")
+                    session.stream_chunk(final_text)
+                    session.finish_stream(final_text)
 
                     roles = [m.get("role") for m in session.messages]
-                    assert "chunk" not in roles, "no chunk messages should remain"
+                    assert "streaming" not in roles, "no answer may be left half-written"
 
                     n_segments = len(segments)
                     expected_assistant = n_segments + 1
@@ -262,8 +261,8 @@ class TestPersistedMessageStructure:
                         actual_tool == expected_tool
                     ), f"expected {expected_tool} tool msgs, got {actual_tool}"
 
-                    non_chunk = [r for r in roles if r in ("assistant", "tool")]
-                    for i, role in enumerate(non_chunk):
+                    settled = [r for r in roles if r in ("assistant", "tool")]
+                    for i, role in enumerate(settled):
                         if i % 2 == 0:
                             assert (
                                 role == "assistant"
@@ -274,13 +273,13 @@ class TestPersistedMessageStructure:
                     tmp_dir.cleanup()
 
 
-# ── _prepare_messages chunk collapse ──
+# ── A streaming answer is one transcript entry ──
 
 
-class TestPrepareMessagesChunkCollapse:
-    """For any message list with trailing chunk messages (mid-stream state),
-    _prepare_messages shall collapse them into a single streaming message
-    while passing through assistant and tool messages unchanged.
+class TestStreamingAnswerIsOneEntry:
+    """However many chunks an answer arrives in (mid-stream state), it is ONE
+    ``streaming`` entry in the transcript, served once by _prepare_messages,
+    while assistant and tool messages pass through unchanged.
     """
 
     @given(
@@ -289,62 +288,43 @@ class TestPrepareMessagesChunkCollapse:
         trailing_chunks=st.lists(_text_st, min_size=1, max_size=5),
     )
     @settings(deadline=None)
-    def test_prepare_messages_collapses_trailing_chunks(
+    def test_streamed_chunks_are_one_served_message(
         self, assistant_texts, tool_names, trailing_chunks
     ):
-        """Generate message lists with interleaved assistant/tool messages
-        followed by trailing chunks.  Verify _prepare_messages output:
+        """Generate interleaved assistant/tool messages followed by a streamed
+        answer.  Verify the transcript and _prepare_messages:
         - assistant and tool messages pass through unchanged
-        - trailing chunks collapse into a single streaming message
+        - the chunks are ONE streaming entry, served as one streaming message
         """
-        messages: list[dict] = []
-
-        # Build interleaved assistant/tool prefix
+        session = _ChatSession("prop-stream")
         n_pairs = min(len(assistant_texts), len(tool_names))
         for i in range(n_pairs):
-            messages.append(
-                {"role": "assistant", "content": assistant_texts[i], "cls": "msg msg-a"}
-            )
-            messages.append(
-                {"role": "tool", "content": f"🔧 {tool_names[i]}", "cls": "msg msg-tool"}
-            )
-        # Any remaining assistant texts
+            session.append("assistant", assistant_texts[i], "msg msg-a")
+            session.append("tool", f"🔧 {tool_names[i]}", "msg msg-tool")
         for i in range(n_pairs, len(assistant_texts)):
-            messages.append(
-                {"role": "assistant", "content": assistant_texts[i], "cls": "msg msg-a"}
-            )
+            session.append("assistant", assistant_texts[i], "msg msg-a")
+        prefix = len(session.messages)
 
-        # Add trailing chunks
         for chunk in trailing_chunks:
-            messages.append({"role": "chunk", "content": chunk, "cls": "chunk"})
+            session.stream_chunk(chunk)
 
-        result = _prepare_messages(messages, running=True)
-
-        # Count roles in output
+        # One transcript entry for the whole streamed answer, not one per chunk.
+        assert len(session.messages) == prefix + 1
+        result = _prepare_messages(session.messages, running=True)
         result_roles = [m.get("role") for m in result]
-
-        # No chunk messages in output
-        assert "chunk" not in result_roles, "chunks must be collapsed"
-
-        # Exactly one streaming message at the end
-        streaming_count = result_roles.count("streaming")
-        assert streaming_count == 1, f"expected exactly 1 streaming message, got {streaming_count}"
+        assert result_roles.count("streaming") == 1
         assert result[-1]["role"] == "streaming", "streaming must be last"
+        assert len(result) == len(session.messages), "every entry is served exactly once"
 
         # Assistant and tool messages pass through
-        input_assistant = sum(1 for m in messages if m["role"] == "assistant")
-        input_tool = sum(1 for m in messages if m["role"] == "tool")
-        output_assistant = result_roles.count("assistant")
-        output_tool = result_roles.count("tool")
-        assert output_assistant == input_assistant
-        assert output_tool == input_tool
+        input_assistant = sum(1 for m in session.messages if m["role"] == "assistant")
+        input_tool = sum(1 for m in session.messages if m["role"] == "tool")
+        assert result_roles.count("assistant") == input_assistant
+        assert result_roles.count("tool") == input_tool
 
-        # Streaming content is concatenation of all chunk contents
-        # (after redaction, which is identity for our safe test strings)
-        expected_text = "".join(trailing_chunks)
-        # The streaming content may have been redacted but for safe chars
-        # it should match
-        assert result[-1]["content"] == expected_text
+        # The streaming content is the concatenation of every chunk (redaction is the
+        # identity for these safe strings).
+        assert result[-1]["content"] == "".join(trailing_chunks)
 
 
 # ── Chunk sequence monotonicity ──
@@ -391,7 +371,7 @@ class TestChunkSequenceMonotonicity:
                         for chunk in text_chunks:
                             assistant_text += chunk
                             chunk_seq += 1
-                            session.append("chunk", chunk, "chunk")
+                            session.stream_chunk(chunk)
                             state.broadcast_ws(
                                 "chat_chunk",
                                 {"session": session.key, "content": chunk, "seq": chunk_seq},
@@ -409,7 +389,7 @@ class TestChunkSequenceMonotonicity:
                     for chunk in final_chunks:
                         assistant_text += chunk
                         chunk_seq += 1
-                        session.append("chunk", chunk, "chunk")
+                        session.stream_chunk(chunk)
                         state.broadcast_ws(
                             "chat_chunk",
                             {"session": session.key, "content": chunk, "seq": chunk_seq},
@@ -456,15 +436,14 @@ class TestNoSegmentForToolFreeStreams:
                     for chunk in text_chunks:
                         assistant_text += chunk
                         chunk_seq += 1
-                        session.append("chunk", chunk, "chunk")
+                        session.stream_chunk(chunk)
                         state.broadcast_ws(
                             "chat_chunk",
                             {"session": session.key, "content": chunk, "seq": chunk_seq},
                         )
 
                     if assistant_text:
-                        session.messages = [m for m in session.messages if m.get("role") != "chunk"]
-                        session.append("assistant", assistant_text, "msg msg-a")
+                        session.finish_stream(assistant_text)
 
                     state.broadcast_ws("chat_done", {"session": session.key})
 

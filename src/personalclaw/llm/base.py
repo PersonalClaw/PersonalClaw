@@ -38,6 +38,17 @@ from personalclaw.llm.events import (  # noqa: F401
 from personalclaw.llm.events import AgentEvent as LLMEvent  # noqa: F401
 from personalclaw.llm.prompt_cache import PromptCache
 
+
+def wire_temperature(value: object) -> float | None:
+    """A request-bound ``temperature`` value as the float it is, or ``None`` when it is none.
+
+    ``bool`` is refused even though it is an ``int``: ``True`` is not a temperature.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
 CancelOutcome = Literal["acked", "timeout", "no_turn", "error"]
 
 
@@ -53,6 +64,33 @@ class ModelProvider(ABC):
     # undeclared provider gets the byte-identical no-marker path; a caching provider
     # sets AUTOMATIC (stable-prefix, no marker) or EXPLICIT (per-request marker).
     prompt_cache: PromptCache = PromptCache.NONE
+
+    # Whether this provider hands its model ONLY the user's request, never the assembled
+    # context (identity, memory, skills, instructions). True for a model too small to follow a
+    # long instruction block — it continues the instructions instead of answering — so the
+    # provider reads the request back out at ``USER_REQUEST_MARKER`` and discards the rest.
+    # Declared, because core must assemble, measure and record exactly what such a model
+    # receives: a skill "used" by a model that was never shown it is a false record.
+    request_only: bool = False
+
+    # The ``"<entry>:<model>"`` ref this instance was BUILT for. Stamped by the resolution seam
+    # (``providers.provider_bridge._resolve_from_config_registry``) — the one point that knows
+    # both halves — so the window resolver can name the model that actually serves a turn,
+    # including the zero-config fallback, which is a registry entry and not a binding.
+    served_ref: str = ""
+
+    async def served_context_window(self) -> int | None:
+        """The context window, in tokens, this provider will serve its next completion with.
+
+        ``None`` means "this provider cannot say" — the window is then resolved from what was
+        declared about the model (its catalog card, then the shared window table). A provider
+        that KNOWS better overrides it: an operator-declared ``context_window``, a runtime that
+        publishes the window it loaded the model with, or a model this provider runs itself.
+        This is the "served" step of ``context_headroom.resolve_window``, and a provider's own
+        context gauge must divide by the same number, or the gauge and the prompt budget
+        describe two different windows.
+        """
+        return None
 
     @abstractmethod
     async def start(self) -> None:
@@ -132,6 +170,34 @@ class ModelProvider(ABC):
         The two flags answer the same question for ``/compact`` from opposite ends, and
         exactly one of them being true is what stops the command reaching a model as the
         literal text "/compact" (#470).
+        """
+        return False
+
+    @property
+    def sampling_temperature(self) -> float | None:
+        """The sampling temperature this instance puts on the request, or ``None`` if it sends none.
+
+        ``None`` by default, and — like :meth:`stage_image_part`'s ``False`` — the default is
+        the safety property: a provider that never declared where a temperature goes cannot be
+        credited with sampling at one. A caller that ASKED for a temperature (best-of-N's
+        ladder, threaded as the ``temperature`` build kwarg) reads this back through the
+        model-call record the guard keeps (:mod:`personalclaw.guardrails.calls`) and says so
+        when it differs, instead of presenting N answers at the provider default as a sweep.
+
+        A statement about the REQUEST, not the model: an endpoint can still ignore the field,
+        which no client can observe — a zero spread across a slate is then the visible sign.
+        """
+        return None
+
+    @property
+    def keeps_cancelled_turns(self) -> bool:
+        """Whether a turn stopped mid-way stays in this provider's OWN history.
+
+        False by default: an ACP agent discards a cancelled turn from its conversation
+        log, so the next prompt re-injects it as the "[PREVIOUS TURN WAS CANCELLED]"
+        preamble. A provider that keeps the turn (the native loop records the user
+        message and whatever it had answered) must say True, or that preamble sends the
+        stopped message a second time.
         """
         return False
 

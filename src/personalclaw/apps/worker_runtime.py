@@ -78,6 +78,7 @@ from personalclaw.apps.background import (
 )
 from personalclaw.apps.manager import app_dir
 from personalclaw.apps.manifest import AppManifest
+from personalclaw.periodic_sweep import PeriodicSweep
 
 logger = logging.getLogger(__name__)
 
@@ -432,7 +433,11 @@ class WorkerSupervisor:
                 logger.info("app %s worker %s held back: %s", rec.app, rec.worker, pause_reason)
                 _notify_paused(rec.app, rec.worker, pause_reason)
             return False
-        cmd = BackendSupervisor._launch_cmd("", rec.entry)
+        # An app that declares python dependencies starts its worker so the app packages load
+        # after the interpreter's own (``app_python.child_argv``), exactly as a backend does.
+        manifest = _manifest_for(rec.app)
+        app_packages = bool(manifest is not None and manifest.dependencies.pythonDependencies)
+        cmd = BackendSupervisor._launch_cmd("", rec.entry, app_packages=app_packages)
         if cmd is None:
             logger.warning(
                 "app %s worker %s: cannot determine launcher for %s",
@@ -442,7 +447,7 @@ class WorkerSupervisor:
             )
             return False
         try:
-            env = self._child_env(rec)
+            env = self._child_env(rec, app_packages=app_packages)
         except Exception:  # noqa: BLE001 — a broken env is a refused start, not a crash
             logger.warning("app %s worker %s: child env failed", rec.app, rec.worker, exc_info=True)
             return False
@@ -472,7 +477,7 @@ class WorkerSupervisor:
         logger.info("app %s worker %s started: pid=%s", rec.app, rec.worker, proc.pid)
         return True
 
-    def _child_env(self, rec: SupervisedWorker) -> dict[str, str]:
+    def _child_env(self, rec: SupervisedWorker, *, app_packages: bool = False) -> dict[str, str]:
         """The worker's environment: the child-env ALLOWLIST plus what this site computes.
 
         Same allowlist as an app backend (``build_child_env``) — a worker is third-party
@@ -508,6 +513,10 @@ class WorkerSupervisor:
         # APE-10 read-only shared mounts: the same grant, computed by the same function the
         # backend site uses, so the two children of one app never disagree about it.
         extra.update(shared_storage_env(rec.app))
+        if app_packages:
+            from personalclaw.apps import app_python
+
+            extra.update(app_python.child_env())
         env = build_child_env(site="app-worker", extra=extra)
         if not storage_ok:
             # The gate is enforced where the name would become a variable — an operator's
@@ -726,22 +735,22 @@ def get_worker_supervisor() -> WorkerSupervisor:
     return _supervisor
 
 
+_WATCHDOG = PeriodicSweep(
+    "app-worker-watchdog", _WATCHDOG_INTERVAL, lambda: get_worker_supervisor().sweep()
+)
+
+
 def start_worker_watchdog() -> threading.Thread:
-    """Start the daemon thread that sweeps every ``_WATCHDOG_INTERVAL`` seconds.
+    """Start the daemon sweep that runs every ``_WATCHDOG_INTERVAL`` seconds — or return the
+    one already running.
 
-    The equivalent of ``start_backend_watchdog``, and it wants the same call site:
-    ``providers/loader.py`` starts that one at boot. Returned for testing.
+    The equivalent of ``start_backend_watchdog``, with the same call site
+    (``providers/loader.py`` at boot) and the same end: :func:`stop_worker_watchdog` from the
+    gateway's cleanup, so no sweep outlives the gateway that started it.
     """
+    return _WATCHDOG.start()
 
-    def _loop() -> None:
-        while True:
-            time.sleep(_WATCHDOG_INTERVAL)
-            try:
-                get_worker_supervisor().sweep()
-            except Exception:  # noqa: BLE001 — one bad sweep must not end the watchdog
-                logger.debug("app-worker watchdog sweep failed", exc_info=True)
 
-    t = threading.Thread(target=_loop, name="app-worker-watchdog", daemon=True)
-    t.start()
-    logger.info("app-worker watchdog started (interval=%ds)", _WATCHDOG_INTERVAL)
-    return t
+def stop_worker_watchdog() -> None:
+    """Stop the sweep :func:`start_worker_watchdog` started. Idempotent."""
+    _WATCHDOG.stop()

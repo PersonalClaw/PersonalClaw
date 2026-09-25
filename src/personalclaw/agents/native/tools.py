@@ -42,7 +42,10 @@ def tool_definitions_to_openai_schema(tools: list[ToolDefinition]) -> list[dict]
 
     Each becomes ``{"type": "function", "function": {name, description,
     parameters}}``. ``parameters`` defaults to an empty-object schema when the
-    tool declares none (some endpoints reject a missing schema).
+    tool declares none, because some endpoints reject a missing schema: OpenRouter's
+    and Mistral's request contracts both declare ``parameters`` required. Omitting it
+    is not the portable form, even though Gemini's native API documents it (see
+    :mod:`personalclaw.tool_providers.portable_schema`).
     """
     schema: list[dict] = []
     for t in tools:

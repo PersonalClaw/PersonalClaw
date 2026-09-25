@@ -209,14 +209,20 @@ export function replayRegressed(row: LearningRow): boolean {
 
 // ── The staging week panel ──
 /** How a day should render. `silent` is the alarming one: capture ran before this day and then did
- *  not run on it. A day before the first pass is out of scope rather than a failure. */
-export type DayState = 'out_of_scope' | 'silent' | 'error' | 'produced' | 'ok'
+ *  not run on it. A day before the first-ever pass — every day, on an install where capture has
+ *  never run — is `not_started`: capture had not begun, so nothing could have been captured. That
+ *  is neither a failure nor a scoping decision.
+ *
+ *  🔴 This state was called `out_of_scope`, and the tile printed its name: "out of scope" under
+ *  every day of a default install's week, which reads as "nothing that day was relevant" — a
+ *  judgment no code here makes. The only inputs are `passes === 0` and the first-pass floor. */
+export type DayState = 'not_started' | 'silent' | 'error' | 'produced' | 'ok'
 
 export function dayState(day: StagingDay, firstPassDay?: string): DayState {
   if (
     day.passes === 0
     && (firstPassDay === '' || (firstPassDay !== undefined && day.day < firstPassDay))
-  ) return 'out_of_scope'
+  ) return 'not_started'
   if (day.passes === 0) return 'silent'
   if (day.errors > 0) return 'error'
   if (day.produced > 0) return 'produced'
@@ -226,14 +232,15 @@ export function dayState(day: StagingDay, firstPassDay?: string): DayState {
 /** `DayState → ink`. Spread straight into `color:` on the pass-count span in `LearningPage`'s
  *  `WeekPanel`, so every value here is TEXT INK and carries AA's 4.5:1 for 12–14px type.
  *
- *  🔴 `out_of_scope` WAS `--color-outline`, A HAIRLINE TOKEN, AT 3.1833:1 IN LIGHT (#3504). A
+ *  🔴 `not_started` (then named `out_of_scope`) WAS `--color-outline`, A HAIRLINE TOKEN, AT
+ *  3.1833:1 IN LIGHT (#3504). A
  *  border/divider value exists to be *barely* separable from its surface, which is the opposite of
  *  what text needs — the same defect #3493 fixed one tone map over, where `StatusPill`'s `neutral`
  *  drew in `--color-outline-variant`. `--color-outline` carries an extra structural tell: it is
  *  `#8e918f` in BOTH modes, and an ink that does not invert with the mode cannot be readable in
  *  both. Measured on the cell's own `bg-surface-container`:
  *
- *      out_of_scope  --color-outline          light 3.1833   dark 5.1861   <- under AA in light
+ *      not_started   --color-outline          light 3.1833   dark 5.1861   <- under AA in light
  *      silent        --color-warn             light 6.3144   dark 7.1839
  *      error         --color-danger           light 6.4389   dark 5.7037
  *      produced      --color-primary          light 4.8314   dark 5.9008
@@ -245,15 +252,12 @@ export function dayState(day: StagingDay, firstPassDay?: string): DayState {
  *  the one tier `WeekPanel` happens to hard-code today.
  *
  *  `--color-on-surface-low` also clears AA and was rejected: `ok` already ships it, so picking it
- *  would collapse "out of scope" and "ran, produced nothing" into one grey and delete a distinction
+ *  would collapse "not started" and "ran, produced nothing" into one grey and delete a distinction
  *  the panel exists to draw. `--color-on-surface-var` keeps them 1.55:1 apart in light and 1.63:1 in
  *  dark, and it is the muted-text tier `TIER_TONE.low` in this same file already uses — so the two
- *  maps agree instead of minting a second muted grey.
- *
- *  Not a dash-only cell: `dayState` returns `out_of_scope` BEFORE it checks `passes === 0`, so a
- *  real pass count can land in this ink too. */
+ *  maps agree instead of minting a second muted grey. */
 export const DAY_TONE: Record<DayState, string> = {
-  out_of_scope: 'var(--color-on-surface-var)',
+  not_started: 'var(--color-on-surface-var)',
   silent: 'var(--color-warn)',
   error: 'var(--color-danger)',
   produced: 'var(--color-primary)',
@@ -261,7 +265,7 @@ export const DAY_TONE: Record<DayState, string> = {
 }
 
 export const DAY_HINT: Record<DayState, string> = {
-  out_of_scope: 'This day predates the first capture pass',
+  not_started: 'Capture had not started yet — this day predates the first capture pass',
   silent: 'No capture pass ran — this is the gap an aggregate view cannot see',
   error: 'A capture pass errored',
   produced: 'Produced proposals',

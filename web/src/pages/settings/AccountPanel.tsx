@@ -211,8 +211,10 @@ function LoginSection() {
   }
 
   const toggleLogin = async (next: boolean) => {
-    // Turning this OFF is the relaxing direction: it retires the password sign-in path, and a
-    // user who does not have the token link handy could lock themselves out of this dashboard.
+    // Turning this OFF retires the password sign-in path, and a user who does not have the token
+    // link handy could lock themselves out of this dashboard — so OFF asks, as a LOCKOUT warning.
+    // ON is the security-relevant direction (a new way in that anyone who can reach the page may
+    // try), and the gateway asks its own consent for it through `api.patchConfig`.
     if (!next && !(await confirm({
       title: 'Turn off password sign-in?',
       body: 'Only your token link will work afterward — make sure you have it saved before turning this off, or you could lock yourself out of this dashboard.',
@@ -233,7 +235,8 @@ function LoginSection() {
       confirmLabel: 'Turn off',
       danger: true,
     }))) return
-    api.patchConfig('auth.require_totp', next)
+    // OFF was just consented to above; the flag tells the gateway so, and it does not ask again.
+    api.patchConfig('auth.require_totp', next, !next)
       .then(() => load())
       .catch((e) => notify(`Couldn't change the 2FA requirement: ${String((e as Error)?.message || e)}`, 'error'))
   }

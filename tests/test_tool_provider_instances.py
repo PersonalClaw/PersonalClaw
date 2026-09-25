@@ -94,9 +94,10 @@ def test_create_returns_none_when_no_enabled_instances(_cfg_home, monkeypatch):
 def test_register_and_deregister_normalize_a_list(_cfg_home, monkeypatch):
     _stub_factory(monkeypatch)
     registered: list[str] = []
+    apps: list[str] = []
     monkeypatch.setattr(
         "personalclaw.tool_providers.registry.register_provider",
-        lambda p: registered.append(p.name),
+        lambda p, app="": (registered.append(p.name), apps.append(app)),
     )
     unregistered: list[str] = []
     monkeypatch.setattr(
@@ -109,6 +110,9 @@ def test_register_and_deregister_normalize_a_list(_cfg_home, monkeypatch):
     )
     handler.register(_Ext("openai-tools"), [p1, p2])
     assert registered == [p1.name, p2.name]
+    # Every instance is registered under the app that owns it — the tool seam names that app
+    # when one of its tools has a schema no model request can carry.
+    assert apps == ["openai-tools", "openai-tools"]
     handler.deregister(_Ext("openai-tools"), [p1, p2])
     assert unregistered == [p1.name, p2.name]
 
@@ -213,9 +217,9 @@ async def _model_provider_client(tmp_path):
     # `rebuild_agent_config()` writes through `agent.agents_dir()` — no longer a MODULE-LEVEL
     # constant frozen at import (`agent.py:93`) — patching `config_dir` alone
     # leaves it pointing at the REAL home, so the write escapes tmp_path and the
-    # conftest real-home rail fails the whole session (`agents/personalclaw.json`
-    # modified). Redirect the frozen constants too; `_USER_DIR` keeps the merge
-    # from reading the real user's `mcp.json` into the rebuilt config.
+    # real-home guard refuses it and fails the test (`agents/personalclaw.json`). Redirect
+    # the frozen constants too; `_USER_DIR` keeps the merge from reading the real user's
+    # `mcp.json` into the rebuilt config.
     with (
         patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
         patch("personalclaw.agent.agents_dir", lambda: tmp_path / "agents"),

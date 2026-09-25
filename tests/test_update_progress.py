@@ -888,3 +888,71 @@ class TestCheckAgreesWithApplyUnderNightly:
     ) -> None:
         """Vacuity guard: an install that never changed version offers no rollback."""
         assert self._run(monkeypatch, channel="stable", behind=0)["last_version"] == ""
+
+
+class TestEveryKindGetsACheckResult:
+    """Updates → Check on a pip install never gave a result: `checked` came only from the git
+    half, which returns early on every other kind, so the endpoint answered `checked: false`
+    right after comparing the install with the newest release. Driven through the REAL
+    `build_update_status` (only the network probes are stubbed), because a mocked status dict
+    would carry whatever key the test put in it and prove nothing about the merge."""
+
+    @staticmethod
+    def _check(monkeypatch, *, latest_tag: str, pin: str = "", git_checked: bool = False) -> dict:
+        import types
+
+        from personalclaw.dashboard.handlers import updates as U
+
+        cfg = types.SimpleNamespace(
+            updates=types.SimpleNamespace(
+                channel="stable",
+                pin=pin,
+                auto="off",
+                check_enabled=True,
+                check_interval_hours=12,
+                last_version="",
+            ),
+        )
+        monkeypatch.setattr(U.AppConfig, "load", staticmethod(lambda: cfg))
+        monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
+        monkeypatch.delenv("PERSONALCLAW_PROJECT_DIR", raising=False)
+        monkeypatch.setattr(U, "_do_update_check", AsyncMock())
+        monkeypatch.setattr(U, "_local_version", "0.1.3")
+        monkeypatch.setattr(
+            U.self_update,
+            "fetch_latest_release",
+            AsyncMock(return_value={"tag": latest_tag} if latest_tag else {}),
+        )
+        monkeypatch.setattr(
+            U.self_update,
+            "fetch_releases",
+            AsyncMock(return_value=[{"tag": "v0.1.3", "prerelease": False}]),
+        )
+        monkeypatch.setitem(U._update_info, "checked", git_checked)
+        resp = asyncio.run(U.api_update_check(MagicMock()))
+        return json.loads(resp.body)
+
+    def test_a_pip_install_that_was_compared_says_it_was_checked(self, monkeypatch) -> None:
+        body = self._check(monkeypatch, latest_tag="v0.1.3")
+        assert body["kind"] == "pip"
+        assert body["checked"] is True
+        assert body["available"] is False
+
+    def test_an_update_found_on_a_pip_install_is_a_checked_result_too(self, monkeypatch) -> None:
+        body = self._check(monkeypatch, latest_tag="v0.1.4")
+        assert body["checked"] is True
+        assert body["available"] is True
+
+    def test_nothing_fetched_is_not_a_result(self, monkeypatch) -> None:
+        """Vacuity floor: the fix must not turn every response into "checked"."""
+        assert self._check(monkeypatch, latest_tag="")["checked"] is False
+
+    def test_the_release_half_cannot_erase_a_git_answer(self, monkeypatch) -> None:
+        """Either half is an answer — a plain merge would let the release half's False win."""
+        assert self._check(monkeypatch, latest_tag="", git_checked=True)["checked"] is True
+
+    def test_a_pin_naming_no_release_reaches_the_panel_as_pin_miss(self, monkeypatch) -> None:
+        body = self._check(monkeypatch, latest_tag="v0.1.3", pin="0.2.1")
+        assert body["pin"] == "0.2.1"
+        assert body["pin_miss"] is True
+        assert body["available"] is False

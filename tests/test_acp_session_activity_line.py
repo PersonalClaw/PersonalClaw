@@ -101,27 +101,13 @@ async def _async_iter(items):
         yield item
 
 
-def _history_log(rows: list[dict] | None):
-    """A ``conversation_log`` double whose ``recent()`` returns *rows*.
-
-    ``None`` means "no log wired at all" (the pre-existing harness shape). ``[]`` means
-    "a log that holds nothing for this key" — the two are different inputs to the
-    restore predicate and both must yield "created".
-    """
-    if rows is None:
-        return None
-    log = MagicMock()
-    log.recent = MagicMock(return_value=list(rows))
-    return log
-
-
 _PRIOR_TURNS = [
     {"role": "user", "content": "what did we decide?"},
     {"role": "assistant", "content": "we decided X"},
 ]
 
 
-def _state(tmp_path, *, provider_id: str, is_new: bool, resumed: bool, history=None):
+def _state(tmp_path, *, provider_id: str, is_new: bool, resumed: bool):
     sessions = MagicMock(count=0)
     sessions.get_pid = MagicMock(return_value=None)
     client = AsyncMock()
@@ -137,7 +123,6 @@ def _state(tmp_path, *, provider_id: str, is_new: bool, resumed: bool, history=N
     cb = MagicMock()
     cb.hooks.on_tool_call.return_value = ToolHookResult.allow()
     cb.build_message.return_value = ("hello", None)
-    cb.conversation_log = _history_log(history)
     state.context_builder = cb
     hs = MagicMock()
     hs.fire_for_ids = AsyncMock(return_value=[])
@@ -164,14 +149,26 @@ def _session_lines(state) -> list[str]:
     return out
 
 
+def _session(history) -> _ChatSession:
+    """A session whose OWN buffer holds *history* — the one source a restore reads.
+
+    ``None`` and ``[]`` are both "no prior turns" (a brand-new conversation), and both
+    must yield "created". The in-flight "hello" is appended last, as the dashboard's
+    send does, and is never history.
+    """
+    session = _ChatSession("chat-1-g1415")
+    session._trust = True
+    for row in history or []:
+        session.append(row["role"], row["content"], ts="2026-01-01T00:00:00")
+    session.append("user", "hello", "msg msg-u")
+    return session
+
+
 async def _one_turn(
     tmp_path, *, provider_id: str, is_new: bool, resumed: bool, history=None
 ) -> list[str]:
-    state, _client = _state(
-        tmp_path, provider_id=provider_id, is_new=is_new, resumed=resumed, history=history
-    )
-    session = _ChatSession("chat-1-g1415")
-    session._trust = True
+    state, _client = _state(tmp_path, provider_id=provider_id, is_new=is_new, resumed=resumed)
+    session = _session(history)
     with patch("personalclaw.dashboard.chat_runner.sel", MagicMock()):
         await run_chat(state, session, "hello")
     return _session_lines(state)
@@ -180,11 +177,8 @@ async def _one_turn(
 async def _turn_and_state(tmp_path, *, provider_id: str, is_new: bool, resumed: bool, history=None):
     """Like :func:`_one_turn` but also hands back the state, so a test can assert what
     the turn DID (whether the history bootstrap ran) beside what it SAID."""
-    state, _client = _state(
-        tmp_path, provider_id=provider_id, is_new=is_new, resumed=resumed, history=history
-    )
-    session = _ChatSession("chat-1-g1415")
-    session._trust = True
+    state, _client = _state(tmp_path, provider_id=provider_id, is_new=is_new, resumed=resumed)
+    session = _session(history)
     with patch("personalclaw.dashboard.chat_runner.sel", MagicMock()):
         await run_chat(state, session, "hello")
     return _session_lines(state), state
@@ -317,9 +311,9 @@ class TestARestoreFromHistoryIsNotCalledResumed:
 
     @pytest.mark.asyncio
     async def test_no_prior_history_still_says_created(self, tmp_path):
-        """VACUITY FLOOR the other way: an empty log is not a restore. Both "no log
-        wired" and "a log holding nothing for this key" must read "created", or the
-        new verb would fire on every brand-new conversation."""
+        """VACUITY FLOOR the other way: no prior turns is not a restore — and the
+        message being sent is never one. Both shapes of "nothing before it" must read
+        "created", or the new verb would fire on every brand-new conversation."""
         for history in (None, []):
             lines = await _one_turn(
                 tmp_path,

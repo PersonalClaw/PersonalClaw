@@ -274,10 +274,14 @@ test.describe('a11y (WCAG AA): desktop viewport — the Session Map rail, OPEN',
 
       // ── FLOOR 2: the preview card, revealed the way a keyboard user reveals it ──
       // A cursor key opens the card and passive focus does not (the rail's REVEAL
-      // one-shot), so the card cannot be reached by focusing a tick alone. The card is
-      // the only text-bearing surface the rail owns — role label, timestamp, request and
-      // response excerpts — i.e. the one place a contrast rule can bite here at all.
+      // one-shot), so the card cannot be reached by focusing a marker alone. The card is
+      // the only text-bearing surface the rail owns — timestamp, request and the muted
+      // reply excerpt — i.e. the one place a contrast rule can bite here at all.
+      // Home, THEN ArrowDown: the tab stop seeds on the on-screen region, which with one
+      // marker per message can already be the LAST marker, where a lone ArrowDown clamps,
+      // moves no focus and so reveals nothing. From Home the second key always moves.
       await page.locator(`${MARK}[tabindex="0"]`).focus()
+      await page.keyboard.press('Home')
       await page.keyboard.press('ArrowDown')
       const card = page.locator('[data-session-map-card]')
       await expect(

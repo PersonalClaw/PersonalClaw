@@ -128,9 +128,17 @@ RUN groupadd --gid 10001 personalclaw && \
 
 COPY --from=builder /opt/venv /opt/venv
 
+# /data is the ONLY volume, so everything a user makes has to land under it. The workspace root —
+# the default chat workspace, and where the folder picker opens to create a project folder —
+# otherwise defaults to ~/workplace/personalclaw-workspace, which in this image is
+# /home/personalclaw/…: container-local, and gone on `docker rm` + `docker run` while the
+# project page kept pointing at it. /data/workspace is the path compose has always set and the
+# home's own `workspace` entry in the state inventory (durability/inventory.py), so snapshots
+# carry it. Set here, the README's one-liner is safe without an extra flag.
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PERSONALCLAW_HOME=/data \
+    PERSONALCLAW_WORKSPACE=/data/workspace \
     PERSONALCLAW_PORT=10000 \
     PERSONALCLAW_INSTALL_KIND=container
 

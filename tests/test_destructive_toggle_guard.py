@@ -316,8 +316,11 @@ async def test_no_boolean_toggle_irreversibly_deletes_state(seeded_home: Path) -
         written: list[tuple[str, bool]] = []
 
         async def _patch(key: str, value: bool) -> None:
+            # As the OWNER who has consented: a toggle whose ON (or OFF) loosens a security
+            # setting needs `confirm: true` (config/edit_spec.py). What this sweep measures is
+            # whether a toggle destroys state, which is the same question with or without it.
             resp = await client.patch(
-                "/api/config/personalclaw", json={"path": key, "value": value}
+                "/api/config/personalclaw", json={"path": key, "value": value, "confirm": True}
             )
             assert resp.status == 200, (
                 f"PATCH {key}={value} returned {resp.status}: {await resp.text()}. Every entry "

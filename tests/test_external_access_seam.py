@@ -258,7 +258,9 @@ class TestPatchRefusals:
         refusal above pass for the wrong reason — the classic false-green on a
         negative assertion.
         """
-        status, body = await self._patch("external_access.enabled", True)
+        # `False`, the tightening write: turning a surface ON loosens it and needs the owner's
+        # `confirm: true` (config/edit_spec.py), which this helper deliberately does not send.
+        status, body = await self._patch("external_access.enabled", False)
         assert status == 200, f"the allowed path was refused too — helper is broken: {body}"
 
 

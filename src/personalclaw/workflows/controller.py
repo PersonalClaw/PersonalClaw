@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw import project_context, review_triage
+from personalclaw.guardrails.calls import CallLog, capture_model_calls
 from personalclaw.knowledge import session_brief
 from personalclaw.ledger import outcomes
 from personalclaw.loop import tick as convergence
@@ -248,6 +249,9 @@ class _InFlight:
     started: float
     last_progress: float
     cache_key: CacheKey
+    #: Every guarded model call the node's dispatch made (`guardrails.calls`) — what an action
+    #: provider's calls used, and, at a cancel, how many were cut off mid-generation.
+    calls: CallLog = field(default_factory=CallLog)
 
 
 #: How many convergence decisions per loop the run row keeps. Bounded, because an unbounded
@@ -570,6 +574,14 @@ class RunController:
 
     async def _tick_loop(self) -> None:
         try:
+            if store.cancel_requested(self.run.id):
+                # A cancel that reached a loop which was NOT running — a paused run woken by
+                # `service.cancel_run` to apply it. Honoured BEFORE `_prepare`, which would flip the
+                # row back to RUNNING and journal a start for a run that is about to end.
+                async with self._lock:
+                    await self._cancel_inflight()
+                    await self._finish(RunStatus.CANCELLED)
+                return
             if not await self._prepare():
                 # The run was refused before any node ran (a fatal `workspace:` declaration or a
                 # contended named workspace). `_prepare` already wrote the terminal status through
@@ -661,6 +673,9 @@ class RunController:
         # iteration blind, re-deriving what a previous one already verified, which is the exact
         # failure the mechanism exists to prevent.
         self._rehydrate_context()
+        self._rehydrate_loop_progress()
+        if resumed:
+            self._requeue_orphaned_stages()
         async with self._lock:
             if not self.run.started_at:
                 self.run.started_at = _now()
@@ -907,6 +922,14 @@ class RunController:
         if store.cancel_requested(self.run.id):
             await self._cancel_inflight()
             await self._finish(RunStatus.CANCELLED)
+            return True
+
+        # A sticky PAUSE, read at the same point as a cancel and for the same reason: an intent a
+        # request handler recorded is applied by the ONE writer, on a step, with the lock held.
+        # PAUSED is not terminal — the loop simply stops here, and `wake()` restarts it on resume.
+        if store.pause_requested(self.run.id):
+            await self._pause_inflight()
+            await self._finish(RunStatus.PAUSED)
             return True
 
         # Mutations drain HERE — lock held, nothing mid-launch (WF2-R20 safety #1). Before
@@ -2697,9 +2720,12 @@ class RunController:
         )
 
         now = time.time()
-        task = asyncio.create_task(self._execute(item, ctx))
+        # The task COPIES the context at creation, so a log bound around `create_task` is the
+        # dispatch's own: every guarded model call it makes, however deep, is recorded there.
+        with capture_model_calls() as calls:
+            task = asyncio.create_task(self._execute(item, ctx))
         self._inflight[item.path] = _InFlight(
-            task=task, ready=item, started=now, last_progress=now, cache_key=key
+            task=task, ready=item, started=now, last_progress=now, cache_key=key, calls=calls
         )
 
     # ── effect ledger ──
@@ -3020,6 +3046,10 @@ class RunController:
             # each call would record saves nobody ever reads, leaving the anti-thrashing rule
             # permanently looking at an empty history.
             compaction_saves=self._compaction_saves.setdefault(node.id, []),
+            # The user's explicit unattended grant, read off the run's overlay at EVERY dispatch
+            # rather than cached: the overlay is the run row's, and the row is what a restart
+            # re-reads. Only a stage consults it (`dispatch_stage`).
+            unattended=supervisor_policy.unattended_grant(self.run.policy_overrides),
         )
         if total and total > 0:
             try:
@@ -3429,7 +3459,8 @@ class RunController:
         # reusing that field would flip the row's rendering and lose the distinction.
         inst.schema_shortfall = result.schema_shortfall
         inst.failure = result.failure
-        inst.tokens = result.tokens
+        tokens, model, cost_usd = _measured_usage(result, entry.calls)
+        inst.tokens = tokens if tokens is not None else result.tokens
         self._decline(inst, result.declined_edges)
 
         # An action provider may ASK rather than finish. Checked before the
@@ -3512,7 +3543,9 @@ class RunController:
             inst.output_ref = ref
             if item.node.id:
                 self._outputs[item.node.id] = preview
-            self.run.total_tokens += int(result.tokens)
+            # The run row keeps the dispatcher's estimate as a FLOOR when the provider reported no
+            # usage — a budget must still see the spend — while the ledger says "not recorded".
+            self.run.total_tokens += int(inst.tokens)
             self.journal.step_completed(
                 item.path,
                 item.node.id,
@@ -3520,11 +3553,11 @@ class RunController:
                 cache_key=entry.cache_key.to_str(),
                 state=result.state,
                 duration_secs=duration,
-                tokens=result.tokens,
+                tokens=tokens,
                 retries=max(0, inst.attempt - 1),
-                model=result.model,
+                model=model,
                 provider=result.provider,
-                cost_usd=result.cost_usd,
+                cost_usd=cost_usd,
                 degraded_reason=result.degraded_reason,
                 # The prompt the PROVIDER received, with the fact of a substitution beside it
                 # (#3166). `result.resolved_prompt` is post-scan since the dispatcher reads it back
@@ -3564,13 +3597,13 @@ class RunController:
                     "input_hash": entry.cache_key.inputs_hash,
                 },
             )
-            # Retries are spent. Produce the typed escalation artifact rather than just
-            # dying: five named options let a human act, where a bare "it failed" leaves
-            # them to invent the next move.
+            # Retries are spent — or there were none to spend (no budget, or a class a retry
+            # cannot fix), and "every retry was spent" on a single attempt is a false sentence.
+            # Produce the typed escalation artifact rather than just dying.
             self._escalate(
                 item.path,
                 item.node.id,
-                reason="retries_exhausted",
+                reason="retries_exhausted" if inst.attempt > 1 else "not_retried",
                 detail=(result.failure.cause_plain if result.failure else ""),
             )
 
@@ -4024,6 +4057,19 @@ class RunController:
                 )
         return failed, attempted, first_error
 
+    def _loop_node_under_overlay(self, node: Node) -> Node:
+        """The loop node with the run's ``max_cycles`` override applied as its iteration cap.
+
+        A template is SHARED across runs, so a per-instance cycle budget cannot live in it (OWNER
+        RULING 2); the run's overlay carries it, and this is where it meets the one config key the
+        engine bounds iterations by. A copy, never an edit: the spec every other reader walks must
+        keep the template's declaration. No override (or ``0``) returns the node unchanged.
+        """
+        cap = supervisor_policy.loop_iteration_cap(self.run.policy_overrides)
+        if not cap:
+            return node
+        return replace(node, config={**(node.config or {}), "max_iterations": cap})
+
     def _advance_loop(self, path: str, node_id: str) -> None:
         """Advance a loop's iteration counter when its body finished an iteration.
 
@@ -4043,6 +4089,9 @@ class RunController:
         node = dict(_walk(self.root)).get(spec_path(parent_path))
         if node is None or node.kind != NodeKind.LOOP:
             return
+        # The run's own cycle budget, applied to the ONE node both iteration-cap readers below
+        # consult (`check_breaker` and `loop_should_continue` both read `max_iterations`).
+        node = self._loop_node_under_overlay(node)
         if not self._iteration_complete(node, parent_path, iteration):
             # A CONTAINER-bodied loop calls this once per leaf. Advancing on the first one
             # would end the iteration mid-cycle: the wait would complete, the counter would
@@ -4425,6 +4474,87 @@ class RunController:
                     self._seen[path] = longrun.SeenSet.from_dict(rec.get("seen") or {})
             except Exception:
                 logger.debug("run %s: skipping unreadable context record", self.run.id)
+
+    def _rehydrate_loop_progress(self) -> None:
+        """Rebuild every loop's iteration counter from the ledger on start/resume.
+
+        🔴 ``_iterations`` lived in memory only, and it is what the frontier reads to know WHICH
+        iteration of a loop's body is current. A controller built by a restarted gateway started
+        every loop back at iteration 0 — whose body was already terminal — so nothing was runnable
+        and the run FAILED "run deadlocked: no runnable nodes and none in flight". Measured on a
+        General loop paused in its second iteration, the gateway restarted, then resumed: failed
+        five seconds after Resume. Every run whose loop was past its first iteration when the
+        process ended had the same fate.
+
+        The counter advances exactly when ``_advance_loop`` journals a ``continue`` iteration, so
+        that record is its durable form: the next iteration of each loop is one past the last one
+        that continued. Replayed like ``_rehydrate_context`` — a rewind archives the rows it undoes,
+        so only live history counts — and never raises, for the same reason. ``max`` keeps a
+        same-process restart of the tick loop (a resume) from moving a counter backwards.
+
+        The dry streak and breaker evidence are NOT journaled and start empty: a resumed
+        ``until_dry`` loop may run up to ``streak`` more iterations before it can stop dry, which
+        costs cycles rather than correctness.
+        """
+        try:
+            rows = journal_mod.ledger(self.run.id, kinds={journal_mod.ITERATION})
+        except Exception:
+            logger.debug("run %s: could not read the iteration ledger", self.run.id, exc_info=True)
+            return
+        for rec in rows:
+            path = str(rec.get("instance_path", "") or "")
+            iteration = rec.get("iteration")
+            if not path or not isinstance(iteration, int) or rec.get("outcome") != "continue":
+                continue
+            self._iterations[path] = max(int(self._iterations.get(path, 0)), iteration + 1)
+
+    def _requeue_orphaned_stages(self) -> list[str]:
+        """Put back in the queue every stage whose subagent ended with an earlier gateway process.
+
+        A dispatched stage keeps its subagent's id in instance state, and
+        ``_reconcile_dispatched_stages`` polls the manager for its verdict. After a restart the
+        subagent is gone — a native one ran in the dead process, an ACP one is killed by the
+        orphan sweep — while the state still reads RUNNING with its id, and a fresh manager knows
+        no ids. The reconciler rightly invents no verdict for an unknown id, so the stage read
+        "still working" until the stale-run audit, and the loop never moved again.
+
+        Called only when a RESUMED run's controller starts, which is what makes "unknown to this
+        process's manager" decisive: nothing this controller spawned can be unknown, and a
+        subagent another controller in this process spawned is known (one manager per process).
+        So this is not a verdict on the work — the stage goes back to PENDING at the same epoch,
+        exactly like a paused stage (`_pause_inflight`): its attempt is not charged, its
+        no-double-execution claim is released (a leftover claim makes the re-run meet its own
+        lease, #3533), and the scheduler dispatches it again.
+        """
+        manager = self.services.subagents
+        if manager is None or not hasattr(manager, "get"):
+            return []
+        orphans: list[str] = []
+        for path in self._awaiting_out_of_band_work():
+            inst = self._instance(path)
+            try:
+                known = manager.get(inst.subagent_id) is not None
+            except Exception:
+                continue  # an unreadable manager is not evidence the work is gone
+            if known:
+                continue
+            release_execution_claim(inst.claim_target, inst.claim_holder)
+            inst.claim_target = ""
+            inst.claim_holder = ""
+            inst.state = InstanceState.PENDING
+            inst.subagent_id = ""
+            inst.started_at = None
+            inst.attempt = max(0, inst.attempt - 1)
+            orphans.append(path)
+        if orphans:
+            logger.info(
+                "run %s: re-queued %d stage(s) whose subagent ended with the previous process: %s",
+                self.run.id,
+                len(orphans),
+                ", ".join(orphans),
+            )
+            self._persist_state()
+        return orphans
 
     def _carried_context(self, item: ReadyNode) -> str:
         """The context block a `session: fresh` iteration starts from, or "".
@@ -4821,8 +4951,114 @@ class RunController:
             inst = self._instance(entry.ready.path)
             inst.state = InstanceState.CANCELLED
             inst.completed_at = _now()
+            # What the step had spent when the cancel landed. Read NOW, before the task sees its
+            # CancelledError: every call still open is a generation this cancel cut off, and what
+            # the finished ones reported is then a floor. Without the row a run cancelled
+            # mid-generation had no ledger events at all, and Introspect said nothing cost money.
+            calls = entry.calls
+            self.journal.step_cancelled(
+                entry.ready.path,
+                entry.ready.node.id,
+                epoch=inst.epoch,
+                model_calls_open=calls.cut_off,
+                tokens=calls.floor_tokens if calls.cut_off else calls.tokens,
+                model=", ".join(calls.models),
+                cost_usd=calls.floor_cost_usd if calls.cut_off else calls.cost_usd,
+            )
         self._inflight.clear()
+        # A DISPATCHED stage is in flight too, and it is the one `_inflight` never holds (see
+        # `_reconcile_dispatched_stages`): its subagent kept working after the run was cancelled,
+        # and a spawn still waiting on approval stayed in the approvals queue — measured 2026-09-25,
+        # a cancelled run's `spawn:` approval was approvable, and approving it spawned a subagent
+        # for a run that no longer existed. Stopping the subagent ends both:
+        # `SubagentManager.cancel` cancels the waiting task, whose `finally` expires the pending
+        # approval.
+        nodes = dict(_walk(self.root))
+        for path in await self._stop_dispatched_stages():
+            inst = self._instance(path)
+            inst.state = InstanceState.CANCELLED
+            inst.completed_at = _now()
+            node = nodes.get(spec_path(path))
+            # Its model calls ran in the subagent, outside this controller's call log, so what it
+            # spent is "not recorded" (`None`) rather than a zero claiming it was free.
+            self.journal.step_cancelled(
+                path,
+                node.id if node else "",
+                epoch=inst.epoch,
+                model_calls_open=0,
+                tokens=None,
+                model="",
+                cost_usd=None,
+            )
         self._persist_state()
+
+    async def _stop_dispatched_stages(self) -> list[str]:
+        """Stop every dispatched stage's subagent; return the paths whose subagent was stopped.
+
+        A path whose subagent had ALREADY finished (or that this process's manager does not know —
+        the post-restart shape) is left RUNNING and not returned: its outcome is real, and the
+        reconciler settles it on the next step it gets. Resetting a finished stage would throw its
+        work away; cancelling an unknown one is not possible. Each stopped attempt's
+        no-double-execution claim is released here, because the attempt is over and nothing else
+        will release it before its TTL (#3533's shape).
+        """
+        manager = self.services.subagents
+        if manager is None or not hasattr(manager, "cancel"):
+            return []
+        stopped: list[str] = []
+        for path in self._awaiting_out_of_band_work():
+            inst = self._instance(path)
+            try:
+                cancelled = bool(await manager.cancel(inst.subagent_id))
+            except Exception:
+                logger.warning(
+                    "run %s: could not stop the subagent for %s", self.run.id, path, exc_info=True
+                )
+                continue
+            if not cancelled:
+                continue
+            release_execution_claim(inst.claim_target, inst.claim_holder)
+            inst.claim_target = ""
+            inst.claim_holder = ""
+            stopped.append(path)
+        return stopped
+
+    async def _pause_inflight(self) -> None:
+        """Withdraw the work in flight, so a paused run does nothing more until it is resumed.
+
+        "Pause — in-flight steps finish" is what the run page used to promise, and on a loop it is
+        not a pause: a stage can run for many minutes and write files the whole time, and the
+        loop measured 2026-09-25 wrote a finding 3.5 minutes after the user saw "Paused". So a
+        pause STOPS it:
+
+        * a stage that already finished is settled first — its output is real work;
+        * a dispatched stage still running has its subagent stopped and goes back to PENDING at
+          the SAME epoch, so a resume re-dispatches it (the committed-effect gate passes a
+          same-epoch retry by design) and its withdrawn attempt is not counted as one;
+        * an awaited node is cancelled and reset the same way.
+        """
+        self._reconcile_dispatched_stages()
+        withdrawn = list(await self._stop_dispatched_stages())
+        for entry in list(self._inflight.values()):
+            entry.task.cancel()
+            withdrawn.append(entry.ready.path)
+        self._inflight.clear()
+        for path in withdrawn:
+            inst = self._instance(path)
+            inst.state = InstanceState.PENDING
+            inst.subagent_id = ""
+            inst.started_at = None
+            inst.attempt = max(0, inst.attempt - 1)
+        self._persist_state()
+
+    def wake(self) -> None:
+        """Restart the tick loop of a controller whose loop has exited (a paused run).
+
+        What the service calls after clearing a sticky pause (resume) or writing a sticky cancel:
+        both are intents the TICK LOOP applies, and a paused run's loop is not running to read
+        them. A no-op for a live loop — it reads the intent on its next step anyway.
+        """
+        self._resume_loop()
 
     async def _finish(self, status: RunStatus, *, error: str = "") -> None:
         """Write the run's terminal status. The single terminal writer (WF2-R10)."""
@@ -4852,6 +5088,9 @@ class RunController:
         if status == RunStatus.CANCELLED:
             store.clear_cancel(self.run.id)
         if status in TERMINAL_RUN_STATUSES:
+            # An ended run has nothing to resume, so a pause intent it carried (cancelled while
+            # paused) is not left behind to read as "paused" by anything that checks it.
+            store.clear_pause(self.run.id)
             # Give the resources back. A lease that outlives its run strands the resource
             # until the TTL runs down, and the next run would sit held by a holder that no longer
             # exists — the one failure mode a named holder is supposed to make impossible.
@@ -4861,6 +5100,10 @@ class RunController:
             # gate in the inbox — cancel a run mid-gate and the question survives the run.
             # NEEDS_INPUT is deliberately not terminal here: that run is waiting, not finished.
             attention.resolve_run_items(self.services.attention_state, self.run.id)
+            # A run started as a loop says it ended, the way a loops-table loop does — after the
+            # resolve above, so the "needs a decision" row it may raise is not closed with the
+            # run's other rows.
+            attention.announce_loop_end(self.services.attention_state, self.run, status)
             if status == RunStatus.COMPLETE:
                 self._revise_project_overview()
             self._capture_run_end()
@@ -5521,6 +5764,19 @@ def _item_label(item: Any) -> str:
 def _clip(text: str) -> str:
     text = " ".join(text.split())  # a newline inside a row breaks the layout
     return text if len(text) <= _ITEM_LABEL_MAX else text[: _ITEM_LABEL_MAX - 1] + "…"
+
+
+def _measured_usage(result: NodeResult, calls: CallLog) -> tuple[int | None, str, float | None]:
+    """`(tokens, model, cost_usd)` for a settled step, measured at the guard when it saw calls.
+
+    A step whose dispatch made no guarded call keeps its dispatcher's own numbers — a transform's
+    zero is a measurement. One that did is reported from what the provider said: an action
+    provider's calls (best-of-n's samples and judge passes) used to book `tokens: 0` and no model,
+    and a call whose provider reported no usage books `None`, the ledger's "not recorded".
+    """
+    if not calls.calls:
+        return result.tokens, result.model, result.cost_usd
+    return calls.tokens, ", ".join(calls.models) or result.model, calls.cost_usd
 
 
 def _opt_metric(value: Any) -> float | None:

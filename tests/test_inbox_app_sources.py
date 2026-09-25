@@ -126,7 +126,7 @@ async def test_app_inbox_source_resolves_and_a_message_flows(tmp_path):
     from personalclaw.inbox_providers.registry import list_source_names
     from personalclaw.inbox_service import InboxService
 
-    res = app_manager.install(_inbox_app(tmp_path))
+    res = app_manager.install(_inbox_app(tmp_path), confirm=True)
     assert res.ok, res.error
 
     # install() registers + enables providers → the source is live under source_name.
@@ -164,7 +164,7 @@ async def test_uninstall_leaves_no_phantom_source(tmp_path):
     otherwise the inbox looks like it is polling a source that is gone."""
     from personalclaw.inbox_providers.registry import get_source
 
-    res = app_manager.install(_inbox_app(tmp_path))
+    res = app_manager.install(_inbox_app(tmp_path), confirm=True)
     assert res.ok, res.error
     assert get_source(SOURCE_NAME) is not None
 

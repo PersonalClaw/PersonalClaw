@@ -166,10 +166,9 @@ def test_RESUME_no_longer_claims_success_on_a_draft_and_writes_nothing() -> None
     statement, and the write underneath it was real — the clear-pause path popped a key and SAVED,
     so this asserts the row is untouched as well as the refusal."""
     run = _draft()
-    # The mark the clear-pause path would have popped. Same instrument the issue-679 rail uses on
+    # The mark the clear-pause path would have removed. Same instrument the issue-679 rail uses on
     # the terminal legs, for the same reason: a status-only assertion leaves the write unexamined.
-    run.extra["pause_requested"] = True
-    store.save(run)
+    store.request_pause(run.id)
 
     body = service.resume_run(run.id, supervisor=_RecordingSupervisor())
 
@@ -179,7 +178,7 @@ def test_RESUME_no_longer_claims_success_on_a_draft_and_writes_nothing() -> None
     assert body.get("resumed") is None
     after = store.get(run.id)
     assert after.status is RunStatus.DRAFT
-    assert after.extra.get("pause_requested") is True, "resume wrote to a run it refused"
+    assert store.pause_requested(run.id) is True, "resume wrote to a run it refused"
 
 
 @pytest.mark.parametrize("verb", ["rewind_run", "run_from"])

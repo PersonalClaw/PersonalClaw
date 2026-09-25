@@ -35,6 +35,21 @@ logger = logging.getLogger(__name__)
 
 ProviderFactory = Callable[..., ModelProvider]
 
+ReadinessProbe = Callable[..., "tuple[str, str] | None"]
+"""Readiness signature: ``probe(entry, *, implicit) -> (why, fix) | None``.
+
+A provider type optionally registers one beside its factory (``register_type(...,
+readiness=probe)``) to answer the question a build cannot: *can this entry serve a turn right
+now?* ``None`` means yes; a ``(why, fix)`` pair means no, in the two sentences a user needs.
+``implicit`` is True when the entry would be chosen because NOTHING is bound (the implicit
+"first capable provider" fallback) and False when a binding names it, because a type may serve
+the second and decline the first.
+
+It must be cheap and side-effect free — no build, no socket, no subprocess — because it runs
+inside :func:`~personalclaw.providers.provider_bridge.can_resolve_use_case`, which is on a hot
+GET and every workflow preflight. A type with nothing to check registers none and is always
+ready, which is every type but one today."""
+
 CatalogFactory = Callable[..., ModelCatalog]
 """Catalog factory signature: ``create_catalog(options: dict, *, model="") -> ModelCatalog``.
 
@@ -122,11 +137,23 @@ class ProviderRegistry:
         # register_catalog(); catalog_of() resolves it fail-soft. Keyed by the same
         # provider type string as _factories.
         self._catalog_factories: dict[str, CatalogFactory] = {}
+        # Per-type READINESS probes (see ``ReadinessProbe``). Optional: a type without one is
+        # always ready.
+        self._readiness: dict[str, ReadinessProbe] = {}
 
     # ── Registration ──────────────────────────────────────────────────
 
-    def register_type(self, cap: ProviderCapability, factory: ProviderFactory) -> None:
+    def register_type(
+        self,
+        cap: ProviderCapability,
+        factory: ProviderFactory,
+        *,
+        readiness: ReadinessProbe | None = None,
+    ) -> None:
         """Register a provider type with its capability descriptor and factory.
+
+        ``readiness`` is the type's optional answer to "can this entry serve right now?" — see
+        :data:`ReadinessProbe` and :meth:`not_ready`.
 
         Raises :class:`ProviderResolutionError` if the type is already
         registered; silent overwrite would mask accidental double
@@ -137,6 +164,8 @@ class ProviderRegistry:
             raise ProviderResolutionError(f"provider type {type_!r} is already registered")
         self._factories[type_] = factory
         self._capabilities[type_] = cap
+        if readiness is not None:
+            self._readiness[type_] = readiness
         logger.debug(
             "registered provider type %r with capabilities %s",
             type_,
@@ -219,6 +248,40 @@ class ProviderRegistry:
                 f"unknown provider entry {name!r}; " f"known entries: {sorted(self._entries)}"
             ) from exc
 
+    def not_ready(self, entry: ProviderEntry, *, implicit: bool) -> tuple[str, str] | None:
+        """Why ``entry`` cannot serve a turn right now as ``(why, fix)``, or ``None`` if it can.
+
+        The ONE readiness answer every consumer reads — the no-instantiate probe behind
+        onboarding's ``needs_model`` and the degraded-mode chip, the resolver's candidate walk,
+        the resolution error's diagnosis and the chat model list — so no two surfaces can
+        disagree about whether a model exists. It exists because a BUILD is not that answer: a
+        type whose model has not been downloaded yet constructs a provider perfectly well and
+        fails on the first turn, so "the provider built" read as "you're ready" for a home with
+        no model at all.
+
+        Fail-OPEN on a probe that raises: the probe is a refinement over "the entry exists",
+        and a defect in one app's probe must not take chat away from a home whose model is
+        fine. The fault is logged loudly rather than swallowed, because an app whose probe
+        always raises would otherwise read as ready forever with nothing saying why.
+        """
+        probe = self._readiness.get(entry.type)
+        if probe is None:
+            return None
+        try:
+            verdict = probe(entry, implicit=implicit)
+        except Exception:  # noqa: BLE001 — a broken probe must not look like a missing model
+            logger.warning(
+                "readiness probe for provider type %r raised; treating %r as ready",
+                entry.type,
+                entry.name,
+                exc_info=True,
+            )
+            return None
+        if not verdict:
+            return None
+        why, fix = verdict
+        return str(why), str(fix)
+
     def capability_of(self, type_: str) -> ProviderCapability:
         """Return the :class:`ProviderCapability` for ``type_``.
 
@@ -252,10 +315,17 @@ class ProviderRegistry:
         instance.
 
         Raises :class:`ProviderResolutionError` for an unknown name
-        (Requirement R1.6).
+        (Requirement R1.6), and for an entry whose TYPE no loaded app has registered — an
+        entry is stored before its type exists on some boot paths (see :meth:`register_entry`),
+        so building one early is a resolution failure, not a ``KeyError`` from a dict lookup.
         """
         entry = self.get_entry(name)
-        factory = self._factories[entry.type]
+        factory = self._factories.get(entry.type)
+        if factory is None:
+            raise ProviderResolutionError(
+                f"provider entry {name!r} is type {entry.type!r}, which no loaded app provides; "
+                f"known types: {sorted(self._factories)}"
+            )
         return factory(entry=entry, session_key=session_key, **kwargs)
 
     def build_catalog(self, entry: ProviderEntry) -> "ModelCatalog | None":
@@ -558,7 +628,11 @@ def sync_entries_from_config() -> int:
                 ptype,
                 name,
             )
-        options = dict(p.get("options") or {})
+        # LOGICAL options: a secret field on disk is a `{{secret:…}}` reference into the
+        # credential store, and the provider factory reads the value, not the pointer.
+        from personalclaw.config.secret_refs import resolve as _resolve_secrets
+
+        options = _resolve_secrets(p.get("options") or {})
         if ptype != registry_type:
             options["_original_type"] = ptype
         try:

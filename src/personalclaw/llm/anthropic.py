@@ -34,6 +34,7 @@ from personalclaw.llm.base import (
     CancelOutcome,
     LLMEvent,
     ModelProvider,
+    wire_temperature,
 )
 from personalclaw.llm.credentials import Credential
 from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, PromptCache
@@ -409,6 +410,16 @@ class AnthropicProvider(ModelProvider):
         # One-shot image content part for the next turn. Empty on every
         # ordinary turn, which keeps the untouched wire payload byte-identical.
         self._pending_image: str = ""
+
+    @property
+    def sampling_temperature(self) -> float | None:
+        """The ``temperature`` a ``stream()`` request carries from ``extra_options``.
+
+        ``complete()`` with a reasoning effort turns extended thinking on, which forbids a custom
+        temperature and drops it — a per-turn fact about the native loop's path, which one-shot
+        sampling never takes.
+        """
+        return wire_temperature(self._extra_options.get("temperature"))
 
     # ── Image content parts ───────────────────────────────────────────
 
@@ -854,6 +865,12 @@ class AnthropicProvider(ModelProvider):
 
     def context_usage_pct(self) -> float | None:
         return self._last_context_pct
+
+    async def served_context_window(self) -> int | None:
+        """The window this binding's gauge divides by: a declared ``context_window``, else the
+        table's entry for the model, else ``None`` — so the prompt budget and the gauge that
+        measures it can never describe two different windows."""
+        return resolved_context_window(self._model, override=self.context_window)
 
     async def cancel(self, *, wait_ack_timeout: float = 0.0) -> CancelOutcome:
         """Cancel is a no-op for now; later phases can wire abort plumbing."""

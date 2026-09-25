@@ -9,13 +9,16 @@ Settings → Prompts picker and what the runtime resolves never disagree.
 
 Use cases (the distinct system-prompt contexts):
 
-* ``chat``        — interactive chat sessions (dashboard / channel / CLI).
-* ``background``  — unattended runs (cron jobs, heartbeat, campaign workers).
-* ``code``        — the Code feature's coder agent.
-* ``goal_loop``   — Goal Loop / autonomous goal-engine workers.
+* ``chat``        — interactive chat sessions (dashboard / messaging channel /
+  ``personalclaw run``).
+* ``background``  — unattended runs (automations, subagents, heartbeat, webhooks).
 
-A use case with no binding falls back to the bundled default prompt
-(``DEFAULT_PROMPT_NAME``), so the system works out-of-box with no configuration.
+Loop and Code workers have no binding: they run as reserved agents whose own, locked
+prompt carries the per-cycle protocol. The ``code`` and ``goal_loop`` rows that once sat
+here were never read by any session — both workers overrode them.
+
+A use case with no binding falls back to its own bundled default prompt, so the system
+works out-of-box with no configuration.
 """
 
 import json
@@ -76,7 +79,6 @@ BUNDLED_PROMPT_CATEGORY: dict[str, str] = {p.use_case: p.category for p in _CATA
 # Humanizing produces the right label for most keys ("history_compression" →
 # "History compression"). These are the ones where it does not.
 _USE_CASE_LABEL_OVERRIDES: dict[str, str] = {
-    "goal_loop": "Goal Loop",
     "nl_to_cron": "Natural language → cron",
     "sdlc_stage_gate": "SDLC stage gate",
     "eval_judge": "Eval judge",
@@ -84,15 +86,13 @@ _USE_CASE_LABEL_OVERRIDES: dict[str, str] = {
     "nav_links": "Navigation links",
 }
 
-# The four agent contexts' catalog descriptions describe the bundled PROMPT ("The
-# bundled PersonalClaw system prompt for the chat context.") — true, and useless as
-# a row hint, because every row on the panel could say it. These say what the
-# CONTEXT is instead. Kept verbatim from the dashboard table this replaced.
+# The agent contexts' catalog descriptions describe the bundled PROMPT ("The bundled
+# PersonalClaw system prompt for the chat context.") — true, and useless as a row
+# hint, because every row on the panel could say it. These say what the CONTEXT is
+# instead — and only what is true: each names the runs that actually read the row.
 _USE_CASE_HINT_OVERRIDES: dict[str, str] = {
-    "chat": "Interactive sessions — dashboard, Slack, CLI",
-    "background": "Unattended runs — cron, heartbeat, campaigns",
-    "code": "The Code feature's coder agent",
-    "goal_loop": "Autonomous goal-engine workers",
+    "chat": "Interactive sessions — dashboard, messaging channels, personalclaw run",
+    "background": "Unattended runs — automations, subagents, heartbeat, webhooks",
 }
 
 # Display order + headings for the catalog's four categories. The wording is lifted
@@ -239,9 +239,11 @@ def save_active_prompts(active: dict[str, str]) -> None:
 def active_prompt_ref(use_case: str) -> str:
     """The bound prompt ref for ``use_case``, or its bundled default when unbound.
 
-    Returns ``"<provider>:<prompt_name>"``. A known use-case (core OR app-owned)
-    falls back to its own tailored bundled prompt; an unknown one falls back to
-    the chat prompt.
+    Returns ``"<provider>:<prompt_name>"`` for a known use-case (core OR app-owned),
+    falling back to its own tailored bundled prompt. An UNKNOWN use case has no
+    prompt, so the answer is ``""`` — it is not handed the chat system prompt, which
+    would reach a task with none of the task's instructions (the extraction prompt of
+    an app that is not installed rendered as "You are <bot>…", its variables dropped).
     """
     if use_case in valid_prompt_use_cases():
         ref = load_active_prompts().get(use_case)
@@ -249,7 +251,7 @@ def active_prompt_ref(use_case: str) -> str:
             return ref
         name = bundled_prompt_name_for(use_case) or DEFAULT_PROMPT_NAME
         return f"{DEFAULT_PROMPT_PROVIDER}:{name}"
-    return f"{DEFAULT_PROMPT_PROVIDER}:{DEFAULT_PROMPT_NAME}"
+    return ""
 
 
 def split_ref(ref: str) -> tuple[str, str] | None:

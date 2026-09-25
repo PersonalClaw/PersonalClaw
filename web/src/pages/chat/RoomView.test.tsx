@@ -25,6 +25,8 @@ import { RoomView } from './RoomView'
 const H = vi.hoisted(() => ({
   postRoomMessage: vi.fn(),
   archiveRoom: vi.fn(),
+  addRoomMember: vi.fn(),
+  continueRoom: vi.fn(),
   room: { fn: null as null | (() => Promise<unknown>) },
   // Indirected like `room` so a test can make the AGENT read reject. It used to be a fixed
   // `{ agents: [] }`, which meant no test could reach the failed-read branch of the member picker.
@@ -41,7 +43,8 @@ vi.mock('../../lib/api', async () => {
       agents: () => H.agents.fn!(),
       postRoomMessage: H.postRoomMessage,
       archiveRoom: H.archiveRoom,
-      addRoomMember: vi.fn(),
+      addRoomMember: H.addRoomMember,
+      continueRoom: H.continueRoom,
       removeRoomMember: vi.fn(),
       setRoomRoundBudget: vi.fn(),
     },
@@ -67,9 +70,13 @@ function room(extra: Partial<RoomRecord> = {}): RoomRecord {
     rounds_used: 0,
     round_budget: 0,
     pending_queue: [],
+    speaking: '',
+    owed: [],
+    round_running: false,
     members: [member('analyst', { role_blurb: 'argues from the numbers' }), member('skeptic')],
     effective_round_budget: 6,
     max_round_budget: 100,
+    max_members: 8,
     transcript_path: '/rooms/pricing-debate/transcript.jsonl',
     ...extra,
   }
@@ -105,6 +112,8 @@ function apiErr(code: string, status: number) {
 beforeEach(() => {
   H.postRoomMessage.mockReset()
   H.archiveRoom.mockReset()
+  H.addRoomMember.mockReset()
+  H.continueRoom.mockReset()
   H.room.fn = async () => detail()
   H.agents.fn = async () => ({ agents: [], default_agent: '' })
 })
@@ -161,7 +170,7 @@ describe('the room transcript', () => {
 describe('the pause card', () => {
   it('appears when the room is paused, with the queue it still owes', async () => {
     H.room.fn = async () => detail({
-      room: room({ paused: true, rounds_used: 6, pending_queue: ['skeptic'] }),
+      room: room({ paused: true, rounds_used: 6, pending_queue: ['skeptic'], owed: ['skeptic'] }),
     })
     mount()
     expect(await screen.findByRole('group', { name: 'Should we raise prices? is paused' })).toBeTruthy()
@@ -184,8 +193,16 @@ describe('the pause card', () => {
 })
 
 describe('speaking in the room', () => {
+  /** What the backend says once a message's turns are queued and its round is running. */
+  function answering(...owed: string[]) {
+    return room({ round_running: true, speaking: owed[0] ?? '', pending_queue: owed.slice(1), owed })
+  }
+
   it('posts to the ROOM route and reports the queue the backend built, in order', async () => {
-    H.postRoomMessage.mockResolvedValue({ messages: [], speaking: ['analyst', 'skeptic'] })
+    H.postRoomMessage.mockImplementation(async () => {
+      H.room.fn = async () => detail({ room: answering('analyst', 'skeptic') })
+      return { messages: [], room: answering('analyst', 'skeptic') }
+    })
     mount()
     const box = await screen.findByRole('textbox', { name: /Message Should we raise prices\?/ })
     await userEvent.type(box, 'Make the case.')
@@ -196,7 +213,10 @@ describe('speaking in the room', () => {
   })
 
   it('announces the outstanding queue in a polite live region, not an alert', async () => {
-    H.postRoomMessage.mockResolvedValue({ messages: [], speaking: ['analyst'] })
+    H.postRoomMessage.mockImplementation(async () => {
+      H.room.fn = async () => detail({ room: answering('analyst') })
+      return { messages: [], room: answering('analyst') }
+    })
     mount()
     await userEvent.type(await screen.findByRole('textbox', { name: /Message/ }), 'Go')
     await userEvent.click(screen.getByRole('button', { name: /^Send/ }))
@@ -219,6 +239,92 @@ describe('speaking in the room', () => {
     mount()
     expect(await screen.findByText(/This room is archived/)).toBeTruthy()
     expect(screen.queryByRole('textbox', { name: /Message/ })).toBeNull()
+  })
+})
+
+/** 🔴 The room view used to FREEZE once every member had spoken once.
+ *
+ *  It decided whether a round was running by subtracting everyone who had EVER spoken from the
+ *  queue the last POST returned — so on the second message to a room whose members had all spoken,
+ *  the subtraction left nobody, the refresh loop never started, and new replies stayed invisible
+ *  until a reload (measured: the first conversation refreshed 141 times, the third twice). The
+ *  queue also lived only in the tab, so a reload lost it. The ROOM now says whether a round is
+ *  running and who it still owes, and the view follows exactly that.
+ *
+ *  The poll is observed through `setInterval` rather than fake timers: fake timers in this suite
+ *  are measured to perturb unrelated files (see `loops/deletedLoopBehaviour.test.tsx`). Capturing the
+ *  armed callback and firing it is the same tick without the global clock. */
+describe('🔴 following a round', () => {
+  const ACTIVE_POLL_MS = 2500
+
+  /** A room whose members have ALL spoken already, asked a second question it is answering now. */
+  function secondRound(extra: Partial<RoomRecord> = {}, more: RoomDetail['messages'] = []) {
+    return detail({
+      room: room({ round_running: true, speaking: 'analyst', pending_queue: ['skeptic'], owed: ['analyst', 'skeptic'], ...extra }),
+      messages: [
+        { role: 'user', content: 'Should we raise prices?', speaker: '', ts: '1' },
+        { role: 'assistant', content: 'Margins are thin.', speaker: 'analyst', ts: '2' },
+        { role: 'assistant', content: 'Churn will rise.', speaker: 'skeptic', ts: '3' },
+        { role: 'user', content: 'And if we do it slowly?', speaker: '', ts: '4' },
+        ...more,
+      ],
+    })
+  }
+
+  function armedPoll(spy: ReturnType<typeof vi.spyOn>) {
+    const call = spy.mock.calls.find((c: unknown[]) => c[1] === ACTIVE_POLL_MS)
+    return call ? (call[0] as () => void) : null
+  }
+
+  it('keeps showing new replies after every member has spoken once', async () => {
+    const spy = vi.spyOn(window, 'setInterval')
+    try {
+      H.room.fn = async () => secondRound()
+      mount()
+      // Who the room is answering with, in order — from the ROOM, not from the tab's memory.
+      expect(await screen.findByText('Answering: analyst → skeptic')).toBeTruthy()
+      const tick = armedPoll(spy)
+      expect(tick, 'the view must keep re-reading the room while a round runs').not.toBeNull()
+
+      H.room.fn = async () => secondRound({ speaking: 'skeptic', pending_queue: [], owed: ['skeptic'] }, [
+        { role: 'assistant', content: 'Slowly still loses the whales.', speaker: 'analyst', ts: '5' },
+      ])
+      tick!()
+      // The reply lands WITHOUT a reload — the whole defect in one assertion.
+      expect(await screen.findByText('Slowly still loses the whales.')).toBeTruthy()
+      expect(screen.getByText('Answering: skeptic')).toBeTruthy()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('stops re-reading the room when the round is over', async () => {
+    const spy = vi.spyOn(window, 'setInterval')
+    try {
+      H.room.fn = async () => secondRound({ round_running: false, speaking: '', pending_queue: [], owed: [] })
+      mount()
+      await screen.findByText('And if we do it slowly?')
+      expect(armedPoll(spy), 'an idle room costs nothing').toBeNull()
+      expect(screen.queryByText(/^Answering:/)).toBeNull()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('says a round cut off by a restart was interrupted, and Continue finishes it without re-sending', async () => {
+    // What a restarted gateway reports: the open turn and the queue behind it survived, and nothing
+    // is running them.
+    H.room.fn = async () => secondRound({ round_running: false })
+    H.continueRoom.mockResolvedValue({ room: room({ round_running: true, speaking: 'analyst', pending_queue: ['skeptic'], owed: ['analyst', 'skeptic'] }) })
+    mount()
+
+    const card = await screen.findByRole('group', { name: 'Should we raise prices? was interrupted' })
+    // Owed in the order they will answer: the cut-off turn first.
+    expect([...card.querySelectorAll('li')].map((li) => li.textContent)).toEqual(['1.analyst', '2.skeptic'])
+    await userEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+
+    expect(H.continueRoom).toHaveBeenCalledWith('pricing-debate')
+    expect(H.postRoomMessage, 'the question is already on the transcript').not.toHaveBeenCalled()
   })
 })
 
@@ -282,5 +388,42 @@ describe('the member picker when the agent list cannot be read', () => {
     expect(await screen.findByText('No agents configured')).toBeTruthy()
     expect(screen.queryByText(/Couldn't load your agents/)).toBeNull()
     expect(screen.queryByRole('button', { name: /^Retry$/ })).toBeNull()
+  })
+})
+
+/** The action banner's Retry used to be `refresh` — a re-read of the room — for EVERY failed write.
+ *  It never re-ran the write, and for a refusal nothing could succeed: at 8/8 the validator saw
+ *  "This room already holds the configured maximum of 8 members. Retry", a control that could only
+ *  ever earn the same 400. A Retry now exists only when the same write could succeed, and it
+ *  re-runs THAT write. */
+describe('🔴 a failed write offers a Retry only when running it again could succeed', () => {
+  async function tryToAdd() {
+    H.room.fn = async () => detail({ room: room({ members: [] }) })
+    H.agents.fn = async () => ({ agents: [{ name: 'writer', provider: 'native', model: 'x' }], default_agent: '' })
+    mount()
+    await userEvent.click(await screen.findByRole('button', { name: /Open members/ }))
+    await userEvent.click(await screen.findByRole('button', { name: /Add a member/ }))
+    await userEvent.click(await screen.findByRole('button', { name: /Add to the room/ }))
+  }
+
+  it('a refusal says why and offers NO Retry', async () => {
+    // The race the panel's own ceiling cannot see: another tab filled the room first.
+    H.addRoomMember.mockRejectedValue(
+      new ApiError('This room already holds the configured maximum of 8 members.', 400, 'room_member_limit'),
+    )
+    await tryToAdd()
+    expect((await screen.findByRole('alert')).textContent).toMatch(/maximum of 8 members/)
+    expect(screen.queryByRole('button', { name: /^Retry$/ })).toBeNull()
+    expect(H.addRoomMember).toHaveBeenCalledTimes(1)
+  })
+
+  it('a transient failure offers a Retry that RE-RUNS the same add', async () => {
+    H.addRoomMember
+      .mockRejectedValueOnce(new ApiError('The gateway hit an error.', 503, 'unavailable'))
+      .mockResolvedValueOnce({ room: room() })
+    await tryToAdd()
+    await userEvent.click(await screen.findByRole('button', { name: /^Retry$/ }))
+    await waitFor(() => expect(H.addRoomMember).toHaveBeenCalledTimes(2))
+    expect(H.addRoomMember.mock.calls[1]).toEqual(H.addRoomMember.mock.calls[0])
   })
 })

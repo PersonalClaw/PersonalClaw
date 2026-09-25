@@ -258,6 +258,9 @@ describe('the chip is wired at both surfaces (not an inert helper)', () => {
   const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8')
   const chatPage = read('../ChatPage.tsx')
   const cockpit = read('../loops/LoopCockpitPage.tsx')
+  // The activity composition lives with the text-run owner, which takes its live-run decision
+  // at dispatch; the WS handler hands it the wire's origin.
+  const textRunOwner = read('./coalesceReducers.ts')
   // The ledger moved out of `ChatPage.tsx` so its one-action reach could be mounted and proved
   // (`contextLedgerReach.test.tsx`); these scans follow the code rather than the old address.
   const ledger = read('./ContextLedger.tsx')
@@ -287,7 +290,8 @@ describe('the chip is wired at both surfaces (not an inert helper)', () => {
     // The WS handler must actually stamp the wire's `origin`, and the ledger must read it off
     // the same segment — otherwise `learnedSurface` is only ever called with `undefined` and
     // every chip degrades, which would look exactly like "old messages" forever.
-    expect(chatPage).toContain('stampActivityOrigin(segs, insertActivity(')
+    expect(chatPage).toContain('textRun.activity(text, kind, origin)')
+    expect(textRunOwner).toContain('stampActivityOrigin(segs, insertActivity(')
     expect(chatPage).toContain("ledger.learnedOrigin = (s as ActivitySegment).origin")
     expect(ledger).toContain('learnedSurface(learnedOrigin)')
     expect(ledger).toContain('<TextLink href={surface.href}>')

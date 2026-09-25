@@ -89,7 +89,8 @@ class TestChatSessionWorkspaceDir:
     async def test_can_change_mid_session(self, tmp_path):
         """The working directory can be changed after messages are sent."""
         session = _ChatSession("test")
-        session.total_messages = 5
+        for i in range(5):
+            session.append("user" if i % 2 == 0 else "assistant", f"message {i}")
         state = _mock_state(session)
         with patch("personalclaw.dashboard.chat_handlers._save_recent_project"):
             async with TestClient(TestServer(_make_app(state))) as client:

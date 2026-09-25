@@ -29,7 +29,8 @@ This module is the contract that removes that asymmetry:
   ``docs/architecture/app-platform.md``): a bundled module runs IN-PROCESS, so it never
   receives the per-app backend subprocess environment (``sdk.util.shared_app_data_dir``
   is always ``None`` for it), and it cannot declare its own dependencies (the manifest
-  ``dependencies`` block installs into an app venv, which a bundled module does not get).
+  ``dependencies`` block is installed by the Store's install/update path, and seeding a
+  bundled app never takes it).
 
 :func:`contract_violations` is the machine-checkable half; ``tests/
 test_native_capability_contract.py`` runs it over every bundled module and carries the

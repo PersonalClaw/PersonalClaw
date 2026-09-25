@@ -63,7 +63,7 @@ _DOC_FILE = Path(__file__).resolve().parents[1] / "docs" / "architecture" / "pro
 #:    ``[tts]`` → ``huggingface_hub``.
 #: 2. Vendor SDK distributions a bundled/first-party app declares in its manifest
 #:    ``dependencies.pythonDependencies`` (``apps/app_manager.py::_install_python_deps``
-#:    installs them into the shared venv): ``openai``, ``anthropic``, ``boto3``,
+#:    installs them into ``<home>/app-python``): ``openai``, ``anthropic``, ``boto3``,
 #:    ``qdrant-client`` → ``qdrant_client``, ``huggingface-hub``, ``slack-sdk``.
 #:
 #: Plus three the provider-boundary doc names as bundle-resident by construction and

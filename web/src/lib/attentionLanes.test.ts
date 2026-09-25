@@ -8,9 +8,9 @@ import type { InboxItemKind, InboxItemStatus } from './api'
 // Four lanes, each item exactly once. The two things these tests exist to catch are the two failures
 // that render perfectly:
 //
-//   * a DOUBLE-COUNT. `chat_runner._mirror_approval_to_inbox()` raises an `agent_request` item with
-//     `refs.approval = <request_id>` for an approval that outlived its prompt, and
-//     `PendingApproval.id` IS that request_id — so one blocked decision arrives on BOTH endpoints
+//   * a DOUBLE-COUNT. The pending-approval registry raises an `agent_request` item with
+//     `refs.approval = <registry id>` for every pending approval, and
+//     `PendingApproval.id` IS that registry id — so one blocked decision arrives on BOTH endpoints
 //     Mission Control reads. Concatenating them shows the same halted tool twice and makes the
 //     lane counts a lie. Asserted by total-count + key-uniqueness, not by eyeballing a lane.
 //

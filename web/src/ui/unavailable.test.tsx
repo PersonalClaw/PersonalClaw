@@ -152,8 +152,10 @@ const walk = (d: string): string[] =>
     return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
   })
 
+// `app/Onboarding.tsx` left this list when its raw submit did: the name step's Continue was an
+// arrow `<button>` inside the name field, and it is now the flow's navigation-bar `<Button>` with
+// a `disabledReason` ("Enter your name first"), the path `ui/disabledReason.test.tsx` covers.
 const ADOPTERS = [
-  'app/Onboarding.tsx',
   'ui/PlanningWalkthrough.tsx',
   'pages/ChatPage.tsx',
   'pages/chat/ChatActivityPanel.tsx',

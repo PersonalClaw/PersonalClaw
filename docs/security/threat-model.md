@@ -90,7 +90,18 @@ Installed apps extend the gateway but must not reach the owner's full authority:
   owner's cookie/Authorization — a fresh 1-hour app-scoped token is injected.
 - **Permission middleware** holds in every auth mode — including `none`, where
   `dashboard/server.py`'s `_dev_user_middleware` re-adopts the app claim via
-  `validate_token_with_app` so an app token only ever *narrows* reach.
+  `validate_token_with_app` so an app token only ever *narrows* reach. The internal
+  routes' cookie/`?token=` fallback records the claim too
+  (`dashboard/token_auth.py::_extract_and_validate_token`): it used to validate an app
+  token and drop its identity, so `/api/tools/invoke` reached the handler as the owner.
+- **The owner's security posture is not an app's to change.** A config field whose
+  `_EDITABLE_CONFIG` entry declares a `SecurityControl` (`config/edit_spec.py`) refuses an
+  app-scoped write `403`, in either direction, with a Security Event Log row naming the
+  app and the field; so does an agent's `approval_mode` and a standing approval verb
+  (`yolo`, `trust_agent`). The routes that exist only to change the posture are in the
+  owner-only registry (`apps/permissions.py::OWNER_ONLY_API_PATHS`). The owner's own write
+  that loosens a security setting needs `"confirm": true` — a record that the owner was
+  asked, not authorization.
 
 ### 3. Gateway ↔ channels / inbound
 
@@ -119,6 +130,10 @@ Installable content (apps, skills) from arbitrary sources:
   content is staged in quarantine, scanned there, and only moved into place if it
   passes — so the scanned bytes are the installed bytes (no time-of-check/
   time-of-use gap).
+- **Staging never follows a link** (`apps/staging.py`): the quarantine copy is made
+  from one survey of the whole bundle, so a symlink or a hard link cannot pull a file
+  from outside the bundle into the installed app. A link to one of the bundle's own
+  files stays a link, and anything else is refused, naming the path.
 - **Scanner verdicts** (`supply_chain.py`: `SkillScanner`, `Verdict`): `clean` /
   `warning` (consent required) / **`dangerous` (terminal, non-overridable)**;
   `TrustTier` modulates strictness.
@@ -133,6 +148,21 @@ Data leaving the running system:
   `redact_exfiltration_urls`).
 - **Credential-excluding exports** (`portability.py`): `.env`, `sel_hmac.key`,
   and `session_map.json` are on the export exclusion list.
+- **Secret settings held by reference** (`config/secret_refs.py`): a provider key and every
+  app setting declared `x-meta.sensitive` live in the credential store; `config.json`, an
+  app's `data/config.json` and provider instance records carry a `{{secret:…}}` reference.
+  Deleting a provider, or either removal rung of an app, deletes what it owned.
+- **Private home** (`atomic_write.py`): a file the atomic writers put under the home —
+  `atomic_write`, and `agent._atomic_json_write` for `mcp.json` and the agent config — is 0600
+  in a 0700 directory, and a wider mode is refused. `config.json`, an app's `data/config.json`,
+  provider instance records, `mcp.json`, the agent config, `.env`, `credentials.json` and
+  `auth/` are all written that way; `.local_secret`, `telemetry_salt` and `.app_secret` have
+  writers of their own that create them 0600. A file written some other way (a log, a lock, a
+  database) keeps the umask mode inside the 0700 home.
+- **Credential-free snapshots** (`durability/inventory.py`, `credential=True`): `.env`,
+  `.env.pre-keychain`, `credentials.json` and `.local_secret` never enter a snapshot, and a
+  per-app `.app_secret` enters neither a snapshot nor an export. MCP server `env` values and
+  the webhook token are not covered yet — [limitations.md §6](limitations.md).
 - **Memory privacy** (`session_restrictions.py`): temporary/incognito sessions
   gate memory reads/writes.
 
@@ -148,7 +178,7 @@ deliberate, disclosed gap — see [limitations.md](limitations.md)). A row may c
 | **ASI01** Agent goal / instruction manipulation | Untrusted-content fencing, approval modes, and data-not-instructions framing on recalled memory | `security.py::fence_untrusted`; `dashboard/handlers/memory.py` (recall framing) | enforced |
 | **ASI02** Tool misuse | Command deny/suspicious patterns, task-mode gating, OS child sandbox | `security.py` (`BUILTIN_DENIED_COMMAND_PATTERNS`, `SUSPICIOUS_BASH_PATTERNS`); `task_modes.py`; `sandbox.py` | enforced |
 | **ASI03** Identity & privilege abuse | App-scoped tokens, reverse-proxy credential stripping, permission middleware (holds even in `none` mode) | `dashboard/handlers/apps.py::api_app_proxy`; `dashboard/token_auth.py`; `dashboard/server.py` (`_dev_user_middleware`) | enforced |
-| **ASI04** Supply-chain & dependency risk | Quarantine → scan → consent → install; `dangerous` verdict terminal; scanned-tree == installed-tree | `apps/app_manager.py::install`; `supply_chain.py` (`SkillScanner`, `Verdict`) | enforced |
+| **ASI04** Supply-chain & dependency risk | Quarantine → scan → consent → install; `dangerous` verdict terminal; scanned-tree == installed-tree; staging never follows a link out of the bundle | `apps/app_manager.py::install`; `apps/staging.py`; `supply_chain.py` (`SkillScanner`, `Verdict`) | enforced |
 | **ASI05** Unauthorized code execution | Command screening + OS sandbox + credential-env denylist | `security.py`; `sandbox.py` | enforced |
 | **ASI06** Memory & context poisoning | Fenced recall, propose-only (never live-write) learning, temporary/incognito session modes | `dashboard/handlers/memory.py`; `after_turn_review.py` (propose-only queue); `session_restrictions.py` | enforced |
 | **ASI07** Insecure inter-agent / inbound comms | Fail-closed inbound surface + fencing at ingestion | *(owned)* | in progress (plans 41, 24) |

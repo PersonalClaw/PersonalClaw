@@ -39,13 +39,14 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/approvals` — list pending tool approvals.
 - `POST /api/approvals/{id}/{action}` — approve or reject.
 - `GET /api/apps` — installed apps with manifest summary + runtime state.
-- `POST /api/apps` — install from ``{source, confirm?}``.
+- `POST /api/apps` — install from ``{source, consent}``.
 - `GET /api/apps/catalog` — available-to-install apps (Store): bundled-but-not-
 - `DELETE /api/apps/local-sources` — remove a local app-source dir.
 - `GET /api/apps/local-sources` — the configured local app-source directories.
 - `POST /api/apps/local-sources` — add a local app-source dir ``{path}`` (a
 - `GET /api/apps/message` — drain THIS app's inbox (read-once).
 - `POST /api/apps/message` — send a typed message ``{to, type, payload}`` to
+- `POST /api/apps/preview` — review ``{source, name?}`` before anything is installed.
 - `DELETE /api/apps/sources` — remove a user git source URL.
 - `GET /api/apps/sources` — the configured git source URLs (defaults + user).
 - `POST /api/apps/sources` — add a user git source URL ``{url}``.
@@ -59,7 +60,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/apps/{name}/enable` — _(no summary)_
 - `POST /api/apps/{name}/token` — mint an app-scoped identity token.
 - `GET /api/apps/{name}/uninstall-preview` — classify shared deps (A3) and report what the app's ``data/`` holds.
-- `POST /api/apps/{name}/update` — atomic update from ``{source, confirm?}``.
+- `POST /api/apps/{name}/update` — atomic update from ``{source, consent?}``.
 - `GET /api/artifacts` — metadata-only rows; ``q`` searches metadata and body.
 - `POST /api/artifacts` — create (or bump an existing file-backed artifact).
 - `GET /api/artifacts/deployed` — the deployed-app listing (slug + in-gateway URL).
@@ -571,8 +572,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/notifications/settings` — _(no summary)_
 - `POST /api/notifications/unack` — mark a single notification as unread.
 - `GET /api/onboarding` — First-run onboarding signal — model readiness plus persisted flow progress.
-- `GET /api/onboarding/import` — what each source holds, and what is already ours.
-- `POST /api/onboarding/import` — import the picked categories and report outcomes.
+- `GET /api/onboarding/import` — what each source holds, and what importing each item does.
+- `POST /api/onboarding/import` — import the picked items and report outcomes.
 - `GET /api/onboarding/local-model` — is a local Ollama reachable on localhost?
 - `POST /api/onboarding/local-model/bind` — credential-free bind of an endpoint.
 - `POST /api/onboarding/local-model/scan` — opt-in LAN sweep for an Ollama.
@@ -654,6 +655,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/rooms/{room_id}` — one room, its members, its posture, and its transcript.
 - `PATCH /api/rooms/{room_id}` — {round_budget} — the room's own budget override.
 - `POST /api/rooms/{room_id}/archive` — archive a room. Idempotent.
+- `POST /api/rooms/{room_id}/continue` — finish an interrupted round.
 - `GET /api/rooms/{room_id}/export` — the transcript, redacted.
 - `POST /api/rooms/{room_id}/members` — {name, role_blurb?, listen_policy?, profile_narrowing?}.
 - `DELETE /api/rooms/{room_id}/members/{name}` — remove a member.

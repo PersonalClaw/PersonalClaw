@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
-import { Plus, Trash2, UserPlus } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { ArrowRight, Plus, Trash2, UserPlus } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
 import { Eyebrow } from '../../ui/Eyebrow'
 import { StatusPill } from '../../ui/StatusPill'
 import { EmptyState } from '../../ui/ListScaffold'
+import { TextLink } from '../../ui/TextLink'
 import { Field, FieldError, Select, TextInput } from '../../ui/forms'
 import { fvs } from '../../design/fontWeight'
 import {
@@ -42,17 +43,17 @@ import type { RoomDetail, RoomListenPolicy, SavedAgent } from '../../lib/api'
  *  · **tool reach + spend ceiling** — `member_posture`, the RESOLVED posture. A declaration
  *    that reaches past the room's is reported as refused, with the backend's reason, because
  *    that member will not take a turn at all.
- *  · **queue position** — the members still owed a turn, in FIFO order.
+ *  · **turn** — "Answering" for the member whose turn is open while a round runs, else its place
+ *    in the queue the room owes, in FIFO order.
  *
- *  Nothing here reports "speaking". The backend publishes no such field, and the head of the
- *  queue is only PROBABLY the member whose turn is running — a failed turn advances the drain
- *  without anything saying so. A dot that is usually right about who is talking is the
- *  fabricated-value defect with a friendly face, so the row says "owed a turn", which is what
- *  the data supports. */
-export function RoomMembersPanel({ detail, owed, agents, agentsError, onRetryAgents, busy, removing, onAdd, onRemove }: {
+ *  "Answering" is a READING, not an inference: the backend publishes the open turn
+ *  (`room.speaking`) and whether a round is running it (`room.round_running`, off the live task).
+ *  It used to publish neither, and the head of a queue this tab remembered was only PROBABLY the
+ *  member talking — a failed turn advanced the drain without anything saying so — so the row said
+ *  only "owed a turn". An open turn with no round running is one a stopped gateway cut off: that
+ *  member reads as owed, first, never as answering. */
+export function RoomMembersPanel({ detail, agents, agentsError, onRetryAgents, busy, removing, onAdd, onRemove }: {
   detail: RoomDetail
-  /** The queue the room owes, in order — parked by a pause or in flight from the last message. */
-  owed: readonly string[]
   /** Every configured agent binding, for the picker. `undefined` while it is still loading. */
   agents: SavedAgent[] | undefined
   /** The `agents:list` rejection, when that read FAILED.
@@ -75,23 +76,42 @@ export function RoomMembersPanel({ detail, owed, agents, agentsError, onRetryAge
   onAdd: (body: { name: string; role_blurb: string; listen_policy: RoomListenPolicy; profile_narrowing?: Record<string, unknown> }) => void
   onRemove: (name: string) => void
 }) {
-  const views = useMemo(() => roomMemberViews(detail, owed), [detail, owed])
+  const views = useMemo(() => roomMemberViews(detail), [detail])
   const [adding, setAdding] = useState(false)
   const full = detail.room.members.length > 0 && !detail.room.archived
+  // The ceiling is the number the ADD ROUTE enforces (`rooms.max_members`, published on the wire),
+  // not a restated default. At it, adding is refused here with the reason, rather than offered and
+  // answered `room_member_limit` — the refusal every Retry would earn again.
+  const ceiling = detail.room.max_members
+  const atCeiling = !detail.room.archived && detail.room.members.length >= ceiling
+  const ceilingReason = `This room holds its maximum of ${ceiling} member${ceiling === 1 ? '' : 's'}`
+  // A room that fills while the form is open (another tab, a lowered ceiling) closes the form: the
+  // offer it makes can no longer be kept. `formOpen` covers the render before the effect lands.
+  useEffect(() => { if (atCeiling) setAdding(false) }, [atCeiling])
+  const formOpen = adding && !atCeiling
   return (
     <div className="flex flex-col gap-l">
-      <div className="flex items-center justify-between gap-s">
-        <Eyebrow as="h3" id="room-members-heading">
-          Members {views.length > 0 ? `(${views.length})` : ''}
-        </Eyebrow>
-        {!detail.room.archived && !adding && (
-          <Button size="xs" variant="secondary" onClick={() => setAdding(true)}>
-            <UserPlus size={13} aria-hidden /> Add
-          </Button>
+      <div className="flex flex-col gap-xs">
+        <div className="flex items-center justify-between gap-s">
+          <Eyebrow as="h3" id="room-members-heading">
+            Members {views.length > 0 ? `(${views.length})` : ''}
+          </Eyebrow>
+          {!detail.room.archived && !formOpen && (
+            <Button size="xs" variant="secondary" disabled={atCeiling} disabledReason={ceilingReason}
+              onClick={() => setAdding(true)}>
+              <UserPlus size={13} aria-hidden /> Add
+            </Button>
+          )}
+        </div>
+        {atCeiling && (
+          <p data-type="body-s" className="text-on-surface-var" style={fvs(400)}>
+            {ceilingReason}. Remove one to add another, or raise Members per room in{' '}
+            <TextLink href="#/settings/chat" ink="emphasis">Settings › Chat</TextLink>.
+          </p>
         )}
       </div>
 
-      {views.length === 0 && !adding ? (
+      {views.length === 0 && !formOpen ? (
         <EmptyState
           icon={UserPlus}
           title="No members yet"
@@ -111,7 +131,7 @@ export function RoomMembersPanel({ detail, owed, agents, agentsError, onRetryAge
         </ul>
       )}
 
-      {adding && (
+      {formOpen && (
         <AddMemberForm
           agents={agents}
           agentsError={agentsError}
@@ -153,7 +173,9 @@ function MemberRow({ view, removable, removing, onRemove }: {
                 <state.icon size={11} aria-hidden /> {state.label}
               </StatusPill>
             )}
-            {view.queuePosition > 0 && (
+            {/* Not for the member that is answering: it is #1 by definition, and "Answering · #1 in
+                the queue" says one fact twice. */}
+            {view.queuePosition > 0 && view.state !== 'answering' && (
               <span data-type="caption" className="text-on-surface-low">
                 #{view.queuePosition} in the queue
               </span>
@@ -274,10 +296,15 @@ function AddMemberForm({ agents, agentsError, onRetryAgents, taken, busy, onAdd,
   return (
     <div className="rounded-lg bg-surface-container px-m py-m">
       <Eyebrow as="h3">Add a member</Eyebrow>
+      {/* Agents are created on the Agents page (`#/agents/new`), NOT in Settings — Settings ›
+          Agent holds defaults, runners and subagents and has no create control, so the old
+          "Create another agent in Settings" sent the user somewhere that cannot do it. */}
       {noneFree ? (
         <p data-type="body-s" className="mt-xs text-on-surface-var" style={fvs(400)}>
-          Every agent you have configured is already in this room. Create another agent in
-          Settings to add one.
+          Every agent you have configured is already in this room.{' '}
+          <TextLink href="#/agents/new" ink="emphasis" icon={ArrowRight} iconPosition="trailing">
+            Create another agent
+          </TextLink>
         </p>
       ) : (
         <div className="mt-s flex flex-col gap-m">

@@ -30,6 +30,7 @@ from typing import Any
 
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.tool_providers.base import ToolFailure, tool_failure
+from personalclaw.validation import decode_json_text
 from personalclaw.workflows import grill_protocol as grill_mod
 from personalclaw.workflows import intent as intent_mod
 from personalclaw.workflows import rigor as rigor_mod
@@ -73,16 +74,23 @@ def _list_tools() -> list[dict[str, Any]]:
                         "description": "Definition name: lowercase letters, digits, hyphens.",
                     },
                     "description": {"type": "string"},
+                    # `root` and `inputs` are JSON TEXT, not objects: a free-form object has no
+                    # portable schema, and a strict provider rejects the whole request over one
+                    # (tool_providers.portable_schema). `validation.decode_json_text` reads it.
                     "root": {
-                        "type": "object",
+                        "type": "string",
                         "description": (
-                            "The root node of the spec tree. Call workflow_manifest for the "
-                            "node taxonomy, binding pipes and allowed shapes."
+                            "The root node of the spec tree, as JSON text (one object). Call "
+                            "workflow_manifest for the node taxonomy, binding pipes and allowed "
+                            "shapes."
                         ),
                     },
                     "inputs": {
-                        "type": "object",
-                        "description": "Declared inputs: name → {type, required, default, help}.",
+                        "type": "string",
+                        "description": (
+                            "Declared inputs, as JSON text: an object mapping each input name to "
+                            "{type, required, default, help}."
+                        ),
                     },
                     "tags": {"type": "array", "items": {"type": "string"}},
                     "save": {
@@ -193,8 +201,11 @@ def _list_tools() -> list[dict[str, Any]]:
                 "properties": {
                     "name": {"type": "string", "description": "The definition to instantiate."},
                     "inputs": {
-                        "type": "object",
-                        "description": "Values for the definition's declared inputs.",
+                        "type": "string",
+                        "description": (
+                            "Values for the definition's declared inputs, as JSON text: an "
+                            "object mapping each input name to its value."
+                        ),
                     },
                     "mode": {"type": "string", "enum": ["blocking", "background"]},
                     "project_id": {"type": "string", "description": "Optional project binding."},
@@ -254,9 +265,11 @@ def _list_tools() -> list[dict[str, Any]]:
                 "properties": {
                     "run_id": run_id,
                     "ops": {
-                        "type": "array",
-                        "items": {"type": "object"},
-                        "description": "Mutation ops. See workflow_manifest for the catalog.",
+                        "type": "string",
+                        "description": (
+                            "The mutation ops, as JSON text: an array of op objects. See "
+                            "workflow_manifest for the catalog."
+                        ),
                     },
                     "expect_version": {"type": "integer"},
                     "confirm_cascade": {
@@ -394,10 +407,10 @@ def _list_tools() -> list[dict[str, Any]]:
         {
             "name": "workflow_resume",
             "description": (
-                "Answer a workflow that is waiting on a human, or clear a pause. For an "
-                "approval gate pass answer=true/false; for a choice or form pass the value "
-                "or object. To change ONE step instead of accepting or rejecting the whole "
-                'plan, pass answer={"revise": {"step_ref": "<step id>", "comment": "what to '
+                "Answer a workflow that is waiting on a human, or clear a pause. `answer` is "
+                "JSON text: for an approval gate pass true or false; for a choice or form pass "
+                "the value or object. To change ONE step instead of accepting or rejecting the "
+                'whole plan, pass {"revise": {"step_ref": "<step id>", "comment": "what to '
                 "change\"}} — that step's instruction is amended and the gate re-asks, "
                 "leaving every other step exactly as it was. With no answer this just lifts a "
                 "pause. Each answer is consumed once — calling twice will not approve twice. "
@@ -407,11 +420,15 @@ def _list_tools() -> list[dict[str, Any]]:
                 "type": "object",
                 "properties": {
                     "run_id": run_id,
+                    # JSON TEXT: an answer can be a bool, a string or an object, and an untyped
+                    # value has no portable schema (tool_providers.portable_schema).
                     "answer": {
+                        "type": "string",
                         "description": (
-                            "true/false for an approval; a value or object otherwise; or "
-                            '{"revise": {"step_ref", "comment"}} to amend one step and re-ask.'
-                        )
+                            "The answer as JSON text: true or false for an approval; a JSON "
+                            'string or object otherwise; or {"revise": {"step_ref": "...", '
+                            '"comment": "..."}} to amend one step and re-ask.'
+                        ),
                     },
                     "resume_token": {
                         "type": "string",
@@ -762,7 +779,9 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
                 run_id,
                 supervisor=_supervisor(),
                 token=str(args.get("resume_token", "") or ""),
-                answer=args.get("answer"),
+                # Declared JSON text on the tool surface (an untyped value has no portable
+                # schema); decoded HERE rather than in the service the REST route shares.
+                answer=decode_json_text(args.get("answer")),
                 always_allow=bool(args.get("always_allow")),
             )
         )

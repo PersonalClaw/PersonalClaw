@@ -231,13 +231,15 @@ async def _handle_elicitation(server: str, params: Any) -> Any:
         except asyncio.TimeoutError:
             # The call that asked this question is about to be abandoned, so the answer has
             # nowhere left to go. Cancelling the wait runs `request_approval`'s own `finally`,
-            # which drops the pending row; the broadcast below takes the card out of the UI's
-            # actionable state so nobody clicks a button that can no longer deliver anything.
+            # which expires the approval on every surface — the pending row, its Inbox row, and
+            # the card, which leaves the UI's actionable state through the same
+            # `approval_resolved` frame (`approved: False`, the fail-closed effect) every other
+            # unanswered approval sends, so nobody clicks a button that can no longer deliver
+            # anything.
             #
             # `cancel` and not `decline`: the spec's `decline` is an explicit refusal, and the
             # user made no choice here. Reporting one they did not make would misstate their
             # intent to the server — the same distinction the no-UI branch above draws.
-            _withdraw(state, approval_id)
             logger.info(
                 "MCP server %r asked a question nobody answered within %.0fs; cancelled",
                 server,
@@ -252,21 +254,6 @@ async def _handle_elicitation(server: str, params: Any) -> Any:
         return mcp_types.ErrorData(
             code=mcp_types.INTERNAL_ERROR, message="elicitation could not be delivered"
         )
-
-
-def _withdraw(state: Any, approval_id: str) -> None:
-    """Take a card the user can no longer usefully answer out of the UI.
-
-    Reuses the existing ``approval_resolved`` event rather than minting a third resolution
-    state: that is the vocabulary every approval surface already consumes, and a new event
-    kind would be a second way to say "this card is finished". ``approved: False`` is the
-    truthful effect — the boundary fails closed on an unanswered prompt, as
-    ``request_approval`` does for every other origin.
-    """
-    try:
-        state.broadcast_ws("approval_resolved", {"id": approval_id, "approved": False})
-    except Exception:
-        logger.debug("could not withdraw elicitation approval %s", approval_id, exc_info=True)
 
 
 def _live_state() -> Any:

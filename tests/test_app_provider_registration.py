@@ -89,7 +89,7 @@ async def test_provider_only_app_registers_and_is_callable(tmp_path):
     # clean any stale registration from a prior run
     unregister_provider("fixture-search")
 
-    res = app_manager.install(_provider_app(tmp_path))
+    res = app_manager.install(_provider_app(tmp_path), confirm=True)
     assert res.ok, res.error
 
     # install() registers + enables providers → it should be live + callable.
@@ -116,7 +116,7 @@ async def test_uninstall_deactivates_provider_keeps_registration(tmp_path):
     from personalclaw.search_providers.registry import get_provider, unregister_provider
 
     unregister_provider("fixture-search")
-    res = app_manager.install(_provider_app(tmp_path))
+    res = app_manager.install(_provider_app(tmp_path), confirm=True)
     assert res.ok, res.error
     ext_registry = get_provider_registry()
     assert ext_registry.get("fixture-search") is not None
@@ -137,7 +137,7 @@ async def test_force_uninstall_fully_deregisters_provider(tmp_path):
     from personalclaw.search_providers.registry import get_provider, unregister_provider
 
     unregister_provider("fixture-search")
-    res = app_manager.install(_provider_app(tmp_path))
+    res = app_manager.install(_provider_app(tmp_path), confirm=True)
     assert res.ok, res.error
     ext_registry = get_provider_registry()
     assert ext_registry.get("fixture-search") is not None
@@ -202,8 +202,8 @@ def test_two_apps_same_module_name_dont_collide(tmp_path):
 
     for pn in ("prov-alpha", "prov-beta"):
         unregister_provider(pn)
-    app_manager.install(_provider_app_named(tmp_path, "app-alpha", "prov-alpha"))
-    app_manager.install(_provider_app_named(tmp_path, "app-beta", "prov-beta"))
+    app_manager.install(_provider_app_named(tmp_path, "app-alpha", "prov-alpha"), confirm=True)
+    app_manager.install(_provider_app_named(tmp_path, "app-beta", "prov-beta"), confirm=True)
 
     a = get_provider("prov-alpha")
     b = get_provider("prov-beta")
@@ -284,7 +284,7 @@ async def test_app_registers_multiple_providers(tmp_path):
     for pn in ("multi-primary", "multi-secondary"):
         unregister_provider(pn)
 
-    res = app_manager.install(_multi_provider_app(tmp_path))
+    res = app_manager.install(_multi_provider_app(tmp_path), confirm=True)
     assert res.ok, res.error
 
     # BOTH providers live + callable in the search registry.

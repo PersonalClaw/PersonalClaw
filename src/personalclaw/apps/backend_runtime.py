@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING
 
 from personalclaw.apps.manager import app_dir
 from personalclaw.apps.manifest import AppManifest
+from personalclaw.periodic_sweep import PeriodicSweep
 
 if TYPE_CHECKING:
     from personalclaw.sandbox_providers import SandboxSpec
@@ -210,7 +211,8 @@ class BackendSupervisor:
                 return None
 
             port = self._resolve_port(backend.port)
-            cmd = self._launch_cmd(backend.type, entry)
+            app_packages = bool(manifest.dependencies.pythonDependencies)
+            cmd = self._launch_cmd(backend.type, entry, app_packages=app_packages)
             if cmd is None:
                 logger.warning(
                     "app %s backend: cannot determine launcher for %s", name, backend.entryPoint
@@ -272,6 +274,10 @@ class BackendSupervisor:
             # Read-only is the contract — the SDK hands the consumer a read-only handle
             # (sdk.util.shared_app_data_dir) and writes stay broker-only.
             extra.update(shared_storage_env(name))
+            if app_packages:
+                from personalclaw.apps import app_python
+
+                extra.update(app_python.child_env())
             env = build_child_env(site="app-backend", extra=extra)
             if data_dir is None:
                 # Storage not declared → don't hand the backend a data dir. The allowlist
@@ -452,7 +458,13 @@ class BackendSupervisor:
             return s.getsockname()[1]
 
     @staticmethod
-    def _launch_cmd(backend_type: str, entry: Path) -> list[str] | None:
+    def _launch_cmd(
+        backend_type: str, entry: Path, *, app_packages: bool = False
+    ) -> list[str] | None:
+        """The child's argv. ``app_packages`` — the app declares ``pythonDependencies`` — starts a
+        Python child through ``app_python.child_argv``, which loads ``<home>/app-python`` AFTER
+        the interpreter's own packages; ``PYTHONPATH`` would put them first, ahead of the
+        resource-ceiling shim these children are started through."""
         kind = backend_type.strip().lower()
         if not kind:
             suffix = entry.suffix.lower()
@@ -461,6 +473,10 @@ class BackendSupervisor:
             elif suffix in (".js", ".mjs", ".cjs"):
                 kind = "node"
         if kind in ("python", "asgi"):
+            if app_packages:
+                from personalclaw.apps import app_python
+
+                return app_python.child_argv(entry)
             return [sys.executable, str(entry)]
         if kind == "node":
             return ["node", str(entry)]
@@ -484,24 +500,23 @@ def get_backend_supervisor() -> BackendSupervisor:
 
 _WATCHDOG_INTERVAL = 30  # seconds between sweeps
 
+# The sweep is looked up per pass (not bound here), so it is always the module's current one.
+_WATCHDOG = PeriodicSweep("app-backend-watchdog", _WATCHDOG_INTERVAL, lambda: _check_and_revive())
+
 
 def start_backend_watchdog() -> threading.Thread:
-    """Start a daemon thread that checks backend health every 30s and
-    relaunches any that crashed. Returns the thread (for testing)."""
-    import time
+    """Start the daemon sweep that relaunches crashed backends every 30s — or return the one
+    already running, since two would race to revive the same backend.
 
-    def _loop() -> None:
-        while True:
-            time.sleep(_WATCHDOG_INTERVAL)
-            try:
-                _check_and_revive()
-            except Exception:
-                logger.debug("backend watchdog sweep failed", exc_info=True)
+    Ended by :func:`stop_backend_watchdog`, which the gateway's cleanup calls: a watchdog that
+    outlives its gateway revives, 30s later, every backend the shutdown just terminated.
+    """
+    return _WATCHDOG.start()
 
-    t = threading.Thread(target=_loop, name="app-backend-watchdog", daemon=True)
-    t.start()
-    logger.info("app-backend watchdog started (interval=%ds)", _WATCHDOG_INTERVAL)
-    return t
+
+def stop_backend_watchdog() -> None:
+    """Stop the sweep :func:`start_backend_watchdog` started. Idempotent."""
+    _WATCHDOG.stop()
 
 
 def _check_and_revive() -> None:

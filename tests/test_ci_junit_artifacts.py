@@ -380,25 +380,27 @@ def test_a_matrix_job_names_its_artifact_per_leg(
             )
 
 
-def test_the_real_home_rail_report_is_uploaded_per_shard(
+def test_the_real_home_guard_report_is_uploaded_per_shard(
     workflows: dict[str, dict[str, str]],
 ) -> None:
     """The one red the JUnit report structurally CANNOT explain still reaches an artifact.
 
-    The real-home rail fails a run from ``pytest_sessionfinish`` by assigning
-    ``session.exitstatus`` — no testcase fails, so the XML reads ``failures=0`` and the
-    shard surfaces as a bare process-level exit naming nothing. MEASURED: that signature
-    cost three shifts of guessing on one PR, because the offending paths lived only on
-    STDOUT, where the #2720 truncation class can eat them (#3386).
+    The real-home guard fails the test that touches the real home, which the XML carries. What
+    it cannot pin on a test — a thread that outlived the test that started it, an import during
+    collection — fails the run from ``pytest_sessionfinish`` by assigning ``session.exitstatus``:
+    no testcase fails, so the XML reads ``failures=0`` and the shard surfaces as a bare
+    process-level exit naming nothing. MEASURED on the walk-based rail before it: that
+    signature cost three shifts of guessing on one PR, because the offending paths lived only
+    on STDOUT, where the #2720 truncation class can eat them (#3386).
 
     The expected path is read from :data:`real_home_guard.REPORT_RELPATH` rather than
-    spelled here, so moving the writer without moving the upload reds this rail instead
+    spelled here, so moving the writer without moving the upload reds this test instead
     of silently publishing a file that no longer exists.
     """
     block = workflows["ci.yml"]["test-shard"]
     wanted = real_home_guard.REPORT_RELPATH
     assert wanted.startswith(_REPORT_DIR), (
-        f"the rail report is written to {wanted!r}, outside {_REPORT_DIR!r} — the only "
+        f"the guard report is written to {wanted!r}, outside {_REPORT_DIR!r} — the only "
         "directory .gitignore covers and CI uploads from."
     )
     uploads = [
@@ -408,17 +410,17 @@ def test_the_real_home_rail_report_is_uploaded_per_shard(
     ]
     assert uploads, (
         f"ci.yml job `test-shard` runs the whole suite but no step uploads {wanted}, so a "
-        "rail-caused red is unattributable from any artifact."
+        "session-level guard red is unattributable from any artifact."
     )
     for upload in uploads:
         condition = key(upload, "if") or "success()"
         assert re.search(r"\balways\(\)|\bfailure\(\)|!\s*cancelled\(\)", condition), (
-            f"the rail report is uploaded under `if: {condition}`, which skips exactly the "
+            f"the guard report is uploaded under `if: {condition}`, which skips exactly the "
             "failing runs it exists for. Use `if: always()`."
         )
         name = with_key(upload, "name") or ""
         assert "${{ matrix." in name, (
-            f"all four shards upload the rail report as {name!r}; without a matrix "
+            f"all four shards upload the guard report as {name!r}; without a matrix "
             "coordinate they collide and only the last leg to finish survives."
         )
 

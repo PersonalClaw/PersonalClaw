@@ -575,13 +575,15 @@ def _body(resp):
     return json.loads(resp.body.decode())
 
 
-def test_the_route_is_a_404_with_its_own_code_when_evals_is_off(monkeypatch):
+def test_the_route_answers_off_rather_than_failing_when_evals_is_off(monkeypatch):
+    """Off is a decided 200 the panel renders, not a 404 the browser logs (see
+    ``test_evals_routes.test_a_switched_off_report_read_answers_off_instead_of_failing``)."""
     from personalclaw.dashboard.handlers import evals as E
 
     monkeypatch.setattr(E, "_enabled", lambda: False)
     resp = _http(E.api_evals_field_metrics(_req()))
-    assert resp.status == 404
-    assert _body(resp)["error"]["code"] == "evals_disabled"
+    assert resp.status == 200
+    assert _body(resp) == {"enabled": False}
 
 
 def test_a_read_failure_is_a_500_not_an_empty_table(monkeypatch):

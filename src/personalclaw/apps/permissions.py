@@ -265,6 +265,14 @@ def _matches_any(value: str, patterns: list[str]) -> bool:
 #: the audit trail, or the gateway's own lifecycle. There is nothing to scope: an app with
 #: a shell does not have "some" access. Deny-by-construction, not deny-by-default.
 #:
+#: **The owner's security posture is in that class**, and it is the same argument: an app that
+#: can switch auto-approve-everything on, trust a folder's scripts, mint itself a sign-in or an
+#: inbound credential, or resume unattended work the owner stopped has made its own manifest
+#: moot. The posture held in ``config.json`` is refused FIELD by field instead
+#: (``config/edit_spec.app_write_refusal``), because ``/api/config`` also carries ordinary
+#: settings an app may legitimately write; the routes below exist only to change the posture,
+#: so the whole route is the owner's.
+#:
 #: **The way OUT** (a refusal with no escape becomes the outage). None of these removes a
 #: capability an app can legitimately need:
 #:
@@ -309,6 +317,29 @@ OWNER_ONLY_API_PATHS: dict[str, str] = {
     "/api/system/restart": "restarting the gateway",
     # Mints a gateway token from the loopback secret — the bootstrap identity itself.
     "/api/token/local": "a gateway token minted as you",
+    # ── The owner's security posture (see the class note above) ──
+    # `{"mode": "yolo"}` auto-approves every tool call in every session; `trust` does it for
+    # one. Reached with an ordinary `/api/chat` declaration before this row existed.
+    "/api/chat/mode": "the approval mode for your chats, including auto-approve-everything",
+    # The incident stop suspends every unattended run; resuming is the owner's decision. The
+    # STOP (`POST /api/incident`) stays grantable — it is the one lever an app should have.
+    "/api/incident/resume": "resuming unattended work after you stopped it",
+    # `trusted: true` lets a folder run and write its own project scripts.
+    "/api/guardrails/project-trust": "which folders may run their own scripts",
+    # A promotion lets an action type run without asking. Demote and undo stay grantable.
+    "/api/autonomy/grant": "letting an action type run without asking you",
+    # A taught `approve` rule auto-executes matching actions on your behalf.
+    "/api/memory/approval-rules": "standing approve and deny rules for actions taken for you",
+    # A pairing code redeems for a durable DEVICE session — the owner's sign-in, not an app's.
+    # An app backend passes `check_origin` (loopback, no Origin), so it could mint one and redeem
+    # it at the session-less `pair/complete`, leaving its sandbox entirely. `pair/complete` stays
+    # declarable: it redeems a code the owner minted.
+    "/api/devices/pair/start": "a new device signed in as you",
+    # Each client is an inbound credential with a scope its creator chooses.
+    "/api/external-access/clients": "credentials for reaching this gateway from outside",
+    # The ACP agent's runtime config: `allowedTools` runs without asking, `mcpServers` are
+    # commands it launches.
+    "/api/agent/config": "the tools your agent runs without asking, and the servers it launches",
 }
 
 

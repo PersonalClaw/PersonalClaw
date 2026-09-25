@@ -10,11 +10,42 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Bringing your setup over lists what comes across, with a count and a checkbox per group, and lets you pick item by item.**
+
 - **A fresh install can hold a conversation without an account, an API key or a provider — after one download it tells you about first.**
 - **A workflow step whose output ignored its declared `schema` now says so on its own row.**
 
+### Changed
+
+- **The Session Map is a map of your messages: one marker for each message you sent, all one length, with colour showing which are on screen.**
+
 ### Fixed
 
+- **An unattended loop runs unattended, every loop is listed wherever you look, and Pause stops the worker.**
+- **The chat page has no drifting shadow shapes any more, and the glow around the composer fades out smoothly in every state instead of ending in a hard line.**
+- **A chat model that validates tool schemas strictly (Gemini, directly or through a router) can chat again, and one tool with a sloppy schema can no longer fail every turn.**
+- **A room keeps showing replies after everyone has spoken, a restart no longer loses a round without a word, and a member whose turn fails says so.**
+- **The container image can offer and fetch its default chat model, keeps your workspace on its volume, and says when a project's folder is gone.**
+- **Apps with Python dependencies install on the published Docker image, and keep working after `docker rm` + `docker run`.**
+- **Generated chat titles no longer keep the model's label.**
+- **A room at its member ceiling no longer offers another agent.**
+- **Boot no longer logs three chained tracebacks for a correctly configured embedding model.**
+- **`personalclaw chat` can use app-provided models, the bundled default model included.**
+- **The network-egress census says `huggingface.co` is fetched, and it now checks what it says.**
+- **A warm page load no longer prints a console warning every 8 seconds.**
+- **A long answer no longer deletes your question, and a restart keeps everything you saw in a chat.**
+- **Background compression no longer rewrites your chats. It shortens what the model reads, and the chat keeps every message.**
+- **A tool approval a chat is waiting on now shows up everywhere you would look for it, and can be answered from any of them.**
+- **A long message no longer takes the gateway down, and every part of a turn uses the same answer for how big the model's window is.**
+- **Updates → Check gives a pip, container or desktop install a result, and the Settings home never says "Up to date" for an install nothing compared.**
+- **A version pin must be a release version, and a pin that matches no release says so.**
+- **The Settings home's Search tile says what is actually installed.**
+- **The Settings home's Chat tile names widget density for what it is.**
+- **A failed workflow is blamed on the step that failed, a transient failure offers a Retry that works, and best-of-n's temperatures reach the model.**
+- **What a chat turn sends the model now matches your settings: the assistant's name and yours arrive, the prompt bound in Settings → Prompts is the one used, each message is sent once, and no other conversation's messages are included.**
+- **A streamed answer renders once and whole: a new chat's first answer is no longer painted twice, and reloading in the middle of an answer no longer cuts off its start.**
+- **First-run setup offers the small offline model up front, notices when its download finishes, and says a chat model is ready only when one exists.**
+- **"Run setup again" keeps your name and handle when you skip it.**
 - **"Escalate on name mention" now escalates a notification that mentions *you*, not one that mentions the assistant.**
 - **Knowledge says what actually failed when no model is set up.**
 - **A refused task save now appears next to Save, and ticking the missing criterion in the same form fixes it.**
@@ -22,6 +53,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A cancelled task no longer shows as done on a project's Work board.**
 - **An artifact saved from a project's workspace now appears on that project.**
 - **Your default project is now the same on every device.**
+- **Triggers: Dry run shows its result, a trigger's notification opens the trigger, one fire makes one notification, and the 900s floor only warns about model calls.**
 - **A judged loop now works past its first iteration: a loop body is handed its previous iteration, a stage's output arrives in its declared shape, and each iteration takes its own execution claim.**
 - **An escalation no longer blames the iteration ceiling for iterations that never ran, and a tripped breaker is visible.**
 - **First-run setup's "All set" recap no longer calls the model-provider app your chat model after a reload.**
@@ -32,10 +64,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The Files page no longer goes blank the first time you open a file of a new type.**
 - **An empty folder in Files now shows how to fill it.**
 - **The README and the guides describe the small default model, and say plainly what it can't do.**
+- **New skill works on the first try, and a skill you create there says so.**
+- **Your prompts are no longer buried under PersonalClaw's own.**
+- **The Learning page no longer logs six errors on every visit when evals are off.**
+- **A failed chat turn says what failed and lands where you can see it, and editing an earlier message no longer deletes the turns after it without a trace.**
 
 ### Security
 
+- **Installing an app never copies files from outside its bundle.**
+- **An installed app can no longer change your security settings, and every write that loosens one asks you first.**
+- **The Settings home's YOLO switch now asks before turning auto-approve-everything on, and the server refuses to turn it on without that consent.**
+- **API keys and channel tokens are no longer stored in plaintext, world-readable, or copied into backups.**
+- **Every app install now shows what the app gets and waits for you — a clean security scan no longer installs in one click.**
 - **A gateway running as root can now use its own home directory as a workspace — and its credentials under it stay refused.**
+- **The owner token no longer stays in the address bar after it is used.**
 
 ## [0.2.0] — 2026-09-23
 

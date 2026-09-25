@@ -72,7 +72,7 @@ describe('workflow re-entry committed-effect previews', () => {
     rewindWorkflowRun
       .mockRejectedValueOnce(confirmationRequired())
       .mockResolvedValueOnce({ ok: true, preview })
-    render(<WorkflowRunDetail runId="run-1" onBack={() => {}} />)
+    render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={() => {}} />)
 
     fireEvent.click(await screen.findByTitle(/Re-run this node and everything/i))
 
@@ -90,7 +90,7 @@ describe('workflow re-entry committed-effect previews', () => {
     workflowRunFrom
       .mockRejectedValueOnce(confirmationRequired())
       .mockResolvedValueOnce({ ok: true, preview })
-    render(<WorkflowRunDetail runId="run-1" onBack={() => {}} />)
+    render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={() => {}} />)
 
     fireEvent.click(await screen.findByTitle(/Re-run only what comes after/i))
 

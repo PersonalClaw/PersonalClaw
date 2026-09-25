@@ -1,4 +1,4 @@
-"""Deterministic turn arbitration — the FIFO speaker queue and the round budget.
+"""Deterministic turn arbitration — the FIFO speaker queue, the round budget, and the round.
 
 **No model ever decides speaking order.** This module is the whole of who-speaks-next, and
 it derives that answer from two inputs only: the room's roster and the ``@``-mentions in a
@@ -34,42 +34,55 @@ a member's words.
 **The round budget is what reconciles this with a bounded room.** `AR-3` restricted the turn
 path to a single human-triggered pass over the roster *because* no budget existed yet, and
 said so; the mention chain above is the multi-pass behaviour that restriction stood in for,
-and it is admitted here only because :func:`run_round` now bounds it. Every agent turn since
-the human's last message is charged to ``Room.rounds_used``; at ``rooms.round_budget`` (6 by
-default — two full passes of a three-member room) the room stops draining, sets ``paused``,
-and raises ONE inbox attention item. Any human message resets the counter and closes that
-item, so the room's own pause has no separate resume button to go missing. The counter is
-persisted, so two concurrent rounds over one room share one bound and a gateway restart
-cannot launder it.
+and it is admitted here only because :func:`drain_round` now bounds it. Every agent turn that
+SPOKE since the human's last message is charged to ``Room.rounds_used``; at
+``rooms.round_budget`` (6 by default — two full passes of a three-member room) the room stops
+draining, sets ``paused``, and raises ONE inbox attention item. Any human message resets the
+counter and closes that item, so the room's own pause has no separate resume button to go
+missing. A turn that failed or came back empty is not an exchange and is not charged — it
+said nothing, and it summons nobody, so it can only shrink the queue (see
+:func:`~personalclaw.rooms.store.end_turn`).
 
-**A pause SUSPENDS the queue; it does not cancel it.** The members still owed a turn when the
-ceiling was reached are parked on ``Room.pending_queue`` and speak first when the human
-replies — :func:`resume_queue` is that rule, and it is pure. This is the difference between a
-budget that protects a conversation and one that quietly truncates it: without the park, the
-reply a user sends to let the deliberation continue would be the very act that discarded the
-turns it was continuing, and the room would restart from that sentence while looking like it
-had resumed. The park is drained exactly once, by
-:func:`~personalclaw.rooms.store.take_pending`, so the debt is owed to one round rather than
-re-inherited by every later one.
+**The round lives on disk, not in this module's call frame.** The queue, and the turn that is
+open, are fields of the room record (``pending_queue``, ``speaking``), written as each turn
+opens and closes. That is what three different readers need, and none of them could get from a
+queue held in a task's memory:
+
+* **the room view**, which follows a round by what the ROOM says it still owes — a guess from
+  the transcript froze it the moment every member had spoken once;
+* **a restarted gateway**, which finds the cut-off turn and the queue behind it intact. It does
+  NOT resume them on its own: a round that nothing is running reads as *interrupted*
+  (:func:`round_running` is False while the room still owes turns), and the human continues it
+  — with one action, without re-sending anything. Resuming at boot was the alternative and is
+  wrong here twice over: the room's premise is that its human is present when its agents spend,
+  and a turn that took the process down (a local model exhausting memory) would take it down
+  again on every boot;
+* **a pause**, which is therefore a suspension by construction — the members still owed a turn
+  when the ceiling was reached are simply still queued, and speak first when the human replies.
+
+**One round per room.** :func:`start_round` refuses to start a second while one is running, so
+a human message that arrives mid-round extends the queue the running round is draining instead
+of racing it — one speaker at a time holds for the ROOM, not just for one message.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections import deque
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.notification_kinds import AGENT
 from personalclaw.rooms.store import (
     RoomMember,
-    charge_round,
+    begin_turn,
     effective_round_budget,
+    end_turn,
     pause_room,
     require_room,
     reset_round_budget,
-    take_pending,
+    set_pending_queue,
 )
-from personalclaw.rooms.turn import mentions_in_order, run_member_turn
+from personalclaw.rooms.turn import mentions_in_order, note_failed_turn, run_member_turn
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from personalclaw.session import SessionManager
@@ -91,6 +104,10 @@ PAUSE_BODY = (
 #: The ref every pause item carries, and the one a human message resolves on. One key, so
 #: the item's lifecycle IS the room's and there is no second piece of bookkeeping to close.
 PAUSE_REF = "room"
+
+#: The name every round's task carries, so "is a round running for this room?" is a question
+#: about a live task rather than about a flag something could forget to clear.
+ROUND_TASK_PREFIX = "room-round:"
 
 
 # ── the queue: pure decisions over (roster, text) ──────────────────────────
@@ -148,20 +165,20 @@ def queue_for_member(members: list[RoomMember], speaker: str, content: str) -> l
 def resume_queue(carryover: list[str], members: list[RoomMember], content: str) -> list[str]:
     """The full FIFO queue for a human message: what the room still OWES, then what it asks.
 
-    Pure: ``(carryover, roster, text) -> names``. This is what makes a pause a suspension
-    rather than a cancellation. ``carryover`` is the remainder parked by
-    :func:`~personalclaw.rooms.store.pause_room`, and it comes **first** because FIFO does not
-    stop being FIFO across a pause: those members were enqueued before the human's new
-    sentence was written, so they are ahead of it in the queue. A resume that dropped them
-    would make the budget silently destructive — the user's reply would cancel the turns they
-    were replying in order to allow.
+    Pure: ``(carryover, roster, text) -> names``. ``carryover`` is the room's queue as it stands
+    — parked by a pause, or still draining in a running round — and it comes **first** because
+    FIFO does not stop being FIFO across a message: those members were enqueued before the
+    human's new sentence was written, so they are ahead of it in the queue. A resume that dropped
+    them would make the budget silently destructive — the user's reply would cancel the turns
+    they were replying in order to allow.
 
     Two filters, both of which the drain loop would otherwise have to guess at:
 
     * **De-duplicated against the carry-over.** A human who replies ``@skeptic`` to a room that
       already owed skeptic a turn gets one turn, keeping its earlier position — the same
       "naming somebody twice is emphasis" rule :func:`queue_for_human` applies within one
-      message, extended across the pause.
+      message, extended across the pause. (The member whose turn is OPEN is not in the
+      carry-over: that turn was built before this message existed, so it is owed another.)
     * **Filtered to the current roster.** A member removed while the room was paused does not
       speak. The roster is the human's to change, and a name parked before they changed it is
       not a standing claim on a seat they took away.
@@ -172,6 +189,18 @@ def resume_queue(carryover: list[str], members: list[RoomMember], content: str) 
         if name not in queued:
             queued.append(name)
     return queued
+
+
+def queue_human_turns(room_id: str, content: str) -> list[str]:
+    """Queue what a human message asks for behind what the room already owes. Returns the queue.
+
+    Persisted before the caller starts (or extends) the round, so the queue the route answers
+    with is on disk whether or not the round that drains it survives — which is the difference
+    between a restart that interrupts a round and one that silently loses it.
+    """
+    room = require_room(room_id)
+    queue = resume_queue(room.pending_queue, room.members, content)
+    return set_pending_queue(room_id, queue).pending_queue
 
 
 # ── the budget's two edges ─────────────────────────────────────────────────
@@ -194,18 +223,17 @@ def note_human_message(state: Any, room_id: str) -> None:
     resolve_attention_items(state, {PAUSE_REF: room_id})
 
 
-def _pause(state: Any, room_id: str, rounds: int, title: str, pending: list[str]) -> None:
-    """Pause the room, park *pending*, and raise exactly ONE attention item for it.
+def _pause(state: Any, room_id: str, rounds: int, title: str) -> None:
+    """Pause the room and raise exactly ONE attention item for it.
 
     Through :func:`~personalclaw.inbox.emit_attention_item` rather than an inbox write plus a
     ``notify`` — that helper exists because the two drift apart otherwise, and a room that
     paused without telling anybody is a room that has silently stopped. ``dedup_key`` makes
-    re-pausing the same room idempotent, so a second round that also hits the ceiling does not
-    stack a second row.
+    re-pausing the same room idempotent, so a second pause of the same room does not stack a
+    second row.
 
-    *pending* is parked BEFORE the item is raised, so the queue the user is being asked about
-    is already durable when they are told about it: a crash between the two would otherwise
-    leave an inbox row inviting them to resume a conversation whose remainder no longer exists.
+    The queue the user is being asked about is already durable when they are told about it: it
+    is the room's own ``pending_queue``, which a pause leaves exactly where it stands.
 
     **The item carries no member text.** Only the room's own human-authored title and a count,
     so the one surface that escapes the transcript's fence cannot carry a member's words to
@@ -213,7 +241,7 @@ def _pause(state: Any, room_id: str, rounds: int, title: str, pending: list[str]
     """
     from personalclaw.inbox import emit_attention_item
 
-    pause_room(room_id, pending)
+    pause_room(room_id)
     emit_attention_item(
         state,
         source=AGENT,
@@ -228,72 +256,139 @@ def _pause(state: Any, room_id: str, rounds: int, title: str, pending: list[str]
 # ── the round ──────────────────────────────────────────────────────────────
 
 
-async def run_round(
-    state: Any, sessions: "SessionManager", room_id: str, content: str
-) -> list[str]:
-    """Drain the speaker queue one member at a time until it empties or the budget runs out.
+def _round_task_name(room_id: str) -> str:
+    return f"{ROUND_TASK_PREFIX}{room_id}"
+
+
+def round_running(state: Any, room_id: str) -> bool:
+    """Whether this gateway is running a round for *room_id* right now.
+
+    Answered from the LIVE TASK, never from the record, and that is the point: the record says
+    what the room owes, and only a running task can pay it. A room that owes turns while nothing
+    is running them is *interrupted* — the process that was running them stopped — and it reads
+    that way by construction, whatever killed the round: a restart, a crash, a bug in the drain.
+    No flag has to be cleared on the way down for the room to stop claiming it is answering.
+    """
+    tasks = getattr(state, "_background_tasks", None) if state is not None else None
+    if not tasks:
+        return False
+    name = _round_task_name(room_id)
+    return any(task.get_name() == name and not task.done() for task in list(tasks))
+
+
+def start_round(state: Any, sessions: "SessionManager", room_id: str) -> None:
+    """Run the room's round in the background, unless one is already running.
+
+    **At most one per room.** A second round would drain the same queue concurrently and put two
+    members on one transcript at once; refusing it is safe because the running round re-reads the
+    queue before every turn, so whatever the caller just queued is drained by it.
+
+    ``state._background_tasks`` is the shipped set every other fire-and-forget handler parks its
+    task in (``dashboard/side.py`` is the closest sibling); an un-referenced ``create_task`` is
+    collectable mid-turn, which would make a member's reply vanish for reasons no log explains.
+    The task's NAME is what :func:`round_running` looks for.
+    """
+    if round_running(state, room_id):
+        return
+    task = asyncio.create_task(
+        drain_round(state, sessions, room_id), name=_round_task_name(room_id)
+    )
+    state._background_tasks.add(task)
+    task.add_done_callback(state._background_tasks.discard)
+
+
+async def drain_round(state: Any, sessions: "SessionManager", room_id: str) -> list[str]:
+    """Drain the room's queue one member at a time until it empties, pauses or is archived.
 
     Returns the members that actually contributed, in the order they spoke — which lets a
     caller tell "silent by policy" from "failed" from "never got a turn before the pause".
 
-    **The room record is re-read every iteration**, because the budget lives on disk and not
-    in this frame: that is what makes two concurrent rounds over one room share a single bound
-    instead of each spending the full budget, and what lets a human message arriving mid-drain
-    be seen.
+    **The room record is re-read every iteration**, because the queue and the budget live on
+    disk and not in this frame: that is what lets a human message arriving mid-round extend the
+    queue being drained, and a member removed mid-round lose its place.
 
-    **The queue starts with whatever the room still owed.** :func:`resume_queue` puts the
-    remainder parked by the last pause ahead of the members this message names, so replying to
-    a paused room continues its conversation instead of starting a new one over the same
-    transcript. The park is drained once, by
-    :func:`~personalclaw.rooms.store.take_pending`, so two rounds cannot both inherit it.
+    **A turn left open by a round that died is reopened first** (see
+    :func:`~personalclaw.rooms.store.begin_turn`), so continuing an interrupted room starts with
+    the member that was cut off.
 
-    **One member's failure does not silence the room**, and it still costs a round. The
-    traceback is logged and the next member speaks — one broken binding must not look like a
-    room where nobody had anything to say — but the charge happens before the turn, so a
-    member that fails every time cannot drain the queue for free.
+    **One member's failure does not silence the room, and it is SAID.** The traceback is logged,
+    the room writes who failed and why in that member's slot
+    (:func:`~personalclaw.rooms.turn.note_failed_turn`), the turn is not charged, and the next
+    member speaks — one broken binding must not look like a room where nobody had anything to
+    say, and it must not look like that member agreed either.
+
+    Anything else escaping the loop is logged at ERROR and ends this round, and the room then
+    reads as interrupted — its queue and any open turn are still on disk — rather than as a round
+    that silently stopped. A cancellation (the gateway stopping) is not caught at all: it ends the
+    task, and the record left behind is exactly what the restarted gateway needs.
     """
-    pending: deque[str] = deque(
-        resume_queue(take_pending(room_id), require_room(room_id).members, content)
-    )
     spoke: list[str] = []
-    while pending:
+    try:
+        await _drain(state, sessions, room_id, spoke)
+    except Exception:
+        logger.error(
+            "rooms: the round in room %s stopped on an unexpected error — the room keeps what it "
+            "owes and reads as interrupted",
+            room_id,
+            exc_info=True,
+        )
+    return spoke
+
+
+async def _drain(state: Any, sessions: "SessionManager", room_id: str, spoke: list[str]) -> None:
+    while True:
         room = require_room(room_id)
+        if room.archived:
+            logger.info("rooms: room %s was archived — its round stops", room_id)
+            return
         if room.paused:
             logger.info(
-                "rooms: room %s is paused — %d queued member(s) do not speak", room_id, len(pending)
-            )
-            pause_room(room_id, list(pending))
-            break
-        if room.rounds_used >= effective_round_budget(room):
-            logger.info(
-                "rooms: room %s hit its round budget of %d — pausing with %d member(s) queued",
+                "rooms: room %s is paused — %d member(s) stay owed a turn",
                 room_id,
-                effective_round_budget(room),
-                len(pending),
+                len(room.owed()),
             )
-            _pause(state, room_id, room.rounds_used, room.title, list(pending))
-            break
-        name = pending.popleft()
+            return
+        if not room.speaking and not room.pending_queue:
+            return
+        budget = effective_round_budget(room)
+        if room.rounds_used >= budget:
+            logger.info(
+                "rooms: room %s hit its round budget of %d — pausing with %d member(s) owed",
+                room_id,
+                budget,
+                len(room.owed()),
+            )
+            _pause(state, room_id, room.rounds_used, room.title)
+            return
+        name = begin_turn(room_id)
+        if not name:
+            return
         if room.member(name) is None:
-            # Removed mid-round. Not an error: the roster is the human's to change while the
+            # Removed while queued. Not an error: the roster is the human's to change while the
             # room is running, and a member they just removed must not get one last word.
+            end_turn(room_id, spoke=False)
             logger.info("rooms: %s left room %s before its turn — skipped", name, room_id)
             continue
-        charge_round(room_id)
         try:
             reply = await run_member_turn(sessions, room_id, name)
-        except Exception:
+        except Exception as exc:
+            end_turn(room_id, spoke=False)
+            now = require_room(room_id)
+            if now.archived or now.member(name) is None:
+                # The human archived the room or removed the member while it was answering, so
+                # the turn ending is their decision rather than a failure to report.
+                logger.info("rooms: %s's turn in room %s ended with the member gone", name, room_id)
+                continue
             logger.warning(
-                "rooms: member %s failed its turn in room %s — the round continues",
+                "rooms: member %s failed its turn in room %s — the room says so and the round "
+                "continues",
                 name,
                 room_id,
                 exc_info=True,
             )
+            note_failed_turn(room_id, name, exc)
             continue
-        if not reply:
-            continue
-        spoke.append(name)
-        for summoned in queue_for_member(room.members, name, reply):
-            if summoned not in pending:
-                pending.append(summoned)
-    return spoke
+        summoned = queue_for_member(require_room(room_id).members, name, reply) if reply else []
+        end_turn(room_id, spoke=bool(reply), summoned=summoned)
+        if reply:
+            spoke.append(name)

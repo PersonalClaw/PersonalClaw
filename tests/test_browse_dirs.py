@@ -27,8 +27,35 @@ def mock_sel():
 
 class TestBrowseDirs:
     @pytest.mark.asyncio
-    async def test_default_path_is_home(self, tmp_path, mock_sel):
+    async def test_default_path_is_the_workspace_root(self, tmp_path, mock_sel, monkeypatch):
+        """The picker opens where work lives — the workspace root — not ``$HOME``.
+
+        Measured on the container image: ``$HOME`` is ``/home/personalclaw``, outside the only
+        volume, so a project folder made with "New folder here" at the picker's starting point was
+        gone after ``docker rm`` + ``docker run``. The image sets the workspace to
+        ``/data/workspace``; opening there puts the new folder on the volume. Same answer the
+        Terminal gives for its cwd (#544).
+        """
+        workspace = tmp_path / "workspace"
+        (workspace / "garden-planner").mkdir(parents=True)
+        home = tmp_path / "home"
+        (home / "elsewhere").mkdir(parents=True)
+        monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(workspace))
+        monkeypatch.setenv("HOME", str(home))
+        async with TestClient(TestServer(_make_app())) as client:
+            resp = await client.get("/api/browse-dirs")
+            data = await resp.json()
+        assert resp.status == 200
+        assert data["path"] == os.path.realpath(workspace)
+        assert {d["name"] for d in data["dirs"]} == {"garden-planner"}
+
+    @pytest.mark.asyncio
+    async def test_default_path_falls_back_to_home_without_a_usable_workspace(
+        self, tmp_path, mock_sel, monkeypatch
+    ):
+        """No safe workspace root (``default_workspace_dir()`` is ``""``) → the home, as before."""
         (tmp_path / "projects").mkdir()
+        monkeypatch.setattr("personalclaw.config.loader.default_workspace_dir", lambda: "")
         with patch("os.path.expanduser", side_effect=lambda p: p.replace("~", str(tmp_path))):
             async with TestClient(TestServer(_make_app())) as client:
                 resp = await client.get("/api/browse-dirs")
@@ -204,8 +231,10 @@ class TestBrowseRefusalIsLegible:
     @pytest.mark.asyncio
     async def test_a_refused_default_location_names_the_home_it_tried(self, mock_sel, monkeypatch):
         # The failure the picker hit: no `path` at all, so the client cannot know what was refused
-        # unless the answer says. A home inside a system tree is refused for any account.
+        # unless the answer says. A home inside a system tree is refused for any account. The
+        # workspace root is taken out of the way so the default falls through to that home.
         monkeypatch.setenv("HOME", "/usr/share")
+        monkeypatch.setattr("personalclaw.config.loader.default_workspace_dir", lambda: "")
         async with TestClient(TestServer(_make_app())) as client:
             resp = await client.get("/api/browse-dirs")
             err = (await resp.json())["error"]

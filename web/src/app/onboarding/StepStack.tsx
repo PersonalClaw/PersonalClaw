@@ -1,9 +1,10 @@
-import { forwardRef, useEffect, useRef } from 'react'
+import { forwardRef, useContext, useEffect, useRef } from 'react'
 import { withWeight } from '../../design/fontWeight'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Check, Minus } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { spring } from '../../design/motion'
+import { StepActionsSlot } from './StepActions'
 
 /** What a row says about its step.
  *
@@ -66,6 +67,11 @@ export const StepRow = forwardRef<HTMLLIElement, {
   // clear.
   const heading = useRef<HTMLHeadingElement>(null)
   const wasActive = useRef(active)
+  // The shell's action bar, handed on to this step's body only while it is the step on screen. A
+  // body that is still animating shut after the user moved on stays mounted for that animation,
+  // and without this its Continue would sit in the bar beside the next step's.
+  const bar = useContext(StepActionsSlot)
+  const bodyBar = active || bar === undefined ? bar : null
   useEffect(() => {
     if (active && !wasActive.current) heading.current?.focus()
     wasActive.current = active
@@ -212,7 +218,12 @@ export const StepRow = forwardRef<HTMLLIElement, {
         </div>
       </Header>
 
-      {/* expanding body — only when active */}
+      {/* expanding body — only when active.
+          The action-bar slot is provided OUTSIDE the presence, on purpose: a body animating shut is
+          rendered from the element it had when it was last active, frozen, so a provider inside it
+          would keep handing that body the bar. Out here the provider re-renders with the row, and
+          the frozen body's actions read `null` the moment the row stops being the step on screen. */}
+      <StepActionsSlot.Provider value={bodyBar}>
       <AnimatePresence initial={false}>
         {active && children && (
           <motion.div
@@ -234,6 +245,7 @@ export const StepRow = forwardRef<HTMLLIElement, {
           </motion.div>
         )}
       </AnimatePresence>
+      </StepActionsSlot.Provider>
     </motion.li>
   )
 })

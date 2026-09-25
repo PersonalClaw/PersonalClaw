@@ -29,7 +29,8 @@ acceptance:
 ## Known cause + mitigation
 
 - **Cause:** the gateway loads the installed copy; the workspace edit never reached it.
-- **Mitigation:** push the edit with `POST /api/apps/{name}/update {source, confirm:true}`,
+- **Mitigation:** push the edit with `POST /api/apps/{name}/update {source}` (an edit that
+  changes what the app gets answers 409 with a review — re-send with its `consent`),
   then exercise the app. Do not edit the installed copy under the dev home directly —
   it's overwritten on the next update.
 

@@ -51,7 +51,7 @@ model is a floor rather than a way to get work done. Concretely:
   can chat. It has 135 million parameters and no tools, and it doesn't see your memory,
   skills or knowledge. [Security limitations §5](../security/limitations.md#5-the-bundled-default-model-is-a-floor-not-an-assistant)
   records what it did with real requests, and
-  [bundled-model-signoff.txt](../architecture/bundled-model-signoff.txt) records the model,
+  [bundled-model-signoff.txt](../../src/personalclaw/apps/native/bundled-chat/bundled-model-signoff.txt) records the model,
   its licence and its digest.
 - Core contains `llm/anthropic.py` and `llm/openai.py`, but these are *wire-protocol
   clients only* — neither registers itself as a provider at import. Registration is
@@ -193,17 +193,19 @@ non-enforcements matter most here:
   provider code is imported **in-process** by the gateway, so its outbound calls *are*
   the gateway's. The consent surface labels this advisory rather than implying
   containment.
-- An app's declared Python dependencies pip-install into the **shared** virtualenv the
-  gateway runs from. There is no per-app `site-packages`.
+- An app's declared Python dependencies pip-install into one directory every app shares
+  (`<home>/app-python`), which the gateway loads into its **own process** after its own
+  packages. An app can add a package but not replace one the gateway uses; once loaded,
+  its code is importable by everything in that process.
 - An app's frontend bundle runs in the dashboard's **own page**, not a separate origin.
 - ACP agents under auto-approve rely on system-prompt framing, not rails.
 
 The real control is the supply-chain scanner — quarantine → scan → consent → install,
-with a `dangerous` terminal verdict — plus a closed owner-only API registry that no
+with a `dangerous` terminal verdict — plus a closed set of owner-only capabilities that no
 manifest can reach (the terminal, computer-use, the credential store, the audit log,
-your password and second factor). That is meaningful, and it is also *vetting what you
-choose to install*, not confinement afterwards. Treat installing an app as running a
-program as yourself, because that is what it is.
+your password and second factor, and your security settings). That is meaningful, and it
+is also *vetting what you choose to install*, not confinement afterwards. Treat installing
+an app as running a program as yourself, because that is what it is.
 
 ## 10. You want a hosted service, or to run one install for other people
 

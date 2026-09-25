@@ -275,10 +275,15 @@ describe('first_success is written by the flow, not by the click', () => {
 })
 
 describe('the step is an offer, never a wall', () => {
-  it('Continue works with nothing tried, and reports it honestly', () => {
+  it('Continue works with nothing tried, and reports it honestly — as a skip', () => {
+    // It used to record the step as DONE with the summary "Skipped" (a green check beside the
+    // word) while a separate "Skip this" beside it did the honest thing. Now there is one button,
+    // and with nothing tried it IS the skip.
     mount()
     fireEvent.click(screen.getByRole('button', { name: /Continue/ }))
-    expect(onDone).toHaveBeenCalledWith('Skipped')
+    expect(onSkip).toHaveBeenCalledTimes(1)
+    expect(onDone).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'Skip this' }), 'no second button doing the same').toBeNull()
   })
 
   it('Continue reports how many actually succeeded', async () => {

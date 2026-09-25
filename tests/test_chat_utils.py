@@ -206,28 +206,25 @@ class TestRemoveQueuedById:
 
 
 class TestPrepareMessages:
-    def test_strips_done(self):
-        msgs = [{"role": "user", "content": "hi"}, {"role": "done", "content": ""}]
-        result = _prepare_messages(msgs, running=False)
-        assert len(result) == 1
-        assert result[0]["role"] == "user"
-
-    def test_collapses_chunks(self):
+    def test_serves_every_transcript_entry_once(self):
         msgs = [
-            {"role": "chunk", "content": "hel"},
-            {"role": "chunk", "content": "lo"},
-            {"role": "user", "content": "next"},
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+            {"role": "error", "content": "provider down"},
         ]
         result = _prepare_messages(msgs, running=False)
-        assert result[0]["role"] == "streaming"
-        assert "hel" in result[0]["content"]
-        assert result[1]["role"] == "user"
+        assert [m["role"] for m in result] == ["user", "assistant", "error"]
 
-    def test_trailing_chunks(self):
-        msgs = [{"role": "chunk", "content": "partial"}]
-        result = _prepare_messages(msgs, running=True)
-        assert len(result) == 1
-        assert result[0]["role"] == "streaming"
+    def test_serves_the_streaming_answer_in_the_shape_the_client_hydrates(self):
+        from personalclaw.dashboard.state import _ChatSession
+
+        session = _ChatSession("s1")
+        session.append("user", "count")
+        for chunk in ("one, ", "two, ", "three"):
+            session.stream_chunk(chunk)
+        result = _prepare_messages(session.messages, running=True)
+        assert result[-1] == {"role": "streaming", "content": "one, two, three", "cls": "msg msg-a"}
+        assert len(result) == 2
 
 
 class TestRedactForDisplay:

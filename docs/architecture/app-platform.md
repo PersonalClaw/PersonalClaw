@@ -24,19 +24,42 @@ modules). App sources for the Store are managed at
 ## Install lifecycle (`apps/app_manager.py`)
 
 Install is: **copy → stage in quarantine → validate manifest → scan staged
-content → platform gate → pip deps → `setup.onInstall` hook (bounded
+content → platform gate → consent → pip deps → `setup.onInstall` hook (bounded
 subprocess, 60s cap) → register providers/prompts/MCP servers/crons → start
 backend**.
 
 - **Quarantine first** — staged under `~/.personalclaw/apps/.quarantine/`;
   dangerous content never touches the live tree.
-- **The scan** is the shared `SkillScanner` (`supply_chain.py`). Verdicts:
-  *clean* installs; *warning* → HTTP 409 `needs_consent` (the caller must
-  explicitly confirm); *dangerous* → terminal refusal, **non-overridable**.
-  The install invariant is scanned-bytes == installed-bytes (no
-  swap-after-scan window).
+- **Staging never follows a link** (`apps/staging.py`) — install, update and the
+  install preview copy the bundle from one survey of the whole tree, taken before
+  anything is written, and every later gate reads that copy. A link to one of the
+  bundle's own files is kept as that link. Anything that brings in bytes from
+  elsewhere, or could, is refused with the offending path named: an absolute link,
+  a link that leaves the bundle for even one step, a link to a folder (the scan does
+  not descend into one), a link to nothing, a loop, a hard link to an outside file, a
+  pipe, socket or device, a link into or out of `data/`, and `data` or
+  `installed.json` as a link. A `repo#subdirectory` pointer must stay inside its
+  clone. The gateway's own copies of an app's `data/` (update, keep-data uninstall,
+  restore) copy links as links.
+- **The scan** is the shared `SkillScanner` (`supply_chain.py`). A *dangerous*
+  verdict (or an invalid signature) is a terminal refusal, **non-overridable**.
+  Each finding carries whether the code it sits in can run (`reachability`) and
+  whether anything the app runs loads its file at all (`runtime` — the install
+  dialog groups an app's own test files apart from the code it runs).
+- **Every install waits for consent** — a clean scan is not consent.
+  `POST /api/apps/preview {source}` stages the source and returns what installing
+  it grants and runs (`apps/disclosure.describe`: permissions, scheduled jobs and
+  whether each is switched on, Python packages, dashboard code, its own server
+  process, the install hook, MCP servers), the scan, and a `consent` digest of the
+  staged bytes. `POST /api/apps {source, consent}` commits only if the bytes still
+  have that digest; anything else — `confirm: true` included — answers 409 with
+  the review. The install invariant is scanned-bytes == reviewed-bytes ==
+  installed-bytes (no swap-after-scan window, and none after consent either).
 - **Update** is atomic with rollback: the previous install is preserved at
-  `~/.personalclaw/apps/.{name}.rollback` for the duration.
+  `~/.personalclaw/apps/.{name}.rollback` for the duration. An update that changes
+  what the app gets (compared with the installed copy's disclosure), or scans with
+  warnings, needs the same `consent` digest (`POST /api/apps/preview {source, name}`);
+  one that changes none of it needs none.
 - **Removal** distinguishes deactivate (providers deregistered, files kept)
   from force-uninstall.
 
@@ -402,6 +425,11 @@ module by accident — the app's own module is registered under a namespaced
 its typed `ToolTypeHandler` — model providers, transports, search providers,
 inbox sources, actions, prompts, skills. Provider REST surfaces live in
 `providers/routes.py` / `entity_routes.py` / `instance_routes.py`.
+
+A tool provider is registered under its app's name, and every tool it lists passes the tool
+seam before a model request carries it: a schema outside the portable profile is repaired or
+left out, with one log line naming the app and the tool — see
+[tool-schema-wire.md](tool-schema-wire.md).
 
 ## Related docs
 

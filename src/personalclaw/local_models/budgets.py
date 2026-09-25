@@ -54,6 +54,8 @@ class ContextBudget:
     * ``"catalog"`` — the local-model card declared ``context_tokens``
     * ``"window-table"`` — no catalog fact; :func:`personalclaw.model_windows.
       model_context_window` answered (its own per-provider default included)
+    * ``"served"`` / ``"declared"`` — the serving provider reported its window, or the binding
+      declared one (:func:`personalclaw.context_headroom.resolve_window`, via :func:`budget_for`)
     """
 
     context_tokens: int
@@ -161,12 +163,22 @@ async def model_budget(model_ref: str) -> ContextBudget:
     declared_context, declared_output = await catalog_window(ref)
 
     if declared_context > 0:
-        context = declared_context
-        source = "catalog"
-    else:
-        context = max(_FLOOR, int(model_context_window(ref or None)))
-        source = "window-table"
+        return budget_for(declared_context, declared_output, source="catalog")
+    return budget_for(
+        max(_FLOOR, int(model_context_window(ref or None))), declared_output, source="window-table"
+    )
 
+
+def budget_for(context_tokens: int, declared_output: int, *, source: str) -> ContextBudget:
+    """Steps 2–4 of :func:`model_budget` for a window that is already known.
+
+    The ONE derivation of a reply reserve from a window: the card's declared output cap (or
+    :data:`DEFAULT_OUTPUT_TOKENS`), clamped to :data:`MAX_OUTPUT_FRACTION` of the window, with
+    the input room what is left. ``context_headroom.resolve_window`` calls it with the window
+    the serving provider reports, so the turn's budget check and this catalog-only path cannot
+    size the same model's reply two different ways.
+    """
+    context = max(_FLOOR, int(context_tokens))
     output = declared_output if declared_output > 0 else DEFAULT_OUTPUT_TOKENS
     output = min(output, max(_FLOOR, int(context * MAX_OUTPUT_FRACTION)))
     output = max(_FLOOR, min(output, context))

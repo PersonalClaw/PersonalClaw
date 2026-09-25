@@ -232,10 +232,18 @@ _ensured_dirs: set[str] = set()
 
 
 def _ensure_dir(p: Path) -> Path:
-    """mkdir ``p`` once per process (idempotent, syscall only on first sight)."""
+    """Create the home ``p`` once per process — PRIVATE (0700) when this call creates it.
+
+    The home holds the credential store and every settings file, so a new one is 0700 like
+    ``~/.ssh``. An EXISTING home is never re-moded here: this runs whenever the home is
+    RESOLVED, including from module constants at import time, so a chmod here would change
+    whatever home an import happened to resolve — the developer's real one during test
+    collection. A loose home from an earlier release is tightened on the WRITE path instead,
+    the first time a file is written into it (:func:`personalclaw.atomic_write.ensure_private_dir`).
+    """
     key = str(p)
     if key not in _ensured_dirs:
-        p.mkdir(parents=True, exist_ok=True)
+        p.mkdir(mode=0o700, parents=True, exist_ok=True)
         _ensured_dirs.add(key)
     return p
 
@@ -2533,7 +2541,14 @@ class ResolvedBindings:
     # approval_mode (the host gate). Empty = adapter default; ignored by runtimes
     # with no separate mode axis (the default dialect). Threaded to the acp factory as acp_mode.
     acp_mode: str = ""
+    # The agent's OWN system prompt, as the Agents UI saved it — "" when it has none. A
+    # value replaces the prompt bound in Settings → Prompts; "" (the default agent) lets
+    # the bound prompt serve.
     system_prompt: str = ""
+    # The agent's VOICE (#42), kept apart from ``system_prompt`` so it can LAYER on
+    # whichever prompt resolves. Folded into ``system_prompt`` it turned an agent with a
+    # voice and no prompt of its own into a system prompt that was the voice block alone.
+    voice: str = ""
     tools: list = field(default_factory=list)
     skills: list = field(default_factory=list)
     approval_mode: str = ""
@@ -2813,26 +2828,30 @@ class ToolsConfig:
         ),
     )
     # Background compression service (Context Economy §4) — the always-on complement
-    # to on-demand projection: idle, at-rest session history is topic-segmented and
-    # attention-weighted compressed on the maintenance cadence so long sessions stay
-    # fast. Feature flag (missing = the DEFAULT, not fail-safe-off): a maintenance
-    # nicety, not a guard.
+    # to on-demand projection: an idle, at-rest chat is topic-segmented and
+    # attention-weighted on the maintenance cadence, so the history the model is handed
+    # when it resumes is short. It writes a derived record beside the chat and never the
+    # chat itself, which is why it can be on by default. Feature flag (missing = the
+    # DEFAULT, not fail-safe-off): a maintenance nicety, not a guard.
     bg_compress_enabled: bool = field(
         default=True,
         metadata=_meta(
             "Background compression",
-            "Continuously compress old, idle conversation history in the background "
-            "(topic-segmented, attention-weighted) so long sessions stay fast. Every "
-            "dropped span is archived first (fully recoverable) and the summary names "
-            "its archive. Incognito/temporary chats are never touched.",
+            "Summarize the older part of idle chats in the background (topic-segmented, "
+            "attention-weighted), so the history handed to the model when one is picked up "
+            "again opens with a short summary instead of every message. Chats are never "
+            "changed: every message stays as you left it. The summary is kept beside the "
+            "chat, stops being used the moment a message it covers changes, and is deleted "
+            "with the chat. Uses the background model. Incognito/temporary chats are never "
+            "summarized.",
         ),
     )
     bg_compress_idle_days: float = field(
         default=7.0,
         metadata=_meta(
             "Background compression idle window",
-            "Only compress sessions untouched for at least this many days (at rest — "
-            "an active session is never compressed).",
+            "Only summarize chats untouched for at least this many days (at rest — an "
+            "active chat is never summarized).",
         ),
     )
     # Dynamic tool-group activation (Context Economy §5) — partition the tool
@@ -3033,10 +3052,12 @@ class UpdatesConfig:
         default="",
         metadata=_meta(
             "Version Pin",
-            "Stay on an exact version (e.g. '0.2.1') or a version line, overriding the "
-            "channel: 'update available' and any apply respect the pin. Empty (the default) "
-            "means follow the channel. This is the 'stay on 0.2.x' and rollback story — "
-            "artifacts are immutable and every version is kept.",
+            "Stay on one exact release (e.g. '0.1.3'), overriding the channel: 'update "
+            "available' and any apply respect the pin, and a pin that names no published "
+            "release offers and installs nothing. Only a release version is accepted — a "
+            "version line or range can never match one. Empty (the default) means follow "
+            "the channel. This is the rollback story — artifacts are immutable and every "
+            "version is kept.",
         ),
     )
     auto: Literal["off", "staged"] = field(
@@ -4803,13 +4824,17 @@ class AppConfig:
             if val:
                 creds[key] = val
 
-        # Propagate credentials into the process environment so spawned children
+        # Propagate NAMED credentials into the process environment so spawned children
         # (sandboxed agents, MCP servers, cron-fired subprocesses) inherit them
         # via Popen's default env=os.environ.copy() — even when their view of
         # ~/.personalclaw/.env is a bind-mounted empty file. setdefault() preserves
-        # any value the caller already set explicitly.
+        # any value the caller already set explicitly. An OWNED key (a provider's or an
+        # app setting's secret) is read only through its settings reference, so it is
+        # never exported — see `config.credentials.OWNED_KEY_PREFIX`.
+        from personalclaw.config.credentials import is_owned_key
+
         for k, v in creds.items():
-            if v:
+            if v and not is_owned_key(k):
                 os.environ.setdefault(k, v)
 
         return creds
@@ -4903,7 +4928,8 @@ def resolve_agent_bindings(
         effective_memory_config=effective_memory,
         provider_agent=provider_agent,
         acp_mode=acp_mode,
-        system_prompt=_compose_voice(getattr(agent_cfg, "voice", ""), agent_cfg.system_prompt),
+        system_prompt=agent_cfg.system_prompt or "",
+        voice=getattr(agent_cfg, "voice", "") or "",
         tools=list(agent_cfg.tools or []),
         skills=list(agent_cfg.skills or []),
         approval_mode=agent_cfg.approval_mode,

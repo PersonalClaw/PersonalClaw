@@ -187,8 +187,12 @@ class TestRestoreRecentSessions:
         assert len(state._sessions["existing"].messages) == 1
         assert state._sessions["existing"].messages[0]["content"] == "already here"
 
-    def test_limits_to_500_messages(self, tmp_path, monkeypatch):
-        """Only the last 500 messages are loaded from a session."""
+    def test_loads_the_whole_transcript_never_a_window(self, tmp_path, monkeypatch):
+        """Every persisted message is loaded — the save rewrites the file from this buffer.
+
+        This loaded the last 500; the next save then wrote the window over the file and
+        the oldest 100 messages were gone.
+        """
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         messages = [
             {"role": "user", "content": f"msg {i}", "ts": f"2026-03-23T10:{i:04d}"}
@@ -202,9 +206,9 @@ class TestRestoreRecentSessions:
         restored = restore_recent_sessions(state, window_minutes=60)
         assert restored == 1
         session = state._sessions["big"]
-        assert len(session.messages) == 500
-        assert session.messages[0]["content"] == "msg 100"
-        assert session._disk_older_count == 100  # 600 total - 500 loaded = 100 older on disk
+        assert len(session.messages) == 600
+        assert session.messages[0]["content"] == "msg 0"
+        assert session._disk_older_count == 0  # one file: nothing lives outside the buffer
 
     def test_restores_multiple_sessions(self, tmp_path, monkeypatch):
         """Multiple recent dashboard sessions are all restored."""

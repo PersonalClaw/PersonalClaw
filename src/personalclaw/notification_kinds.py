@@ -529,9 +529,11 @@ _KINDS: tuple[NotificationKind, ...] = (
     # notification whose latency directly caps how autonomous the system can be, and so a
     # user can send THAT to the phone without sending everything else.
     #
-    # NOT `attention=True`, deliberately: a pending approval is an in-memory future with a
-    # timeout (`DashboardState._approval_futures`), not a durable inbox row. Claiming
-    # otherwise would put an item in the attention list that vanishes on restart.
+    # NOT `attention=True`, deliberately: this pair routes the PING, not the row. A pending
+    # approval's durable Inbox row rides `system/agent_request` below — raised by the pending-
+    # approval registry (`DashboardState._hold_approval`) the moment the approval is, closed the
+    # moment it is answered or expires, and swept at boot, because the approval itself is an
+    # in-memory future that no restart survives.
     NotificationKind(
         "approval",
         "requested",

@@ -147,8 +147,8 @@ class HeartbeatService:
             self._consolidator.check_idle_sessions()
 
         # Background compression pass (Context Economy §4) — hourly, budgeted, off the
-        # request path. Topic-compresses old idle at-rest sessions so long histories
-        # stay fast; config-gated + fully reversible (archive-before-rewrite).
+        # request path. Summarizes old idle at-rest chats for the model, beside the
+        # transcript; config-gated, and it never writes the chat file itself.
         if self._consolidator and self._tick % _BG_COMPRESS_TICKS == 0:
             try:
                 await self._run_bg_compression()
@@ -219,7 +219,10 @@ class HeartbeatService:
         if stats:
             saved = sum(s["chars_in"] - s["chars_out"] for s in stats)
             logger.info(
-                "Background compression: %d session(s), ~%d chars reclaimed", len(stats), saved
+                "Background compression: summarized %d chat(s); the model reads ~%d fewer "
+                "chars when they resume",
+                len(stats),
+                saved,
             )
 
     async def _run_one_task(self, task_text: str, deliver: str) -> str | None:

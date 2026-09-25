@@ -7,7 +7,7 @@ import {
   Trash2, Gavel, FlaskConical, KeyRound, type LucideIcon,
 } from 'lucide-react'
 import {
-  api, type AvailableModel, type JudgeBenchRecommendation, type ProviderHealth,
+  api, isEvalsOff, type AvailableModel, type JudgeBenchRecommendation, type ProviderHealth,
   type HfTokenSource, type LocalModelHealth, type LocalModelSelftest,
 } from '../../lib/api'
 import { humanBytes } from '../../lib/chunkedUpload'
@@ -33,6 +33,7 @@ import { ERROR_SURFACE_PAINT } from '../../design/errorTreatments'
 import { DisclosureCard } from '../../ui/DisclosureCard'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { reportingWrite } from '../../app/reportingWrite'
+import { InlineModelDownload, isDownloadable, modelLabel } from './InlineModelDownload'
 
 // Canonical use-cases (matches the backend's USE_CASES vocabulary).
 // `chain`: the binding is an ordered fallback CHAIN (position 0 = default,
@@ -227,7 +228,9 @@ export function ModelsPanel() {
       api.modelsAvailable(),
       api.modelsActive(),
     ])
-    return { allModels: rows.flatMap((r) => r.models ?? []), active }
+    // `local` marks a provider the local-model registry lists — one that can DOWNLOAD a model it
+    // does not have yet — so a row can offer its Download right where it is chosen.
+    return { allModels: rows.flatMap((r) => r.models ?? []), active, localProviders: rows.filter((r) => r.local).map((r) => r.name) }
   }, { persist: true })
   // Per-provider breaker health for the chain-entry dots — refreshed on panel
   // mount (persist:false so a broken provider isn't shown green from cache).
@@ -235,14 +238,18 @@ export function ModelsPanel() {
     api.modelsHealth().then((h) => h.providers).catch(() => [] as ProviderHealth[]), { persist: false })
   // The judge benchmark's tier recommendations, so rebinding a judge to the cheapest
   // adequate tier is ONE action here rather than a hand-translation from a table on another
-  // page. A failure or a 404 collapses to "no recommendation, no chip" — which is an honest
-  // absence rather than a swallowed error, because the Learning page's Judge tiers panel is
-  // the surface that owns reporting WHY there is none.
+  // page. Evals off (`{"enabled": false}`), a failure or a 404 all collapse to "no
+  // recommendation, no chip" — which is an honest absence rather than a swallowed error,
+  // because the Learning page's Judge tiers panel is the surface that owns reporting WHY there
+  // is none.
   const { data: judgeRecs } = useQuery('settings:judge-bench-recs', () =>
-    api.judgeBench().then((v) => v.recommendations).catch(() => [] as JudgeBenchRecommendation[]),
+    api.judgeBench()
+      .then((v) => (isEvalsOff(v) ? [] : v.recommendations))
+      .catch(() => [] as JudgeBenchRecommendation[]),
     { persist: false })
   const allModels = data?.allModels
   const active = data?.active ?? {}
+  const localProviders = useMemo(() => new Set(data?.localProviders ?? []), [data?.localProviders])
 
   // A binding mutation invalidates the cached catalog so the next read revalidates
   // against the changed state instead of a stale snapshot.
@@ -276,7 +283,7 @@ export function ModelsPanel() {
           return (
             <div key={uc}>
               {showGroupHeader && <div data-type="caption" className="mb-1.5 mt-3 px-1 text-on-surface-low uppercase tracking-wide">{meta.group}</div>}
-              <UseCaseRow useCase={uc} activeModels={active[uc] ?? []} allModels={allModels} health={health ?? []} judgeRec={(judgeRecs ?? []).find((r) => r.verdict === 'recommended' && r.use_case === uc)} onChanged={reloadActive} />
+              <UseCaseRow useCase={uc} activeModels={active[uc] ?? []} allModels={allModels} localProviders={localProviders} health={health ?? []} judgeRec={(judgeRecs ?? []).find((r) => r.verdict === 'recommended' && r.use_case === uc)} onChanged={reloadActive} />
             </div>
           )
         })}
@@ -660,8 +667,11 @@ function HealthDot({ provider, health }: { provider: string; health: ProviderHea
   return <span role="img" className="size-2 shrink-0 rounded-pill" style={{ background: color }} title={label} aria-label={label} />
 }
 
-function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChanged }: {
-  useCase: string; activeModels: string[]; allModels: AvailableModel[]; health: ProviderHealth[]
+function UseCaseRow({ useCase, activeModels, allModels, localProviders, health, judgeRec, onChanged }: {
+  useCase: string; activeModels: string[]; allModels: AvailableModel[]
+  /** Providers that can download a model they do not have yet (see `isDownloadable`). */
+  localProviders: ReadonlySet<string>
+  health: ProviderHealth[]
   judgeRec?: JudgeBenchRecommendation; onChanged: () => void
 }) {
   // No `open` flag here: `DisclosureCard` owns the disclosure state, which is the only thing this
@@ -831,13 +841,16 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
         <div className="flex flex-col gap-1 rounded-lg bg-surface p-2">
           {activeModels.map((ref, i) => {
             const { provider, model: id } = splitModelRef(ref)
+            // The model's name where the catalog has one (`SmolLM2-135M-Instruct`), not its file id.
+            const known = capable.find((m) => m.provider === provider && m.id === id)
+            const named = known ? modelLabel(known) : id
             return (
               <div key={ref} className="flex items-center gap-2 rounded-md bg-surface-container px-2.5 py-1.5">
                 <span data-type="caption" className="w-16 shrink-0 text-on-surface-low uppercase tracking-wide">
                   {i === 0 ? 'default' : `fallback ${i}`}
                 </span>
                 <HealthDot provider={provider} health={health} />
-                <span data-type="body-s" className="min-w-0 flex-1 truncate font-mono text-on-surface">{id}</span>
+                <span data-type="body-s" className="min-w-0 flex-1 truncate font-mono text-on-surface" title={named !== id ? id : undefined}>{named}</span>
                 {provider && <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{provider}</span>}
                 {/* Two different claims, so two different props. The BOUNDARY (`i === 0`,
                     last row) is genuine unavailability and keeps `disabled` + the reason that
@@ -925,6 +938,8 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
             // downloaded won't actually run — surface it so "configured" never
             // silently means "inert" (e.g. after deleting a bound model's weights).
             const notDownloaded = m.downloaded === false
+            // …and one this machine can fetch gets its Download right here (`InlineModelDownload`).
+            const downloadable = isDownloadable(m, localProviders)
             // A local model carries a `downloaded` flag; a hosted/remote model does not. Only a
             // present LOCAL model can run a real-inference selftest here.
             const isLocal = m.downloaded !== undefined
@@ -946,7 +961,8 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
                       style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>
                       {on && <Check size={10} strokeWidth={3} className="text-on-primary" />}
                     </span>
-                    <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface font-mono">{m.name}</span>
+                    <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface font-mono"
+                      title={modelLabel(m) !== m.name ? m.name : undefined}>{modelLabel(m)}</span>
                   </button>
                   <ModelChips model={m} onRepair={() => repair(m)} repairing={repairing === ref} />
                   {needsToken && (
@@ -959,13 +975,22 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
                   {on && notDownloaded && (
                     <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5"
                       style={{ background: 'color-mix(in srgb, var(--color-warning) 16%, transparent)', color: 'var(--color-warning)' }}
-                      title="Bound but not downloaded — download it in Providers to activate.">
+                      title={downloadable
+                        ? 'Bound but not on this machine yet — download it below to use it.'
+                        : 'Bound but not downloaded — download it in Providers to activate.'}>
                       <Download size={9} /> not downloaded
                     </span>
                   )}
                   <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{m.provider}</span>
                 </div>
                 {isLocal && m.downloaded === true && <ModelTestButton provider={m.provider} model={m.id} />}
+                {/* Chosen but not on this machine: its download, right here. Finishing it is the
+                    binding taking effect — and for Embedding, the re-index the choice asked for,
+                    which could not start while the model was missing. */}
+                {on && downloadable && (
+                  <InlineModelDownload model={m}
+                    onDownloaded={() => { onChanged(); if (useCase === 'embedding') startReindex() }} />
+                )}
               </div>
             )
               })}

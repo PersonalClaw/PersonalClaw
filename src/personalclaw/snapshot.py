@@ -132,13 +132,13 @@ CORE_FILES: dict[str, tuple[str, ...]] = {
         "routing_policy.json",
     ),
     "notifications": ("notifications.jsonl",),
-    # `credentials.json` — the provider credential descriptors (#2217). It belongs to this
-    # NAMED component rather than riding `everything`, because secrets are deliberately excluded
-    # from the generic restore pass (`_extra_restore_paths`): capture keeps them, restore must
-    # not re-plant credential material into a home that rotated it. This component is the
-    # documented exception — copy-if-missing, chmod 0600 — so listing it here is what makes it
-    # both captured AND restorable, instead of backed up and unreturnable.
-    "security": ("sel_hmac.key", "telemetry_salt", "credentials.json"),
+    # Integrity material only: the audit log's HMAC key (so a restore into a wiped home can
+    # verify the rows it imports — `_merge_security_events`) and the telemetry salt. NO
+    # credential value is captured: `credentials.json` rode here (#2217) so a restore returned
+    # provider keys, and that is reversed — an archive gets copied off the machine, and a key
+    # inside it leaves with it. The settings that use a key travel as `{{secret:…}}`
+    # references; the credential store itself stays on this machine (`inventory.credential`).
+    "security": ("sel_hmac.key", "telemetry_salt"),
 }
 
 
@@ -334,13 +334,11 @@ def _extra_restore_paths(snap: Path) -> list[str]:
     reads. Keeping the two in one shape is the point: a store added to the inventory later is
     both captured and restored without touching either function.
 
-    **Secrets are excluded, unlike capture.** ``backup_entries()`` includes them on purpose
-    ("losing the credential store is exactly what a backup should prevent"), but restoring
-    ``.env``/``credentials/``/``.local_secret`` generically would re-plant credential material
-    into a home that may have deliberately rotated or removed it. Capture is a local 0600
-    archive; restore writes into a live home, so the two directions do not warrant the same
-    default. The named ``security`` component remains the deliberate path for key material,
-    copy-if-missing and 0600 exactly as today.
+    **Secrets are excluded.** Credential values are not even captured (``backup_entries()``
+    drops ``credential=True`` entries — ``.env``, ``credentials.json``, ``.local_secret``), and
+    the secrets a snapshot does carry are not re-planted generically either: restore writes into
+    a live home that may have deliberately rotated or removed them. The named ``security``
+    component remains the deliberate path for the audit key material it carries.
     """
     from personalclaw.durability import inventory as inv
 
@@ -364,7 +362,7 @@ COMPONENT_HELP = {
     "skills": "skills/ directory",
     "workspace": "workspace/ directory",
     "notifications": "notifications.jsonl (notification history)",
-    "security": "sel_hmac.key, telemetry_salt, credentials.json (provider API keys)",
+    "security": "sel_hmac.key, telemetry_salt (no credential is ever captured)",
     "projects": "projects/ — briefs, context ledgers, templates (worktrees excluded, git-owned)",
     "everything": "every other store: tasks, projects, agents, prompts, workflows, uploads, …",
 }

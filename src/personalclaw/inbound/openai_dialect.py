@@ -478,7 +478,7 @@ def _is_approval_stop(msg: dict) -> bool:
 
 
 def _is_done(msg: dict) -> bool:
-    """The turn-complete marker. ``chat_runner`` appends ``("done", "", "done")``."""
+    """The turn-complete marker ``chat_runner`` sends live readers via ``signal_done()``."""
     return str(msg.get("cls", "")) == "done" or str(msg.get("role", "")) == "done"
 
 

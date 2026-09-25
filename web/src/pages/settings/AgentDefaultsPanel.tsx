@@ -10,6 +10,7 @@ import { FieldError, NumberField, TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { accentChip } from '../../design/accent'
+import { setAgentYolo } from './agentYolo'
 
 // The editable agent.* fields mirror the backend _EDITABLE_CONFIG allowlist
 // (types + ranges are the server's truth; we surface the same bounds).
@@ -76,15 +77,30 @@ export function AgentDefaultsPanel() {
     })
   }
 
+  // YOLO goes through the ONE writer (`agentYolo.setAgentYolo`), which asks before turning it on,
+  // carries the consent the server requires, and reports a failed write itself — the hub tile calls
+  // the same function, so the two surfaces cannot ask differently, or one of them not at all. Not
+  // optimistic, unlike `patch` above: the switch moves once the server has accepted, so it never
+  // shows a bypass that is not live, and a declined dialog or a refused write leaves it where it was.
+  const patchYolo = (_key: string, value: boolean, onSaved: () => void) => {
+    void setAgentYolo(value).then((wrote) => {
+      if (!wrote) return
+      setCfg((c) => ({ ...c, yolo: value }))
+      onSaved()
+    })
+  }
+
   // `agent.self_qa.*` is a nested section, so its rows need a patch that prefixes the sub-path
   // AND rolls back into the nested object. Reusing the flat `patch` above would PATCH
   // `agent.enabled` — a path the server's allowlist rejects, so the control would appear to work
   // and then quietly revert.
   const selfQa = (cfg.self_qa ?? {}) as Record<string, unknown>
-  const patchSelfQa = (key: string, value: unknown, onSaved: () => void, label?: string) => {
+  // `confirmed` is `ToggleRow`'s own "Let the companion propose fix branches?" dialog, forwarded so
+  // the gateway, which asks consent for that loosening itself, does not ask a second time.
+  const patchSelfQa = (key: string, value: unknown, onSaved: () => void, label?: string, confirmed?: boolean) => {
     const prev = selfQa[key]
     setCfg((c) => ({ ...c, self_qa: { ...((c?.self_qa ?? {}) as object), [key]: value } }))
-    api.patchConfig(`agent.self_qa.${key}`, value).then(onSaved).catch((e) => {
+    api.patchConfig(`agent.self_qa.${key}`, value, confirmed === true).then(onSaved).catch((e) => {
       setCfg((c) => ({ ...c, self_qa: { ...((c?.self_qa ?? {}) as object), [key]: prev } }))
       notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
     })
@@ -102,13 +118,8 @@ export function AgentDefaultsPanel() {
         <RowGroup>
           <EnumRow label="Approval mode" hint="When the agent must ask before running a tool." cfg={cfg} field="approval_mode" patch={patch}
             options={[{ key: 'auto', label: 'Auto' }, { key: 'interactive', label: 'Ask each time' }, { key: 'trust_reads', label: 'Trust reads' }]} />
-          <ToggleRow label="YOLO mode" cfg={cfg} field="yolo" patch={patch}
-            hint="Skip every tool-approval confirmation — overrides approval mode, applies immediately, and stays on until turned off (no expiry, unlike the chat YOLO pill). Only inside a sandbox or for trusted automation." danger
-            confirmOn={{
-              title: 'Turn on YOLO mode?',
-              body: 'Every tool-approval confirmation will be skipped, for every session, until you turn this off again — there is no expiry. Only enable this inside a sandbox or for trusted automation.',
-              confirmLabel: 'Turn on YOLO mode',
-            }} />
+          <ToggleRow label="YOLO mode" cfg={cfg} field="yolo" patch={patchYolo}
+            hint="Skip every tool-approval confirmation — overrides approval mode, applies immediately, and stays on until turned off (no expiry, unlike the chat YOLO pill). Only inside a sandbox or for trusted automation." danger />
         </RowGroup>
       </Section>
 

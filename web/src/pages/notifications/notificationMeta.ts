@@ -150,6 +150,29 @@ export function clockTime(iso: string): string {
   return new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
+/** Where a notification's `statusUrl` leads, as an in-app route plus the words for the button —
+ *  or null when it names nowhere this app can go.
+ *
+ *  🔴 WHY THIS EXISTS. Every trigger fire's note has carried `statusUrl: "#/triggers?open=…"` since
+ *  R18, and nothing in the SPA read it: the detail panel offered Mark read and Delete, so a note
+ *  about an automation was a dead end with no way back to the automation.
+ *
+ *  🔴 IN-APP ROUTES ONLY, BY CONSTRUCTION. `statusUrl` rides the note's `meta`, and `notify` is the
+ *  choke point for every emitter — app bundles included — so this is caller-controlled text. Only
+ *  a value that begins `#/` is accepted, and what is returned is the route AFTER it, which
+ *  `navigate` re-prefixes with `#/`: there is no branch that can produce a scheme, a host, or a
+ *  `javascript:` href, because nothing here ever becomes an href at all. */
+export function notificationLink(n: Pick<NotificationItem, 'statusUrl'>): { label: string; path: string } | null {
+  const raw = typeof n.statusUrl === 'string' ? n.statusUrl : ''
+  if (!raw.startsWith('#/')) return null
+  const path = raw.slice(2)
+  const route = path.split(/[/?]/)[0]
+  if (!route) return null
+  if (route === 'triggers') return { label: /[?&]open=/.test(path) ? 'Open trigger' : 'Open triggers', path }
+  if (path.startsWith('workflows/runs/')) return { label: 'Open run', path }
+  return { label: 'Open', path }
+}
+
 export function firstLine(body: string, max = 120): string {
   const line = (body || '').split('\n').find((l) => l.trim()) ?? ''
   return line.length > max ? line.slice(0, max) + '…' : line

@@ -49,6 +49,16 @@ async def _client(tmp_path):
                 backend_runtime.get_backend_supervisor().stop_all()
 
 
+async def _consented_install(client, source: str):
+    """Install ``source`` the way the consent dialog does: review it with
+    ``POST /api/apps/preview``, then echo the review's ``consent`` digest back. A bare
+    ``POST /api/apps`` never installs anything any more — it answers 409 with the review."""
+    review = await client.post("/api/apps/preview", json={"source": source})
+    assert review.status == 200, await review.text()
+    token = (await review.json())["consent"]
+    return await client.post("/api/apps", json={"source": source, "consent": token})
+
+
 def _app_src(
     tmp_path: Path,
     name: str,
@@ -91,7 +101,7 @@ def _app_src(
 async def test_install_list_get(tmp_path):
     async with _client(tmp_path) as client:
         src = _app_src(tmp_path, "notes")
-        r = await client.post("/api/apps", json={"source": src})
+        r = await _consented_install(client, src)
         assert r.status == 201, await r.text()
         body = await r.json()
         assert body["ok"] and body["name"] == "notes"
@@ -138,7 +148,7 @@ async def test_list_hasconfig_from_provider_settings_schema(tmp_path):
         (d / "provider.py").write_text(
             "def create_provider(config=None):\n    return None\n", encoding="utf-8"
         )
-        r = await client.post("/api/apps", json={"source": str(d), "confirm": True})
+        r = await _consented_install(client, str(d))
         assert r.status == 201, await r.text()
 
         apps = (await (await client.get("/api/apps")).json())["apps"]
@@ -152,7 +162,7 @@ async def test_list_hasconfig_false_without_any_schema(tmp_path):
     """A plain app with neither setup.configSchema nor provider.settingsSchema → hasConfig false."""
     async with _client(tmp_path) as client:
         src = _app_src(tmp_path, "noconf")
-        await client.post("/api/apps", json={"source": src})
+        await _consented_install(client, src)
         apps = (await (await client.get("/api/apps")).json())["apps"]
         row = next(a for a in apps if a["name"] == "noconf")
         assert row["hasConfig"] is False
@@ -165,7 +175,7 @@ async def test_list_carries_the_declared_quality_block(tmp_path):
     verified in CI while never reaching a single pixel."""
     async with _client(tmp_path) as client:
         src = _app_src(tmp_path, "badged", quality={"tested": True, "designSystem": "legacy"})
-        await client.post("/api/apps", json={"source": src})
+        await _consented_install(client, src)
         apps = (await (await client.get("/api/apps")).json())["apps"]
         row = next(a for a in apps if a["name"] == "badged")
         assert row["quality"] == {"tested": True, "designSystem": "legacy"}
@@ -182,13 +192,13 @@ async def test_list_reports_no_quality_block_for_an_app_that_declares_none(tmp_p
     signed up for."""
     async with _client(tmp_path) as client:
         src = _app_src(tmp_path, "quiet")
-        await client.post("/api/apps", json={"source": src})
+        await _consented_install(client, src)
         apps = (await (await client.get("/api/apps")).json())["apps"]
         row = next(a for a in apps if a["name"] == "quiet")
         assert row["quality"] == {}
         # …and the two shapes are genuinely distinguishable on the wire.
         src2 = _app_src(tmp_path, "honest-miss", subdir="src2", quality={"tested": False})
-        await client.post("/api/apps", json={"source": src2})
+        await _consented_install(client, src2)
         apps = (await (await client.get("/api/apps")).json())["apps"]
         assert next(a for a in apps if a["name"] == "honest-miss")["quality"] == {"tested": False}
 
@@ -235,7 +245,7 @@ async def test_install_missing_source_400(tmp_path):
 async def test_dangerous_install_refused(tmp_path):
     async with _client(tmp_path) as client:
         src = _app_src(tmp_path, "evil", files={"scripts/x.sh": "rm -rf / --no-preserve-root\n"})
-        r = await client.post("/api/apps", json={"source": src, "confirm": True})
+        r = await client.post("/api/apps", json={"source": src})
         assert r.status == 400
         body = await r.json()
         assert not body["ok"] and body["scan"]["verdict"] == "dangerous"
@@ -245,7 +255,7 @@ async def test_dangerous_install_refused(tmp_path):
 async def test_enable_disable(tmp_path):
     async with _client(tmp_path) as client:
         src = _app_src(tmp_path, "notes")
-        await client.post("/api/apps", json={"source": src})
+        await _consented_install(client, src)
         assert (await client.post("/api/apps/notes/disable")).status == 200
         assert not (await (await client.get("/api/apps/notes")).json())["installed"]["enabled"]
         assert (await client.post("/api/apps/notes/enable")).status == 200
@@ -264,7 +274,7 @@ async def test_config_get_put_validated(tmp_path):
     }
     async with _client(tmp_path) as client:
         src = _app_src(tmp_path, "notes", setup={"configSchema": schema})
-        await client.post("/api/apps", json={"source": src})
+        await _consented_install(client, src)
 
         # empty config initially; schema returned
         r = await client.get("/api/apps/notes/config")
@@ -302,7 +312,7 @@ async def test_sensitive_config_field_is_write_only(tmp_path):
     }
     async with _client(tmp_path) as client:
         src = _app_src(tmp_path, "sec", setup={"configSchema": schema})
-        await client.post("/api/apps", json={"source": src})
+        await _consented_install(client, src)
 
         # set a real secret + a normal field
         r = await client.put(
@@ -365,7 +375,7 @@ async def test_the_app_detail_route_masks_the_same_secret_the_config_route_does(
     }
     async with _client(tmp_path) as client:
         src = _app_src(tmp_path, "sec", setup={"configSchema": schema})
-        await client.post("/api/apps", json={"source": src})
+        await _consented_install(client, src)
         r = await client.put(
             "/api/apps/sec/config",
             json={"api_key": "sk-DETAIL-SECRET-789", "endpoint": "https://x"},
@@ -434,7 +444,7 @@ async def test_config_falls_back_to_provider_settings_schema(tmp_path):
         (d / "provider.py").write_text(
             "def create_provider(config=None):\n    return object()\n", encoding="utf-8"
         )
-        await client.post("/api/apps", json={"source": str(d)})
+        await _consented_install(client, str(d))
 
         # schema surfaced from provider.settingsSchema (NOT empty)
         body = await (await client.get("/api/apps/wiki/config")).json()
@@ -453,7 +463,7 @@ async def test_config_falls_back_to_provider_settings_schema(tmp_path):
 async def test_uninstall_deactivates_force_removes(tmp_path):
     async with _client(tmp_path) as client:
         src = _app_src(tmp_path, "notes")
-        await client.post("/api/apps", json={"source": src})
+        await _consented_install(client, src)
         r = await client.get("/api/apps/notes/uninstall-preview")
         body = await r.json()
         assert r.status == 200 and "dependencies" in body
@@ -480,7 +490,7 @@ async def test_remove_rung_removes_the_app_and_keeps_its_data(tmp_path):
     """
     async with _client(tmp_path) as client:
         src = _app_src(tmp_path, "notes")
-        assert (await client.post("/api/apps", json={"source": src})).status == 201
+        assert (await _consented_install(client, src)).status == 201
 
         from personalclaw.apps import manager as app_store
 
@@ -495,7 +505,7 @@ async def test_remove_rung_removes_the_app_and_keeps_its_data(tmp_path):
         assert (await client.get("/api/apps/notes")).status == 404
 
         # Reinstall through the same endpoint a user would, and read the note back.
-        assert (await client.post("/api/apps", json={"source": src})).status == 201
+        assert (await _consented_install(client, src)).status == 201
         assert (app_store.app_dir("notes") / "data" / "note.md").read_text(
             encoding="utf-8"
         ) == "kept\n"
@@ -510,7 +520,7 @@ async def test_force_wins_when_a_request_asks_for_both_rungs(tmp_path):
     """
     async with _client(tmp_path) as client:
         src = _app_src(tmp_path, "notes")
-        assert (await client.post("/api/apps", json={"source": src})).status == 201
+        assert (await _consented_install(client, src)).status == 201
 
         from personalclaw.apps import manager as app_store
 
@@ -522,7 +532,7 @@ async def test_force_wins_when_a_request_asks_for_both_rungs(tmp_path):
         assert payload["forced"] is True and payload["removed"] is False, payload
         assert (await client.get("/api/apps/notes")).status == 404
 
-        assert (await client.post("/api/apps", json={"source": src})).status == 201
+        assert (await _consented_install(client, src)).status == 201
         assert not (
             app_store.app_dir("notes") / "data" / "doomed.md"
         ).exists(), "data survived a request that asked for the destructive rung"
@@ -541,7 +551,7 @@ async def test_ui_asset_served_and_traversal_guarded(tmp_path):
         src = _app_src(
             tmp_path, "widget", files={"ui/index.js": "export function mount(){return null}\n"}
         )
-        assert (await client.post("/api/apps", json={"source": src})).status == 201
+        assert (await _consented_install(client, src)).status == 201
         r = await client.get("/apps/widget/ui/index.js")
         assert r.status == 200
         assert "mount" in await r.text()
@@ -577,7 +587,7 @@ async def test_ui_asset_sibling_prefix_dir_is_rejected(tmp_path):
         src = _app_src(
             tmp_path, "widget", files={"ui/index.js": "export function mount(){return null}\n"}
         )
-        assert (await client.post("/api/apps", json={"source": src})).status == 201
+        assert (await _consented_install(client, src)).status == 201
         # Drop a SIBLING dir that shares the ``ui`` prefix into the installed app dir.
         installed_ui_bak = manager.app_dir("widget") / "ui.bak"
         installed_ui_bak.mkdir()
@@ -610,7 +620,7 @@ async def test_backend_proxy_round_trip(tmp_path):
             backend={"entryPoint": "backend/server.py", "type": "python", "healthCheck": "/health"},
             files={"backend/server.py": backend_py},
         )
-        r = await client.post("/api/apps", json={"source": src})
+        r = await _consented_install(client, src)
         assert r.status == 201, await r.text()
 
         # Backend was launched on install; poll until the proxy gets through.
@@ -664,7 +674,7 @@ async def test_startup_relaunches_enabled_backends(tmp_path, monkeypatch):
             backend={"entryPoint": "backend/server.py", "type": "python"},
             files={"backend/server.py": backend_py},
         )
-        assert (await client.post("/api/apps", json={"source": src})).status == 201
+        assert (await _consented_install(client, src)).status == 201
         # Simulate a gateway restart: drop the supervisor (kills tracked procs).
         backend_runtime.get_backend_supervisor().stop_all()
         backend_runtime._supervisor = backend_runtime.BackendSupervisor()
@@ -694,7 +704,7 @@ async def test_apps_list_flags_available_update(tmp_path, monkeypatch):
 
     async with _client(tmp_path) as client:
         src = _app_src(tmp_path, "notes", version="1.0.0")
-        assert (await client.post("/api/apps", json={"source": src})).status == 201
+        assert (await _consented_install(client, src)).status == 201
 
         # No newer source yet → no update flagged.
         apps = (await (await client.get("/api/apps")).json())["apps"]

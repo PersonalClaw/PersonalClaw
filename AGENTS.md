@@ -83,9 +83,9 @@ stays true.
   of `config_dir()`; an unisolated destructive test once deleted a developer's real
   bound model — `harness/specs/rules/destructive-test-isolation.md`.
 - **The gateway runs INSTALLED app copies** from `$PERSONALCLAW_HOME/apps/<name>/`, not
-  your workspace tree. Push repo edits with
-  `POST /api/apps/{name}/update {source, confirm:true}`; editing the workspace source
-  does nothing to the running app —
+  your workspace tree. Push repo edits with `POST /api/apps/{name}/update {source}` (a
+  409 means the edit changes what the app gets — re-send with the review's `consent`);
+  editing the workspace source does nothing to the running app —
   `harness/specs/scenarios/installed-app-edit-not-live.md`.
 - **First-party apps live in the sibling `PersonalClawApps` clone**, not `apps/`. Point
   the gateway at them with `PERSONALCLAW_FIRST_PARTY_APPS_DIR=$PWD/../PersonalClawApps`

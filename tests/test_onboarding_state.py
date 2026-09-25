@@ -453,6 +453,112 @@ async def test_chat_download_offer_names_the_size_and_retires_once_it_is_downloa
             lm_registry.unregister_provider(provider_name)
 
 
+def _offer_fixtures(monkeypatch):
+    """A fixed-catalog provider with an undownloaded chat model, and a SEARCHABLE one — whose
+    ``list_models`` stands in for asking a server what it has pulled — registered first, so a
+    probe that walked every catalog would reach it before the offer."""
+    from personalclaw.local_models import registry as lm_registry
+    from personalclaw.local_models.provider import LocalModel, LocalModelProvider
+
+    class _Fixed(LocalModelProvider):
+        name = "ou14-fixed"  # type: ignore[assignment]
+        display_name = "fixed catalog"  # type: ignore[assignment]
+
+        async def is_available(self) -> bool:
+            return True
+
+        async def list_models(self) -> list[LocalModel]:
+            return [
+                LocalModel(
+                    name="tiny-chat",
+                    size_mb=10,
+                    downloaded=False,
+                    capabilities=["chat"],
+                    license="Apache-2.0",
+                )
+            ]
+
+        async def download_model(self, model_name: str) -> bool:
+            return True
+
+        async def delete_model(self, model_name: str) -> bool:
+            return True
+
+    class _Server(_Fixed):
+        searchable = True
+        calls = 0
+
+        async def list_models(self) -> list[LocalModel]:
+            type(self).calls += 1
+            return [LocalModel(name="pulled", size_mb=1, downloaded=True, capabilities=["chat"])]
+
+    monkeypatch.setattr(lm_registry, "_providers", {})
+    monkeypatch.setattr(lm_registry, "_capabilities", {})
+    lm_registry.register_provider(_Server(), capabilities=["chat"], name="ou14-server")
+    lm_registry.register_provider(_Fixed(), capabilities=["chat"], name="ou14-fixed")
+    return _Server
+
+
+@pytest.mark.asyncio
+async def test_the_download_is_offered_when_a_provider_reads_as_set_up(_isolate_home, monkeypatch):
+    """The offer is an option, not a readiness claim, so it does not wait for ``needs_model``.
+
+    Measured on a real image: save Ollama at an address nothing listens on and ``needs_model``
+    turns false, because the readiness probe makes no network call and a configured provider
+    reads as set up to it. The offer was computed only while ``needs_model`` was true, so
+    onboarding's "Pick a different provider" had no no-account download on exactly the home
+    whose provider was down.
+    """
+    from personalclaw.llm.capabilities import Capability, ProviderCapability
+    from personalclaw.llm.registry import ProviderEntry, get_default_registry
+
+    _offer_fixtures(monkeypatch)
+    registry = get_default_registry()
+    try:
+        registry.register_type(
+            ProviderCapability(
+                type="ou14-configured-type",
+                capabilities=frozenset({Capability.CHAT}),
+                supports_streaming=True,
+                supports_tools=False,
+                supports_embeddings=False,
+                supports_vision=False,
+                max_context_tokens=0,
+            ),
+            lambda **_kw: object(),
+        )
+    except Exception:  # noqa: BLE001 — already registered by a sibling test
+        pass
+    registry.register_entry(
+        ProviderEntry(
+            name="ou14-configured",
+            type="ou14-configured-type",
+            model="m",
+            declared_capabilities=frozenset({Capability.CHAT}),
+        )
+    )
+    try:
+        data = await _json(await hs.api_onboarding(_req({})))
+        assert data["needs_model"] is False, "precondition: a configured provider reads as set up"
+        offer = data["chat_download_offer"]
+        assert offer is not None, "the small model is not on disk, so it is on offer"
+        assert offer["provider"] == "ou14-fixed"
+    finally:
+        registry.unregister_entry("ou14-configured")
+
+
+@pytest.mark.asyncio
+async def test_the_offer_reads_no_searchable_catalog(_isolate_home, monkeypatch):
+    """No network call on this read. A ``searchable`` provider's ``list_models`` asks its server
+    what it already pulled (the manager-backed Ollama adapter), and by the ``LocalModelProvider``
+    contract it returns only models already present, so it can never hold an offer."""
+    server = _offer_fixtures(monkeypatch)
+    data = await _json(await hs.api_onboarding(_req({})))
+    assert data["chat_download_offer"] is not None
+    assert data["chat_download_offer"]["provider"] == "ou14-fixed"
+    assert server.calls == 0, "the searchable catalog was read"
+
+
 @pytest.mark.asyncio
 async def test_get_still_answers_over_a_corrupt_store(_isolate_home):
     p = _store_path(_isolate_home)

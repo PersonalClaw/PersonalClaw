@@ -832,6 +832,35 @@ class TestDerivedOrderingReachability:
         assert fr.to_skip == ["root.children[1]"]  # dead (reads the untaken case) only
         assert "root.children[2]" in _paths(fr)  # live (reads the taken case) runs
 
+    @pytest.mark.parametrize(
+        "ended",
+        [InstanceState.FAILED, InstanceState.CANCELLED, InstanceState.ESCALATED],
+    )
+    def test_a_producer_that_ended_without_output_makes_its_reader_unreachable(self, ended) -> None:
+        """The best-of-n blame defect, at its cause. `select` binds `sample`'s output; `sample`
+        FAILED, so that output will never exist — only a succeeded node enters the binding
+        namespace. Running `select` anyway could only fail its binding (filed USER, "check the
+        referenced node id"), and its escalation then replaced `sample`'s as the run's account.
+        Skipped, it leaves the producer's failure as the one thing the run reports."""
+        root = _node(
+            {
+                "kind": "sequence",
+                "id": "root",
+                "children": [
+                    {"kind": "action", "id": "sample", "config": {"provider": "best-of-n"}},
+                    {
+                        "kind": "transform",
+                        "id": "select",
+                        "config": {"expr": "{{nodes.sample.output.winner}}"},
+                    },
+                ],
+            }
+        )
+        fr = frontier(root, {"root.children[0]": ended})
+        assert fr.to_skip == ["root.children[1]"]
+        assert "root.children[1]" not in _paths(fr)
+        assert not fr.blocked
+
     def test_a_non_dataflow_needs_onto_a_skipped_node_is_satisfied(self) -> None:
         """The asymmetry that keeps a join off an untaken leg. A plain `needs` (no dataflow)
         onto a SKIPPED predecessor is SATISFIED — skipped is terminal — so the reader runs

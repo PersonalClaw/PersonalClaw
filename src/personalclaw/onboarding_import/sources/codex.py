@@ -19,13 +19,13 @@ from __future__ import annotations
 import os
 import tomllib
 from pathlib import Path
-from typing import Any
 
 from personalclaw.onboarding_import.floors import (
-    read_json_safely,
+    SplitDocument,
+    read_json_tables_safely,
     read_text_safely,
     refuses,
-    strip_secrets,
+    split_tables,
 )
 from personalclaw.onboarding_import.model import ImportCategory, ImportItem, ScanResult
 
@@ -76,61 +76,52 @@ def scan(root: Path | str | None = None) -> ScanResult:
             )
         )
 
-    config, config_name = _read_config(base, result)
-    if isinstance(config, dict) and config:
-        _scan_config(config, config_name, result)
+    config, config_name = _read_config(base)
+    # The whole-document count, as before; each item below also carries its own share.
+    result.secrets_skipped += config.total
+    _scan_config(config, config_name, result)
 
     result.note_withheld()
     return result
 
 
-def _read_config(base: Path, result: ScanResult) -> tuple[Any, str]:
+def _read_config(base: Path) -> tuple[SplitDocument, str]:
     toml_path = base / _TOML_CONFIG
     if toml_path.is_file():
         if refuses(toml_path):
-            result.secrets_skipped += 1
-            return None, _TOML_CONFIG
+            return SplitDocument(unattributed=1), _TOML_CONFIG
         try:
             with toml_path.open("rb") as handle:
                 parsed = tomllib.load(handle)
         except (OSError, tomllib.TOMLDecodeError):
-            return None, _TOML_CONFIG
-        clean, dropped = strip_secrets(parsed)
-        result.secrets_skipped += dropped
-        return clean, _TOML_CONFIG
+            return SplitDocument(), _TOML_CONFIG
+        return split_tables(parsed, _MCP_KEYS), _TOML_CONFIG
     json_path = base / _JSON_CONFIG
     if json_path.is_file():
-        clean, dropped = read_json_safely(json_path)
-        result.secrets_skipped += dropped
-        return clean, _JSON_CONFIG
-    return None, ""
+        return read_json_tables_safely(json_path, _MCP_KEYS), _JSON_CONFIG
+    return SplitDocument(), ""
 
 
-def _scan_config(config: dict, config_name: str, result: ScanResult) -> None:
-    remainder = dict(config)
-    for mcp_key in _MCP_KEYS:
-        servers = remainder.pop(mcp_key, None)
-        if not isinstance(servers, dict):
-            continue
-        for name, spec in sorted(servers.items()):
-            if not isinstance(spec, dict) or not str(name).strip():
-                continue
-            result.items.append(
-                ImportItem(
-                    source=NAME,
-                    category=ImportCategory.MCP_SERVERS,
-                    key=str(name),
-                    title=str(name),
-                    payload=spec,
-                )
+def _scan_config(config: SplitDocument, config_name: str, result: ScanResult) -> None:
+    for name, spec, withheld in config.entries:
+        result.items.append(
+            ImportItem(
+                source=NAME,
+                category=ImportCategory.MCP_SERVERS,
+                key=name,
+                title=name,
+                payload=spec,
+                secrets_skipped=withheld,
             )
-    if remainder:
+        )
+    if isinstance(config.remainder, dict) and config.remainder:
         result.items.append(
             ImportItem(
                 source=NAME,
                 category=ImportCategory.SETTINGS,
                 key=config_name,
                 title=f"{DISPLAY_NAME} settings",
-                payload=remainder,
+                payload=config.remainder,
+                secrets_skipped=config.remainder_withheld,
             )
         )

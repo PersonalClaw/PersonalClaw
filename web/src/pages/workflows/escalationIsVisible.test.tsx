@@ -126,7 +126,7 @@ async function mountRun(over: Record<string, unknown>) {
     }
   })
   const { WorkflowRunDetail } = await import('./WorkflowRunDetail')
-  render(<WorkflowRunDetail runId="b246d785" onBack={() => {}} />)
+  render(<WorkflowRunDetail runId="b246d785" onBack={() => {}} onOpenRun={() => {}} />)
   await waitFor(() => expect(workflowRun).toHaveBeenCalled())
 }
 

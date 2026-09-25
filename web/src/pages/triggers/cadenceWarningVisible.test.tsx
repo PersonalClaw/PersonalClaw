@@ -65,13 +65,17 @@ describe('a sub-floor cadence is visible on the list', () => {
     expect(screen.getByText(/check schedule/)).toBeInTheDocument()
   })
 
-  it('carries the WHY, not just the badge', async () => {
-    // A bare badge sends the user hunting. The messages ride in `title` so the diagnosis is one
-    // hover away — the same argument `store.health` made for naming ids over counting them.
+  it('carries the WHY on the row, readable without hovering', async () => {
+    // A bare badge sends the user hunting — and a reason that lived only in the badge's `title`
+    // (B10, 2026-09-25) was one hover away on a desktop and unreachable on touch. The diagnosis is
+    // printed on the row itself now, in full.
     STATE.jobs = [SCHED({ warnings: [FLOOR_WARNING] })]
     mount()
     await waitFor(() => expect(screen.getByText('Fast poll')).toBeInTheDocument())
-    expect(screen.getByText(/check schedule/)).toHaveAttribute('title', FLOOR_WARNING)
+    // `getByText` matches rendered TEXT, never an attribute — so this finds the reason only if it
+    // is on the row as words, which is the whole change.
+    expect(screen.getByText(FLOOR_WARNING)).toBeInTheDocument()
+    expect(screen.getByText(/check schedule/)).not.toHaveAttribute('title')
   })
 
   it('stays quiet for a row with no warnings (vacuity leg)', async () => {
@@ -87,5 +91,6 @@ describe('a sub-floor cadence is visible on the list', () => {
     await waitFor(() => expect(screen.getByText('Fast poll')).toBeInTheDocument())
     expect(screen.getByText(/needs attention/)).toBeInTheDocument()
     expect(screen.queryByText(/check schedule/)).toBeNull()
+    expect(screen.queryByText(FLOOR_WARNING)).toBeNull()
   })
 })

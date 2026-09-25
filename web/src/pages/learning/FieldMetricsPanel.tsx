@@ -2,7 +2,7 @@ import { ArrowLeftRight, TrendingDown, TrendingUp } from 'lucide-react'
 import { LoadError } from '../../ui/ListScaffold'
 import { StatusPill } from '../../ui/StatusPill'
 import { Table, THead, Th, Td } from '../../ui/Table'
-import { api, hasApiCode, type FieldMetricsRow } from '../../lib/api'
+import { api, isEvalsOff, type EvalsOffView, type FieldMetricsRow } from '../../lib/api'
 import { EvalsOff } from './EvalsOff'
 
 /** The lab-vs-field table (EVALUATION-SUBSTRATE amendment E3 / ES-9).
@@ -24,19 +24,19 @@ import { EvalsOff } from './EvalsOff'
  *     what the sweep demoted on, and a UI re-deriving it from the visible numbers would
  *     eventually disagree with what actually happened to the subject's autonomy. */
 export function FieldMetricsPanel({ rows, error, onRetry }: {
-  rows: FieldMetricsRow[] | undefined
+  rows: FieldMetricsRow[] | EvalsOffView | undefined
   error: unknown
   onRetry: () => void
 }) {
+  if (isEvalsOff(rows)) {
+    return (
+      <section className="flex flex-col gap-s" aria-labelledby="field-metrics-heading">
+        <Heading />
+        <EvalsOff what="lab-vs-field table" />
+      </section>
+    )
+  }
   if (rows === undefined && error) {
-    if (hasApiCode(error, 'evals_disabled')) {
-      return (
-        <section className="flex flex-col gap-s" aria-labelledby="field-metrics-heading">
-          <Heading />
-          <EvalsOff what="lab-vs-field table" />
-        </section>
-      )
-    }
     return <LoadError what="lab vs field" error={error} onRetry={onRetry} />
   }
   if (!rows) return null

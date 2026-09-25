@@ -90,7 +90,7 @@ implements it. What matters here is where the boundary sits inside each family:
   actually on disk (`refresh_registration()` re-evaluates after a download or a
   delete, so neither needs a restart). Which model is signed off, under which
   licence, with which digest and source pin, is recorded in
-  [bundled-model-signoff.txt](bundled-model-signoff.txt); `scripts/verify_wheel.py`
+  [bundled-model-signoff.txt](../../src/personalclaw/apps/native/bundled-chat/bundled-model-signoff.txt); `scripts/verify_wheel.py`
   asserts at release that the wheel stays small and carries **no** weight-shaped
   member, so a weight creeping back in reds the release rather than the upload.
 - **Agent apps** own binary resolution, dialect selection, and login argv; core

@@ -186,6 +186,11 @@ class TestADraftRunIsNotPermanent:
             def request_cancel(self) -> None:
                 self.asked = True
 
+            def wake(self) -> None:
+                # `cancel_run` wakes the controller so a PAUSED run (tick loop exited) applies
+                # the intent; a live loop reads it on its next step.
+                return None
+
         class _FakeSupervisor:
             def __init__(self, ctrl: _FakeController) -> None:
                 self._ctrl = ctrl

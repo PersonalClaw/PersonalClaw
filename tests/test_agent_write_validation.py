@@ -70,7 +70,10 @@ def _request(body: Any, *, method: str = "POST", match: dict | None = None) -> M
     req.method = method
     req.json = AsyncMock(return_value=body)
     req.match_info = match or {}
-    req.get = lambda *a, **k: "dashboard"
+    # An OWNER request: `user` is set and there is no `app` claim. This used to answer
+    # "dashboard" for every key — `request.get("app")` included — which made every call look
+    # app-scoped once the handlers asked who was calling.
+    req.get = lambda key, default=None: {"user": "dashboard"}.get(key, default)
     req.headers = {}
     req.app = {"state": MagicMock()}
     return req
@@ -488,8 +491,11 @@ class TestLegitimateWritesStillWork:
     @pytest.mark.asyncio
     async def test_a_create_carrying_every_field_round_trips_verbatim(self, home):
         """Every field, not a sample: a coercion table is exactly the kind of change that
-        passes a spot check while quietly dropping the two fields nobody probed."""
-        resp = await _create(dict(_FULL_BODY))
+        passes a spot check while quietly dropping the two fields nobody probed.
+
+        `confirm` rides along because `approval_mode: "auto"` loosens the agent's approval
+        policy, which the owner must consent to (tests/test_apps_cannot_relax_security.py)."""
+        resp = await _create({**_FULL_BODY, "confirm": True})
         assert resp.status == 200, _error_text(resp)
 
         from personalclaw.config.loader import AppConfig
@@ -516,7 +522,7 @@ class TestLegitimateWritesStillWork:
     async def test_an_update_applies_every_field_and_reports_them(self, home):
         assert (await _create({"name": "zz-real"})).status == 200
         body = {k: v for k, v in _FULL_BODY.items() if k != "name"}
-        resp = await _update("zz-real", body)
+        resp = await _update("zz-real", {**body, "confirm": True})  # see the create test
         assert resp.status == 200, _error_text(resp)
 
         from personalclaw.config.loader import AppConfig

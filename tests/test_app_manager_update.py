@@ -49,36 +49,37 @@ def _src(
 
 class TestUpdate:
     def test_clean_update_bumps_version(self, tmp_path):
-        app_manager.install(_src(tmp_path, version="1.0.0"))
-        res = app_manager.update(_src(tmp_path, version="2.0.0", subdir="src2"))
+        app_manager.install(_src(tmp_path, version="1.0.0"), confirm=True)
+        res = app_manager.update(_src(tmp_path, version="2.0.0", subdir="src2"), confirm=True)
         assert res.ok
         assert manager._read_installed("demo-app").version == "2.0.0"
 
     def test_update_preserves_data_dir(self, tmp_path):
-        app_manager.install(_src(tmp_path, version="1.0.0"))
+        app_manager.install(_src(tmp_path, version="1.0.0"), confirm=True)
         # write app state into data/
         data = manager.app_dir("demo-app") / "data"
         data.mkdir(parents=True, exist_ok=True)
         (data / "state.json").write_text('{"runs": 5}', encoding="utf-8")
-        app_manager.update(_src(tmp_path, version="1.1.0", subdir="src2"))
+        app_manager.update(_src(tmp_path, version="1.1.0", subdir="src2"), confirm=True)
         # data/ survived the swap
         assert (manager.app_dir("demo-app") / "data" / "state.json").read_text() == '{"runs": 5}'
 
     def test_update_runs_onupdate_hook(self, tmp_path):
-        app_manager.install(_src(tmp_path, version="1.0.0"))
+        app_manager.install(_src(tmp_path, version="1.0.0"), confirm=True)
         res = app_manager.update(
             _src(
                 tmp_path,
                 version="1.1.0",
                 subdir="src2",
                 setup={"onUpdate": "echo done > updated_marker.txt"},
-            )
+            ),
+            confirm=True,
         )
         assert res.ok
         assert (manager.app_dir("demo-app") / "updated_marker.txt").is_file()
 
     def test_dangerous_update_refused_old_intact(self, tmp_path):
-        app_manager.install(_src(tmp_path, version="1.0.0"))
+        app_manager.install(_src(tmp_path, version="1.0.0"), confirm=True)
         res = app_manager.update(
             _src(
                 tmp_path,
@@ -94,14 +95,15 @@ class TestUpdate:
         assert manager.app_dir("demo-app").is_dir()
 
     def test_onupdate_failure_rolls_back(self, tmp_path):
-        app_manager.install(_src(tmp_path, version="1.0.0"))
+        app_manager.install(_src(tmp_path, version="1.0.0"), confirm=True)
         res = app_manager.update(
             _src(
                 tmp_path,
                 version="2.0.0",
                 subdir="src2",
                 setup={"onUpdate": "exit 9"},
-            )
+            ),
+            confirm=True,
         )
         assert not res.ok and "rolled back" in res.error
         # rolled back to 1.0.0, app still present, no leftover rollback dir
@@ -118,7 +120,7 @@ class TestCrashRecovery:
     def test_recovers_interrupted_update(self, tmp_path):
         # Simulate a crash AFTER move(live→rollback) but BEFORE move(new→live):
         # live is gone, a .rollback dir holds the old app.
-        app_manager.install(_src(tmp_path, version="1.0.0"))
+        app_manager.install(_src(tmp_path, version="1.0.0"), confirm=True)
         live = manager.app_dir("demo-app")
         rollback = manager.apps_dir() / ".demo-app.rollback"
         import shutil
@@ -133,7 +135,7 @@ class TestCrashRecovery:
     def test_drops_stale_rollback(self, tmp_path):
         # live present AND a .rollback exists (swap completed, crash before cleanup):
         # the rollback is stale → dropped, live untouched.
-        app_manager.install(_src(tmp_path, version="1.0.0"))
+        app_manager.install(_src(tmp_path, version="1.0.0"), confirm=True)
         rollback = manager.apps_dir() / ".demo-app.rollback"
         rollback.mkdir()
         (rollback / "app.json").write_text("{}", encoding="utf-8")

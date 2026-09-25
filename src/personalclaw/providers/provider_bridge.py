@@ -445,11 +445,12 @@ def _build_native_runtime(
             f"(Settings → Models), not an ACP agent runtime."
         )
 
-    # Pull the agent's persona/model/tools/skills from its profile when present.
+    # Pull the agent's model/tools/skills from its profile when present. Its PROMPT is
+    # not read here: the system prompt reaches the model through the turn's assembled
+    # context (``ContextBuilder.build_message``), the one place it is resolved.
     # Strip any "<provider>:" prefix so the bare model id reaches complete()
     # (the inner ModelProvider is resolved above; this is the id label the SDK
     # call uses — a "Bedrock:…" ref here means an invalid AWS model identifier).
-    system_prompt = ""
     # Reconcile the per-turn override too (not just the profile pin): a chat
     # session persists its model as a "<provider>:model" ref, and after a
     # provider is uninstalled that ref is stale. Healing it to "" lets the
@@ -466,13 +467,6 @@ def _build_native_runtime(
         cfg = AppConfig.load()
         prof = (cfg.agents or {}).get(agent) if agent else None
         if prof is not None:
-            # Voice layer (#42): WHO the agent is, injected HIGH-PRIORITY (before the
-            # operating rules) so its personality survives a long system prompt.
-            from personalclaw.config.loader import _compose_voice
-
-            system_prompt = _compose_voice(
-                getattr(prof, "voice", ""), getattr(prof, "system_prompt", "") or ""
-            )
             # Heal a stale pin: an explicit agent model (or per-turn override)
             # that's no longer active reconciles to "" → the chat-binding
             # fallback below. Both the override and the profile pin may be the
@@ -507,10 +501,10 @@ def _build_native_runtime(
             use_case=inner_axis,
         )
 
+    cwd = _native_session_cwd(cwd)
     definition = AgentRuntimeDefinition(
         name=name,
         provider="native",
-        system_prompt=system_prompt,
         model=model,
         tools=tools,
         skills=skills,
@@ -594,6 +588,46 @@ def _build_native_runtime(
         tool_groups=list(tool_groups) if tool_groups is not None else None,
         surface=inner_axis,
     )
+
+
+def _native_session_cwd(cwd: str | None) -> str:
+    """The directory a native session's file and shell tools are rooted in — never an ambient one.
+
+    🔴 With no explicit ``cwd`` the platform tool provider fell back to ``Path.cwd()``: the
+    GATEWAY PROCESS's own working directory. Every native session created without one — a
+    workflow stage's subagent on a project-less run, a background session — therefore read and
+    wrote relative to wherever the gateway happened to be started. Measured on a General loop run
+    unattended: its worker wrote ``checklist.md`` into the repository checkout the gateway was
+    launched from, while the run page said it had looked in the run's own directory. For a gateway
+    started from the home directory that is ``~``; for a service manager it can be ``/``. Either
+    way the loop's result lands somewhere the user cannot find, which is the family the ACP spawn
+    path already refuses (``session._acp_spawn_cwd``).
+
+    So a native session defaults to the same place an ACP one does: the configured workspace root
+    (``default_workspace_dir()`` — validated to exist and not to be a sensitive path), which is
+    also where a new chat, the Terminal and the Files page open. When no safe workspace resolves,
+    a fresh private scratch directory stands in rather than the process cwd, and the reason is
+    logged — a session whose tools are rooted in an empty directory is recoverable; files written
+    into an ambient one are not.
+    """
+    explicit = str(cwd or "").strip()
+    if explicit:
+        return explicit
+    from personalclaw.config.loader import default_workspace_dir
+
+    default = str(default_workspace_dir() or "").strip()
+    if default:
+        return default
+    import tempfile
+
+    scratch = tempfile.mkdtemp(prefix="personalclaw-no-workspace-")
+    logger.warning(
+        "native session: no usable workspace root resolved (PERSONALCLAW_WORKSPACE, or the "
+        "workspace directory in Settings); its tools are rooted in the scratch directory %s "
+        "instead of the gateway's own working directory",
+        scratch,
+    )
+    return scratch
 
 
 def _model_app_for_provider_type(provider_type: str) -> tuple[str, bool] | None:
@@ -740,6 +774,13 @@ def _diagnose_unbuildable_ref(
             f"{capability!r} capability that use case {use_case!r} needs",
             f"{rebind}, or bind {use_case!r} to a provider that declares {capability!r}",
         )
+
+    # The provider type's OWN answer to "can this entry serve right now?" — e.g. a model that is
+    # registered and configured but has not been downloaded yet. Its words, not a paraphrase:
+    # the type is the only thing that knows what is missing and how to get it.
+    unready = registry.not_ready(entry, implicit=False)
+    if unready is not None:
+        return unready
 
     credential = str(entry.credential or "")
     if credential and _credential_is_missing(credential):
@@ -1093,16 +1134,122 @@ def resolve_provider_for_use_case(
     if fallback is not None:
         return fallback
 
+    # Nothing READY declares the capability. When something does declare it but its type says
+    # it cannot serve yet (a model that is not downloaded), that is the true cause and the only
+    # one with a fix a user can act on — "no provider declares the capability" would be false
+    # about a home that has one. ``what`` stays the no-model sentence on purpose: from the
+    # user's side no model is set up yet, and the chat surface's calm setup state keys on it.
+    unready = _first_unready_candidate(capability)
     raise ProviderResolutionError(
         f"No provider configured for use case {use_case!r}. "
         f"Add a model provider in Settings → Providers.",
         AgentError(
             code="ERR_MODEL_UNRESOLVED",
             what=f"no model provider resolves for use case {use_case!r}",
-            why="no provider in config.json declares the capability this use case needs",
-            fix=f"add a model provider in Settings → Providers, then bind {use_case!r} to it",
+            why=(
+                unready[0]
+                if unready
+                else "no provider in config.json declares the capability this use case needs"
+            ),
+            fix=(
+                unready[1]
+                if unready
+                else f"add a model provider in Settings → Providers, then bind {use_case!r} to it"
+            ),
         ),
     )
+
+
+def _entry_capabilities(registry: Any, entry: Any) -> frozenset:
+    """What ``entry`` can do: its own declaration, else its registered type's descriptor.
+
+    The fail-soft read every candidate walk uses — an entry whose type is not registered (its
+    app loads later on some boot paths) declares nothing rather than raising.
+    """
+    caps = entry.declared_capabilities
+    if caps:
+        return frozenset(caps)
+    try:
+        return frozenset(registry.capability_of(entry.type).capabilities)
+    except Exception:
+        return frozenset()
+
+
+def _implicit_candidates(registry: Any, target_cap: Any, *, skip_agent_runtimes: bool) -> list[Any]:
+    """The entries the implicit "nothing is bound" fallback may choose, in the order it tries.
+
+    ONE walk for the resolver (:func:`_resolve_from_config_registry`), the no-instantiate probe
+    (:func:`can_resolve_use_case`) and :func:`serving_entry`, so the probe cannot call a use case
+    resolvable through an entry the resolver would refuse. An entry is a candidate when it
+    declares the capability AND its type reports it ready for implicit use
+    (:meth:`~personalclaw.llm.registry.ProviderRegistry.not_ready`).
+
+    A zero-config FLOOR entry sorts LAST. Registration order would otherwise decide this the
+    wrong way round: an app that registers a floor does so while its module is imported
+    (``register_extension_providers``), which runs BEFORE ``sync_entries_from_config()`` replays
+    the user's own ``config.json`` rows — so the floor would be "the first entry declaring the
+    capability" and would beat every provider the user actually configured. ``sorted`` is
+    stable, so non-floor entries keep their registration order exactly. Same rule, same reason,
+    as the search registry's keyless floor (``search_providers/registry.py``: "a provider that
+    declares itself ``keyless`` sorts last among candidates so a user-configured/keyed provider
+    always wins").
+    """
+    out = []
+    for entry in sorted(registry.list_entries(), key=lambda e: getattr(e, "floor", False)):
+        if skip_agent_runtimes and entry.type == "acp_agent":
+            continue
+        if target_cap not in _entry_capabilities(registry, entry):
+            continue
+        if registry.not_ready(entry, implicit=True) is not None:
+            continue
+        out.append(entry)
+    return out
+
+
+def _first_unready_candidate(capability: str) -> tuple[str, str] | None:
+    """``(why, fix)`` of the first model entry that declares ``capability`` but cannot serve.
+
+    Only consulted once resolution has already found nothing ready, to say WHY. ``None`` when
+    no entry declares the capability at all — the plain "no provider" case.
+    """
+    try:
+        from personalclaw.llm.registry import get_default_registry
+
+        target_cap = _capability_enum(capability)
+        if target_cap is None:
+            return None
+        registry = get_default_registry()
+        for entry in sorted(registry.list_entries(), key=lambda e: getattr(e, "floor", False)):
+            if entry.type == "acp_agent":
+                continue
+            if target_cap not in _entry_capabilities(registry, entry):
+                continue
+            unready = registry.not_ready(entry, implicit=True)
+            if unready is not None:
+                return unready
+    except Exception:  # noqa: BLE001 — a diagnosis must never raise over the failure it explains
+        logger.debug("could not diagnose an unready %r provider", capability, exc_info=True)
+    return None
+
+
+def _ref_can_serve(registry: Any, entries: dict[str, Any], ref: str) -> bool:
+    """Whether one bound ref can be served, as far as a no-instantiate probe can tell.
+
+    ``False`` only when the ref names a registry entry whose type reports it NOT READY — the
+    single fact this probe learns without building. A ref naming no LLM-registry entry stays
+    ``True``: embedding / speech / media refs resolve through their own registries, and a
+    stale model ref is the build check's to judge (``/api/onboarding/model-check``), not this
+    hot GET's.
+    """
+    from personalclaw.providers.use_cases import split_ref
+
+    parsed = split_ref(ref)
+    if not parsed:
+        return True
+    entry = entries.get(parsed[0])
+    if entry is None:
+        return True
+    return registry.not_ready(entry, implicit=False) is None
 
 
 def can_resolve_use_case(use_case: str) -> bool:
@@ -1122,6 +1269,14 @@ def can_resolve_use_case(use_case: str) -> bool:
     so "no model" ⇒ chat cannot run regardless of the agent-runtime kind. We
     deliberately do NOT instantiate a provider here (no subprocess/socket side
     effects) — this runs on a hot GET.
+
+    🔴 **Declaring a capability is not being able to serve it.** A provider type whose model is
+    not on disk yet registers, declares ``chat`` and BUILDS — its first turn is what fails. This
+    probe used to answer "resolvable" for that state, so onboarding said "you're ready" while the
+    degraded chip, in the same second, said chat had no model. Both read this function; it now
+    asks the type through :meth:`~personalclaw.llm.registry.ProviderRegistry.not_ready`, so a
+    binding to such an entry, or an implicit fallback onto one, reads unresolvable here exactly
+    as it does in :func:`resolve_provider_for_use_case`.
     """
     try:
         from personalclaw.providers.use_cases import (
@@ -1134,43 +1289,85 @@ def can_resolve_use_case(use_case: str) -> bool:
     if use_case not in VALID_USE_CASES:
         return False
 
-    # 1. An active selection wins (matches resolve_provider_for_use_case order).
-    #    active_model_refs applies the chat sub-category → parent fallback.
-    try:
-        if active_model_refs(use_case):
-            return True
-    except Exception:
-        logger.debug("can_resolve: active-model probe failed", exc_info=True)
-
-    capability = parent_capability(use_case)
-
-    # 2. Implicit fallback: any registry entry declaring the capability. Mirrors
-    #    _resolve_from_config_registry's capability match WITHOUT building.
     try:
         # Trigger provider modules' register_type() side effects (idempotent).
         import personalclaw.llm.acp_agent  # noqa: F401
         from personalclaw.llm.registry import get_default_registry
 
+        registry = get_default_registry()
+    except Exception:
+        logger.debug("can_resolve: registry unavailable", exc_info=True)
+        return False
+
+    # 1. An active selection wins (matches resolve_provider_for_use_case order).
+    #    active_model_refs applies the chat sub-category → parent fallback. A chain whose every
+    #    entry names a model that cannot serve does NOT fall through to implicit fallback, for
+    #    the same reason resolution refuses to: "block, don't silently fall back" past the
+    #    user's declared chain.
+    try:
+        refs = active_model_refs(use_case)
+    except Exception:
+        logger.debug("can_resolve: active-model probe failed", exc_info=True)
+        refs = []
+    if refs:
+        try:
+            entries = {e.name: e for e in registry.list_entries()}
+            return any(_ref_can_serve(registry, entries, ref) for ref in refs)
+        except Exception:
+            logger.debug("can_resolve: binding probe failed", exc_info=True)
+            return True
+
+    capability = parent_capability(use_case)
+
+    # 2. Implicit fallback: any READY registry entry declaring the capability — the same walk
+    #    _resolve_from_config_registry takes, WITHOUT building. An agent-runtime entry
+    #    (acp_agent) is not a model provider.
+    try:
         target_cap = _capability_enum(capability)
         if target_cap is None:
             return False
-
-        registry = get_default_registry()
-        for entry in registry.list_entries():
-            # An agent-runtime entry (acp_agent) is not a model provider.
-            if entry.type == "acp_agent":
-                continue
-            caps = entry.declared_capabilities
-            if not caps:
-                try:
-                    caps = registry.capability_of(entry.type).capabilities
-                except Exception:
-                    caps = frozenset()
-            if target_cap in caps:
-                return True
+        return bool(_implicit_candidates(registry, target_cap, skip_agent_runtimes=True))
     except Exception:
         logger.debug("can_resolve: registry probe failed", exc_info=True)
     return False
+
+
+def serving_entry(use_case: str) -> Any:
+    """The model-registry entry resolution would serve ``use_case`` from, WITHOUT building it.
+
+    The bound chain's first entry that can serve, else — with nothing bound — the implicit
+    fallback's first candidate; ``None`` when neither exists. Read by the surfaces that must say
+    WHAT is answering rather than merely whether something is: onboarding's
+    ``chat_is_bundled_floor`` and the model check's ``floor``, so a model the user explicitly
+    bound is still named as the small floor model when that is what it is. Same readiness
+    authority, same order, as :func:`can_resolve_use_case`; circuit-breaker skips and routing
+    reorders are deliberately not modelled — this names the configured answer, not one turn's.
+    """
+    from personalclaw.llm.registry import get_default_registry
+    from personalclaw.providers.use_cases import (
+        VALID_USE_CASES,
+        active_model_refs,
+        parent_capability,
+        split_ref,
+    )
+
+    if use_case not in VALID_USE_CASES:
+        return None
+    registry = get_default_registry()
+    refs = active_model_refs(use_case)
+    if refs:
+        entries = {e.name: e for e in registry.list_entries()}
+        for ref in refs:
+            parsed = split_ref(ref)
+            entry = entries.get(parsed[0]) if parsed else None
+            if entry is not None and registry.not_ready(entry, implicit=False) is None:
+                return entry
+        return None
+    target_cap = _capability_enum(parent_capability(use_case))
+    if target_cap is None:
+        return None
+    candidates = _implicit_candidates(registry, target_cap, skip_agent_runtimes=True)
+    return candidates[0] if candidates else None
 
 
 def _resolve_from_config_registry(
@@ -1253,31 +1450,25 @@ def _resolve_from_config_registry(
             provider_hint = provider_hint or _hint
 
     candidate = None
-    # A zero-config FLOOR entry sorts LAST among candidates. Registration order would
-    # otherwise decide this the wrong way round: an app that registers a floor does so while
-    # its module is imported (``register_extension_providers``), which runs BEFORE
-    # ``sync_entries_from_config()`` replays the user's own ``config.json`` rows — so the
-    # floor would be "the first entry declaring the capability" and would beat every provider
-    # the user actually configured. ``sorted`` is stable, so non-floor entries keep their
-    # registration order exactly. Same rule, same reason, as the search registry's keyless
-    # floor (``search_providers/registry.py``: "a provider that declares itself ``keyless``
-    # sorts last among candidates so a user-configured/keyed provider always wins").
-    for entry in sorted(entries, key=lambda e: getattr(e, "floor", False)):
-        # Skip agent-runtime entries when only a ModelProvider will do.
-        if model_axis_only and entry.type == "acp_agent":
-            continue
-        caps = entry.declared_capabilities
-        if not caps:
-            try:
-                caps = registry.capability_of(entry.type).capabilities
-            except Exception:
-                caps = frozenset()
-        if target_cap not in caps:
-            continue
-        if provider_hint and entry.name != provider_hint:
-            continue
-        candidate = entry
-        break
+    if provider_hint:
+        # A binding (or a provider-qualified override) NAMES the entry: it is the only
+        # candidate, and it must be able to serve as a bound model. An entry that cannot is
+        # None here, which the chain walk reports through ``_diagnose_unbuildable_ref`` in the
+        # type's own words rather than handing a turn to a model that is not there.
+        named = next((e for e in entries if e.name == provider_hint), None)
+        if (
+            named is not None
+            and not (model_axis_only and named.type == "acp_agent")
+            and target_cap in _entry_capabilities(registry, named)
+            and registry.not_ready(named, implicit=False) is None
+        ):
+            candidate = named
+    else:
+        # Nothing names an entry: the implicit fallback's ONE ordered walk (floor last, ready
+        # only) — shared with ``can_resolve_use_case`` so the probe and this can never disagree.
+        # Agent-runtime entries are skipped when only a ModelProvider will do.
+        implicit = _implicit_candidates(registry, target_cap, skip_agent_runtimes=model_axis_only)
+        candidate = implicit[0] if implicit else None
 
     if candidate is None:
         return None
@@ -1346,6 +1537,12 @@ def _resolve_from_config_registry(
             use_case,
         )
         return None
+    # The ONE point that knows both halves of the ref this provider serves — the entry it was
+    # built from and the model it was built for — so it is recorded here rather than re-derived
+    # downstream. The window resolver reads it to name the model that actually answers a turn,
+    # including the zero-config floor, which is a registry entry and never a binding.
+    served_model = str(config.get("model") or candidate.model or "")
+    served_ref = f"{candidate.name}:{served_model}" if served_model else candidate.name
 
     # §2 chokepoint: wrap the resolved provider for the non-interactive text axis
     # (breaker + hard timeout + audit + day-budget + outbound scan). Config-derived
@@ -1394,11 +1591,11 @@ def _resolve_from_config_registry(
                         _timeout_kw["timeout_secs"] = _secs
             except Exception:  # noqa: BLE001 — fail-open to the guard's own default
                 logger.debug("routing local timeout read failed", exc_info=True)
-        return wrap_model_call_guard(
+        guarded = wrap_model_call_guard(
             built,
             use_case=guard_use_case,
             provider_name=candidate.name,
-            model=str(config.get("model") or candidate.model or ""),
+            model=served_model,
             budget=budget,
             run_budget=run_budget,
             scan_mode=scan_mode,
@@ -1407,7 +1604,22 @@ def _resolve_from_config_registry(
             routed_fallback=guard_routed_fallback,
             **_timeout_kw,
         )
+        _stamp_served_ref(guarded, served_ref)
+        return guarded
+    _stamp_served_ref(built, served_ref)
     return built
+
+
+def _stamp_served_ref(provider: object, ref: str) -> None:
+    """Record ``ModelProvider.served_ref`` on a freshly built provider.
+
+    An object that refuses the attribute keeps no stamp, and the window resolver then names the
+    model from the chat binding instead — a less exact answer, never a failed resolution.
+    """
+    try:
+        provider.served_ref = ref  # type: ignore[attr-defined]
+    except (AttributeError, TypeError):
+        logger.debug("%s does not accept a served_ref stamp", type(provider).__name__)
 
 
 def create_provider_factory(default_use_case: str = "chat") -> ProviderFactory:

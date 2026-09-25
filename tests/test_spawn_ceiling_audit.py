@@ -296,7 +296,7 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "durability/state_history.py::git_available::subprocess.run": "host-fact: git presence probe",
     # App install — operator-initiated (Store install), scanned+vetted.
     "apps/app_manager.py::_run_hook::subprocess.run": "operator: app install setup hook",
-    "apps/app_manager.py::_install_python_deps::subprocess.run": "operator: app dep install",
+    "apps/app_python.py::_pip_install::subprocess.run": "operator: app package install (pip)",
     "apps/catalog.py::_read_git_registry::subprocess.run": "operator: git app registry read",
     "apps/catalog.py::_scan_git_source::subprocess.run": "operator: git app source scan",
     "apps/source.py::_clone_git::subprocess.run": "operator: git app clone",

@@ -1080,7 +1080,11 @@ def test_the_snapshot_coverage_gap_list_can_only_shrink(tmp_path: Path):
     with a reason."""
     from personalclaw.durability import inventory as inv
 
-    uncovered = {e.id for e in inv.INVENTORY} - _snapshot_covered_ids(tmp_path)
+    # A `credential=True` entry is uncovered ON PURPOSE: no snapshot may carry a credential value
+    # (`inventory.backup_entries`). It is not asked about here — this ratchet's source-text half
+    # would call one "covered" merely because a comment in snapshot.py names it — and its
+    # absence from a real archive is asserted in `test_snapshot_carries_no_credentials.py`.
+    uncovered = {e.id for e in inv.INVENTORY if not e.credential} - _snapshot_covered_ids(tmp_path)
     new_gaps = uncovered - _SNAPSHOT_COVERAGE_GAPS
     assert not new_gaps, (
         f"state declared in the inventory but carried by NO snapshot path: {sorted(new_gaps)}. "

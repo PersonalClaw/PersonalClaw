@@ -8,7 +8,7 @@ import { Combobox } from '../../ui/Combobox'
 import { Field, TextInput, TextArea, Segmented, FieldError } from '../../ui/forms'
 import { Toggle } from '../../ui/Toggle'
 import { confirm } from '../../ui/dialog'
-import { APPROVAL_MODES } from './agentMeta'
+import { APPROVAL_MODES, isBuiltinDefaultAgent } from './agentMeta'
 
 export interface AgentDraft {
   name: string; description: string; model: string; system_prompt: string; voice: string
@@ -139,8 +139,10 @@ export function AgentForm({ draft, onChange, nameLocked, compact }: { draft: Age
         {modelErr ? <FieldError className="mt-1">Couldn't load your active chat models — {(modelErr as Error)?.message || 'the server did not respond'}. Only Auto is safe to pick until this loads.</FieldError> : null}
       </Field>
 
-      <Field label="System prompt" hint="The agent's standing instructions — WHAT it does (operating rules).">
-        <TextArea value={draft.system_prompt} onChange={(v) => set('system_prompt', v)} rows={compact ? 5 : 8} placeholder="You are a focused research assistant. …" />
+      <Field label="System prompt" hint={isBuiltinDefaultAgent(draft)
+        ? 'Leave empty to answer with the prompt bound in Settings → Prompts. A prompt written here replaces that binding for this agent.'
+        : "The agent's standing instructions — WHAT it does (operating rules)."}>
+        <TextArea value={draft.system_prompt} onChange={(v) => set('system_prompt', v)} rows={compact ? 5 : 8} placeholder={isBuiltinDefaultAgent(draft) ? 'Empty — uses the bound prompt' : 'You are a focused research assistant. …'} />
       </Field>
       <Field label="Voice" hint="WHO it is — tone, opinions, bluntness, persona. Kept separate from the rules and injected high-priority so personality survives long prompts.">
         <TextArea value={draft.voice} onChange={(v) => set('voice', v)} rows={compact ? 3 : 4} placeholder="Blunt and witty. Has strong opinions and states them. No hedging or filler." />

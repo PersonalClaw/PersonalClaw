@@ -131,25 +131,30 @@ sweeps only your own private (RFC-1918) subnet for an Ollama, is time-bounded, a
 never runs until you press it. Nothing scans your network on first boot, and no
 credential is stored either way. Otherwise, configure a provider below.
 
-**No account and no Ollama?** In step 3, **Essential apps**, the model lane lists
-**Bundled offline model** under *Already installed*. Choose **Configure** on it and the
-lane offers *No account? Download a small model instead*, with a **Download 138 MiB**
-button. If you skip setup, the chat screen offers the same download. It happens once,
-it can be cancelled, and declining costs nothing.
+**No account and no Ollama?** In step 3, **Essential apps**, the model lane opens with
+*No account? Start with a small offline model* and a **Download SmolLM2-135M-Instruct
+(138 MiB)** button. It shows bytes, a percentage and an ETA while it runs, and a reload
+picks the progress back up. When it finishes, onboarding says so, makes it your chat model
+(unless you had already chosen one), checks that chat can use it, and unlocks
+**Continue**. If you skip setup, the chat screen offers the same download. It happens
+once, it can be cancelled, and declining costs nothing.
 
 ### The small default model
 
 The download is `SmolLM2-135M-Instruct` (the Q8_0 GGUF build
 `unsloth/SmolLM2-135M-Instruct-GGUF`, Apache-2.0) from Hugging Face, checked against
-the sha256 in [`bundled-model-signoff.txt`](../architecture/bundled-model-signoff.txt)
+the sha256 in [`bundled-model-signoff.txt`](../../src/personalclaw/apps/native/bundled-chat/bundled-model-signoff.txt)
 before it is installed. It is not in the wheel, the container image or the desktop
 build, so the first chat with it needs network. It lands in
 `$PERSONALCLAW_HOME/models/bundled-chat/`, stays there across upgrades, and from then on
 runs on your CPU inside the gateway with no key and no network.
 
-It answers only when nothing else is set up, and the chat screen says when it is the one
-answering. Bind any model in [§3](#3-configure-a-model-provider) and it stops being used,
-with nothing to undo. To remove it, delete it under **Settings → Providers**.
+It answers when it is your chat model (onboarding makes it one when you download it there)
+or when nothing else is set up, and the chat screen says when it is the one answering. Bind
+any other model in [§3](#3-configure-a-model-provider) and it stops being used, with
+nothing to undo. To remove it, delete it under **Settings → Providers**; to stop it
+answering when nothing is bound, turn off **Answer when nothing else is bound** in its
+settings there (it takes effect when you save).
 
 Treat it as a way to start. It has 135 million parameters and no tools, it doesn't see
 your memory, skills or knowledge, and past a greeting or a simple factual question its
@@ -204,7 +209,7 @@ One container, nothing to check out and no `.env` — the gateway image bundles 
 dashboard. From an empty directory on a machine with only Docker:
 
 ```bash
-docker run -d --name personalclaw -p 127.0.0.1:10000:10000 -e PERSONALCLAW_BIND_HOST=0.0.0.0 -v personalclaw_home:/data ghcr.io/personalclaw/personalclaw-gateway:latest
+docker run -d --name personalclaw --restart unless-stopped -p 127.0.0.1:10000:10000 -e PERSONALCLAW_BIND_HOST=0.0.0.0 -v personalclaw_home:/data ghcr.io/personalclaw/personalclaw-gateway:latest
 ```
 
 Then print the dashboard URL (it carries a one-time token — the default auth mode):
@@ -213,8 +218,16 @@ Then print the dashboard URL (it carries a one-time token — the default auth m
 docker exec personalclaw personalclaw token
 ```
 
-State lives in the named volume `personalclaw_home`, so it survives
-`docker rm`/`docker run`. `-p 127.0.0.1:…` keeps the port on the host's loopback;
+The URL carries the container's own port, 10000. If you published a different host port,
+open that one instead; the command reminds you.
+
+State lives in the named volume `personalclaw_home`, mounted at `/data`, so it survives
+`docker rm`/`docker run`. That includes your work: the image puts the workspace at
+`/data/workspace`, where the default chat workspace lives and where the folder picker opens
+to create a project folder. A folder you bind outside `/data` exists only inside that
+container and is gone when it is recreated; the project page then says so.
+`--restart unless-stopped` brings the gateway back by itself after a crash, an out-of-memory
+kill or a Docker restart. `-p 127.0.0.1:…` keeps the port on the host's loopback;
 `PERSONALCLAW_BIND_HOST=0.0.0.0` is what lets that published port reach the gateway
 *inside* the container (its own default is loopback, which a container cannot publish).
 Swap `:latest` for a release tag to pin one. This is the same command the
@@ -295,7 +308,10 @@ hand. This is a separate switch from `updates.auto`: one governs whether Persona
 - **Run it permanently** — `personalclaw service install` registers a systemd
   unit (Linux) or launchd agent (macOS) so the gateway survives reboots.
 - **Back it up** — `personalclaw snapshot` creates a portable state archive;
-  `personalclaw restore` brings it back.
+  `personalclaw restore` brings it back. The archive never contains a credential: API keys
+  and app tokens stay in this machine's credential store (the OS keychain, or
+  `~/.personalclaw/.env` at mode 0600), and settings carry only references to them — so a
+  restore onto a new machine asks you to enter the keys again.
 
 ## Reference docs
 

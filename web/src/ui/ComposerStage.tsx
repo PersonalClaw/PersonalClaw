@@ -18,7 +18,7 @@ import type { ComposerProps } from './composer/types'
 export const ComposerStage = forwardRef<HTMLDivElement, ComposerProps>(function ComposerStage(props, ref) {
   const morph = { ...physics.fluid, stiffness: 200 + expr(80, 0.4) }
   return (
-    <motion.div ref={ref} layoutId="composer-stage" transition={morph} className="relative z-10 w-full" style={{ maxWidth: 'var(--content-width)' }}>
+    <motion.div ref={ref} layoutId="composer-stage" data-composer-stage transition={morph} className="relative z-10 w-full" style={{ maxWidth: 'var(--content-width)' }}>
       <Composer {...props} />
     </motion.div>
   )

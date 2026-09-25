@@ -101,23 +101,28 @@ class TestTheCliFlag:
     """
 
     @staticmethod
-    def _help() -> str:
+    def _help(home: Path) -> str:
+        import os
         import subprocess
         import sys
 
+        # The child is a whole PersonalClaw process, outside every in-process isolation: given
+        # the inherited environment it resolved the developer's real home, and `cli.main` loaded
+        # that home's `.env` — credentials — into it. Its own home keeps it out.
         proc = subprocess.run(
             [sys.executable, "-m", "personalclaw", "gateway", "--help"],
             capture_output=True,
             text=True,
             timeout=90,
             cwd=str(Path(__file__).resolve().parent.parent),
+            env={**os.environ, "PERSONALCLAW_HOME": str(home)},
         )
         return proc.stdout + proc.stderr
 
-    def test_the_real_cli_carries_the_flag_with_help_text(self) -> None:
+    def test_the_real_cli_carries_the_flag_with_help_text(self, tmp_path: Path) -> None:
         """An undocumented recovery flag is one nobody reaches for in the situation it exists
         for — so the help line is asserted, not just the option."""
-        out = self._help()
+        out = self._help(tmp_path)
         assert "--safe-surfaces" in out
         assert "core" in out.lower()
 

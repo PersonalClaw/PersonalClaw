@@ -18,7 +18,8 @@ things that previously duplicated each other:
 A prompt's ``category`` groups it for the Settings UI:
 
 * ``agent``    — the default-agent system prompt for a runtime context
-                 (chat / background / code / goal_loop).
+                 (chat / background). Loop and Code workers are NOT here: they run
+                 as reserved agents whose own, locked prompt carries their protocol.
 * ``internal`` — a one-shot LLM task the system runs on the user's behalf
                  (title generation, history compression, consolidation, …).
 * ``loop``     — autonomous loop/orchestration prompts (classifiers, judges,
@@ -66,11 +67,15 @@ class BundledSnippet:
     tags: tuple[str, ...] = ("system", "bundled")
 
 
-# Runtime variables the four default-agent system prompts render with. Values are
-# supplied at resolve time by ``context._apply_runtime_vars``.
+# Runtime variables the default-agent system prompts render with. Values are supplied
+# at resolve time by ``ContextBuilder._runtime_prompt_values``.
 _AGENT_SYSTEM_VARS: tuple[PromptVariable, ...] = (
     PromptVariable(
         name="bot_name", description="The configured assistant name.", default="PersonalClaw"
+    ),
+    PromptVariable(
+        name="user_name",
+        description="Your name from Settings → Account (empty when unset).",
     ),
     PromptVariable(
         name="widget_block",
@@ -99,22 +104,6 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
         filename="background.md",
         category="agent",
         description="The bundled PersonalClaw system prompt for the background context.",
-        variables=_AGENT_SYSTEM_VARS,
-    ),
-    BundledPrompt(
-        name="system-code",
-        use_case="code",
-        filename="code.md",
-        category="agent",
-        description="The bundled PersonalClaw system prompt for the code context.",
-        variables=_AGENT_SYSTEM_VARS,
-    ),
-    BundledPrompt(
-        name="system-goal-loop",
-        use_case="goal_loop",
-        filename="goal_loop.md",
-        category="agent",
-        description="The bundled PersonalClaw system prompt for the goal_loop context.",
         variables=_AGENT_SYSTEM_VARS,
     ),
     # ── internal task prompts (one-shot LLM jobs the system runs) ──
@@ -256,37 +245,6 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
                 type="textarea",
                 required=True,
                 description="The formatted conversation to process.",
-            ),
-        ),
-    ),
-    BundledPrompt(
-        name="task-plan-rephrase",
-        use_case="plan_rephrase",
-        filename="task-plan_rephrase.md",
-        kind="user",
-        category="internal",
-        description="Reformat a plan to the canonical stage template (optionally first deciding whether the text is even a plan).",  # noqa: E501
-        variables=(
-            PromptVariable(
-                name="plan_template",
-                type="textarea",
-                required=True,
-                description="The canonical plan template to match.",
-            ),
-            PromptVariable(
-                name="issues", default="", description="Comma-joined list of format issues to fix."
-            ),
-            PromptVariable(
-                name="text",
-                type="textarea",
-                required=True,
-                description="The plan text to reformat.",
-            ),
-            PromptVariable(
-                name="might_not_be_plan",
-                type="boolean",
-                default=False,
-                description="When true, first decide if the text is a plan at all (return NOT_A_PLAN if not).",  # noqa: E501
             ),
         ),
     ),
@@ -1273,13 +1231,22 @@ BUNDLED_SNIPPETS: tuple[BundledSnippet, ...] = (
     BundledSnippet(
         name="agent-runtime-identity",
         filename="agent-runtime-identity.md",
-        description="Tells the agent which agent it is and which runtime it runs in (dashboard/channel/CLI/cron), so it answers natively.",  # noqa: E501
+        description="Tells the agent which agent it is, whom it works for, and which runtime it runs in (dashboard/channel/CLI/cron), so it answers natively.",  # noqa: E501
         variables=(
             PromptVariable(
-                name="agent_label", required=True, description="The running agent's name."
+                name="agent_label",
+                required=True,
+                description=(
+                    "The running agent's name — the assistant name from Settings → Account "
+                    "for the default agent."
+                ),
             ),
             PromptVariable(
                 name="runtime", required=True, description="Human-readable runtime name."
+            ),
+            PromptVariable(
+                name="user_name",
+                description="Your name from Settings → Account (empty leaves the line out).",
             ),
         ),
     ),
@@ -1293,19 +1260,6 @@ BUNDLED_SNIPPETS: tuple[BundledSnippet, ...] = (
                 type="textarea",
                 required=True,
                 description="The resolved + runtime-var-rendered agent system prompt.",
-            ),
-        ),
-    ),
-    BundledSnippet(
-        name="cross-tab-context",
-        filename="cross-tab-context.md",
-        description="Framing for recent activity in sibling dashboard tabs — awareness only, not tasks to act on.",  # noqa: E501
-        variables=(
-            PromptVariable(
-                name="cross_lines",
-                type="textarea",
-                required=True,
-                description="The assembled recent sibling-tab message lines.",
             ),
         ),
     ),

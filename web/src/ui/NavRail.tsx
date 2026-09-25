@@ -62,6 +62,9 @@ const COLLAPSED_W = 64
 // Mobile overlay-drawer width — a comfortable touch target, capped under a phone's
 // portrait width so the scrim always shows (tap-to-close affordance stays reachable).
 const OVERLAY_W = 264
+// How far past its own width the CLOSED overlay drawer parks: `shadow-2xl`'s 38px reach
+// (spread −12 + blur 50), rounded up, so none of its shadow is left on screen.
+const CLOSED_SHADOW_CLEARANCE = 48
 // Default to a snug, content-fitting width (the labels are short); the user can
 // drag the right edge wider if they want more room.
 const DEFAULT_W = 196
@@ -285,10 +288,15 @@ export function NavRail({
             `ui/SidePanel` and `chat/ChatFilePanel`, which are both `fixed inset-0 z-50`. Three
             overlays on one rung do not stack by design; they stack by DOM/portal order, so which one
             covered the other was an accident of mount sequence. */}
+        {/* CLOSED IS PARKED PAST ITS OWN SHADOW, not at `-100%`. `shadow-2xl` reaches 38px past the
+            drawer's edge (spread −12 + blur 50), so a drawer parked exactly off-screen left that
+            shadow ON screen: a grey strip down the left edge of every route at phone width, visible
+            on the light canvas ((221,224,228) at x=0 on (240,244,248)). Measured once the chat
+            halo stopped running into the same edge and no longer covered it. */}
         <motion.div
           className="fixed left-0 top-0 z-[var(--z-modal)] h-full shadow-2xl"
           initial={false}
-          animate={{ x: overlayOpen ? 0 : '-100%' }}
+          animate={{ x: overlayOpen ? 0 : -(OVERLAY_W + CLOSED_SHADOW_CLEARANCE) }}
           transition={spring.spatialDefault}
           role="dialog" aria-label="Navigation" aria-hidden={!overlayOpen}
           // `aria-hidden` alone hides the drawer from the a11y TREE but leaves its 18 nav

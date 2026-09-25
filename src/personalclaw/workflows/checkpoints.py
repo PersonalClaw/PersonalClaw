@@ -209,6 +209,11 @@ def fork_run(
     COPY of the parent's prefix: cache keys carry no run id, so the child gets hits on
     everything already done and re-runs only what diverges. Copying is what makes a fork
     cheap; recomputing would defeat the point.
+
+    The child inherits what the parent COMPLETED and nothing else (`_inherited`). Copying the
+    instance map verbatim handed a fork of a failed run its parent's FAILED nodes, so the
+    child's frontier was complete before it began: Start answered 202 and the child failed
+    at +0.0 s with zero provider calls — the one retry path a failed run offers, dead.
     """
     source_instances = dict(instances)
     spec_version = parent.spec_version
@@ -251,9 +256,10 @@ def fork_run(
         )
     )
     store.write_spec(child.id, spec)
-    store.write_state(child.id, source_instances)
-    cached = _copy_journal_prefix(parent.id, child.id)
-    _copy_outputs(parent.id, child.id, source_instances)
+    child_instances = _inherited(source_instances)
+    store.write_state(child.id, child_instances)
+    cached = _copy_journal_prefix(parent.id, child.id, child_instances)
+    _copy_outputs(parent.id, child.id, child_instances)
 
     return ForkResult(
         child=child,
@@ -264,23 +270,78 @@ def fork_run(
     )
 
 
-def _copy_journal_prefix(parent_id: str, child_id: str) -> int:
+def _inherited(instances: dict[str, NodeInstance]) -> dict[str, NodeInstance]:
+    """The instance map a fork's child starts from: the parent's SUCCESSES, and a fresh start for
+    every other node.
+
+    A succeeded instance carries over whole — its output is copied and its cache key still hits,
+    which is what makes a fork cheap. Anything else is work the child has not done: a FAILED or
+    CANCELLED node is the parent's outcome, a RUNNING or WAITING one is the parent's in-flight work
+    (its subagent, its lease, its open question), and a node SKIPPED because its input never
+    materialized must be re-derived once that input can exist. Each restarts PENDING at the SAME
+    epoch — a lower epoch could meet a stale pre-rewind cache entry in the copied journal — and
+    keeps only the `foreach` item it was, which is the one durable record of WHICH item that is.
+    The frontier re-skips anything that is still genuinely unreachable: an untaken branch case is
+    re-skipped from its DONE branch's recorded route, which travels with the branch.
+    """
+    out: dict[str, NodeInstance] = {}
+    for path, inst in instances.items():
+        if inst.state in SUCCESS_STATES:
+            out[path] = inst
+            continue
+        out[path] = NodeInstance(
+            path=inst.path or path,
+            epoch=inst.epoch,
+            item_label=inst.item_label,
+            item_total=inst.item_total,
+        )
+    return out
+
+
+def _copy_journal_prefix(parent_id: str, child_id: str, instances: dict[str, NodeInstance]) -> int:
     """Copy the parent's journal so the child's resume cache hits.
 
     Read-only in spirit: the child appends its own records after the copy, and the parent's
     file is never opened for writing. Returns how many cache-bearing records carried over.
+
+    A step OUTCOME record carries over only when the child inherits that step (`_inherited`). A
+    step the child re-runs has the parent's attempt at it as history, not as the child's own:
+    copied whole, a retry's Introspect counted the parent's failure beside its own work ("Steps
+    failed 3" over a run with one failed node). Everything else carries over as before — above
+    all `effect` records, the external world's account of what fired, which a fork cannot undo
+    and the committed-effect boundary (`effects.redo_blocked`) must keep reading, and the
+    per-container context records (handoffs, carryover, decisions) a resumed loop starts from.
     """
     from personalclaw.workflows.journal import (
         EVENTS_FILE,
         JOURNAL_FILE,
+        STEP_ATTEMPT,
         STEP_CACHED,
+        STEP_CANCELLED,
         STEP_COMPLETED,
+        STEP_ESCALATED,
+        STEP_FAILED,
+        STEP_SKIPPED,
+        STEP_STARTED,
     )
 
+    step_outcomes = {
+        STEP_STARTED,
+        STEP_COMPLETED,
+        STEP_CACHED,
+        STEP_ATTEMPT,
+        STEP_FAILED,
+        STEP_SKIPPED,
+        STEP_CANCELLED,
+        STEP_ESCALATED,
+    }
+    inherited = {path for path, inst in instances.items() if inst.state in SUCCESS_STATES}
     carried = 0
     for filename in (JOURNAL_FILE, EVENTS_FILE):
         records = store.read_jsonl(parent_id, filename)
         for rec in records:
+            if rec.get("kind") in step_outcomes and rec.get("instance_path") not in inherited:
+                continue
             store.append_jsonl(child_id, filename, rec)
             if filename == JOURNAL_FILE and rec.get("kind") in (STEP_COMPLETED, STEP_CACHED):
                 carried += 1

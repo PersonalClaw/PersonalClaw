@@ -116,3 +116,101 @@ def test_does_not_build_a_provider():
         pb.can_resolve_use_case("chat")
         build.assert_not_called()
         build_native.assert_not_called()
+
+
+# ── the readiness authority (the "you're ready" with no model on disk defect) ──────────────
+
+
+def _readiness_registry(monkeypatch, probe):
+    """An isolated registry holding ONE chat entry whose type registers ``probe``."""
+    from personalclaw.llm.capabilities import Capability, ProviderCapability
+    from personalclaw.llm.registry import ProviderRegistry
+
+    registry = ProviderRegistry()
+    registry.register_type(
+        ProviderCapability(
+            type="probed",
+            capabilities=frozenset({Capability.CHAT}),
+            supports_streaming=False,
+            supports_tools=False,
+            supports_embeddings=False,
+            supports_vision=False,
+            max_context_tokens=0,
+        ),
+        lambda **_kw: object(),
+        readiness=probe,
+    )
+    registry.register_entry(
+        ProviderEntry(
+            name="probed-entry",
+            type="probed",
+            model="m",
+            declared_capabilities=frozenset({Capability.CHAT}),
+        )
+    )
+    monkeypatch.setattr("personalclaw.llm.registry.get_default_registry", lambda: registry)
+    return registry
+
+
+def test_an_entry_whose_type_says_it_cannot_serve_does_not_resolve(monkeypatch):
+    """Declaring ``chat`` is not being able to answer one. A type whose model is not on disk
+    BUILDS fine, which is why the probe — not a build — decides, and why it must be asked on
+    both paths: the implicit fallback and a binding that names the entry."""
+    calls: list[bool] = []
+
+    def not_downloaded(entry, *, implicit):
+        calls.append(implicit)
+        return ("its model is not downloaded yet", "download it")
+
+    _readiness_registry(monkeypatch, not_downloaded)
+    with patch("personalclaw.providers.use_cases.active_model_refs", return_value=[]):
+        assert pb.can_resolve_use_case("chat") is False
+    with patch(
+        "personalclaw.providers.use_cases.active_model_refs", return_value=["probed-entry:m"]
+    ):
+        assert pb.can_resolve_use_case("chat") is False, "a binding does not conjure the model"
+    assert calls == [True, False], "the probe must be told which path is asking"
+
+
+def test_the_refusal_names_the_types_own_cause_instead_of_no_provider(monkeypatch):
+    """With nothing ready, resolution used to say "no provider in config.json declares the
+    capability" — false about a home that has one. The type's sentence is the true cause."""
+    _readiness_registry(monkeypatch, lambda e, *, implicit: ("not downloaded yet", "get it"))
+    with patch("personalclaw.providers.use_cases.active_model_refs", return_value=[]):
+        try:
+            pb.resolve_provider_for_use_case("chat", provider_kind="acp")
+        except pb.ProviderResolutionError as exc:
+            error = exc.agent_error
+        else:  # pragma: no cover — the assertion below is the point
+            raise AssertionError("an entry that cannot serve was resolved")
+    assert error is not None
+    assert error.why == "not downloaded yet" and error.fix == "get it"
+    # `what` keeps the no-model sentence the chat surface's calm setup state keys on.
+    assert error.what == "no model provider resolves for use case 'chat'"
+
+
+def test_a_type_may_decline_implicit_use_and_still_serve_a_binding(monkeypatch):
+    """The floor model's off switch: nothing-bound chat passes it by, a binding keeps it."""
+    _readiness_registry(
+        monkeypatch, lambda e, *, implicit: ("switched off", "bind it") if implicit else None
+    )
+    with patch("personalclaw.providers.use_cases.active_model_refs", return_value=[]):
+        assert pb.can_resolve_use_case("chat") is False
+    with patch(
+        "personalclaw.providers.use_cases.active_model_refs", return_value=["probed-entry:m"]
+    ):
+        assert pb.can_resolve_use_case("chat") is True
+        assert pb.serving_entry("chat").name == "probed-entry"
+
+
+def test_a_probe_that_raises_fails_open_rather_than_hiding_a_working_model(monkeypatch):
+    """Fail-OPEN, stated at the registry: a defect in one app's probe must not take chat away
+    from a home whose model is fine. (It is logged, so it cannot stay invisible.)"""
+
+    def broken(entry, *, implicit):
+        raise RuntimeError("probe bug")
+
+    registry = _readiness_registry(monkeypatch, broken)
+    assert registry.not_ready(registry.get_entry("probed-entry"), implicit=True) is None
+    with patch("personalclaw.providers.use_cases.active_model_refs", return_value=[]):
+        assert pb.can_resolve_use_case("chat") is True

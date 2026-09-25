@@ -3,6 +3,24 @@
 All atomic-write sites in PersonalClaw should use this helper instead of
 deterministic ``.tmp`` filenames, which cause ENOENT when concurrent
 writers target the same file.
+
+🔴 **The PersonalClaw home is private, and this is where that is enforced.** A file written
+under the home is created 0600 and the directory it is written into is made 0700 — the home
+itself included, the first time a file lands in it (a new home is created 0700 by
+``config.loader.config_dir``, which never re-modes an existing one: it runs on every
+resolution, imports included). Before this, every write defaulted to the umask mode, so
+``config.json`` — which carried a provider's API key — and an app's ``data/config.json`` —
+which carried its channel tokens — were 0644 on disk, world-readable, unless the author of
+each of those writers had remembered ``mode=0o600``. Most had not. The rule lives HERE rather
+than at each writer because the settings and credential stores funnel through ``_atomic_write``
+(``mcp.json``'s own writer asks :func:`private_mode_for` too): one rule at the chokepoint covers
+the writers that exist and the ones that do not yet, and no enumeration of "files that can hold
+a secret" can drift out of date. The three single-secret files with writers of their own —
+``.local_secret``, ``telemetry_salt`` and an app's ``.app_secret`` — create theirs 0600. A file
+written any other way (a log, a lock, a SQLite database, a few ``write_text`` caches) keeps the
+umask mode; the 0700 home it sits in is what shields it. An explicit mode wider than 0600 for a
+home path is REFUSED, not honoured — that refusal is the rail. Outside the home (an export the
+user saves into Downloads) the umask default still applies: that file is theirs to share.
 """
 
 import logging
@@ -98,6 +116,66 @@ def _get_default_mode() -> int:
     return _default_mode
 
 
+#: Mode of every file written under the PersonalClaw home.
+PRIVATE_FILE_MODE = 0o600
+#: Mode of the home and of every directory a home file is written into.
+PRIVATE_DIR_MODE = 0o700
+
+
+def ensure_private_dir(directory: Path | str) -> None:
+    """Create ``directory`` at 0700 if absent, and tighten it to 0700 if it is looser.
+
+    Tightening is best-effort: a directory this process may not chmod (a volume root owned by
+    another uid) is logged and left, because refusing the write would lose the user's data over
+    a mode the files inside are protected from anyway (they are written 0600).
+    """
+    d = Path(directory)
+    d.mkdir(mode=PRIVATE_DIR_MODE, parents=True, exist_ok=True)
+    try:
+        if d.stat().st_mode & 0o077:
+            os.chmod(d, PRIVATE_DIR_MODE)
+    except OSError:
+        logger.warning("could not make %s private (0700)", d)
+
+
+def is_in_home(path: Path | str) -> bool:
+    """Whether ``path`` lies inside the PersonalClaw home this process writes into.
+
+    Asks ``config.loader.config_dir`` — the one resolver of the home, patched per test by the
+    suite's isolation fixture — at call time, never at import. ``False`` when the home cannot be
+    resolved at all, which leaves the write at the pre-existing umask default rather than
+    guessing.
+    """
+    try:
+        from personalclaw.config import loader  # lazy: loader imports this module
+
+        home = os.path.abspath(str(loader.config_dir()))
+    except Exception:  # noqa: BLE001 — an unresolvable home must not fail an unrelated write
+        return False
+    target = os.path.abspath(str(path))
+    return target == home or target.startswith(home + os.sep)
+
+
+def private_mode_for(path: Path | str, requested: int | None = None) -> int | None:
+    """The mode a write to ``path`` must use, or ``None`` when the home rule does not apply.
+
+    Under the home: ``requested`` if it grants no group/other bit, else :class:`ValueError`;
+    :data:`PRIVATE_FILE_MODE` when nothing was requested. Shared with
+    ``agent._atomic_json_write`` — the ``mcp.json`` writer, which does its own temp-and-rename —
+    so the rule has one statement.
+    """
+    if not is_in_home(path):
+        return None
+    if requested is None:
+        return PRIVATE_FILE_MODE
+    if requested & 0o077:
+        raise ValueError(
+            f"refusing to write {path} at {oct(requested)}: files under the PersonalClaw home "
+            f"can hold secrets and are written {oct(PRIVATE_FILE_MODE)}"
+        )
+    return requested
+
+
 def atomic_write(
     path: Path | str,
     content: str,
@@ -110,8 +188,10 @@ def atomic_write(
     Uses ``tempfile.mkstemp`` so concurrent writers never collide on the
     same temp filename.  On error the temp file is cleaned up.
 
-    *mode* sets explicit permissions (e.g. ``0o600`` for secrets).
-    ``None`` (default) applies umask-based permissions (matching ``open()``).
+    Under the PersonalClaw home the file is 0600 in a 0700 directory, and a *mode* that
+    grants a group/other bit raises :class:`ValueError` (see the module docstring).
+    Elsewhere *mode* sets explicit permissions, and ``None`` (default) applies the
+    umask-based mode (matching ``open()``).
     """
     _atomic_write(path, content, text=True, fsync=fsync, mode=mode)
 
@@ -140,7 +220,12 @@ def _atomic_write(
     mode: int | None,
 ) -> None:
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    home_mode = private_mode_for(path, mode)  # raises BEFORE any byte lands
+    if home_mode is None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        ensure_private_dir(path.parent)
+        mode = home_mode
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
     open_mode = "w" if text else "wb"
     encoding = "utf-8" if text else None

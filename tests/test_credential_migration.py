@@ -503,13 +503,16 @@ def test_the_gate_has_a_write_path_and_the_patch_allowlist_declares_it() -> None
     absent from it is silently dropped by the handler — the Settings toggle would report
     success and change nothing. So the write path gets its own rail.
     """
-    from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
+    from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value, security_control
     from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
     key = "security.credential_keychain"
     spec = _EDITABLE_CONFIG.get(key)
     assert spec is not None, "the Settings toggle PATCHes this path — it must be allowlisted"
-    assert spec == {"type": "bool"}
+    # The validation shape, exactly; turning the keychain OFF sends new credentials to .env, so
+    # the field is on the security list too (tests/test_security_posture_rail.py).
+    assert {k: v for k, v in spec.items() if k != "security"} == {"type": "bool"}
+    assert security_control(spec) is not None
     assert coerce_edit_value(key, True, spec) is True
     assert coerce_edit_value(key, False, spec) is False
     # Vacuity floor: the spec must be able to REFUSE. A string that coerced to True here

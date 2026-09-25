@@ -65,7 +65,8 @@ describe('both consent surfaces disclose their cap', () => {
   it('each renders the residue, gated on there being one', () => {
     for (const rel of CONSENT) {
       const src = read(rel)
-      expect(src, `${rel} must render the note`).toMatch(/hiddenFindingsNote\([\w.?]+\.findings\.length\)/)
+      // `scan.findings.length`, or `findings.length` inside a renderer handed a typed list of them.
+      expect(src, `${rel} must render the note`).toMatch(/hiddenFindingsNote\((?:[\w.?]+\.)?findings\.length\)/)
       // Gated, not unconditional: an always-rendered empty element is a blank row on a clean scan.
       expect((src.match(/hiddenFindingsNote\(/g) ?? []).length,
         `${rel}: once to decide, once to render`).toBeGreaterThanOrEqual(2)
@@ -95,15 +96,21 @@ describe('both consent surfaces disclose their cap', () => {
         if (statSync(p).isDirectory()) return walk(p)
         return /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n) ? [p] : []
       })
-    // 🪤 Keyed on `scan.findings` — the SECURITY-scan shape — not on the word "findings". A looser
-    // sweep flagged `chat/SdlcProgressCard` and `code/CodeCockpitPage`, which slice an SDLC loop's
-    // REVIEW findings to show the most recent few (`slice(-3)`, `slice(-CAP)`). That is a recent-
-    // activity tail on a live progress surface, not a security list a user is consenting against —
-    // a different concept wearing the same noun, and "fixing" it would have been a non-defect.
+    // 🪤 Keyed on the SECURITY-scan shape — `scan.findings`, or a list typed `AppScanFinding[]` (the
+    // app dialog renders one report as two such lists: what the app runs, and what it cannot) — not
+    // on the word "findings". A looser sweep flagged `chat/SdlcProgressCard` and
+    // `code/CodeCockpitPage`, which slice an SDLC loop's REVIEW findings to show the most recent few
+    // (`slice(-3)`, `slice(-CAP)`). That is a recent-activity tail on a live progress surface, not a
+    // security list a user is consenting against — a different concept wearing the same noun, and
+    // "fixing" it would have been a non-defect.
+    const listsScanFindings = (src: string) =>
+      /scan\??\.findings[\s\S]{0,40}\.slice\(\s*0/.test(src)
+      || (/\bAppScanFinding\[\]/.test(src) && /\bfindings\.slice\(\s*0/.test(src))
     const renderers = walk(SRC)
       .map((abs) => ({ rel: abs.replace(SRC + '/', ''), src: strip(readFileSync(abs, 'utf8')) }))
-      .filter(({ src }) => /scan\??\.findings[\s\S]{0,40}\.slice\(\s*0/.test(src) && src.includes('.map('))
-    expect(renderers.length, 'the census must find the consent surfaces').toBeGreaterThanOrEqual(2)
+      .filter(({ src }) => listsScanFindings(src) && src.includes('.map('))
+    expect(renderers.map((r) => r.rel).sort(), 'the census must find both consent surfaces')
+      .toEqual(expect.arrayContaining(CONSENT))
     const silent = renderers.filter(({ src }) => !src.includes('hiddenFindingsNote')).map((r) => r.rel)
     expect(silent, 'a truncated findings list must say how many it hides').toEqual([])
   })

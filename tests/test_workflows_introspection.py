@@ -44,6 +44,7 @@ from personalclaw.workflows.introspection import (
     run_stats,
     template_card,
 )
+from personalclaw.workflows.models import InstanceState
 
 
 @pytest.fixture()
@@ -92,7 +93,7 @@ def test_run_stats_matches_the_engines_OWN_run_totals(journal_home):
             (J.STEP_CACHED, {"instance_path": "d", "node_id": "d"}),
         ],
     )
-    stats = run_stats("r-agree", events)
+    stats = run_stats("r-agree", events, elapsed_secs=0.0)
     official = J.run_totals("r-agree")
     assert stats.tokens == official["tokens"]
     assert round(stats.cost_usd, 6) == official["cost_usd"]
@@ -162,7 +163,7 @@ def test_run_stats_and_run_totals_agree_on_the_token_DISCLOSURE(
             for i, tok in enumerate(step_tokens)
         ],
     )
-    stats = run_stats(run_id, events)
+    stats = run_stats(run_id, events, elapsed_secs=0.0)
     official = J.run_totals(run_id)
 
     assert stats.tokens_recorded is recorded, label
@@ -174,6 +175,93 @@ def test_run_stats_and_run_totals_agree_on_the_token_DISCLOSURE(
     # The money fact is untouched in every case, which is what makes the token fact the only
     # variable — and is #2630's ruling asserted rather than remembered.
     assert stats.priced is True, label
+
+
+def test_a_cancel_that_cut_generations_off_is_spend_not_nothing(journal_home):
+    """A run cancelled mid-generation used to leave no ledger event at all, so Introspect said
+    "Nothing is costing money" while four generations had been running. The `step_cancelled` row
+    carries the cut-off count and makes both aggregates floors — and they still agree."""
+    from personalclaw.workflows import journal as J
+
+    J.Journal("r-cut").step_completed(
+        "a", "a", epoch=0, cache_key="", state=InstanceState.DONE, tokens=40, cost_usd=0.0
+    )
+    J.Journal("r-cut").step_cancelled(
+        "b", "b", epoch=0, model_calls_open=4, tokens=None, model="gemma3:4b", cost_usd=None
+    )
+    events = J.ledger("r-cut")
+    stats = run_stats("r-cut", events, elapsed_secs=10.0)
+    official = J.run_totals("r-cut")
+    assert stats.calls_cut_off == 4
+    assert stats.models == ["gemma3:4b"]
+    assert stats.tokens_recorded is official["tokens_recorded"] is False
+    assert stats.priced is official["priced"] is False
+    assert stats.tokens == 40 and official["tokens"] is None
+    assert stats.to_dict()["calls_cut_off"] == 4
+
+
+def test_what_the_finished_calls_reported_is_kept_as_a_floor(journal_home):
+    """A cancel that cut ONE generation off after two finished must not throw the two away: the
+    run spent at least what they reported, and the cell reads `≥` that rather than "not
+    recorded". Both aggregates still refuse to call it a measured total."""
+    from personalclaw.workflows import journal as J
+
+    J.Journal("r-floor").step_cancelled(
+        "b", "b", epoch=0, model_calls_open=1, tokens=500, model="gemma3:4b", cost_usd=0.02
+    )
+    stats = run_stats("r-floor", J.ledger("r-floor"), elapsed_secs=3.0)
+    official = J.run_totals("r-floor")
+    assert (stats.tokens, stats.tokens_recorded, stats.priced) == (500, False, False)
+    assert round(stats.cost_usd, 6) == 0.02
+    assert official["tokens_recorded"] is False and official["priced"] is False
+
+
+def test_the_duration_is_the_runs_own_not_the_ledger_span(journal_home):
+    """ONE duration per run. The ledger span (first event → last) is not what the run header
+    shows, and a run whose only step was cut off had no span at all: "10s" and "0s" on one page."""
+    from personalclaw.workflows import introspection
+    from personalclaw.workflows.models import RunStatus, WorkflowRun
+
+    assert run_stats("r-none", [], elapsed_secs=10.0).duration_secs == 10.0
+    ended = WorkflowRun(
+        id="r-ended",
+        workflow_name="w",
+        status=RunStatus.CANCELLED,
+        started_at="2026-09-25T12:00:00Z",
+        elapsed_seconds=10.0,
+    )
+    assert introspection.run_elapsed(ended, now=10**10) == 10.0
+    live = WorkflowRun(
+        id="r-live",
+        workflow_name="w",
+        status=RunStatus.RUNNING,
+        started_at="2026-09-25T12:00:00Z",
+    )
+    started = introspection._epoch(live.started_at)
+    assert introspection.run_elapsed(live, now=started + 42) == 42.0
+    draft = WorkflowRun(id="r-draft", workflow_name="w", status=RunStatus.DRAFT)
+    assert introspection.run_elapsed(draft, now=10**10) == 0.0
+
+
+def test_a_forks_first_output_is_timed_on_its_own_clock():
+    """A fork's ledger opens with its parent's records (every effect, and each step it
+    inherited), stamped on the PARENT's clock. Timed from them, a Retry child that ran for 75 s
+    read "To first output 121000 ms" beside "Duration 1m 15s". The parent's records name the
+    parent in their `event_id`; only the run's own records time it."""
+    parent = [
+        {"kind": "effect", "ts": 1000.0, "event_id": "par-evt-1"},
+        {"kind": "step_completed", "ts": 1010.0, "event_id": "par-evt-2", "node_id": "a"},
+    ]
+    own = [
+        {"kind": "effect", "ts": 1100.0, "event_id": "kid-evt-3"},
+        {"kind": "step_completed", "ts": 1103.0, "event_id": "kid-evt-4", "node_id": "b"},
+    ]
+    stats = run_stats("kid", parent + own, elapsed_secs=5.0)
+    assert stats.first_byte_ms == 3000.0
+    assert stats.steps_completed == 2  # the inherited step still counts; only its CLOCK does not
+    # A record written before event ids existed is the run's own, as it always was.
+    legacy = [{"kind": "effect", "ts": 50.0}, {"kind": "step_completed", "ts": 52.0}]
+    assert run_stats("old", legacy, elapsed_secs=2.0).first_byte_ms == 2000.0
 
 
 def test_the_token_disclosure_survives_the_wire(journal_home):
@@ -189,7 +277,7 @@ def test_the_token_disclosure_survives_the_wire(journal_home):
             (J.STEP_COMPLETED, {"instance_path": "b", "node_id": "b", "cost_usd": 0.02}),
         ],
     )
-    payload = run_stats("r-tok-wire", events).to_dict()
+    payload = run_stats("r-tok-wire", events, elapsed_secs=0.0).to_dict()
     assert payload["tokens_recorded"] is False
     assert payload["tokens"] == 100
     assert payload["tokens_recorded"] is J.run_totals("r-tok-wire")["tokens_recorded"]
@@ -207,18 +295,20 @@ def test_the_models_a_run_used_are_collected(journal_home):
             (J.STEP_COMPLETED, {"instance_path": "c", "node_id": "c", "model": "claude-sonnet-5"}),
         ],
     )
-    assert run_stats("r-models", events).models == ["claude-sonnet-5", "claude-opus-5"]
+    stats = run_stats("r-models", events, elapsed_secs=0.0)
+    assert stats.models == ["claude-sonnet-5", "claude-opus-5"]
 
 
 def test_an_empty_ledger_projects_to_zeros_rather_than_raising():
-    stats = run_stats("r-empty", [])
+    stats = run_stats("r-empty", [], elapsed_secs=0.0)
     assert stats.tokens == 0
     assert stats.verification_debt == 0.0
     assert stats.cache_hit_rate == 0.0
 
 
 def test_a_malformed_event_is_skipped(journal_home):
-    stats = run_stats("r-junk", [None, "not a dict", {"kind": "step_completed", "tokens": 5}])
+    junk = [None, "not a dict", {"kind": "step_completed", "tokens": 5}]
+    stats = run_stats("r-junk", junk, elapsed_secs=0.0)
     assert stats.steps_completed == 1
     assert stats.tokens == 5
 
@@ -243,7 +333,7 @@ def test_a_step_a_GATE_verified_is_not_debt(journal_home):
             ),
         ],
     )
-    stats = run_stats("r-verified", events)
+    stats = run_stats("r-verified", events, elapsed_secs=0.0)
     assert stats.unverified_steps == 0
     assert stats.verification_debt == 0.0
 
@@ -258,7 +348,7 @@ def test_an_UNVERIFIED_step_is_debt(journal_home):
             (J.STEP_COMPLETED, {"instance_path": "b", "node_id": "publish"}),
         ],
     )
-    stats = run_stats("r-debt", events)
+    stats = run_stats("r-debt", events, elapsed_secs=0.0)
     assert stats.unverified_steps == 2
     assert stats.verification_debt == 1.0
 

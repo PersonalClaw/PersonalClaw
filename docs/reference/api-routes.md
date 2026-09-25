@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **852 registrations** over **691 distinct paths** — 845 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **854 registrations** over **693 distinct paths** — 847 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -30,7 +30,7 @@ The 127 families the surface divides into, largest first.
 | `/api/workflows` | 44 | 39 |
 | `/api/models` | 34 | 28 |
 | `/api/artifacts` | 25 | 16 |
-| `/api/apps` | 22 | 14 |
+| `/api/apps` | 23 | 15 |
 | `/api/inbox` | 21 | 20 |
 | `/api/loops` | 21 | 17 |
 | `/api/skills` | 19 | 15 |
@@ -48,11 +48,11 @@ The 127 families the surface divides into, largest first.
 | `/api/model-providers` | 11 | 9 |
 | `/api/prompts` | 11 | 7 |
 | `/api/notifications` | 10 | 7 |
+| `/api/rooms` | 10 | 8 |
 | `/api/doctor` | 9 | 9 |
 | `/api/evals` | 9 | 9 |
 | `/api/learning` | 9 | 7 |
 | `/api/lexicon` | 9 | 6 |
-| `/api/rooms` | 9 | 7 |
 | `/api/agent-marketplace` | 8 | 5 |
 | `/api/channels` | 8 | 8 |
 | `/api/onboarding` | 8 | 7 |
@@ -154,7 +154,7 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 845 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 847 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -191,13 +191,14 @@ The 845 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/approvals` | list pending tool approvals. |
 | `POST` | `/api/approvals/{id}/{action}` | approve or reject. |
 | `GET` | `/api/apps` | installed apps with manifest summary + runtime state. |
-| `POST` | `/api/apps` | install from ``{source, confirm?}``. |
+| `POST` | `/api/apps` | install from ``{source, consent}``. |
 | `GET` | `/api/apps/catalog` | available-to-install apps (Store): bundled-but-not- |
 | `DELETE` | `/api/apps/local-sources` | remove a local app-source dir. |
 | `GET` | `/api/apps/local-sources` | the configured local app-source directories. |
 | `POST` | `/api/apps/local-sources` | add a local app-source dir ``{path}`` (a |
 | `GET` | `/api/apps/message` | drain THIS app's inbox (read-once). |
 | `POST` | `/api/apps/message` | send a typed message ``{to, type, payload}`` to |
+| `POST` | `/api/apps/preview` | review ``{source, name?}`` before anything is installed. |
 | `DELETE` | `/api/apps/sources` | remove a user git source URL. |
 | `GET` | `/api/apps/sources` | the configured git source URLs (defaults + user). |
 | `POST` | `/api/apps/sources` | add a user git source URL ``{url}``. |
@@ -211,7 +212,7 @@ The 845 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/apps/{name}/enable` | _(no summary)_ |
 | `POST` | `/api/apps/{name}/token` | mint an app-scoped identity token. |
 | `GET` | `/api/apps/{name}/uninstall-preview` | classify shared deps (A3) and report what the app's ``data/`` holds. |
-| `POST` | `/api/apps/{name}/update` | atomic update from ``{source, confirm?}``. |
+| `POST` | `/api/apps/{name}/update` | atomic update from ``{source, consent?}``. |
 | `GET` | `/api/artifacts` | metadata-only rows; ``q`` searches metadata and body. |
 | `POST` | `/api/artifacts` | create (or bump an existing file-backed artifact). |
 | `GET` | `/api/artifacts/deployed` | the deployed-app listing (slug + in-gateway URL). |
@@ -723,8 +724,8 @@ The 845 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `PUT` | `/api/notifications/settings` | _(no summary)_ |
 | `POST` | `/api/notifications/unack` | mark a single notification as unread. |
 | `GET` | `/api/onboarding` | First-run onboarding signal — model readiness plus persisted flow progress. |
-| `GET` | `/api/onboarding/import` | what each source holds, and what is already ours. |
-| `POST` | `/api/onboarding/import` | import the picked categories and report outcomes. |
+| `GET` | `/api/onboarding/import` | what each source holds, and what importing each item does. |
+| `POST` | `/api/onboarding/import` | import the picked items and report outcomes. |
 | `GET` | `/api/onboarding/local-model` | is a local Ollama reachable on localhost? |
 | `POST` | `/api/onboarding/local-model/bind` | credential-free bind of an endpoint. |
 | `POST` | `/api/onboarding/local-model/scan` | opt-in LAN sweep for an Ollama. |
@@ -806,6 +807,7 @@ The 845 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/rooms/{room_id}` | one room, its members, its posture, and its transcript. |
 | `PATCH` | `/api/rooms/{room_id}` | {round_budget} — the room's own budget override. |
 | `POST` | `/api/rooms/{room_id}/archive` | archive a room. Idempotent. |
+| `POST` | `/api/rooms/{room_id}/continue` | finish an interrupted round. |
 | `GET` | `/api/rooms/{room_id}/export` | the transcript, redacted. |
 | `POST` | `/api/rooms/{room_id}/members` | {name, role_blurb?, listen_policy?, profile_narrowing?}. |
 | `DELETE` | `/api/rooms/{room_id}/members/{name}` | remove a member. |

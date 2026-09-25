@@ -1808,6 +1808,40 @@ class TestHeartbeatCallback:
         orch._deliver_result.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_a_heartbeat_is_framed_by_the_background_prompt_not_the_chat_one(self, tmp_path):
+        """Recorded at the send: the heartbeat's build passes no session key, and a keyless
+        build derives CHAT — so it ran on the interactive prompt while Settings → Prompts
+        promised it the Background one."""
+        from personalclaw.context import ContextBuilder
+        from personalclaw.memory import MemoryStore
+        from personalclaw.skills import SkillsLoader
+
+        orch = _make_orchestrator()
+        orch.sessions = _mock_sessions()
+        orch.ctx_builder = ContextBuilder(
+            memory=MemoryStore(workspace=tmp_path / "ws"),
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+        )
+        orch.consolidator = MagicMock()
+        orch.dashboard_state = None
+        orch._deliver_result = AsyncMock()
+
+        with patch("personalclaw.gateway.HeartbeatService") as mock_hs:
+            mock_hs_inst = MagicMock()
+            mock_hs_inst.start = AsyncMock()
+            mock_hs.return_value = mock_hs_inst
+            await orch._init_heartbeat()
+        callback = mock_hs.call_args[1]["on_task"]
+
+        sent = AsyncMock(return_value="ok")
+        with patch("personalclaw.gateway.stream_and_collect", new=sent):
+            await callback("check the deploy", "")
+
+        message = sent.await_args.args[1]
+        assert "You are running in a BACKGROUND context" in message
+        assert "check the deploy" in message
+
+    @pytest.mark.asyncio
     async def test_heartbeat_task_failure(self):
         """Heartbeat task exception propagates."""
         orch = _make_orchestrator()

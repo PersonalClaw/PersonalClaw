@@ -165,6 +165,64 @@ def _mark_permission_resolved(messages: list[dict], request_id: str, decision: s
                 pass
 
 
+#: The in-chat card's closed decision vocabulary — must stay in step with the frontend's
+#: ApproveAction union (web/src/pages/ChatPage.tsx). Past tense throughout: "approved"/"rejected",
+#: NOT the "approve"/"reject" pair ``/api/approvals/{id}/{action}`` takes. Anything outside this
+#: set is a 400 at the route, never a silent denial.
+SESSION_APPROVAL_ACTIONS = frozenset(
+    {"approved", "rejected", "trust", "trust_agent", "trust_reads", "yolo"}
+)
+
+#: The verbs above that do more than answer THIS call: each raises a standing posture — the
+#: chat's (``trust``, ``trust_reads``), the bound agent's for every future chat
+#: (``trust_agent``), or every session's (``yolo``). An app-scoped caller may answer a pending
+#: approval once, which is what a companion that relays the owner's decision needs, and never
+#: with one of these (``chat_handlers.api_chat_session_approve``).
+STANDING_APPROVAL_ACTIONS = SESSION_APPROVAL_ACTIONS - {"approved", "rejected"}
+
+
+def chat_approval_id(session_key: str, request_id: str | int) -> str:
+    """The registry id of an approval a chat is waiting on — derived here, and only here.
+
+    A chat's ``request_id`` is unique only inside that chat: an ACP agent's permission request
+    carries the agent's own JSON-RPC message id, which every connection counts from the same small
+    integers, and the native runtime falls back to the tool NAME for a call with no id. A registry
+    every surface reads cannot be keyed by that — two chats both waiting on ``"1"`` would share a
+    row, and an answer given for one would land on the other. So the registry keys a chat approval
+    by its session too, while the chat keeps addressing its own call by the bare ``request_id``
+    its card, transcript and runner have always used.
+    """
+    return f"{session_key}:{request_id}"
+
+
+def _approval_row_body(entry: dict[str, Any]) -> str:
+    """What a pending approval's Inbox row says. Server-composed product copy: every clause true.
+
+    Names who is waiting (the chat's agent and the chat, or the background origin), on what, at
+    what risk, and then what the call would actually do — the redacted arguments the listing
+    carries — so the row can be judged from the Inbox rather than only opened.
+    """
+    tool = str(entry.get("tool") or "a tool")
+    agent = str(entry.get("agent") or "")
+    title = str(entry.get("session_title") or "")
+    if agent:
+        # Only a chat-held approval names its agent; that is how the two origins are told apart.
+        who = f"{agent} in “{title}”" if title else f"{agent} in a chat"
+    elif entry.get("source") == "subagent":
+        who = f"A subagent of “{title}”" if title else "A subagent"
+    else:
+        who = "A background task"
+    risk = str(entry.get("risk") or "")
+    lines = [
+        f"{who} is waiting for your decision on {tool}" + (f" (risk: {risk})." if risk else ".")
+    ]
+    for detail in (entry.get("tool_purpose"), entry.get("tool_input")):
+        text = " ".join(str(detail or "").split())
+        if text:
+            lines.append(text if len(text) <= 200 else text[:199] + "…")
+    return "\n".join(lines)
+
+
 # ── Constants ──
 
 
@@ -173,7 +231,6 @@ _SSE_INTERVAL_SECS = 5
 _NOTIFICATIONS_FILE = "notifications.jsonl"
 _MAX_PERSISTED_NOTIFICATIONS = 200
 _AUTO_COMPACT_NOTICE = "🔄 Auto-compacted at {pct:.0f}%."
-_MAX_SESSION_MESSAGES = 10000  # Keep all messages — virtual scrolling handles performance
 
 # Bare chat-N label matcher used by DashboardState.resolve_session() for prefix fallback.
 # Gates the prefix lookup to prevent broad matches (e.g. bare "chat" binding to any session).
@@ -230,7 +287,7 @@ class _ChatSession:
         "project_id",
         "created_at",
         "messages",
-        "total_messages",
+        "_stream",
         "task",
         "event",
         "_pending",
@@ -359,8 +416,15 @@ class _ChatSession:
         # this closes the tool-availability layer the watchdog can't reach.
         self._unattended: bool = False
         self.created_at: str = datetime.now(timezone.utc).isoformat()
+        # The transcript: one entry per thing the user wrote or saw, and nothing else.
+        # It is never trimmed — the whole-file save rewrites the transcript FROM this
+        # list, so an entry missing here is an entry deleted from disk (see
+        # `chat_persistence._seed_transcript`, which loads the whole file, never a window).
         self.messages: list[dict[str, Any]] = []
-        self.total_messages: int = 0  # lifetime count (survives trimming)
+        # The answer being streamed right now, while it is still being written: ONE
+        # `streaming` entry in `messages`, grown in place by `stream_chunk` and settled
+        # into an `assistant` entry by `finish_stream`. None between answers.
+        self._stream: dict[str, Any] | None = None
         self.task: asyncio.Task | None = None  # type: ignore[type-arg]
         self.event = asyncio.Event()
         self._pending: list[dict[str, str]] = []
@@ -462,9 +526,10 @@ class _ChatSession:
             asyncio.Lock()
         )  # serialises concurrent forks on this session
         self._tab_id: str = ""  # permanent tab identity for cross-restart session chaining
-        self._disk_older_count: int = (
-            0  # count of disk messages OLDER than in-memory window (stable, set at restore/resume)
-        )
+        # Messages in OLDER sibling files of this tab (legacy cross-restart chaining), which
+        # the conversation shows before this buffer but which this session never writes.
+        # Set when the transcript is seeded; the session's own file is always loaded whole.
+        self._disk_older_count: int = 0
         # Per-turn file-change accumulator [{path, before, after}], reset at the
         # top of each run_chat and flushed onto the assistant message's meta at turn end.
         self._file_changes: list[dict[str, str]] = []
@@ -523,6 +588,13 @@ class _ChatSession:
         broadcast: bool = True,
         meta: dict | None = None,
     ) -> None:
+        """Add one transcript entry — something the user wrote or saw.
+
+        Stream bookkeeping never comes through here. A streamed chunk grows the one open
+        answer (:meth:`stream_chunk`) and the end-of-turn marker goes to live readers only
+        (:meth:`signal_done`), because every entry in ``messages`` is served, counted and
+        persisted as a message.
+        """
         msg: dict[str, Any] = {
             "role": role,
             "content": content,
@@ -532,19 +604,21 @@ class _ChatSession:
         if meta:
             msg["meta"] = meta
         self.messages.append(msg)
-        self.total_messages += 1
-        # Stamp real activity for the auto-archive rule. Only user/assistant turns
-        # count: `chunk`/`done` are stream bookkeeping that would keep a session
-        # "active" for its own streaming, and system notices are not the user using
-        # it. Recording here — the one canonical append — means every producer
-        # (web, channel, resume) is covered without touching any of them.
+        # `ts` is the live-vs-replay discriminator. A live turn passes no timestamp (it is
+        # "now"); history REPLAY passes each message's stored ts.
+        self._announce(msg, replay=bool(ts), broadcast=broadcast)
+
+    def _announce(self, msg: dict[str, Any], *, replay: bool, broadcast: bool) -> None:
+        """What a new — or newly settled — transcript entry owes the rest of the system."""
+        # Stamp real activity for the auto-archive rule. Only user/assistant turns count:
+        # system notices are not the user using the chat. Recording here — the one place
+        # every entry is announced — covers every producer (web, channel, resume) without
+        # touching any of them.
         #
-        # `ts` is the live-vs-replay discriminator. A live turn passes no timestamp
-        # (it is "now"); history REPLAY passes each message's stored ts. Without this
-        # check, rehydrating an archived session would replay its transcript through
-        # here and un-archive it on load — so an archived chat would silently
-        # un-archive itself just by being opened, or by a restart restoring it.
-        if role in ("user", "assistant") and not ts:
+        # A replay must not stamp: rehydrating an archived session replays its transcript
+        # through `append`, and stamping would un-archive a chat just by opening it, or by
+        # a restart restoring it.
+        if msg["role"] in ("user", "assistant") and not replay:
             self.last_activity_at = time.time()
             # A real turn un-archives: using an archived chat is the clearest possible
             # signal that it is active again.
@@ -553,19 +627,96 @@ class _ChatSession:
         self._dirty = True
         self._pending.append(msg)
         self.event.set()
-        # Broadcast via global SSE when no HTTP stream reader is active
-        # Skip: chunk (too noisy), done (internal), user (frontend adds optimistically)
-        if (
-            broadcast
-            and self._on_message
-            and role not in ("chunk", "done", "user")
-            and not self._has_reader
-        ):
+        # Broadcast via global SSE when no HTTP stream reader is active. A user entry is
+        # not echoed: the frontend adds it optimistically.
+        if broadcast and self._on_message and msg["role"] != "user" and not self._has_reader:
             self._on_message(self.key, msg)  # type: ignore[operator]
-        # Trim old messages to bound memory usage
-        if len(self.messages) > _MAX_SESSION_MESSAGES:
-            excess = len(self.messages) - _MAX_SESSION_MESSAGES
-            del self.messages[:excess]
+
+    def _stream_index(self) -> int | None:
+        """Where the open streaming entry sits in ``messages`` — found by IDENTITY.
+
+        ``None`` when nothing is streaming, and also when the buffer was rebuilt without
+        the entry (a ``/clear``, a purge): the stream is then forgotten rather than grown
+        in a dict nothing will ever persist. The entry is the last or next-to-last row
+        while it streams, so the scan from the end stops at once.
+        """
+        entry = self._stream
+        if entry is not None:
+            for i in range(len(self.messages) - 1, -1, -1):
+                if self.messages[i] is entry:
+                    return i
+            self._stream = None
+        return None
+
+    @property
+    def streaming_text(self) -> str | None:
+        """The answer being streamed, as far as it has arrived — ``None`` when none is."""
+        idx = self._stream_index()
+        return None if idx is None else self.messages[idx]["content"]
+
+    def stream_chunk(self, text: str) -> None:
+        """Grow the answer being streamed by *text*.
+
+        A chunk is not a transcript entry. However many chunks an answer arrives in, it
+        is ONE ``streaming`` entry until it settles — ten thousand chunks used to be ten
+        thousand entries, and the buffer then pushed the user's own prompt out to make
+        room for them. A live reader still gets every delta as a ``chunk`` frame on
+        ``_pending`` (the HTTP SSE stream and the OpenAI dialect each claim
+        ``_has_reader`` before the turn starts); the WS path gets ``chat_chunk`` from the
+        runner. Without a reader nothing drains ``_pending``, so no frame is queued.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        idx = self._stream_index()
+        if idx is None:
+            self._stream = {"role": "streaming", "content": text, "cls": "msg msg-a", "ts": now}
+            self.messages.append(self._stream)
+        else:
+            self.messages[idx]["content"] += text
+        self._dirty = True
+        if self._has_reader:
+            self._pending.append({"role": "chunk", "content": text, "cls": "chunk", "ts": now})
+            self.event.set()
+
+    def finish_stream(self, content: str) -> dict[str, Any]:
+        """Settle the answer being streamed as an ``assistant`` entry, where it streamed.
+
+        Settled IN PLACE, so a stop card appended while the answer was still arriving
+        stays after the prose. With no open stream (none started, or the buffer was
+        rebuilt under it) the answer is appended instead. Returns the settled entry.
+        """
+        idx = self._stream_index()
+        self._stream = None
+        if idx is None:
+            self.append("assistant", content, "msg msg-a")
+            return self.messages[-1]
+        entry = self.messages[idx]
+        entry["role"] = "assistant"
+        entry["content"] = content
+        entry["ts"] = datetime.now(timezone.utc).isoformat()
+        self._announce(entry, replay=False, broadcast=True)
+        return entry
+
+    def discard_stream(self) -> None:
+        """Drop the answer being streamed without settling it."""
+        idx = self._stream_index()
+        self._stream = None
+        if idx is not None:
+            del self.messages[idx]
+            self._dirty = True
+
+    def signal_done(self) -> None:
+        """Tell a live reader the turn is over.
+
+        Not a transcript entry: it goes to ``_pending`` only, so nothing serves, counts
+        or persists it. (As a ``done`` row in ``messages`` it made the detail ``total``
+        and the paginated tail count one phantom message per turn.) Queued only for a
+        reader that is attached — a marker left in an undrained queue would end the NEXT
+        reader's stream before its turn began.
+        """
+        if self._has_reader:
+            now = datetime.now(timezone.utc).isoformat()
+            self._pending.append({"role": "done", "content": "", "cls": "done", "ts": now})
+            self.event.set()
 
     def drain(self) -> list[dict[str, str]]:
         """Return and clear pending messages."""
@@ -664,14 +815,18 @@ class _ChatSession:
         task.add_done_callback(_log_task_exception)
         return True
 
-    def to_dict(self) -> dict:
-        # Import locally: chat_utils imports state at module load, so a top-level
-        # import here would be circular. The list message count MUST run the same
-        # exclusion/collapse rule the detail view serves (_prepare_messages skips the
-        # per-turn `done` sentinel and collapses `chunk` runs), or the sidebar count
-        # and the open conversation disagree on the same session (#2862).
-        from personalclaw.dashboard.chat_utils import _prepare_messages
+    @property
+    def message_count(self) -> int:
+        """How many messages the open conversation serves.
 
+        The persisted head older than this buffer (``_disk_older_count``) plus every entry
+        in it — the buffer holds transcript entries only, and the detail view serves each
+        one once. The chat list reads this, so the sidebar and the open conversation cannot
+        disagree about one session (#2862).
+        """
+        return self._disk_older_count + len(self.messages)
+
+    def to_dict(self) -> dict:
         last_ts = self.messages[-1].get("ts", "") if self.messages else ""
         # Single reverse scan for last_msg, options, and last_activity_ts.
         last_msg = ""
@@ -750,7 +905,7 @@ class _ChatSession:
             "mode": self.mode,
             "workspace_dir": self.workspace_dir,
             "project_id": self.project_id,
-            "messages": len(_prepare_messages(self.messages, self.running)),
+            "messages": self.message_count,
             "running": self.running,
             "stopping": self._stopping,
             "pending_approval": pending_approval,
@@ -907,6 +1062,10 @@ class DashboardState(DashboardWebSocketState):
         self._ws_app: dict[web.WebSocketResponse, str] = {}
         self._ws_log_subscribers: set[web.WebSocketResponse] = set()
         self._ws_subagent_subscribers: set[web.WebSocketResponse] = set()
+        # The streamed-chunk stamp (`next_stream_seq`): the resume watermark a session
+        # detail reports and every chat_chunk carries. Based at the boot time in
+        # microseconds so it never restarts across a gateway restart (see there).
+        self._stream_seq = time.time_ns() // 1_000
         # The gateway's event loop, captured when the first WS client registers.
         # broadcast_ws is invoked from BOTH the loop (chat runner) and off-loop
         # threads (MCP tool subprocess callbacks, subagent/cron announce paths);
@@ -1265,55 +1424,31 @@ class DashboardState(DashboardWebSocketState):
         #   one call differently.
         display_input = tool_input_to_str(tool_input)
 
-        # Sanitize LLM-sourced fields before broadcasting to dashboard clients
-        safe_tool, _ = redact_exfiltration_urls(tool)
-        safe_tool, _ = redact_credentials(safe_tool)
-        safe_input, _ = redact_exfiltration_urls(display_input)
-        safe_input, _ = redact_credentials(safe_input)
-        safe_purpose, _ = redact_exfiltration_urls(tool_purpose)
-        safe_purpose, _ = redact_credentials(safe_purpose)
-
-        self._pending_approvals[approval_id] = {
-            "id": approval_id,
-            "source": source,
-            "tool": safe_tool,
-            "tool_input": safe_input,
-            "tool_purpose": safe_purpose,
-            "session": session,
-            "ts": time.time(),
+        entry = self._approval_entry(
+            approval_id,
+            request_id=approval_id,
+            source=source,
+            tool=tool,
+            tool_input=display_input,
+            tool_purpose=tool_purpose,
+            session=session,
             # #2821: the same command-screening verdict the chat card gets, from the same
             # owner, so the two surfaces that ask a human for permission cannot describe
-            # one call differently. This entry is BOTH the `approval` WS payload and the
-            # `GET /api/approvals` row, so supplying it here reaches both doors at once.
+            # one call differently.
             #
-            # Screened on the RAW `tool_input`, NOT on `display_input`: `safe_input` has had
+            # Screened on the RAW `tool_input`, NOT on `display_input`: the entry's copy has had
             # URLs and credentials rewritten, and screening a string the shell will never see
             # is how a verdict stops describing the actual call. The raw object is also the
             # more precise input — `read_only_command` is typed `object` precisely so it can
             # read a native dict's `command` key instead of re-parsing a serialized copy.
             # `None` when this is not a shell call.
-            "is_read_only": read_only_command(tool, "", tool_input),
-        }
-        self.broadcast_ws("approval", self._pending_approvals[approval_id])
-        self._push_approval(approval_id)
-        # `ApprovalRequest` (AUTO crit 5): declared, selectable in the hook UI, fired by nothing
-        # until now. Emitted alongside the WS broadcast — the same moment the user is asked — so a
-        # hook can mirror the prompt to another channel while the future is still pending.
-        #
-        # OBSERVATIONAL ONLY: the hook's result is not awaited into the decision and cannot resolve
-        # `fut`. Letting a hook answer would turn a local approval gate into an unreviewed remote
-        # one. The redacted `safe_tool` is passed, not the raw tool or its input.
-        from personalclaw.triggers.lifecycle_fire import approval_request_payload
-        from personalclaw.triggers.lifecycle_fire import fire as _fire_lifecycle
-
-        await _fire_lifecycle(
-            approval_request_payload(
-                tool=safe_tool, source=source, session_key=session, approval_id=approval_id
-            ),
-            tool_name=safe_tool,
+            is_read_only=read_only_command(tool, "", tool_input),
         )
         timeout = self._approval_timeout_for(source)
         try:
+            # Published inside the try, so a waiter cancelled mid-publication still leaves
+            # nothing listed: the finally expires whatever was registered.
+            await self._hold_approval(entry)
             return await asyncio.wait_for(fut, timeout=timeout)
         except asyncio.TimeoutError:
             # Fail closed: an unanswered prompt denies. Audit unattended timeouts
@@ -1325,14 +1460,233 @@ class DashboardState(DashboardWebSocketState):
                     caller=f"approval_timeout:{source}",
                     operation="approval_timeout:denied",
                     outcome="denied",
-                    resources=f"tool={safe_tool[:80]} after={int(timeout)}s",
+                    resources=f"tool={entry['tool'][:80]} after={int(timeout)}s",
                 )
             except Exception:
                 self._log.debug("SEL audit failed for approval timeout", exc_info=True)
             return False
         finally:
-            self._pending_approvals.pop(approval_id, None)
             self._approval_futures.pop(approval_id, None)
+            self.expire_approval(approval_id)
+
+    async def hold_session_approval(
+        self,
+        session: "_ChatSession",
+        request_id: str,
+        *,
+        tool: str,
+        tool_input: str,
+        tool_purpose: str,
+        agent: str,
+        risk: str,
+        is_read_only: bool | None,
+        grant_agent: str,
+    ) -> None:
+        """Publish the approval a chat's runner is about to wait on, under
+        :func:`chat_approval_id`.
+
+        The caller has ALREADY parked its future on ``session._approval_futures[request_id]``:
+        this publishes it, and the publication is what makes it answerable from outside the chat,
+        so an answer that arrives the instant it is listed must find the future in place.
+
+        ``tool_input`` is the caller's already-sanitized display string (the same one the
+        transcript row persists), and ``is_read_only`` its verdict on the RAW input — the
+        screening rule `request_approval` states, kept by the one caller that holds the raw
+        object.
+        """
+        entry = self._approval_entry(
+            chat_approval_id(session.key, request_id),
+            request_id=request_id,
+            # A chat approval names no source: that is the established convention every reader
+            # keys "Another chat session" off (`useApprovalToasts`), and the chat is `session`.
+            source="",
+            tool=tool,
+            tool_input=tool_input,
+            tool_purpose=tool_purpose,
+            session=session.key,
+            is_read_only=is_read_only,
+            agent=agent,
+            risk=risk,
+            grant_agent=grant_agent,
+        )
+        await self._hold_approval(entry)
+
+    def _approval_entry(
+        self,
+        approval_id: str,
+        *,
+        request_id: str,
+        source: str,
+        tool: str,
+        tool_input: str,
+        tool_purpose: str,
+        session: str,
+        is_read_only: bool | None,
+        agent: str = "",
+        risk: str = "",
+        grant_agent: str = "",
+    ) -> dict[str, Any]:
+        """The ONE shape a pending approval has, whatever raised it.
+
+        This dict is at once the ``GET /api/approvals`` row, the ``approval`` WS frame (the chat
+        card, the out-of-context nudge, the phone queue) and the source of the Inbox row — so a
+        field supplied here reaches every door, and no door can describe the call differently.
+
+        Every LLM-sourced string is redacted here, once, for both origins. ``agent``/``risk``/
+        ``grant_agent`` are known only to a chat and stay empty for a background origin: empty
+        is "not known", never "none".
+        """
+        live = self._sessions.get(session) if session else None
+        # A session's title defaults to its key until the chat is named; a key is not a title.
+        title = live.title if live is not None and live.title and live.title != live.key else ""
+        return {
+            "id": approval_id,
+            # How the WAITER addresses this call. Equal to `id` for a background origin; for a
+            # chat it is the chat's own id, which the card posts back to the chat's approve route.
+            "request_id": request_id,
+            "source": source,
+            "tool": _redact(tool),
+            "tool_input": _redact(tool_input),
+            "tool_purpose": _redact(tool_purpose),
+            "session": session,
+            "session_title": _redact(title),
+            "agent": agent,
+            "risk": risk,
+            "is_read_only": is_read_only,
+            "grant_agent": grant_agent,
+            "ts": time.time(),
+        }
+
+    async def _hold_approval(self, entry: dict[str, Any]) -> None:
+        """Put a pending approval on every surface at once — the one registration there is.
+
+        The registry row is what ``GET /api/approvals`` serves (Home's count and To triage, the
+        phone queue, the workflow run view); the WS frame is what an open chat card and the
+        out-of-context nudge render; the push wakes a phone; the Inbox row is the durable
+        listing. They are written together so no surface can learn of an approval another does
+        not list — the defect this replaced was a chat approval that reached only its own chat.
+        """
+        self._pending_approvals[entry["id"]] = entry
+        self.broadcast_ws("approval", entry)
+        self._push_approval(entry["id"])
+        self._raise_approval_row(entry)
+        # `ApprovalRequest` (AUTO crit 5): declared, selectable in the hook UI. Emitted alongside
+        # the WS broadcast — the same moment the user is asked — so a hook can mirror the prompt
+        # to another channel while the future is still pending.
+        #
+        # OBSERVATIONAL ONLY: the hook's result is not awaited into the decision and cannot
+        # resolve the future. Letting a hook answer would turn a local approval gate into an
+        # unreviewed remote one. The redacted tool name is passed, not the raw tool or its input.
+        from personalclaw.triggers.lifecycle_fire import approval_request_payload
+        from personalclaw.triggers.lifecycle_fire import fire as _fire_lifecycle
+
+        await _fire_lifecycle(
+            approval_request_payload(
+                tool=entry["tool"],
+                source=entry["source"],
+                session_key=entry["session"],
+                approval_id=entry["id"],
+            ),
+            tool_name=entry["tool"],
+        )
+
+    def _raise_approval_row(self, entry: dict[str, Any]) -> None:
+        """The pending approval's Inbox row, raised through the attention seam.
+
+        `emit_attention_item` rather than a store write, so the row lands in the LIVE store the
+        Inbox serves and carries its one notification. Raised the moment the approval is, not
+        after a grace period: the Inbox is a surface that reads this registry, and a surface
+        that lags it is one a user can look at while the agent is waiting and see nothing — the
+        measured defect. `refs.approval` is the registry id, which is how every reader that also
+        lists the approval (To triage, Home's count, Mission Control) recognises the row as the
+        same item rather than a second one.
+
+        Best-effort: the approval is what the user is waiting on, and losing the decision to a
+        bookkeeping failure is strictly worse than losing the row.
+        """
+        try:
+            from personalclaw.inbox import ItemKind, emit_attention_item
+
+            refs = {"approval": str(entry["id"])}
+            if entry.get("session"):
+                refs["session"] = str(entry["session"])
+            emit_attention_item(
+                self,
+                source="system",
+                kind="agent_request",
+                item_kind=ItemKind.AGENT_REQUEST.value,
+                title=f"Approval needed: {entry.get('tool') or 'a tool'}",
+                body=_approval_row_body(entry),
+                refs=refs,
+                dedup_key=f"approval:{entry['id']}",
+            )
+        except Exception:
+            self._log.debug("approval inbox row failed", exc_info=True)
+
+    def withdraw_approval(
+        self, approval_id: str, *, approved: bool, request_id: str = "", session: str = ""
+    ) -> None:
+        """Take an answered or expired approval off every surface at once.
+
+        The registry row, the Inbox row (closed through the seam's own resolver on the live
+        store) and every open card and list — the ``approval_resolved`` frame is the one signal
+        they all act on. Every path that ends an approval comes through here, so none of them
+        can leave a surface still asking.
+
+        The frame names the SESSION as well as the id: an open chat drops a frame for another
+        session, and matches its card by the ``request_id`` it has always used.
+        """
+        entry = self._pending_approvals.pop(approval_id, None) or {}
+        try:
+            from personalclaw.inbox import resolve_attention_items
+
+            resolve_attention_items(self, {"approval": approval_id})
+        except Exception:
+            self._log.debug("could not close the inbox row for %s", approval_id, exc_info=True)
+        try:
+            self.broadcast_ws(
+                "approval_resolved",
+                {
+                    "id": approval_id,
+                    "request_id": str(entry.get("request_id") or request_id or approval_id),
+                    "session": str(entry.get("session") or session),
+                    "approved": approved,
+                },
+            )
+        except Exception:
+            self._log.warning("WS broadcast failed for approval resolution", exc_info=True)
+
+    def expire_approval(self, approval_id: str) -> None:
+        """An approval its waiter stopped waiting for — a timeout, a cancelled or torn-down turn.
+
+        It failed closed, so every surface drops it as denied. A no-op once a decision has
+        withdrawn it, which is what lets every waiter call this unconditionally on its way out.
+        """
+        if approval_id in self._pending_approvals:
+            self.withdraw_approval(approval_id, approved=False)
+
+    def close_orphaned_approval_rows(self) -> int:
+        """Close every open Inbox row whose approval is no longer pending. Returns the count.
+
+        No approval survives a restart — the futures are in memory and the turns that awaited
+        them are gone — so after one, a row still asking for an approval is asking for nothing:
+        opening it finds a card whose buttons can no longer deliver an answer. Run when the
+        gateway attaches its Inbox, and safe at any other time: an approval still in the
+        registry keeps its row.
+        """
+        from personalclaw.inbox import OPEN_STATUSES, live_store, resolve_attention_items
+
+        store = live_store(self)
+        if store is None:
+            return 0
+        orphaned = {
+            str(item.refs.get("approval"))
+            for item in store.items.values()
+            if item.status in OPEN_STATUSES
+            and item.refs.get("approval")
+            and str(item.refs.get("approval")) not in self._pending_approvals
+        }
+        return sum(resolve_attention_items(self, {"approval": aid}) for aid in sorted(orphaned))
 
     def _push_approval(self, approval_id: str) -> None:
         """Wake the phone for a pending approval — MOBILE-COMPANION `MC-5`'s milestone.
@@ -1363,47 +1717,166 @@ class DashboardState(DashboardWebSocketState):
         except Exception:
             self._log.debug("approval push dispatch failed", exc_info=True)
 
-    def _audit_and_broadcast_approval(
-        self, session_key: str, approval_id: str, approved: bool
-    ) -> None:
-        """Emit SEL audit event and broadcast WS notification for an approval decision."""
-        try:
-            sel().log_tool_invocation(
-                session_key=session_key,
-                tool_name="approval_decision",
-                outcome="approved" if approved else "rejected",
-                request_id=approval_id,
-                source="dashboard",
-            )
-        except Exception:
-            self._log.warning("SEL audit failed for approval resolution", exc_info=True)
-        try:
-            self.broadcast_ws("approval_resolved", {"id": approval_id, "approved": approved})
-        except Exception:
-            self._log.warning("WS broadcast failed for approval resolution", exc_info=True)
-
     def resolve_approval(self, approval_id: str, approved: bool) -> bool:
-        """Resolve a pending approval. Returns False if not found.
+        """Answer a pending approval by its REGISTRY id, from any surface. False if not pending.
 
-        State-level futures receive ``bool`` (consumed by gateway, which converts to str).
-        Session-level futures receive ``str`` ("approved"/"rejected", consumed by channel.py).
+        A background origin's future lives here and receives the ``bool`` its gateway waiter
+        converts. A chat-held approval is answered by :meth:`decide_session_approval` — the very
+        path the chat's own card takes — so a decision made on Home, the phone or the Inbox
+        writes the same record and the same audit row, and meets the same refusal handling in
+        the waiting runner. There is no second way to answer a chat's approval.
         """
-        decision = "approved" if approved else "rejected"
         fut = self._approval_futures.get(approval_id)
         if fut and not fut.done():
             fut.set_result(approved)
-            self._audit_and_broadcast_approval("state", approval_id, approved)
+            self.withdraw_approval(approval_id, approved=approved)
+            try:
+                sel().log_tool_invocation(
+                    session_key="state",
+                    tool_name="approval_decision",
+                    outcome="approved" if approved else "rejected",
+                    request_id=approval_id,
+                    source="dashboard",
+                )
+            except Exception:
+                self._log.warning("SEL audit failed for approval resolution", exc_info=True)
             return True
-        # Also check session-level approval futures (chat tool approvals)
-        for session in self._sessions.values():
-            fut = session._approval_futures.get(approval_id)
-            if fut and not fut.done():
-                fut.set_result(decision)
-                _mark_permission_resolved(session.messages, approval_id, decision)
-                self._audit_and_broadcast_approval(session.key, approval_id, approved)
-                self.push_sessions_update()
-                return True
-        return False
+        entry = self._pending_approvals.get(approval_id)
+        session = self._sessions.get(str(entry.get("session") or "")) if entry else None
+        if session is None:
+            return False
+        request_id = str(entry.get("request_id") or "") if entry else ""
+        held = session._approval_futures.get(request_id)
+        if held is None or held.done():
+            return False
+        self.decide_session_approval(session, request_id, "approved" if approved else "rejected")
+        return True
+
+    def decide_session_approval(
+        self, session: "_ChatSession", request_id: str, action: str
+    ) -> dict[str, object] | None:
+        """Answer the approval a chat is waiting on — the ONE decision path, whichever door.
+
+        The chat's card (``POST /api/chat/sessions/{key}/approve``) and every surface outside
+        the chat (``POST /api/approvals/{id}/{action}``: Home's To triage, the phone companion)
+        arrive here. So a decision made anywhere persists the same transcript record, writes the
+        same SEL row, withdraws the approval from every surface, and wakes the same waiting
+        runner — whose refusal handling (the rest of a refused batch is refused, not re-asked,
+        so the agent cannot route around a Deny with a second call) is therefore the same for
+        every door.
+
+        The caller has established that *request_id* names a pending future on *session* and
+        that *action* is in :data:`SESSION_APPROVAL_ACTIONS`. Returns what a ``trust_agent``
+        grant actually did, or None for every other verb: a scope that grants nothing has no
+        grant to describe, and an always-present object with ``persisted: false`` would read as
+        a failed grant on an Allow-once (#541/#683).
+        """
+        name = session.key
+        original_action = action
+        grant: dict[str, object] | None = None
+        # Trust: auto-approve remaining tools for this session
+        if action == "trust":
+            session._trust = True
+            self.sessions.set_approval_policy(f"dashboard:{name}", "auto")
+            action = "approved"
+        # Trust-agent ("Always allow for this agent"): trust THIS chat now (like trust)
+        # AND persist the grant onto the bound agent's profile (approval_mode="auto") so
+        # every future chat with that agent starts auto-approving — seeded at session-open
+        # by chat_runner. One vocabulary, one gate: this just writes the persistent floor
+        # the runtime already consumes. Skipped for the default/unnamed agent (no editable
+        # profile) and reserved system agents (their config is fixed).
+        elif action == "trust_agent":
+            session._trust = True
+            self.sessions.set_approval_policy(f"dashboard:{name}", "auto")
+            action = "approved"
+            from personalclaw.agents.defaults import persistable_grant_target
+
+            # The grant target, resolved by the ONE owner that also feeds the card's promise at
+            # prompt time (chat_runner's perm_meta["grant_agent"]). Deciding it here a second
+            # way is what let the card and the write path disagree: the card said "in this chat
+            # and future ones" while this branch's `else` degraded the grant to session scope
+            # and told only the log. Now the outcome is a value, so it can be REPORTED — on the
+            # wire, in the transcript row, and in the SEL.
+            agent_name = ""
+            try:
+                cfg = config_loader.AppConfig.load()
+                target = persistable_grant_target(session.agent or "", cfg)
+                if target:
+                    prof = cfg.agents[target]
+                    if prof.approval_mode != "auto":
+                        prof.approval_mode = "auto"
+                        cfg.save()
+                    # Set only AFTER the write returned. A failed save is not a persisted
+                    # grant, and the report below is read as a statement about the file.
+                    agent_name = target
+            except Exception:
+                self._log.warning("Failed to persist always-for-agent grant", exc_info=True)
+            grant = {"scope": "agent", "persisted": bool(agent_name), "agent": agent_name}
+            try:
+                # Best-effort, and OUTSIDE the block above: an audit that raises must not turn a
+                # grant that persisted into one this path reports as session-scope. Both
+                # outcomes get a row — "the user asked for a standing grant and did not get one"
+                # is exactly the event an auditor reconstructing a later ask would look for.
+                sel().log_api_access(
+                    caller="dashboard:approval",
+                    operation="mode_change:always_for_agent",
+                    outcome="enabled" if agent_name else "session_scope_only",
+                    resources=f"{name} agent={agent_name or (session.agent or '').strip() or '(default)'}",  # noqa: E501
+                )
+            except Exception:
+                self._log.warning("SEL audit failed for always-for-agent grant", exc_info=True)
+        # Trust-reads: auto-approve read-only bash commands for this session
+        # Defer setting _trust_reads until after the approval future is consumed
+        # to prevent the frontend from seeing trust_reads=true while still pending.
+        elif action == "trust_reads":
+            action = "approved_trust_reads"
+        # YOLO: auto-approve all tools globally (all sessions)
+        elif action == "yolo":
+            self.enable_yolo()
+            for s in self._sessions.values():
+                self.sessions.set_approval_policy(f"dashboard:{s.key}", "auto")
+            action = "approved"
+        resolved = action if action in ("approved", "approved_trust_reads") else "rejected"
+        session._approval_futures[request_id].set_result(resolved)
+        # Persist resolved state into the permission message so it survives tab switches.
+        #
+        # The RECORD is not the future's value (#683). `trust_agent` is remapped to "approved"
+        # above because that is what the awaiting tool call must see, and the record used to
+        # inherit that remap — so a standing per-agent grant and a one-off Allow left
+        # byte-identical transcript rows, while their side effects differ by an auto-approval
+        # policy that explains every later silent run. The transcript is the permanent record of
+        # a security decision, so it keeps the verb the user chose.
+        #
+        # THREE outcomes, not two, because the grant has three (#541 + #683): allow-once,
+        # granted-and-persisted, and granted-but-session-scope-only. Collapsing the last two
+        # would re-lose exactly the fact #541 is about — whether "in this chat and future ones"
+        # actually happened. `trust`/`trust_reads` were already preserved and are unchanged.
+        if original_action == "trust_agent":
+            record = "trust_agent" if (grant or {}).get("persisted") else "trust_agent_session"
+        elif original_action in ("trust", "trust_reads"):
+            record = original_action
+        else:
+            record = resolved
+        _mark_permission_resolved(session.messages, request_id, record)
+        # Withdraw first so every surface is unblocked before the bookkeeping below.
+        self.withdraw_approval(
+            chat_approval_id(name, request_id),
+            approved=resolved != "rejected",
+            request_id=request_id,
+            session=name,
+        )
+        self.push_sessions_update()
+        # SEL audit (best-effort — must not block the UI-unblocking path above)
+        try:
+            sel().log_api_access(
+                caller=f"dashboard:{name}",
+                operation=f"tool_approval:{original_action}",
+                outcome=resolved,
+                resources=request_id,
+            )
+        except Exception:
+            self._log.warning("SEL audit failed for approval %s", request_id, exc_info=True)
+        return grant
 
     def start_flush_loop(self) -> None:
         """Start background loop that flushes dirty sessions to disk every 5s."""

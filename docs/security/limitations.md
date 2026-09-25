@@ -64,13 +64,24 @@ what the Store shows you. The other half is a closed **owner-only** registry
 (`apps/permissions.OWNER_ONLY_API_PATHS`) of capabilities no declaration reaches at
 all, not even `"*"`: the terminal and its sessions, computer-use, the credential
 store and secrets vault, the security audit log and SEL rotation, your login
-password and second factor, gateway restart, and local token minting. Holding any
-of those would make every other line in a manifest moot, so there is nothing to
-scope — and before it existed, an app declaring `/api/ws` (the event socket)
-prefix-matched `/api/ws/terminal/{id}` and got an interactive shell running as you.
-A manifest that names one of these paths now fails to install. None of this touches
-your own access to those surfaces; the refusal applies only to requests carrying an
-app identity.
+password and second factor, gateway restart, and local token minting. Your security
+posture is in the same class: the chat approval mode (auto-approve-everything),
+resuming after an incident stop, project trust, autonomy promotions, standing
+approve/deny rules, device pairing codes, external-access clients, and the agent's
+runtime config (`allowedTools`, the servers it launches). Holding any of those would
+make every other line in a manifest moot, so there is nothing to scope — and before
+the registry existed, an app declaring `/api/ws` (the event socket) prefix-matched
+`/api/ws/terminal/{id}` and got an interactive shell running as you. A manifest that
+names one of these paths now fails to install. None of this touches your own access
+to those surfaces; the refusal applies only to requests carrying an app identity.
+
+The security settings that live in `config.json` are refused field by field instead,
+because `/api/config` also carries ordinary settings an app may legitimately write: an
+app-scoped `PATCH` of a field that is a security setting (YOLO, the approval mode,
+sign-in and 2FA, egress, the keychain, sandbox ceilings, guardrail budgets, external
+access, sync) answers `403`, in either direction, as does an app writing an agent's
+`approval_mode` or answering a pending approval with a standing grant such as `yolo`.
+Every such refusal leaves a Security Event Log row naming the app and the field.
 
 **What this means for you:** treat an installed app's `network: true` as a stated
 intent you are consenting to, the same way you would trust any program you choose
@@ -79,19 +90,36 @@ supply-chain scanner (quarantine → scan → consent → install, with `dangero
 terminal) is the control that vets what you install; the `network` flag is
 disclosure, not containment.
 
-## 3. App Python dependencies install into the venv the gateway runs from
+## 3. App Python dependencies load into the gateway's own process
 
 An app may declare `dependencies.pythonDependencies` in its manifest, and the
-installer pip-installs them into the **shared** virtualenv the gateway itself runs
-out of — there is no per-app site-packages. Core ships lean deliberately (heavy
-provider and ML libraries are not core dependencies), so this is how an app brings
-what it needs.
+installer pip-installs them into `<home>/app-python` — one directory every app
+shares, on the same volume as the rest of your data — which the gateway loads into
+its **own process**, after its own packages (`apps/app_python.py`). Core ships lean
+deliberately (heavy provider and ML libraries are not core dependencies), so this is
+how an app brings what it needs. Nothing is installed into the environment the
+gateway runs from: in the container image that environment is read-only to the
+gateway's user, and an install there would not survive the next `docker run`.
 
-**What is enforced:** an app may not re-pin a dependency core owns. Before anything
-is installed, `app_manager._reject_core_dependency_conflicts` refuses any declared
-requirement that names a core-declared dependency unless the version already
-installed satisfies it — so pip is never in a position to move a core dependency
-under the running gateway. The check is fail-closed: an unparseable requirement, or
+**What is enforced:** an app can add packages, but it cannot change or shadow one the
+gateway uses.
+
+- The directory is appended to the import path after the gateway's own entries, so a
+  module the gateway already provides always wins the import.
+- pip resolves with every distribution the gateway can import pinned, so a
+  dependency — direct or transitive — that needs another version of one of them fails
+  resolution instead of being installed, and nothing outside `app-python` is ever
+  uninstalled or replaced. (Measured without the pins: pip resolved a conflicting
+  `urllib3` by uninstalling the base environment's copy.)
+- Every installed app's requirements resolve in the same pip run, so the version of a
+  package two apps share is one both accept — or the install is refused, naming the
+  conflict. One interpreter can hold only one version of a module, so this is the
+  honest form of isolation between apps, not a weaker one.
+
+Before pip runs, `app_manager._reject_core_dependency_conflicts` also refuses any
+declared requirement that names a core-declared dependency unless the version already
+installed satisfies it — the gateway's copy loads first, so such a pin could never
+take effect. The check is fail-closed: an unparseable requirement, or
 a core-owned name whose installed version cannot be read, denies rather than
 installs. Requirements for libraries core does not own are unaffected — that is 20
 of the 22 first-party apps that declare dependencies, so the check has something to
@@ -104,18 +132,22 @@ the 22 manifests declaring `dependencies.pythonDependencies`, compared against
 core's `pyproject.toml` `[project].dependencies`. It is a claim about another
 repository at a moment in time: re-derive it, do not trust it.)
 
-**What is not enforced:** the packages an app adds are still importable by
-everything in the process, and pip may still move a *transitive* dependency that
-core does not declare directly. Isolating app dependencies properly requires
-out-of-process providers — today an app's provider code is imported in-process, so
-there is no import boundary to scope a path to. That is a platform-seam change,
-recorded as such rather than approximated here.
+**What is not enforced:** the packages an app adds are importable by everything in
+the gateway's process — PersonalClaw itself and every other app. Isolating app
+dependencies properly requires out-of-process providers — today an app's provider
+code is imported in-process, so there is no import boundary to scope a path to. That
+is a platform-seam change, recorded as such rather than approximated here. And the
+pins protect against a *resolution* moving the gateway's packages, not against the
+code itself: an app's dependency runs with the gateway's own access once imported, so
+on an install where the environment is writable by your user it could rewrite it,
+as any program you run could. The container image's environment is read-only to the
+gateway's user.
 
 **What the consent surface tells you:** the declared specifiers, verbatim, on the
 install-consent screen itself — `anthropic>=0.20`, not "this app installs some
 packages". `app_manager.describe_python_dependencies` classifies each against the
 same core pin set the guard above gates on, so a package core does not own reads as
-new code entering the interpreter, while a core-owned pin (`Pillow>=10,<13`) reads
+new code the gateway will load, while a core-owned pin (`Pillow>=10,<13`) reads
 as "the version you already have must satisfy this, or the install is refused". An
 app declaring none shows nothing at all. This section documenting the behaviour is
 not a substitute for that: a user consenting in a modal does not read a threat
@@ -126,9 +158,9 @@ install outright — every specifier degrades to the *new code* reading rather t
 disappearing. Over-disclosing a package is safe; under-disclosing one is not.
 
 **What this means for you:** an installed app can add libraries to the gateway's
-environment, so install apps you trust — the supply-chain scanner (quarantine →
+process, so install apps you trust — the supply-chain scanner (quarantine →
 scan → consent → install, with `dangerous` terminal) is the control that vets them.
-What an app cannot do is silently change the version of a library the gateway
+What an app's install cannot do is change the version of a library the gateway
 depends on.
 
 ## 4. An app's frontend bundle runs in the dashboard's own page
@@ -192,11 +224,12 @@ model you can download: `SmolLM2-135M-Instruct`, in the Q8_0 GGUF build
 it inside the gateway, on your CPU, with numpy
 (`src/personalclaw/apps/native/bundled-chat/provider.py`). The model, its licence, its
 pinned source and its sha256 are recorded in
-[`bundled-model-signoff.txt`](../architecture/bundled-model-signoff.txt).
+[`bundled-model-signoff.txt`](../../src/personalclaw/apps/native/bundled-chat/bundled-model-signoff.txt).
 
 It is there so a new install is not a dead end. At 135 million parameters it can greet you
-and answer a simple factual question, and it gets unreliable quickly after that. When it
-answers because nothing else is bound, the chat screen says so.
+and answer a simple factual question, and it gets unreliable quickly after that. Whenever it
+is the model answering — because onboarding made it your chat model when you downloaded it
+there, or because nothing else is bound — the chat screen says so.
 
 **What it does not get:**
 
@@ -204,17 +237,22 @@ answers because nothing else is bound, the chat screen says so.
   empty toolset. It cannot read or write a file, run a command, search the web or call an
   app, and no approval prompt appears because there is nothing to approve. Asked to create
   a file, it replied with a Python snippet for you to run, and nothing was written.
-- The context PersonalClaw builds. The first turn of a chat is assembled into one prompt:
-  the agent's instructions, your memory and preferences, the skills chosen for the turn,
-  today's date, then your message. On a fresh home that came to about 20,000 characters. A
-  model this small, handed that much, continues the instructions instead of following
-  them, so the app cuts the prompt back to your message (`user_request()` in
-  `provider.py`). On the measured first turn the model saw 18 tokens. It does not know your
-  name, your notes or the date, and it does not know it is PersonalClaw either. Asked "What
-  can you do for me?", it offered to help with health questions.
-- Room. It gets 4,096 tokens of conversation, oldest turns dropped first (the **Prompt
-  budget** setting; the weight itself accepts 8,192), and a reply stops at 320 tokens
-  (**Maximum reply length**).
+- The context PersonalClaw builds. For other models, each turn is assembled into one
+  prompt: the agent's instructions, your memory and preferences, the skills chosen for the
+  turn, today's date, then your message. On a fresh home that came to about 20,000
+  characters. A model this small, handed that much, continues the instructions instead of
+  following them, so the app declares that it takes your message alone (`request_only` in
+  `provider.py`) and PersonalClaw sends it nothing else. On the measured first turn the
+  model saw 18 tokens. It does not know your name, your notes or the date, and it does not
+  know it is PersonalClaw either. Asked "What can you do for me?", it offered to help with
+  health questions.
+- Room. It reads 4,096 tokens at a time (the **Prompt budget** setting; the weight itself
+  accepts 8,192, and the setting cannot go higher). That includes its reply, which stops at
+  320 tokens (**Maximum reply length**), so about 3,770 tokens are left for the
+  conversation, and older turns are dropped first. A message that does not fit on its own is
+  refused before the model reads it, with a sentence giving the limit in tokens and roughly
+  in characters. For plain English prose at the defaults that was about 3,765 tokens, or
+  roughly 15,000 characters. A reply that stops at the maximum length is marked **Cut off**.
 
 **What it did with real requests**, measured on the shipped weight through the
 dashboard's chat route:
@@ -232,9 +270,10 @@ dashboard's chat route:
 In none of these did it say it could not do something or did not know, so treat whatever it
 tells you as unverified.
 
-**It also answers for the rest of PersonalClaw.** With nothing else bound, anything that
-asks for a chat model falls back to it
-(`providers/provider_bridge.py::_resolve_from_config_registry`). That includes the jobs
+**It also answers for the rest of PersonalClaw.** While it is your chat model, or with nothing
+else bound, anything that asks for a chat model gets it — background work borrows the chat
+model, and with nothing bound the implicit fallback
+(`providers/provider_bridge.py::_resolve_from_config_registry`) picks it. That includes the jobs
 that run after each reply to name the chat, tag it and suggest follow-ups, so every reply is
 followed by more work for it on your CPU. In the same measurement, none of its four
 follow-up suggestion replies came back in a form the chat could use. Goal loops and
@@ -243,14 +282,18 @@ too.
 
 **What it costs:** it loads on your first message and stays loaded. The weights take 538 MB
 as float32, and loading them added 0.7 to 0.8 GiB to the resident size of the process that
-holds them (measured on an Apple silicon Mac).
+holds them (measured on an Apple silicon Mac). Reading a long prompt takes more on top of
+that: in a process holding only the model, a full 4,096-token prompt peaked at 1.3 GB
+resident and took 21 seconds, and an 8,192-token one peaked at 1.8 GB and took 62 seconds.
 
 **What is enforced:** the download never starts by itself. It is offered with its size
 (138 MiB) in onboarding, on the chat screen and in **Settings → Providers**, and runs only
 when you ask for it. It comes over https from a pinned revision on Hugging Face and is
-checked against the sha256 in the sign-off record before it is installed. A file over the
-150 MiB ceiling is refused, and a transfer that fails, is cancelled or does not match leaves
-nothing behind that PersonalClaw would load. The record's licence must be on an allowlist
+checked against the sha256 in the sign-off record before it is installed. The 150 MiB ceiling
+is enforced while the bytes arrive: a source that announces a bigger file is refused before
+anything is written, and a transfer that passes the ceiling is stopped there. A transfer that
+fails, is cancelled, passes the ceiling or does not match leaves nothing behind that
+PersonalClaw would load. The record's licence must be on an allowlist
 (Apache-2.0 or MIT); anything else is refused by name.
 
 **What is not enforced:** the sha256 check guards the download, not the file on disk. If you
@@ -266,7 +309,35 @@ and keeps working offline; every other provider is an app in the Store
 you bind wins, because this model answers only when nothing else does, and there is no
 config to clean up afterwards. To stop it answering at all, delete it under **Settings →
 Providers**, or turn off **Answer when nothing else is bound** in its settings there. That
-switch takes effect the next time the gateway starts.
+switch takes effect when you save it; it decides what answers when no chat model is chosen,
+so if onboarding made this your chat model, choose another in **Settings → Models** too.
+
+## 6. Two secrets are still stored inline: MCP server `env` values and the webhook token
+
+A provider's API key and every app setting its manifest declares `x-meta.sensitive` are kept
+in the credential store — the OS keychain, or `~/.personalclaw/.env` at mode 0600 — and the
+settings file holds only a `{{secret:…}}` reference to it (`src/personalclaw/config/secret_refs.py`).
+Two secrets are not among those settings yet, and are written exactly as you entered them:
+
+- an MCP server's `env` block — free-form, in `~/.personalclaw/mcp.json`, copied into the agent
+  config `~/.personalclaw/agents/personalclaw.json`, and read back by every place that starts
+  the server;
+- the webhook token, `hooks.webhook_token` in `~/.personalclaw/config.json`, which
+  `POST /api/hooks/agent` checks.
+
+So a token in either place:
+
+- is on disk in plaintext, in a file PersonalClaw writes 0600 inside a home that is 0700, so no
+  other account on the machine can read it. A file last written by an earlier release keeps the
+  mode it had until PersonalClaw next writes it;
+- travels in a `personalclaw snapshot` and in an export, which carry `mcp.json` and
+  `config.json`;
+- for the webhook token, is also kept in the local time-travel history (`state-history/`, which
+  records `config.json` and never leaves the machine).
+
+**What this means for you:** prefer a Secrets-panel credential for an MCP server's token and
+leave its value out of `mcp.json`; treat a snapshot or export of a home that holds either one as
+holding those tokens, and change the webhook token if such an archive leaves your hands.
 
 ## Why these are listed, not fixed
 
@@ -276,6 +347,7 @@ patched inline in a docs change. Every item above has a named future direction
 (extending the hard rail to ACP protocol paths for #1; OS-level app isolation for
 #2; out-of-process providers for the residual half of #3; a distinct origin for app
 UI, with the SDK crossing it as a message channel, for #4; checking a hand-copied
-weight's sha256 when it loads, for the gap in #5). This page will shrink as those land.
+weight's sha256 when it loads, for the gap in #5; resolving MCP `env` values and the webhook
+token from the credential store where they are used, for #6). This page will shrink as those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

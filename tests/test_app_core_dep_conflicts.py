@@ -1,19 +1,18 @@
 """An app may not re-pin a dependency core owns (EI-12 D3).
 
-App ``pythonDependencies`` are pip-installed into the **shared** venv the gateway is
-running out of, so a pin pip can only satisfy by moving a core dependency changes the
-gateway's own dependency set — under a live process that already imported those
-modules. ``app_manager._reject_core_dependency_conflicts`` refuses that class of pin
-before anything is installed.
+App ``pythonDependencies`` are pip-installed into ``<home>/app-python``, which the gateway
+loads AFTER its own environment (``apps/app_python.py``). So core's installed copy of a
+package always wins the import, and an app pin it does not satisfy could never take
+effect — the app would run on core's version whatever it declared.
+``app_manager._reject_core_dependency_conflicts`` refuses that class of pin before pip
+runs, with the reason in the sentence. (A TRANSITIVE dependency needing another version of
+a core package is refused by pip itself: every distribution the gateway imports is pinned
+in its constraints — ``tests/test_app_python_packages.py`` holds that half.)
 
-Why this shape rather than the plan's original "app-scoped target" isolation: measured
-over the 44 first-party manifests, **zero** apps have both a backend and declared
-``pythonDependencies`` — the two apps with a backend (``growth``, ``minutes``) declare
-none, and all 20 dep-declaring apps are in-process provider apps. So a backend-scoped
-``PYTHONPATH`` would isolate an empty population while the real shadowing risk (the
-in-process providers) stayed open. Isolating those needs out-of-process providers, an
-owner-scope seam change recorded BLOCKED in the plan. Refusing the conflict is the part
-that makes the property true without redefining the provider seam.
+Isolation stops at the process: in-process provider code shares one interpreter, so an
+app's packages are importable by everything in it. That is disclosed on the consent
+surface rather than approximated; truly scoping them needs out-of-process providers, an
+owner-scope seam change recorded BLOCKED in the plan.
 
 Every assertion here runs through the real installer entry point, and the pip
 subprocess is replaced with one that FAILS the test if it is ever reached — a refusal
@@ -61,7 +60,7 @@ def no_pip(monkeypatch: pytest.MonkeyPatch):
 
 def test_a_conflicting_core_pin_is_refused_and_leaves_the_gateway_untouched(no_pip) -> None:
     """The change's clause, with a real conflicting pin: core runs numpy>=1.21, the app
-    demands <1.21, so pip could only satisfy it by downgrading the gateway's numpy."""
+    demands <1.21 — a version the gateway's own numpy, loaded first, would always override."""
     before = _dist_version(_CORE_NAME)
 
     with pytest.raises(app_manager.AppLifecycleError) as ei:
@@ -75,9 +74,9 @@ def test_a_conflicting_core_pin_is_refused_and_leaves_the_gateway_untouched(no_p
 
 def test_an_upgrade_pip_would_have_to_perform_is_also_refused(no_pip) -> None:
     """Stricter than "stay inside core's range", and deliberately so: a pin ABOVE the
-    installed version still sits inside core's `<3` ceiling, but satisfying it moves
-    numpy under a running gateway. "Does not affect the gateway" means pip moves
-    nothing, not "pip moves it somewhere core would also have accepted"."""
+    installed version still sits inside core's `<3` ceiling, but no install can satisfy
+    it — the gateway's own numpy loads first — so admitting it would install a package
+    the app never actually runs on."""
     installed = _dist_version(_CORE_NAME)
     with pytest.raises(app_manager.AppLifecycleError):
         app_manager._install_python_deps(_manifest([f"{_CORE_NAME}>{installed}"]))
@@ -171,10 +170,12 @@ def test_a_non_core_pin_is_untouched_by_the_guard(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         app_manager.subprocess, "run", lambda cmd, **kw: (calls.append(cmd), _OK())[1]
     )
-    assert (
-        app_manager._install_python_deps(_manifest(["totally-not-a-real-pkg-xyz==9.9.9"])) is True
-    )
+    # pip "succeeds" but installs nothing, which the post-install check reports; reaching pip
+    # at all, with the requirement intact, is what this test asserts.
+    with pytest.raises(app_manager.AppLifecycleError, match="still cannot be found"):
+        app_manager._install_python_deps(_manifest(["totally-not-a-real-pkg-xyz==9.9.9"]))
     assert calls, "the guard swallowed a perfectly legal non-core requirement"
+    assert "totally-not-a-real-pkg-xyz==9.9.9" in calls[0]
 
 
 def test_every_real_first_party_dep_declaration_passes_the_guard(no_pip) -> None:
@@ -325,16 +326,18 @@ def test_an_unparseable_spec_still_discloses_and_does_not_claim_core_ownership()
 
 def test_the_catalog_carries_the_disclosure_to_every_scanned_card() -> None:
     """The three scan paths (git, local, native) build a `CatalogEntry` from a manifest, and
-    all three read the consent facts from ONE helper — which is what stops a fourth scan
-    site from surfacing permissions and crons while forgetting the packages. Asserted
-    structurally, because the defect being fixed was precisely an omission."""
+    all three splat the consent facts from ONE projection (`disclosure.describe`, which the
+    install dialog reads too) — which is what stops a fourth scan site from surfacing
+    permissions and crons while forgetting the packages. Asserted structurally, because the
+    defect being fixed was precisely an omission."""
     import inspect
 
     from personalclaw.apps import catalog
 
     src = inspect.getsource(catalog)
-    assert src.count("_perms, _crons, _deps = _manifest_consent(m)") == 3
-    assert src.count("pythonDependencies=_deps,") == 3
+    assert src.count("**describe(m),") == 3
+    # …and no scan site hand-builds a consent field beside it.
+    assert "pythonDependencies=" not in src
     # A registry POINTER must NOT get one: its manifest is unread, and `consentKnown=False`
     # is what the frontend reads to say "unknown" rather than "none".
     pointer = inspect.getsource(catalog._pointer_to_entry)
@@ -350,16 +353,14 @@ def test_the_catalog_carries_the_disclosure_to_every_scanned_card() -> None:
 
 
 def test_a_scanned_manifest_with_deps_reaches_the_wire_classified() -> None:
-    """End to end through the real helper: manifest → `_manifest_consent` → the wire shape
+    """End to end through the real helper: manifest → `disclosure.describe` → the wire shape
     the consent UI reads."""
-    from personalclaw.apps import catalog
+    from personalclaw.apps.disclosure import describe
 
-    _perms, _crons, deps = catalog._manifest_consent(
-        _manifest([f"{_CORE_NAME}>=1.24", "openai>=1.0"])
-    )
+    deps = describe(_manifest([f"{_CORE_NAME}>=1.24", "openai>=1.0"]))["pythonDependencies"]
     assert deps == [
         {"spec": f"{_CORE_NAME}>=1.24", "coreOwned": True},
         {"spec": "openai>=1.0", "coreOwned": False},
     ]
     # And the no-dep case stays empty rather than becoming a placeholder.
-    assert catalog._manifest_consent(_manifest([]))[2] == []
+    assert describe(_manifest([]))["pythonDependencies"] == []

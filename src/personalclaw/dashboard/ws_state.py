@@ -44,6 +44,35 @@ class DashboardWebSocketState:
     _ws_log_subscribers: set[web.WebSocketResponse]
     _ws_loop: asyncio.AbstractEventLoop | None
     _ws_subagent_subscribers: set[web.WebSocketResponse]
+    _stream_seq: int
+
+    def next_stream_seq(self) -> int:
+        """Stamp the next streamed text chunk — the ``seq`` every ``chat_chunk`` carries.
+
+        The stamp is the resume point for a client that rebuilds a live answer from a
+        session-detail snapshot (a reload mid-answer, the session-create remount, a
+        reconnect). The chat runner stamps, appends the chunk to the session's messages and
+        broadcasts it in one synchronous step on the loop, and the detail handler reads its
+        messages and :attr:`stream_seq` in one synchronous step too — so a snapshot reporting
+        ``stream_seq = W`` reflects exactly the chunks stamped ``<= W``. The client drops a
+        chunk stamped at or below the watermark it resumed from (already on screen) and
+        keeps the rest, which is what makes the resumed answer whole and single.
+
+        Process-wide rather than per session, so a session evicted from memory and
+        rehydrated can never restart its numbering under a tab that still has it open. Nor
+        does a gateway restart restart it: the count starts from the boot time in
+        microseconds (``DashboardState.__init__``), above every stamp an earlier process
+        handed out unless that one averaged a chunk per microsecond since its own boot. A
+        tab outlives the process and keeps its watermark; a count restarting at zero would
+        make it refuse the new process's chunks as already shown until a snapshot re-based
+        it — and the reconnect's re-snapshot is a read that can fail."""
+        self._stream_seq += 1
+        return self._stream_seq
+
+    @property
+    def stream_seq(self) -> int:
+        """The newest chunk stamp handed out (see :meth:`next_stream_seq`)."""
+        return self._stream_seq
 
     def _broadcast(self, note: dict[str, Any]) -> None:
         """Fan a dashboard state note out to the WebSocket clients.

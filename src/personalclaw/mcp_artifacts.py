@@ -14,6 +14,7 @@ from typing import Any
 from personalclaw.artifacts import dedupe as artifact_dedupe
 from personalclaw.mcp_core import _resolve_session_key
 from personalclaw.tool_providers.base import tool_failure
+from personalclaw.validation import decode_json_text
 
 logger = logging.getLogger(__name__)
 
@@ -350,8 +351,9 @@ def _list_tools() -> list[dict[str, Any]]:
             "name": "sheet_create",
             "description": (
                 "Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. "
-                "Supply `sheets` as {sheet name: rows} for multiple tabs, or `rows` for a "
-                "single tab, or `csv` text. Row 0 is treated as the header. KEEP NUMBERS "
+                "Supply `sheets` (JSON text: {sheet name: rows}) for multiple tabs, or `rows` "
+                "(JSON text: an array of row arrays) for a single tab, or `csv` text. Row 0 is "
+                "treated as the header. KEEP NUMBERS "
                 "AS NUMBERS (not strings) so the result can be summed and charted — that "
                 "is the main reason to produce a spreadsheet rather than a table. "
                 "Re-running with the same `name` (or the same `slug`) updates that "
@@ -363,13 +365,15 @@ def _list_tools() -> list[dict[str, Any]]:
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Display name for the spreadsheet"},
+                    # JSON TEXT, not structured: a sheet map has no portable schema, and a cell
+                    # is a number OR a string — carried as JSON, a number stays a number.
                     "sheets": {
-                        "type": "object",
-                        "description": "Map of sheet name → array of row arrays (row 0 = header)",
+                        "type": "string",
+                        "description": "Several tabs, as JSON text: an object mapping each sheet name to its rows (an array of row arrays; row 0 = header)",  # noqa: E501
                     },
                     "rows": {
-                        "type": "array",
-                        "description": "Single-sheet rows (array of arrays; row 0 = header)",
+                        "type": "string",
+                        "description": "A single tab's rows, as JSON text: an array of row arrays (row 0 = header)",  # noqa: E501
                     },
                     "csv": {"type": "string", "description": "Single-sheet CSV text"},
                     "format": {"type": "string", "description": "Output format (default 'xlsx')"},
@@ -404,9 +408,29 @@ def _list_tools() -> list[dict[str, Any]]:
                         "type": "string",
                         "description": "Outline: `##` per slide, bullets beneath (indent two spaces per sub-level), `<!-- notes: -->` for notes",  # noqa: E501
                     },
+                    # Declared down to the bullet: an array must say what its items are, or a
+                    # strict provider rejects the whole request (tool_providers.portable_schema).
                     "slides": {
                         "type": "array",
-                        "description": "Alternative to markdown: [{title, body:[str | {text, level}], notes}] — `level` is the bullet's indent depth (0 = top)",  # noqa: E501
+                        "description": "Alternative to markdown: one object per slide — a bullet's `level` is its indent depth (0 = top)",  # noqa: E501
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": {"type": "string"},
+                                "body": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "text": {"type": "string"},
+                                            "level": {"type": "integer", "minimum": 0},
+                                        },
+                                        "required": ["text"],
+                                    },
+                                },
+                                "notes": {"type": "string"},
+                            },
+                        },
                     },
                     "title": {"type": "string", "description": "Deck title slide"},
                     "format": {"type": "string", "description": "Output format (default 'pptx')"},
@@ -433,8 +457,8 @@ def _list_tools() -> list[dict[str, Any]]:
             "description": (
                 "Turn structured DATA into a generative-UI widget (charts, stat tiles, "
                 "tables, callouts) rendered inline — the agency-free two-step pattern: you "
-                "produce the data, this separate no-tools step renders it. Pass `data` (a "
-                "JSON object/array or text) and an optional `hint` describing how to present "
+                "produce the data, this separate no-tools step renders it. Pass `data` (JSON "
+                "text for an object/array, or plain text) and an optional `hint` describing how to present "  # noqa: E501
                 "it (e.g. 'show the monthly totals as a bar chart'). Returns a "
                 '`<widget kind="genui">` block to embed directly in your reply. Use this '
                 "instead of hand-writing a widget when you have data to show; it emits ONLY "
@@ -443,8 +467,11 @@ def _list_tools() -> list[dict[str, Any]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
+                    # A string: an untyped value has no portable schema, and this data reaches the
+                    # rendering model as text anyway (`visualize._coerce_data`).
                     "data": {
-                        "description": "The data to visualize (JSON object/array, or text)",
+                        "type": "string",
+                        "description": "The data to visualize: JSON text (an object or array), or plain text",  # noqa: E501
                     },
                     "hint": {
                         "type": "string",
@@ -1162,8 +1189,10 @@ def _document_create(
             _audit("denied", error="no deck input")
             return tool_failure("provide markdown or slides.")
     elif name == "sheet_create":
-        sheets = args.get("sheets")
-        rows = args.get("rows")
+        # Declared JSON text (a sheet map has no portable schema); a structured value from a
+        # caller that is not a model passes through `decode_json_text` untouched.
+        sheets = decode_json_text(args.get("sheets"))
+        rows = decode_json_text(args.get("rows"))
         csv_text = str(args.get("csv") or "")
         # ``from_rows`` rather than the constructor: the agent supplies DATA, and a raw
         # value that looks like a formula stays a literal. A cell becomes a formula only

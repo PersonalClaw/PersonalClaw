@@ -371,7 +371,7 @@ describe('the skill-impact benchmark is CONSUMED, not merely served', () => {
 
   it('tells a user the substrate is off rather than showing an empty benchmark', () => {
     render(
-      <BenchmarkPanel view={undefined} error={new ApiError('evals are off', 404, 'evals_disabled')} onRetry={() => {}} />,
+      <BenchmarkPanel view={{ enabled: false }} error={null} onRetry={() => {}} />,
     )
     expect(screen.getByText(/The eval substrate is off/)).toBeTruthy()
     expect(screen.queryByText(/No skill-impact benchmark has run yet/)).toBeNull()

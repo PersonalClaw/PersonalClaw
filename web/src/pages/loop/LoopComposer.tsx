@@ -323,7 +323,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
-      <DotGlow intensity={focused ? 1.6 : 1} composerRef={composerRef} />
+      <DotGlow intensity={focused ? 1.6 : 1} focused={focused} composerRef={composerRef} />
       <TopBar left={headerControls} right={<HeaderActions><HeaderControl icon={ListChecks} label="All loops" onClick={onHistory} priority="primary" /></HeaderActions>} />
 
       <div className="relative min-h-0 flex-1 flex flex-col overflow-y-auto px-l py-l">

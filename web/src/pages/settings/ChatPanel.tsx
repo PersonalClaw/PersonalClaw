@@ -555,8 +555,11 @@ function LifecycleSection({ session, setSession, agentOptions, discovered }: {
 }
 
 // ── Background compression (tools.bg_compress_* config) ──────────────────────
-/** The always-on complement to the auto-compact threshold above: old, idle, at-rest history is
- *  topic-segmented and compressed on the maintenance cadence, with no manual trigger.
+/** The always-on complement to the auto-compact threshold above: an old, idle, at-rest chat is
+ *  topic-segmented and summarized on the maintenance cadence, with no manual trigger. What it
+ *  shortens is the history the MODEL is handed when the chat resumes — a record kept beside the
+ *  chat (`bg_compress.py`). It never writes the chat itself, so the copy below must not suggest it
+ *  trims, archives or recovers anything.
  *
  *  Its two allowlisted paths (`tools.bg_compress_enabled`, `tools.bg_compress_idle_days`) were
  *  PATCH-editable and read by `bg_compress.py` with NO control anywhere in `web/` — one of the
@@ -581,17 +584,17 @@ function BackgroundCompressionSection({ tools, setTools }: {
   }
   const on = tools.bg_compress_enabled !== false
   return (
-    <Section title="Background compression" hint="Old, idle chats are compressed in the background so long sessions stay fast — no manual compaction needed.">
+    <Section title="Background compression" hint="When a long, idle chat is picked up again, the history handed to the model opens with a summary of its older part instead of every message.">
       <RowGroup>
         <Row label="Background compression"
-          hint="Continuously compress old, idle conversation history (topic-segmented, attention-weighted). Every dropped span is archived first and stays fully recoverable, and the summary names its archive. Incognito and temporary chats are never touched.">
+          hint="Summarizes the older part of idle chats, using the background model. Your chats are never changed: every message stays as you left it. A summary stops being used the moment a message it covers changes, and is deleted with its chat. Incognito and temporary chats are never summarized.">
           <div className="flex items-center gap-s">
             <SavedToast show={saved} />
             <Toggle on={on} onChange={(v) => patch('bg_compress_enabled', v, undefined, 'Background compression')} label="Background compression" />
           </div>
         </Row>
         {on && (
-          <NumberRow label="Idle window before compressing" hint="Only compress chats untouched for at least this long. An active chat is never compressed."
+          <NumberRow label="Idle window before summarizing" hint="Only summarize chats untouched for at least this long. An active chat is never summarized."
             value={Number(tools.bg_compress_idle_days ?? 7)} min={0} max={365} step={1} suffix="d"
             onCommit={(n, l) => patch('bg_compress_idle_days', n, undefined, l)} saved={saved} />
         )}

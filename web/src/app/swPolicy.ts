@@ -21,8 +21,9 @@
 /** The app shell — the ONLY paths precached at install time.
  *
  *  Every entry is build-output that is identical for every user: the navigation
- *  document, the favicon, the manifest, the app icons, and the one font
- *  `index.html` preloads. Nothing user-specific, nothing from `/api`. Adding a
+ *  document, the favicon, the manifest, the app icons, and the default font (DM Sans) —
+ *  precached so every load after the first draws it from here, which is why `index.html`
+ *  carries no `<link rel="preload">` for it. Nothing user-specific, nothing from `/api`. Adding a
  *  user-scoped URL here would be the same leak in a different coat, which is why
  *  `swPolicy.test.ts` asserts the list is disjoint from `/api` AND that every
  *  entry exists in `web/public/` (a missing entry would fail `cache.addAll` and

@@ -1185,6 +1185,43 @@ class TestStopTurnReachesSpawnedWork:
             session.prev_turn_cancelled is False
         ), "a stop after the turn finished must not inject a cancelled-turn preamble"
 
+    async def test_a_runtime_that_keeps_the_stopped_turn_gets_no_preamble(self, tmp_path):
+        """The native loop keeps a stopped turn in its own history (the user message is
+        appended before the first inference; a stop breaks into the assistant-record
+        path). Re-injecting it as "[PREVIOUS TURN WAS CANCELLED]" sent the stopped message
+        to the model twice on the next turn — measured on a live gateway."""
+        from unittest.mock import AsyncMock
+
+        from personalclaw.config.loader import AppConfig
+        from personalclaw.session import SessionManager
+
+        rt = await _build_runtime(tmp_path, [[AgentEvent(kind=EVENT_COMPLETE)]])
+        rt.cancel = AsyncMock(return_value="acked")  # a turn WAS in flight
+        sessions = SessionManager(AppConfig())
+        session = _fake_session(rt)
+        sessions._sessions["dashboard:main"] = session  # type: ignore[assignment]
+
+        assert await sessions.stop_turn("dashboard:main") == "soft"
+        assert session.prev_turn_cancelled is False
+
+    async def test_a_runtime_that_drops_the_stopped_turn_still_gets_it_back(self):
+        """VACUITY FLOOR: an ACP agent discards a cancelled turn, so for it the preamble
+        is the ONLY record of what was interrupted and must still be armed."""
+        from unittest.mock import AsyncMock
+
+        from personalclaw.config.loader import AppConfig
+        from personalclaw.llm.acp_agent import AcpAgentProvider
+        from personalclaw.session import SessionManager
+
+        acp = AcpAgentProvider(command=["/usr/bin/true"])
+        acp.cancel = AsyncMock(return_value="acked")  # type: ignore[method-assign]
+        sessions = SessionManager(AppConfig())
+        session = _fake_session(acp)
+        sessions._sessions["dashboard:main"] = session  # type: ignore[assignment]
+
+        assert await sessions.stop_turn("dashboard:main") == "soft"
+        assert session.prev_turn_cancelled is True
+
 
 def test_the_stop_card_reports_what_the_stop_reached():
     """Clause 4's record, at the surface that renders it (the shape PR2-13 consumes)."""

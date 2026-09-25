@@ -1,9 +1,10 @@
 """Agent Rooms — a persistent shared transcript with a bound-agent member list.
 
-Public surface of the room store, including every writer that moves the round budget — the
-three the arbiter drives (:func:`~personalclaw.rooms.store.charge_round`,
-:func:`~personalclaw.rooms.store.pause_room`,
-:func:`~personalclaw.rooms.store.reset_round_budget`) plus the human's own
+Public surface of the room store, including every writer that moves the round — the four the
+arbiter drives (:func:`~personalclaw.rooms.store.set_pending_queue`,
+:func:`~personalclaw.rooms.store.begin_turn`, :func:`~personalclaw.rooms.store.end_turn`,
+:func:`~personalclaw.rooms.store.pause_room`), the reset any human message makes
+(:func:`~personalclaw.rooms.store.reset_round_budget`), plus the human's own
 :func:`~personalclaw.rooms.store.set_round_budget`, which is what makes the per-room
 override settable rather than merely readable.
 The turn path lives in :mod:`personalclaw.rooms.turn`, the arbiter that decides who speaks
@@ -26,13 +27,13 @@ from personalclaw.rooms.store import (
     add_member,
     append_message,
     archive_room,
-    charge_round,
+    begin_turn,
     create_room,
     effective_round_budget,
+    end_turn,
     export_payload,
     get_room,
     list_rooms,
-    members_for_turn,
     pause_room,
     read_messages,
     remove_member,
@@ -42,8 +43,8 @@ from personalclaw.rooms.store import (
     room_log,
     rooms_dir,
     rooms_enabled,
+    set_pending_queue,
     set_round_budget,
-    take_pending,
     transcript_path,
 )
 
@@ -59,13 +60,13 @@ __all__ = [
     "add_member",
     "append_message",
     "archive_room",
-    "charge_round",
+    "begin_turn",
     "create_room",
     "effective_round_budget",
+    "end_turn",
     "export_payload",
     "get_room",
     "list_rooms",
-    "members_for_turn",
     "pause_room",
     "read_messages",
     "remove_member",
@@ -75,7 +76,7 @@ __all__ = [
     "room_log",
     "rooms_dir",
     "rooms_enabled",
+    "set_pending_queue",
     "set_round_budget",
-    "take_pending",
     "transcript_path",
 ]

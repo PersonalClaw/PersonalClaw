@@ -10,35 +10,29 @@
 // into this shape by the test. The driver is pure — no React, no fetch — matching the
 // folds it exercises, so it runs in plain vitest.
 
-import { applyCoalescedFlush, insertActivity } from '../pages/chat/coalesceReducers'
+import { TextRunOwnership } from '../pages/chat/coalesceReducers'
 import { foldReducer, emptyRunFlags, type RunFlags } from '../pages/loops/runFold'
 import type { Segment } from '../pages/chat/chatTypes'
 
 /** One chat-stream trace step. `flush` reveals coalesced text; `activity` inserts a
- *  native activity line; `boundary` resets the coalescing run (tool/approval/done/send). */
+ *  native activity line; `boundary` ends the live text run (tool/approval/done/send). */
 export type ChatStep =
   | { kind: 'flush'; text: string }
   | { kind: 'activity'; text: string; activityKind?: string }
   | { kind: 'boundary' }
 
-/** Replay a chat trace through the coalescer folds. Returns the terminal segments and
- *  the `coalescing` flag — the same state the live ChatPage would hold. */
-export function replayChat(steps: ChatStep[]): { segs: Segment[]; coalescing: boolean } {
+/** Replay a chat trace through the coalescer folds — the same `TextRunOwnership` updaters
+ *  the live ChatPage dispatches, applied as each step lands. Returns the terminal segments. */
+export function replayChat(steps: ChatStep[]): { segs: Segment[] } {
   let segs: Segment[] = []
-  let coalescing = false
+  const run = new TextRunOwnership()
   for (const step of steps) {
-    if (step.kind === 'flush') {
-      const r = applyCoalescedFlush(segs, step.text, coalescing)
-      segs = r.segs
-      coalescing = r.coalescing
-    } else if (step.kind === 'activity') {
-      segs = insertActivity(segs, step.text, step.activityKind ?? '', coalescing)
-    } else {
-      // A boundary (tool/approval/segment/chat_done or a fresh send) ends the active run.
-      coalescing = false
-    }
+    if (step.kind === 'flush') segs = run.flush(step.text)(segs)
+    else if (step.kind === 'activity') segs = run.activity(step.text, step.activityKind ?? '')(segs)
+    // A boundary (tool/approval/segment/chat_done or a fresh send) ends the active run.
+    else run.release()
   }
-  return { segs, coalescing }
+  return { segs }
 }
 
 /** Replay a run-stream trace (a sequence of lifecycle event strings + optional data)

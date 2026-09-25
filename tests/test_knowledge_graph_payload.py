@@ -90,8 +90,8 @@ def store(tmp_path, monkeypatch):
     """A real store on an isolated path, under an isolated home.
 
     ``PERSONALCLAW_HOME`` is redirected even though this endpoint does not load the config:
-    the store's own path helper resolves ``config_dir()``, and the real-home rail fails the
-    whole session over one stray write into the developer's ``~/.personalclaw``.
+    the store's own path helper resolves ``config_dir()``, and the real-home guard fails the
+    test over one stray write into the developer's ``~/.personalclaw``.
     """
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
     return KnowledgeStore(os.path.join(tmp_path, "k.db"))

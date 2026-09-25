@@ -23,11 +23,14 @@ CARRIED the weight; it now gates a wheel that must not:
 * :func:`size_decision` — an artifact over the declared ceiling is refused, naming both
   numbers. The ceiling now bounds a DOWNLOAD rather than a wheel delta, which is what stops a
   moved upstream file from pulling gigabytes onto a user's disk.
+* :func:`admit_transfer` — that same ceiling applied WHILE the bytes arrive (the announced
+  ``Content-Length`` first, then the running count), because a ceiling checked only once the
+  whole file has landed has already let the disk pay for it.
 
 What is NOT here is the bundle CHOICE: which model, under which licence, from which pinned
-revision, at which digest, is recorded in ``docs/architecture/bundled-model-signoff.txt``, and
-that record — not this module — is what a reader consults. As of OU-14 it names
-``unsloth/SmolLM2-135M-Instruct-GGUF`` under Apache-2.0.
+revision, at which digest, is recorded in :data:`DECLARATION_RELPATH` — the bundled-chat app's
+own ``bundled-model-signoff.txt`` — and that record, not this module, is what a reader
+consults. As of OU-14 it names ``unsloth/SmolLM2-135M-Instruct-GGUF`` under Apache-2.0.
 
 **Why default-DENY and no fuzzy licence matching.** The known-false cases this rail exists for
 all *look* permissive: Gemma ships under Google's own Gemma Terms with use restrictions,
@@ -44,8 +47,9 @@ So a zero-byte download is refused, and so is an unset ceiling: an unset number 
 permission.
 
 Everything in this module is pure stdlib and reads no configuration, so the release gate
-(``scripts/verify_wheel.py``) can call it against a built wheel on a bare runner, and the
-bundled-chat app can call it against a download with nothing else imported.
+(``scripts/verify_wheel.py``, through ``scripts/installed_bundled_model_probe.py``) runs the
+INSTALLED copy of it against the wheel that installed it, and the bundled-chat app can call it
+against a download with nothing else imported.
 """
 
 from __future__ import annotations
@@ -65,10 +69,14 @@ from personalclaw.local_models.layouts import DIRECT_FILE_EXTENSIONS
 #: commit.
 PERMITTED_LICENCES: frozenset[str] = frozenset({"apache-2.0", "mit"})
 
-#: Where the owner's sign-off record lives, relative to the repository root. A RELATIVE path on
-#: purpose: this module ships inside the wheel, where no repository exists, so resolving a
-#: default absolute path here would be a lie that only fails at a release gate.
-DECLARATION_RELPATH = "docs/architecture/bundled-model-signoff.txt"
+#: Where the owner's sign-off record lives, relative to the repository root — inside the
+#: bundled-chat app that reads it, because that is the only location every install carries. It
+#: was once under ``docs/`` with a symlink into the app, and the container image, which copies
+#: only ``src/``, shipped the link without its target. A RELATIVE path on purpose: this module
+#: ships inside the wheel, where no repository exists, so resolving a default absolute path here
+#: would be a lie that only fails at a release gate. Refusals name it so a maintainer knows which
+#: file to edit; the runtime reads the app's own copy.
+DECLARATION_RELPATH = "src/personalclaw/apps/native/bundled-chat/bundled-model-signoff.txt"
 
 #: Every key a complete sign-off record carries. All seven are required — see
 #: :func:`parse_declaration` for why a partial record is refused rather than ignored.
@@ -537,6 +545,55 @@ def sha256_file(path: Path, *, chunk: int = 1024 * 1024) -> str:
         for block in iter(lambda: handle.read(chunk), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def admit_transfer(
+    declaration: BundleDeclaration, byte_count: int, *, announced: bool
+) -> DownloadResult | None:
+    """The size ceiling applied to a transfer that is still RUNNING — ``None`` while it fits.
+
+    :func:`verify_download` judges a finished file, which is too late for the one thing the
+    ceiling exists to prevent: a moved upstream file pulling gigabytes onto a user's disk before
+    anything looks at it. So a fetch asks here twice — once with the ``Content-Length`` the
+    source ANNOUNCED, before a byte is written, and again with the running count after every
+    chunk — and stops the moment the answer is no. Same ceiling, same arithmetic
+    (:func:`size_decision`), so the in-flight refusal and the post-transfer one cannot disagree
+    about where the line is.
+
+    ``announced`` picks the sentence, because the two refusals leave different things behind:
+    an announced size is refused with nothing downloaded, a running count after the partial
+    file was already removed.
+    """
+    budget = declaration.size_budget_bytes
+    if budget <= 0:
+        # An unset ceiling is not permission — the same refusal, in the same words, as a
+        # finished file gets.
+        return DownloadResult(
+            outcome=DOWNLOAD_OVER_BUDGET,
+            detail=size_decision(byte_count, budget).reason,
+            bytes_received=byte_count,
+        )
+    if byte_count <= budget:
+        return None
+    signed = (
+        f"{declaration.model_id} is signed off at {declaration.size_bytes} bytes "
+        f"({_mib(declaration.size_bytes)})"
+    )
+    if announced:
+        detail = (
+            f"the model source says this file is {byte_count} bytes ({_mib(byte_count)}), over "
+            f"the {budget}-byte ({_mib(budget)}) ceiling this download is allowed, so nothing "
+            f"was downloaded. {signed}, so the source is no longer serving the signed-off file — "
+            "retrying the same URL is not the fix."
+        )
+    else:
+        detail = (
+            f"the model source had sent {byte_count} bytes ({_mib(byte_count)}), past the "
+            f"{budget}-byte ({_mib(budget)}) ceiling this download is allowed, so the transfer "
+            f"was stopped and the partial file removed. {signed}, so the source is no longer "
+            "serving the signed-off file — retrying the same URL is not the fix."
+        )
+    return DownloadResult(outcome=DOWNLOAD_OVER_BUDGET, detail=detail, bytes_received=byte_count)
 
 
 def verify_download(path: Path, declaration: BundleDeclaration) -> DownloadResult:

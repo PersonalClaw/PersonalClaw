@@ -2,13 +2,13 @@ import { ExternalLink, FlaskConical, ShieldAlert } from 'lucide-react'
 import { LoadError } from '../../ui/ListScaffold'
 import { StatusPill } from '../../ui/StatusPill'
 import { fvs } from '../../design/fontWeight'
-import { hasApiCode } from '../../lib/api'
+import { hasApiCode, isEvalsOff } from '../../lib/api'
 import { UNRECORDED_LABEL, provenanceRecorded, tokensUnrecorded } from '../../lib/unrecorded'
 import { repoDocUrl } from '../../lib/repoDocs'
 import { EvalsOff } from './EvalsOff'
 import type {
   BenchmarkArmAggregate, BenchmarkProviderBinding, BenchmarkReport, BenchmarkTaskRow,
-  BenchmarkView,
+  BenchmarkView, EvalsOffView,
 } from '../../lib/api'
 
 /** Canonical blob root for repo docs, from `pyproject.toml`'s `[project.urls] Source`.
@@ -37,40 +37,41 @@ import type {
  *
  *  **A failed fetch is not an empty benchmark.** "No benchmark has run yet" is this panel's
  *  ORDINARY state for months, so it must be distinguishable from "we could not ask". The backend
- *  mints three distinct codes and this reads them. */
+ *  answers the three distinctly — a decided "off", a 404 with its own code, a 500 — and this
+ *  reads them. */
 export function BenchmarkPanel({ view, error, onRetry }: {
-  view: BenchmarkView | undefined
+  view: BenchmarkView | EvalsOffView | undefined
   error: unknown
   onRetry: () => void
 }) {
+  if (isEvalsOff(view)) {
+    return (
+      <section className="flex flex-col gap-s" aria-labelledby="skillbench-heading">
+        <Heading />
+        {/* 🔑 `EvalsOff` OWNS THIS SENTENCE, and this panel was the one of five that never adopted it.
+            Its four siblings — Judge tiers, Template studies, Retrieval arms, Component ablation —
+            all render `<EvalsOff what="…" />`; this branch hand-rolled the copy the shared
+            component's own docstring records as the FIXED-AND-WRONG version, and kept all three of
+            its defects:
+
+              · `<code>evals.enabled</code>` — the dotted path. "The right instruction for a terminal
+                and the wrong one for a link: `evals.enabled` appears nowhere on the destination."
+                `EvalsOff` names the CONTROL ("Evals enabled"), which is that field's own `_meta`
+                label — the words a user then looks for on the page.
+              · `href="#/settings"` — the 34-card hub, which the docstring calls "the dead-end version".
+                `#/settings/evals` renders the actual switch.
+              · a link whose text is just "Settings", so its accessible name was "Settings" rather
+                than the whole instruction. `EvalsOff` spans control AND destination so the name
+                carries the purpose out of context.
+
+            The `learning_benchmark_absent` branch below keeps its OWN command on purpose — the
+            docstring's rule is that turning a setting on and registering a component are two
+            different places, so each panel's `*_absent` state owns its run command. */}
+        <EvalsOff what="benchmark" />
+      </section>
+    )
+  }
   if (view === undefined && error) {
-    if (hasApiCode(error, 'evals_disabled')) {
-      return (
-        <section className="flex flex-col gap-s" aria-labelledby="skillbench-heading">
-          <Heading />
-          {/* 🔑 `EvalsOff` OWNS THIS SENTENCE, and this panel was the one of five that never adopted it.
-              Its four siblings — Judge tiers, Template studies, Retrieval arms, Component ablation —
-              all render `<EvalsOff what="…" />`; this branch hand-rolled the copy the shared
-              component's own docstring records as the FIXED-AND-WRONG version, and kept all three of
-              its defects:
-
-                · `<code>evals.enabled</code>` — the dotted path. "The right instruction for a terminal
-                  and the wrong one for a link: `evals.enabled` appears nowhere on the destination."
-                  `EvalsOff` names the CONTROL ("Evals enabled"), which is that field's own `_meta`
-                  label — the words a user then looks for on the page.
-                · `href="#/settings"` — the 34-card hub, which the docstring calls "the dead-end version".
-                  `#/settings/evals` renders the actual switch.
-                · a link whose text is just "Settings", so its accessible name was "Settings" rather
-                  than the whole instruction. `EvalsOff` spans control AND destination so the name
-                  carries the purpose out of context.
-
-              The `learning_benchmark_absent` branch below keeps its OWN command on purpose — the
-              docstring's rule is that turning a setting on and registering a component are two
-              different places, so each panel's `*_absent` state owns its run command. */}
-          <EvalsOff what="benchmark" />
-        </section>
-      )
-    }
     if (hasApiCode(error, 'learning_benchmark_absent')) {
       return (
         <section className="flex flex-col gap-s" aria-labelledby="skillbench-heading">

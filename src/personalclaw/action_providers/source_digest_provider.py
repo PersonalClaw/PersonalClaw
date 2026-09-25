@@ -67,6 +67,9 @@ logger = logging.getLogger(__name__)
 #: directly. The `system:` prefix keeps a reconcile away from a user's hand-made rows.
 SOURCE_DIGEST_JOB_NAME = "system:source-digest"
 
+#: What the Triggers page calls it. The id above is an identifier, not a label.
+SOURCE_DIGEST_DISPLAY_NAME = "Morning source digest"
+
 #: 07:00 daily. Not a config field: §6.2 calls this the *morning* digest, so the hour is the
 #: feature's meaning rather than a preference, and a knob with no Settings control behind it
 #: would be an inert control (see the module docstring).
@@ -148,7 +151,8 @@ def reconcile_source_digest_cron(store: Any) -> None:
     """Make the morning-digest trigger exist. Idempotent, best-effort.
 
     Creation-only, like `reconcile_usage_recap_cron`: there is no user-facing schedule setting to
-    converge, so an existing row is left alone — including one the user edited or disabled. A
+    converge, so an existing row is left alone — including one the user edited or disabled — except
+    for a name that is still the machine id, which `converge_display_name` turns into the label. A
     scheduler problem must never block startup, hence every step is wrapped.
 
     Enabled on creation, deliberately. A disabled bundled trigger is the same defect WS-7 was
@@ -159,7 +163,10 @@ def reconcile_source_digest_cron(store: Any) -> None:
     from personalclaw.triggers import screen as _screen
     from personalclaw.triggers.arm import arm as _arm
     from personalclaw.triggers.models import Trigger
-    from personalclaw.triggers.system_singleton import converge_system_singleton
+    from personalclaw.triggers.system_singleton import (
+        converge_display_name,
+        converge_system_singleton,
+    )
 
     try:
         # An upgraded home can hold this same job under the RANDOM id the legacy
@@ -175,12 +182,14 @@ def reconcile_source_digest_cron(store: Any) -> None:
         logger.debug("source-digest cron: could not read the trigger store", exc_info=True)
         return
     if row is not None:
+        # The one thing converged on an existing row: a name that is still the machine id.
+        converge_display_name(store, row.trigger, name=SOURCE_DIGEST_DISPLAY_NAME)
         return
 
     try:
         trigger = Trigger(
             id=SOURCE_DIGEST_JOB_NAME,
-            name=SOURCE_DIGEST_JOB_NAME,
+            name=SOURCE_DIGEST_DISPLAY_NAME,
             kind="clock",
             # True unless a retired duplicate says the user had switched this off — see
             # `converge_system_singleton`. `None` means nothing was retired: a fresh install.

@@ -29,6 +29,9 @@ import {
   Switch, SegToggle, InlineSelect, type BentoSize,
 } from './bento'
 import { fvs } from '../../design/fontWeight'
+import { setAgentYolo } from './agentYolo'
+import { hasSearchTool, SEARCH_TOOL, SEARCH_TOOL_APP } from './searchTool'
+import { updateVerdict, updateVerdictLabel, type UpdateVerdict } from './updateVerdict'
 
 /** A settings widget: surfaces its subpage's most essential info on a bento card,
  *  deep-links into the subpage on click, contributes its data to the search index
@@ -85,12 +88,20 @@ const useModelsActive = () => useQuery('settings:models-active', () => api.model
 // (`reasoning` → `long_reasoning`), which is a measured one, and the empty copy says what is measured.
 const useRoutingTelemetry = () => useQuery('settings:routing-telemetry:reasoning:long_reasoning',
   () => api.modelsTelemetry({ use_case: 'reasoning', query_class: 'long_reasoning' }).then((d) => d.rows), { persist: false })
-const useSearchEntity = () => useQuery('settings:search', async () => {
-  const [providers, active] = await Promise.all([
+// 🪤 A KEY OF ITS OWN, and the reason is the rule this file states twice: match the PANEL exactly, or
+// take a key of your own. This shared `settings:search` with `SearchPanel` while reading something
+// else — no `/api/tools`, and none of the panel's two fallbacks — so whichever surface mounted first
+// decided the shape the other painted: hub first, and the panel read `tools` as absent and withheld
+// its "no web_search tool" note. It needs the tool list for its own claim now, bare, like every read
+// on this hub, so a failed read says so instead of choosing a sentence. `SearchPanel` busts by PREFIX,
+// so its binding changes still reach this key.
+const useSearchEntity = () => useQuery('settings:search-card', async () => {
+  const [providers, active, tools] = await Promise.all([
     api.searchProviders(),
     api.searchActive(),
+    api.tools(),
   ])
-  return { providers, active }
+  return { providers, active, tools }
 }, { persist: true })
 const useRuntimes = () => useQuery('settings:agent-runtimes', () => api.agentRuntimes(), { persist: true })
 const useProviders = () => useQuery('settings:providers', () => api.settingsProviders(), { persist: true })
@@ -296,10 +307,16 @@ const useCompanionDiscovery = () => useQuery('settings:companion:discovery', () 
  *  replaces: the toggle flipped back on its own with nothing said, which reads as a glitchy UI
  *  rather than as a write the server refused. Reconciling is not the same as reporting. The
  *  server's own message carries the reason (it usually names the field), so no per-tile copy is
- *  invented here — the same funnel every other failed action in the app uses. */
+ *  invented here — the same funnel every other failed action in the app uses.
+ *
+ *  `fn` resolving the literal `false` means NOTHING CHANGED and nothing is left to say — a consent
+ *  the user declined, or a write whose own writer already reported its refusal (the YOLO switch,
+ *  whose control renders the fetched value and so never moved). There is nothing to reconcile, so
+ *  there is no re-read: a cancelled dialog sends no request at all. Every other outcome, a
+ *  rejection included, re-reads. */
 async function mutate(fn: () => Promise<unknown>, ...affects: CacheKeySpec[]) {
   try {
-    await fn()
+    if ((await fn()) === false) return
   } catch (e) {
     notify(`Couldn't save that change: ${String((e as Error)?.message || e)}`, 'error')
   }
@@ -310,6 +327,18 @@ async function mutate(fn: () => Promise<unknown>, ...affects: CacheKeySpec[]) {
   // its own `refresh()` beside its bust, so a second surface reading the same config kept
   // painting the pre-save value until its own next mount.
   invalidateSpecs(affects)
+}
+
+/** The Updates tile's pill tone per verdict. Tone is the second channel, never the only one — the
+ *  label carries the state in words (WCAG 1.4.1). `warn` is kept for the state the user caused and
+ *  can fix in place (a pin naming no release); a check that could not run or is switched off is not
+ *  a fault in the install, so it stays neutral. */
+const UPDATE_PILL_TONE: Record<UpdateVerdict, 'ok' | 'warn' | 'muted' | 'primary'> = {
+  available: 'primary',
+  pin_miss: 'warn',
+  checks_off: 'muted',
+  up_to_date: 'ok',
+  not_checked: 'muted',
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -370,7 +399,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     // `agent routing … muted unmute` is in here on purpose: the panel's Agent-routing section is the
     // ONLY place a muted agent can be un-muted from the whole list, and a user hunting for it has no
     // reason to guess "Chat" — the state was created by an ✕ in a chat, not by a chat setting.
-    useSearchText() { const { data } = useDashCfg(); const c = data; return `chat message session restore history send enter timestamps agent routing suggestions specialist dismiss cooldown muted unmute re-enable ${c ? `restore ${c.restore_sessions} send-on-enter ${c.send_on_enter} timestamps ${c.show_timestamps} density ${c.widget_density}` : ''}` },
+    useSearchText() { const { data } = useDashCfg(); const c = data; return `chat message session restore history send enter timestamps agent routing suggestions specialist dismiss cooldown muted unmute re-enable ${c ? `restore ${c.restore_sessions} send-on-enter ${c.send_on_enter} timestamps ${c.show_timestamps} inline widget density ${c.widget_density}` : ''}` },
     render(query, go) {
       const { data: c, refresh, stale: cStale, status: cStatus, error: cErr } = useDashCfg()
       // This card is the SECOND writer of these prefs (the Chat settings panel is the other), so it
@@ -388,8 +417,13 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
             { k: 'Restore sessions', control: true, v: <Switch on={c.restore_sessions} label="Restore sessions" onToggle={(v) => save({ restore_sessions: v })} /> },
             { k: 'Send on Enter', control: true, v: <Switch on={c.send_on_enter} label="Send on Enter" onToggle={(v) => save({ send_on_enter: v })} /> },
             { k: 'Timestamps', control: true, v: <Switch on={c.show_timestamps} label="Timestamps" onToggle={(v) => save({ show_timestamps: v })} /> },
-            { k: 'Density', control: true, v: <SegToggle value={c.widget_density} onPick={(v) => save({ widget_density: v })} ariaLabel="Density"
-              options={[{ key: 'more', label: 'Comfortable' }, { key: 'less', label: 'Compact' }]} /> },
+            // 🔴 THIS READ "Density: Comfortable / Compact" — the vocabulary of a LAYOUT setting — over
+            // `widget_density`, which is how readily the AGENT reaches for inline widgets in its
+            // replies (`AppConfig.dashboard.widget_density`, read into the prompt). Clicking Compact
+            // changed nothing on screen, because it changes what future turns are told. The panel's
+            // own label and options, verbatim, so the two surfaces name one setting one way.
+            { k: 'Widget density', control: true, v: <SegToggle value={c.widget_density} onPick={(v) => save({ widget_density: v })} ariaLabel="Widget density"
+              options={[{ key: 'more', label: 'More' }, { key: 'less', label: 'Less' }]} /> },
           ]} />}
         </BentoCard>
       )
@@ -491,16 +525,34 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const { data, stale: isStalePaint, status, error, refresh } = useSearchEntity()
       const USE_CASES = [['search-general', 'General'], ['search-news', 'News'], ['fetch-article', 'Fetch']] as const
       const active = data?.active
+      const registered = new Set((data?.providers ?? []).map((p) => p.name))
       return (
         <BentoCard icon={Search} title="Search" query={query} onClick={() => go('search')} loading={data === undefined} stale={isStalePaint} failed={status === 'error'} error={error} onRetry={refresh}>
+          {/* 🔴 THIS USED TO PROMISE A SEARCH THAT DID NOT EXIST. With no provider it read "DuckDuckGo
+              (keyless) is the default; add a provider in Providers to upgrade" — fixed text, shown
+              exactly when nothing could search: core names no vendor, so with no provider app
+              installed `resolve_search_provider_for_use_case` returns None and there is no default at
+              all. And the remedy pointed at the wrong page: search providers are apps from the Store.
+              Three real states now, each read from the server — no provider, a provider but no tool
+              to call it (#278's trap), or the bindings, with a binding whose provider is gone said as
+              such rather than ticked. */}
           {data && (data.providers.length === 0
-            ? <div data-type="body-s" className="text-on-surface-low">DuckDuckGo (keyless) is the default; add a provider in Providers to upgrade.</div>
-            : <KVList query={query} rows={USE_CASES.map(([uc, label]) => {
-                const bound = (active?.[uc] ?? [])[0]
-                return { k: label, mono: false, vText: bound ?? 'General', v: bound
-                  ? <span className="inline-flex items-center gap-1"><CheckCircle2 size={11} className="shrink-0 text-ok" /> <span className="truncate">{bound}</span></span>
-                  : <span className="text-on-surface-low">— falls back</span> }
-              })} />)}
+            ? <><StatusPill query={query} label="No search provider" tone="muted" />
+                <div data-type="caption" className="mt-1.5 text-on-surface-low">The agent can’t search the web until you install a search provider app from the Store.</div></>
+            : !hasSearchTool(data.tools)
+              ? <><StatusPill query={query} label="No search tool" tone="warn" />
+                  <div data-type="caption" className="mt-1.5 text-on-surface-low">A chat turn can’t search until the {SEARCH_TOOL_APP.label} app is installed from the Store — it ships the {SEARCH_TOOL} tool.</div></>
+              : <KVList query={query} rows={USE_CASES.map(([uc, label]) => {
+                  const bound = (active?.[uc] ?? [])[0]
+                  // A binding outlives its provider (uninstalling the app leaves it stored), and the
+                  // resolver skips it — the panel's picker marks it `not installed`, and so does this.
+                  const gone = bound !== undefined && !registered.has(bound)
+                  return { k: label, mono: false, vText: !bound ? 'falls back' : gone ? `${bound} not installed` : bound, v: !bound
+                    ? <span className="text-on-surface-low">— falls back</span>
+                    : gone
+                      ? <span className="truncate text-on-surface-low">{bound} — not installed</span>
+                      : <span className="inline-flex items-center gap-1"><CheckCircle2 size={11} className="shrink-0 text-ok" /> <span className="truncate">{bound}</span></span> }
+                })} />)}
         </BentoCard>
       )
     },
@@ -599,6 +651,17 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const setCfg = (key: string, value: unknown) => mutate(
         () => api.patchConfig(`agent.${key}`, value).then(refresh), 'settings:agent-defaults',
       )
+      // 🔴 THE YOLO SWITCH USED `setCfg('yolo', v)` — and so turned on auto-approve-everything in ONE
+      // click: `PATCH agent.yolo true` ~41 ms later, persisted, no dialog, while the panel one click
+      // away asked first. It goes through the one writer the panel uses now, which asks before ON,
+      // sends the consent the server requires, and reports a refused write itself. `false` means
+      // nothing changed (declined, or refused and already reported), which `mutate` reads as
+      // "nothing to reconcile": no PATCH on a cancel, and no re-read either — this switch renders
+      // the fetched value, so it never moved.
+      const setYolo = (next: boolean) => mutate(async () => {
+        if (!(await setAgentYolo(next))) return false
+        refresh()
+      }, 'settings:agent-defaults')
       return (
         // `!agentErr` so a failed read stops pretending to load — the treatment the legibility tile and
         // the other four already carry. Without it the card spins forever on a read that has finished.
@@ -607,7 +670,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
             { k: 'Default agent', v: data.defaultAgent || '—', vText: data.defaultAgent || '—' },
             { k: 'Approval', control: true, v: <InlineSelect value={approval} ariaLabel="Approval mode" onPick={(v) => setCfg('approval_mode', v)}
               options={[{ value: 'auto', label: 'Auto' }, { value: 'interactive', label: 'Ask each time' }, { value: 'trust_reads', label: 'Trust reads' }]} /> },
-            { k: 'YOLO', control: true, v: <Switch on={!!c.yolo} label="YOLO auto-approve all" onToggle={(v) => setCfg('yolo', v)} /> },
+            { k: 'YOLO', control: true, v: <Switch on={!!c.yolo} label="YOLO auto-approve all" onToggle={setYolo} /> },
           ]} />}
         </BentoCard>
       )
@@ -1342,17 +1405,18 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   {
     id: 'updates', group: 'System', label: 'Updates', icon: DownloadCloud, size: 'sm',
     description: 'Version, changelog, and update controls.',
-    useSearchText() { const { data: u } = useUpdates(); return `updates version changelog upgrade ${u ? `${u.version ?? ''} ${u.available ? `update available ${u.latest ?? ''}` : 'up to date'} ${u.auto === 'staged' ? 'auto-update' : ''}` : ''}` },
+    useSearchText() { const { data: u } = useUpdates(); return `updates version changelog upgrade pin ${u ? `${u.version ?? ''} ${updateVerdictLabel(u)} ${u.auto === 'staged' ? 'auto-update' : ''}` : ''}` },
     render(query, go) {
       const { data: u, refresh, stale: uStale, status: uStatus, error: uErr } = useUpdates()
       return (
         <BentoCard icon={DownloadCloud} title="Updates" query={query} onClick={() => go('updates')} loading={u === undefined} rows={2} stale={uStale} failed={uStatus === 'error'} error={uErr} onRetry={refresh}>
           {u && <>
             <div data-type="body-m" className="text-on-surface font-mono">{u.version || '—'}</div>
+            {/* 🔴 THIS SAID "Up to date" WHENEVER `available` WAS FALSE — for an install never compared
+                with anything, one whose pin names no release, and one with checking switched off.
+                The panel's words for the same install, from the one derivation both now read. */}
             <div className="mt-1.5">
-              {u.available
-                ? <StatusPill query={query} label={`Update available${u.latest ? ` — ${u.latest}` : ''}`} tone="primary" />
-                : <StatusPill label="Up to date" tone="ok" />}
+              <StatusPill query={query} label={updateVerdictLabel(u)} tone={UPDATE_PILL_TONE[updateVerdict(u)]} />
             </div>
             <div className="mt-2.5 flex items-center justify-between gap-2">
               <span data-type="caption" className="text-on-surface-low">Auto-update</span>

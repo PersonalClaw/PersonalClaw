@@ -496,9 +496,11 @@ function EgressPolicyEditor() {
   const [err, setErr] = useState('')
   if (!eg) return null
 
-  const save = async (next: EgressPolicyConfig) => {
+  // `confirmed` only from the private-networks checkbox, which asks its own question below. A host
+  // list change that widens the guard is asked about by the gateway instead (`api.patchConfig`).
+  const save = async (next: EgressPolicyConfig, confirmed = false) => {
     setBusy(true); setErr('')
-    try { await api.setSecurityEgress(next); refresh() }
+    try { await api.setSecurityEgress(next, confirmed); refresh() }
     catch (e) { setErr(e instanceof Error ? e.message : 'Failed to save') }
     finally { setBusy(false) }
   }
@@ -522,7 +524,7 @@ function EgressPolicyEditor() {
                 confirmLabel: 'Allow private networks',
                 danger: true,
               }))) return
-              save({ ...eg, allow_private: next })
+              save({ ...eg, allow_private: next }, next)
             }}
             className="mt-0.5 size-4 shrink-0 accent-primary" />
           <span className="min-w-0">

@@ -16,8 +16,8 @@ import type { Segment } from './chatTypes'
  *  The fix is one mechanism instead of six special cases: a boundary ALWAYS clears the buffer, and
  *  the only choice is whether the tail lands first (`seal`) or is discarded (`reset`). These tests
  *  drive the REAL hook through the same two-line wiring `ChatPage` uses (`endTextRun` /
- *  `dropTextRun` + `applyCoalescedFlush` over the trailing assistant turn), because the defect lived
- *  in the wiring and not in either piece on its own.
+ *  `dropTextRun` + `TextRunOwnership.flush` over the trailing assistant turn), because the defect
+ *  lived in the wiring and not in either piece on its own.
  */
 
 const TURN_1 = 'Turn ONE full answer.'
@@ -29,8 +29,7 @@ function harness(opts: { immediate?: boolean } = { immediate: true }) {
   const textRun = new TextRunOwnership()
   const { result } = renderHook(() =>
     useStreamCoalescer((revealed) => {
-      const r = applyCoalescedFlush(turns[turns.length - 1], revealed, textRun.claimFlush())
-      turns[turns.length - 1] = r.segs
+      turns[turns.length - 1] = textRun.flush(revealed)(turns[turns.length - 1])
     }, opts),
   )
   return {
@@ -40,6 +39,7 @@ function harness(opts: { immediate?: boolean } = { immediate: true }) {
     push: (chunk: string) => act(() => { result.current.push(chunk) }),
     endTextRun: () => act(() => { result.current.seal(); textRun.release() }),
     dropTextRun: () => act(() => { result.current.reset(); textRun.release() }),
+    reveal: () => act(() => { result.current.reveal() }),
     /** A new assistant turn arrives (the transcript tail moves). */
     newTurn: () => { turns.push([]) },
   }
@@ -143,9 +143,8 @@ describe('a boundary clears the coalesced run', () => {
         (revealed) => {
           pending = () => {
             // The defect: ownership is read HERE, inside the deferred updater.
-            const r = applyCoalescedFlush(segments, revealed, coalescing.current)
-            coalescing.current = r.coalescing
-            segments = r.segs
+            segments = applyCoalescedFlush(segments, revealed, coalescing.current)
+            coalescing.current = true
           }
         },
         () => { pending?.(); pending = null },
@@ -160,8 +159,8 @@ describe('a boundary clears the coalesced run', () => {
       let pending: (() => void) | null = null
       drive(
         (revealed) => {
-          const replace = textRun.claimFlush()
-          pending = () => { segments = applyCoalescedFlush(segments, revealed, replace).segs }
+          const update = textRun.flush(revealed)
+          pending = () => { segments = update(segments) }
         },
         () => { pending?.(); pending = null },
         () => { textRun.release() },
@@ -176,3 +175,25 @@ describe('a boundary clears the coalesced run', () => {
     expect(newWiring()).toEqual([{ kind: 'text', text: 'complete answer' }])
   })
 })
+
+// `reveal` exists for the frames replayed onto an adopted snapshot (snapshotReplay.ts): text the
+// tab was already showing must paint with the snapshot, not animate back in. It is the private
+// drain made public, so it is pinned to NOT being a boundary.
+describe('reveal paints the buffered run now, without ending it', () => {
+  it('shows everything buffered, and the run goes on in the same segment', () => {
+    const h = harness({ immediate: false })
+    h.push('already on screen before the snapshot, ')
+    h.reveal()
+    expect(h.texts(0)).toEqual(['already on screen before the snapshot, '])
+    h.push('and then more.')
+    h.endTextRun()
+    expect(h.texts(0)).toEqual(['already on screen before the snapshot, and then more.'])
+  })
+
+  it('writes nothing on an empty run', () => {
+    const h = harness({ immediate: false })
+    h.reveal()
+    expect(h.last(), 'an emit on an empty run writes an empty text segment').toEqual([])
+  })
+})
+

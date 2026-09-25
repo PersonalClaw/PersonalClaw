@@ -11,7 +11,7 @@ Verifies that memory (semantic, episodic, lessons) is truly useful:
 import json
 from pathlib import Path
 
-from personalclaw.context import ContextBuilder
+from personalclaw.context import USER_REQUEST_MARKER, ContextBuilder
 from personalclaw.hooks import ContextRule, HookManager, HooksConfig, TransformHook
 from personalclaw.memory import MemoryStore
 from personalclaw.skills import SkillsLoader
@@ -171,7 +171,7 @@ class TestMemoryInjectionAllAgents:
         hooks_cfg = HooksConfig(transforms=[TransformHook(pattern="deploy", prefix="[DEPLOY]")])
         builder = _builder(tmp_path, hooks=HookManager(hooks_cfg))
         msg, _ = builder.build_message("deploy app", is_new_session=False, agent="custom")
-        assert msg.startswith("[DEPLOY]")
+        assert msg.startswith(f"{USER_REQUEST_MARKER}\n[DEPLOY]")
 
 
 # ── Episodic memory injection for all agents ──

@@ -848,6 +848,39 @@ def apply_policy_overrides(
     return policy
 
 
+def unattended_grant(overrides: dict[str, Any] | None) -> bool:
+    """Whether a run's overlay carries the user's EXPLICIT unattended grant.
+
+    ``attended: False`` written at creation (the loop composer's "Unattended" mode) is consent to
+    run every stage without a per-stage approval, and the engine spawns the run's stages on it
+    (`engine.dispatch_stage`). It is read off the OVERLAY rather than off the resolved
+    ``hitl_posture``, and that is the whole point: ``Attention.AFK`` is ALSO every template's
+    declared default, so reading the policy would hand the grant to every run started from the
+    Workflows page — runs whose starter never said "unattended" and which today approve each stage.
+    An explicit choice is consent; a default is not. ``is False`` rather than falsiness, so a
+    malformed ``0``/``""`` written by a newer core does not become a grant.
+    """
+    return isinstance(overrides, dict) and overrides.get("attended") is False
+
+
+def loop_iteration_cap(overrides: dict[str, Any] | None) -> int:
+    """The iteration cap a run's ``max_cycles`` override puts on its loop, or ``0`` for none.
+
+    ``max_cycles`` is the per-instance cycle budget a loop is created with (knob 12). On the run
+    path the loop node's own ``max_iterations`` is what bounds iterations, so the override has to
+    reach THAT reader to mean anything (`RunController._loop_node_under_overlay`); before this, a
+    loop created with a budget of 30 ran the template's literal 6 while every loop surface counted
+    toward 30. ``0`` keeps the template's own cap: a run loop always has a bounded iteration
+    count, so "uncapped" is not a run semantic, and a malformed value is no override at all.
+    """
+    if not isinstance(overrides, dict):
+        return 0
+    raw = overrides.get("max_cycles")
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return 0
+    return max(0, raw)
+
+
 def policy_for_run(
     kind: str, kind_config: Any = None, overrides: dict[str, Any] | None = None
 ) -> SupervisorPolicy:

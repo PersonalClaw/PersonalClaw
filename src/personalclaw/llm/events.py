@@ -29,6 +29,20 @@ EVENT_COMPACTION_STATUS = "compaction_status"
 EVENT_CLEAR_STATUS = "clear_status"
 EVENT_AGENT_SWITCHED = "agent_switched"
 
+#: The ``stop_reason`` of a reply that stopped because it reached the model's OUTPUT cap — the
+#: Anthropic/Bedrock spelling, which a provider that owns its own decoding also emits.
+STOP_MAX_TOKENS = "max_tokens"
+
+#: Every spelling of that same stop across providers: OpenAI's ``finish_reason`` is ``length``.
+#: One set, so the tool-argument reader (a call cut mid-JSON) and the chat surface (a reply cut
+#: mid-sentence) cannot disagree about which stops were cuts.
+LENGTH_STOP_REASONS: frozenset[str] = frozenset({STOP_MAX_TOKENS, "length"})
+
+
+def is_length_stop(stop_reason: object) -> bool:
+    """Whether ``stop_reason`` says the reply was cut at the output cap, in any provider's words."""
+    return str(stop_reason or "").strip().lower() in LENGTH_STOP_REASONS
+
 
 @dataclass
 class AgentEvent:

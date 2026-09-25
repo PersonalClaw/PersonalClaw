@@ -202,8 +202,9 @@ describe('an entity is the destination when the URL says so', () => {
   const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
 
   it('the path-segment detail routes carry the entity as their h1', () => {
+    // A run started as a loop is named by the loop (`title`), a template run by its template.
     expect(read('pages/workflows/WorkflowRunDetail.tsx'), 'the run')
-      .toMatch(/<PageTitle className="truncate">\{run\.workflow\}<\/PageTitle>/)
+      .toMatch(/<PageTitle className="truncate">\{run\.title \|\| run\.workflow\}<\/PageTitle>/)
     expect(read('pages/workflows/WorkflowDefDetail.tsx'), 'the definition')
       .toMatch(/<PageTitle className="truncate">\{name\}<\/PageTitle>/)
     expect(read('pages/projects/ProjectsSection.tsx'), "the project view's own titleNode")

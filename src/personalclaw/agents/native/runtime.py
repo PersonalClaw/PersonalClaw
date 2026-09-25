@@ -73,7 +73,9 @@ from personalclaw.llm.events import (
     EVENT_THINKING_CHUNK,
     EVENT_TOOL_CALL,
     EVENT_TOOL_RESULT,
+    STOP_MAX_TOKENS,
     AgentEvent,
+    is_length_stop,
 )
 from personalclaw.llm.prompt_cache import (
     PromptCache,
@@ -82,6 +84,10 @@ from personalclaw.llm.prompt_cache import (
 )
 from personalclaw.token_estimate import CONSERVATIVE_CHARS_PER_TOKEN
 from personalclaw.tool_providers.base import RiskLevel
+from personalclaw.tool_providers.portable_schema import (
+    ToolSchemaRejected,
+    tools_named_in_rejection,
+)
 from personalclaw.workflows.compaction import is_context_overflow
 
 if TYPE_CHECKING:
@@ -122,6 +128,12 @@ def _inference_failure_mode(exc: BaseException) -> FailureMode:
         return exc.mode
     if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
         return FailureMode.TIMEOUT
+    if isinstance(exc, MemoryError):
+        # An allocation that just failed is not a transient: the identical prompt asks for the
+        # identical memory. Measured on the bundled model, the blind retry re-ran a
+        # (9, 27862, 27862) float32 allocation — and on a memory-capped host the second attempt
+        # is the one the kernel kills the whole gateway for.
+        return FailureMode.PROMPT_TOO_LARGE
     return FailureMode.PROVIDER_ERROR
 
 
@@ -389,6 +401,8 @@ class NativeAgentRuntime(AgentProvider):
         # can't see or call it. Core-locked tools + the locked platform provider are
         # never disabled (the tool_prefs guards ignore them). Load once; fail-open.
         from personalclaw.tool_providers import tool_prefs
+        from personalclaw.tool_providers.portable_schema import offered_tool_definitions
+        from personalclaw.tool_providers.registry import app_of
 
         disabled_keys = tool_prefs.load_disabled()
         disabled_provs = tool_prefs.load_disabled_providers()
@@ -408,6 +422,7 @@ class NativeAgentRuntime(AgentProvider):
             except Exception:  # noqa: BLE001 - a broken provider must not kill start
                 logger.debug("native: tool provider %s list failed", prov_name, exc_info=True)
                 continue
+            enabled = []
             for t in tools:
                 # Prefer the tool's own provider tag; fall back to the provider
                 # instance name (matches how GET /api/tools keys the disable set).
@@ -415,6 +430,13 @@ class NativeAgentRuntime(AgentProvider):
                 if tool_prefs.is_disabled(pkey, t.name, disabled_keys, disabled_provs):
                     dropped.append(t.name)
                     continue
+                enabled.append(t)
+            # THE TOOL SEAM: a provider validates the whole tool block, so one schema it
+            # cannot accept fails every turn. Every tool — built-in or app — is brought inside
+            # the portable profile here, where the request is assembled; one that cannot be
+            # repaired stays out of the schema AND the index, with one log line naming it.
+            for t in offered_tool_definitions(enabled, provider=prov_name, app=app_of(prov_name)):
+                pkey = getattr(t, "provider", "") or prov_name
                 defs.append(t)
                 index[t.name] = prov
                 # Same provider key the disable gate resolved (tool tag, else the
@@ -546,7 +568,13 @@ class NativeAgentRuntime(AgentProvider):
                             "Group name → true (active) / false (inactive). Omitted "
                             "groups deactivate."
                         ),
-                        "additionalProperties": {"type": "boolean"},
+                        # One declared boolean per group this session HAS. An open map
+                        # (`additionalProperties`) has no portable schema — a strict provider
+                        # rejects the whole request over it (tool_providers.portable_schema).
+                        "properties": {
+                            g.name: {"type": "boolean", "description": f"{_n_tools(len(g.tools))}"}
+                            for g in self._groups
+                        },
                     }
                 },
                 "required": ["groups"],
@@ -722,6 +750,21 @@ class NativeAgentRuntime(AgentProvider):
         if self._cancel.stopped_by_user:
             return STOP_REASON_STOPPED_BY_USER
         return STOP_REASON_CANCELLED
+
+    def _final_stop_reason(self, usage: AgentEvent | None) -> str:
+        """How the turn's last inference ended, as the chat surface needs to know it.
+
+        A cancel wins, then the provider's own LENGTH stop: a reply cut at the model's output
+        cap ends mid-sentence, and before this every provider stop reason was replaced with
+        ``end_turn`` here, so the chat runner could not tell a cut reply from a finished one.
+        Only the length stop is carried — it is the one the user must be told about, and every
+        other provider spelling of "finished" keeps meaning ``end_turn`` to every consumer.
+        """
+        if self._cancelled:
+            return self._stop_reason_for_cancel()
+        if usage is not None and is_length_stop(usage.stop_reason):
+            return STOP_MAX_TOKENS
+        return "end_turn"
 
     def _audit_inference_attempt(
         self,
@@ -1022,11 +1065,31 @@ class NativeAgentRuntime(AgentProvider):
                             started_ms=attempt_started,
                             passed=False,
                         )
+                        # A provider refusing one of THIS request's tool definitions: the
+                        # identical request fails identically, so there is no retry, and the
+                        # raw dump is replaced by a sentence naming the tool (the seam should
+                        # have kept it out — so it is PersonalClaw's bug, and says so).
+                        rejected = tools_named_in_rejection(str(exc), tools_kwarg or [])
+                        if rejected:
+                            from personalclaw.tool_providers import tool_prefs
+
+                            logger.warning(
+                                "native: the provider rejected the tool definition(s) %s — not "
+                                "retrying: %r",
+                                rejected,
+                                exc,
+                            )
+                            raise ToolSchemaRejected(
+                                rejected,
+                                can_turn_off=not any(tool_prefs.is_locked(n) for n in rejected),
+                            ) from exc
                         if not can_retry:
                             raise
                         inference_retried = True
+                        # `%r`, not `%s`: httpx.ReadError and every timeout stringify to "",
+                        # which logged "retrying once: " with nothing after it.
                         logger.warning(
-                            "native: inference attempt failed (%s) — retrying once: %s",
+                            "native: inference attempt failed (%s) — retrying once: %r",
                             fmode.value,
                             exc,
                         )
@@ -1090,9 +1153,7 @@ class NativeAgentRuntime(AgentProvider):
                             self._messages.append(self._tool_result_msg(call, CANCELLED_BEFORE_RUN))
                     yield AgentEvent(
                         kind=EVENT_COMPLETE,
-                        stop_reason=(
-                            self._stop_reason_for_cancel() if self._cancelled else "end_turn"
-                        ),
+                        stop_reason=self._final_stop_reason(usage),
                         input_tokens=agg_in,
                         output_tokens=agg_out,
                         cache_read_tokens=agg_cache_read,
@@ -1189,7 +1250,10 @@ class NativeAgentRuntime(AgentProvider):
             # No retrieval reduction: the assembled (group-filtered) schema stands.
             surfaced_defs = list(pool)
             if grouped:
-                surfaced_defs.append(self._reset_tools_def)
+                # `reset_tools` names the session's groups as declared properties, so it rides
+                # only when there is a group to name (an object with none is not portable).
+                if self._groups:
+                    surfaced_defs.append(self._reset_tools_def)
                 tools_kwarg = tool_definitions_to_openai_schema(surfaced_defs) or None
             else:
                 tools_kwarg = self._tool_schema or None
@@ -1202,7 +1266,7 @@ class NativeAgentRuntime(AgentProvider):
             # by capability — and dispatch via _tool_index works for ANY tool name,
             # surfaced or not. So the model can never conclude a capability is absent.
             surfaced = [*selected_defs, self._tool_search_def, self._tool_schema_def]
-            if grouped:
+            if grouped and self._groups:
                 surfaced.append(self._reset_tools_def)
             tools_kwarg = tool_definitions_to_openai_schema(surfaced) or None
             exclude = {getattr(d, "name", "") for d in surfaced}
@@ -1266,10 +1330,7 @@ class NativeAgentRuntime(AgentProvider):
         arg_error = ""
         if raw_args is ARGUMENTS_UNREADABLE:
             args = {}
-            truncated = str(getattr(call, "stop_reason", "") or "").lower() in {
-                "length",
-                "max_tokens",
-            }
+            truncated = is_length_stop(getattr(call, "stop_reason", ""))
             arg_error = (
                 correction_note(FailureMode.TOKEN_OVERFLOW)
                 if truncated
@@ -2041,6 +2102,14 @@ class NativeAgentRuntime(AgentProvider):
         """
         return True
 
+    @property
+    def keeps_cancelled_turns(self) -> bool:
+        """True — a stopped turn stays in ``self._messages``: :meth:`stream` appends the
+        user message before the first inference, and a stop breaks out of the stream into
+        the same assistant-record path, so whatever was answered is kept too. Re-injecting
+        the turn as a "[PREVIOUS TURN WAS CANCELLED]" preamble would send it twice."""
+        return True
+
     async def compact(self, context: str = "") -> None:
         """Compact this session's history NOW, unconditionally.
 
@@ -2236,6 +2305,32 @@ class NativeAgentRuntime(AgentProvider):
     @property
     def agent_model(self) -> str:
         return self._definition.model or getattr(self._model, "_model", "") or ""
+
+    @property
+    def model_provider(self) -> "ModelProvider":
+        """The inference provider this loop calls — what serves every turn it runs.
+
+        Public because the window a turn is served with is the provider's own answer
+        (``ModelProvider.served_context_window``), and the chat runner resolves that window
+        before assembling the turn.
+        """
+        return self._model
+
+    @property
+    def served_model_ref(self) -> str:
+        """The ``"<entry>:<model>"`` ref of the model this loop actually sends each turn to.
+
+        The ENTRY comes from the provider's build stamp (``ModelProvider.served_ref``); the
+        MODEL is the one this loop passes to ``complete(model=…)``, which overrides the entry's
+        own default whenever the definition names one. ``""`` when the provider was not built
+        through the resolution seam and the definition names nothing.
+        """
+        stamped = str(getattr(self._model, "served_ref", "") or "")
+        entry, _, built_model = stamped.partition(":")
+        model = self._definition.model or built_model
+        if entry and model:
+            return f"{entry}:{model}"
+        return stamped
 
     @property
     def agent_name(self) -> str:

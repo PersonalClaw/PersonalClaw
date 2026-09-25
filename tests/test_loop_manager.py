@@ -463,7 +463,7 @@ class TestTaskWorker:
         assert worktree.ensure_base_commit(str(ws))
         wt = worktree.add_worktree(str(ws), "t-1", c.tasks_project_id)
         assert wt and os.path.isdir(wt)
-        _run(manager.teardown_for_delete(_FakeSvc(), c.id))
+        _run(manager.teardown_for_delete(_FakeState(), _FakeSvc(), c.id))
         assert not os.path.isdir(wt)  # worktree removed
 
 
@@ -498,8 +498,7 @@ class TestBootSweep:
     def test_a_running_loop_with_an_idle_session_is_live_not_a_survivor(self):
         """The liveness predicate is session ABSENCE, not ``sess.running``. Between cycles a
         live loop's session exists with ``running`` False (autonudge fires a turn every
-        ``idle_secs``), and re-arming that is a silent restart of healthy work — plus
-        ``manager.start`` re-stamps the RUNNING row, which resets the trust window."""
+        ``idle_secs``), and re-arming that is a silent restart of healthy work."""
         g = _goal()
         store.update_status(g.id, LoopStatus.RUNNING)
         state, svc = _FakeState(), _FakeSvc()

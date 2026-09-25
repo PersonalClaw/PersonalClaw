@@ -122,32 +122,29 @@ describe('every one of the nine now announces, through the shared owner', () => 
   })
 })
 
-describe('the five identical rows became one', () => {
-  const code = srcOf(APPS)
+describe('the five identical rows became one, and then one dialog owns it', () => {
+  // Five install/update/store surfaces once shared a byte-identical failure row — that
+  // duplication is WHY the dead class survived: there was no single place anyone would have
+  // looked. They were first folded into one component here; every install and update now fails
+  // inside the ONE consent dialog, so the row lives there and nowhere else.
+  const consent = srcOf('pages/apps/installConsent.tsx')
+  const row = consent.match(/function InstallFailure[\s\S]*?\n\}/)?.[0] ?? ''
 
-  it('GuardedFailure is declared once and used at every guarded surface', () => {
-    expect([...code.matchAll(/function GuardedFailure\b/g)], 'exactly one declaration').toHaveLength(1)
-    // Five install/update/store surfaces shared a byte-identical row. That duplication is WHY the
-    // dead class survived: there was no single place anyone would have looked.
-    expect([...code.matchAll(/<GuardedFailure guarded=\{guarded\} \/>/g)].length,
-      'every guarded surface adopts it').toBeGreaterThanOrEqual(5)
+  it('InstallFailure is declared once, and rendered once — by the dialog', () => {
+    expect([...consent.matchAll(/function InstallFailure\b/g)], 'exactly one declaration').toHaveLength(1)
+    expect([...consent.matchAll(/<InstallFailure\b/g)], 'the dialog is its one caller').toHaveLength(1)
   })
 
-  it('it is self-guarding, so no call site re-wraps it in its own `&&`', () => {
-    const fn = code.match(/function GuardedFailure[\s\S]*?\n\}/)?.[0] ?? ''
-    expect(fn, 'found GuardedFailure').not.toBe('')
-    expect(fn, 'it returns null on no error').toMatch(/if \(!guarded\.error\) return null/)
-    expect(code, 'and no site guards it again').not.toMatch(/guarded\.error && \(?\s*<GuardedFailure/)
+  it('no Store surface hand-rolls an install error of its own any more', () => {
+    const apps = srcOf(APPS)
+    expect(apps, 'the per-surface row is gone').not.toMatch(/GuardedFailure|guarded\.error/)
+    expect(apps, 'nor does the Store call the install API around the dialog').not.toMatch(/api\.(?:installApp|updateApp)\(/)
   })
 
-  it('the error and its fix-prompt stay together, as the hook says they must', () => {
-    // `useGuardedInstall`'s own doc: fixPrompt "Rides alongside `error` — the same surface that
-    // renders it." This component IS that surface, so the pair cannot drift apart again.
-    const fn = code.match(/function GuardedFailure[\s\S]*?\n\}/)?.[0] ?? ''
-    expect(fn).toMatch(/<FieldError>\{guarded\.error\}<\/FieldError>/)
-    expect(fn).toMatch(/<FixWithAiButton fixPrompt=\{guarded\.fixPrompt\} \/>/)
-    expect(read('lib/useGuardedInstall.ts'), 'the doc this follows')
-      .toMatch(/Rides alongside `error`/)
+  it('the error and its fix-prompt stay together, in the shared owner', () => {
+    expect(row, 'found InstallFailure').not.toBe('')
+    expect(row).toMatch(/<FieldError>\{error\}<\/FieldError>/)
+    expect(row).toMatch(/<FixWithAiButton fixPrompt=\{fixPrompt \|\| null\} \/>/)
   })
 })
 

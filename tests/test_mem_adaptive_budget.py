@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from personalclaw.model_windows import (
     DEFAULT_CONTEXT_WINDOW,
-    active_chat_model_window,
     model_context_window,
 )
 
@@ -25,10 +24,28 @@ def test_window_unknown_is_default():
     assert model_context_window(None) == DEFAULT_CONTEXT_WINDOW
 
 
-def test_active_chat_window_resolves_or_defaults():
-    # Never raises; returns a positive int (the bound chat model's window or default).
-    w = active_chat_model_window()
-    assert isinstance(w, int) and w >= DEFAULT_CONTEXT_WINDOW - 1
+def test_an_unmeasured_local_model_is_budgeted_by_the_floor_and_never_refused_by_it():
+    """Nothing served, declared or catalogued this local model's window.
+
+    The assembler must not budget it as a hosted 200,000 (a local runtime truncates silently past
+    its served window, with HTTP 200 and nothing to catch), and the check must not refuse a turn
+    against the floor, because a floor is a guess and a refusal claims a measurement.
+    """
+    import asyncio
+
+    from personalclaw.context_headroom import Component, HeadroomState, check, resolve_window
+    from personalclaw.local_models import registry
+    from personalclaw.model_windows import LOCAL_SERVED_CONTEXT_WINDOW
+
+    registry._providers["unit-test-local"] = object()  # type: ignore[assignment]
+    try:
+        window = asyncio.run(resolve_window("unit-test-local:some-weight.gguf"))
+    finally:
+        registry._providers.pop("unit-test-local", None)
+    assert window.tokens is None
+    assert window.budget_tokens == LOCAL_SERVED_CONTEXT_WINDOW
+    verdict = check([Component(name="x", text="tok " * 50_000, compressible=False)], window=window)
+    assert verdict.state is HeadroomState.FITS
 
 
 def test_caps_scale_with_window():
@@ -88,14 +105,13 @@ def test_caps_scale_down_when_the_baseline_cannot_fit_the_window():
 
 
 def test_a_locally_served_binding_does_not_inherit_the_hosted_default_window():
-    """The assembler's window authority must not answer 200k for a local model.
+    """The window authority must not answer 200k for a local model.
 
-    `active_chat_model_window` is the ONE number every window-scaled budget in
-    `context.py` and `learning/ambient.py` is scaled by, and it reads only
-    `model_tokens.json`. A local model has no entry there, so the table DEFAULTED and the
-    assembler budgeted for 200,000 tokens while `context_headroom.resolve_window` — which
-    does read the local-model catalog card — measured the same model at 2,048. A 97.7x
-    disagreement inside one turn: the assembler built a prompt the contract then refused.
+    Before one resolver existed, the assembler's window read only `model_tokens.json`. A local
+    model has no entry there, so the table DEFAULTED and the assembler budgeted for 200,000
+    tokens while the budget check — which did read the local-model catalog card — measured the
+    same model at 2,048. A 97.7x disagreement inside one turn. `context_headroom.resolve_window`
+    now answers for both; this pins the table-level half it still relies on.
     """
     from personalclaw.model_windows import (
         LOCAL_SERVED_CONTEXT_WINDOW,

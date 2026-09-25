@@ -120,6 +120,7 @@ while not terminal:
 | `overlap.py` | `on_overlap`: the exhaustive policy decision with a raising tail, the queued-vs-hand-made-draft marker on `run.extra`, the coalesce-to-one cap, and the single-flight drain called from the terminal writer and the watchdog poll |
 | `web_preview.py` | a run's localhost dev-server preview: fixed-argv `lsof`/`ss`/`ps` host-fact probes, port→pid→cwd attribution scoped to the run's own workspace, and the honest empty reason when no scanner exists |
 | `loop_run_map.py` | the `Loop`→`WorkflowRun` field map: every `Loop` field either maps to a run field, maps to a template input, or is listed as homeless — the checked starting point for retiring the second work-unit noun |
+| `loop_view.py` | the READ half of that map: a run started as a loop (`WorkflowRun.loop_kind`) projected back into the loop wire shape, so `GET /api/loops` lists every loop whatever backs it. The projected row carries `run_id` (the discriminator every surface routes by); run statuses map onto the nearest truthful loop status (`escalated` → `complete` + a non-`done` stop reason, i.e. "Ended early"); the cycle count is the root loop's distinct finished iterations and the budget is the one the engine stops at; and `RUN_ACTION_SOURCE_STATES` is the run's narrower action table (no resume from `failed`), railed equal to the frontend mirror |
 | `deliverable.py` | a run's DOCUMENT deliverable + working log, the run-side answer to `GET /api/loops/{id}/report`: the kind→filename resolution DERIVED by walking `loop_aliases` forward and asking each kind's own `deliverable_name` (never a constant here), the workspace-then-run-dir root order that mirrors `loop/watchdog._deliverable_file`, a confined + redacted read with a blob ceiling that bounds the redactor's quadratic unbroken-token cost, and a five-member NAMED absence vocabulary — unknown template, kind declares none, not written, no root, unreadable — because a blank panel cannot tell a finished verifiable goal from a slow worker. Carries no money field by design (issue #2566) |
 
 ## Containers do not execute
@@ -146,6 +147,14 @@ that satisfies both: **a `needs` edge is satisfied by any TERMINAL predecessor,
 and unreachable paths are MADE terminal by marking them skipped.** Declines are
 recorded explicitly, never inferred from "the source routed elsewhere" —
 inferring would starve a sibling whose `needs` merely names the branch.
+
+A **dataflow** edge — a reader that binds the producer's output — is stricter.
+Only a succeeded node's output enters the binding namespace, so a producer that
+ended without one (skipped, failed, cancelled: any terminal state outside
+`SUCCESS_STATES`) makes that reader unreachable, and it is skipped too. Running
+it instead is a guaranteed binding failure whose escalation would replace the
+producer's on `run.attention`, blaming a step that did nothing wrong for the
+one that failed.
 
 The wait-entry subtlety: a `wait`/`gate` enters `WAITING` rather than
 completing, and `WAITING` is not terminal, so a join behind it keeps waiting
@@ -274,6 +283,14 @@ A rewind whose cascade would re-run completed work reports
 `needs_confirmation` and applies nothing until confirmed. The cascade is
 computed over the **binding-dependency graph**, not the container tree, so
 editing a node invalidates what actually reads it.
+
+A finished run is one attempt and cannot be re-entered, so a retry is a
+**fork**, not a rewind: the child draft inherits only the steps that SUCCEEDED
+(their state, outputs and step records), and every other step starts `PENDING`
+at the same epoch, so starting the child re-runs exactly what did not finish.
+Effect records carry over whole, because the committed-effect boundary reads
+them and a fork cannot un-fire anything. The run page's Retry, offered when the
+failed step's own failure class is retryable, is that fork followed by a start.
 
 ## Timeouts: two knobs that mean different things
 

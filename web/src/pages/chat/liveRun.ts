@@ -33,10 +33,27 @@
  */
 
 import { deliverableToOpenSession } from './sessionDelivery'
+import type { HistMsg } from './chatTypes'
 
 /** Whether a mount of `open` must start out streaming, given the session key a run
  *  was dispatched for. `''` means nothing was handed off. */
 export function streamingAtMount(liveRun: string, open: string | null): boolean {
   if (!liveRun) return false
   return deliverableToOpenSession(liveRun, open)
+}
+
+/** Whether the handed-off mount's first snapshot was read before the send it was handed off
+ *  from reached the server — the seed's latest user message is not in it.
+ *
+ *  `ensureSession` caches the just-sent message as the replacement's seed, navigates, and only
+ *  then posts it, so the replacement's first read can land on either side of the post. Before
+ *  it, the snapshot is honest and simply old: adopting it would erase the user's own message.
+ *  After it, the snapshot holds the message and, because the gateway appends the message and
+ *  starts the turn in one step, a `running: false` there means that turn has already ENDED —
+ *  its `chat_done` went out before this instance was listening. Identity is the
+ *  message's client stamp, which the gateway stores verbatim. */
+export function snapshotPredatesSend(seed: readonly HistMsg[] | null | undefined, snapshot: readonly HistMsg[]): boolean {
+  const sent = seed ? [...seed].reverse().find((m) => m.role === 'user') : undefined
+  if (!sent?.ts) return false
+  return !snapshot.some((m) => m.role === 'user' && m.ts === sent.ts)
 }

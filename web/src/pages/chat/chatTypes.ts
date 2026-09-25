@@ -6,6 +6,7 @@
 // `approvalMeta` imports ApprovalSegment from here as `import type`, which is erased at
 // compile time, so this value import creates no runtime cycle.
 import { readOnlyCommandOf } from './approvalMeta'
+import { turnErrorText } from './turnError'
 
 export interface TextSegment { kind: 'text'; text: string }
 
@@ -160,7 +161,7 @@ export function skillsUsedTitle(skills: SkillUsed[]): string {
 /** Stamp `origin` onto the activity segment `insertActivity` just created, given the
  *  arrays before (`prev`) and after (`next`) that call.
  *
- *  Exists so the ChatPage WS handler doesn't have to widen `insertActivity`'s signature (and
+ *  Exists so `TextRunOwnership.activity` doesn't have to widen `insertActivity`'s signature (and
  *  re-baseline its K42/K44/K45 suite) just to carry one optional field. It identifies the new
  *  segment by REFERENCE, not by matching text: `insertActivity` returns `prev` untouched on
  *  both its early-outs (a turn with tool cards, an adjacent duplicate line), so the only
@@ -224,6 +225,10 @@ export interface ChatTurn {
   // input. Rides the same meta seam as `citations`, so it is absent on the turns that
   // loaded no skill (and on every user turn) rather than an empty array.
   skillsUsed?: SkillUsed[]
+  // The reply stopped at the model's OUTPUT cap and ends mid-sentence — the assistant
+  // message's `meta.finish_reason === 'length'`. Absent (never `false`-by-default noise) on
+  // the turns that finished on their own, which is nearly all of them.
+  cutOff?: boolean
   // paste blocks referenced by `[Paste #N]` markers in this turn's text, kept so
   // the bubble can render the markers as inspectable chips after send.
   pastes?: { seq: number; lines: number; content: string }[]
@@ -366,7 +371,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; is_read_only?: string; grant_agent?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[] } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; is_read_only?: string; grant_agent?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string } }
 
 /** Re-collapse a persisted user message: the stored content has paste markers
  *  expanded to full text (the model saw that), but meta.pastes lets us swap each
@@ -482,6 +487,11 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       if (Array.isArray(m.meta?.skills_used) && m.meta!.skills_used.length) {
         at.skillsUsed = m.meta!.skills_used
       }
+      // A reply cut at the model's output cap. The backend stamps it on the turn's LAST
+      // assistant message, and consecutive assistant messages merge into this turn with the
+      // last one winning — so the mark is re-decided per message, not latched by an earlier one.
+      if (m.meta?.finish_reason === 'length') at.cutOff = true
+      else delete at.cutOff
       // Regenerated answers persist as ONE assistant message carrying every version
       // in `variants` (the active one's content == m.content). Carry the count + index
       // onto the turn so the ‹n/N› switcher rehydrates on reload.
@@ -531,9 +541,18 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       lastAssistant().segments.push({ kind: 'approval', id: m.meta?.approval_id || m.meta?.tool_call_id || `perm-${turns.length}`, tool: toolName(m.meta, m.content), input: m.meta?.input || m.meta?.tool_input, purpose: m.meta?.purpose, risk: m.meta?.risk as ApprovalSegment['risk'], readOnlyCommand: readOnlyCommandOf(m.meta?.is_read_only), grantAgent: m.meta?.grant_agent, resolved })
     } else if (m.role === 'error') {
       // a failed turn (provider/model error) — surface it instead of a blank turn.
-      lastAssistant().segments.push({ kind: 'error', text: m.content })
+      lastAssistant().segments.push({ kind: 'error', text: turnErrorText(m.content) })
+    } else if (m.role === 'streaming') {
+      // The answer being written RIGHT NOW — the gateway keeps it as ONE `streaming` entry,
+      // grown in place until it settles. Skipping it cut off everything a turn had written
+      // before a reload (measured on two reloads: the 170- and 209-char partials, gone from
+      // answers of 6,580 and 3,857 chars until a second reload after the turn ended). It
+      // renders as the answer's text; `livePartialOf` names it for the resume that continues
+      // it. Not a visible-list slot: the backend counts user/assistant rows only.
+      lastAssistant().segments.push({ kind: 'text', text: m.content })
+      assistantTextSinceUser = true
     }
-    // other roles (chunk/system): skip.
+    // other roles (queued/system): skip.
   }
   // A finished session has nothing in flight: the native path persists tool calls
   // without ever flagging done, so any lingering pending card would spin forever.
@@ -545,4 +564,20 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
     tools.slice(0, -1).forEach((seg) => { seg.done = true })
   }
   return turns
+}
+
+/** The roles `hydrateTurns` renders — every other row is invisible to the transcript. */
+const TRANSCRIPT_ROLES = new Set(['user', 'assistant', 'streaming', 'tool', 'permission', 'error'])
+
+/** The text of the answer still being written when this history was read — the `streaming`
+ *  entry, when it is the last row the transcript renders — or `null`. That entry paints the
+ *  hydrated transcript's tail segment, so a resume can continue the live answer IN it instead
+ *  of beside it. Behind a rendered row (a card appended while the answer was arriving) it is
+ *  not the tail, and the live text lands after that row as a fresh segment, as it does live. */
+export function livePartialOf(messages: HistMsg[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (TRANSCRIPT_ROLES.has(m.role)) return m.role === 'streaming' ? m.content : null
+  }
+  return null
 }

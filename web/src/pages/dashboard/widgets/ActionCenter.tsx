@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { Check, X, ShieldCheck, Inbox, Sparkles, CheckCheck, Send } from 'lucide-react'
-import { api } from '../../../lib/api'
+import { api, type PendingApproval } from '../../../lib/api'
 import { reportingWrite } from '../../../app/reportingWrite'
 import { approvalDestination } from '../../../app/approvalDestination'
+import { mirroredApprovalId } from '../../../lib/attentionLanes'
 import { rowSubject } from '../../../lib/rowSubject'
 import { useDashboardLive } from '../DashboardLive'
 import { SlotEmptyState, WidgetRow, RowAction } from './kit'
@@ -14,6 +15,17 @@ import { invalidateKeys } from '../../../lib/data'
 
 type Kind = 'approval' | 'inbox' | 'proposal'
 interface Entry { key: string; kind: Kind; title: string; sub: string; id: string; session?: string }
+
+/** One line saying what an approval would do and who is asking — the row carries Approve, so it
+ *  has to carry what is being approved. The purpose when the agent gave one, else the call's own
+ *  (server-redacted) arguments; then the chat's agent and name, or the background origin. */
+function approvalSubtitle(a: PendingApproval): string {
+  const input = typeof a.tool_input === 'string' ? a.tool_input
+    : a.tool_input == null ? '' : JSON.stringify(a.tool_input)
+  const what = (a.tool_purpose || input).replace(/\s+/g, ' ').trim()
+  const who = a.agent ? (a.session_title ? `${a.agent} in “${a.session_title}”` : a.agent) : a.source
+  return [what, who].filter(Boolean).join(' · ') || 'Tool approval'
+}
 
 /** Action Center — the unified triage queue merging pending tool approvals, inbox
  *  items awaiting a reply, and skill proposals. Approvals + proposals resolve
@@ -56,11 +68,17 @@ export function ActionCenter({ navigate }: RouteProps) {
   // can_reply=false) and keep a mirror whose proposal is NOT in the slice — a
   // stale mirror must degrade to visible, not vanish.
   const proposalIds = new Set(proposals.map((p) => p.id))
+  // The same rule for a pending approval: its Inbox row is the listing of the approval row above
+  // it (`mirroredApprovalId`, the one test every surface uses), and the approval row is the one
+  // that carries Approve/Reject. A row whose approval is NOT in the slice stays — stale degrades
+  // to visible, never to vanished.
+  const approvalIds = new Set(approvals.map((a) => a.id))
   const liveInbox = inbox.filter(
-    (i) => !(i.refs?.skill_proposal && proposalIds.has(String(i.refs.skill_proposal))),
+    (i) => !(i.refs?.skill_proposal && proposalIds.has(String(i.refs.skill_proposal)))
+      && !approvalIds.has(mirroredApprovalId(i)),
   )
   const allEntries: Entry[] = [
-    ...approvals.map((a) => ({ key: `a:${a.id}`, kind: 'approval' as const, id: a.id, title: `Run ${a.tool}`, sub: a.tool_purpose || a.source || 'Tool approval', session: a.session })),
+    ...approvals.map((a) => ({ key: `a:${a.id}`, kind: 'approval' as const, id: a.id, title: `Run ${a.tool}`, sub: approvalSubtitle(a), session: a.session })),
     ...liveInbox.map((i) => ({ key: `i:${i.id}`, kind: 'inbox' as const, id: i.id, title: i.sender_name || i.channel_name || 'Message', sub: i.message?.slice(0, 90) || '' })),
     ...proposals.map((p) => ({ key: `p:${p.id}`, kind: 'proposal' as const, id: p.id, title: `Skill: ${p.slug}`, sub: p.description?.slice(0, 90) || '' })),
   ].filter((e) => !done.has(e.key))

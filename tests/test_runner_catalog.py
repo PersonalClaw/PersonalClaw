@@ -683,10 +683,15 @@ async def test_key_derived_gate_still_obeys_the_flag(monkeypatch, tmp_path):
 
 def test_flag_is_in_the_editable_patch_allowlist():
     """Point 4 of the round-trip: without this a PATCH is rejected as unknown."""
+    from personalclaw.config.edit_spec import security_control
     from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
     spec = _EDITABLE_CONFIG.get("agent.unattended_requires_verified_adapter")
-    assert spec == {"type": "bool"}
+    assert spec is not None
+    # The validation shape, exactly; turning the requirement OFF loosens it, so the field is on
+    # the security list too (tests/test_security_posture_rail.py).
+    assert {k: v for k, v in spec.items() if k != "security"} == {"type": "bool"}
+    assert security_control(spec) is not None
 
 
 def test_flag_survives_a_file_round_trip(tmp_path, monkeypatch):

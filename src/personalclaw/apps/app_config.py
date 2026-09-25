@@ -9,6 +9,10 @@ Validation is deliberately a JSON-Schema SUBSET rather than a full engine. The p
 rules are shared with the provider ``settingsSchema`` path (see
 :mod:`personalclaw.apps.schema_validate`); what is specific to apps stays here — unknown keys
 are rejected, because an app shouldn't receive config it never declared.
+
+A field the schema declares ``x-meta.sensitive`` (or whose name is credential-shaped) is kept
+in the credential store, and the file holds a ``{{secret:…}}`` reference: :func:`write_config`
+stores, :func:`read_config` resolves (:mod:`personalclaw.config.secret_refs`).
 """
 
 from __future__ import annotations
@@ -20,7 +24,9 @@ from typing import Any
 
 from personalclaw.apps.manager import app_dir
 from personalclaw.apps.schema_validate import validate_properties
+from personalclaw.apps.secret_fields import sensitive_field_names
 from personalclaw.atomic_write import atomic_write
+from personalclaw.config import secret_refs
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +46,7 @@ def _schema_properties(schema: dict[str, Any]) -> dict[str, Any]:
     return props if isinstance(props, dict) else {}
 
 
-def read_config(name: str) -> dict[str, Any]:
-    """Return the persisted config for an app (empty dict if none saved yet)."""
+def _read_stored(name: str) -> dict[str, Any]:
     path = _config_path(name)
     if not path.is_file():
         return {}
@@ -51,6 +56,12 @@ def read_config(name: str) -> dict[str, Any]:
     except (json.JSONDecodeError, OSError):
         logger.warning("app %s config unreadable; treating as empty", name, exc_info=True)
         return {}
+
+
+def read_config(name: str) -> dict[str, Any]:
+    """Return the persisted config for an app (empty dict if none saved yet), each secret
+    field holding its value."""
+    return secret_refs.resolve(_read_stored(name))
 
 
 def validate_config(values: dict[str, Any], schema: dict[str, Any]) -> list[str]:
@@ -87,7 +98,14 @@ def write_config(name: str, values: dict[str, Any], schema: dict[str, Any]) -> d
     errors = validate_config(values, schema)
     if errors:
         raise AppConfigError("; ".join(errors))
-    path = _config_path(name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(path, json.dumps(values, indent=2, sort_keys=True) + "\n", mode=0o600)
+    try:
+        stored = secret_refs.store(
+            values,
+            owner=secret_refs.app_owner(name),
+            declared=sensitive_field_names(schema) | secret_refs.declared_app_fields(name),
+            previous=_read_stored(name),
+        )
+    except ValueError as exc:
+        raise AppConfigError(str(exc)) from exc
+    atomic_write(_config_path(name), json.dumps(stored, indent=2, sort_keys=True) + "\n")
     return values

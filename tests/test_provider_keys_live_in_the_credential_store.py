@@ -1,0 +1,245 @@
+"""A provider key typed in Settings lives in the credential store; config.json holds a reference.
+
+Measured on the real image (uid 10001): the key entered in Settings → Providers → Add instance
+landed as ``options.api_key`` in ``/data/config.json`` at mode 0644 — world-readable, captured by
+every snapshot and every export. ``api_provider_create`` / ``api_provider_update`` wrote the
+request's ``options`` into the document verbatim.
+
+These tests drive the real handlers against the per-test home and read the bytes on disk, because
+"the handler returned 200" is not the claim — "no key text reaches the file" is. The "still
+authenticates" legs go through the real registry entry and the real catalog probe; only the far
+end of the HTTP call is a stand-in, and it answers 200 for exactly one ``Authorization`` header.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import stat
+import uuid
+
+import pytest
+from aiohttp.test_utils import make_mocked_request
+
+from personalclaw.config import loader as config_loader
+from personalclaw.dashboard.handlers import providers as H
+from personalclaw.llm.branded_specs import BrandedProviderSpec
+from personalclaw.llm.registry import get_default_registry
+from personalclaw.net.client import FetchResponse
+from personalclaw.sdk.provider_helpers import register_branded_app
+
+KEY = "sk-fixture-5f0c1d9e-never-plaintext"
+ROTATED = "sk-fixture-rotated-8a7b6c5d"
+
+FIXTURE_TYPE = "fixture-keystore-openai"
+FIXTURE_BASE = "https://fixture-keystore.invalid/v1"
+
+
+@pytest.fixture(autouse=True)
+def _home(monkeypatch):
+    """The conftest-guarded tmp home, a registered fixture provider type, no OS keychain."""
+    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
+    monkeypatch.setattr(H, "_refresh_media_registries", lambda: None)
+    register_branded_app(
+        BrandedProviderSpec(type=FIXTURE_TYPE, protocol="openai", default_base_url=FIXTURE_BASE)
+    )
+    previous = os.umask(0o022)  # the common default — what made 0644 the measured mode
+    try:
+        yield config_loader.config_dir()
+    finally:
+        os.umask(previous)
+
+
+@pytest.fixture
+def name():
+    """A per-test instance name: the LLM registry is process-global and idempotent by name."""
+    n = f"fx-{uuid.uuid4().hex[:8]}"
+    yield n
+    get_default_registry().unregister_entry(n)
+
+
+@pytest.fixture
+def endpoint_accepting(monkeypatch):
+    """Make the catalog probe's far end accept exactly one bearer token."""
+
+    def install(token: str) -> list[str]:
+        seen: list[str] = []
+
+        async def fake_fetch(url, *, policy=None, method="GET", headers=None, **_kw):
+            auth = (headers or {}).get("Authorization", "")
+            seen.append(auth)
+            if auth == f"Bearer {token}":
+                body = json.dumps({"object": "list", "data": [{"id": "fixture-model"}]})
+                return FetchResponse(url=url, status=200, body=body.encode())
+            return FetchResponse(url=url, status=401, body=b'{"error":"bad key"}')
+
+        monkeypatch.setattr("personalclaw.sdk.net.fetch", fake_fetch)
+        return seen
+
+    return install
+
+
+async def _coro(v):
+    return v
+
+
+def _req(method: str, path: str, body: dict | None = None, match_info: dict | None = None):
+    req = make_mocked_request(method, path, match_info=match_info or {})
+    req.json = lambda: _coro(body or {})
+    return req
+
+
+def _run(coro):
+    return asyncio.run(coro)
+
+
+def _create(name: str, options: dict) -> None:
+    body = {"name": name, "type": FIXTURE_TYPE, "model": "", "options": options}
+    resp = _run(H.api_provider_create(_req("POST", "/api/model-providers", body)))
+    assert resp.status == 200, resp.body
+
+
+def _update(name: str, options: dict) -> None:
+    resp = _run(
+        H.api_provider_update(
+            _req("PUT", f"/api/model-providers/{name}", {"options": options}, {"name": name})
+        )
+    )
+    assert resp.status == 200, resp.body
+
+
+def _test_connection(name: str) -> dict:
+    resp = _run(
+        H.api_provider_test(_req("POST", f"/api/model-providers/{name}/test", None, {"name": name}))
+    )
+    return json.loads(resp.body)
+
+
+def _config_text() -> str:
+    return config_loader.config_path().read_text(encoding="utf-8")
+
+
+def _stored_options(name: str) -> dict:
+    data = json.loads(_config_text())
+    return next(p for p in data["providers"] if p["name"] == name).get("options", {})
+
+
+def _home_hits(home, needle: str) -> list[str]:
+    """Every file under the home whose bytes contain ``needle`` — the brief's grep, as a test."""
+    hits = []
+    for path in sorted(home.rglob("*")):
+        if path.is_file() and not path.is_symlink() and needle.encode() in path.read_bytes():
+            hits.append(str(path.relative_to(home)))
+    return hits
+
+
+def test_add_instance_leaves_no_key_text_in_config_json(name):
+    _create(name, {"api_key": KEY, "endpoint": FIXTURE_BASE})
+
+    assert KEY not in _config_text(), "the typed key reached config.json in plaintext"
+    stored = _stored_options(name)
+    assert stored["endpoint"] == FIXTURE_BASE, "non-secret options still live in config.json"
+    assert stored["api_key"].startswith("{{secret:"), stored
+
+
+def test_config_json_is_written_0600(name):
+    _create(name, {"api_key": KEY})
+
+    mode = stat.S_IMODE(config_loader.config_path().stat().st_mode)
+    assert mode == 0o600, f"config.json written at {oct(mode)}; it can hold a secret"
+
+
+def test_the_only_file_holding_the_key_is_the_credential_store(_home, name):
+    _create(name, {"api_key": KEY})
+
+    assert _home_hits(_home, KEY) == [".env"]
+
+
+def test_the_stored_key_authenticates(name, endpoint_accepting):
+    seen = endpoint_accepting(KEY)
+    _create(name, {"api_key": KEY, "endpoint": FIXTURE_BASE})
+
+    result = _test_connection(name)
+    assert result["ok"] is True, result
+    assert seen == [f"Bearer {KEY}"]
+
+
+def test_rotate_clear_and_omit_all_go_through_the_store(_home, name, endpoint_accepting):
+    """#3554's three wire meanings, preserved: a value rotates, ``null`` clears, absence keeps."""
+    _create(name, {"api_key": KEY, "endpoint": FIXTURE_BASE})
+
+    _update(name, {"api_key": ROTATED})
+    seen = endpoint_accepting(ROTATED)
+    assert _test_connection(name)["ok"] is True
+    assert seen == [f"Bearer {ROTATED}"]
+    assert KEY not in _config_text() and ROTATED not in _config_text()
+    assert _home_hits(_home, KEY) == [], "a rotated-away key must not linger anywhere"
+
+    _update(name, {"endpoint": FIXTURE_BASE})  # omitted → unchanged
+    assert _home_hits(_home, ROTATED) == [".env"]
+
+    _update(name, {"api_key": None})  # explicit null → cleared, from the store too
+    assert "api_key" not in _stored_options(name)
+    assert _home_hits(_home, ROTATED) == []
+
+
+def test_delete_removes_the_stored_key(_home, name):
+    _create(name, {"api_key": KEY})
+
+    resp = _run(
+        H.api_provider_delete(_req("DELETE", f"/api/model-providers/{name}", None, {"name": name}))
+    )
+    assert resp.status == 200, resp.body
+    assert _home_hits(_home, KEY) == [], "deleting the provider left its key in the store"
+
+
+def test_the_key_is_not_exported_into_the_process_environment(name):
+    """Only a reference resolves it: the gateway's children must not inherit a provider key."""
+    _create(name, {"api_key": KEY})
+
+    assert KEY not in os.environ.values()
+
+
+def test_provider_list_reports_the_stored_secret_by_name_only(name):
+    _create(name, {"api_key": KEY})
+
+    resp = _run(H.api_providers_list(_req("GET", "/api/model-providers")))
+    assert KEY not in resp.body.decode()
+    row = next(p for p in json.loads(resp.body)["providers"] if p["name"] == name)
+    assert row["stored_secrets"] == ["api_key"]
+
+
+def test_a_key_typed_before_this_change_moves_to_the_store_and_still_authenticates(
+    _home, name, endpoint_accepting
+):
+    """The one-time move at gateway boot. A key the user already typed must keep working."""
+    doc = {
+        "providers": [
+            {
+                "name": name,
+                "type": FIXTURE_TYPE,
+                "model": "",
+                "options": {"api_key": KEY, "endpoint": FIXTURE_BASE},
+            }
+        ]
+    }
+    config_loader.config_path().write_text(json.dumps(doc), encoding="utf-8")
+    (_home / "config.json.bak").write_text(json.dumps(doc), encoding="utf-8")
+
+    from personalclaw.config.secret_refs import migrate_plaintext_secrets
+    from personalclaw.llm.registry import sync_entries_from_config
+
+    migrate_plaintext_secrets()
+
+    assert _home_hits(_home, KEY) == [".env"], "the move left a plaintext copy behind"
+    assert stat.S_IMODE(config_loader.config_path().stat().st_mode) == 0o600
+
+    sync_entries_from_config()
+    seen = endpoint_accepting(KEY)
+    assert _test_connection(name)["ok"] is True
+    assert seen == [f"Bearer {KEY}"]
+
+    before = _config_text()
+    migrate_plaintext_secrets()
+    assert _config_text() == before, "the move is not idempotent"

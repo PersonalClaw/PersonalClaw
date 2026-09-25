@@ -1,8 +1,8 @@
 """Tests for prompt use-case bindings — which system prompt serves each context.
 
 The default-agent system prompt resolves from the prompt provider via a per-use-case
-binding (chat / background / code / goal_loop), falling back to the bundled
-``system-default`` prompt (seeded from the shipped prompt) when unbound.
+binding (chat / background), falling back to the use case's own bundled prompt (seeded
+from the shipped file) when unbound.
 """
 
 import pytest
@@ -22,11 +22,15 @@ def _home(tmp_path, monkeypatch):
 
 
 def test_use_case_vocabulary():
-    # The four default-AGENT contexts are always present. The full vocabulary is
-    # larger now (every bundled prompt — agent system prompts AND internal task
-    # prompts — is individually bindable), and is derived from the catalog.
-    for agent_uc in ("chat", "background", "code", "goal_loop"):
+    # The default-AGENT contexts are always present. The full vocabulary is larger
+    # (every bundled prompt — agent system prompts AND internal task prompts — is
+    # individually bindable), and is derived from the catalog.
+    for agent_uc in ("chat", "background"):
         assert agent_uc in puc.PROMPT_USE_CASES
+    # Loop and Code workers run as reserved agents whose own prompt is the override, so
+    # a binding for them could never be read — the rows were removed, not left inert.
+    for inert in ("code", "goal_loop"):
+        assert inert not in puc.PROMPT_USE_CASES
     from personalclaw.prompt_providers.catalog import BUNDLED_PROMPTS
 
     assert puc.PROMPT_USE_CASES == tuple(p.use_case for p in BUNDLED_PROMPTS)
@@ -56,12 +60,12 @@ def test_binding_overrides_resolution():
 
     _ensure_default_providers_registered()
     get_prompt_provider("native").create_prompt(
-        PromptTemplate(name="custom-code", content="CUSTOM CODE SYSTEM PROMPT — long enough.")
+        PromptTemplate(name="custom-bg", content="CUSTOM BACKGROUND SYSTEM PROMPT — long enough.")
     )
-    puc.save_active_prompts({"code": "native:custom-code"})
+    puc.save_active_prompts({"background": "native:custom-bg"})
 
-    assert puc.active_prompt_ref("code") == "native:custom-code"
-    assert puc.resolve_prompt_content("code").startswith("CUSTOM CODE")
+    assert puc.active_prompt_ref("background") == "native:custom-bg"
+    assert puc.resolve_prompt_content("background").startswith("CUSTOM BACKGROUND")
     # other use-cases still resolve the default
     assert "PersonalClaw" in puc.resolve_prompt_content("chat")
 
@@ -77,7 +81,7 @@ def test_system_prompt_resolution_matches_rendering_declarations():
     _ensure_default_providers_registered()
     get_prompt_provider("native").create_prompt(
         PromptTemplate(
-            name="declared-code",
+            name="declared-bg",
             content="{{tone}} review for {{subject}}",
             variables=[
                 PromptVariable(name="tone", default="careful"),
@@ -85,15 +89,17 @@ def test_system_prompt_resolution_matches_rendering_declarations():
             ],
         )
     )
-    puc.save_active_prompts({"code": "native:declared-code"})
+    puc.save_active_prompts({"background": "native:declared-bg"})
 
     # Missing required values fail identically instead of leaking raw template content.
-    assert puc.resolve_prompt_content("code") == render_use_case_prompt("code") is None
+    assert puc.resolve_prompt_content("background") == render_use_case_prompt("background") is None
 
     values = {"subject": "the release"}
     expected = "careful review for the release"
-    assert puc.resolve_prompt_content("code", values) == render_use_case_prompt("code", values)
-    assert puc.resolve_prompt_content("code", values) == expected
+    assert puc.resolve_prompt_content("background", values) == render_use_case_prompt(
+        "background", values
+    )
+    assert puc.resolve_prompt_content("background", values) == expected
 
 
 def test_render_failure_warns_with_use_case_and_reason(caplog):
@@ -107,24 +113,54 @@ def test_render_failure_warns_with_use_case_and_reason(caplog):
     _ensure_default_providers_registered()
     get_prompt_provider("native").create_prompt(
         PromptTemplate(
-            name="required-code",
+            name="required-bg",
             content="Review {{subject}}",
             variables=[PromptVariable(name="subject", required=True)],
         )
     )
-    puc.save_active_prompts({"code": "native:required-code"})
+    puc.save_active_prompts({"background": "native:required-bg"})
 
     with caplog.at_level("WARNING", logger="personalclaw.prompt_providers.runtime"):
-        assert render_use_case_prompt("code") is None
+        assert render_use_case_prompt("background") is None
 
-    assert "'code'" in caplog.text
+    assert "'background'" in caplog.text
     assert "missing required variable: subject" in caplog.text
 
 
-def test_unknown_use_case_falls_back_to_chat_prompt():
-    # Unknown use-cases fall back to the chat prompt (the ultimate default).
-    assert puc.active_prompt_ref("bogus") == f"native:{puc.DEFAULT_PROMPT_NAME}"
-    assert puc.DEFAULT_PROMPT_NAME == "system-chat"
+def test_an_unknown_use_case_resolves_to_no_prompt_not_the_chat_persona():
+    # An unknown use case (e.g. an uninstalled app's) has no prompt. Handing it the chat
+    # system prompt sent a task "You are <bot>…" with none of its own instructions.
+    from personalclaw.prompt_providers.runtime import render_use_case_prompt
+
+    assert puc.active_prompt_ref("bogus") == ""
+    assert render_use_case_prompt("bogus", {"content": "PAGE"}) is None
+
+
+def test_a_deleted_bound_prompt_falls_back_to_the_use_cases_own_prompt():
+    """Deleting a bound prompt leaves the binding dangling. The task then gets ITS OWN
+    bundled prompt back — never the chat persona in its place."""
+    from personalclaw.prompt_providers.base import PromptTemplate
+    from personalclaw.prompt_providers.registry import (
+        _ensure_default_providers_registered,
+        get_prompt_provider,
+    )
+    from personalclaw.prompt_providers.runtime import render_use_case_prompt
+
+    _ensure_default_providers_registered()
+    native = get_prompt_provider("native")
+    native.create_prompt(PromptTemplate(name="my-title", content="MY TITLE PROMPT {{transcript}}"))
+    puc.save_active_prompts({"title": "native:my-title"})
+    assert render_use_case_prompt("title", {"transcript": "T"}) == "MY TITLE PROMPT T"
+
+    native.delete_prompt("my-title")
+    dangling = render_use_case_prompt("title", {"transcript": "User: hi"})
+    assert dangling is not None
+    assert "User: hi" in dangling, "the task's own prompt did not render with its variables"
+    assert "powered by the PersonalClaw" not in dangling, "the chat persona stood in for it"
+
+    # …and it is exactly what the unbound use case renders.
+    puc.save_active_prompts({})
+    assert dangling == render_use_case_prompt("title", {"transcript": "User: hi"})
 
 
 def test_save_rejects_unknown_use_case_keys():
@@ -149,9 +185,12 @@ class TestSessionKeyDerivation:
             ("_bg", "background"),
             ("cron:job1", "background"),
             ("subagent:x", "background"),
-            ("code:proj1", "code"),
-            ("loop:goal1", "goal_loop"),
-            ("campaign-7", "goal_loop"),
+            # A webhook-triggered session: the Background prompt names this context, and
+            # without the entry a webhook run was framed as an interactive chat.
+            ("hook:deploy-ci", "background"),
+            # Loop/code workers run under `dashboard:loop-<id>` as reserved agents; no
+            # prefix routes them to a binding (they have none).
+            ("dashboard:loop-abc", "chat"),
         ],
     )
     def test_derivation(self, session_key, expected):
@@ -162,7 +201,7 @@ class TestSessionKeyDerivation:
     def test_explicit_non_default_wins(self):
         from personalclaw.context import _prompt_use_case_for
 
-        assert _prompt_use_case_for("dashboard:x", "code") == "code"
+        assert _prompt_use_case_for("dashboard:x", "background") == "background"
 
 
 # ── How a use case DESCRIBES itself ──────────────────────────────────────────
@@ -178,7 +217,8 @@ class TestSessionKeyDerivation:
 def test_every_core_use_case_has_a_human_label():
     # The vacuity floor first: this asserts a property of every member, so it is
     # worthless if the vocabulary ever resolves to a handful.
-    assert len(puc.PROMPT_USE_CASES) >= 40
+    # (39 since the three rows no consumer ever read — code, goal_loop, plan_rephrase — went.)
+    assert len(puc.PROMPT_USE_CASES) >= 35
     for uc in puc.PROMPT_USE_CASES:
         label = puc.use_case_label(uc)
         assert label, f"{uc} has no label"
@@ -194,13 +234,21 @@ def test_every_core_use_case_has_a_hint():
         assert puc.use_case_hint(uc), f"{uc} has no description"
 
 
-def test_the_four_agent_contexts_describe_the_CONTEXT_not_the_prompt():
+def test_the_agent_contexts_describe_the_CONTEXT_not_the_prompt():
     # Their catalog descriptions say "The bundled PersonalClaw system prompt for the
     # <x> context" — true of every row on the panel, and so useless as a row hint.
-    # These four are overridden; the assertion is that the override actually wins.
-    for uc in ("chat", "background", "code", "goal_loop"):
+    # These are overridden; the assertion is that the override actually wins.
+    for uc in ("chat", "background"):
         assert "bundled PersonalClaw system prompt" not in puc.use_case_hint(uc)
-    assert puc.use_case_hint("chat") == "Interactive sessions — dashboard, Slack, CLI"
+    assert (
+        puc.use_case_hint("chat")
+        == "Interactive sessions — dashboard, messaging channels, personalclaw run"
+    )
+    # Every run the Background row names really does resolve to it.
+    assert (
+        puc.use_case_hint("background")
+        == "Unattended runs — automations, subagents, heartbeat, webhooks"
+    )
 
 
 def test_every_core_use_case_lands_in_a_declared_category():

@@ -2,9 +2,11 @@
 
 ``GET /api/onboarding/model-check``
     Attempt the resolution chat itself performs, and report the verdict:
-    ``{"ok": true, "source": "binding"|"fallback", "bound": [ref, …]}`` when a chat
-    provider really built, else ``{"ok": false, "code", "what", "why", "fix"}`` — the
-    bridge's own ``AgentError`` envelope, relayed field for field.
+    ``{"ok": true, "source": "binding"|"fallback", "bound": [ref, …], "floor": bool,
+    "provider": name}`` when a chat provider really built (``floor``: what answers is the
+    zero-config floor model; ``provider``: the entry that answers, ``""`` when it cannot be
+    named), else ``{"ok": false, "code", "what", "why", "fix"}`` — the bridge's own
+    ``AgentError`` envelope, relayed field for field.
 
 Why this exists at all, and why it is not ``needs_model``
 ---------------------------------------------------------
@@ -30,6 +32,13 @@ not registered; a type with no factory because no app claims it, or its app is i
 but disabled, or it failed to load; a capability that does not cover the use case; a
 credential with no secret) fires at build time, where ``needs_model`` cannot see it. So
 this route asks the real question by doing the real thing, and relays the real cause.
+
+A build alone still could not see one cause: a provider type whose MODEL is not on disk yet
+(the bundled floor before its download) constructs perfectly well and fails its first turn.
+That answer comes from the type's readiness probe
+(:meth:`~personalclaw.llm.registry.ProviderRegistry.not_ready`), which resolution itself asks
+before choosing or building an entry — so it is part of the verdict relayed here, in the type's
+own words, and ``needs_model`` reads the same probe. There is no second check in this route.
 
 It deliberately adds NO cause analysis of its own. The bridge is the single source of
 "why can't I chat", and a second opinion here would be a second thing to keep true; the
@@ -57,12 +66,17 @@ That split is deliberate, not a gap left open: the two probe different layers, a
 onboarding step uses both. This route answers *"is the binding coherent"* — the
 configuration/registration/capability/credential family, which is where the nine causes
 live and the only family a green tick could otherwise fake. The provider test answers *"is
-it answering"*, and the step fires it exactly where the difference is visible: on an empty
-model list, which ``GET /api/models/chat`` produces identically for "offers no chat model"
-and "could not be reached" (it gathers catalogs with ``return_exceptions=True`` and drops a
-raising provider silently). Collapsing the two into one endpoint would mean either putting
-a network round trip behind this GET or reporting an unreachable provider as unbindable —
-both worse than naming the layer each answer belongs to.
+it answering"*, and the step asks it of the ``provider`` this verdict names, after every
+``ok`` that is not the in-process floor model — on every path to "ready", a reloaded step
+included. That last clause is the one that was missing: the step used to fire the test only
+on an empty model list during a first pass, so a reload that opened the step on ``verify``
+went straight from this build to "you're ready" — measured with an Ollama entry saved at an
+address nothing listened on and nothing bound. The step also fires it on an empty model list,
+which ``GET /api/models/chat`` produces identically for "offers no chat model" and "could not
+be reached" (it gathers catalogs with ``return_exceptions=True`` and drops a raising provider
+silently). Collapsing the two into one endpoint would mean either putting a network round
+trip behind this GET or reporting an unreachable provider as unbindable — both worse than
+naming the layer each answer belongs to.
 """
 
 from __future__ import annotations
@@ -122,11 +136,32 @@ async def api_onboarding_model_check(request: web.Request) -> web.Response:
             except Exception:  # noqa: BLE001 — a failed teardown does not change the verdict
                 logger.debug("model-check: provider shutdown failed", exc_info=True)
 
+    # WHICH entry answers, off the same authority as `GET /api/onboarding` (`serving_entry`):
+    #  - `floor` — it is the zero-config floor model, bound or not. The lane names the small
+    #    model as what it is rather than as "a chat model is configured", and reads that off THIS
+    #    verdict rather than off the readiness read the flow made before anything was downloaded.
+    #  - `provider` — its entry name, the one argument the reachability test takes. This verdict
+    #    is a build, not a call (see "What ok: true does NOT claim"), so the lane asks that
+    #    entry whether it answers before it says "ready". '' when it cannot be named.
+    floor = False
+    answering = ""
+    try:
+        from personalclaw.providers.provider_bridge import serving_entry
+
+        entry = serving_entry(_USE_CASE)
+        if entry is not None:
+            floor = bool(getattr(entry, "floor", False))
+            answering = str(entry.name)
+    except Exception:  # noqa: BLE001 — a label probe never changes the verdict
+        logger.debug("model-check: serving-entry probe failed", exc_info=True)
+
     return web.json_response(
         {
             "ok": True,
             "source": "binding" if bound else "fallback",
             "bound": bound,
+            "floor": floor,
+            "provider": answering,
         }
     )
 

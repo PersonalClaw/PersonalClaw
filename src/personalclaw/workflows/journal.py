@@ -94,6 +94,7 @@ from personalclaw.ledger import (  # noqa: F401 — re-exported for this module'
     STEERING,
     STEP_ATTEMPT,
     STEP_CACHED,
+    STEP_CANCELLED,
     STEP_COMPLETED,
     STEP_ESCALATED,
     STEP_FAILED,
@@ -191,11 +192,11 @@ class Journal(LedgerWriter):
         cache_key: str,
         state: InstanceState,
         duration_secs: float = 0.0,
-        tokens: int = 0,
+        tokens: int | None = 0,
         retries: int = 0,
         model: str = "",
         provider: str = "",
-        cost_usd: float = 0.0,
+        cost_usd: float | None = 0.0,
         degraded_reason: str = "",
         resolved_prompt_ref: str = "",
         resolved_prompt_redacted: bool = False,
@@ -226,6 +227,9 @@ class Journal(LedgerWriter):
         conformance on rows nothing examined; absent claims nothing. It also keeps every row without
         a shortfall byte-identical to what this writer wrote before the field existed, which is what
         lets the ledger golden prove a conforming run is unchanged.
+
+        `tokens` / `cost_usd` are ``None`` when the step's model calls did not report them — the
+        ledger's own "not recorded" (`ledger.reader.run_totals`), never a zero standing in for one.
         """
         self.write(
             STEP_COMPLETED,
@@ -235,11 +239,11 @@ class Journal(LedgerWriter):
             cache_key=cache_key,
             state=state.value,
             duration_secs=round(float(duration_secs), 3),
-            tokens=int(tokens),
+            tokens=None if tokens is None else int(tokens),
             retries=int(retries),
             model=model,
             provider=provider,
-            cost_usd=round(float(cost_usd), 6),
+            cost_usd=None if cost_usd is None else round(float(cost_usd), 6),
             degraded_reason=degraded_reason,
             resolved_prompt_ref=resolved_prompt_ref,
             resolved_prompt_redacted=bool(resolved_prompt_redacted),
@@ -269,6 +273,42 @@ class Journal(LedgerWriter):
             failure_signature=dict(signature or {}),
             attempt=int(attempt),
             retries_exhausted=bool(retries_exhausted),
+        )
+
+    def step_cancelled(
+        self,
+        path: str,
+        node_id: str,
+        *,
+        epoch: int,
+        model_calls_open: int,
+        tokens: int | None,
+        model: str,
+        cost_usd: float | None,
+    ) -> None:
+        """A step the run's cancel stopped mid-flight, with what its model calls had spent.
+
+        `model_calls_open` counts the generations the cancel cut off. Their usage was never
+        reported, so whenever it is non-zero `tokens` and `cost_usd` are a FLOOR — what the calls
+        that did finish reported — and `run_totals` and `introspection.run_stats` carry the run as
+        "not recorded" (at least this much) rather than as a measured total or a free zero. With
+        nothing cut off they are the step's measured usage, ``None`` when a provider reported none.
+        """
+        self.write(
+            STEP_CANCELLED,
+            instance_path=path,
+            node_id=node_id,
+            epoch=epoch,
+            model_calls_open=int(model_calls_open),
+            tokens=None if tokens is None else int(tokens),
+            model=model,
+            cost_usd=None if cost_usd is None else round(float(cost_usd), 6),
+            detail=(
+                f"cancelled with {model_calls_open} model "
+                f"{'call' if model_calls_open == 1 else 'calls'} still generating"
+                if model_calls_open
+                else "cancelled"
+            ),
         )
 
     def step_skipped(self, path: str, node_id: str, *, epoch: int, actor: str = "engine") -> None:

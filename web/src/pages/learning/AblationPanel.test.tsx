@@ -258,7 +258,8 @@ describe('the ablation report is CONSUMED, not merely served', () => {
   })
 
   it('points at the SWITCH when the substrate is off, not at the registry', () => {
-    render(<AblationPanel view={undefined} error={new ApiError('The eval substrate is off. Turn on `evals.enabled` to publish benchmark results.', 404, 'evals_disabled')} onRetry={() => {}} />)
+    // The wire's off answer — a 200 `{"enabled": false}`, not an error (see `EvalsOff.tsx`).
+    render(<AblationPanel view={{ enabled: false }} error={null} onRetry={() => {}} />)
     // The SWITCH, asked for by the name the user will see on it — its `_meta` label, which is what
     // `#/settings/evals` renders. This assertion used to read `/evals.enabled/`, the config path;
     // that was the right instruction while the CLI was the only way to flip it, and became the
@@ -274,7 +275,7 @@ describe('the ablation report is CONSUMED, not merely served', () => {
    *  the failure this guards is a typo'd path, which a mock can never catch. */
   it('the api client targets GET /api/evals/ablation', () => {
     const src = readFileSync(join(process.cwd(), 'src', 'lib', 'api.ts'), 'utf8')
-    expect(src).toContain("ablation: () => get<AblationView>('/api/evals/ablation')")
+    expect(src).toContain("ablation: () => get<AblationView | EvalsOffView>('/api/evals/ablation')")
     // Vacuity floor for the scan itself: `toContain` over a large file passes for the wrong
     // reasons easily, so prove it discriminates.
     expect(src).not.toContain("'/api/evals/ablations'")

@@ -33,7 +33,18 @@ dependency and no vendor string from this app.
 lives and dies with the app, so there is no orphan provider row to strand if the bundle is
 removed, and no credential is involved anywhere. ``floor=True`` is what makes the resolver
 sort this entry LAST, so the moment a user binds any real provider the floor stops being
-chosen — the model axis' version of the search registry's ``keyless`` floor.
+chosen — the model axis' version of the search registry's ``keyless`` floor. The entry is
+also BINDABLE (``bundled-chat:<model>``), which is how onboarding makes it the chat model when
+a user downloads it there.
+
+**Whether it can serve is the type's own answer, asked live.** The type registers a readiness
+probe (:func:`_readiness`) beside its factory, and core consults it before choosing or
+building any entry of this type: no weight on disk means "not downloaded yet", and — for the
+implicit nothing-is-bound path only — ``offer_as_fallback: false`` means "not offered". A build
+alone could not say either: this provider constructs perfectly well with no weight and fails on
+its first turn, which is how a home with no model used to be told it was ready. Because the
+probe reads the disk and the app's settings on every call, the switch takes effect the moment
+it is saved rather than at the next restart.
 
 **Honesty is part of the contract.** A 135M model is not a good assistant; it is a working
 first turn. Shipping it silently would let a user conclude the *product* is poor. So the
@@ -64,7 +75,6 @@ from typing import Any
 import numpy as np
 
 from personalclaw.sdk.local_model import (
-    DECLARATION_RELPATH,
     DOWNLOAD_BAD_STATUS,
     DOWNLOAD_TRUNCATED,
     DOWNLOAD_UNREACHABLE,
@@ -72,6 +82,7 @@ from personalclaw.sdk.local_model import (
     BundleDeclarationError,
     LocalModel,
     LocalModelProvider,
+    admit_transfer,
     licence_decision,
     parse_declaration,
     verify_download,
@@ -83,6 +94,7 @@ from personalclaw.sdk.model import (
     LLMEvent,
     ModelProvider,
     PromptCache,
+    PromptExceedsWindow,
     ProviderCapability,
     ProviderEntry,
     ProviderResolutionError,
@@ -125,34 +137,20 @@ DEFAULT_TEMPERATURE = 0.0
 DEFAULT_TOP_P = 0.95
 DEFAULT_REPEAT_PENALTY = 1.12
 DEFAULT_REPEAT_WINDOW = 96
-#: Prompt budget. The weight declares an 8192-token window, but every prompt token is a full
-#: forward pass through 537 MB of dequantized weights, so a long prompt is paid for in
-#: seconds. Overridable per install.
+#: The window this model is run with — the "Prompt budget" setting. The prompt AND the reply
+#: must fit in it together, so the prompt's own room is this minus the reply reserve: 3,776
+#: tokens at the defaults. The weight takes 8,192, but prefill time grows with the prompt, so the
+#: default is half that; the setting's schema bounds it by the weight's own limit.
 #:
-#: 🔴 4096 AND NOT 2048, BECAUSE 2048 MADE THE FLOOR REFUSE ANYTHING PAST THREE SENTENCES.
-#: This is the number ``context_headroom`` bounds the assembled prompt against, and the bound
-#: is ``window − output_reserve``, so 2048 left **1728** tokens of INPUT room, not 2048.
-#: Measured on this tree, driving the real ``assemble_context`` → ``check_for_model`` seam on a
-#: fresh home (so no memory, no history — the most favourable case there is):
+#: 🔴 4096 AND NOT 2048. At 2048 the reply reserve left 1,728 tokens of room; while the turn was
+#: still assembled a full context for this model (~1,640 tokens on a fresh home), a FIRST message
+#: past ~370 characters was refused outright. The model is now handed the request alone
+#: (``request_only``), so nearly all of the room is the message's — and 2048 would still halve
+#: what a user can send.
 #:
-#:     window  user text        assembled  room  remaining  verdict
-#:     2048    "hello"               1640  1728         88  fits
-#:     2048    223 chars             1691  1728         37  fits
-#:     2048    372 chars             1728  1728          0  fits      <- the ceiling
-#:     2048    373 chars             1729  1728         -1  CANNOT FIT
-#:     4096    "hello"               1640  3776       2136  fits
-#:     4096    20,000 chars          3640  3776        136  fits
-#:
-#: So the defect was never the greeting — it was that a FIRST message longer than 372
-#: characters was refused outright, with nothing in the conversation yet to trim. 88 tokens of
-#: headroom is not a budget, it is a rounding error.
-#:
-#: 🪤 AND THE THROUGHPUT COST IS NOT WHAT IT LOOKS LIKE. A wider window does not make a first
-#: turn slower: the assembled prompt is 1640 tokens at BOTH values (measured above — identical,
-#: because the assembler's own budget is already far under either room). The extra cost only
-#: arrives once a conversation genuinely grows past 1728 tokens, which under 2048 did not
-#: happen because the turn was refused instead. The window is paid for only where it buys
-#: something.
+#: 🔴 AND IT IS A HARD BOUND, enforced by :func:`_chatml`. Before it was one, the newest message
+#: was kept whole whatever its size: a 40,000-character paste became a ~9,000-token prefill and
+#: OOM-killed a 6 GB-capped gateway 7.1 s after send, with nothing in its log.
 DEFAULT_CONTEXT_TOKENS = 4096
 
 #: How much system prompt this model can be given before it starts CONTINUING the instructions
@@ -462,6 +460,31 @@ class ByteBpeTokenizer:
 
 # ── the executor ──────────────────────────────────────────────────────────────────────────
 
+#: The most memory one block of attention scores may occupy, in bytes (see
+#: :meth:`LlamaCpuModel._attend`). At 64 MiB a 4,096-token prefill of the shipped weight (9
+#: heads) runs ~455 query rows per block; the peak is set by this number, not by the prompt.
+_ATTENTION_BLOCK_BYTES = 64 * 1024 * 1024
+
+#: How a generation ended, in the words providers already use for it (Anthropic/Bedrock
+#: ``stop_reason``). Core reads the cap spelling to tell the user a reply was cut mid-sentence.
+_STOP_END_TURN = "end_turn"
+_STOP_MAX_TOKENS = "max_tokens"
+
+
+class GenerationReport:
+    """What one :meth:`LlamaCpuModel.generate` call did — filled in as it runs.
+
+    A per-call object rather than state on the model, because the model is ONE process-wide
+    instance shared by every open chat, and two turns generating at once must not read each
+    other's counts.
+    """
+
+    __slots__ = ("output_tokens", "stop_reason")
+
+    def __init__(self) -> None:
+        self.output_tokens = 0
+        self.stop_reason = _STOP_MAX_TOKENS
+
 
 class LlamaCpuModel:
     """A Llama-architecture forward pass on numpy, with a per-call KV cache.
@@ -557,6 +580,57 @@ class LlamaCpuModel:
         rotated = np.stack([even * cos - odd * sin, even * sin + odd * cos], -1)
         return rotated.reshape(x.shape)
 
+    def _attend(self, q: np.ndarray, k_t: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Causal softmax attention over the whole cache, computed in QUERY BLOCKS.
+
+        ``q`` is ``(heads, span, head_dim)``, ``k_t`` is ``(heads, head_dim, total)`` and ``v``
+        is ``(heads, total, head_dim)``; the result is ``(heads, span, head_dim)``.
+
+        🔴 Why blocks. The score matrix for a prefill is ``heads × span × total`` float32, and
+        computing it in one expression materialised it three or four times over (the scores,
+        the masked copy, the shifted copy, the exponentials). Measured on the shipped weight
+        before this: a 4,096-token prefill peaked at 3,687 MB RSS against 904 MB loaded, and
+        8,192 tokens at 10.73 GB — the whole "an ordinary paste OOM-kills an 8 GB laptop"
+        failure. Each block here is at most :data:`_ATTENTION_BLOCK_BYTES` of scores, and the
+        softmax runs IN PLACE on it, so the peak no longer depends on the prompt length at all.
+        Measured after, same weight and host: numpy's allocation peak for a 4,096-token prefill
+        fell from 2,641 MB to 427 MB (RSS 3,222 → 1,301 MB), and at the weight's 8,192 limit
+        from 9,922 MB to 738 MB (RSS 9,968 → 1,789 MB).
+
+        Each query row's softmax is independent of every other row's, so blocking changes no
+        arithmetic: the operations per row are the ones the one-shot expression performed, in
+        the same order (``tests/test_bundled_chat_provider.py`` pins it against an independent
+        reference at one row per block, a few rows, and one block for everything).
+
+        It is also LESS work, not more. A block's queries sit at positions ``offset + start ..
+        offset + stop - 1``, so no key at or past ``offset + stop`` is visible to any of them:
+        the upper triangle a causal prefill used to compute and then overwrite with ``-inf`` is
+        never computed, and only the block's own square of keys needs a mask at all.
+        """
+        heads, span, _ = q.shape
+        total = k_t.shape[2]
+        offset = total - span  # the absolute position of query row 0
+        rows = max(1, _ATTENTION_BLOCK_BYTES // max(1, heads * total * 4))
+        scale = math.sqrt(self.head_dim)
+        out = np.empty((heads, span, v.shape[2]), dtype=np.float32)
+        for start in range(0, span, rows):
+            stop = min(span, start + rows)
+            visible = offset + stop  # keys past this are in every query's future
+            scores = q[:, start:stop] @ k_t[:, :, :visible]
+            scores /= scale
+            if stop - start > 1:
+                # Causal mask inside the block's own square of keys — the only keys that can be
+                # in the future of some query here. A single decode step needs none: it attends
+                # to everything in the cache by construction.
+                first = offset + start
+                future = np.triu(np.ones((stop - start, stop - start), dtype=bool), 1)
+                np.copyto(scores[:, :, first:visible], -np.inf, where=future[None])
+            scores -= scores.max(-1, keepdims=True)
+            np.exp(scores, out=scores)
+            scores /= scores.sum(-1, keepdims=True)
+            out[:, start:stop] = scores @ v[:, :visible]
+        return out
+
     def forward(self, ids: Sequence[int], cache: "_KvCache") -> np.ndarray:
         """Run *ids* through every block and return the logits for the LAST position."""
         x = self.embedding[list(ids)].astype(np.float32)
@@ -569,26 +643,26 @@ class LlamaCpuModel:
             k = (h @ block["attn_k"].T).reshape(span, self.n_head_kv, self.head_dim)
             v = (h @ block["attn_v"].T).reshape(span, self.n_head_kv, self.head_dim)
             keys, values = cache.append(layer, self._rope(k, positions), v)
-            total = keys.shape[0]
-            k_all = np.repeat(keys, repeat, axis=1).transpose(1, 0, 2)
-            v_all = np.repeat(values, repeat, axis=1).transpose(1, 0, 2)
-            q_all = self._rope(q, positions).transpose(1, 0, 2)
-            scores = q_all @ k_all.transpose(0, 2, 1) / math.sqrt(self.head_dim)
-            if span > 1:
-                # Causal mask, only needed while prefilling: a single decode step attends to
-                # everything in the cache by construction.
-                future = np.arange(total)[None, :] > (np.arange(span) + total - span)[:, None]
-                scores = np.where(future[None], -np.inf, scores)
-            scores = scores - scores.max(-1, keepdims=True)
-            weights = np.exp(scores)
-            weights /= weights.sum(-1, keepdims=True)
-            attended = (weights @ v_all).transpose(1, 0, 2).reshape(span, self.d_model)
+            k_all = np.ascontiguousarray(np.repeat(keys, repeat, axis=1).transpose(1, 2, 0))
+            v_all = np.ascontiguousarray(np.repeat(values, repeat, axis=1).transpose(1, 0, 2))
+            q_all = np.ascontiguousarray(self._rope(q, positions).transpose(1, 0, 2))
+            attended = (
+                self._attend(q_all, k_all, v_all).transpose(1, 0, 2).reshape(span, self.d_model)
+            )
             x = x + attended @ block["attn_output"].T
             h = self._rms_norm(x, block["ffn_norm"])
             gate = h @ block["ffn_gate"].T
             up = h @ block["ffn_up"].T
-            silu = gate / (1.0 + np.exp(-gate, dtype=np.float32))
-            x = x + (silu * up) @ block["ffn_down"].T
+            # SwiGLU, in place: ``gate / (1 + exp(-gate)) * up`` with one temporary instead of
+            # four — at a 4,096-token prefill each of these is a 25 MB array, and the prefill
+            # peak is what decides whether a laptop survives the turn.
+            denominator = np.negative(gate)
+            np.exp(denominator, out=denominator)
+            denominator += 1.0
+            gate /= denominator
+            del denominator
+            gate *= up
+            x = x + gate @ block["ffn_down"].T
         cache.length += span
         logits: np.ndarray = self._rms_norm(x[-1], self.output_norm) @ self.output_weight.T
         return logits
@@ -606,8 +680,15 @@ class LlamaCpuModel:
         repeat_window: int,
         stop_ids: Sequence[int],
         should_stop: "threading.Event | None" = None,
+        report: GenerationReport | None = None,
     ) -> Iterable[str]:
-        """Yield decoded text as it is produced. Synchronous — run it off the event loop."""
+        """Yield decoded text as it is produced. Synchronous — run it off the event loop.
+
+        ``report`` is filled in as the reply is produced: how many tokens it took and why it
+        stopped — on the model's own stop token (``end_turn``) or on ``max_new_tokens``
+        (``max_tokens``), which is a reply cut mid-sentence that the user has to be told about.
+        """
+        report = report if report is not None else GenerationReport()
         cache = _KvCache(self.n_layer, self.n_head_kv, self.head_dim)
         logits = self.forward(prompt_ids, cache)
         produced: list[int] = []
@@ -615,6 +696,7 @@ class LlamaCpuModel:
         emitted = 0
         for _ in range(max_new_tokens):
             if should_stop is not None and should_stop.is_set():
+                report.stop_reason = _STOP_END_TURN
                 break
             history = list(prompt_ids)[-repeat_window:] + produced[-repeat_window:]
             token = _pick_token(
@@ -626,8 +708,10 @@ class LlamaCpuModel:
                 rng=rng,
             )
             if token in stop_ids:
+                report.stop_reason = _STOP_END_TURN
                 break
             produced.append(token)
+            report.output_tokens = len(produced)
             # Decode the whole run each step and emit only the delta, so a multi-token UTF-8
             # character is never sliced into two replacement glyphs.
             whole = self.tokenizer.decode(produced)
@@ -635,9 +719,6 @@ class LlamaCpuModel:
                 yield whole[emitted:]
                 emitted = len(whole)
             logits = self.forward([token], cache)
-
-    def context_tokens_used(self, count: int) -> float:
-        return 0.0 if self.max_context <= 0 else min(1.0, count / self.max_context) * 100.0
 
 
 class _KvCache:
@@ -767,11 +848,9 @@ def installed_weight() -> Path | None:
 
 
 def _declaration() -> BundleDeclaration | None:
-    """The sign-off record that ships beside this app in the wheel.
+    """The sign-off record that ships beside this app — :data:`DECLARATION_PATH`.
 
-    ``repo_declaration`` resolves it relative to a root, and the root here is the *installed*
-    package's own copy — ``docs/`` is not in the wheel, so the record is read from the path the
-    manifest data glob actually carries. Cached: it is parsed on every status poll.
+    Cached: it is parsed on every status poll.
     """
     global _DECLARATION
     if _DECLARATION is _UNSET:
@@ -780,15 +859,18 @@ def _declaration() -> BundleDeclaration | None:
 
 
 def _read_declaration() -> BundleDeclaration | None:
-    for candidate in _DECLARATION_CANDIDATES:
-        if candidate.is_file():
-            try:
-                return parse_declaration(candidate.read_text(encoding="utf-8"))
-            except BundleDeclarationError:
-                logger.exception("bundled-chat: %s is not a readable sign-off record", candidate)
-                return None
-    logger.warning("bundled-chat: no sign-off record found in %s", _DECLARATION_CANDIDATES)
-    return None
+    if not DECLARATION_PATH.is_file():
+        logger.warning(
+            "bundled-chat: no sign-off record at %s, so this install can neither offer nor "
+            "fetch the default chat model — the package was built without it",
+            DECLARATION_PATH,
+        )
+        return None
+    try:
+        return parse_declaration(DECLARATION_PATH.read_text(encoding="utf-8"))
+    except BundleDeclarationError:
+        logger.exception("bundled-chat: %s is not a readable sign-off record", DECLARATION_PATH)
+        return None
 
 
 def reset_declaration_cache() -> None:
@@ -800,14 +882,12 @@ def reset_declaration_cache() -> None:
 _UNSET = object()
 _DECLARATION: object = _UNSET
 
-#: Where to look for the sign-off record, nearest first. The app dir's own copy is what a real
-#: install has (the repo's ``docs/`` tree is not in the wheel); the repo path is what a source
-#: checkout and the tests have. Two candidates rather than one because a record that resolved
-#: only in a checkout would make every installed gateway unable to say what it would download.
-_DECLARATION_CANDIDATES: tuple[Path, ...] = (
-    Path(__file__).resolve().parent / "bundled-model-signoff.txt",
-    Path(__file__).resolve().parents[4] / DECLARATION_RELPATH,
-)
+#: The sign-off record: a real file beside this module, shipped by the
+#: ``apps/native/*/bundled-model-signoff.txt`` package-data glob, and the ONE place every
+#: install — checkout, wheel, container image, desktop bundle — reads it from. It is
+#: deliberately not a link into ``docs/``: an install carries only the package, so a record
+#: that resolved through anything outside it would exist in a checkout and nowhere else.
+DECLARATION_PATH = Path(__file__).resolve().parent / "bundled-model-signoff.txt"
 
 
 def offer() -> dict[str, Any] | None:
@@ -836,6 +916,24 @@ def model_name() -> str:
     if declaration is None:
         return "bundled-chat-model"
     return Path(declaration.artifact).stem
+
+
+def display_model_name() -> str:
+    """What a person calls this model: ``SmolLM2-135M-Instruct``, not the file it lands as.
+
+    Read off the sign-off record's ``model_id`` (``unsloth/SmolLM2-135M-Instruct-GGUF``) — the
+    repository name without its owner and without the ``-GGUF`` packaging suffix a GGUF
+    conversion's repository conventionally carries — so the name a surface shows moves with the
+    record and is never a second copy of which model is signed off. :func:`model_name` stays the
+    id the download, the delete and a binding use (``SmolLM2-135M-Instruct-Q8_0``).
+    """
+    declaration = _declaration()
+    if declaration is None:
+        return model_name()
+    repo = declaration.model_id.strip().rsplit("/", 1)[-1]
+    if repo.lower().endswith("-gguf"):
+        repo = repo[: -len("-gguf")]
+    return repo or model_name()
 
 
 # ── the download ──────────────────────────────────────────────────────────────────────────
@@ -875,7 +973,9 @@ async def download_weight(*, progress: Any = None) -> Path:
 
     Every requirement of a large first-run download is here rather than in a caller:
 
-    * **Bounded** — an https-only URL, a per-read socket timeout and a total deadline.
+    * **Bounded** — an https-only URL, a per-read socket timeout, a total deadline, and the
+      record's size ceiling enforced WHILE the bytes arrive (the announced length before the
+      first write, the running count after every read), not after the whole file has landed.
     * **Cancellable for real** — the transfer is a loop of ``await asyncio.to_thread(read)``,
       so cancelling the task lands between chunks (within one 4 MiB read) and the ``finally``
       unlinks the partial file. A download run as one blocking call could not be interrupted at
@@ -968,6 +1068,11 @@ async def _transfer(declaration: BundleDeclaration, target: Path, progress: Any)
             declared_total = response.headers.get("Content-Length")
             if declared_total and declared_total.isdigit():
                 total = int(declared_total)
+                # The ceiling, BEFORE a byte lands: a source announcing more than the signed-off
+                # file may be is refused on its word rather than after it has filled the disk.
+                refused = admit_transfer(declaration, total, announced=True)
+                if refused is not None:
+                    raise DownloadFailed(refused.outcome, refused.detail)
             while True:
                 if time.monotonic() > deadline:
                     raise DownloadFailed(
@@ -980,6 +1085,12 @@ async def _transfer(declaration: BundleDeclaration, target: Path, progress: Any)
                 chunk = await asyncio.to_thread(response.read, _CHUNK_BYTES)
                 if not chunk:
                     break
+                # …and after every read, because a Content-Length can be absent or lie. The
+                # chunk that crosses the line is never written, so the partial on disk never
+                # exceeds the ceiling, and the ``finally`` below removes it.
+                refused = admit_transfer(declaration, received + len(chunk), announced=False)
+                if refused is not None:
+                    raise DownloadFailed(refused.outcome, refused.detail)
                 sink.write(chunk)
                 received += len(chunk)
                 if progress is not None:
@@ -1062,7 +1173,8 @@ def load_bundled_model(path: Path | None = None) -> LlamaCpuModel:
             # act on.
             raise BundleUnavailable(
                 f"the default chat model is not downloaded yet ({resolved or weight_path()}). It "
-                "is a one-time download; start it from the chat screen or Settings → Models."
+                "is a one-time download; start it from the chat screen, onboarding's model step, "
+                "or Settings → Providers → Bundled offline model."
             )
         logger.info("bundled-chat: loading %s", resolved.name)
         model = LlamaCpuModel(GgufModel(resolved))
@@ -1124,6 +1236,13 @@ def _chatml(
     conversation still reaches the model as a conversation rather than as N copies of the
     assembled context.
 
+    🔴 **The result never exceeds *budget* — a newest turn that cannot fit is REFUSED.** It
+    used to be kept whole whatever its size, and that one rule is how an ordinary paste became
+    an out-of-memory kill: a 40,000-character message became a ~9,000-token prefill, a 60,000
+    one a (9, 27862, 27862) float32 score array. Nothing older can be dropped to make room for
+    the message itself, so the honest outcome is :class:`PromptExceedsWindow` — raised here,
+    before the model runs, carrying the numbers its sentence needs.
+
     **The system prompt is capped too, for the same measured reason.** The loop's prompt is
     written for a tool-using frontier model and this provider declares
     ``supports_tools = False``, so most of it does not even apply here. A system prompt over
@@ -1145,17 +1264,28 @@ def _chatml(
     head: list[int] = turn("system", declared) if declared else []
     tail = [start, *model.tokenizer.encode("assistant\n")]
 
-    body: list[list[int]] = []
+    body: list[tuple[str, str, list[int]]] = []
     for message in rest:
         role = str(message.get("role") or "user")
         role = role if role in ("user", "assistant") else "user"
         text = str(message.get("content", ""))
-        body.append(turn(role, user_request(text) if role == "user" else text))
+        text = user_request(text) if role == "user" else text
+        body.append((role, text, turn(role, text)))
 
-    kept: list[list[int]] = []
     used = len(head) + len(tail)
-    for chunk in reversed(body):
-        if kept and used + len(chunk) > budget:
+    if body:
+        role, text, newest = body[-1]
+        if used + len(newest) > budget:
+            framing = len(turn(role, ""))
+            raise PromptExceedsWindow(
+                model=model_name(),
+                room_tokens=budget - used - framing,
+                request_tokens=len(newest) - framing,
+                request_chars=len(text),
+            )
+    kept: list[list[int]] = []
+    for _role, _text, chunk in reversed(body):
+        if used + len(chunk) > budget:
             break
         kept.insert(0, chunk)
         used += len(chunk)
@@ -1188,6 +1318,10 @@ class BundledChatProvider(ModelProvider, LocalModelProvider):
 
     supports_tools = False
     prompt_cache = PromptCache.NONE
+    #: :func:`user_request` discards everything before core's marker, so this model is handed
+    #: the user's request alone. Declared so core assembles, budgets and records exactly that —
+    #: before it was declared, a "used 1 skill" chip named a skill this model never saw.
+    request_only = True
 
     def __init__(self, options: dict[str, Any] | None = None) -> None:
         settings = dict(options or {})
@@ -1207,6 +1341,11 @@ class BundledChatProvider(ModelProvider, LocalModelProvider):
         )
         self._context_pct: float | None = None
         self._cancelled = threading.Event()
+
+    @property
+    def sampling_temperature(self) -> float | None:
+        """This provider IS the sampler, so it always samples at a temperature: this one."""
+        return self._temperature
 
     # ── identity ──
 
@@ -1251,6 +1390,37 @@ class BundledChatProvider(ModelProvider, LocalModelProvider):
         self._cancelled.set()
         return "acked"
 
+    # ── the window this provider serves ──
+
+    def _served_window(self) -> int:
+        """The window this provider runs its model with: the configured prompt budget, never
+        past what the loaded weight declares it can take (``llama.context_length``).
+
+        ONE derivation for every number that describes this window — the prompt budget, the
+        reply reserve, the context gauge, the model card and :meth:`served_context_window` —
+        because each of them used to answer separately: the prompt was built against the
+        configured 4,096, the gauge divided by the weight's 8,192 and the card said a fixed
+        4,096 whatever the setting. Until the weight is loaded the configured value stands
+        alone; the settings form bounds it by the signed-off weight's own limit.
+        """
+        engine = _MODEL
+        limit = engine.max_context if engine is not None and engine.max_context > 0 else 0
+        return min(self._context_tokens, limit) if limit else self._context_tokens
+
+    def _reply_reserve(self, window: int) -> int:
+        """Room kept for the reply: the configured maximum, never more than half the window.
+
+        Half, because that is core's rule for every catalog card
+        (``local_models.budgets.MAX_OUTPUT_FRACTION``) — the budget check reads this app's card
+        through it, so a reserve this provider sized differently would put the two halves of one
+        turn on two different budgets.
+        """
+        return max(1, min(self._max_output_tokens, window // 2))
+
+    async def served_context_window(self) -> int | None:
+        """What core's window resolver asks before a turn: the window above, exactly."""
+        return self._served_window()
+
     # ── inference ──
 
     async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
@@ -1277,21 +1447,30 @@ class BundledChatProvider(ModelProvider, LocalModelProvider):
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[str | None] = asyncio.Queue()
         failure: list[BaseException] = []
+        report = GenerationReport()
+        prompt_tokens = [0]
 
         def run() -> None:
             try:
                 engine = load_bundled_model(self._weight_override)
-                prompt = _chatml(engine, messages, self._context_tokens)
-                self._context_pct = engine.context_tokens_used(len(prompt))
+                window = self._served_window()
+                reserve = self._reply_reserve(window)
+                # The prompt AND the reply must fit the window together: a prompt that fills it
+                # exactly leaves the reply nowhere to go. A newest message that cannot fit raises
+                # here, before the prefill — the prefill is the allocation.
+                prompt = _chatml(engine, messages, window - reserve)
+                prompt_tokens[0] = len(prompt)
+                self._context_pct = min(100.0, len(prompt) / window * 100.0)
                 for piece in engine.generate(
                     prompt,
-                    max_new_tokens=self._max_output_tokens,
+                    max_new_tokens=reserve,
                     temperature=self._temperature,
                     top_p=self._top_p,
                     repeat_penalty=self._repeat_penalty,
                     repeat_window=DEFAULT_REPEAT_WINDOW,
                     stop_ids=(engine.eos_id, engine.pad_id),
                     should_stop=self._cancelled,
+                    report=report,
                 ):
                     loop.call_soon_threadsafe(queue.put_nowait, piece)
             except BaseException as exc:  # noqa: BLE001 — re-raised on the caller's task
@@ -1312,7 +1491,13 @@ class BundledChatProvider(ModelProvider, LocalModelProvider):
             await asyncio.to_thread(worker.join, 30.0)
         if failure:
             raise failure[0]
-        yield LLMEvent(kind=EVENT_COMPLETE, context_usage_pct=self._context_pct)
+        yield LLMEvent(
+            kind=EVENT_COMPLETE,
+            context_usage_pct=self._context_pct,
+            stop_reason=report.stop_reason,
+            input_tokens=prompt_tokens[0],
+            output_tokens=report.output_tokens,
+        )
 
     # ── the local-model management contract ──
 
@@ -1344,6 +1529,10 @@ class BundledChatProvider(ModelProvider, LocalModelProvider):
         if declaration is None:
             return []
         present = installed_weight() is not None
+        # The window THIS provider serves, not the defaults: the budget check reads the reply
+        # reserve off this card, and a card that always said 4,096/320 disagreed with any user
+        # who had changed either setting.
+        window = self._served_window()
         return [
             LocalModel(
                 name=model_name(),
@@ -1361,8 +1550,9 @@ class BundledChatProvider(ModelProvider, LocalModelProvider):
                 runtime="gguf-numpy",
                 license=declaration.licence,
                 non_commercial=False,
-                context_tokens=DEFAULT_CONTEXT_TOKENS,
-                output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
+                context_tokens=window,
+                output_tokens=self._reply_reserve(window),
+                display_name=display_model_name(),
             )
         ]
 
@@ -1451,9 +1641,24 @@ def _factory(
     session_key: str | None = None,
     **kwargs: object,
 ) -> ModelProvider:
-    """Registry contract: build a provider from its entry's options bag."""
-    del session_key, kwargs  # stateless, credential-free
-    return BundledChatProvider(dict(entry.options or {}))
+    """Registry contract: build a provider from the app's settings AS SAVED NOW.
+
+    The settings are read at BUILD time rather than captured when the entry was registered.
+    The entry is registered once per process (and again when the weight lands), so options
+    captured then made every change in the settings form — the reply length, the prompt
+    budget, the sampling knobs — wait for a gateway restart. An entry's own options (a
+    user-created ``config.json`` row of this type) still win over the app's settings.
+
+    A per-call ``temperature`` build kwarg (best-of-N's ladder) wins over both — the caller
+    asking for THIS temperature is more specific than the default. Every build kwarg used to
+    be discarded here, so best-of-N on the bundled floor sampled N greedy copies of one answer.
+    """
+    del session_key  # stateless, credential-free
+    options = {**ProviderSettings.load(APP_NAME), **dict(entry.options or {})}
+    temperature = kwargs.get("temperature")
+    if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
+        options["temperature"] = float(temperature)
+    return BundledChatProvider(options)
 
 
 def create_provider(config: dict | None = None) -> BundledChatProvider:
@@ -1477,23 +1682,23 @@ def availability() -> tuple[bool, str]:
 def floor_entry() -> ProviderEntry | None:
     """The in-memory zero-config floor entry, or ``None`` when there is nothing to run.
 
-    ``None`` is the load-bearing half, and it is now the state of every fresh install until the
-    download finishes. An entry registered with no weight behind it would make
-    ``can_resolve_use_case("chat")`` report True, retire OU-12's calm setup state, and then fail
-    the turn — trading an honest wall for a broken promise.
+    ``None`` is the load-bearing half, and it is the state of every fresh install until the
+    download finishes: an entry with no weight behind it is a provider that builds and then
+    fails its first turn. (:func:`_readiness` answers the same question for any entry of this
+    type, so a ``config.json`` row created by hand cannot smuggle that state back in.)
+
+    The entry exists whenever the weight does — whatever ``offer_as_fallback`` says — because
+    the switch decides whether the model answers when NOTHING is bound, not whether it can be
+    bound at all. It carries no options: the settings are read at build (see :func:`_factory`).
     """
     path = installed_weight()
     if path is None:
-        return None
-    options: dict[str, Any] = dict(ProviderSettings.load(APP_NAME))
-    if not _as_bool(options.get("offer_as_fallback", True)):
-        logger.info("bundled-chat: offer_as_fallback is off; not registering the chat floor")
         return None
     return ProviderEntry(
         name=APP_NAME,
         type=PROVIDER_TYPE,
         model=path.stem,
-        options=options,
+        options={},
         credential=None,
         declared_capabilities=frozenset({Capability.CHAT}),
         floor=True,
@@ -1506,17 +1711,53 @@ def _as_bool(value: Any) -> bool:
     return bool(value)
 
 
+def _readiness(entry: ProviderEntry, *, implicit: bool) -> tuple[str, str] | None:
+    """Core's readiness contract for this type: ``(why, fix)`` when an entry cannot serve.
+
+    Two answers, both read LIVE — the disk and the saved settings, on every call — so neither
+    waits for a restart:
+
+    * **No weight on disk** — the model is not downloaded (or a partial transfer is all there
+      is). A provider of this type BUILDS in that state and fails its first turn, which is why
+      the answer has to come from here rather than from a build.
+    * **Nothing is bound and ``offer_as_fallback`` is off** — the user switched off "Answer when
+      nothing else is bound", so the implicit fallback must pass this model by. A binding to it
+      (``implicit=False``) is still served: choosing the model is the user saying it should
+      answer.
+
+    The words are the ones a user sees on the model check and in chat's setup state, so they
+    name the model, its size and where the download is.
+    """
+    if installed_weight() is None:
+        declaration = _declaration()
+        size = f"{round(declaration.size_bytes / (1024 * 1024))} MiB " if declaration else ""
+        return (
+            f"{display_model_name()}, the small offline model, is not downloaded yet — it is a "
+            f"one-time {size}download",
+            "download it from onboarding's model step, the chat screen, or Settings → Providers "
+            "→ Bundled offline model — or bind chat to another model in Settings → Models",
+        )
+    if implicit and not _as_bool(ProviderSettings.load(APP_NAME).get("offer_as_fallback", True)):
+        return (
+            f"{display_model_name()} is downloaded, but “Answer when nothing else is bound” is "
+            "switched off, so it only answers when chat is bound to it",
+            "bind chat to it in Settings → Models, or switch that setting back on in Settings → "
+            "Providers → Bundled offline model",
+        )
+    return None
+
+
 def register() -> bool:
     """Register the type, and the floor entry when a weight is actually installed.
 
     Returns whether a floor entry was registered, which is what the tests assert on: the type
     registering is unconditional (so Settings can describe the provider and its download card
     can exist), the ENTRY is conditional (so resolution only succeeds when a turn can really be
-    served).
+    served). The type carries :func:`_readiness`, which is what every resolution asks first.
     """
     registry = get_default_registry()
     try:
-        registry.register_type(BUNDLED_CHAT_CAPABILITY, _factory)
+        registry.register_type(BUNDLED_CHAT_CAPABILITY, _factory, readiness=_readiness)
     except ProviderResolutionError:
         logger.debug("bundled-chat: provider type already registered")
     entry = floor_entry()
@@ -1534,11 +1775,16 @@ def refresh_registration() -> bool:
     is not a first-run experience. Called by :meth:`BundledChatProvider.download_model` and
     :meth:`BundledChatProvider.delete_model`, which are the only two events that change the
     answer.
+
+    The app's entry REPLACES whatever holds its name. ``register_entry`` is first-wins, so a
+    ``config.json`` row named ``bundled-chat`` (the settings form used to create one) would
+    otherwise keep the name after the download, and chat would resolve to that row — not a
+    floor, so the chat screen would stop saying the small model is the one answering.
     """
     registry = get_default_registry()
     entry = floor_entry()
+    registry.unregister_entry(APP_NAME)
     if entry is None:
-        registry.unregister_entry(APP_NAME)
         reset_loaded_model()
         return False
     registry.register_entry(entry)

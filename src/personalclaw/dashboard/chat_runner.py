@@ -21,11 +21,16 @@ from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig, resolve_agent_bindings
 from personalclaw.constants import CHAT_TURN_TIMEOUT
 from personalclaw.context_engine import assemble_context, check_headroom
-from personalclaw.context_headroom import HeadroomState
+from personalclaw.context_headroom import HeadroomState, resolve_window
 from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
-from personalclaw.dashboard.chat_persistence import _build_history_prefix, save_session_to_history
+from personalclaw.dashboard.chat_persistence import (
+    background_summary,
+    prior_turns_transcript,
+    save_session_to_history,
+)
 from personalclaw.dashboard.chat_session_map import (
     build_turn_telemetry,
+    stamp_finish_reason,
     stamp_turn_summary,
     stamp_turn_telemetry,
     summarize_session_turn,
@@ -47,7 +52,6 @@ from personalclaw.dashboard.chat_utils import (
     _project_context_preamble,
     _redact_for_display,
     _validate_tool_name,
-    persisted_history_key,
     stream_slash_command,
     strip_status_sentinel,
     task_mode_denies,
@@ -60,6 +64,7 @@ from personalclaw.dashboard.state import (
     SUBAGENT_COMPLETION_PREFIX,
     DashboardState,
     _ChatSession,
+    chat_approval_id,
     read_only_command,
     resolve_effective_risk,
     tool_input_to_str,
@@ -74,6 +79,7 @@ from personalclaw.guardrails.loop_breaker import (
     structural_note,
     warn_note,
 )
+from personalclaw.history import model_view
 from personalclaw.hooks import (
     HOOK_EVENT_AGENT_SPAWN,
     HOOK_EVENT_ERROR,
@@ -95,6 +101,7 @@ from personalclaw.llm.base import (
     EVENT_TOOL_CALL_UPDATE,
     EVENT_TOOL_RESULT,
 )
+from personalclaw.llm.events import is_length_stop
 from personalclaw.llm_helpers import PromptBusyExhaustedError, humanize_provider_error
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
@@ -120,6 +127,37 @@ logger = logging.getLogger(__name__)
 #: different answers for what "used" means. REFUSED is absent on purpose: the skill was
 #: NAMED to the agent but none of its content loaded.
 _SKILL_USED_STATES = (SkillLoadState.ADMITTED.value, SkillLoadState.REDUCED.value)
+
+
+def _skills_sent(decisions: list, headroom: object) -> list[dict]:
+    """The skills-used record for a turn: what the prompt that was actually SENT carried.
+
+    The allocator's decisions describe the ASSEMBLY. The budget check can then shrink a skill
+    block to fit the window (``FITS_AFTER_COMPRESSION``), and a record built from the assembly
+    alone said a skill loaded 4,200 tokens when the prompt that went out carried 900 — so a
+    compressed skill is recorded as ``reduced`` at its post-compression size. The component
+    name is the assembler's own ``"skill: <name>"`` label, the same key the notice prints.
+    """
+    compressed = {
+        getattr(c, "name", ""): int(getattr(c, "tokens_after", 0) or 0)
+        for c in (getattr(headroom, "compressed", ()) or ())
+    }
+    sent: list[dict] = []
+    for decision in decisions:
+        if not isinstance(decision, dict) or decision.get("state") not in _SKILL_USED_STATES:
+            continue
+        name = str(decision.get("name") or "")
+        entry = {
+            "name": name,
+            "state": str(decision.get("state") or ""),
+            "loaded_tokens": int(decision.get("loaded_tokens") or 0),
+        }
+        after = compressed.get(f"skill: {name}")
+        if after is not None:
+            entry["state"] = SkillLoadState.REDUCED.value
+            entry["loaded_tokens"] = after
+        sent.append(entry)
+    return sent
 
 
 def is_empty_turn(
@@ -605,12 +643,6 @@ _WRITE_FILE_TOOLS = {"write_file", "edit_file"}
 # would bloat persisted meta; truncate with a marker.
 _MAX_FILE_SNAPSHOT = 200_000
 
-# How long an approval prompt may go unanswered before it is ALSO mirrored into the inbox
-# as a standing request. Short enough that a user who stepped away finds it
-# waiting, long enough that answering promptly never creates an inbox row to clean up —
-# the common case (approve within seconds) must not leave litter.
-_APPROVAL_MIRROR_GRACE_SECS = 90.0
-
 
 def _turn_complete_line(
     *,
@@ -700,54 +732,6 @@ def _record_turn_usage(
         model=model,
         estimate_if_missing=False,
     )
-
-
-def _mirror_approval_to_inbox(state: object, session_key: str, event: object, risk: str) -> str:
-    """Raise an ``agent_request`` item for an approval that outlived its prompt.
-
-    Returns the inbox item id, or "" when nothing was written. Deduped per
-    (session, request) so a re-entered prompt can't stack rows. Best-effort: a failure here
-    must never break the approval flow the user is actually waiting on.
-    """
-    try:
-        from personalclaw.inbox import ItemKind, emit_attention_item
-
-        tool = getattr(event, "title", "") or "a tool"
-        return emit_attention_item(
-            state,
-            source="system",
-            kind="agent_request",
-            item_kind=ItemKind.AGENT_REQUEST.value,
-            title=f"Approval needed: {tool}",
-            body=f"A chat is waiting for your decision before running {tool} (risk: {risk}).",
-            refs={"session": session_key, "approval": str(getattr(event, "request_id", ""))},
-            dedup_key=f"approval:{session_key}:{getattr(event, 'request_id', '')}",
-        )
-    except Exception:
-        logger.debug("approval inbox mirror failed", exc_info=True)
-        return ""
-
-
-def _resolve_mirrored_approval(item_id: str, outcome: str) -> None:
-    """Close the mirrored item once the approval is answered anywhere.
-
-    Approved → HANDLED, anything else (rejected, timed out) → DISMISSED, so the item records
-    which answer was given rather than merely that the question closed.
-    """
-    if not item_id:
-        return
-    try:
-        from personalclaw.inbox import InboxStore
-
-        store = InboxStore()
-        store.load()
-        item = store.items.get(item_id)
-        if item is None or item.status in ("handled", "dismissed"):
-            return
-        item.status = "handled" if outcome.startswith("approved") else "dismissed"
-        store.save()
-    except Exception:
-        logger.debug("approval inbox mirror resolve failed", exc_info=True)
 
 
 def _file_change_base(session: _ChatSession) -> Path:
@@ -906,36 +890,12 @@ def _flush_segment(
     *,
     broadcast: bool = True,
 ) -> None:
-    """Finalize current text block as a segment and persist it."""
+    """Settle the answer streamed so far as an assistant segment.
 
-    # Remove trailing chunk messages (they belong to this segment).
-    # Also pull aside any stop_event interleaved with this segment's chunks
-    # so it lands AFTER the finalized assistant message. Historical
-    # stop_events from prior turns stay in place.
-    def _is_stop_event(m: dict) -> bool:
-        cls_val = m.get("cls", "")
-        if not cls_val or not isinstance(cls_val, str):
-            return False
-        try:
-            parsed = json.loads(cls_val)
-            return isinstance(parsed, dict) and parsed.get("kind") == "stop_event"
-        except (json.JSONDecodeError, ValueError):
-            return False
-
-    # Walk backwards to find the start of the trailing chunk/stop_event run.
-    boundary = len(session.messages)
-    for i in range(len(session.messages) - 1, -1, -1):
-        role = session.messages[i].get("role", "")
-        if role == "chunk" or _is_stop_event(session.messages[i]):
-            boundary = i
-        else:
-            break
-    head = session.messages[:boundary]
-    tail = session.messages[boundary:]
-    trailing_stop_events = [m for m in tail if _is_stop_event(m)]
-    session.messages = (
-        head  # drops chunks AND trailing stop_events; tail.non-chunk-non-stop stays in head
-    )
+    The ONE settler of a streamed answer — the end of a turn, a tool call or approval
+    that interrupts the text, and every error path that ends a turn mid-answer all come
+    here, so an interrupted answer is kept exactly like a finished one.
+    """
     # Redact the accumulated text
     redacted, exfil_warnings = redact_exfiltration_urls(assistant_text)
     for w in exfil_warnings:
@@ -943,12 +903,11 @@ def _flush_segment(
     redacted, cred_warnings = redact_credentials(redacted)
     for w in cred_warnings:
         logger.warning("Credential redacted in chat segment: %s", w)
-    # Persist as assistant message. Broadcast is kept enabled so that
-    # other tabs viewing the same session receive the finalized text.
-    # The active tab already has this content from streaming chunks;
-    # the chat_segment event tells it to finalize streaming → assistant.
-    session.append("assistant", redacted, "msg msg-a")
-    last_msg: dict = session.messages[-1]
+    # Settled in place — where the text streamed, so a stop card pressed mid-answer stays
+    # after the prose. The settled entry is broadcast so other tabs viewing the session get
+    # the finalized text; the active tab already has it from the streamed chunks, and the
+    # chat_segment event tells it to finalize streaming → assistant.
+    last_msg: dict = session.finish_stream(redacted)
     # Episodic memory citations: stamp the turn's `[Memory N]` → record manifest
     # onto the assistant message's meta so the frontend can resolve each cited token to
     # a deep-link. The manifest is per-TURN (episodic injects once, on the new-session
@@ -988,11 +947,6 @@ def _flush_segment(
         last_msg["variant_idx"] = len(pending_list) - 1
         session._pending_variants = []
         attached_variants = True
-    # Re-append any stop_event that belongs to this segment's trailing run,
-    # placed AFTER the finalized assistant message so the UI shows
-    # prose → stop card.
-    for ev in trailing_stop_events:
-        session.messages.append(ev)
     # Tell the frontend to finalize streaming → assistant.
     if broadcast:
         state.broadcast_ws("chat_segment", {"session": session.key})
@@ -1715,6 +1669,10 @@ async def run_chat(
     """
     # Reset the per-turn error flag; the except block sets it True on a crash.
     session._last_turn_errored = False
+    # The text this turn's dispatcher appended to the buffer, captured before anything
+    # below rewrites ``message`` (attachments, @prompt expansion, preambles). It is how
+    # the history restore finds — and leaves out — the message now being sent.
+    _in_flight_text = message
     # Phase 1 of the turn checkpoint: open a numbered turn and
     # record the identity set. Only at depth 0 — a nested `run_chat` (prompt expansion,
     # auto-continue) is the SAME user turn, and numbering it separately would make
@@ -1837,7 +1795,6 @@ async def run_chat(
 
     assistant_text = ""
     last_heartbeat = time.time()
-    chunk_seq = 0
     in_tool_group = False
     _pending_tools: dict[str, str] = {}  # tool_call_id -> tool_name
     # Host-authority bookkeeping for ACP turns. An ACP CLI decides for
@@ -2047,6 +2004,7 @@ async def run_chat(
         provider_agent: str | None = None
         memory_store: str | None = None
         agent_system_prompt: str = ""
+        agent_voice: str = ""
         provider_kind: str = ""
         acp_mode: str = ""
         agent_approval_mode: str = ""
@@ -2059,6 +2017,7 @@ async def run_chat(
             acp_mode = getattr(bindings, "acp_mode", "") or ""
             memory_store = bindings.memory_store_name
             agent_system_prompt = bindings.system_prompt
+            agent_voice = bindings.voice
             # The bound agent's EXPLICIT persistent approval grant (the "Always allow for
             # this agent" the card's scope picker writes → AgentProfile.approval_mode).
             # Consumed below to seed a NEW session's trust — the single seam that makes the
@@ -2076,10 +2035,12 @@ async def run_chat(
 
         # Task-mode framing — a LAYER on the resolved system prompt, threaded as
         # system_prompt_suffix (NOT folded into the override): for the default
-        # agent bindings.system_prompt is empty, and folding the framing into it
-        # made build_message treat the 4-line posture block as the ENTIRE system
-        # prompt — silently dropping identity/{{bot_name}}, widget instructions,
-        # output format, and safety rules on every default-agent chat.
+        # agent bindings.system_prompt is empty (its prompt is the one bound in
+        # Settings → Prompts), and folding the framing into it made build_message
+        # treat the 4-line posture block as the ENTIRE system prompt — silently
+        # dropping identity/{{bot_name}}, widget instructions, output format, and
+        # safety rules on every default-agent chat. The agent's voice rides beside
+        # it (agent_voice) for the same reason.
         _tm_framing = task_mode_framing(session)
 
         # Ephemeral discovered-ACP-agent override (picked live in the chat picker,
@@ -2253,20 +2214,18 @@ async def run_chat(
         # only, so anything that lived in a tool result is gone. Printing "resumed"
         # there would claim a protocol resume that did not happen; printing "created"
         # denies a restore that did. ``_restoring_history`` is computed from the very
-        # predicate the bootstrap consumes (one predicate, so the label cannot drift
-        # from the behaviour it names).
-        from personalclaw.context import (  # circular: context -> chat -> chat_runner
-            has_restorable_history,
+        # transcript the bootstrap consumes (one source, so the label cannot drift
+        # from the behaviour it names): THIS session's turns before the one being
+        # sent — never the in-flight message, never another session's.
+        _prior_transcript = prior_turns_transcript(
+            session, _in_flight_text, nested=_prompt_depth > 0
         )
-
-        _restore_log = (
-            getattr(state.context_builder, "conversation_log", None)
-            if state.context_builder is not None
-            else None
-        )
-        _restoring_history = bool(
-            is_new and not resumed and has_restorable_history(_restore_log, session_key)
-        )
+        if is_new and not resumed and _prior_transcript:
+            # What the fresh runtime is handed of those turns: while the chat's background
+            # summary (`bg_compress`) still describes its oldest span, the summary stands in
+            # for that span. The chat itself — the buffer and the file — is never shortened.
+            _prior_transcript = model_view(_prior_transcript, background_summary(state, session))
+        _restoring_history = bool(is_new and not resumed and _prior_transcript)
         if not is_new:
             _session_verb = "continued"
         elif resumed:
@@ -2407,20 +2366,18 @@ async def run_chat(
 
             compressed: str | None = None
             # is_new = new ACP agent/dashboard process, NOT new conversation.
-            # The channel thread persists across processes, so we compress its
+            # The conversation persists across processes, so we compress its
             # history to bootstrap the fresh session's context window. The gate is
             # ``_restoring_history`` — the same value the activity line printed
             # "restored from history" from, so the sentence and the bootstrap can
-            # never disagree about whether a restore happened. The ``is not None`` is a
-            # TYPE narrowing only — ``_restoring_history`` is already false for a missing
-            # log — so it cannot reintroduce a second, drifting predicate.
-            if _restoring_history and _restore_log is not None:
+            # never disagree about whether a restore happened.
+            if _restoring_history:
                 from personalclaw.context import (  # circular: context -> chat
                     compress_thread_history,
                 )
 
                 compressed = await compress_thread_history(
-                    _restore_log,
+                    _prior_transcript,
                     session_key,
                     message,
                     state.sessions,
@@ -2575,6 +2532,14 @@ async def run_chat(
                     # loop advance on an answer it never received.
                     session._last_turn_errored = True
                     return
+            # ── ONE window for this turn, asked of the runtime that will serve it ──
+            # Resolved once, BEFORE assembly, and handed to both the assembler and the budget
+            # check below: they used to resolve it separately and disagreed — for the unbound
+            # fallback model the check saw no model at all and passed a paste that OOM-killed
+            # the gateway, and for a local runtime the assembler budgeted for a fixed 4,096
+            # while the runtime served 32,768. The serving provider's own gauge divides by
+            # this same number, because the resolver's first answer is the provider's.
+            _window = await resolve_window(model_label, serving=client)
             # Assemble via the pluggable context engine (default = the monolithic
             # build_message; a custom engine that raises is quarantined to default
             # so the turn still gets context). Active-recall + structured-
@@ -2589,6 +2554,10 @@ async def run_chat(
                 cwd=session.workspace_dir or None,
                 memory_store=memory_store,
                 compressed_history=compressed,
+                # The session's own prior turns — what a fresh runtime is restored FROM
+                # when compression is not needed or fails. Handed over rather than
+                # re-read from the log, which may already hold the in-flight message.
+                prior_transcript=_prior_transcript,
                 mode=session.mode,
                 blocks_reads=session.blocks_reads,
                 # The push reflex logs a volunteer event per offered record; incognito
@@ -2601,6 +2570,7 @@ async def run_chat(
                 active_recall=getattr(session, "_app", "") not in ("loop", "code"),
                 system_prompt_override=agent_system_prompt,
                 system_prompt_suffix=_tm_framing,
+                agent_voice=agent_voice,
                 # Resolve the turn's agent to the binding-id form workflow
                 # scope_ref uses (native profile name | acp:<cli>/<modeId>), so
                 # agent-scoped SOPs surface only on that agent's turns.
@@ -2609,12 +2579,13 @@ async def run_chat(
                 ),
                 force_skill_ids=_force_skill_ids,
                 force_workflow_ids=_force_workflow_ids,
+                window=_window,
             )
             # ── The headroom contract, decided BEFORE the model call ──
             # The turn no longer discovers the context limit by failing at it: the seam
-            # measures the assembled prompt against the bound model's real window (minus
+            # measures the assembled prompt against the serving model's real window (minus
             # the reply reserve) and gets back one of three DECLARED states.
-            _headroom = await check_headroom(_assembled, model_ref=model_label)
+            _headroom = check_headroom(_assembled, window=_window)
             if _headroom.state is HeadroomState.CANNOT_FIT:
                 _refusal = _headroom.notice()
                 logger.warning("context headroom refusal in %s: %s", session.key, _refusal)
@@ -2662,15 +2633,7 @@ async def run_chat(
             # the hover list reads in the order the skills were admitted.
             _decisions = _assembled.metadata.get("skill_decisions")
             if isinstance(_decisions, list):
-                session._skills_used = [
-                    {
-                        "name": str(_d.get("name") or ""),
-                        "state": str(_d.get("state") or ""),
-                        "loaded_tokens": int(_d.get("loaded_tokens") or 0),
-                    }
-                    for _d in _decisions
-                    if isinstance(_d, dict) and _d.get("state") in _SKILL_USED_STATES
-                ]
+                session._skills_used = _skills_sent(_decisions, _headroom)
             if is_new:
                 ctx_len = _assembled.injected_chars
                 state.broadcast_ws(
@@ -2683,41 +2646,6 @@ async def run_chat(
                 )
         else:
             full_message = message
-
-        # Re-inject history if session was reset but messages haven't been
-        # saved to JSONL yet (e.g. stop button killed the process mid-chat).
-        # build_session_context already injects recent() from JSONL, so this
-        # only adds value when in-memory messages are newer than disk.
-        # Skip for soft stops — session is preserved, no re-injection needed.
-        if is_new and session.messages:
-            # Check if last stop was soft (session preserved, no re-injection).
-            # cls is a JSON-encoded dict (see api_chat_session_stop); parse it.
-            _last_stop_soft = False
-            for m in reversed(session.messages):
-                cls_val = m.get("cls", "")
-                if not isinstance(cls_val, str) or not cls_val.startswith("{"):
-                    continue
-                try:
-                    _cls = json.loads(cls_val)
-                except (json.JSONDecodeError, TypeError):
-                    continue
-                if not isinstance(_cls, dict) or _cls.get("kind") != "stop_event":
-                    continue
-                if _cls.get("outcome") == "soft":
-                    _last_stop_soft = True
-                break
-            if not _last_stop_soft:
-                history_key = persisted_history_key(state.conversation_log, session.key)
-                disk_count = 0
-                if state.conversation_log:
-                    disk_count = len(state.conversation_log.read_messages(history_key))
-                mem_count = sum(
-                    1 for m in session.messages if m.get("role") in ("user", "assistant")
-                )
-                if mem_count > disk_count:
-                    history = _build_history_prefix(session)
-                    if history:
-                        full_message = history + full_message
 
         if is_new:
             await _fire(HOOK_EVENT_SESSION_START, session_key)
@@ -2939,18 +2867,20 @@ async def run_chat(
                                     "tool_result",
                                     {"session": session.key, "tool_call_id": tcid, "output": ""},
                                 )
-                        elif m.get("role") not in ("tool", "permission", "chunk"):
+                        elif m.get("role") not in ("tool", "permission"):
                             break
                 in_tool_group = False
-                chunk_seq += 1
                 safe_chunk, _ = redact_exfiltration_urls(event.text)
                 safe_chunk, _ = redact_credentials(safe_chunk)
                 assistant_text += safe_chunk
-                session.append("chunk", safe_chunk, "chunk")
-                # Push chunk to WS clients (HTTP SSE reader drains from session._pending)
+                # Grows the ONE streaming entry for this answer — never a row per chunk.
+                session.stream_chunk(safe_chunk)
+                # Push chunk to WS clients (HTTP SSE reader drains from session._pending).
+                # Grown and stamped in this one synchronous step, so a session-detail
+                # snapshot's `stream_seq` is an exact resume point (see next_stream_seq).
                 state.broadcast_ws(
                     "chat_chunk",
-                    {"session": session.key, "content": safe_chunk, "seq": chunk_seq},
+                    {"session": session.key, "content": safe_chunk, "seq": state.next_stream_seq()},
                 )
             elif event.kind == EVENT_THINKING_CHUNK:
                 # Thinking content is not included in the main response text.
@@ -3767,8 +3697,8 @@ async def run_chat(
                     logger.warning("AUTO-REJECTED tool=%r (batch rejection)", event.title)
                     continue
                 # §2.3 (gap 3) — UNATTENDED FAIL-FAST, the last gate before the wedge.
-                # Everything below this point waits on a human: it renders an approval
-                # card, mirrors it to the inbox after a grace period, and then blocks
+                # Everything below this point waits on a human: it publishes the approval
+                # to every surface (the card, the approvals list, the Inbox) and then blocks
                 # for up to two hours. On an unattended turn there is no human, so that
                 # is not a gate — it is a two-hour stall that ends in a rejection
                 # anyway. Deny NOW, with the reason, and let the turn continue: the CLI
@@ -3867,77 +3797,63 @@ async def run_chat(
                     event.title,
                     json.dumps(perm_meta),
                 )
-                # The live chat page consumes this turn via the HTTP stream, so
-                # session.append's SSE broadcast is suppressed (_has_reader). Emit
-                # a typed `approval` WS event so the card renders LIVE — without it
-                # the prompt only appeared after a manual reload (which rehydrated
-                # the persisted permission message).
-                state.broadcast_ws(
-                    "approval",
-                    {
-                        "session": session.key,
-                        "id": str(event.request_id),
-                        "tool": event.title,
-                        "tool_input": perm_meta.get("tool_input", ""),
-                        "tool_purpose": event.tool_purpose or "",
-                        "risk": effective_risk,
-                        # #2821: the third input Contract C2 names. Computed per approval
-                        # since #443 and dropped on the floor until now — the frontend
-                        # declared the parameter and one branch of its derivation was
-                        # unreachable in production. `null` when the call runs no shell.
-                        "is_read_only": read_only,
+                # Park the future BEFORE publishing: publication is what makes the call
+                # answerable from anywhere, and an answer that arrives the instant it is
+                # listed must find the future in place.
+                loop = asyncio.get_running_loop()
+                fut: asyncio.Future[str] = loop.create_future()
+                request_id = str(event.request_id)
+                session._approval_futures[request_id] = fut
+                # Bind `outcome` BEFORE the try so the finally (and the post-block reads
+                # below) can never hit UnboundLocalError. It is set by the wait and by the
+                # TimeoutError handler — but NOT when the wait is cancelled (pytest-timeout,
+                # gateway shutdown, client disconnect, navigation away). On that path the
+                # finally used to raise UnboundLocalError, which REPLACED the cancellation
+                # in the traceback (so a CI hang read as an unrelated error, #1536).
+                # Default "rejected": a never-answered approval must not execute the tool.
+                # The cancellation still propagates (the finally doesn't swallow it).
+                outcome = "rejected"
+                try:
+                    # ONE registration for every surface — inside the try, so a turn torn
+                    # down mid-publication still leaves nothing listed. The live chat page
+                    # consumes this turn via the HTTP stream, so session.append's SSE
+                    # broadcast is suppressed (_has_reader); the registry's `approval` frame
+                    # is what renders the card LIVE, and it is the same entry
+                    # `GET /api/approvals` lists, Home counts, To triage and the phone offer
+                    # to answer, and the Inbox row is raised from. A chat approval used to
+                    # broadcast a frame of its own and register nowhere else, so it was
+                    # invisible to every one of those.
+                    await state.hold_session_approval(
+                        session,
+                        request_id,
+                        tool=event.title,
+                        tool_input=perm_meta.get("tool_input", ""),
+                        tool_purpose=event.tool_purpose or "",
+                        agent=_agent_label(session),
+                        risk=effective_risk,
+                        # #2821: the third input Contract C2 names — `None` when the call
+                        # runs no shell, screened on the RAW input above.
+                        is_read_only=read_only,
                         # The live card needs the grant target too, not just the rehydrated
                         # one — a prompt answered without a reload is the COMMON case, and
                         # it is the one that was promising blind (#541).
-                        "grant_agent": perm_meta.get("grant_agent", ""),
-                    },
-                )
-                loop = asyncio.get_running_loop()
-                fut: asyncio.Future[str] = loop.create_future()
-                session._approval_futures[str(event.request_id)] = fut
-                # Push via global SSE AFTER registering the future, so the
-                # session dict reflects pending_approval=true and Board cards
-                # move into the Blocked lane without a browser refresh.
-                state.push_sessions_update()
-                mirrored_item = ""
-                # Bind `outcome` BEFORE the try so the finally (and the post-block reads
-                # below) can never hit UnboundLocalError. It is set on the success and
-                # grace-timeout paths and by the outer TimeoutError handler — but NOT when
-                # the inner wait is cancelled (pytest-timeout, gateway shutdown, client
-                # disconnect, navigation away). On that path the finally used to raise
-                # UnboundLocalError, which REPLACED the cancellation in the traceback (so
-                # a CI hang read as an unrelated error, #1536) and — worse in production —
-                # skipped `_resolve_mirrored_approval`, leaving the mirrored inbox item
-                # asking for a decision the turn is already tearing down. Default
-                # "rejected": a never-answered approval must not execute the tool, and the
-                # mirror is resolved rather than stranded. The cancellation still
-                # propagates (the finally doesn't swallow it).
-                outcome = "rejected"
-                try:
-                    # An approval prompt is session-MODAL for latency: if the user is
-                    # looking at the chat, the card is the right surface and the inbox
-                    # would be noise. But this waits up to two hours, and a prompt the
-                    # user walked away from is a standing request they cannot see —
-                    # the session might be backgrounded, or the tab closed. So: wait a
-                    # short grace period first, and only mirror into the inbox if the
-                    # prompt is still unanswered after it.
-                    try:
-                        outcome = await asyncio.wait_for(
-                            asyncio.shield(fut), timeout=_APPROVAL_MIRROR_GRACE_SECS
-                        )
-                    except asyncio.TimeoutError:
-                        mirrored_item = _mirror_approval_to_inbox(
-                            state, session.key, event, effective_risk
-                        )
-                        outcome = await asyncio.wait_for(fut, timeout=7200.0)
+                        grant_agent=perm_meta.get("grant_agent", ""),
+                    )
+                    # Push via global SSE AFTER registering the future, so the
+                    # session dict reflects pending_approval=true and Board cards
+                    # move into the Blocked lane without a browser refresh.
+                    state.push_sessions_update()
+                    # The interactive window: an unattended turn failed fast above, so a
+                    # human is who this waits for.
+                    outcome = await asyncio.wait_for(fut, timeout=state._APPROVAL_TIMEOUT)
                 except asyncio.TimeoutError:
                     outcome = "rejected"
                 finally:
-                    session._approval_futures.pop(str(event.request_id), None)
-                    # Answering in the session must resolve the mirror too, or the inbox
-                    # keeps asking for a decision the user already made.
-                    if mirrored_item:
-                        _resolve_mirrored_approval(mirrored_item, outcome)
+                    session._approval_futures.pop(request_id, None)
+                    # Unanswered on the way out — expired, or its turn was torn down — so
+                    # every surface still listing it drops it as denied. A no-op when a
+                    # decision already withdrew it.
+                    state.expire_approval(chat_approval_id(session.key, request_id))
                 if outcome == "approved_trust_reads":
                     session._trust_reads = True
                     outcome = "approved"
@@ -4060,8 +3976,12 @@ async def run_chat(
                 logger.debug("Main loop: compaction event text=%r", event.text)
                 if _broadcast_compaction_result(state, session, event):
                     saw_compaction = True
+                    # What streamed before the result was the agent's compaction chatter,
+                    # not an answer: the result message above replaces it.
+                    session.discard_stream()
                     assistant_text = ""
             elif event.kind == EVENT_CLEAR_STATUS:
+                session.discard_stream()
                 session.messages.clear()
                 assistant_text = ""
                 session.append("assistant", "Conversation cleared.", "msg msg-a")
@@ -4079,6 +3999,8 @@ async def run_chat(
                 new_agent, _ = redact_exfiltration_urls(new_agent)
                 if new_agent:
                     session.agent = new_agent
+                    # The switch acknowledgement below replaces what streamed before it.
+                    session.discard_stream()
                     assistant_text = ""
                     session.append(
                         "assistant",
@@ -4172,6 +4094,7 @@ async def run_chat(
                     _stop_reason
                     and _stop_reason != STOP_REASON_END_TURN
                     and not is_cancelled_stop(_stop_reason)
+                    and not is_length_stop(_stop_reason)
                 ):
                     logger.warning(
                         "Unexpected stop_reason %r for session %s",
@@ -4187,6 +4110,11 @@ async def run_chat(
         if _stop_reason and _stop_reason.startswith("error:"):
             _rc = getattr(client, "exit_code", None)
             _rc_suffix = f" (exit {_rc})" if _rc is not None else ""
+            # The answer streamed before the process died was on screen: keep it, ahead
+            # of the error that explains why it stops.
+            if assistant_text:
+                _flush_segment(state, session, assistant_text, broadcast=False)
+                assistant_text = ""
 
             def _emit_error(msg: str) -> None:
                 session.append("error", msg, "msg msg-err")
@@ -4215,7 +4143,7 @@ async def run_chat(
         )
         if first_word == "/compact" and not saw_compaction and not slash_substituted:
             # Clear ACP agent's streamed "Compacting conversation..." text
-            session.messages = [m for m in session.messages if m.get("role") != "chunk"]
+            session.discard_stream()
             assistant_text = ""
             state.broadcast_ws("chat_done", {"session": session.key})
             # Tell frontend to show compacting state and disable input
@@ -4331,6 +4259,9 @@ async def run_chat(
         # holds the whole turn at this point — the user row, every tool row and every
         # flushed assistant segment — so it needs no turn-scoped accumulator of its own.
         stamp_turn_summary(session, summarize_session_turn(session))
+        # A reply cut at the model's output cap ends mid-sentence; the mark is what lets the
+        # transcript say so instead of reading as the model trailing off.
+        stamp_finish_reason(session, _stop_reason)
         # Save to history and trigger memory consolidation
         save_session_to_history(state, session)
         session._prompt_busy_retries = 0
@@ -4461,24 +4392,17 @@ async def run_chat(
                 )
             except Exception:
                 logger.debug("Failed to mirror response to channel", exc_info=True)
+    # Every handler below settles the answer streamed so far BEFORE it appends its own row,
+    # so the partial answer the user was reading is kept, and sits ahead of the error that
+    # explains why it stops.
     except asyncio.CancelledError:
         if assistant_text:
-            session.messages = [m for m in session.messages if m.get("role") != "chunk"]
-            session.append(
-                "assistant",
-                redact_credentials(redact_exfiltration_urls(assistant_text)[0])[0],
-                "msg msg-a",
-            )
+            _flush_segment(state, session, assistant_text, broadcast=False)
     except AcpProcessDied as exc:
         logger.warning("ACP process died in session %s: %s — resetting session", session.key, exc)
         needs_session_reset = True
         if assistant_text:
-            session.messages = [m for m in session.messages if m.get("role") != "chunk"]
-            session.append(
-                "assistant",
-                redact_credentials(redact_exfiltration_urls(assistant_text)[0])[0],
-                "msg msg-a",
-            )
+            _flush_segment(state, session, assistant_text, broadcast=False)
         if _prompt_depth == 0:
             session._acp_pipe_death_retries += 1
             if session._acp_pipe_death_retries <= 3:
@@ -4495,12 +4419,7 @@ async def run_chat(
         )
         needs_session_reset = True  # checked in finally block
         if assistant_text:
-            session.messages = [m for m in session.messages if m.get("role") != "chunk"]
-            session.append(
-                "assistant",
-                redact_credentials(redact_exfiltration_urls(assistant_text)[0])[0],
-                "msg msg-a",
-            )
+            _flush_segment(state, session, assistant_text, broadcast=False)
         if _prompt_depth == 0:
             session._prompt_busy_retries += 1
             if session._prompt_busy_retries <= 3:
@@ -4530,10 +4449,7 @@ async def run_chat(
             )
             needs_session_reset = True  # checked in finally block
             if assistant_text:
-                _safe, _ = redact_exfiltration_urls(assistant_text)
-                _safe, _ = redact_credentials(_safe)
-                session.messages = [m for m in session.messages if m.get("role") != "chunk"]
-                session.append("assistant", _safe, "msg msg-a")
+                _flush_segment(state, session, assistant_text, broadcast=False)
             if _prompt_depth == 0:
                 session._prompt_busy_retries += 1
                 if session._prompt_busy_retries <= 3:
@@ -4546,10 +4462,7 @@ async def run_chat(
                 session.append("error", "⟳ Connection lost — please retry.", "msg msg-err")
         else:
             if assistant_text:
-                _safe, _ = redact_exfiltration_urls(assistant_text)
-                _safe, _ = redact_credentials(_safe)
-                session.messages = [m for m in session.messages if m.get("role") != "chunk"]
-                session.append("assistant", _safe, "msg msg-a")
+                _flush_segment(state, session, assistant_text, broadcast=False)
             _err_text, _ = redact_exfiltration_urls(humanize_provider_error(exc))
             _err_text, _ = redact_credentials(_err_text)
             session.append(
@@ -4567,6 +4480,8 @@ async def run_chat(
             await _fire(HOOK_EVENT_ERROR, _err_text)
     except Exception as exc:
         logger.exception("Dashboard chat error in session %s", session.key)
+        if assistant_text:
+            _flush_segment(state, session, assistant_text, broadcast=False)
         _err_text, _ = redact_exfiltration_urls(humanize_provider_error(exc))
         _err_text, _ = redact_credentials(_err_text)
         session.append("error", _err_text, "msg msg-err")
@@ -4577,6 +4492,15 @@ async def run_chat(
         await _fire(HOOK_EVENT_ERROR, _err_text)
         await state.sessions.record_failure(session_key)
     finally:
+        # No exit leaves an answer half-written: one still streaming here — a path that
+        # returned or raised without settling it — is settled where it stood, before the
+        # file-change flush below attaches this turn's chips to it.
+        _unsettled = session.streaming_text
+        if _unsettled is not None:
+            try:
+                _flush_segment(state, session, _unsettled, broadcast=False)
+            except Exception:
+                logger.warning("could not settle the streamed answer for %s", session.key)
         session._batch_rejected = False
         # Clear this turn from the active-job tracker — the
         # same turn-exit boundary autonudge re-arms on. Best-effort.
@@ -4754,7 +4678,7 @@ async def run_chat(
         else:
             session._stopping = False
             # Only send "done" when queue is empty — keeps SSE reader alive
-            session.append("done", "", "done")
+            session.signal_done()
             # Clear task reference BEFORE pushing session update so that
             # session.running returns False immediately.  Without this,
             # push_sessions_update() reports running=True because the task

@@ -59,7 +59,7 @@ def test_failed_install_populates_fenced_fix_prompt(tmp_path):
         name="broken-app",
         manifest_extra={"setup": {"onInstall": f"echo {marker} >&2; exit 7"}},
     )
-    res = app_manager.install(src)
+    res = app_manager.install(src, confirm=True)
 
     assert not res.ok and not manager.app_dir("broken-app").exists()  # rolled back
     # 1) the bounded tail of the failing subprocess was captured

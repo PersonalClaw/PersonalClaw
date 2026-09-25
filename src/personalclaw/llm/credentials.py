@@ -201,27 +201,17 @@ class CredentialStore:
         return Credential(name=name, kind=kind, secret=None, source="none")  # type: ignore[arg-type]  # noqa: E501
 
     def save(self, descriptors: dict[str, dict[str, object]]) -> None:
-        """Atomically write ``descriptors`` to ``credentials.json``.
+        """Atomically write ``descriptors`` to ``credentials.json`` at mode ``0o600``.
 
-        Writes to a sibling ``.tmp`` file, ``chmod`` ``0o600`` on it,
-        ``os.replace`` into place, then re-applies ``0o600`` on the
-        renamed file (some filesystems reset permissions across rename).
-        Updates the in-memory descriptor map on success (R4.6).
+        Through ``atomic_write``, whose temp file is 0600 from creation: the previous
+        write-then-chmod of a fixed ``.tmp`` name held the descriptors — inline values
+        included — at the umask mode until the chmod ran, and two concurrent saves shared
+        one temp path. Updates the in-memory descriptor map on success (R4.6).
         """
-        self._home.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(descriptors, indent=2, sort_keys=True) + "\n"
+        from personalclaw.atomic_write import atomic_write
 
-        tmp_path = self._credentials_path.with_suffix(self._credentials_path.suffix + ".tmp")
-        tmp_path.write_text(payload, encoding="utf-8")
-        try:
-            os.chmod(tmp_path, self.FILE_MODE)
-        except OSError:
-            logger.warning("Cannot chmod %s to 0o600", tmp_path)
-        os.replace(tmp_path, self._credentials_path)
-        try:
-            os.chmod(self._credentials_path, self.FILE_MODE)
-        except OSError:
-            logger.warning("Cannot chmod %s to 0o600 after rename", self._credentials_path)
+        payload = json.dumps(descriptors, indent=2, sort_keys=True) + "\n"
+        atomic_write(self._credentials_path, payload, mode=self.FILE_MODE, fsync=True)
 
         # Take a defensive copy so callers can keep mutating their dict.
         self._descriptors = {k: dict(v) for k, v in descriptors.items()}

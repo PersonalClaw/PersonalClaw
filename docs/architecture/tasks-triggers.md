@@ -55,9 +55,26 @@ relative to `PersonalClaw/src/personalclaw/`.
 `registry.py`). Template variables are exported as environment variables for
 the bash action.
 
-**Dry-run is honest**: only providers that declare `supports_dry_run`
-(run-prompt, run-workflow) actually execute in observe mode; every other
-action records a `[dry run]` preview and refuses to run.
+**A trigger dry run executes nothing and records nothing.** `POST
+/api/triggers/{id}/run {"dry_run": true}` (the **Dry run** button) answers with
+the gate plan a hand-run would apply and `would_run` — the action a real run
+would dispatch, as `{provider, config}` — and that answer is the whole result:
+no run row, no `last_run_ts` move, so the panel renders it instead of waiting
+for one. `supports_dry_run` (run-prompt, run-workflow) is a provider's own
+observe-mode capability, reported by the Doctor's would-execute simulator.
+
+**One notification per fire.** A fire's completion report ("X finished" /
+"X failed", `triggers/delivery.py`) carries `statusUrl` back to the trigger.
+When the action IS a dashboard notification (`notify`), a successful fire
+sends no report — the action's own note is the notification, and it carries
+the `statusUrl` itself (`ActionContext.status_url`). A failed notify still
+reports.
+
+**The 900s cadence floor is for model calls.** `MIN_CLOCK_INTERVAL_SECS`
+warns only when the action can call a model: providers listed in
+`triggers/models.py`'s `ZERO_TOKEN_PROVIDERS` (bash, notify, the digests, …)
+are exempt, and anything unlisted — app-contributed actions included — keeps
+the warning.
 
 ### App-manifest crons
 

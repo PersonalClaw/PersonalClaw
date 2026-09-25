@@ -283,8 +283,9 @@ const SCHEME_SUPPLIED = new Set(Object.keys(SCHEMES[0].colors))
  *
  *  ✅ SCOPE WIDENED FROM ONE FILE TO THE TREE (#3504). This used to read `ui/StatusPill.tsx` only,
  *  and recorded that limit honestly: "a tree-wide version of `no_hairline_ink` fails on `DAY_TONE`
- *  today". It did — `pages/learning/learningMeta.ts`'s `DAY_TONE.out_of_scope` was `--color-outline`
- *  at 3.1833 on the light `surface-container`. That site is fixed (`--color-on-surface-var`, worst
+ *  today". It did — `pages/learning/learningMeta.ts`'s `DAY_TONE.not_started` (then named
+ *  `out_of_scope`) was `--color-outline` at 3.1833 on the light `surface-container`. That site is
+ *  fixed (`--color-on-surface-var`, worst
  *  5.4738 across all four tiers in both modes), so the assertion now runs over EVERY tone map in
  *  `web/src` and every literal ink position — see `toneMaps()` and `literalInkSites()`. A
  *  component-scoped guard for a class-shaped defect is a guard that finds the class exactly once. */
@@ -460,7 +461,7 @@ describe('the tone vocabulary is closed: every StatusPill tone is swept or named
     `${where} draws TEXT in ${tok}, a border/hairline token. A hairline is designed to be barely ` +
     `separable from its surface, so no choice of ground and no pinned compositing base can make it ` +
     `readable — pick an ink-ramp value (\`--color-on-surface-low\` or \`--color-on-surface-var\`; ` +
-    `they are \`StatusPill.neutral\`'s and \`DAY_TONE.out_of_scope\`'s respectively).`
+    `they are \`StatusPill.neutral\`'s and \`DAY_TONE.not_started\`'s respectively).`
 
   it('scan_population: both tree-wide scans found a real population (a scan over nothing passes forever)', () => {
     // 🔴 THE VACUITY FLOOR FOR EVERYTHING BELOW. `modules()`, `literalInkSites()`, `toneMaps()` and

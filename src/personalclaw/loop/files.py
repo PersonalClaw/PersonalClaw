@@ -202,6 +202,39 @@ def write_status(loop_id: str, status: LoopStatus, **extra: Any) -> None:
     atomic_write(d / "status.json", json.dumps(payload, indent=2))
 
 
+def write_credited_cycles(loop_id: str, cycles: int) -> None:
+    """Record how many cycles the watchdog has CREDITED (notified, judged, run the kind's hook for).
+
+    Durable because crediting is not idempotent — it notifies "Cycle N complete", runs the done
+    signal (a judge model call) and the kind's per-cycle hook (a code loop's SDLC stage advance).
+    The watchdog's in-memory baseline is empty after a gateway restart, so without this record it
+    re-credited the latest cycle on its first poll: measured 2026-09-25, "Cycle 1/30 complete" was
+    notified twice across one restart. Its own file rather than a key in ``status.json``, which
+    every status transition rewrites.
+    """
+    d = loop_dir(loop_id)
+    if d is not None:
+        atomic_write(d / "credited.json", json.dumps({"cycles": int(cycles)}))
+
+
+def credited_cycles(loop_id: str) -> int:
+    """The cycles already credited (:func:`write_credited_cycles`); 0 when none is recorded.
+
+    Tolerant: an absent file is a loop never credited (its first cycle is still to be), and an
+    unreadable one reads as 0 — re-crediting one cycle is recoverable, silently never crediting a
+    real one is not.
+    """
+    d = safe_loop_dir(loop_id)
+    f = d / "credited.json" if d else None
+    if f is None or not f.is_file():
+        return 0
+    try:
+        value = json.loads(f.read_text()).get("cycles", 0)
+    except (OSError, ValueError, AttributeError):
+        return 0
+    return value if isinstance(value, int) and value >= 0 else 0
+
+
 def write_brief(loop_id: str, text: str) -> None:
     d = loop_dir(loop_id)
     if d is not None:

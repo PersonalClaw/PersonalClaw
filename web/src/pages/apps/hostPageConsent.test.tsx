@@ -1,8 +1,21 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from 'vitest'
-import { render } from '@testing-library/react'
-import { ConsentModal, PermissionList, consentHostUi } from './installConsent'
-import type { AppCatalogEntry, AppSummary } from '../../lib/api'
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import type { AppCatalogEntry, AppInstallResult, AppSummary } from '../../lib/api'
+
+const previewApp = vi.fn()
+vi.mock('../../lib/api', () => ({
+  api: {
+    previewApp: (...a: unknown[]) => previewApp(...a),
+    installApp: () => Promise.reject(new Error('nothing is confirmed in this file')),
+    updateApp: () => Promise.reject(new Error('nothing is confirmed in this file')),
+  },
+}))
+vi.mock('../../app/appSdk', () => ({ launchChat: vi.fn() }))
+
+// Imported after the mocks so the dialog binds them.
+import { PermissionList, consentHostUi } from './installConsent'
+import { InstallDialogHarness } from '../../test/installDialogHarness'
 
 // #492. An app's UI bundle is fetched, rewritten and `import()`-ed into THIS page
 // (`appSdk.loadContributedModule` — no iframe, sharing the host React instance), so its
@@ -77,23 +90,24 @@ describe('PermissionList — the host-page row (#492)', () => {
   })
 })
 
-describe('ConsentModal passes the fact through to the row', () => {
-  // The install modal is a SECOND reader of the same disclosure, and the surface a user
-  // actually consents on when the scanner objects. The source rail counts that every
-  // `<ConsentModal` is handed `hostUi`; this pins that handing it over still reaches the
-  // row, which a prop renamed inside the component would break silently.
-  const guarded = { needsConsent: true, ok: false } as unknown as Parameters<typeof ConsentModal>[0]['result']
-
-  it('renders the host-page row inside the modal', () => {
-    render(
-      <ConsentModal
-        label="ui-app" busy={false} result={guarded}
-        permissions={{ api: ['/api/tasks'] }} hostUi={{ page: true, components: false }}
-        pythonDeps={undefined} crons={undefined} onConfirm={() => {}} onClose={() => {}}
-      />,
-    )
-    // `Modal` renders through a portal, so the RTL container is empty — read the document.
-    expect(text(document.body)).toMatch(/Runs in this dashboard page: yes/)
+describe('the install dialog passes the fact through to the row', () => {
+  // The dialog is a SECOND reader of the same disclosure, and the surface a user actually
+  // consents on. `consentHostUiRendered.test.ts` counts that every `PermissionList` is handed
+  // `hostUi`; this pins that the server's review still reaches the row, which a field renamed on
+  // the way through `AppDisclosureView` would break silently.
+  it('renders the host-page row inside the dialog, from the review the server read', async () => {
+    previewApp.mockResolvedValue({
+      ok: false, name: 'ui-app', error: '', needs_consent: true,
+      scan: { verdict: 'clean', tier: 'community', findings: [], signature: null },
+      displayName: 'UI App', version: '1.0.0', previous: null, consent: 'u'.repeat(64),
+      disclosure: {
+        permissions: { api: ['/api/tasks'] }, crons: [], pythonDependencies: [],
+        hasUI: true, uiComponents: '', hasBackend: false, onInstall: '', onUpdate: '', mcpServers: [],
+      },
+    } satisfies AppInstallResult)
+    render(<InstallDialogHarness target={{ source: '/apps/ui-app', label: 'ui-app' }} />)
+    await waitFor(() => expect(screen.getByRole('dialog').textContent).toMatch(/Security scan:/))
+    expect(text(screen.getByRole('dialog'))).toMatch(/Runs in this dashboard page: yes/)
   })
 })
 
@@ -105,8 +119,8 @@ describe('consentHostUi — one reading for both wires', () => {
 
   it('reads an installed app summary through the same two fields', () => {
     // The point of naming the catalog fields `hasUI`/`uiComponents` (rather than a third
-    // spelling) is that the Store card, the install modal, onboarding and the installed
-    // panel cannot answer this question differently.
+    // spelling) is that the Store detail panel, the install dialog and the installed panel
+    // cannot answer this question differently.
     const app = { hasUI: false, uiComponents: 'components.mjs' } as Pick<AppSummary, 'hasUI' | 'uiComponents'>
     expect(consentHostUi(app)).toEqual({ page: false, components: true })
   })

@@ -5,6 +5,7 @@ import json
 import sys
 
 from personalclaw.acp.errors import AcpError, AcpTimeoutError
+from personalclaw.atomic_write import atomic_write
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import DATA_WARNING
@@ -140,5 +141,4 @@ def _ensure_default_agent_in_config() -> None:
             }
         }
         data["default_agent"] = "default"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        atomic_write(p, json.dumps(data, indent=2) + "\n")

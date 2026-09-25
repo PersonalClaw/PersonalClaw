@@ -717,7 +717,79 @@ async def one_shot_completion(
     return await _run(provider)
 
 
-def humanize_provider_error(exc: object) -> str:
+def _failed_endpoint(exc: BaseException) -> str:
+    """``" at <host:port>"`` for a transport error that knows its request, else ``""``.
+
+    Only the host and port — never the path or query, which is where a provider that takes
+    its key in the URL would carry it. httpx attaches the request to the errors it raises
+    while sending; its ``request`` property raises instead of returning ``None`` when it was
+    never attached, so the absence is caught rather than tested.
+    """
+    try:
+        url = exc.request.url  # type: ignore[attr-defined]
+    except (AttributeError, RuntimeError):
+        return ""
+    host = str(getattr(url, "host", "") or "")
+    if not host:
+        return ""
+    if ":" in host:
+        host = f"[{host}]"
+    port = getattr(url, "port", None)
+    return f" at {host}:{port}" if port else f" at {host}"
+
+
+def _describe_unexplained_failure(exc: object) -> str:
+    """The sentence for a failure whose ``str()`` is empty — never an empty string.
+
+    ``httpx.ReadError``, every httpx timeout, ``asyncio.TimeoutError`` and a bare
+    ``ConnectionResetError`` all stringify to ``""``, and a turn error is SHOWN as its text:
+    an empty string rendered as an error bar with nothing in it, over the WebSocket and on
+    disk alike. So the class — and, for httpx, the endpoint — has to say what the message
+    did not. A wrapper raised ``from`` a transport error is described by that cause, since the
+    cause is what actually failed.
+    """
+    if exc is None:
+        return (
+            "The turn failed without reporting an error. Try again; if it keeps failing, "
+            "check the gateway log."
+        )
+    import httpx
+
+    seen: BaseException | None = exc if isinstance(exc, BaseException) else None
+    for _ in range(5):
+        if seen is None:
+            break
+        where = _failed_endpoint(seen)
+        if isinstance(seen, httpx.ConnectTimeout):
+            return (
+                f"Timed out connecting to the model provider{where}. Check that it is "
+                "running and reachable, then try again."
+            )
+        if isinstance(seen, (httpx.TimeoutException, TimeoutError)):
+            return (
+                f"The model provider{where} did not answer in time, so the request timed "
+                "out. Wait a moment and try again, or pick a different model."
+            )
+        if isinstance(seen, (httpx.ConnectError, ConnectionRefusedError)):
+            return (
+                f"Couldn't connect to the model provider{where}. Check that it is running "
+                "and reachable, then try again."
+            )
+        if isinstance(
+            seen, (httpx.NetworkError, httpx.RemoteProtocolError, ConnectionError, EOFError)
+        ):
+            return (
+                f"The connection to the model provider{where} was lost before its reply was "
+                "complete. Check that it is still running and reachable, then try again."
+            )
+        seen = seen.__cause__
+    return (
+        f"The turn failed with {type(exc).__name__}, and the error carried no message. "
+        "Try again; if it keeps failing, check the gateway log."
+    )
+
+
+def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
     """Turn a raw LLM-provider exception into a short, actionable user-facing line.
 
     Providers (Anthropic/OpenAI/…-compatible) surface failures as verbose SDK
@@ -728,15 +800,80 @@ def humanize_provider_error(exc: object) -> str:
     concise hint; pass anything unrecognized through (trimmed) so we never HIDE a
     real error, just clean up the ones we know. Pure string heuristics (provider SDKs
     don't share a typed error taxonomy), matched on the lowercased message.
+
+    Never returns an empty string: an exception with no message is described from its
+    class instead (:func:`_describe_unexplained_failure`).
+
+    Three classes are answered BEFORE the matcher, because the matcher would get them wrong:
+
+    * ``PromptExceedsWindow`` is already the user-facing sentence (model, limit, fix). Its
+      figures are this turn's own — "1,429 tokens" contains ``429``, which the substring map
+      below reads as a rate limit — so it passes through verbatim.
+    * ``MemoryError`` from an in-process model is numpy's allocator text ("Unable to allocate
+      26.0 GiB for an array with shape (9, 27862, 27862)") — true, and nothing a user can act on.
+      Answered before the empty-message rule too, since a bare ``MemoryError()`` is the same
+      failure with the same fix.
+    * ``ToolSchemaRejected`` — a provider refusing one of the request's tool definitions — is
+      already the sentence (which tool, whose bug, and a workaround that is true on the surface
+      that shows it). The raw dump it replaces contains ``400`` and ``permission``-shaped words
+      the substring map below would misread.
+
+    **``room_member`` makes the remedies true on a room.** A sentence here is product copy on
+    whatever surface shows it, and four of them name a chat-only fix: the composer's model
+    selector, "start a new chat", "your message". A room member's model is its AGENT BINDING's,
+    chosen on the Agents page, and what outgrows a model there is the room's conversation — so
+    given the member's name those four say that instead. Every other sentence is surface-neutral
+    and is the same words either way; with no member, every word is exactly the chat's.
     """
+    from personalclaw.guardrails.failure import PromptExceedsWindow, request_exceeds_window_sentence
+    from personalclaw.tool_providers.portable_schema import ToolSchemaRejected
+
+    if isinstance(exc, ToolSchemaRejected):
+        return exc.sentence(room=bool(room_member))
+    if isinstance(exc, PromptExceedsWindow):
+        if room_member:
+            return request_exceeds_window_sentence(
+                model=exc.model,
+                room_tokens=exc.room_tokens,
+                request_tokens=exc.request_tokens,
+                request_chars=exc.request_chars,
+                room_member=room_member,
+            )
+        return str(exc)
+    if isinstance(exc, MemoryError):
+        if room_member:
+            return (
+                "This machine ran out of memory while the model was reading this room's "
+                "conversation, so no reply was produced. Start a new room, or give the "
+                f"{room_member} agent a model that does not run on this machine on the Agents page."
+            )
+        return (
+            "This machine ran out of memory while the model was reading this conversation, so "
+            "no reply was produced. Shorten the message or start a new chat — or bind a model "
+            "that does not run on this machine in Settings → Models."
+        )
     raw = str(exc or "").strip()
+    if not raw:
+        return _describe_unexplained_failure(exc)
     low = raw.lower()
-    # (needle, friendly) — order matters; first match wins.
+    # (needle, friendly) — order matters; first match wins. The two surface-bound remedies are
+    # resolved first, so the table below stays one row per failure class.
+    credits_fix = (
+        f"give the {room_member} agent a different model on the Agents page."
+        if room_member
+        else "pick a different model for this chat (the model selector is in the composer)."
+    )
+    model_id = (
+        f"The model the {room_member} agent names isn't valid for this provider. Pick a listed "
+        "model for it on the Agents page."
+        if room_member
+        else "The selected model id isn't valid for this provider. Pick a listed model in "
+        "the composer's model selector."
+    )
     _MAP = [
         (
             ("credit balance is too low", "insufficient_quota", "insufficient credit", "billing"),
-            "This model's provider account is out of credits/quota. Top it up, or pick a "
-            "different model for this chat (the model selector is in the composer).",
+            f"This model's provider account is out of credits/quota. Top it up, or {credits_fix}",
         ),
         (
             (
@@ -771,8 +908,7 @@ def humanize_provider_error(exc: object) -> str:
                 "unknown model",
                 "invalid model",
             ),
-            "The selected model id isn't valid for this provider. Pick a listed model in "
-            "the composer's model selector.",
+            model_id,
         ),
     ]
     for needles, friendly in _MAP:

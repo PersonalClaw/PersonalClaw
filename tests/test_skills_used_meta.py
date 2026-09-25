@@ -91,7 +91,7 @@ def turn(tmp_path, monkeypatch):
 
     # The headroom verdict is not what is under test; a real check would need a bound
     # model and a window lookup.
-    async def _fits(_assembled, **_kw):
+    def _fits(_assembled, **_kw):
         return SimpleNamespace(state=HeadroomState.FITS, notice=lambda: "")
 
     monkeypatch.setattr(chat_runner, "check_headroom", _fits)

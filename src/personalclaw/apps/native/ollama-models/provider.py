@@ -139,6 +139,10 @@ _OUTPUT_TYPE_KEY = "output_type"
 #: The unschema'd JSON mode ollama accepts in place of a schema object.
 _JSON_MODE = "json"
 
+#: The request-body object ollama reads its sampling parameters from (`temperature`, `top_p`,
+#: `num_ctx`, …). A sampling parameter placed at the top level of the body is ignored.
+_WIRE_OPTIONS = "options"
+
 
 def native_format(requested: object) -> object | None:
     """Normalize a requested output shape into ollama's native ``format`` value.
@@ -196,6 +200,44 @@ def resolve_output_format(options: dict[str, object]) -> object | None:
         if resolved is not None:
             return resolved
     return None
+
+
+def _ollama_error_reason(body: str) -> str:
+    """Ollama's own sentence for a refused request, or its raw body when it sent no sentence.
+
+    Ollama answers a refusal with ``{"error": "..."}`` — e.g. ``model "x" not found, try pulling
+    it first`` — and that sentence is the only place the actual reason exists.
+    """
+    text = body.strip()
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, dict):
+        reason = parsed.get("error")
+        if isinstance(reason, str) and reason.strip():
+            text = reason.strip()
+    return text[:300] or "it gave no reason"
+
+
+def _raise_refused(response: Any, body: str) -> None:
+    """Raise a refused ``/api/chat`` as ``httpx.HTTPStatusError`` carrying OLLAMA's sentence.
+
+    ``response.raise_for_status()`` says "Client error '404 Not Found' for url
+    'http://localhost:11434/api/chat'" plus a link to MDN, and that is what a chat turn and an
+    Agent Rooms member's failed turn both showed for a model that is not pulled — measured in a
+    live room, where the next member read it as a connectivity problem. Ollama's body, already
+    read and logged by the caller, said exactly what was wrong. Same exception type with the
+    same response attached, so nothing that classifies or retries on it changes; only the
+    sentence a person reads does.
+    """
+    import httpx
+
+    raise httpx.HTTPStatusError(
+        f"Ollama answered {response.status_code}: {_ollama_error_reason(body)}",
+        request=response.request,
+        response=response,
+    )
 
 
 def _is_tools_unsupported_error(status_code: int, body: str) -> bool:
@@ -409,6 +451,15 @@ class OllamaProvider(ModelProvider):
         # this model, so subsequent complete() turns skip the doomed first try.
         self._tools_unsupported: bool = False
 
+    @property
+    def sampling_temperature(self) -> float | None:
+        """The ``options.temperature`` every request from this instance carries, if any."""
+        wire = self._extra_options.get(_WIRE_OPTIONS)
+        value = wire.get("temperature") if isinstance(wire, dict) else None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value)
+
     # ── Local-model management (the uniform download-surface contract) ─────────
     #
     # Ollama is a LOCAL downloadable model provider like faster-whisper/piper — its
@@ -551,14 +602,15 @@ class OllamaProvider(ModelProvider):
 
         async with self._client.stream("POST", "/api/chat", json=body) as response:
             if response.status_code >= 400:
-                err_body = await response.aread()
+                err_text = (await response.aread()).decode(errors="replace")
                 logger.error(
                     "Ollama %d: %s (model=%r, msg_count=%d)",
                     response.status_code,
-                    err_body.decode(errors="replace")[:200],
+                    err_text[:200],
                     self._model,
                     len(self._history),
                 )
+                _raise_refused(response, err_text)
             response.raise_for_status()
             async for line in response.aiter_lines():
                 if not line:
@@ -681,6 +733,7 @@ class OllamaProvider(ModelProvider):
                     model or self._model,
                     len(messages),
                 )
+                _raise_refused(response, err_text)
             response.raise_for_status()
             async for line in response.aiter_lines():
                 if not line:
@@ -825,6 +878,16 @@ class OllamaProvider(ModelProvider):
         except Exception as exc:  # noqa: BLE001 - best-effort probe, never fatal
             logger.debug("ollama: /api/ps served-window probe failed (%s)", exc)
         return None
+
+    async def served_context_window(self) -> int | None:
+        """The window this runtime serves the bound model with — the probe the gauge divides by.
+
+        This is what core's window resolver asks before a turn is assembled. Before it existed,
+        ``/api/ps`` fed only the gauge: with Ollama serving 32,768 the prompt builder budgeted
+        for its conservative 4,096 floor, dropped the widget instructions and told the user, on
+        every turn, that the model had a 4,096-token window.
+        """
+        return await self._served_window(self._model)
 
     async def _context_pct(
         self, model: str, input_tokens: int, messages: list[dict]
@@ -978,6 +1041,26 @@ def _factory(
         options.pop(_FORMAT_FIELD, None)
         options.pop(_OUTPUT_TYPE_KEY, None)
         options.update(_requested)
+
+    # A per-call sampling TEMPERATURE arrives the same way (HARNESS-CRAFT §2.1: best-of-N needs
+    # N genuinely different samples), and on ollama's wire it is not a top-level field: it lives
+    # in the request's `options` object. This factory used to read neither — the kwarg was
+    # dropped, and a proxy in front of a live ollama saw every best-of-n candidate request carry
+    # only `model`, `messages` and `stream`, so N paid calls sampled ONE answer N times. The
+    # per-call value wins over an entry-level one: the caller asking for THIS temperature is
+    # more specific than the instance default (the SDK's branded factory makes the same call).
+    _temperature = kwargs.get("temperature")
+    if isinstance(_temperature, (int, float)) and not isinstance(_temperature, bool):
+        _wire = options.get(_WIRE_OPTIONS)
+        options[_WIRE_OPTIONS] = {
+            **(_wire if isinstance(_wire, dict) else {}),
+            "temperature": float(_temperature),
+        }
+    # Routing and label fields are not request parameters: everything left in `options` is
+    # `setdefault`-ed onto the request body, so `default_model` (which the "Add instance" form
+    # writes) reached the wire as a top-level key on every call.
+    for _label in ("model", "default_model", "type", "name"):
+        options.pop(_label, None)
 
     logger.debug("Ollama factory: model=%r endpoint=%r", model, endpoint)
     return OllamaProvider(

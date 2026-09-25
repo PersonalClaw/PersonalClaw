@@ -4,10 +4,11 @@
 matrix is 540 judge calls, so a POST that started one would spend real money on a click and
 hold a request open for minutes. The run is `personalclaw judge-bench`.
 
-The load-bearing assertions are the two refusals. "No benchmark has run yet" and "the eval
-substrate is off" are both 404s, and they carry DIFFERENT stable codes — one code for both
-would make the panel's empty state a guess, and the panel does branch on the code to decide
-between guidance and a load failure.
+The load-bearing assertions are the two non-answers. "No benchmark has run yet" is a 404 with
+its own stable code, and "the eval substrate is off" is a DECIDED 200 ``{"enabled": false}``
+on every report read — one answer for both would make the panel's empty state a guess, and
+the off state is not a failure (a 404 there logged six console errors per Learning visit on a
+default install).
 """
 
 from __future__ import annotations
@@ -42,11 +43,55 @@ def evals_on(monkeypatch):
     monkeypatch.setattr(E, "_enabled", lambda: True)
 
 
-def test_disabled_is_a_404_with_its_own_code(monkeypatch):
+#: The six report reads the Learning page loads on EVERY visit, whatever the switch says.
+_REPORT_READS = (
+    (E.api_evals_judge_bench, "/api/evals/judge-bench"),
+    (E.api_evals_field_metrics, "/api/evals/field-metrics"),
+    (E.api_evals_studies, "/api/evals/studies"),
+    (E.api_evals_retrieval, "/api/evals/retrieval"),
+    (E.api_evals_ablation, "/api/evals/ablation"),
+    (E.api_evals_learning_benchmark, "/api/evals/learning-benchmark"),
+)
+
+
+@pytest.mark.parametrize(("handler", "path"), _REPORT_READS, ids=[p for _, p in _REPORT_READS])
+def test_a_switched_off_report_read_answers_off_instead_of_failing(monkeypatch, handler, path):
+    """Off is a decided state, so it is a 200 the page renders — not a 404 the browser logs.
+
+    Measured before this on a default install: every visit to #/learning made these six
+    requests and logged six "Failed to load resource: 404" console errors, one per panel, for
+    a feature the user had merely not turned on. The body is the flag alone: an empty
+    collection beside it would read as "nothing registered" to a client that skips the flag.
+    """
     monkeypatch.setattr(E, "_enabled", lambda: False)
-    resp = _run(E.api_evals_judge_bench(_req()))
-    assert resp.status == 404
-    assert _body(resp)["error"]["code"] == "evals_disabled"
+    resp = _run(handler(_req(path=path)))
+    assert resp.status == 200
+    assert _body(resp) == {"enabled": False}
+
+
+def test_off_drill_downs_and_the_one_write_still_refuse_with_their_code(monkeypatch):
+    """A drill-down names an artifact of a switched-off surface, and a write would bank work
+    for a machine told not to run — neither has a decided answer, so both keep the refusal.
+    The page never asks for either while the report read above says off."""
+    monkeypatch.setattr(E, "_enabled", lambda: False)
+    for coro in (
+        E.api_evals_study(_study_req("/api/evals/studies/st-1", study_id="st-1")),
+        E.api_evals_retrieval_card(_req(path="/api/evals/retrieval/card?store=knowledge")),
+        E.api_evals_retrieval_labels(_req("POST", "/api/evals/retrieval/labels")),
+    ):
+        resp = _run(coro)
+        assert resp.status == 404
+        assert _body(resp)["error"]["code"] == "evals_disabled"
+
+
+def test_every_report_read_on_the_surface_is_in_the_off_census():
+    """The census above is DERIVED against the route table, so a seventh report read cannot
+    arrive answering off with a 404: every GET that is not a drill-down must be listed."""
+    app = web.Application()
+    E.register_evals_routes(app)
+    gets = {str(r.resource.canonical) for r in app.router.routes() if r.method == "GET"}
+    drill_downs = {"/api/evals/studies/{study_id}", "/api/evals/retrieval/card"}
+    assert gets - drill_downs == {path for _, path in _REPORT_READS}
 
 
 def test_no_benchmark_yet_is_a_different_404_than_disabled(evals_on, monkeypatch):
@@ -144,16 +189,6 @@ def _study_req(path: str, **match):
     return request
 
 
-def test_the_study_routes_are_disabled_with_the_substrate(monkeypatch):
-    monkeypatch.setattr(E, "_enabled", lambda: False)
-    for resp in (
-        _run(E.api_evals_studies(_study_req("/api/evals/studies"))),
-        _run(E.api_evals_study(_study_req("/api/evals/studies/st-1", study_id="st-1"))),
-    ):
-        assert resp.status == 404
-        assert _body(resp)["error"]["code"] == "evals_disabled"
-
-
 def test_an_unregistered_study_is_its_own_404_code(evals_on, monkeypatch):
     from personalclaw.evals import studies
 
@@ -248,13 +283,6 @@ def _abl_req(**kw):
     return _req(path="/api/evals/ablation", **kw)
 
 
-def test_ablation_disabled_is_a_404_with_its_own_code(monkeypatch):
-    monkeypatch.setattr(E, "_enabled", lambda: False)
-    resp = _run(E.api_evals_ablation(_abl_req()))
-    assert resp.status == 404
-    assert _body(resp)["error"]["code"] == "evals_disabled"
-
-
 def test_no_ablation_yet_is_a_distinct_404_code(evals_on, monkeypatch):
     """Three states send a user to three different places — the switch, the registry, and
     waiting for the cadence — so "nothing has run" cannot share a code with "evals off"."""
@@ -316,18 +344,6 @@ def test_the_enabled_check_fails_closed_on_an_unreadable_config(monkeypatch):
 
 def _ret_req(method="GET", path="/api/evals/retrieval", **kw):
     return _req(method, path, **kw)
-
-
-def test_retrieval_disabled_is_a_404_with_its_own_code(monkeypatch):
-    monkeypatch.setattr(E, "_enabled", lambda: False)
-    for coro in (
-        E.api_evals_retrieval(_ret_req()),
-        E.api_evals_retrieval_card(_ret_req(path="/api/evals/retrieval/card?store=knowledge")),
-        E.api_evals_retrieval_labels(_ret_req("POST", "/api/evals/retrieval/labels")),
-    ):
-        resp = _run(coro)
-        assert resp.status == 404
-        assert _body(resp)["error"]["code"] == "evals_disabled"
 
 
 def test_no_retrieval_run_yet_is_a_different_404_than_disabled(evals_on, monkeypatch):
@@ -488,13 +504,6 @@ def test_a_card_that_marked_nothing_at_all_is_refused(evals_on):
 
 def _bench_req(**kw):
     return _req(path="/api/evals/learning-benchmark", **kw)
-
-
-def test_benchmark_disabled_is_a_404_with_its_own_code(monkeypatch):
-    monkeypatch.setattr(E, "_enabled", lambda: False)
-    resp = _run(E.api_evals_learning_benchmark(_bench_req()))
-    assert resp.status == 404
-    assert _body(resp)["error"]["code"] == "evals_disabled"
 
 
 def test_no_benchmark_run_yet_is_a_distinct_404_code(evals_on, monkeypatch):

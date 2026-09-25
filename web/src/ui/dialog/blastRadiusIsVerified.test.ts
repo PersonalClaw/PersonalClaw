@@ -635,19 +635,23 @@ describe('three more bodies, checked against their handlers', () => {
     expect(dropper.slice(0, 700), 'across every use case').toMatch(/for use_case, refs in list\(active\.items\(\)\)/)
   })
 
-  it('the credential clause is conditional AND true — the handler never touches the store', () => {
+  it('the credential clause is conditional AND true — the handler deletes the key it names', () => {
     const ui = web('pages/settings/ModelBackends.tsx')
-    expect(ui, 'gated on a credential actually being stored').toMatch(
-      /provider\.credential_status === 'ok' \? ' Its saved credential stays in the store\.'/,
+    expect(ui, 'gated on a key actually being stored').toMatch(
+      /const saved = provider\.stored_secrets\?\.length \?\? 0/,
     )
+    expect(ui).toContain(' The key saved for it is deleted too.')
     const h = py('dashboard/handlers/providers.py')
     const del = h.slice(h.indexOf('async def api_provider_delete'), h.indexOf('async def api_provider_test'))
-    // 🪤 THE CLAIM IS AN ABSENCE, so it is pinned as one: if the handler ever starts deleting the
-    // credential, this fails and the sentence has to be re-written rather than left reassuring people
-    // about a key that is gone.
-    expect(del, 'no credential deletion in the delete path').not.toMatch(
-      /credential|keyring|secret|delete_key|remove_credential/i,
+    // 🪤 THE CLAIM IS A DELETION, so it is pinned as one. This rail used to pin the opposite ("the
+    // handler never touches the store") and said the sentence must be rewritten the day that changed:
+    // the key now lives in the credential store and the delete path purges exactly the instance's own
+    // keys. If it ever stops, this fails rather than the dialog promising a revocation that did not happen.
+    expect(del, 'the delete path purges the instance-owned keys').toMatch(
+      /secret_refs\.purge\(\[secret_refs\.provider_owner\(name\)\.prefix\]\)/,
     )
+    const list = h.slice(h.indexOf('async def api_providers_list'), h.indexOf('async def api_provider_types'))
+    expect(list, 'and the list reports them, by name only').toMatch(/"stored_secrets": secret_refs\.owned_field_names\(/)
   })
 
   it('the schedule delete really removes the run history it promises', () => {

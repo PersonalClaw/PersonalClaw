@@ -126,26 +126,3 @@ def test_agent_still_reaches_metadata_on_creation_only(tmp_path):
     assert log.get_metadata("t")["agent"] == "researcher", "creation wins; later calls are ignored"
     for msg in log.read_messages("t"):
         assert "agent" not in msg
-
-
-def test_rotation_preserves_the_speaker_on_the_lines_it_keeps(tmp_path):
-    """Rotation rewrites the kept lines, so a field it did not know about could be dropped.
-
-    It is not, because `_maybe_rotate` moves the raw text of a line rather than re-encoding
-    a parsed message — but that is an implementation property worth a rail, since a future
-    rewrite through a typed projection would silently lose the field.
-    """
-    from personalclaw import history
-
-    log = ConversationLog(base_dir=tmp_path)
-    chunk = "x" * 8_000
-    archive_dir = tmp_path / "archive"
-    for i in range(400):
-        log.append("t", "assistant", chunk, speaker=f"member-{i % 3}")
-        if archive_dir.exists():
-            break
-    assert archive_dir.exists(), "the fixture must actually rotate for this to mean anything"
-
-    kept = log.read_messages("t")
-    assert len(kept) <= history._SESSION_KEEP_LINES
-    assert all(speaker_of(m).startswith("member-") for m in kept)

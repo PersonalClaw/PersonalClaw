@@ -54,14 +54,27 @@ def _atomic_json_write(path: Path, data: dict) -> None:
 
     Uses mkstemp for a unique temp file per call so concurrent writers
     to the same path don't clobber each other's temp files.
+
+    Under the PersonalClaw home (``mcp.json``, whose server ``env`` blocks carry tokens)
+    the file is 0600 in a 0700 directory — the home rule ``atomic_write`` enforces, applied
+    through the same :func:`~personalclaw.atomic_write.private_mode_for`. Anywhere else
+    (an external CLI's own agent config) the file keeps the mode it already has.
     """
+    from personalclaw.atomic_write import ensure_private_dir, private_mode_for
+
+    home_mode = private_mode_for(path)
+    if home_mode is not None:
+        ensure_private_dir(path.parent)
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            try:
-                mode = stat.S_IMODE(path.stat().st_mode)
-            except FileNotFoundError:
-                mode = 0o644
+            if home_mode is not None:
+                mode = home_mode
+            else:
+                try:
+                    mode = stat.S_IMODE(path.stat().st_mode)
+                except FileNotFoundError:
+                    mode = 0o644
             os.fchmod(f.fileno(), mode)
             json.dump(data, f, indent=2)
             f.write("\n")

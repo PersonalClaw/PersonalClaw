@@ -33,9 +33,13 @@ function room(extra: Partial<RoomRecord> = {}): RoomRecord {
     rounds_used: 0,
     round_budget: 0,
     pending_queue: [],
+    speaking: '',
+    owed: [],
+    round_running: false,
     members: [],
     effective_round_budget: 6,
     max_round_budget: 100,
+    max_members: 8,
     transcript_path: '/rooms/pricing-debate/transcript.jsonl',
     ...extra,
   }
@@ -47,9 +51,9 @@ const AGENTS: SavedAgent[] = [
   { name: 'writer', provider: 'native', model: 'gpt-5' },
 ]
 
-function panel(detail: RoomDetail, owed: string[] = [], onAdd = vi.fn(), onRemove = vi.fn()) {
+function panel(detail: RoomDetail, onAdd = vi.fn(), onRemove = vi.fn()) {
   render(
-    <RoomMembersPanel detail={detail} owed={owed} agents={AGENTS} busy={false} removing=""
+    <RoomMembersPanel detail={detail} agents={AGENTS} busy={false} removing=""
       onAdd={onAdd} onRemove={onRemove} />,
   )
 }
@@ -128,7 +132,7 @@ describe('a member row reports what that member IS', () => {
 
   it('says which member is owed a turn, and where in the queue', () => {
     panel({
-      room: room({ members: [member('analyst'), member('skeptic')] }),
+      room: room({ members: [member('analyst'), member('skeptic')], owed: ['skeptic', 'analyst'] }),
       member_posture: [
         { name: 'analyst', declared: {}, tool_grants: 'read', tool_allowlist: [] },
         { name: 'skeptic', declared: {}, tool_grants: 'read', tool_allowlist: [] },
@@ -138,30 +142,57 @@ describe('a member row reports what that member IS', () => {
         { name: 'skeptic', configured: true, model: 'b', provider: 'native' },
       ],
       messages: [],
-    }, ['skeptic', 'analyst'])
+    })
     expect(screen.getAllByText('Owed a turn')).toHaveLength(2)
     expect(screen.getByText('#1 in the queue')).toBeTruthy()
     expect(screen.getByText('#2 in the queue')).toBeTruthy()
   })
 
-  it('never claims a member is SPEAKING — the backend publishes no such field', () => {
-    panel({
-      room: room({ members: [member('analyst')] }),
-      member_posture: [{ name: 'analyst', declared: {}, tool_grants: 'read', tool_allowlist: [] }],
-      member_bindings: [{ name: 'analyst', configured: true, model: 'a', provider: 'native' }],
+  /** Two members, analyst's turn open — the only difference between the two tests below is whether
+   *  a round is running it, which is the whole difference between "answering" and "cut off". */
+  function openTurn(roundRunning: boolean): RoomDetail {
+    return {
+      room: room({
+        members: [member('analyst'), member('skeptic')],
+        speaking: 'analyst', owed: ['analyst', 'skeptic'], round_running: roundRunning,
+      }),
+      member_posture: [
+        { name: 'analyst', declared: {}, tool_grants: 'read', tool_allowlist: [] },
+        { name: 'skeptic', declared: {}, tool_grants: 'read', tool_allowlist: [] },
+      ],
+      member_bindings: [
+        { name: 'analyst', configured: true, model: 'a', provider: 'native' },
+        { name: 'skeptic', configured: true, model: 'b', provider: 'native' },
+      ],
       messages: [],
-    }, ['analyst'])
-    // The head of the queue is only PROBABLY the member whose turn is running: a failed turn
-    // advances the drain with nothing saying so. A badge that is usually right about who is
-    // talking is a fabricated value with a friendly face.
-    expect(screen.queryByText(/speaking/i)).toBeNull()
+    }
+  }
+
+  it('says ANSWERING for the member whose turn is open while a round runs — a reading, not a guess', () => {
+    // Both facts are the backend's: the open turn (`speaking`) and the live round
+    // (`round_running`). The head of a queue the tab remembered was only PROBABLY the member
+    // talking, which is why this badge did not exist until the backend said so.
+    panel(openTurn(true))
+    expect(screen.getByText('Answering')).toBeTruthy()
+    expect(screen.getAllByText('Owed a turn')).toHaveLength(1)
+    expect(screen.getByText('#2 in the queue')).toBeTruthy()
+    // The answering member is not ALSO "#1 in the queue": one fact, said once.
+    expect(screen.queryByText('#1 in the queue')).toBeNull()
+  })
+
+  it('says a cut-off turn is OWED, first — never answering — when no round is running', () => {
+    // An open turn with nothing running it is the one a stopped gateway cut off.
+    panel(openTurn(false))
+    expect(screen.queryByText('Answering')).toBeNull()
+    expect(screen.getAllByText('Owed a turn')).toHaveLength(2)
+    expect(screen.getByText('#1 in the queue')).toBeTruthy()
   })
 })
 
 describe('the roster controls', () => {
   it('offers an on-ramp when the room has no members, naming what a member is', () => {
     const onAdd = vi.fn()
-    panel({ room: room(), member_posture: [], member_bindings: [], messages: [] }, [], onAdd)
+    panel({ room: room(), member_posture: [], member_bindings: [], messages: [] }, onAdd)
     expect(screen.getByText('No members yet')).toBeTruthy()
     expect(screen.getByRole('button', { name: /Add a member/ })).toBeTruthy()
   })
@@ -180,7 +211,7 @@ describe('the roster controls', () => {
       member_posture: [{ name: 'analyst', declared: {}, tool_grants: 'read', tool_allowlist: [] }],
       member_bindings: [{ name: 'analyst', configured: true, model: 'a', provider: 'native' }],
       messages: [],
-    }, [], onAdd)
+    }, onAdd)
     await userEvent.click(screen.getByRole('button', { name: /Add/ }))
     const select = screen.getByRole('combobox', { name: 'Agent' })
     // Already-added agents are present but disabled, which answers "why is my analyst not in the
@@ -215,6 +246,23 @@ describe('the roster controls', () => {
     expect(screen.queryByRole('combobox', { name: 'Agent' })).toBeNull()
   })
 
+  it('points at the Agents page to create another agent, not at Settings', async () => {
+    // Agents are created under Agents (`#/agents/new`). Settings › Agent holds defaults, runners
+    // and subagents and has no create control — the validator measured `create: []` there — so the
+    // old "Create another agent in Settings" sent the user to a page that cannot do it.
+    const members = AGENTS.map((a) => member(a.name))
+    panel({
+      room: room({ members }),
+      member_posture: members.map((m) => ({ name: m.name, declared: {}, tool_grants: 'read', tool_allowlist: [] })),
+      member_bindings: members.map((m) => ({ name: m.name, configured: true, model: 'x', provider: 'native' })),
+      messages: [],
+    })
+    await userEvent.click(screen.getByRole('button', { name: /Add/ }))
+    const link = screen.getByRole('link', { name: /Create another agent/ })
+    expect(link.getAttribute('href')).toBe('#/agents/new')
+    expect(screen.queryByText(/in Settings/)).toBeNull()
+  })
+
   it('removes a member by name', async () => {
     const onRemove = vi.fn()
     panel({
@@ -222,9 +270,74 @@ describe('the roster controls', () => {
       member_posture: [{ name: 'analyst', declared: {}, tool_grants: 'read', tool_allowlist: [] }],
       member_bindings: [{ name: 'analyst', configured: true, model: 'a', provider: 'native' }],
       messages: [],
-    }, [], vi.fn(), onRemove)
+    }, vi.fn(), onRemove)
     await userEvent.click(screen.getByRole('button', { name: 'Remove analyst from this room' }))
     expect(onRemove).toHaveBeenCalledWith('analyst')
+  })
+})
+
+describe('🔴 the member ceiling is refused in the panel, not offered and then refused', () => {
+  // At 8/8 the picker still offered a ninth agent; "Add to the room" answered 400
+  // `room_member_limit`, and the composer banner offered a Retry that could never succeed. The
+  // ceiling is `room.max_members` — the number the add route enforces — so the panel can say no.
+  const FOUR: SavedAgent[] = [...AGENTS, { name: 'critic', provider: 'native', model: 'a' }]
+
+  function atCount(n: number, max: number) {
+    const members = FOUR.slice(0, n).map((a) => member(a.name))
+    render(
+      <RoomMembersPanel
+        detail={{
+          room: room({ members, max_members: max }),
+          member_posture: members.map((m) => ({ name: m.name, declared: {}, tool_grants: 'read', tool_allowlist: [] })),
+          member_bindings: members.map((m) => ({ name: m.name, configured: true, model: 'x', provider: 'native' })),
+          messages: [],
+        }}
+        agents={FOUR} busy={false} removing="" onAdd={vi.fn()} onRemove={vi.fn()} />,
+    )
+  }
+
+  it('at the ceiling, Add is unavailable and the reason is on screen', async () => {
+    atCount(3, 3)
+    const add = screen.getByRole('button', { name: /Add/ })
+    // Reachable but unavailable — the tab stop keeps its reason — and the click does nothing.
+    expect(add.getAttribute('aria-disabled')).toBe('true')
+    expect(add.getAttribute('title')).toMatch(/maximum of 3 members/)
+    // The reason is a visible sentence, not only a hover tooltip, and it says what to do.
+    expect(screen.getByText(/This room holds its maximum of 3 members/)).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Settings › Chat' }).getAttribute('href')).toBe('#/settings/chat')
+    await userEvent.click(add)
+    // A free agent EXISTS (critic) — the old panel offered it. Now no picker opens at all.
+    expect(screen.queryByRole('combobox', { name: 'Agent' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Add to the room/ })).toBeNull()
+  })
+
+  it('below the ceiling, the same room offers the free agent', async () => {
+    // The control for the test above: the refusal is the ceiling, not the roster.
+    atCount(2, 3)
+    const add = screen.getByRole('button', { name: /Add/ })
+    expect(add.getAttribute('aria-disabled')).toBeNull()
+    expect(screen.queryByText(/maximum of/)).toBeNull()
+    await userEvent.click(add)
+    expect(screen.getByRole('combobox', { name: 'Agent' })).toBeTruthy()
+    expect((screen.getByRole('option', { name: 'critic' }) as HTMLOptionElement).disabled).toBe(false)
+  })
+
+  it('closes an open add form when the room reaches its ceiling', async () => {
+    const members = FOUR.slice(0, 2).map((a) => member(a.name))
+    const d = (ms: RoomMemberRecord[]): RoomDetail => ({
+      room: room({ members: ms, max_members: 3 }),
+      member_posture: ms.map((m) => ({ name: m.name, declared: {}, tool_grants: 'read', tool_allowlist: [] })),
+      member_bindings: ms.map((m) => ({ name: m.name, configured: true, model: 'x', provider: 'native' })),
+      messages: [],
+    })
+    const props = { agents: FOUR, busy: false, removing: '', onAdd: vi.fn(), onRemove: vi.fn() }
+    const { rerender } = render(<RoomMembersPanel detail={d(members)} {...props} />)
+    await userEvent.click(screen.getByRole('button', { name: /Add/ }))
+    expect(screen.getByRole('combobox', { name: 'Agent' })).toBeTruthy()
+    // Another tab filled the room; the poll brings the third member in.
+    rerender(<RoomMembersPanel detail={d([...members, member('writer')])} {...props} />)
+    expect(screen.queryByRole('combobox', { name: 'Agent' })).toBeNull()
+    expect(screen.getByText(/This room holds its maximum of 3 members/)).toBeTruthy()
   })
 })
 

@@ -30,14 +30,46 @@ The spec registry stays in `dashboard/handlers/core.py`: the inert-surface censu
 that module for the `_EDITABLE_CONFIG` literal to find `editable_config` entries with no
 backing field, and moving the dict here would make that detector match nothing while
 looking clean.
+
+Security posture: which fields are security controls, and which way loosens one
+==============================================================================
+
+A spec may carry ``"security"``: a :class:`SecurityControl` (the field is part of the owner's
+security posture, with the rule for which direction LOOSENS it and the sentence the owner
+consents to) or a :class:`NotASecurityControl` (reviewed, and why it is not one). The set of
+specs holding a ``SecurityControl`` IS the list of security-sensitive fields — there is no
+second list — and two rules follow from being on it, decided here and nowhere else:
+
+* :func:`app_write_refusal` — **an app-scoped caller can never write one, in either
+  direction.** A path-prefix grant such as ``permissions.api: ["/api/config"]`` says nothing
+  about WHICH field is written, so an app that declared it for an ordinary setting could turn
+  ``agent.yolo`` on. Tightening is refused too, deliberately: on these fields it is the
+  lockout and denial-of-service direction (2FA required before it is enrolled, a one-guess
+  lockout, a deny-everything command pattern, a zero budget), no shipped app writes one, and
+  the value-independent rule needs no read of the stored value to decide, so it cannot race
+  one. An app that needs to stop things has the incident switch (``POST /api/incident``).
+* :func:`unconsented_loosening` — **the owner's write that loosens one needs
+  ``confirm: true``**, the JSON literal (``safety_flags.confirm_granted``). This records that
+  the owner was asked, on the wire, so a UI surface added tomorrow cannot skip the question
+  by not knowing the field is sensitive: it gets ``400 confirmation_required`` carrying the
+  consent sentence instead. Tightening never needs it — revoking a grant is the direction a
+  broken or confused client must always be able to take.
+
+:data:`SECURITY_SECTIONS` is the rail's handle: every editable field in one of those sections
+must declare ``"security"``, so a field added to ``auth``/``security``/``sandbox``/
+``guardrails``/``external_access`` cannot land without someone deciding which it is.
 """
 
 from __future__ import annotations
 
 import math
 import re
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
+
+from personalclaw.safety_flags import confirm_granted
 
 #: A `security.egress` host entry the matcher can actually match: DNS labels, or an IPv4
 #: literal (the documented homelab-webhook case — `net.guard` compares `urlparse().hostname`,
@@ -50,7 +82,213 @@ _EGRESS_HOST_RE = re.compile(
     r"^[a-z0-9](?:[a-z0-9_-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9_-]{0,61}[a-z0-9])?)*$"
 )
 
-__all__ = ["ConfigValueError", "coerce_edit_value"]
+__all__ = [
+    "SECURITY_SECTIONS",
+    "ConfigValueError",
+    "NotASecurityControl",
+    "SecurityControl",
+    "app_write_refusal",
+    "coerce_edit_value",
+    "loosens_egress",
+    "loosens_toward",
+    "loosens_when",
+    "loosens_when_added",
+    "loosens_when_changed",
+    "loosens_when_longer",
+    "loosens_when_raised",
+    "loosens_when_removed",
+    "loosens_when_shorter",
+    "security_control",
+    "unconsented_loosening",
+]
+
+#: The config sections that are security posture as a whole. Every editable field under one of
+#: them must declare ``"security"`` (enforced by ``tests/test_security_posture_rail.py``).
+#: Security controls OUTSIDE these sections (``agent.yolo``, ``agent.approval_mode``,
+#: ``browse.user_browser_enabled``, …) declare themselves individually; the section rule is the
+#: part a new field cannot slip past.
+SECURITY_SECTIONS: frozenset[str] = frozenset(
+    {"auth", "security", "sandbox", "guardrails", "external_access"}
+)
+
+
+@dataclass(frozen=True)
+class SecurityControl:
+    """A field that is part of the owner's security posture.
+
+    ``loosens(current, new)`` says whether writing *new* over the value in effect weakens the
+    control. A *current* that cannot be read as the field's type counts as loosening: a write
+    whose direction cannot be proven safe is asked about, not waved through.
+
+    ``consent`` is what the owner agrees to, in one sentence. It is shown in the consent dialog
+    of any surface that did not ask its own question, so it must be TRUE of what the looser
+    value does — product copy, not a description of the field.
+    """
+
+    loosens: Callable[[Any, Any], bool]
+    consent: str
+
+
+@dataclass(frozen=True)
+class NotASecurityControl:
+    """A field in a :data:`SECURITY_SECTIONS` section that loosens nothing when changed.
+
+    The reason is required: the declaration is a reviewer's claim, and a bare marker would be
+    indistinguishable from a field nobody looked at."""
+
+    reason: str
+
+
+def loosens_when(value: Any) -> Callable[[Any, Any], bool]:
+    """A switch whose *value* side is the open one: writing it loosens, from anything else."""
+    return lambda current, new: new == value and current != value
+
+
+def loosens_when_raised(*, unlimited: float | None = None) -> Callable[[Any, Any], bool]:
+    """A ceiling: a higher number loosens it, and so does *unlimited*, the value meaning none.
+
+    From *unlimited* nothing is looser, so every write there tightens or keeps it.
+    """
+
+    def loosens(current: Any, new: Any) -> bool:
+        if not _is_number(current):
+            return True
+        if unlimited is not None:
+            if current == unlimited:
+                return False
+            if new == unlimited:
+                return True
+        return new > current
+
+    return loosens
+
+
+def loosens_when_added() -> Callable[[Any, Any], bool]:
+    """An allowlist: an entry the stored list lacks is a new grant."""
+
+    def loosens(current: Any, new: Any) -> bool:
+        if not _is_str_list(current):
+            return True
+        return bool(set(new) - set(current))
+
+    return loosens
+
+
+def loosens_when_removed() -> Callable[[Any, Any], bool]:
+    """A denylist: dropping a stored entry un-denies whatever it matched."""
+
+    def loosens(current: Any, new: Any) -> bool:
+        if not _is_str_list(current):
+            return True
+        return bool(set(current) - set(new))
+
+    return loosens
+
+
+def loosens_toward(*strict_to_loose: str) -> Callable[[Any, Any], bool]:
+    """An ordered choice, listed from the strictest value to the loosest.
+
+    A value outside the order, on either side, counts as loosening: a free-text field (an agent
+    profile's ``approval_mode``) can hold one, and its direction cannot be proven safe.
+    """
+    rank = {v: i for i, v in enumerate(strict_to_loose)}
+
+    def loosens(current: Any, new: Any) -> bool:
+        if current not in rank or new not in rank:
+            return True
+        return rank[new] > rank[current]
+
+    return loosens
+
+
+def loosens_when_longer() -> Callable[[Any, Any], bool]:
+    """A duration (``30d``/``12h``/``15m``) where longer is looser — a session lifetime."""
+
+    def loosens(current: Any, new: Any) -> bool:
+        cur = _duration_minutes(current)
+        return cur is None or _duration_minutes(new) > cur  # type: ignore[operator]
+
+    return loosens
+
+
+def loosens_when_shorter() -> Callable[[Any, Any], bool]:
+    """A duration where shorter is looser — a lockout that ends sooner."""
+
+    def loosens(current: Any, new: Any) -> bool:
+        cur = _duration_minutes(current)
+        return cur is None or _duration_minutes(new) < cur  # type: ignore[operator]
+
+    return loosens
+
+
+def loosens_when_changed() -> Callable[[Any, Any], bool]:
+    """Any change loosens — the value is a DESTINATION, and a new one is a new recipient."""
+    return lambda current, new: new != current
+
+
+def loosens_egress(current: Any, new: Any) -> bool:
+    """The ``security.egress`` overrides: the guard reaches further when private addresses are
+    allowed, a host joins the allow list (it becomes reachable even on a private address), or a
+    host leaves the deny list (a deny wins over every allow)."""
+    if not isinstance(current, Mapping):
+        return True
+    return (
+        (bool(new["allow_private"]) and not bool(current.get("allow_private")))
+        or loosens_when_added()(current.get("allow_hosts", []), new["allow_hosts"])
+        or loosens_when_removed()(current.get("deny_hosts", []), new["deny_hosts"])
+    )
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_str_list(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(v, str) for v in value)
+
+
+def _duration_minutes(value: Any) -> int | None:
+    """``30d``/``12h``/``15m`` in minutes — the shape the ``duration`` spec type accepts."""
+    if not isinstance(value, str) or not re.fullmatch(r"\d+[mhd]", value.strip()):
+        return None
+    text = value.strip()
+    return int(text[:-1]) * {"m": 1, "h": 60, "d": 1440}[text[-1]]
+
+
+def security_control(spec: Mapping[str, Any]) -> SecurityControl | None:
+    """The field's :class:`SecurityControl`, or ``None`` when it is not one."""
+    control = spec.get("security")
+    return control if isinstance(control, SecurityControl) else None
+
+
+def app_write_refusal(field: str, spec: Mapping[str, Any], app: str) -> str:
+    """Why the app-scoped caller *app* may not write *field*, or ``""`` when it may.
+
+    Value-independent on purpose (see the module docstring): the answer depends only on WHO is
+    asking and WHICH field, so it is decided before the value is read or validated, and a refused
+    app learns nothing about the stored value or the field's validation rules.
+    """
+    if not app or security_control(spec) is None:
+        return ""
+    return (
+        f"{field} is a security setting, and an app cannot change it — only the owner can, "
+        "from Settings"
+    )
+
+
+def unconsented_loosening(
+    field: str, spec: Mapping[str, Any], *, current: Any, new: Any, body: Any
+) -> str:
+    """The consent sentence when writing *new* over *current* loosens *field* and *body* does
+    not carry ``confirm: true``; ``""`` otherwise.
+
+    *new* is the value AFTER :func:`coerce_edit_value`, so the direction is judged on exactly
+    what would be stored. *current* is the value in effect, defaults included.
+    """
+    control = security_control(spec)
+    if control is None or confirm_granted(body):
+        return ""
+    return control.consent if control.loosens(current, new) else ""
 
 
 class ConfigValueError(ValueError):

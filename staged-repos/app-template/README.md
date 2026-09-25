@@ -42,17 +42,25 @@ export PERSONALCLAW_URL="${TOKEN_URL%%\?*}"
 export PERSONALCLAW_TOKEN="${TOKEN_URL#*token=}"
 ```
 
-**4 — install it from this directory and enable it.**
+**4 — review it, install it from this directory, and enable it.** An install is two calls:
+the review says what the app gets and what the security scanner found, and installs
+nothing; the install carries the review's `consent` digest, so it installs exactly the
+bytes you reviewed. Keep the review out of this directory — a new file here is a different
+app, and it gets a fresh review instead.
 
 ```bash
+review="$(curl -sS -X POST "$PERSONALCLAW_URL/api/apps/preview?token=$PERSONALCLAW_TOKEN" \
+  -H 'Content-Type: application/json' -d "{\"source\": \"$PWD\"}")"
+echo "$review" | python3 -m json.tool      # read it: permissions, jobs, packages, the scan
+consent="$(echo "$review" | python3 -c 'import json, sys; print(json.load(sys.stdin)["consent"])')"
 curl -sS -X POST "$PERSONALCLAW_URL/api/apps?token=$PERSONALCLAW_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d "{\"source\": \"$PWD\", \"confirm\": true}"
+  -d "{\"source\": \"$PWD\", \"consent\": \"$consent\"}"
 curl -sS -X POST "$PERSONALCLAW_URL/api/apps/app-template/enable?token=$PERSONALCLAW_TOKEN"
 ```
 
 Prefer clicking? **Store → Add source → local path**, point it at this directory, then
-install and enable. Same install path, same scan gate — there is only one.
+install and enable. Same review, same scan gate, same consent — there is only one path.
 
 **5 — see it.** The app is in the Store, enabled, and its provider is registered:
 

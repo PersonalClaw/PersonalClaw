@@ -5,8 +5,6 @@ conversation log persistence intact for tab recovery and gateway restart.
 """
 
 import json as _json
-import os
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -550,72 +548,6 @@ class TestMcpCoreSessionKeyPassthrough:
         assert req.get_header("X-session-key") is None
 
 
-# ── Cross-tab privacy filtering (history.py) ──
-
-
-class TestCrossTabPrivacy:
-    def test_recent_from_source_skips_restricted_sessions(self, tmp_path):
-        """Restricted session messages must not leak into 'Other chat tabs' context."""
-        log = ConversationLog(base_dir=tmp_path)
-
-        _write_session(
-            log, "dashboard:e1", [("user", "secret private data")], memory_mode="incognito"
-        )
-        _write_session(log, "dashboard:n1", [("user", "normal public data")])
-
-        results = log.recent_from_source("dashboard:", max_messages=50)
-        texts = [m.get("content", "") for m in results]
-        assert "normal public data" in texts
-        assert "secret private data" not in texts
-
-    def test_recent_from_source_includes_persistent_sessions(self, tmp_path):
-        log = ConversationLog(base_dir=tmp_path)
-        _write_session(log, "dashboard:n1", [("user", "visible message")])
-
-        results = log.recent_from_source("dashboard:", max_messages=50)
-        texts = [m.get("content", "") for m in results]
-        assert "visible message" in texts
-
-    def test_restricted_sessions_do_not_consume_budget(self, tmp_path):
-        """4 restricted + 3 persistent: all 3 persistent sessions included."""
-        log = ConversationLog(base_dir=tmp_path)
-        for i in range(4):
-            _write_session(
-                log, f"dashboard:e{i}", [("user", f"secret-{i}")], memory_mode="temporary"
-            )
-            p = log._path(f"dashboard:e{i}")
-            os.utime(p, (time.time() + 100 + i, time.time() + 100 + i))
-        for i in range(3):
-            _write_session(log, f"dashboard:n{i}", [("user", f"normal-{i}")])
-            p = log._path(f"dashboard:n{i}")
-            os.utime(p, (time.time() + i, time.time() + i))
-
-        results = log.recent_from_source("dashboard:", max_messages=50)
-        texts = [m.get("content", "") for m in results]
-        for i in range(3):
-            assert f"normal-{i}" in texts
-        for i in range(4):
-            assert f"secret-{i}" not in texts
-
-    def test_many_restricted_do_not_crowd_out_persistent_sessions(self, tmp_path):
-        log = ConversationLog(base_dir=tmp_path)
-        for i in range(18):
-            _write_session(
-                log, f"dashboard:e{i}", [("user", f"secret-{i}")], memory_mode="incognito"
-            )
-            p = log._path(f"dashboard:e{i}")
-            os.utime(p, (time.time() + 200 + i, time.time() + 200 + i))
-        for i in range(5):
-            _write_session(log, f"dashboard:n{i}", [("user", f"normal-{i}")])
-            p = log._path(f"dashboard:n{i}")
-            os.utime(p, (time.time() + i, time.time() + i))
-
-        results = log.recent_from_source("dashboard:", max_messages=50)
-        texts = [m.get("content", "") for m in results]
-        included = sum(1 for t in texts if t.startswith("normal-"))
-        assert included == 5
-
-
 # ── Soft gate: incognito prompt prefix (chat.py) ──
 
 
@@ -660,7 +592,7 @@ class TestSoftGatePrompt:
 
 
 class TestHistoryFileIntegrity:
-    """list_sessions() must surface memory_mode; rewrite_session() must preserve it."""
+    """list_sessions() must surface memory_mode."""
 
     def test_list_sessions_includes_memory_mode(self, tmp_path):
         log = ConversationLog(base_dir=tmp_path)
@@ -673,26 +605,6 @@ class TestHistoryFileIntegrity:
         assert by_key["e1"].get("memory_mode") == "incognito"
         assert by_key["t1"].get("memory_mode") == "temporary"
         assert by_key["p1"].get("memory_mode") == "persistent"
-
-    def test_rewrite_session_preserves_memory_mode(self, tmp_path):
-        """Compaction must not drop memory_mode from metadata."""
-        log = ConversationLog(base_dir=tmp_path)
-        _write_session(log, "e1", [("user", "a"), ("assistant", "b")], memory_mode="incognito")
-
-        kept = [{"role": "user", "content": "a", "ts": "2026-01-01T00:00:01"}]
-        log.rewrite_session("e1", kept)
-
-        meta = log.get_metadata("e1")
-        assert meta.get("memory_mode") == "incognito"
-
-    def test_rewrite_session_persistent_has_no_memory_mode(self, tmp_path):
-        log = ConversationLog(base_dir=tmp_path)
-        _write_session(log, "p1", [("user", "a")])
-
-        log.rewrite_session("p1", [{"role": "user", "content": "a", "ts": "2026-01-01T00:00:01"}])
-
-        meta = log.get_metadata("p1")
-        assert "memory_mode" not in meta
 
 
 # ── Context builder: blocks_reads skips memory ──

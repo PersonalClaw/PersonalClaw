@@ -38,6 +38,7 @@ import { phaseKey } from '../loops/loopPhases'
 import { SearchField } from '../../ui/SearchField'
 import { DiffView } from './DiffView'
 import { WorkspacePicker } from './WorkspacePicker'
+import { useWorkspaceMissing } from '../../lib/useWorkspaceMissing'
 import { FileTree } from '../files/browse/FileTree'
 import { FileViewer, type FileViewerHandle } from '../files/browse/FileViewer'
 import { useFileTabs } from '../files/browse/useFileTabs'
@@ -243,10 +244,6 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
   // In-flight guard for run controls (start/pause/resume/stop) — without it a rapid
   // double-click fires two codeAction calls, racing the worker spawn/teardown.
   const [acting, setActing] = useState(false)
-  // A brownfield project whose bound workspace was moved/deleted on disk after binding.
-  // Probed below; surfaces a proactive "re-pick the folder" banner instead of only
-  // erroring when the user clicks Start against a vanished dir (C244 follow-on).
-  const [wsMissing, setWsMissing] = useState(false)
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   // Set by Escape so the blur that fires as the input unmounts skips the save.
@@ -275,28 +272,16 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
   // Auto-retry while the FIRST load hasn't landed (project still null) and the last
   // attempt errored — so a transient blip recovers on its own without a manual Retry.
   useVisiblePoll(() => load(), project === null && loadErr ? 4000 : null)
-  // Probe whether a bound brownfield workspace still exists on disk (the user may have
-  // moved/deleted the repo). Only for a not-running brownfield with a path set; a
-  // running worker already proves it exists. browseDirs throws if the dir is gone.
-  useEffect(() => {
-    const p = project
-    if (!p || p === 'missing') return
-    const w = (p.workspace_dir || '').trim()
-    if (!w || p.project_kind !== 'brownfield' || p.status === 'running') { setWsMissing(false); return }
-    let alive = true
-    api.browseDirs(w).then(() => { if (alive) setWsMissing(false) })
-      .catch((e) => {
-        if (!alive) return
-        // Only flag "no longer exists" when the dir is genuinely GONE. browseDirs also
-        // fails on a permission/sensitive-path block (403) or a transient network/5xx —
-        // where the dir likely DOES exist — and flagging those would wrongly nag the
-        // user to re-pick a perfectly good workspace. The backend says "No such
-        // directory" only for true non-existence; anything else → don't claim missing.
-        const msg = (e instanceof Error ? e.message : '').toLowerCase()
-        setWsMissing(msg.includes('no such directory'))
-      })
-    return () => { alive = false }
-  }, [project])
+  // A brownfield project whose bound workspace was moved/deleted on disk after binding surfaces
+  // a proactive "re-pick the folder" banner instead of only erroring when the user clicks Start
+  // against a vanished dir (C244 follow-on). Only for a not-running brownfield with a path set —
+  // a running worker already proves the dir exists — and only on a 404, which the shared hook
+  // keys on the STATUS: it used to match the error text "no such directory".
+  const probed = project && project !== 'missing' ? project : null
+  const wsMissing = useWorkspaceMissing(probed?.workspace_dir, {
+    enabled: !!probed && probed.project_kind === 'brownfield' && probed.status !== 'running',
+    recheck: project,
+  })
 
   // Instant-paint seed: re-opening a project should show its last snapshot
   // immediately instead of a cold spinner. The authoritative mount fetch above +

@@ -11,23 +11,29 @@
  *  gone quiet. */
 export const STREAM_SETTLED_GRACE_MS = 3_500
 
+/** What ChatPage logs when the reconciler settles a stream whose terminal frame never came.
+ *  One string, so the e2e turn driver (`web/e2e/helpers.ts`) can refuse a turn that only
+ *  completed because this net caught it (#3575). */
+export const STREAM_HEAL_WARNING = 'the turn ended but its terminal frame never reached this tab'
+
 /** What a silent streaming window means once session detail has been read back.
  *
  *  Two different stalls reach this point, and only the server can tell them apart:
  *
  *  · `settled` — the server holds no task, so nothing is in flight and the client's
  *    streaming claim is false. This is the state a LOST TERMINAL FRAME leaves behind:
- *    `chat_done` is the only frame that clears `streaming`, and `useChatSocket` opens one
- *    socket per component instance with its `everOpened` flag closure-local — so the
- *    session-create remount (sending on a brand-new chat backfills the key into the URL
- *    and re-keys `ChatSession`) closes the socket and the replacement's first `onopen` is
- *    NOT a reconnect, so `resyncOnReconnect` never runs. Every frame emitted in that gap
- *    is delivered to nothing, and a fast turn can be entirely inside it.
- *    `chat_handlers.py` records the same gap for `routing_suggestion` (issue 569) and
- *    closed it by riding the send response; a terminal frame has no second transport, and
- *    a plain socket drop can lose it regardless. So the server's `running` is read as the
- *    authority — the one reading that makes the stall recoverable whatever lost the frame,
- *    and the same reading `resyncOnReconnect` already makes on the socket-outage form of it.
+ *    `chat_done` is the only frame that clears `streaming`. Its measured source was the
+ *    session-create remount — sending on a brand-new chat re-keys `ChatSession`, whose socket
+ *    was its own, so the replacement's was not yet listening while a fast turn streamed and
+ *    ended. That gap is now closed at its cause: the tab's one socket outlives the remount,
+ *    and the replacement reads the session only once it is listening and settles the
+ *    handed-off claim from that read. This stays as the net for any
+ *    other way a terminal frame goes missing, and it says so (`STREAM_HEAL_WARNING`) when it
+ *    catches one. `chat_handlers.py` records the same gap for `routing_suggestion` (issue
+ *    569) and closed it by riding the send response; a terminal frame has no second
+ *    transport. So the server's `running` is read as the authority — the one reading that
+ *    makes the stall recoverable whatever lost the frame, and the same reading a reconnect's
+ *    resync makes on the socket-outage form of it.
  *
  *  · `recover-approval` — the server IS running, parked on an approval the client is not
  *    showing. A parked turn sends no `chat_done` either, so the stream just goes quiet; if

@@ -165,3 +165,61 @@ async def test_a_healthy_inference_writes_no_audit_rows(tmp_path, monkeypatch):
     events, rows = await _run(tmp_path, model, monkeypatch)
     assert any(ev.kind == EVENT_COMPLETE for ev in events)
     assert rows == [], "healthy native traffic must not re-baseline the audit fold"
+
+
+# ── a prompt too large to run is refused once, never retried (the bundled-model OOM) ─────
+#
+# Measured on the out-of-the-box path: a ~27,862-token paste reached the bundled model, numpy
+# raised "Unable to allocate 26.0 GiB for an array with shape (9, 27862, 27862)", and the loop's
+# ONE blind retry ran the identical allocation a second time. An allocation that just failed is
+# not a transient — the same prompt asks for the same memory — and on a memory-capped host the
+# second attempt is the one the kernel kills the gateway for.
+
+
+async def test_an_allocation_failure_is_never_blindly_retried(tmp_path, monkeypatch):
+    model = _FlakyModel(
+        [
+            MemoryError("Unable to allocate 26.0 GiB for an array with shape (9, 27862, 27862)"),
+            [_text("hi"), _complete()],
+        ]
+    )
+    with pytest.raises(MemoryError):
+        await _run(tmp_path, model, monkeypatch)
+    assert model.calls == 1, "the identical allocation was attempted twice"
+
+
+async def test_a_prompt_that_cannot_fit_the_window_is_never_retried(tmp_path, monkeypatch):
+    from personalclaw.sdk.model import PromptExceedsWindow
+
+    refusal = PromptExceedsWindow(
+        model="SmolLM2-135M-Instruct-Q8_0",
+        room_tokens=3_700,
+        request_tokens=9_400,
+        request_chars=40_000,
+    )
+    model = _FlakyModel([refusal, [_text("hi"), _complete()]])
+    with pytest.raises(PromptExceedsWindow):
+        await _run(tmp_path, model, monkeypatch)
+    assert model.calls == 1, "a deterministic refusal was sent again unchanged"
+
+
+async def test_a_reply_cut_at_the_output_cap_reaches_the_turn_as_a_length_stop(
+    tmp_path, monkeypatch
+):
+    """The runtime replaced every provider stop reason with "end_turn", so a reply cut at the
+    model's output cap reached the chat runner indistinguishable from a finished one."""
+    model = _FlakyModel(
+        [
+            [
+                _text("A sentence that stops in the"),
+                AgentEvent(kind=EVENT_COMPLETE, stop_reason="max_tokens"),
+            ]
+        ]
+    )
+    events, _rows = await _run(tmp_path, model, monkeypatch)
+    assert events[-1].kind == EVENT_COMPLETE
+    assert events[-1].stop_reason == "max_tokens"
+
+    finished = _FlakyModel([[_text("Done."), _complete()]])
+    events, _rows = await _run(tmp_path, finished, monkeypatch)
+    assert events[-1].stop_reason == "end_turn"

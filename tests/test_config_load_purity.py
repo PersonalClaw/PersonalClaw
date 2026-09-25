@@ -272,7 +272,7 @@ def test_the_gateway_boot_path_persists_the_migration(monkeypatch, tmp_path: Pat
 
 def test_a_second_boot_writes_nothing(monkeypatch, tmp_path: Path) -> None:
     """One-shot. An already-current config must not be rewritten on every restart, or the
-    ``.bak`` becomes a copy of itself and the real-home rail reds on every gateway start."""
+    ``.bak`` becomes a copy of itself on every gateway start."""
     home = _seed_pre_migration_home(tmp_path)
     monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
     from personalclaw.cli_server import _boot_config

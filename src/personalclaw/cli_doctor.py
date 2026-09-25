@@ -12,6 +12,7 @@ from pathlib import Path
 
 from personalclaw import __version__ as _pc_version
 from personalclaw.agent import AGENT_FILENAME, agents_dir
+from personalclaw.atomic_write import atomic_write
 from personalclaw.auth.modes import classify_auth_mode_request
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
@@ -744,7 +745,7 @@ def _doctor() -> None:
         if mcp_fixed or mcp_cmd_fixed:
             agent_data["tools"] = tools
             agent_data["allowedTools"] = allowed
-            agent_path.write_text(json.dumps(agent_data, indent=2) + "\n", encoding="utf-8")
+            atomic_write(agent_path, json.dumps(agent_data, indent=2) + "\n")
             if mcp_fixed:
                 print("  → Auto-fixed tools/allowedTools in personalclaw.json")
                 issues = [i for i in issues if "config" not in i]

@@ -161,14 +161,28 @@ def create_code_map_provider(config: dict[str, Any] | None = None) -> ToolProvid
 
 
 _providers: dict[str, ToolProvider] = {}
+#: provider name → the installed app that registered it. Recorded at registration because that
+#: is the one place the app is known; the tool seam reads it to NAME the app when one of its
+#: tools has to be repaired or left out of model requests.
+_provider_app: dict[str, str] = {}
 
 
-def register_provider(provider: ToolProvider) -> None:
+def register_provider(provider: ToolProvider, *, app: str = "") -> None:
     _providers[provider.name] = provider
+    if app:
+        _provider_app[provider.name] = app
+    else:
+        _provider_app.pop(provider.name, None)
 
 
 def unregister_provider(name: str) -> None:
     _providers.pop(name, None)
+    _provider_app.pop(name, None)
+
+
+def app_of(provider_name: str) -> str:
+    """The app that registered ``provider_name`` ("" for core and unregistered providers)."""
+    return _provider_app.get(provider_name, "")
 
 
 def get_provider(name: str) -> ToolProvider | None:
@@ -184,8 +198,16 @@ async def list_all_tools() -> list[ToolDefinition]:
 
     A provider that raises while listing its tools is recorded as a load failure
     (operator-visible via :func:`get_load_failures`) rather than silently
-    dropped, and the remaining providers still contribute.
+    dropped, and the remaining providers still contribute. So is a tool whose
+    schema has no portable form: it stays in this catalog (the Tools page can
+    still show and invoke it), but no model request carries it, and the page
+    has to be able to say why.
     """
+    from personalclaw.tool_providers.portable_schema import (
+        conform_parameters,
+        exclusion_reason,
+    )
+
     all_tools: list[ToolDefinition] = []
     for prov in _providers.values():
         try:
@@ -198,4 +220,16 @@ async def list_all_tools() -> list[ToolDefinition]:
                 "Tool provider %r failed to list tools: %s", prov.name, exc, exc_info=True
             )
             record_failure(prov.name, str(exc))
+            continue
+        unofferable = []
+        for t in tools:
+            verdict = conform_parameters(t.parameters)
+            if verdict.parameters is None:
+                unofferable.append(f"{t.name} ({exclusion_reason(verdict)})")
+        if unofferable:
+            record_failure(
+                prov.name,
+                "not offered to models because the parameter schema has no portable form: "
+                + "; ".join(unofferable),
+            )
     return all_tools

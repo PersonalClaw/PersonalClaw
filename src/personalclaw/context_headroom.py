@@ -39,16 +39,25 @@ together, where calling ``output_budget`` separately would reach the provider's
 ``test_the_reserve_is_output_budgets_number_not_a_second_one`` asserts the two agree, so
 the shortcut cannot drift into a second reserve.
 
+**One window per turn, from the provider that serves it.** :func:`resolve_window` is the ONE
+answer to "how big is this turn's window": the chat runner calls it once, before assembly, and
+the assembler, :func:`check` and every notice read the same :class:`Window`. Its first
+authority is the serving provider's own ``served_context_window()`` — the number that
+provider's gauge divides by — so the budget and the gauge cannot describe two windows. It also
+sees the zero-config fallback model, which is a registry entry rather than a binding and was
+invisible to the binding-only resolution that preceded it (every prompt then "fit").
+
 **An UNKNOWN window is not zero and not infinite.** ``local_models.budgets`` already
 treats a ``0`` catalog card as "unknown", and ``model_windows.model_context_window``
 hands out a hardcoded 200k when no entry names the model. Accepting that default would be
 the defaulted-field-is-an-unsupplied-input defect: the whole contract would then be
-measured against a number nobody declared. So :func:`resolve_window` asks
-``model_windows.resolved_context_window`` — the one reader that can answer ``None`` — and
-reports that as ``tokens=None`` / ``source="unknown"``, the same discipline
-:mod:`personalclaw.local_models.fit` uses, where ``None`` means *unmeasured* and ``0``
-means *measured, nothing fits* (collapsing those two produced a real bug). The measured
-context gauge asks the same question the same way (:mod:`personalclaw.context_gauge`).
+measured against a number nobody declared. So when nothing served, declared or catalogued
+the window, :func:`resolve_window` asks ``model_windows.resolved_context_window`` — the one
+reader that can answer ``None`` — and reports that as ``tokens=None`` / ``source="unknown"``,
+the same discipline :mod:`personalclaw.local_models.fit` uses, where ``None`` means
+*unmeasured* and ``0`` means *measured, nothing fits* (collapsing those two produced a real
+bug). A locally-served model additionally carries a conservative ``floor_tokens`` for the
+assembler to BUDGET by; the floor is never a refusal bound.
 
 An unmeasured window yields ``FITS`` with ``window.measured is False`` and
 ``pressure is None``. That choice is deliberate in both directions: refusing on an
@@ -74,6 +83,7 @@ contract is a wiring change, not a redesign. It is not done here.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, replace
 from enum import Enum
@@ -126,13 +136,14 @@ MIN_PROJECTION_CHARS = 400
 MAX_NAMED_OVERSIZED = 4
 
 _UNMEASURED_REASON = (
-    "The bound model's context window is unmeasured — neither the local-model catalog "
-    "nor the model-window table names this model — so assembled size was counted but not "
-    "compared against a limit."
+    "This turn's context window is unmeasured — the serving provider did not report one, none "
+    "is declared on its binding, and neither its catalog card nor the model-window table names "
+    "the model — so the assembled size was counted but not compared against a limit."
 )
 _UNMEASURED_FIX = (
-    "Add the model to the window table (src/personalclaw/model_tokens.json), or declare "
-    "context_tokens on its model card, so this turn's headroom becomes measurable."
+    "Declare the window its provider serves (a context_window setting on the provider), or "
+    "add the model to the window table (src/personalclaw/model_tokens.json), so this turn's "
+    "headroom becomes measurable."
 )
 
 #: Model refs already reported as unmeasured, so a long session logs the fact ONCE rather
@@ -173,6 +184,10 @@ class Component:
     #: Passed to :func:`personalclaw.tool_providers.projection.project_output` so a JSON
     #: or log block gets its type-aware projector instead of a blunt head/tail cut.
     content_type: str = ""
+    #: This component IS what the user just sent. A refusal it alone causes is a different
+    #: sentence — "your message is too long for this model", with its limit in characters —
+    #: because the only fix is to the message, and a user reads their paste in characters.
+    is_request: bool = False
 
 
 @dataclass(frozen=True)
@@ -233,40 +248,61 @@ class Oversized:
 
 @dataclass(frozen=True)
 class Window:
-    """The bound model's real room, and where the numbers came from.
+    """The window THIS TURN is served with, and where the numbers came from.
 
-    Built only by :func:`resolve_window` so there is exactly one derivation in the
-    process. ``input_tokens`` is carried rather than recomputed from
-    ``tokens - output_reserve_tokens``: that subtraction already lives in
-    :class:`personalclaw.local_models.budgets.ContextBudget`, and a second copy of it is
-    how the two halves of a budget start disagreeing.
+    Built only by :func:`resolve_window` — once per turn — and read by every consumer of that
+    turn: the assembler budgets by it, :func:`check` bounds by it, the notices print it, and the
+    serving provider's own gauge divides by the same number because it is the provider's own
+    answer. ``input_tokens`` is carried rather than recomputed from ``tokens -
+    output_reserve_tokens``: that subtraction already lives in
+    :class:`personalclaw.local_models.budgets.ContextBudget`, and a second copy of it is how the
+    two halves of a budget start disagreeing.
     """
 
-    #: ``None`` = UNMEASURED (nobody declared this model's window). Never 0, never a
+    #: ``None`` = UNMEASURED (nothing declared or served this model's window). Never 0, never a
     #: stand-in for "unbounded".
     tokens: int | None
-    #: The reply's reserve — ``local_models.budgets.output_budget``'s number, the same one
-    #: the provider receives as ``max_tokens``.
+    #: The reply's reserve — ``local_models.budgets``' derivation, the same rule the serving
+    #: provider sizes its own reply by.
     output_reserve_tokens: int
     #: The room a prompt may actually occupy (window minus the reserve), or ``None`` when
     #: the window is unmeasured.
     input_tokens: int | None
-    #: ``"catalog"`` | ``"window-table"`` | :data:`WINDOW_UNKNOWN`.
+    #: ``"served"`` | ``"declared"`` | ``"catalog"`` | ``"window-table"`` | :data:`WINDOW_UNKNOWN`.
     source: str
     #: The model ref these numbers describe, so a refusal can NAME the model the user has to
-    #: change rather than only the number it failed against. ``""`` when no model is bound —
-    #: which is itself the honest thing to print, not a fabricated id. Last field with a default
-    #: so every existing positional construction keeps working.
+    #: change rather than only the number it failed against. ``""`` when nothing serves the
+    #: turn — which is itself the honest thing to print, not a fabricated id.
     ref: str = ""
+    #: The model half of :attr:`ref`, when the resolver knew where the provider half ends (a
+    #: bare model id may itself contain a colon, so it is never split on a guess).
+    model: str = ""
+    #: The conservative window to BUDGET by when :attr:`tokens` is unknown for a locally-served
+    #: model (``model_windows.LOCAL_SERVED_CONTEXT_WINDOW``). A floor is not a measurement, so
+    #: :func:`check` never refuses against it — erring small costs only a leaner prompt.
+    floor_tokens: int | None = None
+    #: The serving provider hands its model the user's request alone
+    #: (``ModelProvider.request_only``), so nothing else is assembled for it.
+    request_only: bool = False
 
     @property
     def measured(self) -> bool:
         return self.tokens is not None
 
     @property
+    def budget_tokens(self) -> int | None:
+        """The window every assembly budget scales by: the served window, else the floor."""
+        return self.tokens if self.tokens is not None else self.floor_tokens
+
+    @property
     def label(self) -> str:
-        """How to name the bound model in a message to the user."""
-        return self.ref or "the bound chat model"
+        """How to name the serving model in a message to the user."""
+        return self.ref or "this chat's model"
+
+    @property
+    def model_label(self) -> str:
+        """The model's own name when it is known, else :attr:`label`."""
+        return self.model or self.label
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -276,6 +312,9 @@ class Window:
             "source": self.source,
             "measured": self.measured,
             "ref": self.ref,
+            "model": self.model,
+            "floor_tokens": self.floor_tokens,
+            "request_only": self.request_only,
         }
 
 
@@ -384,56 +423,94 @@ class Headroom:
         }
 
 
-async def resolve_window(model_ref: str) -> Window:
-    """The bound model's real window, its reply reserve, and the authority for both.
+#: How long the window resolver waits for the serving provider to say what window it serves. A
+#: probe is a loopback round-trip (a local runtime's own status endpoint) or no I/O at all, so this
+#: only ever bites a runtime that has stopped answering — and a window question must never be the
+#: thing that costs a turn.
+SERVED_WINDOW_PROBE_TIMEOUT_SECS = 2.0
 
-    Catalog first (``LocalModel.context_tokens`` off the model card), then the shared
-    window table, then UNMEASURED. :func:`~personalclaw.model_windows.resolved_context_window`
-    is the whole point: ``model_context_window`` answers every query, returning
-    ``DEFAULT_CONTEXT_WINDOW`` (200k) for a model it has never heard of, so its plain
-    answer cannot distinguish a declared window from a hardcoded one.
 
-    Never raises: an unresolvable window is an UNMEASURED window, which is a state this
-    contract already models. A headroom lookup must not be the thing that costs a turn.
+async def resolve_window(model_ref: str = "", *, serving: object | None = None) -> Window:
+    """THE answer to "what window will this turn be served with" — resolved once, read by all.
+
+    Three pieces of code used to answer this for one turn and they disagreed: the assembler read
+    only the chat BINDING (200,000 for the unbound fallback; a fixed 4,096 for any local model),
+    this check resolved the same binding and found nothing for the fallback (so every prompt
+    passed, including the paste that OOM-killed a 6 GB-capped gateway), and each provider's gauge
+    divided by a third number of its own. Now the chat runner calls this ONCE per turn, before
+    assembly, and hands the result to the assembler, to :func:`check` and to every notice; the
+    serving provider's gauge divides by the same number because it IS the provider's answer.
+
+    ``serving`` is the agent runtime that will serve the turn. Resolution, most authoritative
+    first:
+
+    1. **the model** — ``model_ref`` when the user picked one (``"auto"`` is the absence of a
+       pick), else the ref the runtime was built for (``served_model_ref``, stamped at the one
+       seam that knows both halves — this is how the zero-config floor, a registry entry and not a
+       binding, is seen at all), else the chat binding;
+    2. **served** — the serving provider's own ``served_context_window()``: an operator-declared
+       window, a runtime that publishes the window it loaded the model with, or a model the
+       provider runs itself;
+    3. **declared** — a ``context_window`` declared on the binding in ``config.json``;
+    4. **catalog** — the local-model card's ``context_tokens``;
+    5. **window-table** — the shared table, when it KNOWS the model;
+    6. otherwise UNMEASURED — with the conservative local floor as a BUDGET (never a refusal
+       bound) when the model is locally served, because a local runtime's architectural maximum
+       is the unsafe direction: silent truncation with HTTP 200.
+
+    The reply reserve comes from the model's catalog card through ``local_models.budgets`` — one
+    reserve derivation, the same rule the serving provider sizes its own reply by.
+
+    Never raises, and never waits longer than :data:`SERVED_WINDOW_PROBE_TIMEOUT_SECS` for a
+    probe: an unresolvable window is an UNMEASURED window, a state the contract already models.
     """
-    from personalclaw.local_models.budgets import DEFAULT_OUTPUT_TOKENS
+    from personalclaw.local_models.budgets import (
+        DEFAULT_OUTPUT_TOKENS,
+        budget_for,
+        catalog_window,
+    )
+    from personalclaw.model_windows import (
+        LOCAL_SERVED_CONTEXT_WINDOW,
+        binding_declared_window,
+        is_locally_served,
+        resolved_context_window,
+    )
 
-    ref = (model_ref or "").strip()
+    provider = getattr(serving, "model_provider", None) if serving is not None else None
+    ref, model = _serving_ref(model_ref, serving)
+    request_only = getattr(provider, "request_only", False) is True
     try:
-        from personalclaw.local_models.budgets import model_budget
-        from personalclaw.model_windows import resolved_context_window
-
-        budget = await model_budget(ref)
-        reserve = budget.output_tokens
-        if budget.source == "catalog":
+        tokens = await _served_tokens(provider)
+        source = "served"
+        if tokens is None:
+            tokens, source = binding_declared_window(ref), "declared"
+        card_context, card_output = await catalog_window(ref) if ref else (0, 0)
+        if tokens is None and card_context > 0:
+            tokens, source = card_context, "catalog"
+        if tokens is None and ref:
+            tokens, source = resolved_context_window(ref), "window-table"
+        floor = LOCAL_SERVED_CONTEXT_WINDOW if tokens is None and is_locally_served(ref) else None
+        if tokens is None:
+            _note_unmeasured(ref)
             return Window(
-                tokens=budget.context_tokens,
-                output_reserve_tokens=reserve,
-                input_tokens=budget.input_tokens,
-                source="catalog",
+                tokens=None,
+                output_reserve_tokens=DEFAULT_OUTPUT_TOKENS,
+                input_tokens=None,
+                source=WINDOW_UNKNOWN,
                 ref=ref,
+                model=model,
+                floor_tokens=floor,
+                request_only=request_only,
             )
-        if ref and resolved_context_window(ref) is not None:
-            return Window(
-                tokens=budget.context_tokens,
-                output_reserve_tokens=reserve,
-                input_tokens=budget.input_tokens,
-                source="window-table",
-                ref=ref,
-            )
-        if ref not in _UNMEASURED_SEEN:
-            _UNMEASURED_SEEN.add(ref)
-            logger.info(
-                "context headroom: window for %r is UNMEASURED (no catalog card, no "
-                "window-table entry) — assembled size will be counted but not bounded",
-                ref or "<unbound>",
-            )
+        budget = budget_for(tokens, card_output, source=source)
         return Window(
-            tokens=None,
-            output_reserve_tokens=reserve,
-            input_tokens=None,
-            source=WINDOW_UNKNOWN,
+            tokens=budget.context_tokens,
+            output_reserve_tokens=budget.output_tokens,
+            input_tokens=budget.input_tokens,
+            source=source,
             ref=ref,
+            model=model,
+            request_only=request_only,
         )
     except Exception:  # noqa: BLE001 — an unresolvable window is UNMEASURED, not a crash
         logger.debug("context headroom: window resolution failed for %r", ref, exc_info=True)
@@ -443,27 +520,78 @@ async def resolve_window(model_ref: str) -> Window:
             input_tokens=None,
             source=WINDOW_UNKNOWN,
             ref=ref,
+            model=model,
+            request_only=request_only,
         )
 
 
-def bound_model_ref(explicit: str = "") -> str:
-    """The model ref whose window governs this turn.
+def _serving_ref(model_ref: str, serving: object | None) -> tuple[str, str]:
+    """``(ref, model)`` for the model that serves this turn — see :func:`resolve_window` step 1.
 
-    ``explicit`` is the user's selection when they made one. ``"auto"`` is NOT a model —
-    it is the absence of a selection — so it resolves through the ``chat`` use-case
-    binding instead of being asked about as if it were a model id.
+    ``model`` is the ref's model half ONLY when the ref's structure is known: a stamped or bound
+    ref is ``"<entry>:<model>"`` by construction, while a user-typed id is split only when its
+    prefix really names a provider entry (``gpt-oss:20b`` is a bare id with a colon in it).
     """
-    ref = (explicit or "").strip()
-    if ref and ref.lower() != "auto":
-        return ref
+    explicit = (model_ref or "").strip()
+    if explicit and explicit.lower() != "auto":
+        head, sep, tail = explicit.partition(":")
+        return explicit, (tail if sep and tail and head in _entry_names() else "")
+    stamped = getattr(serving, "served_model_ref", "") if serving is not None else ""
+    if isinstance(stamped, str) and stamped.strip():
+        head, sep, tail = stamped.strip().partition(":")
+        return stamped.strip(), (tail if sep else "")
     try:
         from personalclaw.providers.use_cases import active_model_refs
 
         refs = active_model_refs("chat")
-        return str(refs[0]) if refs else ""
     except Exception:  # noqa: BLE001 — no binding is an UNMEASURED window, not a crash
         logger.debug("context headroom: chat model binding unresolvable", exc_info=True)
-        return ""
+        refs = []
+    bound = str(refs[0]).strip() if refs else ""
+    return bound, (bound.partition(":")[2] if ":" in bound else "")
+
+
+def _entry_names() -> set[str]:
+    """Names of the provider entries registered right now — what a ref's prefix can name."""
+    try:
+        from personalclaw.llm.registry import get_default_registry
+
+        return {entry.name for entry in get_default_registry().list_entries()}
+    except Exception:  # noqa: BLE001 — an unreadable registry names nothing
+        return set()
+
+
+async def _served_tokens(provider: object | None) -> int | None:
+    """The serving provider's own ``served_context_window()``, or ``None`` if it cannot say.
+
+    Strictly typed on the way out, because the caller may be handed ANY object: chat-runner tests
+    drive turns with ``AsyncMock`` clients whose every attribute answers, and a mock is not a
+    window. Bounded by :data:`SERVED_WINDOW_PROBE_TIMEOUT_SECS`, and a failing probe is simply no
+    answer — the static steps of the resolution still stand.
+    """
+    probe = getattr(provider, "served_context_window", None) if provider is not None else None
+    if not callable(probe):
+        return None
+    try:
+        value = await asyncio.wait_for(probe(), timeout=SERVED_WINDOW_PROBE_TIMEOUT_SECS)
+    except Exception:  # noqa: BLE001 — includes the timeout; a probe never costs a turn
+        logger.debug("context headroom: served-window probe failed", exc_info=True)
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
+def _note_unmeasured(ref: str) -> None:
+    """Log an UNMEASURED window once per ref, not once per turn."""
+    if ref in _UNMEASURED_SEEN:
+        return
+    _UNMEASURED_SEEN.add(ref)
+    logger.info(
+        "context headroom: window for %r is UNMEASURED (nothing served, declared or catalogued "
+        "it) — assembled size will be counted but not bounded",
+        ref or "<unbound>",
+    )
 
 
 def _compress(
@@ -617,6 +745,32 @@ def check(components: "list[Component] | tuple[Component, ...]", *, window: Wind
 
     over = total - limit
     oversized = _name_culprits(working, over=over, compressed_names={n.name for n in notes})
+    request = next(((c, t) for c, t in working if c.is_request), None)
+    if request is not None and oversized and oversized[0].name == request[0].name:
+        request_component, request_tokens = request
+        others = total - request_tokens
+        if others < limit:
+            # The user's own message is the largest thing here and, without it, the rest fits:
+            # this is "your message is too long", and the only fix is to the message. The same
+            # sentence a provider raises when it catches the case itself, so a user never reads
+            # two different explanations of one failure.
+            from personalclaw.guardrails.failure import request_exceeds_window_sentence
+
+            return Headroom(
+                state=HeadroomState.CANNOT_FIT,
+                window=window,
+                assembled_tokens=total,
+                raw_tokens=raw,
+                text="",
+                compressed=tuple(notes),
+                oversized=oversized,
+                reason=request_exceeds_window_sentence(
+                    model=window.model_label,
+                    room_tokens=limit - others,
+                    request_tokens=request_tokens,
+                    request_chars=len(request_component.text),
+                ),
+            )
     listed = "; ".join(f"{o.name} ({o.tokens:,} tokens, {o.note})" for o in oversized)
     reason = (
         f"This turn's context does not fit. Assembled {total:,} tokens, but only "
@@ -658,13 +812,3 @@ def check(components: "list[Component] | tuple[Component, ...]", *, window: Wind
         reason=reason,
         fix=fix,
     )
-
-
-async def check_for_model(
-    components: "list[Component] | tuple[Component, ...]", *, model_ref: str
-) -> Headroom:
-    """:func:`check` against the window the bound model really has.
-
-    The seam's entry point: resolve the window once per turn, then decide.
-    """
-    return check(components, window=await resolve_window(bound_model_ref(model_ref)))

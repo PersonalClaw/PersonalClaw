@@ -40,9 +40,7 @@ from personalclaw.context_headroom import (
     Headroom,
     HeadroomState,
     Window,
-    bound_model_ref,
     check,
-    check_for_model,
     resolve_window,
 )
 from personalclaw.local_models import registry as lm_registry
@@ -500,7 +498,7 @@ async def test_a_driven_assembly_past_a_small_declared_window_refuses_legibly(
         active_recall=False,
         action_context="D" * 200_000,
     )
-    verdict = await check_headroom(assembled, model_ref="FakeLocal:tiny-chat")
+    verdict = check_headroom(assembled, window=await resolve_window("FakeLocal:tiny-chat"))
 
     assert verdict.state is HeadroomState.CANNOT_FIT
     # Vacuity: the figure came from the registry, not from a default.
@@ -541,7 +539,7 @@ async def test_a_driven_assembly_compresses_and_says_so(builder, clean_registry)
         session_key="dashboard:ce28",
         active_recall=False,
     )
-    verdict = await check_headroom(assembled, model_ref="FakeLocal:tiny-chat")
+    verdict = check_headroom(assembled, window=await resolve_window("FakeLocal:tiny-chat"))
 
     assert verdict.state is HeadroomState.FITS_AFTER_COMPRESSION
     assert verdict.window.source == "catalog"  # vacuity: registry, not a default
@@ -572,18 +570,22 @@ def test_the_chat_seam_branches_on_all_three_states():
     from personalclaw.dashboard import chat_runner
 
     src = inspect.getsource(chat_runner)
-    assert "await check_headroom(" in src
+    assert "check_headroom(_assembled, window=_window)" in src
     assert "HeadroomState.CANNOT_FIT" in src
     assert "HeadroomState.FITS_AFTER_COMPRESSION" in src
     # The refusal reaches the user as an error card, and the notice as an activity line.
     assert '"kind": "headroom"' in src
+    # The window is resolved ONCE, before assembly, and the check reads that same one…
+    assert src.index("await resolve_window(") < src.index("_assembled = assemble_context(")
     # …and it is decided before the message is handed on.
-    assert src.index("await check_headroom(") < src.index("full_message = _apply_incognito_prefix")
+    assert src.index("check_headroom(_assembled") < src.index(
+        "full_message = _apply_incognito_prefix"
+    )
 
 
 @pytest.mark.asyncio
-async def test_check_for_model_resolves_the_bound_model(clean_registry):
-    """``check_for_model`` is the seam's entry point: it resolves the window and decides."""
+async def test_the_check_decides_against_the_resolved_window(clean_registry):
+    """The resolved window is what the check bounds by — a catalog card's 6,000 refuses here."""
     clean_registry.register_provider(
         _FakeLocalProvider(
             "FakeLocal", [LocalModel(name="tiny-chat", context_tokens=6_000, output_tokens=2_000)]
@@ -592,21 +594,22 @@ async def test_check_for_model_resolves_the_bound_model(clean_registry):
         name="FakeLocal",
     )
 
-    verdict = await check_for_model(
+    verdict = check(
         [Component(name="ctx", text="tok " * 10_000, compressible=False)],
-        model_ref="FakeLocal:tiny-chat",
+        window=await resolve_window("FakeLocal:tiny-chat"),
     )
 
     assert verdict.window.source == "catalog"
     assert verdict.state is HeadroomState.CANNOT_FIT
 
 
-def test_auto_is_not_treated_as_a_model_id():
+@pytest.mark.asyncio
+async def test_auto_is_not_treated_as_a_model_id():
     """ "auto" is the ABSENCE of a selection, not a model. Asking the registry about it
     would return an unmeasured window for a turn whose real model is perfectly known."""
-    assert bound_model_ref("claude-opus-4-8") == "claude-opus-4-8"
-    assert bound_model_ref("auto") != "auto"
-    assert bound_model_ref("") == bound_model_ref("auto")
+    assert (await resolve_window("claude-opus-4-8")).ref == "claude-opus-4-8"
+    assert (await resolve_window("auto")).ref != "auto"
+    assert (await resolve_window("")).ref == (await resolve_window("auto")).ref
 
 
 # ── 10. The assembly's own silent drop is now reported ────────────────────────
@@ -654,9 +657,10 @@ def test_a_refusal_names_the_bound_model_not_just_the_number():
     assert verdict.state is HeadroomState.CANNOT_FIT
     assert "bundled-chat:SmolLM2-135M-Instruct-Q8_0" in verdict.reason
     assert "bundled-chat:SmolLM2-135M-Instruct-Q8_0" in verdict.fix
-    # An unbound model is named honestly rather than as a fabricated id.
+    # A turn with no known model is named honestly rather than as a fabricated id — and not
+    # as "the bound" model, because the model answering may be the UNBOUND zero-config floor.
     assert Window(tokens=1, output_reserve_tokens=0, input_tokens=1, source="catalog").label == (
-        "the bound chat model"
+        "this chat's model"
     )
 
 

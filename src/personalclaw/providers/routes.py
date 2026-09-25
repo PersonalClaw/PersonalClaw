@@ -198,7 +198,10 @@ async def handle_patch_config(request: web.Request) -> web.Response:
     if errors:
         return web.json_response({"error": "Validation failed", "details": errors}, status=422)
 
-    updated = ProviderSettings.update(name, body)
+    try:
+        updated = ProviderSettings.update(name, body)
+    except ValueError as exc:  # a secret the credential store cannot hold (multi-line)
+        return web.json_response({"error": "Validation failed", "details": [str(exc)]}, status=422)
 
     # A provider instance is built from its config at enable-time and cached in the
     # typed registry; a config change (e.g. a new API key) wouldn't otherwise take

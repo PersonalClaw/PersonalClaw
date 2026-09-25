@@ -205,12 +205,11 @@ def is_locally_served(model_ref: str) -> bool:
     """Whether ``model_ref`` is served by a REGISTERED LOCAL provider.
 
     A pure dict lookup on the local-model registry (``get_provider`` is
-    ``_providers.get``), so it is safe on the synchronous assembly path — which is the
-    whole reason it exists. The async authority for a local model's window is
-    :func:`personalclaw.local_models.budgets.model_budget`, and it reaches the
-    provider's ``list_models()`` coroutine; a sync caller cannot await that, and
-    before this helper the sync callers simply did not ask. They got
-    :data:`DEFAULT_CONTEXT_WINDOW` instead.
+    ``_providers.get``). The window resolver
+    (:func:`personalclaw.context_headroom.resolve_window`) asks it when nothing served,
+    declared or catalogued a model's window: a local runtime's table entry is an
+    ARCHITECTURAL maximum, so such a model is budgeted by
+    :data:`LOCAL_SERVED_CONTEXT_WINDOW` instead of by the table's number.
 
     Only the QUALIFIER is inspected, never the bare tail, because a bare Ollama id
     legitimately contains a colon (``qwen3:4b``) — the same reason
@@ -236,11 +235,12 @@ def binding_declared_window(model_ref: str) -> int | None:
 
     The synchronous half of the override that :func:`model_context_window` already ranks
     above every other answer. The provider ADAPTERS read this option off their own options
-    bag at construction (``llm/openai.py:170``, ``llm/anthropic.py:393``, the bundled
-    ``ollama-models`` provider) and a caller holding a live instance reads it off the
-    instance (``agents/native/runtime.py:1893``) — but the assembly path holds neither, so
-    before this it could not ask, and an operator who had declared their served window got
-    the conservative :data:`LOCAL_SERVED_CONTEXT_WINDOW` floor anyway.
+    bag at construction (``llm/openai.py``, ``llm/anthropic.py``, the bundled
+    ``ollama-models`` provider) and answer it through ``served_context_window()`` — so the
+    window resolver reads THIS only when it holds no live provider for the turn (an ACP
+    session, or a caller that resolved no runtime), where an operator who had declared their
+    served window would otherwise get the conservative :data:`LOCAL_SERVED_CONTEXT_WINDOW`
+    floor anyway.
 
     That matters in exactly the case the floor is least accurate: an operator serving a
     large local context (Ollama's ``num_ctx``, a llama.cpp ``--ctx-size``) declares it here
@@ -280,46 +280,3 @@ def binding_declared_window(model_ref: str) -> int | None:
     except Exception:  # noqa: BLE001 — an unreadable config is UNDECLARED, not a crash
         return None
     return None
-
-
-def active_chat_model_window() -> int:
-    """The context window of the model bound to the ``chat`` use-case (Settings →
-    Models), or the default. Lets a context builder scale its budget to the model
-    actually in use without threading the id through every call site.
-
-    🪤 A LOCALLY-SERVED binding resolves to :data:`LOCAL_SERVED_CONTEXT_WINDOW`, not to
-    this table's hosted default. Without that branch this function was the assembler's
-    only answer to "how much room does this model have?" and it answered 200,000 for
-    every local model, because a local model has no ``model_tokens.json`` entry and the
-    table defaults rather than admitting it does not know. Measured against the OU-14
-    bundled floor (a 2,048-token card): this returned 200,000 where
-    ``context_headroom.resolve_window`` — the async authority, which DOES read the
-    catalog card — returned 2,048. A 97.7x over-statement, in the direction this
-    module's own docstring calls the unsafe one, and every window-scaled budget in
-    ``context.py`` and ``learning/ambient.py`` was scaled by it. The result was an
-    assembler budgeting for 200k and a headroom contract refusing the turn against the
-    1,728 tokens of input room that card actually leaves (2,048 minus a declared
-    320-token reply reserve).
-
-    The floor is deliberately conservative rather than exact (see
-    :data:`LOCAL_SERVED_CONTEXT_WINDOW`): the honest served number is not knowable from
-    a synchronous call, and erring small only costs a leaner prompt where erring large
-    costs the turn. An operator who DOES know it declares it, and
-    :func:`binding_declared_window` is how that declaration reaches here — it outranks
-    both the floor and the table, so serving a large local context is a config line and
-    not a lost cause.
-    """
-    try:
-        from personalclaw.providers.use_cases import active_model_refs
-
-        refs = active_model_refs("chat")
-        if refs:
-            ref = str(refs[0])
-            return model_context_window(
-                ref,
-                local=is_locally_served(ref),
-                override=binding_declared_window(ref),
-            )
-    except Exception:
-        pass
-    return DEFAULT_CONTEXT_WINDOW

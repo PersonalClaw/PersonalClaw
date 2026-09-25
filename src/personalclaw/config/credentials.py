@@ -83,6 +83,22 @@ _KEYCHAIN_INDEX_KEY = "__personalclaw_key_index__"
 #: either as usable would be exactly the fail-open this contract forbids.
 _UNUSABLE_KEYRING_BACKENDS = ("keyring.backends.fail.", "keyring.backends.null.")
 
+#: Key prefix of every credential OWNED by a settings record — a provider instance's API key,
+#: an app setting declared ``x-meta.sensitive`` — rather than stored by name through the
+#: Secrets panel or an app's own ``save_credential`` call. The settings FILE holds a
+#: ``{{secret:<key>}}`` reference to it (``config.secret_refs``), which is the only way it is
+#: read, so an owned key is deliberately NOT mirrored into ``os.environ``: nothing resolves it
+#: by environment name, and exporting it would hand every provider key to every child the
+#: gateway spawns. The vault hides the prefix for the same reason it hides browse profile keys
+#: — the owning settings surface manages it, and deleting it from the Secrets panel would leave
+#: that surface pointing at nothing.
+OWNED_KEY_PREFIX = "PCSECRET_"
+
+
+def is_owned_key(key: str) -> bool:
+    """Whether ``key`` is owned by a settings record (see :data:`OWNED_KEY_PREFIX`)."""
+    return key.startswith(OWNED_KEY_PREFIX)
+
 
 def _usable_keyring() -> object | None:
     """Return the ``keyring`` module iff it is importable AND backed by a real store.
@@ -451,16 +467,16 @@ def save_credential(key: str, value: str) -> None:
 
     Callers do not choose or learn the backend. With the keychain active the secret
     goes to the OS secret service; otherwise — and whenever a keychain write fails —
-    it is upserted into ``~/.personalclaw/.env`` at mode 0600. Either way the value
-    is mirrored into the process environment so the running gateway and the trusted
+    it is upserted into ``~/.personalclaw/.env`` at mode 0600. A NAMED credential is
+    then mirrored into the process environment so the running gateway and the trusted
     children that inherit ``os.environ`` see it immediately (sandboxed children are
-    filtered by name in ``sandbox.py``, independent of the backend).
+    filtered by name in ``sandbox.py``, independent of the backend). An OWNED key
+    (:func:`is_owned_key`) is not: it is read only through its settings reference.
     """
-    if credential_backend() == "keychain" and _keychain_save(key, value):
+    if not (credential_backend() == "keychain" and _keychain_save(key, value)):
+        _dotenv_save_credential(key, value)
+    if not is_owned_key(key):
         os.environ[key] = value
-        return
-    _dotenv_save_credential(key, value)
-    os.environ[key] = value
 
 
 def get_credential(key: str) -> str:

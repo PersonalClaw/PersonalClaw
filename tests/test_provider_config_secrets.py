@@ -76,9 +76,17 @@ async def _client(tmp_path: Path):
             yield client
 
 
+def _config_file(tmp_path: Path) -> Path:
+    return tmp_path / "apps" / "fake-channel" / "data" / "config.json"
+
+
 def _stored(tmp_path: Path) -> dict:
-    path = tmp_path / "apps" / "fake-channel" / "data" / "config.json"
-    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    """The settings as the app reads them: the file holds a reference for each secret, and the
+    value is resolved from the credential store (``config.secret_refs``)."""
+    from personalclaw.config.secret_refs import resolve
+
+    path = _config_file(tmp_path)
+    return resolve(json.loads(path.read_text(encoding="utf-8"))) if path.is_file() else {}
 
 
 @pytest.mark.asyncio
@@ -98,8 +106,10 @@ async def test_get_config_masks_sensitive_fields(tmp_path):
         assert body["config"]["app_token"] == SECRET_MASK
         assert body["config"]["command"] == "pclaw", "a non-sensitive field must pass through"
         assert body["_secret_set"] == ["app_token", "bot_token"]
-        # …and the real value is still on disk, unharmed.
+        # …and the real value is still stored, unharmed — in the credential store, never in
+        # the app's own config file.
         assert _stored(tmp_path)["bot_token"] == _SECRET
+        assert _SECRET not in _config_file(tmp_path).read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio

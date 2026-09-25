@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 // ── Issue 614: absent permissions are DISCLOSED, not hidden ─────────────────────────
@@ -10,71 +10,67 @@ import { join } from 'node:path'
 // copy ("None — this app is granted no gateway capability") was unreachable from the
 // Store. The gate now keys on consentKnown (was a manifest actually read?): a
 // declared-none manifest reaches PermissionList's disclosure, while a registry
-// pointer — whose manifest isn't fetched until install — says the permissions aren't
-// known YET instead of pretending they're none.
+// pointer — whose manifest isn't read until its install is reviewed — says the
+// permissions aren't known YET instead of pretending they're none.
 
-const read = (f: string) =>
-  readFileSync(join(process.cwd(), 'src/pages/apps', f), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '')
+const SRC = join(process.cwd(), 'src')
+const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+const read = (f: string) => strip(readFileSync(join(SRC, 'pages/apps', f), 'utf8'))
+
+function productionFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((n) => {
+    const p = join(dir, n)
+    if (statSync(p).isDirectory()) return n === 'test' ? [] : productionFiles(p)
+    return /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n) ? [p] : []
+  })
+}
 
 describe('install consent discloses absent permissions (issue 614)', () => {
-  it('the consent section keys on consentKnown, not permissions-emptiness', () => {
+  it('the Store detail panel keys on disclosureOf, not permissions-emptiness', () => {
     const src = read('AppsSection.tsx')
-    expect(src).toMatch(/item\.consentKnown \?/)
-    // The old hide-when-empty gate is gone from the consent panel.
-    expect(src).not.toMatch(/item\.permissions && Object\.keys\(item\.permissions\)\.length > 0 &&\s*\(\s*<PermissionList/)
+    expect(src).toMatch(/const disclosure = disclosureOf\(item\)/)
+    expect(src).toMatch(/\{disclosure \? \(\s*<AppDisclosureView disclosure=\{disclosure\}/)
+    // The old hide-when-empty gate is gone.
+    expect(src).not.toMatch(/item\.permissions && Object\.keys\(item\.permissions\)\.length > 0/)
   })
 
-  it('a known manifest reaches PermissionList even when it declared nothing', () => {
-    const src = read('AppsSection.tsx')
-    const gate = src.slice(src.indexOf('item.consentKnown ?'))
-    expect(gate).toMatch(/<PermissionList perms=\{item\.permissions \?\? \{\}\}/)
-  })
-
-  it("a registry pointer says the permissions aren't known yet", () => {
+  it("a registry pointer says the permissions aren't known yet, and when they will be", () => {
     const src = read('AppsSection.tsx')
     expect(src).toMatch(/not known yet/i)
-    expect(src).toMatch(/read at install/i)
+    expect(src).toMatch(/read when\s+you choose Install/)
+    expect(src).toMatch(/You will see everything it gets before anything is installed/)
   })
 
-  it("PermissionList still owns the declared-none copy (the branch this fix makes reachable)", () => {
-    const consent = read('installConsent.tsx')
-    expect(consent).toMatch(/None — this app is granted no gateway capability/)
+  it('PermissionList still owns the declared-none copy (the branch this fix makes reachable)', () => {
+    expect(read('installConsent.tsx')).toMatch(/None — this app is granted no gateway capability/)
   })
 
-  // ── The SECOND reader (the install path) ──────────────────────────────────────────
+  // ── The install path never faces the question ──────────────────────────────────────
   //
-  // Issue 614 was closed on the Store panel's sibling, `ConsentModal`, whose guard is
-  // `permissions ? … : "could not read this app's declared permissions"`. That guard
-  // cannot express the distinction on its own: `to_dict` is `asdict`, so the wire ships
-  // `permissions: {}` for a registry pointer too, and `{}` is truthy — the pointer took
-  // the KNOWN branch and asserted "granted no gateway capability" about a manifest
-  // nobody had read. `consentPermissions` is the one place the `undefined` the modal
-  // documents actually gets derived, and every caller must route through it.
+  // Issue 614 was first closed on the Store panel's sibling, the install modal, whose guard
+  // could not express the distinction: `to_dict` is `asdict`, so the wire ships
+  // `permissions: {}` for a registry pointer too, `{}` is truthy, and the pointer took the KNOWN
+  // branch and asserted "granted no gateway capability" about a manifest nobody had read. The
+  // install dialog now discloses the SERVER'S reading of the staged bytes, which exists for a
+  // pointer as much as for a local card — so no catalog row reaches it at all, and
+  // `disclosureOf` is left as the one reader of the flag, for the one surface that still shows
+  // a catalog row's grants before any review.
 
-  it('every ConsentModal caller derives its grants through consentPermissions', () => {
-    const callers = [
-      join('src/pages/apps', 'AppsSection.tsx'),
-      join('src/app/onboarding', 'EssentialsStep.tsx'),
-    ]
-    let seen = 0
-    for (const rel of callers) {
-      const src = readFileSync(join(process.cwd(), rel), 'utf8')
-      for (const m of src.matchAll(/<ConsentModal\b[\s\S]{0,600}?\/?>/g)) {
-        seen += 1
-        expect(m[0], `${rel}: a ConsentModal passes permissions straight from the row`)
-          .toMatch(/permissions=\{consentPermissions\(/)
-      }
-    }
-    // The module header names FOUR callers; a fifth that forgot must fail this, not pass
-    // it vacuously.
-    expect(seen).toBe(4)
+  it('the install dialog discloses the review, never a catalog row', () => {
+    const consent = read('installConsent.tsx')
+    expect(consent).toMatch(/r\.disclosure && <AppDisclosureView disclosure=\{r\.disclosure\}/)
+    // …and what it is handed to review is a SOURCE, not a catalog row.
+    expect(consent).toMatch(/api\.previewApp\(target\.source, target\.update\)/)
   })
 
-  it('consentPermissions is the one authority for known-vs-not-known', () => {
+  it('disclosureOf is the one authority for known-vs-not-known', () => {
     const consent = read('installConsent.tsx')
-    expect(consent).toMatch(/export function consentPermissions/)
+    expect(consent).toMatch(/export function disclosureOf/)
     expect(consent).toMatch(/if \(!entry\?\.consentKnown\) return undefined/)
+    // No other production file reads the flag, so no surface can re-derive the distinction.
+    const readers = productionFiles(SRC)
+      .filter((abs) => /\.consentKnown\b/.test(strip(readFileSync(abs, 'utf8'))))
+      .map((abs) => abs.slice(SRC.length + 1))
+    expect(readers).toEqual(['pages/apps/installConsent.tsx'])
   })
 })

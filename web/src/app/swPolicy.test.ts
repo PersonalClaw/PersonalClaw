@@ -52,6 +52,25 @@ describe('APP_SHELL — the precache list', () => {
     }
   })
 
+  it('index.html preloads nothing the worker already caches', () => {
+    // A `<link rel="preload">` for a shell file is spent only on the FIRST cold visit. On every
+    // warm load — worker or HTTP cache, measured both ways — the file arrives from cache without
+    // consuming the preload, so Chrome reports it "preloaded but not used", and re-reports every
+    // unused preload 3 s after EACH completed fetch: the shell's 8 s `/api/loops` poll turned the
+    // one font preload into a console warning every 8 s for the life of the page. The worker's
+    // precache is what delivers these files on every load after the first.
+    const html = readFileSync(join(WEB_DIR, 'index.html'), 'utf8')
+    const links = [...html.matchAll(/<link\b[^>]*>/g)].map((m) => m[0])
+    expect(links.some((l) => /rel="manifest"/.test(l)), 'the scan read no <link> at all').toBe(true)
+    const preloaded = links
+      .filter((l) => /\brel="preload"/.test(l))
+      .map((l) => /\bhref="([^"]+)"/.exec(l)?.[1] ?? '')
+    for (const href of preloaded) {
+      expect(APP_SHELL as readonly string[], `index.html preloads ${href}, which the worker precaches`)
+        .not.toContain(href)
+    }
+  })
+
   it('declares the same icons the manifest does', () => {
     const manifest = JSON.parse(
       readFileSync(join(WEB_DIR, 'public', 'manifest.webmanifest'), 'utf8'),

@@ -52,9 +52,9 @@ def render_use_case_prompt(use_case: str, values: dict[str, Any] | None = None) 
     """
     from personalclaw.prompt_providers.engine import render_template
     from personalclaw.providers.prompt_use_cases import (
-        DEFAULT_PROMPT_NAME,
         DEFAULT_PROMPT_PROVIDER,
         active_prompt_ref,
+        bundled_prompt_name_for,
         split_ref,
     )
 
@@ -66,7 +66,7 @@ def render_use_case_prompt(use_case: str, values: dict[str, Any] | None = None) 
 
         # Register + seed FIRST (core + always-on bundled-app prompts) so an
         # app-owned use-case is in the vocabulary before we resolve its binding —
-        # otherwise it'd look unknown and fall back to the chat prompt.
+        # otherwise it'd look unknown and resolve to no prompt at all.
         _ensure_default_providers_registered()
         ref = active_prompt_ref(use_case)
         parsed = split_ref(ref)
@@ -78,12 +78,19 @@ def render_use_case_prompt(use_case: str, values: dict[str, Any] | None = None) 
             return None
         template = provider.get_prompt(prompt_name)
         if template is None:
-            # Bound/own prompt missing — fall back to the chat prompt so a
-            # use-case is never left with nothing.
-            fallback = get_prompt_provider(DEFAULT_PROMPT_PROVIDER)
-            template = fallback.get_prompt(DEFAULT_PROMPT_NAME) if fallback else None
+            # The BOUND prompt is gone (deleted after it was bound): serve this use
+            # case's own bundled prompt. Not the chat prompt — that is an agent persona,
+            # and a title/judge/extraction task handed it would get "You are <bot>…"
+            # with every one of its own instructions and variables missing. No
+            # bundled prompt either → None, and the caller's shipped fallback applies.
+            own = bundled_prompt_name_for(use_case)
+            default_provider = get_prompt_provider(DEFAULT_PROMPT_PROVIDER)
+            if not own or default_provider is None:
+                return None
+            template = default_provider.get_prompt(own)
             if template is None:
                 return None
+            provider = default_provider
         return render_template(template, values or {}, resolver=(lambda n: provider.get_snippet(n)))
     except PromptRenderError as exc:
         logger.warning("render_use_case_prompt failed for %r: %s", use_case, exc)

@@ -11,7 +11,6 @@ import { Field, TextInput } from '../../ui/forms'
 import { fvs } from '../../design/fontWeight'
 import {
   ROOM_ICON,
-  parkedQueue,
   roomState,
   roomStateMeta,
   roundBudgetLabel,
@@ -142,7 +141,8 @@ export function RoomsScope({ rooms, error, loading, onRefresh, navigate }: {
 function RoomRow({ room, onOpen }: { room: RoomRecord; onOpen: () => void }) {
   const state = roomState(room)
   const meta = roomStateMeta(state)
-  const parked = parkedQueue(room)
+  // An archived room owes nobody anything — nobody may speak in it — so it promises no turn.
+  const owed = room.archived ? [] : room.owed
   const Icon = ROOM_ICON
   return (
     <li>
@@ -171,11 +171,11 @@ function RoomRow({ room, onOpen }: { room: RoomRecord; onOpen: () => void }) {
               <MessagesSquare size={11} aria-hidden />
               {roundBudgetLabel(room)}
             </span>
-            {/* The parked queue on the ROW, because it is the one thing a paused room owes that a
-                user cannot guess: "paused" alone does not say whether anyone is still waiting to
-                speak, and that is the difference between replying and archiving. */}
-            {parked.length > 0 && (
-              <span>{parked.length} still owed a turn</span>
+            {/* What the room owes, on the ROW, because it is the one thing a paused or interrupted
+                room owes that a user cannot guess: "paused" alone does not say whether anyone is
+                still waiting to speak, and that is the difference between replying and archiving. */}
+            {owed.length > 0 && (
+              <span>{owed.length} still owed a turn</span>
             )}
           </p>
         </div>

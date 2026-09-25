@@ -1422,6 +1422,7 @@ async def start_dashboard(
     # flipping the config takes effect without a gateway restart.
     from personalclaw.dashboard.handlers.rooms import (
         api_room_archive,
+        api_room_continue,
         api_room_export,
         api_room_get,
         api_room_member_add,
@@ -1442,6 +1443,7 @@ async def start_dashboard(
     app.router.add_post("/api/rooms/{room_id}/members", api_room_member_add)
     app.router.add_delete("/api/rooms/{room_id}/members/{name}", api_room_member_remove)
     app.router.add_post("/api/rooms/{room_id}/messages", api_room_message_post)
+    app.router.add_post("/api/rooms/{room_id}/continue", api_room_continue)
     app.router.add_get("/api/rooms/{room_id}/export", api_room_export)
     app.router.add_get("/api/rooms/{room_id}", api_room_get)
     app.router.add_patch("/api/rooms/{room_id}", api_room_update)
@@ -1657,6 +1659,17 @@ async def start_dashboard(
     from personalclaw.providers.routes import register_routes as register_extension_routes
 
     load_all_extensions()
+    # Move any secret an earlier release left inline in a settings file (a provider key in
+    # config.json, an app's tokens in its data/config.json, an instance's key) into the
+    # credential store. HERE: after extensions load, so every app's declared-sensitive fields
+    # are known, and before the registry sync below reads config.json. Idempotent and
+    # fail-safe per file — a key it cannot move keeps working where it is.
+    from personalclaw.config.secret_refs import migrate_plaintext_secrets
+
+    try:
+        migrate_plaintext_secrets()
+    except Exception:  # noqa: BLE001 — never block boot; the next start retries
+        logger.warning("moving plaintext secrets into the credential store failed", exc_info=True)
     # Sync config.json provider entries into the LLM registry IMMEDIATELY after
     # extensions load (types are now registered). Must happen BEFORE any handler
     # resolves a provider (e.g. embedding/knowledge auto-embed at boot).
@@ -2045,7 +2058,17 @@ async def start_dashboard(
         """Terminate every app-backend subprocess on gateway stop. Without this the
         backends (snippet-lab/standup-notes/… server.py) were spawned on enable but
         never reaped on shutdown — so each gateway restart ORPHANED another set
-        (reparented to init), leaking dozens of processes over a dev session."""
+        (reparented to init), leaking dozens of processes over a dev session.
+
+        The watchdogs boot started go FIRST: left running, the backend one revived every
+        backend terminated here 30s later, and all three outlived the gateway that started
+        them — each boot in one process adding three sweepers that never ended."""
+        try:
+            from personalclaw.providers.loader import stop_extension_watchdogs
+
+            stop_extension_watchdogs()
+        except Exception:
+            logger.debug("watchdog shutdown failed", exc_info=True)
         try:
             from personalclaw.apps.backend_runtime import get_backend_supervisor
 

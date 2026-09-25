@@ -29,6 +29,13 @@ _MIN_TRIGGER_OVERLAP = 0.7
 DIRECT_SKILL_MAX_CONTENT_CHARS = 50_000
 _SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
+# The frontmatter ``source:`` a skill created through ``POST /api/skills`` — the dashboard's New
+# skill dialog — carries. The third writer beside ``AUTO_SKILL_SOURCE_VALUE`` and
+# ``ephemeral.TAUGHT_SKILL_SOURCE_VALUE``; the listing reads it back as the skill's provenance,
+# so the inspector can say the skill was created in the dashboard rather than guessing
+# "bundled or hand-placed" — which it said about exactly that skill before this.
+DASHBOARD_SKILL_SOURCE_VALUE = "dashboard"
+
 # ── Auto skill creation ──
 
 # Namespace for auto-generated skills — keeps them out of the way of
@@ -436,6 +443,29 @@ def parse_frontmatter(content: str) -> dict[str, str]:
     block scalars and block lists exactly where the first one was carefully fixed.
     """
     return SkillsLoader._parse_frontmatter_text(content)
+
+
+def with_source_marker(content: str, value: str) -> str:
+    """*content* with ``source: <value>`` appended to its frontmatter — unless the frontmatter
+    already declares a ``source``, which is left exactly as the author wrote it.
+
+    For a writer that KNOWS how a skill came to exist while the body was authored by someone
+    else: the create route knows the skill is being created in the dashboard, and a body pasted
+    into the dialog cannot carry that fact. It only ever ADDS a key — overwriting a declared
+    ``source`` would discard text the user wrote, which is the one thing a write path must not
+    do silently. No closed frontmatter → unchanged, and ``validate_skill_md`` names the problem.
+
+    Finds the block the way ``SkillsLoader._parse_frontmatter_text`` does (leading whitespace
+    ignored, closed at the first ``\\n---``) and keeps the block's own line endings.
+    """
+    if "source" in parse_frontmatter(content):
+        return content
+    match = re.match(r"^(\s*---\r?\n)(.*?)(\r?\n---)", content, re.DOTALL)
+    if match is None:
+        return content
+    newline = "\r\n" if match.group(3).startswith("\r\n") else "\n"
+    at = match.end(2)
+    return f"{content[:at]}{newline}source: {value}{content[at:]}"
 
 
 def validate_skill_md(

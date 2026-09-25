@@ -529,9 +529,14 @@ class TestTheConnectorToggleHasAWritePath:
         """`test_config_roundtrip.py` covers dataclass/_meta, `load()` and `to_dict()`, but
         provably NOT the `_EDITABLE_CONFIG` allowlist — a field missing from it leaves that file
         fully green while the Settings control silently 400s."""
+        from personalclaw.config.edit_spec import security_control
         from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
-        assert _EDITABLE_CONFIG["browse.user_browser_enabled"] == {"type": "bool"}
+        spec = _EDITABLE_CONFIG["browse.user_browser_enabled"]
+        # The validation shape, exactly; turning the connector ON lets the agent drive the
+        # user's own browser, so the field is on the security list too.
+        assert {k: v for k, v in spec.items() if k != "security"} == {"type": "bool"}
+        assert security_control(spec) is not None
 
     def test_the_allowlisted_value_coerces_the_way_the_toggle_sends_it(self):
         from personalclaw.config.edit_spec import coerce_edit_value

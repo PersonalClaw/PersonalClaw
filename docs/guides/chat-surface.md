@@ -15,15 +15,18 @@ so if you cannot find one below, that is the reason, and each section says which
 
 ## 1. Rewind — go back to any earlier message
 
-**Where:** hover any of your own messages that is *not* the last one → **Rewind to here**.
+**Where:** hover any of your own messages that is *not* the last one → **Edit & resend** to
+change what you asked, or **Rewind to here** to ask it again unchanged.
 
-Editing your last message and sending it again has always worked. Rewind is for the message
-*before* that: pick a turn from an hour ago, change what you asked, and the conversation
-replays from that point. Everything after the message you edited comes off the visible
-transcript, and the assistant's memory of it is dropped too, so it will not quietly refer to
-an answer you just undid.
+Editing your last message and sending it again only replaces that message's reply. An
+*earlier* message is different: pick a turn from an hour ago, and the assistant answers it
+afresh from that point. The messages after it are not re-sent — everything below the message
+comes off the visible transcript, and the assistant's memory of it is dropped too, so it will
+not quietly refer to an answer you just undid.
 
-It asks first, because it changes the shape of the conversation rather than adding to it.
+You are told before it happens, because it changes the shape of the conversation rather than
+adding to it: the editor says that resending replaces everything below the message (its button
+reads **Resend & replace**), and Rewind asks you to confirm.
 
 ### Nothing is thrown away
 

@@ -429,9 +429,90 @@ def test_branded_provider_factory_threads_temperature_into_extra_options(monkeyp
 
     hot = factory(entry=entry, temperature=0.85)
     assert hot._extra_options["temperature"] == 0.85
+    # …and the provider says so: this is what a best-of-N candidate reads back as `sampled_at`.
+    assert hot.sampling_temperature == 0.85
     # Absent the kwarg, nothing is injected (every existing build stays unchanged).
     cold = factory(entry=entry)
     assert "temperature" not in cold._extra_options
+    assert cold.sampling_temperature is None
+
+
+class _WireAdapter:
+    """A provider adapter that either puts the requested temperature on its request or not —
+    the one fact a caller cannot see through `one_shot_completion`'s text-only return."""
+
+    def __init__(self, temperature: float | None):
+        self._temperature = temperature
+
+    @property
+    def sampling_temperature(self) -> float | None:
+        return self._temperature
+
+    async def start(self) -> None:
+        pass
+
+    async def shutdown(self) -> None:
+        pass
+
+    async def stream(self, message: str):
+        yield LLMEvent(kind=EVENT_TEXT_CHUNK, text=f"answer@{self._temperature}")
+        yield LLMEvent(kind=EVENT_COMPLETE, input_tokens=5, output_tokens=2)
+
+
+def _guarded_one_shot(honours_temperature: bool):
+    """`one_shot_completion` as production shapes it: one guarded call per candidate."""
+
+    async def one_shot(prompt, *, use_case="background", temperature=None, **_kw):
+        from personalclaw.guardrails.model_call import wrap_model_call_guard
+        from personalclaw.llm_helpers import stream_and_collect
+
+        adapter = _WireAdapter(temperature if honours_temperature else None)
+        guard = wrap_model_call_guard(
+            adapter, use_case=use_case, provider_name="wire-probe", model="probe-1"
+        )
+        return await stream_and_collect(guard, prompt)
+
+    return one_shot
+
+
+@pytest.mark.asyncio
+async def test_each_candidate_reports_the_temperature_its_request_carried(monkeypatch):
+    """`sampled_at` is read off the GUARD's call record, not echoed from the argument — asking
+    for a temperature and sending one are different facts, and only the second samples."""
+    monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", _guarded_one_shot(True))
+    result = await best_of_n("q", n=3, judge_provider_factory=_judge_factory({}))
+    assert [c["sampled_at"] for c in result["candidates"]] == list(_TEMPERATURE_LADDER[:3])
+    assert result["note"] == ""
+
+
+@pytest.mark.asyncio
+async def test_a_provider_that_drops_the_temperature_is_named_not_presented_as_a_sweep(
+    monkeypatch,
+):
+    """The shipped defect's shape: N paid calls at the provider default. The slate still returns
+    — the answers are real — but the envelope must not let them read as a temperature ladder."""
+    monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", _guarded_one_shot(False))
+    result = await best_of_n("q", n=3, judge_provider_factory=_judge_factory({}))
+    assert [c["sampled_at"] for c in result["candidates"]] == [None, None, None]
+    assert result["note"].startswith("not temperature-varied"), result["note"]
+    assert result["winner"] is not None
+
+
+@pytest.mark.asyncio
+async def test_an_all_failed_slate_names_what_the_calls_died_of(monkeypatch):
+    """The note IS the workflow step's failure, so it has to say whether the provider was down or
+    the prompt was bad — "all N sampling calls failed" alone cannot tell them apart."""
+
+    async def down(prompt, *, use_case="background", temperature=None, **_kw):
+        raise ConnectionError("provider refused the connection")
+
+    monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", down)
+    result = await best_of_n("q", n=2, judge_provider_factory=_judge_factory({}))
+    assert result["winner"] is None
+    assert result["note"] == (
+        "no candidate: all 2 sampling calls failed — "
+        "ConnectionError: provider refused the connection"
+    )
 
 
 def test_sampling_outcomes_is_declared_and_snapshot_excluded():

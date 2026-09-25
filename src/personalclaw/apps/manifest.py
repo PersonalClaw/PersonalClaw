@@ -550,7 +550,8 @@ class Permissions:
     # is mounted READ-ONLY into the consumer's backend env as
     # ``PERSONALCLAW_APP_SHARED_DIR_<SHARER>`` (writes stay broker-only), and the
     # SDK hands the consumer a read-only handle (``sdk.util.shared_app_data_dir``). Both
-    # reach install consent via ``to_dict`` → ``catalog._manifest_consent`` → the Store.
+    # reach install consent via ``to_dict`` → ``disclosure.describe`` → the Store and the
+    # install dialog.
     storageShared: bool = False  # noqa: N815
     storageRead: list[str] = field(default_factory=list)  # noqa: N815
     # Native desktop capabilities this app may read/use through the gateway
@@ -833,9 +834,10 @@ class Dependencies:
     ``"faster-whisper>=1.0"``) the app needs at runtime. Core ships LEAN — heavy
     ML/provider libs (sentence-transformers, faster-whisper, boto3, …) are NOT
     core deps; the app that needs one declares it here and the installer pip-installs
-    it into the shared core venv at install/update time. A newly-introduced dep
-    requires a gateway RESTART to import (the running process already imported its
-    modules) — surfaced to the user via the install result's ``restart_required``.
+    it at install/update time into ``<home>/app-python``, which every process running
+    app code loads after the interpreter's own packages (``apps/app_python.py``). A
+    first install is importable in place; replacing a package the gateway had already
+    loaded needs a RESTART — surfaced via the install result's ``restart_required``.
     """
 
     managedBy: str = "gateway"  # noqa: N815

@@ -190,9 +190,15 @@ def test_to_dict_carries_the_flag():
 
 def test_the_flag_is_patch_editable():
     """Absent from ``_EDITABLE_CONFIG`` ⇒ unreachable from the API or any UI."""
+    from personalclaw.config.edit_spec import security_control
     from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
-    assert _EDITABLE_CONFIG.get("sandbox.cgroup_scopes") == {"type": "bool"}
+    spec = _EDITABLE_CONFIG.get("sandbox.cgroup_scopes")
+    assert spec is not None
+    # The validation shape, exactly; `security` is its place on the security list (turning the
+    # scopes OFF loosens containment — tests/test_security_posture_rail.py).
+    assert {k: v for k, v in spec.items() if k != "security"} == {"type": "bool"}
+    assert security_control(spec) is not None
 
 
 def test_no_sandbox_allowlist_key_is_dead():

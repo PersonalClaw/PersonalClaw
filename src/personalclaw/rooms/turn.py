@@ -230,10 +230,15 @@ async def run_member_turn(
 ) -> str:
     """Drive ONE member's turn and append its reply to the shared transcript.
 
-    Returns the reply text, or ``""`` when the member produced nothing (which is appended
-    nowhere — an empty message in a shared transcript reads as a member having taken a
-    position it did not take). ``""`` is also what a member over its OWN budget returns: it
-    stops speaking while the rest of the room carries on.
+    Returns the reply text, or ``""`` when the member produced nothing. Nothing is appended AS
+    the member then — an empty message in a shared transcript reads as a member having taken a
+    position it did not take — but the ROOM says the turn came back empty (:data:`EMPTY_TURN`),
+    because a member that was queued, took its turn and left no trace is the vanishing turn
+    this surface must not have. ``""`` is also what a member over its OWN budget returns, after
+    its refusal note: it stops speaking while the rest of the room carries on.
+
+    A turn that FAILS raises, and the arbiter records it through :func:`note_failed_turn` —
+    it owns the round, so it decides the room continues.
 
     **Each member carries its own reach; the human remains the only approver.** The posture is
     resolved per turn from this member's session key by :mod:`personalclaw.rooms.posture` — the
@@ -285,12 +290,57 @@ async def run_member_turn(
         _note_refusal(room_id, refusal)
 
     if not reply.strip():
-        logger.info(
-            "rooms: member %s in room %s produced no text — nothing appended", member_name, room_id
-        )
+        logger.info("rooms: member %s in room %s produced no text", member_name, room_id)
+        _note(room_id, member_name, EMPTY_TURN.format(member=member_name))
         return ""
     append_message(room_id, role="assistant", content=reply, speaker=member_name)
     return reply
+
+
+#: The room's line for a turn that came back with no text. Product copy, pinned by test: it is
+#: what the user reads where an answer should have been.
+EMPTY_TURN = "{member} took its turn but wrote nothing."
+
+#: The room's line for a turn that FAILED: who, then why. The reason is a whole sentence
+#: (see :func:`failure_reason`), so this is two sentences rather than a clause and a dash.
+FAILED_TURN = "{member} could not take its turn. {reason}"
+
+
+def failure_reason(member_name: str, exc: BaseException) -> str:
+    """Why *member_name*'s turn failed, as a sentence the human can act on.
+
+    A :class:`~personalclaw.rooms.store.RoomError` is already that sentence — the room refused the
+    turn because the member's declared posture widens the room's or cannot be read, and its
+    message names the axis. (A member removed or a room archived mid-turn is the human's own
+    decision, and the arbiter records no failure for it.) Anything
+    else is the member's MODEL failing, and goes through the one provider-error humanizer every
+    chat error already uses — never ``str(exc)``, which is empty for every httpx timeout (the
+    failure measured in a live room) and a JSON blob for most SDK errors, and never a traceback,
+    which stays in the gateway log.
+
+    ``room_member=`` makes the humanizer's remedies true HERE: a member's model is its agent
+    binding's, changed on the Agents page, not in a chat composer this surface does not have.
+    And NOT the humanizer for a ``RoomError``, deliberately: its substring map would read a
+    refusal that mentions "permission" as a rejected API key.
+    """
+    from personalclaw.llm_helpers import humanize_provider_error
+
+    if isinstance(exc, RoomError):
+        return exc.message
+    return humanize_provider_error(exc, room_member=member_name)
+
+
+def note_failed_turn(room_id: str, member_name: str, exc: BaseException) -> None:
+    """Say on the transcript that *member_name*'s turn failed, and why — in that member's slot.
+
+    **The note IS the fix for a failed turn vanishing.** Before it, the log said "the round
+    continues" and the room showed nothing, so a member the human had addressed by name simply
+    never answered while the others answered for it. Written where the member's reply would have
+    been, so the human reads the failure in sequence, and fenced to the members that speak next
+    like every other line, so none of them mistakes the silence for agreement.
+    """
+    reason = failure_reason(member_name, exc)
+    _note(room_id, member_name, FAILED_TURN.format(member=member_name, reason=reason))
 
 
 def _note_refusal(room_id: str, refusal: "ToolRefusal") -> None:
@@ -301,25 +351,31 @@ def _note_refusal(room_id: str, refusal: "ToolRefusal") -> None:
     refusal recorded anywhere else would be a member that inexplicably never acts. The note
     also reaches the other members on their next turn, fenced like every other line, which is
     deliberate: a critic that learns its write tool was refused stops proposing writes.
+    """
+    logger.warning("rooms: %s (room %s)", refusal.sentence(), room_id)
+    _note(room_id, refusal.member, refusal.sentence())
+
+
+def _note(room_id: str, about: str, sentence: str) -> None:
+    """Append one line the ROOM wrote, ABOUT the member *about*. Never raises.
+
+    ``ROOM_NOTE_ROLE`` with the member as ``speaker``: the reader needs to know which member the
+    line concerns, and the role is what keeps it from rendering as that member having said it.
+    Written through :func:`append_message`, so it is redacted like every other line.
 
     A failure to write the note is logged at ERROR and swallowed, and that is the ONE place
     swallowing is right here: the alternative is a transcript-bookkeeping error replacing the
-    member's actual reply, which would lose the turn to protect its footnote. The refusal
-    itself already happened — the gate returned ``False`` before this ran — so nothing is
-    granted by this failing.
+    round's own flow — losing the next member's turn to protect this one's footnote. What the
+    note describes already happened, so nothing is granted or hidden by its failing; the log
+    line carries the sentence the room could not.
     """
-    logger.warning("rooms: %s (room %s)", refusal.sentence(), room_id)
     try:
-        append_message(
-            room_id,
-            role=ROOM_NOTE_ROLE,
-            content=refusal.sentence(),
-            speaker=refusal.member,
-        )
+        append_message(room_id, role=ROOM_NOTE_ROLE, content=sentence, speaker=about)
     except Exception:
         logger.error(
-            "rooms: could not record a tool refusal on room %s's transcript — it is in the "
-            "log above but the human will not see it in the room",
+            "rooms: could not record %r on room %s's transcript — it is in this log but the "
+            "human will not see it in the room",
+            sentence,
             room_id,
             exc_info=True,
         )

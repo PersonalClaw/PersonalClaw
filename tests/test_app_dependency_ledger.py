@@ -98,12 +98,12 @@ class TestLedgerUnit:
 
 class TestLedgerThroughLifecycle:
     def test_install_records_via_app_manager(self, tmp_path):
-        app_manager.install(_src(tmp_path, "app-a", subdir="s1", mcp=["shared"]))
+        app_manager.install(_src(tmp_path, "app-a", subdir="s1", mcp=["shared"]), confirm=True)
         assert "app-a" in dependency_ledger.installed_by("mcp:shared")
 
     def test_two_apps_share_dep_force_uninstall_keeps_shared(self, tmp_path):
-        app_manager.install(_src(tmp_path, "app-a", subdir="s1", mcp=["shared"]))
-        app_manager.install(_src(tmp_path, "app-b", subdir="s2", mcp=["shared"]))
+        app_manager.install(_src(tmp_path, "app-a", subdir="s1", mcp=["shared"]), confirm=True)
+        app_manager.install(_src(tmp_path, "app-b", subdir="s2", mcp=["shared"]), confirm=True)
         # Preview app-a's uninstall: the shared dep should classify SHARED.
         preview = {c.key: c.disposition for c in app_manager.preview_uninstall("app-a")}
         assert preview["mcp:shared"] is DepDisposition.SHARED

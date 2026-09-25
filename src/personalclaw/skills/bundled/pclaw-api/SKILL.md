@@ -96,8 +96,12 @@ suggestions; use one of those.
 - **Don't hand-roll UI** when a tool or route already does the job. The manifest
   is the inventory of what exists; check it before building.
 - **Don't edit an installed app's files** to change its behavior. Push edits with
-  `POST /api/apps/{name}/update` `{source, confirm:true}` — the gateway runs the
-  INSTALLED copy under `$PERSONALCLAW_HOME/apps/<name>/`, not the workspace tree.
+  `POST /api/apps/{name}/update` `{source}` — the gateway runs the INSTALLED copy
+  under `$PERSONALCLAW_HOME/apps/<name>/`, not the workspace tree. An edit that
+  changes what the app gets (permissions, scheduled jobs, Python packages, what it
+  runs) or that the scanner warns about answers `409` with a review instead: show the
+  owner that review. It updates only when re-sent with the review's `consent` digest,
+  and giving that consent is the owner's decision, not yours.
 - **Don't call a route the manifest doesn't mark `agent_callable`** as if it were
   an agent API — those are UI transport or websocket surfaces.
 - **Don't replace the `static/dist` symlink with a copy** — a `cp -R` shadows it

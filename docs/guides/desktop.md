@@ -387,9 +387,11 @@ governs what the app *tells* you:
 - **Channel** (`updates.channel`) — `stable` (default) watches normal releases, `beta`
   watches release candidates too. `nightly` tracks a git branch, so it has no meaning for
   a packaged app; the resolver treats it as `stable` here.
-- **Version pin** (`updates.pin`) — pin `0.2.1` and the panel stops reporting newer
+- **Version pin** (`updates.pin`) — pin `0.1.3` and the panel stops reporting newer
   releases as available, which is how you stay on a known-good build while you finish
-  something. Clear it to follow the channel again.
+  something. It must be an exact release version; a pin that matches no published
+  release is flagged in the panel rather than silently stopping updates. Clear it to
+  follow the channel again.
 - **Roll back** — download the older release from the
   [releases page](https://github.com/PersonalClaw/PersonalClaw/releases) and install it over
   this one, then set `updates.pin` to that version so the panel stops nagging. Run

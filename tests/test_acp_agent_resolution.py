@@ -33,6 +33,10 @@ def test_acp_agent_entry_builds_via_registry():
     # Entry has no declared caps → resolution falls back to capability_of(type);
     # make CHAT present so the candidate matches.
     registry.capability_of.return_value = MagicMock(capabilities=frozenset({Capability.CHAT}))
+    # The registry's readiness answer (``None`` = can serve). A bare MagicMock would answer
+    # with a truthy mock, i.e. "not ready", and the candidate would be skipped for a reason
+    # this test is not about.
+    registry.not_ready.return_value = None
     built = MagicMock(name="AcpAgentProvider")
     registry.build.return_value = built
 

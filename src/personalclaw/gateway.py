@@ -595,7 +595,25 @@ class GatewayOrchestrator:
                 else:
                     _parent_session_name = None
 
-                if _parent_session_name:
+                from personalclaw.workflows import ownership as _ownership
+
+                if _parent_session_name and _parent_session_name.startswith(
+                    _ownership.OWNED_PREFIX
+                ):
+                    # A workflow STAGE: its parent is the run-owned key `workflow:<run>:<node>`,
+                    # which is never a dashboard session, so there is no chat Trust toggle to
+                    # consult and a session lookup can only ever miss. An UNATTENDED run never
+                    # reaches here — its stages spawn `approval_mode="auto"`
+                    # (`engine.dispatch_stage`) — so this is an attended run asking, and the audit
+                    # says that instead of `scoped_trust_session_not_found`, which read as a
+                    # broken lookup on every stage of every run.
+                    _sel_log(
+                        caller=f"run:{_parent_session_name}",
+                        operation=f"{source}.run_stage_attended",
+                        outcome="not_auto_approved",
+                        resources=_safe_title,
+                    )
+                elif _parent_session_name:
                     _ps = (self.dashboard_state._sessions or {}).get(_parent_session_name)
                     if _ps and _ps._trust:
                         _sel_log(
@@ -1145,8 +1163,16 @@ class GatewayOrchestrator:
 
         # The context the provider will receive, built HERE rather than at the `execute` call so
         # the denylist gate below judges the same `(config, ctx)` pair the provider is handed —
-        # the call shape the other two seams already use.
-        ctx = ActionContext(event=event, context="", payload=payload)
+        # the call shape the other two seams already use. `status_url` is this trigger's own row,
+        # so an action whose effect is a notification can link back to what fired it.
+        from personalclaw.triggers.delivery import status_url as _trigger_status_url
+
+        ctx = ActionContext(
+            event=event,
+            context="",
+            payload=payload,
+            status_url=_trigger_status_url(trigger_id=str(getattr(trigger, "id", "") or "")),
+        )
 
         # 🔴 THE DENYLIST, at the seam that lost it. §1.2 says
         # the denylist is enforced at the THREE dispatch seams every action-provider execution
@@ -1602,6 +1628,14 @@ class GatewayOrchestrator:
 
             state = getattr(self, "dashboard_state", None)
             if state is None:
+                return
+            # 🔴 ONE NOTIFICATION PER FIRE. A `notify` action's success already put the user's own
+            # note in front of them — measured: 5 fires of a per-minute notify trigger made 10
+            # notifications, each fire's "Standup nudge: review Q4 tasks" followed by an empty
+            # "Standup nudge finished". The report would be a note about the note, so it is not
+            # sent; the action's note carries the trigger link instead (`ActionContext.status_url`).
+            # A failure still reports: in that case the action's own note never went out.
+            if ok and _delivery.notifies_on_its_own(trigger):
                 return
             if not hasattr(self, "_delivered_event_ids"):
                 self._delivered_event_ids: set[str] = set()
@@ -2332,7 +2366,17 @@ class GatewayOrchestrator:
             try:
                 client, is_new, _resumed = await self.sessions.get_or_create(session_key)
                 _acquired = True
-                full_message, _ = self.ctx_builder.build_message(task_text, is_new)
+                from personalclaw.context_headroom import resolve_window
+
+                # Named, not derived: this call passes no session key, and a keyless build
+                # derives the CHAT use case — so a heartbeat ran on the interactive-chat
+                # prompt while Settings → Prompts promised it the Background one.
+                full_message, _ = self.ctx_builder.build_message(
+                    task_text,
+                    is_new,
+                    prompt_use_case="background",
+                    window=await resolve_window(serving=client),
+                )
 
                 # Heartbeat is a pure UNATTENDED background loop — no user present.
                 # The approval policy is DERIVED from the session's SafetyProfile, not
@@ -2629,6 +2673,20 @@ class GatewayOrchestrator:
                     finally:
                         _sess._running = False
 
+            def _cycle_still_armed(_sess: Any) -> bool:
+                """Is the loop that fired this cycle still armed to run it?
+
+                Two facts, both required: the session is still the one the dashboard has
+                registered under its key (a delete pops it), and the nudge loop that fired the
+                cycle still exists and is active (a pause deactivates it, a stop removes it).
+                """
+                key = str(getattr(_sess, "key", "") or "")
+                if not key or dstate._sessions.get(key) is not _sess:
+                    return False
+                nudge_svc = self.autonudge_svc
+                armed = nudge_svc.get_by_session(key) if nudge_svc is not None else None
+                return armed is not None and bool(getattr(armed, "active", False))
+
             async def _run_turn_bounded(_sess=session, _msg=tagged) -> None:
                 # Bound each turn so a wedged worker turn can't hold the session
                 # `running` forever. Loop cycles run long (subagent fan-out,
@@ -2655,6 +2713,17 @@ class GatewayOrchestrator:
                         if _finding_count(_sess.key) > before or getattr(
                             _sess, "_last_turn_errored", False
                         ):
+                            break
+                        if not _cycle_still_armed(_sess):
+                            # The loop was paused, stopped or deleted while this cycle ran. The
+                            # re-prompts are the SAME cycle, so they end with it — this is what
+                            # used to write a finding minutes after "Paused", and re-save a
+                            # deleted loop's transcript as an orphan chat.
+                            logger.info(
+                                "AutoNudge: %s is no longer armed — abandoning the cycle's "
+                                "re-prompts",
+                                _sess.key,
+                            )
                             break
                         logger.info(
                             "AutoNudge: %s produced no finding (re-prompt %d/%d) — fresh ACP session + re-prompt",  # noqa: E501
@@ -3556,7 +3625,14 @@ class GatewayOrchestrator:
                         client, is_new, _resumed = await self.sessions.get_or_create(parent_key)
                         _acquired = True
                         if self.ctx_builder:
-                            msg, _ = self.ctx_builder.build_message(announce, is_new, parent_key)
+                            from personalclaw.context_headroom import resolve_window
+
+                            msg, _ = self.ctx_builder.build_message(
+                                announce,
+                                is_new,
+                                parent_key,
+                                window=await resolve_window(serving=client),
+                            )
                         else:
                             msg = announce
                         response = await asyncio.wait_for(
@@ -3677,7 +3753,14 @@ class GatewayOrchestrator:
                     client, is_new, _resumed = await self.sessions.get_or_create(parent_key)
                     acquired = True
                     if self.ctx_builder:
-                        msg, _ = self.ctx_builder.build_message(announce, is_new, parent_key)
+                        from personalclaw.context_headroom import resolve_window
+
+                        msg, _ = self.ctx_builder.build_message(
+                            announce,
+                            is_new,
+                            parent_key,
+                            window=await resolve_window(serving=client),
+                        )
                     else:
                         msg = announce
                     cron_response = await asyncio.wait_for(
@@ -3924,6 +4007,9 @@ class GatewayOrchestrator:
             # dashboard state exists) so the Inbox handlers reach draft/classify/digest.
             self.dashboard_state._inbox_svc = self.inbox_svc
             self.dashboard_state._inbox_restart = self._restart_inbox
+            # No approval survives a restart, so an Inbox row still asking for one from the
+            # previous run is asking for nothing — close those before anyone opens them.
+            self.dashboard_state.close_orphaned_approval_rows()
 
     async def _init_api_server(self) -> None:
         """Start a minimal API-only HTTP server for MCP tool transport."""
@@ -4345,6 +4431,24 @@ class GatewayOrchestrator:
     # Main run loop
     # ------------------------------------------------------------------
 
+    def _wire_embeddings(self) -> None:
+        """Bind the Settings > Models embedding selection to the gateway's vector memory.
+
+        Called AFTER the dashboard / API-server init, never before it: that init is where the
+        installed apps register their provider types (``load_all_extensions``) and where
+        ``config.json``'s ``providers[]`` are replayed into the LLM registry. Resolved any
+        earlier — as it was, right after ``_init_services()`` — an app-provided embedding model
+        (Ollama, the sentence-transformers app) could not be built because its app had not
+        registered it yet: the vector memory booted with no embed fn, and an Ollama binding logged
+        a chained traceback on every boot for a provider that was configured correctly. When no
+        embedding model is bound, semantic embeddings stay off until the user picks one.
+        """
+        from personalclaw.embedding_providers.registry import get_active_embed_fn
+
+        embed_fn = get_active_embed_fn()
+        if embed_fn and getattr(self, "vector_memory", None) is not None:
+            self.vector_memory.embed_fn = embed_fn
+
     async def run(self) -> None:
         """Start all services and block until shutdown signal."""
         # ── GOVERNANCE BOOT, first and fail-closed ──
@@ -4383,15 +4487,6 @@ class GatewayOrchestrator:
         # ── Initialise all services ──
         self._init_services()
 
-        # Wire embedding function from the Settings > Models active embedding
-        # selection. When no embedding model is bound, semantic embeddings
-        # stay off until the user picks one.
-        from personalclaw.embedding_providers.registry import get_active_embed_fn
-
-        embed_fn = get_active_embed_fn()
-        if embed_fn and getattr(self, "vector_memory", None) is not None:
-            self.vector_memory.embed_fn = embed_fn
-
         await self._init_cron()
         await self._init_heartbeat()
         self._install_graph_maintenance_probe()
@@ -4407,6 +4502,7 @@ class GatewayOrchestrator:
             await self._init_dashboard()
         else:
             await self._init_api_server()
+        self._wire_embeddings()
 
         # Emit machine-readable READY line for test harnesses (--json-ready).
         # Printed BEFORE bg_session and other startup chatter so the harness

@@ -17,7 +17,48 @@ from __future__ import annotations
 
 from typing import Any
 
+from personalclaw.loop.sdlc_meta import SDLC_STAGES
 from personalclaw.tool_providers.base import RiskLevel, ToolDefinition
+
+
+def _strings(description: str = "") -> dict[str, Any]:
+    """A list of strings. Every array declares its ``items`` — a strict provider rejects the
+    whole request for one that does not (``tool_providers.portable_schema``)."""
+    schema: dict[str, Any] = {"type": "array", "items": {"type": "string"}}
+    if description:
+        schema["description"] = description
+    return schema
+
+
+def _stage_plan_schema() -> dict[str, Any]:
+    """The rows ``code_classify._normalize_plan`` reads — declared, so the model sees the same
+    shape the normalizer keeps (a stage id outside ``SDLC_STAGES`` is dropped there)."""
+    task = {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "description": {"type": "string"},
+            "action_plan": _strings("Ordered concrete sub-steps."),
+            "exit_criteria": _strings("Checkable done-conditions."),
+            "depends_on": {
+                "type": "array",
+                "items": {"type": "integer"},
+                "description": "0-based indices of prerequisite tasks within this stage.",
+            },
+        },
+        "required": ["title"],
+    }
+    stage = {
+        "type": "object",
+        "properties": {
+            "stage": {"type": "string", "enum": list(SDLC_STAGES)},
+            "title": {"type": "string"},
+            "objective": {"type": "string"},
+            "exit_criteria": _strings(),
+            "tasks": {"type": "array", "items": task},
+        },
+    }
+    return {"type": "array", "items": stage}
 
 
 def project_run_tool_definitions(provider: str, s: dict[str, Any]) -> list[ToolDefinition]:
@@ -69,15 +110,15 @@ def project_run_tool_definitions(provider: str, s: dict[str, Any]) -> list[ToolD
                     "project_kind": {"type": "string"},
                     "entry_stage": {"type": "string"},
                     "workspace_dir": {"type": "string"},
-                    "stage_plan": {"type": "array"},
+                    "stage_plan": _stage_plan_schema(),
                     "verify_command": {"type": "string"},
                     "test_command": {"type": "string"},
                     # goal/research/design/general
-                    "sub_goals": {"type": "array"},
-                    "deliverables": {"type": "array"},
-                    "scope": {"type": "array"},
+                    "sub_goals": _strings(),
+                    "deliverables": _strings(),
+                    "scope": _strings(),
                     "goal_type": {"type": "string"},
-                    "rubric": {"type": "array"},
+                    "rubric": _strings(),
                 },
                 "required": ["kind", "task"],
             },

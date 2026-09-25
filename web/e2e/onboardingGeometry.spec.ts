@@ -105,7 +105,9 @@ const IMPORT_SCAN = {
         ['skills', 'run'], ['skills', 'code-review'], ['skills', 'simplify'], ['skills', 'init'],
         ['settings', 'settings.json'],
       ].map(([category, key], i) => ({
-        fingerprint: `cc-${i}`, source: 'claude-code', category, key, title: key, redactions: 0, existing: i % 5 === 0,
+        fingerprint: `cc-${i}`, source: 'claude-code', category, key, title: key,
+        state: i % 5 === 0 ? 'existing' : 'new', destination: '', detail: i % 5 === 0 ? 'already imported' : '',
+        secrets_skipped: 0, redactions: 0,
       })),
     },
     {
@@ -116,7 +118,8 @@ const IMPORT_SCAN = {
         ['instructions', 'AGENTS.md'], ['memories', 'house style'], ['mcp_servers', 'sqlite'],
         ['skills', 'review'], ['settings', 'config.toml'],
       ].map(([category, key], i) => ({
-        fingerprint: `cx-${i}`, source: 'codex', category, key, title: key, redactions: 0, existing: false,
+        fingerprint: `cx-${i}`, source: 'codex', category, key, title: key,
+        state: 'new', destination: '', detail: '', secrets_skipped: 0, redactions: 0,
       })),
     },
   ],

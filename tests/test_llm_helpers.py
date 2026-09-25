@@ -610,4 +610,193 @@ class TestHumanizeProviderError:
         assert len(out) <= 501 and out.endswith("…")
 
     def test_none_safe(self):
-        assert humanize_provider_error(None) == ""
+        out = humanize_provider_error(None)
+        assert out and "failed" in out
+
+    def test_a_window_refusal_reaches_the_user_verbatim(self):
+        """The refusal is already the sentence: the model, its limit and the fix. Its figures
+        are this turn's own, and "1,429 tokens" contains ``429`` — which the substring map reads
+        as a rate limit, telling a user whose message is too long to wait and retry it."""
+        from personalclaw.sdk.model import PromptExceedsWindow
+
+        refusal = PromptExceedsWindow(
+            model="SmolLM2-135M-Instruct-Q8_0",
+            room_tokens=1_429,
+            request_tokens=2_000,
+            request_chars=8_000,
+        )
+        assert "1,429 tokens" in str(refusal)
+        assert humanize_provider_error(refusal) == str(refusal)
+
+    def test_running_out_of_memory_is_said_in_words(self):
+        """numpy's allocator text is true and nothing a user can act on."""
+        raw = "Unable to allocate 26.0 GiB for an array with shape (9, 27862, 27862)"
+        out = humanize_provider_error(MemoryError(raw))
+        assert "ran out of memory" in out
+        assert "GiB" not in out and "27862" not in out
+        assert "Settings → Models" in out
+        # A bare MemoryError() is the same failure with the same fix, not an unexplained one.
+        assert humanize_provider_error(MemoryError()) == out
+
+
+class TestHumanizeProviderErrorInARoom:
+    """A room member's failed turn is shown IN the room, so the sentence must be true there.
+
+    Four of the humanizer's remedies name a chat-only fix — the composer's model selector, a new
+    chat, "your message" — and a room has none of them: a member's model is its agent binding's,
+    set on the Agents page, and what outgrows a model is the room's conversation. With
+    ``room_member`` those four say so; every other sentence is surface-neutral and identical;
+    and with no member the chat's words are exactly what they were, pinned verbatim below.
+    """
+
+    def _window_refusal(self):
+        from personalclaw.sdk.model import PromptExceedsWindow
+
+        return PromptExceedsWindow(
+            model="gemma3:1b", room_tokens=8_192, request_tokens=9_000, request_chars=36_000
+        )
+
+    def _surface_bound(self):
+        return {
+            "credits": Exception("Error code: 400 - credit balance is too low"),
+            "model_id": Exception("model not found: gemma9:900b"),
+            "memory": MemoryError("Unable to allocate 26.0 GiB"),
+            "window": self._window_refusal(),
+        }
+
+    def test_the_four_surface_bound_remedies_name_the_members_agent_and_no_chat_control(self):
+        for label, exc in self._surface_bound().items():
+            out = humanize_provider_error(exc, room_member="critic")
+            assert "the critic agent" in out and "Agents page" in out, (label, out)
+            for chat_only in ("composer", "new chat", "for this chat", "Your message"):
+                assert chat_only not in out, (label, chat_only, out)
+
+    def test_a_window_refusal_in_a_room_is_about_the_rooms_conversation(self):
+        out = humanize_provider_error(self._window_refusal(), room_member="critic")
+        assert out == (
+            "This room's conversation is too long for gemma3:1b: it can read about 8,192 tokens "
+            "(roughly 33,000 characters of text like this) at a time, and critic's turn needs "
+            "9,000 tokens (36,000 characters). Start a new room, or give the critic agent a model "
+            "with a larger context window on the Agents page."
+        )
+
+    def test_the_chat_keeps_its_own_words_exactly(self):
+        bound = self._surface_bound()
+        assert humanize_provider_error(bound["credits"]) == (
+            "This model's provider account is out of credits/quota. Top it up, or pick a "
+            "different model for this chat (the model selector is in the composer)."
+        )
+        assert humanize_provider_error(bound["model_id"]) == (
+            "The selected model id isn't valid for this provider. Pick a listed model in the "
+            "composer's model selector."
+        )
+        assert humanize_provider_error(bound["memory"]) == (
+            "This machine ran out of memory while the model was reading this conversation, so "
+            "no reply was produced. Shorten the message or start a new chat — or bind a model "
+            "that does not run on this machine in Settings → Models."
+        )
+        assert humanize_provider_error(bound["window"]) == (
+            "Your message is too long for gemma3:1b: it can read about 8,192 tokens (roughly "
+            "33,000 characters of text like this) at a time, and this message is 9,000 tokens "
+            "(36,000 characters). Shorten it, or bind a model with a larger context window in "
+            "Settings → Models."
+        )
+
+    def test_a_surface_neutral_sentence_is_the_same_on_both_surfaces(self):
+        import httpx
+
+        req = httpx.Request("POST", "http://127.0.0.1:11434/api/chat")
+        for exc in (
+            httpx.ReadTimeout("", request=req),
+            Exception("Error code: 429 rate limit"),
+            Exception("401 invalid x-api-key"),
+            Exception("some brand new failure mode nobody mapped"),
+        ):
+            assert humanize_provider_error(exc, room_member="critic") == humanize_provider_error(
+                exc
+            ), exc
+
+
+class TestHumanizeProviderErrorWithNoMessage:
+    """An exception whose ``str()`` is empty still gets a sentence (day-56b evidence).
+
+    Measured on a fresh instance: the provider proxy rejected the connection, the native
+    runtime raised ``httpx.ReadError('')``, and the chat showed an error bar with NOTHING in
+    it — ``"content": ""`` over the WebSocket and on disk — because this function returned
+    ``str(exc)``. Every case below returned ``""`` before the fix.
+    """
+
+    def _req(self):
+        import httpx
+
+        return httpx.Request("POST", "http://127.0.0.1:11435/api/chat?key=NOT-SHOWN")
+
+    def test_read_error_names_the_lost_connection_and_the_endpoint(self):
+        import httpx
+
+        out = humanize_provider_error(httpx.ReadError("", request=self._req()))
+        assert "connection to the model provider at 127.0.0.1:11435 was lost" in out
+        assert "try again" in out
+        # Host and port only: a key carried in the URL never reaches the sentence.
+        assert "NOT-SHOWN" not in out and "/api/chat" not in out
+
+    def test_read_error_without_a_request_still_says_what_failed(self):
+        import httpx
+
+        out = humanize_provider_error(httpx.ReadError(""))
+        assert out.startswith("The connection to the model provider was lost")
+
+    def test_timeouts_say_the_request_timed_out(self):
+        import asyncio
+
+        import httpx
+
+        for exc in (
+            httpx.ReadTimeout("", request=self._req()),
+            asyncio.TimeoutError(),
+            TimeoutError(),
+        ):
+            out = humanize_provider_error(exc)
+            assert "timed out" in out, exc
+
+    def test_connect_timeout_and_refusal_say_it_could_not_be_reached(self):
+        import httpx
+
+        assert "Timed out connecting" in humanize_provider_error(
+            httpx.ConnectTimeout("", request=self._req())
+        )
+        assert "Couldn't connect to the model provider" in humanize_provider_error(
+            ConnectionRefusedError()
+        )
+
+    def test_reset_and_broken_pipe_are_a_lost_connection(self):
+        for exc in (ConnectionResetError(), BrokenPipeError()):
+            assert "was lost" in humanize_provider_error(exc), exc
+
+    def test_a_messageless_wrapper_is_described_by_its_transport_cause(self):
+        import httpx
+
+        try:
+            try:
+                raise httpx.ReadError("", request=self._req())
+            except httpx.ReadError as inner:
+                raise RuntimeError() from inner
+        except RuntimeError as wrapped:
+            out = humanize_provider_error(wrapped)
+        assert "127.0.0.1:11435 was lost" in out
+
+    def test_an_unknown_messageless_class_is_named_rather_than_blank(self):
+        class WeirdProviderFault(Exception):
+            pass
+
+        out = humanize_provider_error(WeirdProviderFault())
+        assert "WeirdProviderFault" in out and "no message" in out
+
+    def test_whitespace_only_counts_as_no_message(self):
+        assert humanize_provider_error(Exception("   \n")).startswith("The turn failed with")
+
+    def test_an_ipv6_endpoint_is_bracketed(self):
+        import httpx
+
+        req = httpx.Request("POST", "http://[::1]:11434/api/chat")
+        assert "[::1]:11434" in humanize_provider_error(httpx.ReadError("", request=req))

@@ -123,6 +123,18 @@ describe('refTarget', () => {
     expect(refTarget({ refs: { room: 'a b' } })).toBe('chat/room/a%20b')
   })
 
+  it('sends the Inbox row of a pending approval to where the approval is ANSWERED', () => {
+    // Derived by `approvalDestination`, the one parser of an approval's session key: a chat
+    // opens the chat, and a workflow stage's synthetic key opens its run at the node — never a
+    // `chat/workflow:…` route that 404s (#258). The label says where it goes.
+    const chat = { refs: { approval: 'chat-a:1', session: 'chat-a' } }
+    expect(refTarget(chat)).toBe('chat/chat-a')
+    expect(refLabel(chat)).toBe('Open the chat')
+    const stage = { refs: { approval: 'spawn:1', session: 'workflow:11b9a34c:synthesize' } }
+    expect(refTarget(stage)).toBe('workflows/runs/11b9a34c?node=synthesize')
+    expect(refLabel(stage)).toBe('Open the workflow run')
+  })
+
   it('returns empty when there is nowhere to go', () => {
     // The row then renders no deep-link affordance at all, rather than a dead link.
     expect(refTarget({ refs: {} })).toBe('')

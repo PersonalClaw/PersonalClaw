@@ -114,7 +114,7 @@ def _install(tmp_path: Path, name: str, *, agent_perm: bool):
     if agent_perm:
         mani["permissions"] = {"agent": True}
     (d / "app.json").write_text(json.dumps(mani), encoding="utf-8")
-    res = app_manager.install(d)
+    res = app_manager.install(d, confirm=True)
     assert res.ok, res.error
 
 
