@@ -7,7 +7,7 @@ import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { Segmented } from '../../ui/Segmented'
 import { ProjectPicker } from '../../ui/ProjectPicker'
-import { getActiveProject, setActiveProject } from '../../lib/activeProject'
+import { useDefaultProject } from '../../lib/defaultProject'
 import { ClawMark } from '../../ui/ClawMark'
 import { ComposerStage } from '../../ui/ComposerStage'
 import { DotGlow } from '../../ui/DotGlow'
@@ -97,7 +97,16 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
   // completes (its report is graduated to Artifacts first). Off = keep (default).
   const [scratch, setScratch] = useState(false)
   const [projectKind, setProjectKind] = useState<'greenfield' | 'brownfield'>('greenfield')
-  const [projectId, setProjectId] = useState(initialProjectId || getActiveProject())
+  // Seeded from the deep-linked project, else the user's DEFAULT project (an account setting).
+  // The default can land after the first render (its first-ever read), so it is applied when it
+  // arrives — unless the user has already chosen here, which always wins. Picking a project here
+  // scopes this loop; it does not move the default (see `lib/defaultProject`).
+  const { defaultProjectId } = useDefaultProject()
+  const [projectId, setProjectId] = useState(initialProjectId || defaultProjectId)
+  const projectChosen = useRef(!!initialProjectId)
+  useEffect(() => {
+    if (!projectChosen.current && defaultProjectId) setProjectId(defaultProjectId)
+  }, [defaultProjectId])
   // A Code loop can reuse a bound codebase: a directly-supplied workspace (the "New
   // target" reuse flow) wins; else inherit the picked project's workspace_dir. Either
   // flips to brownfield so the new target operates on the same repo without re-picking.
@@ -250,7 +259,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
     // design (they must keep their natural size), so the row can only fit by each wide control
     // having its OWN collapse strategy — which only the granularity dial had.
     <div className="flex min-w-0 items-center gap-s [&>*]:shrink-0">
-      <ProjectPicker value={projectId} onChange={(id) => { setProjectId(id); setActiveProject(id) }} disabled={busy} />
+      <ProjectPicker value={projectId} onChange={(id) => { projectChosen.current = true; setProjectId(id) }} disabled={busy} />
       {/* Goal-only: the stop-granularity dial. 4 options → collapses to a menu when narrow. */}
       {kind === 'goal' && (
         <Segmented ariaLabel="Granularity" disabled={busy} collapse="menu" value={granularity} onChange={(v) => setGranularity(v as Granularity)}

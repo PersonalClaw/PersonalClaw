@@ -25,6 +25,7 @@ from personalclaw.workflows.containers import (
     LEDGERS,
     MAX_LEASE_SECS,
     UNATTENDED_ORIGINS,
+    BoardOutcome,
     BoardState,
     Claim,
     Completeness,
@@ -103,6 +104,33 @@ def test_an_escalated_run_lands_in_REVIEW():
 @pytest.mark.parametrize("status", [RunStatus.COMPLETE, RunStatus.FAILED, RunStatus.CANCELLED])
 def test_terminal_statuses_are_done(status):
     assert board_state_for(run(status=status)) is BoardState.DONE
+
+
+@pytest.mark.parametrize(
+    ("status", "outcome"),
+    [
+        (RunStatus.COMPLETE, BoardOutcome.COMPLETED),
+        (RunStatus.FAILED, BoardOutcome.FAILED),
+        (RunStatus.CANCELLED, BoardOutcome.CANCELLED),
+    ],
+)
+def test_a_done_run_says_how_it_ended(status, outcome):
+    """DONE is "nothing left to do", which a failed or cancelled run also is — so the group cannot
+    say how the work ended, and the row must. A cancelled run filed under Done with a completed
+    run's glyph is the board claiming it finished."""
+    row = board_row(run(status=status), now=0.0)
+    assert row.state is BoardState.DONE
+    assert row.outcome is outcome
+    assert row.to_dict()["outcome"] == outcome.value
+
+
+@pytest.mark.parametrize(
+    "status", [RunStatus.RUNNING, RunStatus.DRAFT, RunStatus.PAUSED, RunStatus.ESCALATED]
+)
+def test_a_run_that_has_not_ended_claims_no_outcome(status):
+    row = board_row(run(status=status), now=0.0)
+    assert row.outcome is None
+    assert row.to_dict()["outcome"] == ""
 
 
 # ── the origin rules have to key on the REAL enum ──

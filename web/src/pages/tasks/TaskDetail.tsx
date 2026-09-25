@@ -19,7 +19,7 @@ import { statusMeta, priorityMeta, dueMeta, relTime, isExitComplete, exitDoneCou
 import { prereqIds } from './dag'
 import { TaskForm, toDraft, draftToPayload, type TaskDraft } from './TaskForm'
 import { accentChip } from '../../design/accent'
-import { reportingWrite } from '../../app/reportingWrite'
+import { failureSentence, reportingWrite } from '../../app/reportingWrite'
 
 /** Body for the task SidePanel. Owns the view↔edit toggle (edit reuses the same
  *  panel, per the directive) and the comment thread. Project-provider tasks are
@@ -50,7 +50,10 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
     try {
       const updated = await api.updateTask(task.id, draftToPayload(draft))
       onSaved(updated); setEditing(false)
-    } catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') } finally { setSaving(false) }
+    // The server's refusal names what blocked the save ("cannot complete: unfinished exit criteria
+    // — Copy reviewed by Sam"); the sentence around it says the save did not happen. It renders in
+    // the sticky footer beside Save — see `ui/FormFooter` for why it cannot live in the form body.
+    } catch (e) { setErr(failureSentence('save this task', e)) } finally { setSaving(false) }
   }
   // Reverse dependencies, hoisted: the "Blocks" section below renders them and the delete dialog
   // states them, and two copies of one filter is how a count starts disagreeing with a list.
@@ -115,8 +118,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
     return (
       <div className="flex flex-col gap-l">
         <TaskForm draft={draft} onChange={setDraft} compact allTasks={allTasks} />
-        {err && <FieldError>{err}</FieldError>}
-        <FormFooter>
+        <FormFooter error={err}>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(task)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} loading={saving} disabled={saving || !draft.title.trim()}
             disabledReason={!draft.title.trim() ? 'Enter a task title first' : undefined}><Check size={15} /> Save</Button>

@@ -251,6 +251,10 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "one_link_required": "A one-link target is required.",
     "one_link_rejected": "The submitted one-link target was rejected.",
     "project_not_found": "No such project.",
+    # `PUT /api/projects/settings` (the default project). 409 rather than 404: the project exists
+    # and the request is valid once it is restored — an archived project is off every picker, so
+    # it cannot be where new work starts.
+    "project_archived": "The project is archived; restore it before new work can start in it.",
     "prompt_card_failed": "Rendering the prompt card failed.",
     "prompt_card_rejected": "The submitted prompt card was rejected.",
     "rejection_incomplete": "A rejection must carry a reason.",

@@ -1404,10 +1404,13 @@ export interface ProjectKnowledgeItem {
 // source degrades ONE section, never the board); `board` is the state-grouped view with
 // needs-input pinned first.
 export type WorkState = 'needs_input' | 'working' | 'queued' | 'suspended' | 'review' | 'done'
+/** How a `done` row ended (`containers.BoardOutcome`); `''` on a row that has not ended. */
+export type WorkOutcome = 'completed' | 'cancelled' | 'skipped' | 'failed' | 'stopped' | 'ended_early'
 export interface WorkClaim { holder: string; expires_at: number; taken_at: number; renewals: number }
 export interface WorkRow {
   run_id: string; title: string; state: WorkState; origin: string; project_id: string
   claim: WorkClaim | null; collapsed: boolean; attention: boolean; resumable: boolean
+  outcome: WorkOutcome | ''
 }
 export interface WorkGroup { state: WorkState; count: number; attention: number; rows: WorkRow[] }
 export interface WorkSection { name: string; items: WorkRow[]; status: 'ok' | 'loading' | 'error'; error: string; loadedAt: number }
@@ -1416,6 +1419,8 @@ export interface WorkBoard {
   completeness: 'complete' | 'inferred' | 'partial' | 'error'
   attention: number; loadedAt: number
 }
+/** `GET/PUT /api/projects/settings`. */
+export interface ProjectSettings { default_project_id: string }
 /** The server-side cap on a project or task-list NAME, mirroring `hierarchy.MAX_NAME_LEN`.
  *  Kept in step by `projectNameCap.test.ts`, which reads the Python constant — a name field
  *  bounded here but not there (or vice versa) is exactly the drift that let 3000 characters
@@ -7048,6 +7053,11 @@ export const api = {
   createProject: (body: { name: string; brief?: string; agent_instructions_template?: string; workspace_dir?: string; name_locked?: boolean }) => post<ProjectItem>('/api/projects', body),
   updateProject: (id: string, body: Record<string, unknown>) => put<ProjectItem>(`/api/projects/${encodeURIComponent(id)}`, body),
   deleteProject: (id: string, force = false) => del(`/api/projects/${encodeURIComponent(id)}${force ? '?force=true' : ''}`),
+  // The user's default project — where the dashboard's create forms (a new task, a new loop)
+  // start. An account preference in `entity_settings/projects.json`, so it follows the user to
+  // every browser; `""` when none, or when the stored one is deleted or archived.
+  projectSettings: () => get<ProjectSettings>('/api/projects/settings'),
+  updateProjectSettings: (body: ProjectSettings) => put<ProjectSettings>('/api/projects/settings', body),
   // Legibility §7 — render the marker-fenced PClaw context block into the project's
   // bound workspace_dir adapter files (CLAUDE.md / AGENTS.md / .cursorrules), replace-
   // in-place. Gated server-side on legibility.context_adapters + a bound workspace_dir.

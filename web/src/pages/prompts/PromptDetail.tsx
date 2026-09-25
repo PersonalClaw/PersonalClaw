@@ -92,9 +92,8 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
               `on-surface-low`. See `design/accentChipTone.test.tsx`. */}
           <span data-type="caption" className="ml-auto inline-flex items-center rounded-pill px-m h-6" style={toneChipSkin(sourceTone(prompt.source), 16)}>{sourceLabel(prompt.source, full?.tags)}</span>
         </div>
-        {err && <FieldError>{err}</FieldError>}
         <PromptEditFields draft={draft} onChange={setDraft} Section={Section} />
-        <FormFooter>
+        <FormFooter error={err}>
           <Button variant="ghost" size="sm" onClick={() => { if (full) setDraft(toDraft(full)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} loading={saving} disabled={saving || !draft.name.trim()}
             disabledReason={!draft.name.trim() ? 'Enter a name first' : undefined}><Check size={15} /> Save</Button>
