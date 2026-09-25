@@ -1513,6 +1513,7 @@ class DashboardState(DashboardWebSocketState):
         the safety property of shipping without a gate, and `test_notification_rules.py` /
         `test_notification_addressing.py` pin the two halves of it.
         """
+        from personalclaw import identity
         from personalclaw import notification_addressing as addressing
         from personalclaw import notification_rules as rules
         from personalclaw.providers import entity_routes
@@ -1570,7 +1571,9 @@ class DashboardState(DashboardWebSocketState):
         # system (the same reason the gate above fails open).
         try:
             rule = rules.resolve_rule_for_legacy(kind)
-            reason = rule.conditions.matches(f"{title}\n{body}", self._operator_name())
+            # The USER's name (`identity.operator_name`), which is what "mentions you by name"
+            # means — this read `agent.bot_name` once, and escalated on the assistant's name.
+            reason = rule.conditions.matches(f"{title}\n{body}", identity.operator_name())
             if reason:
                 rule = rule.escalated()
                 note["escalated_by"] = reason
@@ -1701,20 +1704,6 @@ class DashboardState(DashboardWebSocketState):
             push.deliver_async(kind, item_id)
         except Exception:
             self._log.debug("push target dispatch failed", exc_info=True)
-
-    def _operator_name(self) -> str:
-        """The operator's name for name-mention conditions, or "" when unknown.
-
-        Best-effort and never raises: a missing config must not turn a condition check
-        into a failed notification.
-        """
-        try:
-            from personalclaw.config.loader import AppConfig
-
-            return (AppConfig.load().agent.bot_name or "").strip()
-        except Exception:
-            logger.debug("operator name lookup failed", exc_info=True)
-            return ""
 
     def unread_count(self) -> int:
         """How many things are actually waiting on you — derived, never cached.

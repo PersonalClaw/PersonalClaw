@@ -98,7 +98,7 @@ def state(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "personalclaw.notification_rules.queue_for_digest", lambda note: digested.append(note)
     )
-    monkeypatch.setattr(st, "_operator_name", lambda: "", raising=False)
+    monkeypatch.setattr("personalclaw.identity.operator_name", lambda: "")
 
     class _Desktop:
         """A connected shell that reports the native-notification capability.

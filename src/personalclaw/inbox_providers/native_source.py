@@ -126,10 +126,10 @@ def post_to_inbox(
     # name-mention from the inbox entity settings) so an agent-pushed "urgent"
     # question fires the notification too.
     try:
-        from personalclaw.config.loader import AppConfig
+        from personalclaw.identity import operator_name
         from personalclaw.inbox import evaluate_alert, notify_inbox_alert
 
-        reason = evaluate_alert(item, AppConfig.load().dashboard.user_name or "")
+        reason = evaluate_alert(item, operator_name())
         if reason:
             notify_inbox_alert(st, item, reason)
     except Exception:

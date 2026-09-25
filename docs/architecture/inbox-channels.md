@@ -137,7 +137,11 @@ to a rule:
   path in `gateway.py` calls it directly; it is not wired to this target.)
 - **conditions** — keywords / name-mention that **escalate** a quieter mode to
   `immediate`. Escalation is capped at `immediate` and never adds targets the
-  user didn't choose.
+  user didn't choose. Name-mention matches the **user's** name (Settings →
+  Account → Your name), resolved once by `identity.operator_name()` for
+  `notify()` and both inbox ingestion paths, never the assistant's. With no name
+  given, including the `Operator` placeholder that skipping setup stores, it
+  never matches.
 
 Rules live in `entity_settings/notification_rules.json` with a guarded
 `PUT /api/notifications/rules`; the matrix is Settings → Notifications →

@@ -45,7 +45,7 @@ from typing import TYPE_CHECKING
 from personalclaw import shutdown_event
 from personalclaw import trace_recorder as _trace
 from personalclaw.guardrails.audit import caller_scope
-from personalclaw.identity import contributor_label, current_username
+from personalclaw.identity import contributor_label, current_username, operator_name
 from personalclaw.inbox import (
     SOURCE_DECLARABLE_KINDS,
     Classification,
@@ -292,7 +292,7 @@ class InboxService:
         evaluating alerts + broadcasting each new item live. Returns # ingested."""
         if not messages:
             return 0
-        operator = self._operator_name()
+        operator = operator_name()
         dash_state = _dashboard_state()
         can_reply = bool(self._provider is not None and self._provider.source_name != "filesystem")
         source_name = self._provider.source_name if self._provider else "native"
@@ -461,15 +461,6 @@ class InboxService:
             pass  # not on any loop (a worker thread) — bounce below
         future = asyncio.run_coroutine_threadsafe(self._run_maintenance_on_loop(), loop)
         return future.result(timeout=timeout)
-
-    @staticmethod
-    def _operator_name() -> str:
-        try:
-            from personalclaw.config.loader import AppConfig
-
-            return AppConfig.load().dashboard.user_name or ""
-        except Exception:
-            return ""
 
     # ── AI affordances ──
     #
