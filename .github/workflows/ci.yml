@@ -718,6 +718,18 @@ jobs:
       - name: offline scripted chat turn (web/e2e/chat.spec.ts)
         working-directory: web
         run: npx playwright test e2e/chat.spec.ts --project=chromium
+      # The step above proves a turn COMPLETES. This one proves the turn survives losing the one
+      # frame that ends it. `chat_done` is the only frame that clears the streaming state, and the
+      # session-create remount closes the socket while its replacement is still handshaking — so a
+      # fast turn can be delivered to nothing and the chat then claims a stream that no longer
+      # exists, with the assistant's whole action row (Speak / Copy / Regenerate / Fork) suppressed
+      # and no way back but a reload. It lives HERE because it needs exactly the harness the steps
+      # above stand up, and it forces the loss with `routeWebSocket` rather than racing the remount
+      # — a test that waits for a race is a test that passes for the wrong reason. Named explicitly
+      # because CI names specs one by one: a spec not listed runs nowhere.
+      - name: a lost terminal frame does not strand a chat (web/e2e/streamStall.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/streamStall.spec.ts --project=chromium
       # SSM-11/SSM-10's clauses — the rail renders in-session, stays fixed while the transcript
       # scrolls, a mark jump scrolls it, and the coarse-pointer form collapses to one control. All
       # four are LAYOUT or NAVIGATION properties of a ~4k-line `ChatPage` that jsdom cannot mount

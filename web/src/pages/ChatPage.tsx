@@ -105,6 +105,7 @@ import { useAppearance } from '../app/appearance'
 import { TOKENS } from '../design/tokenRegistry'
 import { applyCoalescedFlush, insertActivity, TextRunOwnership } from './chat/coalesceReducers'
 import { StreamFinalizationFence } from './chat/streamFinalizationFence'
+import { resolveStalledStream } from './chat/streamStall'
 import { useQuery, invalidateKeys, peekQuery, writeQuery } from '../lib/data'
 import { sessionRecencyMs, sessionActivitySeconds, epochSeconds } from '../lib/epoch'
 import { sessionTitle } from '../lib/sessionTitle'
@@ -1582,16 +1583,21 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   }, [])
   useChatSocket(onWs, resyncOnReconnect, setWsConnected)
 
-  // Idle approval-reconciler. A turn that parks on an approval sends no `chat_done`
-  // and goes silent; if the `approval` WS frame was lost/early (arrived before the
-  // socket delivered it, with no reconnect to trigger resyncOnReconnect), the card
-  // never appears and the turn looks stuck until a manual reload. So while
-  // streaming, if the WS has been quiet for a beat, reconcile from session detail:
-  // when it reports pending_approval but the transcript shows no unresolved
-  // approval segment, re-hydrate (which surfaces the persisted permission card).
-  // Self-healing + cheap (fires only during a silent-while-streaming window).
+  // Idle stream-reconciler. A streaming claim can outlive the turn it describes in two
+  // ways, and BOTH are silent — no `chat_done`, no error, and nothing on screen that says
+  // the page has stopped tracking the run. So while streaming, once the WS has been quiet
+  // for a beat, read session detail and let the server settle it. `resolveStalledStream`
+  // owns the two readings and the reasoning for each (a turn parked on an approval whose
+  // card never arrived; a turn that FINISHED while nothing was listening), and lives beside
+  // this file because nothing in `web/` can mount it — the rule is assertable, the render is
+  // not. Self-healing + cheap: fires only inside a silent-while-streaming window, and tears
+  // itself down the moment the claim is corrected.
   useEffect(() => {
     if (!streaming) return
+    // Restarts on every transcript change (the `turns` dep), so a turn that is still
+    // painting can never satisfy the settled grace. That is what keeps a send whose dispatch
+    // has not landed yet out of it — see STREAM_SETTLED_GRACE_MS.
+    const transcriptChangedAt = Date.now()
     const iv = window.setInterval(() => {
       const s = sessionRef.current
       if (!s) return
@@ -1600,9 +1606,27 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       if (showingApproval) return  // card already up
       api.chatSessionDetail(s).then((d) => {
         if (sessionRef.current !== s) return
-        if (!d.pending_approval) return  // genuinely just quiet (e.g. long model think) — leave it
-        // Server is parked on an approval the client isn't showing → recover it.
-        setTurns(hydrateTurns(d.messages || [], d.running))
+        const stall = resolveStalledStream({
+          serverRunning: !!d.running,
+          serverPendingApproval: !!d.pending_approval,
+          msSinceTranscriptChange: Date.now() - transcriptChangedAt,
+        })
+        if (stall === 'wait') return  // genuinely just quiet (e.g. long model think) — leave it
+        // The server's transcript is authoritative for both readings, so hydrate from it
+        // first and act second. `settled` is by definition `!d.running`, so the one flag
+        // serves both branches.
+        setTurns(hydrateTurns(d.messages || [], !!d.running))
+        if (stall === 'settled') {
+          // The server holds no task for this session, so nothing is in flight and the
+          // composer's Stop button and the suppressed assistant action row are both lying.
+          // `dropTextRun` rather than `endTextRun`: the transcript tail has just been
+          // replaced from history, so landing a buffered tail would write the old answer
+          // into it — the boundary that comment calls the CLIENT's to make.
+          dropTextRun()
+          markStreaming(false); setStatusText(''); setLatestActivity(null)
+          return
+        }
+        // Server is parked on an approval the client isn't showing → recovered above.
         lastWsActivityRef.current = Date.now()  // don't re-fire every tick
       }).catch(() => {})
     }, 2000)
