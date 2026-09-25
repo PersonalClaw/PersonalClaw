@@ -310,6 +310,14 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     # OPERATOR set (`PERSONALCLAW_PROJECT_DIR` or the saved `project_dir` file) and which
     # `_doctor` has already resolved through `is_dir()`; no agent input reaches this argv.
     "cli_doctor.py::_git_is_inside_work_tree::subprocess.run": ("operator: doctor work-tree probe"),
+    # Also split out of `_doctor`, and for the same shape of reason: both Runtime rows
+    # render an interpreter version, and obtaining it in ONE place is what stops the
+    # "Python " prefix being stripped by one row and not the other. Fixed argv
+    # (`<python> --version`), no shell, read-only, bounded by a timeout. The one variable
+    # is the interpreter path — either `<repo>/.venv/bin/python3` or whatever
+    # `shutil.which("python3")` resolves on the OPERATOR's PATH; no agent input reaches
+    # this argv.
+    "cli_doctor.py::_probe_python_version::subprocess.run": "operator: doctor python probe",
     "cli_server.py::_stop::subprocess.check_output": "operator: stop — pid lookup",
     "cli_server.py::_is_personalclaw_process::subprocess.check_output": (
         "operator: pid identity probe"
