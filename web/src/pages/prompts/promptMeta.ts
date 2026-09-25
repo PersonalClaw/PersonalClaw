@@ -31,6 +31,28 @@ export function sourceLabel(source?: string, tags?: string[]): string {
   return !source || source === 'user' ? 'user' : source
 }
 
+/** Whether PersonalClaw (or one of its apps) ships this prompt — the ORIGIN half of how a prompt
+ *  is classified, resolved exactly as the badge resolves it.
+ *
+ *  A prompt carries two classifications and they answer different questions:
+ *
+ *  - `kind` is the ROLE its rendered text plays in a model call: `system` is injected as a system
+ *    prompt, `user` is sent as a user turn. It is NOT who the prompt is for. 35 of the 42 prompts
+ *    core's catalog ships — and all four the native knowledge app ships — are `kind: user`, because
+ *    the system sends them as the user turn of its OWN one-shot calls (titles, classifiers, judges).
+ *    Filtering on `kind` alone is how 39 internal prompts filled the User tab around the user's one
+ *    and how "Eval Judge" and "Task Code Classify" led the chat prompt picker.
+ *  - ORIGIN is who ships it. Every shipped prompt is seeded to disk tagged `bundled` (the catalog's
+ *    default tags, and each app prompt's own YAML), while the native provider stamps every on-disk
+ *    record `source: 'user'` so it stays editable — which is why the tag, not `source`, is the
+ *    provenance record (see `sourceLabel`).
+ *
+ *  So the user's own prompts are the ones this says `false` for, whatever their kind, and a
+ *  surface that offers prompts for the user to run filters on this rather than on a name list. */
+export function isBundled(p: { source?: string; tags?: string[] }): boolean {
+  return sourceLabel(p.source, p.tags) === 'bundled'
+}
+
 /** Variables a prompt declares (the typed `variables` list). */
 export function promptVars(p: { variables?: PromptVariable[] }): PromptVariable[] {
   return p.variables ?? []

@@ -33,6 +33,49 @@ export function provenanceMeta(provenance?: string): { label: string; title: str
   return null
 }
 
+/** WHY a skill has no install baseline, as far as anything recorded it — the parenthetical on the
+ *  inspector's "Unverified" line.
+ *
+ *  🔴 This was the constant "(bundled or hand-placed)", which is a guess that is wrong for every
+ *  skill whose origin IS recorded: a skill created with New skill read as bundled or hand-placed
+ *  while its own frontmatter said `source: dashboard`. Only a skill with no marker at all keeps
+ *  the either-or, because that is all anything knows about it. `dashboard` gets no row marker in
+ *  `provenanceMeta` above — like a hand-placed skill it is the user's own, which is most rows. */
+export function noBaselineReason(skill: { source: string; provenance?: string }): string {
+  if (skill.source === 'bundled') return 'bundled with PersonalClaw'
+  if (skill.provenance === 'dashboard') return 'created in the dashboard'
+  if (skill.provenance === 'taught') return 'taught in a session'
+  if (skill.provenance === 'auto') return 'extracted from session activity'
+  return 'bundled or hand-placed'
+}
+
+/** `content` with its frontmatter `name:` set to `name` — in the New-skill dialog, the Name field
+ *  is the one source of the skill's identity and the SKILL.md follows it.
+ *
+ *  🔴 The dialog's template carried a literal `name: my-skill` that nothing updated, while the
+ *  server binds that line to the key the Name field sends (`skills/loader.py:validate_skill_md`:
+ *  "frontmatter name must match skill key"). So filling in the Name and pressing Create failed on
+ *  the first try, every time. The KEY is the source of truth, not the line: it is the directory on
+ *  disk and the id every skills route, the loader and agent bindings address the skill by — and the
+ *  server refuses a body that disagrees rather than rewriting text the user typed. So the dialog
+ *  derives the line, and shows exactly the bytes Create will send.
+ *
+ *  Finds the block the way the server's parser does (`SkillsLoader._parse_frontmatter_text`):
+ *  leading whitespace ignored, `---` first, closed at the first `\n---`. Every top-level `name:`
+ *  line is rewritten (that parser keeps the LAST one, so leaving any stale one would still
+ *  mismatch); none → one is added as the block's first line. No closed block → unchanged: there
+ *  is no frontmatter to follow, and the server names that problem itself. */
+export function withFrontmatterName(content: string, name: string): string {
+  const block = /^(\s*---\r?\n)([\s\S]*?)(\r?\n---)/.exec(content)
+  if (!block) return content
+  const [whole, open, body, close] = block
+  const line = name.trim() ? `name: ${name.trim()}` : 'name:'
+  const next = /^name[ \t]*:/m.test(body)
+    ? body.replace(/^name[ \t]*:.*$/gm, line)
+    : (body ? `${line}\n${body}` : line)
+  return open + next + close + content.slice(whole.length)
+}
+
 /** What an accepted skill proposal DID — one sentence, shared by both surfaces that accept one.
  *
  *  The Skills card and the inbox proposal panel answer the same proposal through the same

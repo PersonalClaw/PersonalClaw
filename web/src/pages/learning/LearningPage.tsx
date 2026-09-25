@@ -7,7 +7,7 @@ import { Segmented } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { useQuery } from '../../lib/data'
-import { api, type AblationView, type AttentionScope, type BenchmarkView, type FieldMetricsRow, type IdentityReportView, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type RetrievalBenchView, type StagingWeek, type StudyRow } from '../../lib/api'
+import { api, isEvalsOff, type AblationView, type AttentionScope, type BenchmarkView, type EvalsOffView, type FieldMetricsRow, type IdentityReportView, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type RetrievalBenchView, type StagingWeek, type StudyRow } from '../../lib/api'
 import { AblationPanel } from './AblationPanel'
 import { AttentionPanel } from './AttentionPanel'
 import { FIELD_METRICS_KEY, FieldMetricsPanel, fetchFieldMetrics } from './FieldMetricsPanel'
@@ -87,28 +87,33 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
   // The lab-vs-field table (ES-9). `error` is read for the attention panel's reason and one
   // more: its divergence flag is the row a demotion was filed on, and a swallowed failure
   // would render "nothing diverged" — the one claim this panel must never make by accident.
-  const { data: fieldMetrics, error: fieldMetricsError, refresh: refreshFieldMetrics } = useQuery<{ subjects: FieldMetricsRow[] }>(
+  //
+  // 🔑 EVERY EVAL READ BELOW CAN ANSWER `{"enabled": false}` (a 200), and each panel renders that
+  // itself. With `evals.enabled` off — a default install — these six reads used to 404
+  // `evals_disabled`, one console error per panel per visit, for a feature nobody had turned on.
+  // The switch stays the backend's judgement: the page asks, the route answers "off".
+  const { data: fieldMetrics, error: fieldMetricsError, refresh: refreshFieldMetrics } = useQuery<{ subjects: FieldMetricsRow[] } | EvalsOffView>(
     FIELD_METRICS_KEY,
     fetchFieldMetrics,
   )
   // The judge tier table (ES-4). `error` is read for the same reason the health panel's is, plus
   // one more: its ORDINARY state is a 404 ("no benchmark has run"), and the panel needs the error
   // to tell that apart from a real failure. Swallowing it would render both as nothing at all.
-  const { data: judgeBench, error: judgeBenchError, refresh: refreshJudgeBench } = useQuery<JudgeBenchView>(
+  const { data: judgeBench, error: judgeBenchError, refresh: refreshJudgeBench } = useQuery<JudgeBenchView | EvalsOffView>(
     JUDGE_BENCH_KEY,
     () => api.judgeBench(),
   )
-  // Pre-registered studies (ES-5). `error` is read for the judge table's exact two reasons: a
-  // 404 ("no study registered") is this panel's ORDINARY state, and a swallowed failure would
-  // render an unreadable study tree as "no study has been graduated" — the opposite claim.
-  const { data: studies, error: studiesError, refresh: refreshStudies } = useQuery<{ studies: StudyRow[] }>(
+  // Pre-registered studies (ES-5). `error` is read for the judge table's reason: a swallowed
+  // failure would render an unreadable study tree as "no study has been graduated" — the
+  // opposite claim.
+  const { data: studies, error: studiesError, refresh: refreshStudies } = useQuery<{ studies: StudyRow[] } | EvalsOffView>(
     STUDIES_KEY,
     () => api.evalStudies(),
   )
   // Per-arm retrieval ablation (ES-3). `error` is read for the same two reasons again: a 404
   // ("no retrieval benchmark yet") is the ORDINARY state, and it is the state where the panel
   // still has something useful to offer — the hand-label card.
-  const { data: retrievalBench, error: retrievalError, refresh: refreshRetrieval } = useQuery<RetrievalBenchView>(
+  const { data: retrievalBench, error: retrievalError, refresh: refreshRetrieval } = useQuery<RetrievalBenchView | EvalsOffView>(
     RETRIEVAL_BENCH_KEY,
     () => api.retrievalBench(),
   )
@@ -128,7 +133,7 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
   // unreadable artifacts), and the panel needs the error to tell them apart. Swallowing it would
   // render all three as nothing at all — and "no ablation has run" is the state a user is in
   // for months, so it is precisely the one that must not look like a bug or like silence.
-  const { data: ablation, error: ablationError, refresh: refreshAblation } = useQuery<AblationView>(
+  const { data: ablation, error: ablationError, refresh: refreshAblation } = useQuery<AblationView | EvalsOffView>(
     ABLATION_KEY,
     () => api.ablation(),
   )
@@ -137,7 +142,7 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
   // run is 100 real model calls, so most users will be in that state permanently. Swallowing the
   // error would make an unreachable gateway look identical to a benchmark nobody chose to run —
   // and this is the one panel whose whole subject is not overclaiming a measurement.
-  const { data: benchmark, error: benchmarkError, refresh: refreshBenchmark } = useQuery<BenchmarkView>(
+  const { data: benchmark, error: benchmarkError, refresh: refreshBenchmark } = useQuery<BenchmarkView | EvalsOffView>(
     BENCHMARK_KEY,
     () => api.learningBenchmark(),
   )
@@ -242,11 +247,11 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
 
           <AttentionPanel scopes={attention?.scopes} error={attentionError} onRetry={refreshAttention} />
 
-          <FieldMetricsPanel rows={fieldMetrics?.subjects} error={fieldMetricsError} onRetry={refreshFieldMetrics} />
+          <FieldMetricsPanel rows={isEvalsOff(fieldMetrics) ? fieldMetrics : fieldMetrics?.subjects} error={fieldMetricsError} onRetry={refreshFieldMetrics} />
 
           <JudgeBenchPanel bench={judgeBench} error={judgeBenchError} onRetry={refreshJudgeBench} />
 
-          <StudiesPanel studies={studies?.studies} error={studiesError} onRetry={refreshStudies} />
+          <StudiesPanel studies={isEvalsOff(studies) ? studies : studies?.studies} error={studiesError} onRetry={refreshStudies} />
 
           <RetrievalBenchPanel bench={retrievalBench} error={retrievalError} onRetry={refreshRetrieval} />
 
@@ -474,7 +479,7 @@ function WeekPanel({ week }: { week: StagingWeek }) {
                 {day.passes === 0 ? '—' : day.passes}
               </span>
               <span className="text-on-surface-low text-[0.6875rem]">
-                {state === 'out_of_scope' ? 'out of scope' : state === 'silent' ? 'silent' : day.produced > 0 ? `${day.produced} filed` : state === 'error' ? 'error' : 'ok'}
+                {state === 'not_started' ? 'not started' : state === 'silent' ? 'silent' : day.produced > 0 ? `${day.produced} filed` : state === 'error' ? 'error' : 'ok'}
               </span>
             </div>
           )

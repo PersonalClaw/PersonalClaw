@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { api, ApiError, hasApiCode } from '../../lib/api'
+import { api, ApiError, hasApiCode, isEvalsOff, type EvalsOffView } from '../../lib/api'
 import { errEnvelope, errText } from '../../lib/errText'
 import { JudgeBenchPanel } from './JudgeBenchPanel'
 import { StudiesPanel } from './StudiesPanel'
@@ -20,7 +20,7 @@ import { FieldMetricsPanel } from './FieldMetricsPanel'
 // DRIVEN on a real gateway (`--seed demo-home`, port 10784, viewport 1440×1000 and 390×844),
 // `#/learning`, with the four `/api/evals/*` responses read off the wire:
 //
-//   evals.enabled = false  → all four answer 404 `evals_disabled`
+//   evals.enabled = false  → all four answer 404 `evals_disabled` (since retired — see 🔁 below)
 //     BEFORE  4 × red role="alert" "Couldn't load your judge benchmark / studies / retrieval
 //             benchmark / ablation report", each with a Retry that cannot ever succeed
 //     AFTER   4 × "The eval substrate is off, so no <x> can run — turn on Evals enabled in
@@ -50,22 +50,31 @@ import { FieldMetricsPanel } from './FieldMetricsPanel'
 // 34-card hub), and there must still be exactly ONE instruction — so the CLI command it used to
 // print is now asserted ABSENT. The invariant that never moved: this state hands the user exactly
 // one place to go, and that place has the control.
+//
+// 🔁 AND THE OFF STATE IS NO LONGER AN ERROR AT ALL. The six report reads used to answer it as a
+// 404 `evals_disabled`, which this file matched by code — and which made the browser log one
+// "Failed to load resource: 404" per panel on every visit to `#/learning` (six on a default
+// install, where the switch ships off). They now answer a decided `200 {"enabled": false}`, the
+// same shape the rest of the gateway's switched-off reads use, so the panels branch on the VALUE
+// (`isEvalsOff`) and the "nothing has run yet" 404s below are the only coded non-answers left.
 
 /** Verbatim `curl http://127.0.0.1:10784/api/evals/…` bodies. Do not paraphrase these. */
 const WIRE = {
-  judge_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish benchmark results."}}',
-  studies_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish study results."}}',
-  retrieval_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish retrieval ablation reports."}}',
-  ablation_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish ablation reports."}}',
-  benchmark_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish benchmark reports."}}',
-  field_metrics_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish field metrics."}}',
   judge_absent: '{"error": {"code": "judge_bench_absent", "message": "No judge benchmark has run yet. Run `personalclaw judge-bench` to produce one."}}',
   retrieval_absent: '{"error": {"code": "retrieval_absent", "message": "No retrieval benchmark has run yet. Run `personalclaw retrieval-eval` to score both stores."}}',
   ablation_absent: '{"error": {"code": "ablation_absent", "message": "No ablation has run yet. Register a component in `evals/ablation_registry.json` and run `personalclaw ablation --force`."}}',
 } as const
 
+/** Verbatim `curl` of ANY of the six report reads with `evals.enabled` off — a 200, one body. */
+const WIRE_OFF = '{"enabled": false}'
+
 const res = (body: string, status = 404) =>
   new Response(body, { status, headers: { 'Content-Type': 'application/json' } })
+
+/** The off view the panel really receives: the wire body, parsed the way the client parses it. */
+async function offView(): Promise<EvalsOffView> {
+  return (await res(WIRE_OFF, 200).json()) as EvalsOffView
+}
 
 describe('errEnvelope keeps BOTH halves of the platform envelope', () => {
   it('lifts the code off every real /api/evals body', async () => {
@@ -116,14 +125,33 @@ describe('the api client hands the code to its callers', () => {
   afterEach(() => { vi.unstubAllGlobals() })
 
   it('populates ApiError.code from the envelope, through the real request helper', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => res(WIRE.judge_disabled)))
+    vi.stubGlobal('fetch', vi.fn(async () => res(WIRE.judge_absent)))
     const err = await api.judgeBench().then(() => null, (e: unknown) => e)
     expect(err).toBeInstanceOf(ApiError)
-    expect((err as ApiError).code).toBe('evals_disabled')
+    expect((err as ApiError).code).toBe('judge_bench_absent')
     expect((err as ApiError).status).toBe(404)
     // `.message` is the contract 200+ `catch(e => e.message)` call sites depend on.
     expect((err as ApiError).message)
-      .toBe('The eval substrate is off. Turn on `evals.enabled` to publish benchmark results.')
+      .toBe('No judge benchmark has run yet. Run `personalclaw judge-bench` to produce one.')
+  })
+
+  it('hands the OFF answer through as a value, never as a rejection', async () => {
+    // The defect this closes: the off state arrived as a 404, so it could only ever be seen as an
+    // error — by the panels, and by the browser console, once per panel per visit.
+    vi.stubGlobal('fetch', vi.fn(async () => res(WIRE_OFF, 200)))
+    const got = await api.judgeBench()
+    expect(isEvalsOff(got)).toBe(true)
+  })
+
+  it('isEvalsOff recognises only the off body — never a real view or a list', () => {
+    expect(isEvalsOff({ enabled: false })).toBe(true)
+    // Vacuity controls: a real view, an empty list, and look-alikes must all read as NOT off.
+    expect(isEvalsOff({ studies: [] })).toBe(false)
+    expect(isEvalsOff([])).toBe(false)
+    expect(isEvalsOff({ enabled: true })).toBe(false)
+    expect(isEvalsOff({ enabled: 'false' })).toBe(false)
+    expect(isEvalsOff(undefined)).toBe(false)
+    expect(isEvalsOff(null)).toBe(false)
   })
 
   it('populates it on the DELETE helper too, which throws its own ApiError', async () => {
@@ -160,19 +188,19 @@ describe('every eval panel says "the substrate is off" — and says it alike', (
   // docstring recorded the dotted-path/hub-link version as fixed-and-wrong — this panel kept all three
   // defects: `<code>evals.enabled</code>`, a link to the 34-card `#/settings` hub, and a link whose
   // accessible name was just "Settings". An enumerated census cannot catch a member nobody enumerated,
-  // so `every panel handling evals_disabled renders EvalsOff` below DERIVES the population from source.
+  // so `every panel answering the off view renders EvalsOff` below DERIVES the population from source.
   const CASES = [
-    { name: 'judge tiers', body: WIRE.judge_disabled, what: 'judge benchmark', el: (e: unknown) => <JudgeBenchPanel bench={undefined} error={e} onRetry={() => {}} /> },
-    { name: 'template studies', body: WIRE.studies_disabled, what: 'study', el: (e: unknown) => <StudiesPanel studies={undefined} error={e} onRetry={() => {}} /> },
-    { name: 'retrieval', body: WIRE.retrieval_disabled, what: 'retrieval benchmark', el: (e: unknown) => <RetrievalBenchPanel bench={undefined} error={e} onRetry={() => {}} /> },
-    { name: 'ablation', body: WIRE.ablation_disabled, what: 'ablation', el: (e: unknown) => <AblationPanel view={undefined} error={e} onRetry={() => {}} /> },
-    { name: 'skill-impact benchmark', body: WIRE.benchmark_disabled, what: 'benchmark', el: (e: unknown) => <BenchmarkPanel view={undefined} error={e} onRetry={() => {}} /> },
-    { name: 'lab vs field', body: WIRE.field_metrics_disabled, what: 'lab-vs-field table', el: (e: unknown) => <FieldMetricsPanel rows={undefined} error={e} onRetry={() => {}} /> },
+    { name: 'judge tiers', what: 'judge benchmark', el: (v: EvalsOffView) => <JudgeBenchPanel bench={v} error={null} onRetry={() => {}} /> },
+    { name: 'template studies', what: 'study', el: (v: EvalsOffView) => <StudiesPanel studies={v} error={null} onRetry={() => {}} /> },
+    { name: 'retrieval', what: 'retrieval benchmark', el: (v: EvalsOffView) => <RetrievalBenchPanel bench={v} error={null} onRetry={() => {}} /> },
+    { name: 'ablation', what: 'ablation', el: (v: EvalsOffView) => <AblationPanel view={v} error={null} onRetry={() => {}} /> },
+    { name: 'skill-impact benchmark', what: 'benchmark', el: (v: EvalsOffView) => <BenchmarkPanel view={v} error={null} onRetry={() => {}} /> },
+    { name: 'lab vs field', what: 'lab-vs-field table', el: (v: EvalsOffView) => <FieldMetricsPanel rows={v} error={null} onRetry={() => {}} /> },
   ] as const
 
   for (const c of CASES) {
     it(`${c.name}: guidance, one instruction, and no Retry`, async () => {
-      render(c.el(await wireError(c.body)))
+      render(c.el(await offView()))
       expect(screen.getByText(new RegExp(`no ${c.what} can run`))).toBeTruthy()
       // ONE instruction, and it is the control's own `_meta` label — not the dotted config path,
       // which appears nowhere on the destination page.
@@ -187,9 +215,9 @@ describe('every eval panel says "the substrate is off" — and says it alike', (
     })
   }
 
-  it('and the list above is the WHOLE population — every panel handling evals_disabled renders EvalsOff', () => {
+  it('and the list above is the WHOLE population — every panel answering the off view renders EvalsOff', () => {
     // The derived half. Enumerating panels is what let `BenchmarkPanel` drift, so this asks the source
-    // a mechanical question instead: any file that branches on `evals_disabled` must render `EvalsOff`,
+    // a mechanical question instead: any file that branches on the off view must render `EvalsOff`,
     // and must not hand-roll the sentence's telltales.
     const HERE = import.meta.dirname
     const files = readdirSync(HERE).filter((n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
@@ -199,16 +227,21 @@ describe('every eval panel says "the substrate is off" — and says it alike', (
     for (const n of files) {
       if (n === 'EvalsOff.tsx') continue
       const src = strip(readFileSync(join(HERE, n), 'utf8'))
-      if (!/hasApiCode\(error, 'evals_disabled'\)/.test(src)) continue
+      // The off state is a VALUE now, so a panel that still branched on the retired 404 code would
+      // be dead code that no longer runs — named as its own offence rather than silently skipped.
+      if (/hasApiCode\(error, 'evals_disabled'\)/.test(src)) offenders.push(`${n}: branches on the retired evals_disabled 404`)
+      if (!/\bisEvalsOff\(/.test(src)) continue
+      // LearningPage only routes the value to the panel that renders it; it owns no sentence.
+      if (n === 'LearningPage.tsx') continue
       handlers.push(n)
-      if (!/<EvalsOff\b/.test(src)) offenders.push(`${n}: branches on evals_disabled without rendering <EvalsOff>`)
+      if (!/<EvalsOff\b/.test(src)) offenders.push(`${n}: branches on the off view without rendering <EvalsOff>`)
       // The three telltales of the hand-rolled version, each named in EvalsOff's docstring.
       if (/<code[^>]*>\s*evals\.enabled/.test(src)) offenders.push(`${n}: prints the dotted config path`)
       if (/href="#\/settings"/.test(src)) offenders.push(`${n}: links the 34-card hub, not #/settings/evals`)
     }
     // Vacuity floor: if the scan finds no handlers, every check above passed over nothing.
-    expect(handlers.length, 'no panel branches on evals_disabled — the scan is wrong').toBeGreaterThanOrEqual(5)
-    expect(handlers.length, 'a panel handles evals_disabled but is not in CASES above').toBe(CASES.length)
+    expect(handlers.length, 'no panel branches on the off view — the scan is wrong').toBeGreaterThanOrEqual(5)
+    expect(handlers.length, 'a panel handles the off view but is not in CASES above').toBe(CASES.length)
     expect(
       offenders,
       'EvalsOff owns this sentence — its docstring records why the dotted path and the hub link are ' +
@@ -223,7 +256,7 @@ describe('every eval panel says "the substrate is off" — and says it alike', (
     // regression: `SettingsHome` renders only `SETTINGS_WIDGETS`, so a user dropped there has to
     // find the right card among 34 before they can reach the switch this sentence names.
     for (const c of CASES) {
-      const { unmount } = render(c.el(await wireError(c.body)))
+      const { unmount } = render(c.el(await offView()))
       const link = document.querySelector('a[href="#/settings/evals"]')
       expect(link, `${c.name} must link the evals subpage`).not.toBeNull()
       expect(document.querySelector('a[href="#/settings"]'), 'the bare hub is the dead end').toBeNull()
@@ -242,7 +275,7 @@ describe('every eval panel says "the substrate is off" — and says it alike', (
       [CASES[0], 'judge-bench-heading'], [CASES[1], 'studies-heading'],
       [CASES[2], 'retrieval-bench-heading'], [CASES[3], 'ablation-heading'],
     ] as const) {
-      const { unmount } = render(c.el(await wireError(c.body)))
+      const { unmount } = render(c.el(await offView()))
       expect(document.querySelector(`section[aria-labelledby="${id}"]`), `${c.name} keeps its section`).not.toBeNull()
       expect(document.getElementById(id)?.textContent?.trim(), `${c.name} keeps its name`).toBeTruthy()
       unmount()
@@ -270,10 +303,10 @@ describe('and the "nothing has run yet" branches, which were inert for the same 
   })
 
   it('the OFF state does not leak any of those three next steps', async () => {
-    const { unmount } = render(<AblationPanel view={undefined} error={await wireError(WIRE.ablation_disabled)} onRetry={() => {}} />)
+    const { unmount } = render(<AblationPanel view={await offView()} error={null} onRetry={() => {}} />)
     expect(screen.queryByText(/ablation_registry/)).toBeNull()
     unmount()
-    render(<JudgeBenchPanel bench={undefined} error={await wireError(WIRE.judge_disabled)} onRetry={() => {}} />)
+    render(<JudgeBenchPanel bench={await offView()} error={null} onRetry={() => {}} />)
     expect(screen.queryByText(/personalclaw judge-bench/)).toBeNull()
   })
 })

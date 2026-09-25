@@ -3,6 +3,7 @@ import { fvs } from '../../design/fontWeight'
 import { createPortal } from 'react-dom'
 import { FileText, BookText, ScrollText, Loader2, AlertTriangle } from 'lucide-react'
 import { api } from '../../lib/api'
+import { isBundled } from '../../pages/prompts/promptMeta'
 
 /** A menu row is a workspace file, a knowledge-library item, or a user prompt.
  *  Files thread a path into meta.files (the agent reads them); knowledge threads
@@ -52,9 +53,11 @@ async function cachedSearch(query: string, project?: string, leading?: boolean):
   const [files, knowledge, prompts] = await Promise.allSettled([
     api.fileSearch(query, project).then((d) => d.results || []),
     api.knowledgeItems({ q: query, limit: 6 }).then((d) => d.items || []),
+    // The user's OWN prompts, the palette's rule: `?kind=user` also carries the internal prompts
+    // PersonalClaw sends as the user turn of its own calls (see `isBundled`).
     leading
       ? api.prompts('user')
-          .then((items) => items.filter((p) => `${p.name} ${p.title ?? ''}`.toLowerCase().includes(ql)).slice(0, 6))
+          .then((items) => items.filter((p) => !isBundled(p) && `${p.name} ${p.title ?? ''}`.toLowerCase().includes(ql)).slice(0, 6))
       : Promise.resolve([]),
   ])
   const rows: Row[] = [

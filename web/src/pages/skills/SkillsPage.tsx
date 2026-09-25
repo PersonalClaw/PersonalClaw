@@ -16,7 +16,7 @@ import { SidePanel } from '../../ui/SidePanel'
 import { TextInput, TextArea, FieldError } from '../../ui/forms'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type SkillItem, type SkillSearchResult, type SkillMarketplace } from '../../lib/api'
-import { SOURCE_TONE, sourceLabel, fmtInstalls, provenanceMeta } from './skillMeta'
+import { SOURCE_TONE, sourceLabel, fmtInstalls, provenanceMeta, withFrontmatterName } from './skillMeta'
 import { toneChipSkin } from '../../design/accent'
 import { SkillInspector } from './SkillInspector'
 import { MarketplaceDetail } from './MarketplaceDetail'
@@ -24,8 +24,10 @@ import { SkillProposals } from './SkillProposals'
 import { LearningSummaryBlock } from './LearningSummaryBlock'
 import { PageTitle } from '../../ui/PageTitle'
 
+/** The New-skill dialog's starting SKILL.md. `name:` is deliberately empty: it is filled from the
+ *  Name field, the skill's one identity, by `withFrontmatterName` as the user types. */
 const SKILL_TEMPLATE = `---
-name: my-skill
+name:
 description: One line on when this skill should load.
 ---
 
@@ -234,10 +236,15 @@ function SkillCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
   const [content, setContent] = useState(SKILL_TEMPLATE)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  // The Name field is the skill's identity; the SKILL.md's `name:` follows it on every keystroke,
+  // so the default path — type a name, press Create — sends a body the server accepts.
+  const onName = (v: string) => { setName(v); setContent((c) => withFrontmatterName(c, v)) }
 
   async function create() {
     const n = name.trim()
-    if (!/^[a-z0-9-]{1,64}$/.test(n)) { setErr('Name must be lowercase letters, digits, dashes (1–64 chars).'); return }
+    // No leading or trailing dash, because the server's key sanitizer strips them: `my-skill-`
+    // would be stored as `my-skill` and then refused, since the frontmatter still says `my-skill-`.
+    if (!/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/.test(n)) { setErr('Name must be 1–64 lowercase letters, digits or dashes, starting and ending with a letter or digit.'); return }
     setBusy(true); setErr('')
     try { await api.createSkill(n, content); onCreated() }
     catch (e) { setErr((e as Error).message || 'Could not create skill'); setBusy(false) }
@@ -246,7 +253,7 @@ function SkillCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
   return (
     <Modal title="New skill" icon={<Sparkles size={18} className="text-primary" />} onClose={onClose}>
       <div className="flex flex-col gap-m p-l" style={{ minWidth: 'min(680px, 80vw)' }}>
-        <div style={{ maxWidth: 280 }}><TextInput value={name} onChange={setName} placeholder="skill-name" autoFocus ariaLabel="Skill name" /></div>
+        <div style={{ maxWidth: 280 }}><TextInput value={name} onChange={onName} placeholder="skill-name" autoFocus ariaLabel="Skill name" /></div>
         <TextArea value={content} onChange={setContent} rows={14} mono ariaLabel="Skill definition (SKILL.md)" />
         {err && <FieldError>{err}</FieldError>}
         <div className="flex justify-end gap-s">

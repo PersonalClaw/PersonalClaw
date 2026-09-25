@@ -1,13 +1,19 @@
 import { TextLink } from '../../ui/TextLink'
 
-/** What all four eval panels say when `evals.enabled` is off — said once, so they say it alike.
+/** What every eval panel says when `evals.enabled` is off — said once, so they say it alike.
  *
- *  `/api/evals/{judge-bench,studies,retrieval,ablation}` all answer the same 404
- *  `evals_disabled` from the same `AppConfig.load().evals.enabled` check
+ *  The six report reads under `/api/evals/` all answer the same `200 {"enabled": false}`
+ *  (`isEvalsOff`) from the same `AppConfig.load().evals.enabled` check
  *  (`dashboard/handlers/evals.py:_enabled`), so this is one fact about one switch. Before this
  *  it had three renderings — a red "Couldn't load your judge benchmark" alert with a dead
  *  Retry, a red one for retrieval, and (in `StudiesPanel`) the "no study has been registered"
  *  empty state, which is a different fact entirely.
+ *
+ *  🔑 A 200, NOT THE 404 `evals_disabled` THOSE READS USED TO ANSWER. A decided answer arriving as
+ *  an error made the browser log one "Failed to load resource: 404" per panel on every visit to
+ *  `#/learning` — six console errors on a default install, where the switch ships off. The
+ *  triage digest this copy converged on (below) was already built the other way: its off state
+ *  is a 200 `state: "off"`, so the transport now agrees with the copy.
  *
  *  🔑 IT IS IN SETTINGS NOW, AND THAT IS WHY THIS SENTENCE CHANGED. The version immediately
  *  before this one sent the user to `personalclaw config set evals.enabled true`, and the comment
