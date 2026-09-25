@@ -253,10 +253,20 @@ class Window:
     input_tokens: int | None
     #: ``"catalog"`` | ``"window-table"`` | :data:`WINDOW_UNKNOWN`.
     source: str
+    #: The model ref these numbers describe, so a refusal can NAME the model the user has to
+    #: change rather than only the number it failed against. ``""`` when no model is bound —
+    #: which is itself the honest thing to print, not a fabricated id. Last field with a default
+    #: so every existing positional construction keeps working.
+    ref: str = ""
 
     @property
     def measured(self) -> bool:
         return self.tokens is not None
+
+    @property
+    def label(self) -> str:
+        """How to name the bound model in a message to the user."""
+        return self.ref or "the bound chat model"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -265,6 +275,7 @@ class Window:
             "input_tokens": self.input_tokens,
             "source": self.source,
             "measured": self.measured,
+            "ref": self.ref,
         }
 
 
@@ -342,12 +353,18 @@ class Headroom:
         if self.level in ("warn", "critical"):
             pct = int(round((self.pressure or 0.0) * 100))
             left = self.headroom_tokens or 0
+            # The remedy list carries the model swap because the other two can be
+            # UNAVAILABLE at the moment this fires. On a small-window model the pressure is
+            # not the session's fault and is critical from the very first turn — measured at
+            # 95% on message one of a new chat against a 2,048-token window — where
+            # "/compact or start a new chat" names two things the user has already done.
             return (
                 f"Context headroom {'critical' if self.level == 'critical' else 'low'}: "
                 f"{pct}% of this model's input room used "
                 f"({left:,} of {self.window.input_tokens:,} tokens left, after reserving "
                 f"{self.window.output_reserve_tokens:,} for the reply). "
-                f"Run /compact or start a new chat to free room."
+                f"Run /compact, start a new chat, or bind a model with a window larger than "
+                f"{self.window.tokens:,} tokens to free room."
             )
         return ""
 
@@ -394,6 +411,7 @@ async def resolve_window(model_ref: str) -> Window:
                 output_reserve_tokens=reserve,
                 input_tokens=budget.input_tokens,
                 source="catalog",
+                ref=ref,
             )
         if ref and resolved_context_window(ref) is not None:
             return Window(
@@ -401,6 +419,7 @@ async def resolve_window(model_ref: str) -> Window:
                 output_reserve_tokens=reserve,
                 input_tokens=budget.input_tokens,
                 source="window-table",
+                ref=ref,
             )
         if ref not in _UNMEASURED_SEEN:
             _UNMEASURED_SEEN.add(ref)
@@ -414,6 +433,7 @@ async def resolve_window(model_ref: str) -> Window:
             output_reserve_tokens=reserve,
             input_tokens=None,
             source=WINDOW_UNKNOWN,
+            ref=ref,
         )
     except Exception:  # noqa: BLE001 — an unresolvable window is UNMEASURED, not a crash
         logger.debug("context headroom: window resolution failed for %r", ref, exc_info=True)
@@ -422,6 +442,7 @@ async def resolve_window(model_ref: str) -> Window:
             output_reserve_tokens=DEFAULT_OUTPUT_TOKENS,
             input_tokens=None,
             source=WINDOW_UNKNOWN,
+            ref=ref,
         )
 
 
@@ -599,14 +620,30 @@ def check(components: "list[Component] | tuple[Component, ...]", *, window: Wind
     listed = "; ".join(f"{o.name} ({o.tokens:,} tokens, {o.note})" for o in oversized)
     reason = (
         f"This turn's context does not fit. Assembled {total:,} tokens, but only "
-        f"{limit:,} fit: the model's window is {window.tokens:,} tokens and "
+        f"{limit:,} fit: {window.label}'s window is {window.tokens:,} tokens and "
         f"{window.output_reserve_tokens:,} of it is reserved so there is room to reply. "
         f"Over by {over:,} tokens. Largest components: {listed}."
     )
+    # Two very different situations wear this same arithmetic — a session that has grown too
+    # big, and a model too small to hold PersonalClaw's base context on its FIRST turn — and the
+    # advice for one is actively wrong for the other. The text below is written to be true of
+    # both rather than guessing between them, because the components cannot distinguish them:
+    # `compressible` says "may be TRUNCATED", which is not the same question as "can the user do
+    # anything about it" (a 100,000-char tool result is declared incompressible and is
+    # nonetheless the most removable thing in the prompt).
+    #
+    # Two clauses changed as a result, both measured against the OU-14 bundled floor, where a
+    # 2,048-token model refused the very first message of a new chat. It used to assert "run
+    # /compact to summarize the history" of a conversation that had not happened yet — so the
+    # one remedy it named was the one that could not work — and it offered no way to read the
+    # requirement. It now states what this turn NEEDS beside what the model OFFERS, and names
+    # the model, so "bind something bigger" is a decision the user can actually make.
     fix = (
-        f"Shorten or remove {oversized[0].name} for this turn, run /compact to summarize "
-        f"the history, or switch to a model with a window larger than "
-        f"{window.tokens:,} tokens."
+        f"Shorten or remove {oversized[0].name} for this turn — or, if this turn is already "
+        f"minimal, bind a chat model with more input room: this turn needs {total:,} tokens "
+        f"and {window.label} offers {limit:,} ({window.tokens:,}-token window minus "
+        f"{window.output_reserve_tokens:,} reserved for the reply). /compact helps only if "
+        f"this session has history to summarize."
     )
     return Headroom(
         state=HeadroomState.CANNOT_FIT,

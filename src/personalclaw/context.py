@@ -18,9 +18,11 @@ from personalclaw.hooks import (
     safe_read_file,
 )
 from personalclaw.memory import MemoryStore
+from personalclaw.model_windows import active_chat_model_window
 from personalclaw.schedule import get_local_tz
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.skills import SkillsLoader
+from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
 
 if TYPE_CHECKING:
     from personalclaw.channel_history import ChannelHistory
@@ -157,8 +159,9 @@ _HISTORY_BUDGET_CHARS = 35_000  # thread history (fallback/truncated)
 _CROSS_TAB_BUDGET_CHARS = 6_000  # sibling dashboard sessions
 # Memory-injection per-section caps. These are the BASELINE (calibrated for a 200k-
 # token window); mem-adaptive-budget scales them proportionally to the resolved
-# model's context window (via _memory_caps) so a 1M-window model recalls more and a
-# 128k one less — clamped floor (the baseline) / ceiling (×5).
+# model's context window (via _memory_caps) so a 1M-window model recalls more, and a
+# window too small to hold the baseline recalls LESS — ceiling (×5) and a
+# window-affordability bound (_MEMORY_WINDOW_FRACTION) rather than a flat floor.
 _MEMORY_PREFS_CAP = 4_000  # user preferences
 _MEMORY_PROJECTS_CAP = 6_000  # active projects
 _MEMORY_HISTORY_CAP = 25_000  # daily history (multi-tier decay)
@@ -233,6 +236,7 @@ def _render_ambient(
     self_model: str = "",
     procedural: str = "",
     query: str = "",
+    window: int,
 ) -> str:
     """Render the named ambient blocks under ONE token budget (§2.4 / §7 crit 5).
 
@@ -256,7 +260,6 @@ def _render_ambient(
     try:
         from personalclaw.config.loader import AppConfig
         from personalclaw.learning import ambient
-        from personalclaw.model_windows import active_chat_model_window
 
         budget = int(getattr(AppConfig.load().learning, "context_budget_tokens", 4000) or 4000)
         alloc = ambient.render(
@@ -268,7 +271,7 @@ def _render_ambient(
             procedural=procedural,
             query=query,
             budget_tokens=budget,
-            window=active_chat_model_window(),
+            window=window,
         )
         text = ambient.frame(alloc, lessons_block=lessons)
         if text:
@@ -296,12 +299,55 @@ def _render_ambient(
 _BASELINE_WINDOW = 200_000
 _MAX_BUDGET_MULTIPLE = 5.0
 
+#: The most of a model's window the memory sections may ever claim, together. This is what lets
+#: :func:`_memory_caps` scale DOWN; the 1.0 floor on the baseline multiple cannot, by construction.
+#:
+#: 0.125 is not a taste call, it is the value that keeps every previously-pinned window EXACTLY
+#: where it was. The baseline caps sum to 59,000 chars ≈ 14,750 tokens, so this bound is inert
+#: wherever ``window × 0.125 ≥ 14,750`` — i.e. at 118k and above, which covers 128k, the 200k
+#: calibration point, 1M and 10M. Below that it binds, and binding is the whole point: at 2,048
+#: tokens the unbounded baseline was fourteen times the model's entire window. The SAME fraction is
+#: used by ``learning.ambient.MAX_WINDOW_FRACTION`` so the memory half and the learning half of one
+#: prompt cannot disagree about how much of a small window they may claim.
+_MEMORY_WINDOW_FRACTION = 0.125
+
 
 #: The two variants the ``widget-instructions`` snippet implements. Density is a FREQUENCY
 #: preference ("how aggressively the agent uses inline widgets"), never a capability switch — both
 #: variants document the `data-action` return channel, because a widget that cannot send data back
 #: while looking interactive is the defect #2263 reported.
 WIDGET_DENSITIES: frozenset[str] = frozenset({"more", "less"})
+
+
+#: Below this context window a turn carries NO inline-widget guidance at all.
+#:
+#: This is a window affordability rule, NOT a density preference, and the two must not be confused:
+#: density picks how aggressively a model that CAN render widgets should reach for them, while this
+#: answers whether the model has room to be told about them in the first place. Overloading
+#: ``widget_density`` for it would give one knob two meanings and make a user's frequency preference
+#: silently mean "capability off".
+#:
+#: The guidance costs a measured 730 tokens per turn — 553 for the ``widget-instructions`` snippet
+#: that fills ``{{widget_block}}`` in the system prompt (at the ``more`` variant) plus 177 for the
+#: ``[WIDGETS]`` block appended after the user's request. That is 42% of the OU-14 bundled floor's
+#: entire input room (1,728 tokens — a 2,048-token window minus its declared 320-token reply
+#: reserve), spent telling a model how to emit Tailwind-styled HTML that a 135M-parameter model
+#: cannot produce, and it is exactly the difference between answering and refusing there: a first
+#: turn measures 2,371 tokens with the guidance (refused, 643 over) and 1,640 without it (fits).
+#: 8,192 is the smallest window that comfortably affords the guidance AND a real first turn
+#: (measured: 2,861 assembled tokens against 7,872 of input room), so it is the threshold rather
+#: than a rounder number.
+_WIDGET_GUIDANCE_MIN_WINDOW = 8192
+
+
+def _widget_guidance_affordable(window: int | None) -> bool:
+    """Whether this turn's bound model has room to be told about inline widgets.
+
+    ``None`` (an unmeasured window) reads as AFFORDABLE: an unknown window must not silently
+    delete a capability that every previously-shipping binding had. Erring the other way would
+    make a mistyped model id remove widgets from the product.
+    """
+    return window is None or window >= _WIDGET_GUIDANCE_MIN_WINDOW
 
 
 class _MemoryCaps(TypedDict):
@@ -364,18 +410,45 @@ def _memory_caps(context_window: int | None) -> _MemoryCaps:
     """Per-section memory caps scaled to the resolved model window (mem-adaptive-budget).
 
     Baseline caps are calibrated for a 200k window; scale linearly by
-    ``window / 200k``, clamped to [1.0, 5.0]× so a 1M-window model (e.g. Opus)
-    recalls ~5× more while a small model stays at the safe baseline. ``None``/unknown
-    → the baseline (no regression). History stays the dominant section (its cap is
-    largest), preserving the current section balance across the scale."""
+    ``window / 200k``, ceilinged at 5× so a 1M-window model (e.g. Opus) recalls ~5×
+    more. ``None``/unknown → the baseline (no regression). History stays the dominant
+    section (its cap is largest), preserving the current section balance across the scale.
+
+    🪤 The 1.0 floor on the multiple is kept, but it is no longer the last word. On its own
+    it made this function scale in ONE direction: ``max(1.0, 2048/200_000)`` is 1.0, so a
+    2,048-token model received the identical 59,000-char budget as a 200,000-token one —
+    the baseline caps sum to roughly 14,750 tokens, i.e. SEVEN TIMES a 2,048-token
+    model's whole window. The previous docstring called that "a small model stays at the
+    safe baseline"; it is only safe above the calibration point.
+
+    So the sum of the caps is additionally bounded by :data:`_MEMORY_WINDOW_FRACTION` of
+    the window. That bound is INERT wherever the baseline genuinely fits — a 128k window
+    admits 16,000 tokens of memory against a ~14,750-token baseline, so it stays at
+    exactly 1.0× as before — and binds only below the calibration point, which is where
+    the flat floor was lying. Sections scale together so the balance the baseline encodes
+    survives, and every cap keeps a 1-char floor: a zero cap divides badly and reads as
+    "no memory feature" rather than "no room for memory".
+    """
     win = context_window or _BASELINE_WINDOW
     mult = max(1.0, min(_MAX_BUDGET_MULTIPLE, win / _BASELINE_WINDOW))
+    baseline_chars = (
+        _MEMORY_PREFS_CAP
+        + _MEMORY_PROJECTS_CAP
+        + _MEMORY_HISTORY_CAP
+        + _SEMANTIC_MEMORY_CAP
+        + _EPISODIC_MEMORY_CAP
+    )
+    # The window is in TOKENS and the caps are in CHARS — converted at the repo's one
+    # nominal ratio so the comparison is between like quantities.
+    affordable_chars = int(win * _MEMORY_WINDOW_FRACTION * NOMINAL_CHARS_PER_TOKEN)
+    if affordable_chars < baseline_chars * mult:
+        mult = affordable_chars / baseline_chars
     return {
-        "prefs_cap": int(_MEMORY_PREFS_CAP * mult),
-        "projects_cap": int(_MEMORY_PROJECTS_CAP * mult),
-        "history_cap": int(_MEMORY_HISTORY_CAP * mult),
-        "semantic_cap": int(_SEMANTIC_MEMORY_CAP * mult),
-        "episodic_cap": int(_EPISODIC_MEMORY_CAP * mult),
+        "prefs_cap": max(1, int(_MEMORY_PREFS_CAP * mult)),
+        "projects_cap": max(1, int(_MEMORY_PROJECTS_CAP * mult)),
+        "history_cap": max(1, int(_MEMORY_HISTORY_CAP * mult)),
+        "semantic_cap": max(1, int(_SEMANTIC_MEMORY_CAP * mult)),
+        "episodic_cap": max(1, int(_EPISODIC_MEMORY_CAP * mult)),
     }
 
 
@@ -935,14 +1008,21 @@ class ContextBuilder:
         except Exception:
             return "PersonalClaw"
 
-    def _runtime_prompt_values(self, session_key: str) -> dict[str, Any]:
-        """Values supplied whenever a system prompt is rendered."""
+    def _runtime_prompt_values(
+        self, session_key: str, *, window: int | None = None
+    ) -> dict[str, Any]:
+        """Values supplied whenever a system prompt is rendered.
+
+        ``window`` is the bound chat model's context window, resolved once per assembly by
+        the caller; ``None`` resolves it here for the standalone callers (CLI, tests)."""
         return {
             "bot_name": self._bot_name,
-            "widget_block": self._widget_block(session_key),
+            "widget_block": self._widget_block(session_key, window=window),
         }
 
-    def _apply_runtime_vars(self, prompt: str, session_key: str) -> str:
+    def _apply_runtime_vars(
+        self, prompt: str, session_key: str, *, window: int | None = None
+    ) -> str:
         """Substitute the runtime prompt variables on the unified ``{{name}}``
         format used by the prompts entity everywhere:
 
@@ -958,7 +1038,7 @@ class ContextBuilder:
         from personalclaw.prompt_providers.base import PromptTemplate, PromptVariable
         from personalclaw.prompt_providers.engine import render_template
 
-        values = self._runtime_prompt_values(session_key)
+        values = self._runtime_prompt_values(session_key, window=window)
         tpl = PromptTemplate(
             name="_runtime",
             content=prompt,
@@ -967,7 +1047,7 @@ class ContextBuilder:
         return render_template(tpl, values, resolver=_snippet_resolver())
 
     @staticmethod
-    def _widget_block(session_key: str) -> str:
+    def _widget_block(session_key: str, *, window: int | None = None) -> str:
         """The inline-widget instruction block for ``{{widget_block}}``.
 
         Dashboard sessions get widget instructions; channel/CLI get an empty string.
@@ -977,6 +1057,13 @@ class ContextBuilder:
             session_key.startswith("dashboard:") or session_key.startswith("dashboard_")
         )
         if not is_dashboard:
+            return ""
+        # A window too small to afford the guidance gets none of it. See
+        # `_WIDGET_GUIDANCE_MIN_WINDOW` for the measurement; the drop is reported to the user
+        # from `build_message`, which is the one place holding the turn's notice channel.
+        if not _widget_guidance_affordable(
+            active_chat_model_window() if window is None else window
+        ):
             return ""
 
         cfg = AppConfig.load()
@@ -1061,6 +1148,13 @@ class ContextBuilder:
         # CE2-8: filled with one legible line per assembly-time DROP (today: the
         # `_MAX_CONTEXT_CHARS` cut, which previously only reached a server log).
         dropped_out: list[str] | None = None,
+        # The bound chat model's context window, resolved ONCE per assembly by the caller.
+        # Threaded rather than re-read here because every window-scaled budget in this
+        # module must be scaled by the SAME number: two independent reads could straddle a
+        # binding change mid-turn and hand the memory sections and the ambient blocks
+        # different ideas of how much room the model has. `None` = resolve it here, which is
+        # what the standalone callers (CLI, tests) get.
+        window: int | None = None,
     ) -> str:
         """Build context for a new session (memory + skills + history).
 
@@ -1104,6 +1198,10 @@ class ContextBuilder:
         _, tz = get_local_tz()
         now = datetime.now(tz)
         current_date_line = f"[CURRENT DATE] {now.strftime('%A, %Y-%m-%d %H:%M %Z')}\n\n"
+
+        # ONE window for the whole assembly. Every budget below is scaled by it, so it is
+        # read once and shared rather than re-resolved per consumer.
+        _window = active_chat_model_window() if window is None else window
 
         # Agent identity and runtime — inject for ALL agents so the LLM
         # knows which agent it is and where it's running.  Without this,
@@ -1212,11 +1310,9 @@ class ContextBuilder:
             _svc = service_for(memory)
             # Adaptive budget (mem-adaptive-budget): scale the per-section caps to the
             # window of the model actually bound to chat (1M for Opus → ~5× recall;
-            # 200k baseline for smaller models). Resolved from the active-model binding
-            # so no window param has to thread through every build_message call site.
-            from personalclaw.model_windows import active_chat_model_window
-
-            _caps = _memory_caps(active_chat_model_window())
+            # 200k baseline at the calibration point; a SMALL window now scales down too —
+            # see `_MEMORY_WINDOW_FRACTION`).
+            _caps = _memory_caps(_window)
             memory_ctx = _guarded_recall(
                 "recall",
                 lambda: _svc.get_context(**_caps),
@@ -1339,6 +1435,7 @@ class ContextBuilder:
             persona=_persona,
             self_model=_self_model,
             procedural=_procedural,
+            window=_window,
         )
         if _ambient:
             parts.append(_ambient)
@@ -1487,6 +1584,11 @@ class ContextBuilder:
         is_custom = agent and agent != "personalclaw"
         hook_result = self.hooks.on_message(text)
 
+        # ONE window for the whole turn's assembly: every budget and affordability rule
+        # below is scaled by it, and two independent reads could straddle a binding change
+        # mid-turn and disagree about how much room the model has.
+        _window = active_chat_model_window()
+
         parts = _Parts()
 
         # Session context on first message only
@@ -1506,7 +1608,7 @@ class ContextBuilder:
                 # to the shipped prompt file when the provider can't resolve it.
                 _uc = _prompt_use_case_for(session_key, prompt_use_case)
                 agent_prompt = _resolve_use_case_prompt(
-                    _uc, self._runtime_prompt_values(session_key or "")
+                    _uc, self._runtime_prompt_values(session_key or "", window=_window)
                 )
                 if not agent_prompt:
                     try:
@@ -1523,7 +1625,9 @@ class ContextBuilder:
                     else system_prompt_suffix
                 )
             if agent_prompt:
-                agent_prompt = self._apply_runtime_vars(agent_prompt, session_key or "")
+                agent_prompt = self._apply_runtime_vars(
+                    agent_prompt, session_key or "", window=_window
+                )
                 from personalclaw.prompt_providers.runtime import render_snippet_block
 
                 parts.add(
@@ -1544,6 +1648,7 @@ class ContextBuilder:
                 mode=mode,
                 blocks_reads=blocks_reads,
                 dropped_out=notices_out,
+                window=_window,
             )
             if session_ctx:
                 from personalclaw.prompt_providers.runtime import render_snippet_block
@@ -1849,7 +1954,19 @@ class ContextBuilder:
         _is_dashboard = session_key and (
             session_key.startswith("dashboard:") or session_key.startswith("dashboard_")
         )
-        if _is_dashboard:
+        # Same affordability rule as `{{widget_block}}` in the system prompt, and deliberately the
+        # same helper: the two blocks are one capability described twice, so a window that cannot
+        # afford one cannot afford the other, and gating only one would leave a model told to emit
+        # `<widget>` markup by a block whose syntax reference had been dropped.
+        _widgets_affordable = _widget_guidance_affordable(_window)
+        if _is_dashboard and not _widgets_affordable and notices_out is not None:
+            notices_out.append(
+                f"Inline-widget instructions were left out of this turn: the bound model's "
+                f"{_window:,}-token context window cannot afford the 730 tokens they cost "
+                f"and still leave room for a reply. Bind a model with a window of at least "
+                f"{_WIDGET_GUIDANCE_MIN_WINDOW:,} tokens to get widgets back."
+            )
+        if _is_dashboard and _widgets_affordable:
             parts.add(
                 "\n\n[WIDGETS] You can render rich HTML inline using "
                 '<widget title="Title">HTML</widget> tags. Tailwind CSS is available. '

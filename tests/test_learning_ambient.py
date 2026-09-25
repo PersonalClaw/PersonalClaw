@@ -154,10 +154,22 @@ def test_the_budget_scales_with_the_model_window():
     """
     assert ambient.budget_for_window(200_000, 4000) == 4000
     assert ambient.budget_for_window(1_000_000, 4000) == 20_000
-    # Clamped both ways: a small window does not shrink below the calibrated baseline, and a
-    # gigantic one does not grow past 5x.
-    assert ambient.budget_for_window(8_000, 4000) == 4000
+    # A gigantic window does not grow past 5x.
     assert ambient.budget_for_window(10_000_000, 4000) == 20_000
+    # …and a SMALL window shrinks. This line used to assert 4000 here, under the comment
+    # "a small window does not shrink below the calibrated baseline" — which handed an
+    # 8,000-token model a budget worth HALF its entire window for ambient blocks alone. The
+    # flat 1.0 floor made this function scale in one direction only, and that is what refused
+    # the first message of a new chat on the OU-14 bundled floor: the skill index arrived at
+    # 2,482 tokens against that card's 1,728 tokens of input room. The bound is now
+    # `MAX_WINDOW_FRACTION` of the window, which is inert at 118k and above (so the three
+    # assertions above are unchanged) and binds only below the calibration point.
+    assert ambient.budget_for_window(8_000, 4000) == int(8_000 * ambient.MAX_WINDOW_FRACTION)
+    assert ambient.budget_for_window(2_048, 4000) == int(2_048 * ambient.MAX_WINDOW_FRACTION)
+    # 128k is the lowest previously-pinned window and it must still sit exactly at baseline.
+    assert ambient.budget_for_window(128_000, 4000) == 4000
+    # Never zero: a 0-token budget renders no block, which reads as the feature being off.
+    assert ambient.budget_for_window(16, 4000) == ambient.MIN_BUDGET_TOKENS
 
 
 def test_an_unknown_window_uses_the_base_budget():
@@ -641,7 +653,15 @@ def test_the_context_builder_routes_the_blocks_through_the_budget():
     src = inspect.getsource(context._render_ambient)
     assert "ambient.render" in src
     assert "context_budget_tokens" in src
-    assert "active_chat_model_window" in src
+    # The window is no longer resolved HERE: it is resolved once per assembly by
+    # `build_session_context` and threaded in, so the memory sections and the ambient
+    # blocks cannot be scaled by two different reads of the same binding. Assert the
+    # scaling is still WIRED (this function passes a window through to the allocator)
+    # and that the one resolution exists at the seam that owns it.
+    assert "window=window" in src
+    assert "active_chat_model_window" in inspect.getsource(
+        context.ContextBuilder.build_session_context
+    )
 
 
 def test_the_old_per_block_lesson_cap_is_gone():
@@ -671,7 +691,7 @@ def test_a_broken_budget_never_costs_the_user_their_lessons():
     from personalclaw import context
 
     block = lesson_block(5)
-    out = context._render_ambient(lessons=block, skill_index="boom")
+    out = context._render_ambient(lessons=block, skill_index="boom", window=200_000)
     assert out  # something rendered
 
     import personalclaw.learning.ambient as amb
@@ -679,7 +699,7 @@ def test_a_broken_budget_never_costs_the_user_their_lessons():
     original = amb.render
     try:
         amb.render = lambda **_kw: (_ for _ in ()).throw(RuntimeError("boom"))
-        assert context._render_ambient(lessons=block) == block
+        assert context._render_ambient(lessons=block, window=200_000) == block
     finally:
         amb.render = original
 
@@ -687,4 +707,4 @@ def test_a_broken_budget_never_costs_the_user_their_lessons():
 def test_no_blocks_means_no_ambient_call():
     from personalclaw import context
 
-    assert context._render_ambient() == ""
+    assert context._render_ambient(window=200_000) == ""
