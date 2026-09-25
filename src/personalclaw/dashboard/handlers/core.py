@@ -5,6 +5,7 @@ import hmac
 import json
 import logging
 import os
+import unicodedata
 from pathlib import Path
 
 from aiohttp import web
@@ -13,7 +14,12 @@ from aiohttp.client_exceptions import ClientConnectionResetError
 import personalclaw.validation as _validation_mod
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
-from personalclaw.config.loader import MEMORY_VAULT_MODES, PUSH_BACKENDS, AppConfig
+from personalclaw.config.loader import (
+    MEMORY_VAULT_MODES,
+    PUSH_BACKENDS,
+    AppConfig,
+    _bot_name_disallowed,
+)
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.dashboard.token_auth import MAX_SESSION_TTL_SECS, generate_token, parse_duration
 from personalclaw.http_errors import json_error
@@ -601,11 +607,37 @@ def _context_engine_values() -> set[str]:
     return set(available_engines())
 
 
-def _bot_name_sanitizer(value: str) -> str:
-    """The loader's bot_name sanitizer (single source of truth)."""
-    from personalclaw.config.loader import _sanitize_bot_name
+def _bot_name_validator(value: str) -> str:
+    """Refuse an assistant name holding a character a name may not contain; trim the rest.
 
-    return _sanitize_bot_name(value)
+    REFUSED, not stripped. This used to hand the value to the loader's sanitizer, which dropped
+    what it disliked while the PATCH answered 200: `Chloé's Aide` was stored as `Chlos Aide`, and
+    Settings showed "Saved" beside the name as typed. A stripped name is one nobody typed, and the
+    caller has been told it succeeded — so the refusal names each character, and the user decides
+    what the name becomes. Trimming surrounding whitespace changes no name, so that one is applied.
+
+    Which characters are allowed is the loader's call (`_bot_name_disallowed`): one policy for this
+    write side and for `load()`, which strips the same characters from a hand-edited file.
+    """
+    name = value.strip()
+    refused = _bot_name_disallowed(name)
+    if refused:
+        # A glyph is shown quoted; an invisible character (control, format, space, mark) is shown
+        # as its code point and name, since quoting it would print an empty pair of quotes.
+        shown = ", ".join(
+            (
+                f"“{ch}”"
+                if ch.isprintable() and not unicodedata.category(ch).startswith(("M", "Z"))
+                else f"U+{ord(ch):04X} {unicodedata.name(ch, '')}".rstrip()
+            )
+            for ch in refused
+        )
+        raise ConfigValueError(
+            f"{shown} can't be part of a name — use letters (any language), digits, spaces, "
+            "apostrophes, hyphens, periods or underscores",
+            f"agent.bot_name={value}",
+        )
+    return name
 
 
 def _push_to_talk_chord_sanitizer(value: str) -> str:
@@ -932,10 +964,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # ordering repairs, which are unconditional.
     "agent.prompt_cache_enabled": {"type": "bool"},
     # The assistant's display name — consumed by the prompt engine ({{bot_name}}
-    # template var + ContextBuilder). Sanitized at the write boundary (strip
-    # markdown/braces, ≤50 chars) so the FILE matches what load() produces —
-    # load() applies the same function, defense in depth for hand-edits.
-    "agent.bot_name": {"type": "str", "max_len": 50, "sanitize": _bot_name_sanitizer},
+    # template var + ContextBuilder). Validated at the write boundary (≤50 chars; a
+    # character a name may not contain is refused by name, never dropped) so the FILE
+    # holds exactly what the user typed — load() strips the same characters from a
+    # hand-edited file, defense in depth.
+    "agent.bot_name": {"type": "str", "max_len": 50, "sanitize": _bot_name_validator},
     "agent.log_level": {"type": "enum", "values": ["DEBUG", "INFO", "WARNING", "ERROR"]},
     # Self-QA companion (SELF-VERIFICATION §5 wiring point (d)). All four fields are editable,
     # not just the two toggles: a companion you can enable but cannot point at a repo is
@@ -1199,14 +1232,14 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # context_adapters gates writing adapter files into opted-in project workspaces.
     "legibility.discover_tips": {"type": "bool"},
     "legibility.context_adapters": {"type": "bool"},
-    # Ambient surfaces — the composable home + generative-UI +
-    # surface-layer + tray knobs. surfaces_max_layer is the safe-mode ceiling.
+    # Ambient surfaces — the composable home + generative-UI knobs.
+    # `surfaces_max_layer` and `tray_enabled` were allowlisted here with no reader anywhere
+    # (issue #3490) and are gone: the layer ceiling is `surface_layers.py`'s process latch,
+    # and menu-bar presence is the Electron shell's, reported through `desktop_registry`.
     "ambient.tiles_enabled": {"type": "bool"},
     "ambient.max_tiles": {"type": "int", "min": 1, "max": 48},
     "ambient.default_refresh_ttl_secs": {"type": "int", "min": 30, "max": 86400},
     "ambient.genui_enabled": {"type": "bool"},
-    "ambient.surfaces_max_layer": {"type": "int", "min": 0, "max": 2},
-    "ambient.tray_enabled": {"type": "bool"},
     # Companion apps — LAN discovery advertisement + the friendly
     # instance name a client shows. discovery_enabled is off by default; toggling it here
     # is the opt-in to announcing this gateway on the local network.
@@ -1242,19 +1275,20 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "local_models.selftest_timeout_s": {"type": "int", "min": 5, "max": 600},
     # Watched sources — the poll engine's runtime knobs. The
     # network floor is bounded at 300s (the R1-class rate floor) so a UI edit cannot make
-    # the engine poll a third party abusively.
+    # the engine poll a third party abusively. `daily_request_budget` was allowlisted here
+    # with nothing counting requests against it (issue #3490) and is gone; the allowance that
+    # IS enforced is the per-source, per-poll `budget.max_requests` on the source row.
     "sources.enabled": {"type": "bool"},
     "sources.poll_interval_default_secs": {"type": "int", "min": 300, "max": 604800},
     "sources.network_floor_secs": {"type": "int", "min": 300, "max": 604800},
     "sources.max_sources": {"type": "int", "min": 1, "max": 1000},
     "sources.max_items_per_poll": {"type": "int", "min": 1, "max": 1000},
-    "sources.daily_request_budget": {"type": "int", "min": 1, "max": 100000},
-    # Packs — the runtime-editable subset. The fingerprint toggle and the
-    # skill-catalog list are the knobs a user reaches for from Settings; the catalog-refresh
-    # URL is a plain string. No credential rides any of these (a connector credential goes to
-    # the credential store, never a config field).
+    # Packs — the runtime-editable subset: the fingerprint toggle and the
+    # skill-catalog list are the knobs a user reaches for from Settings. No credential rides
+    # either (a connector credential goes to the credential store, never a config field).
+    # `packs.connector_catalog_url` was allowlisted here for a catalog refresh nothing
+    # implements (issue #3490) and is gone.
     "packs.fingerprint_enabled": {"type": "bool"},
-    "packs.connector_catalog_url": {"type": "str", "max_len": 512},
     "packs.skill_catalogs": {"type": "skill_catalogs"},
     # Apps — whether the curated registry ships as a default Store
     # source. Editable because it is the operator's opt-out for a shipped NETWORK source; it

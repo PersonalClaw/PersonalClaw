@@ -90,6 +90,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # is a bad id is the wrong noun for a file browser.
     "invalid_name": "A file or directory name is not a single safe path segment "
     "(separators, '..' or over-long).",
+    # The directory picker's refusal (`browse-dirs`, `create-dir`): a credential location or an
+    # OS/system root. 403, and — unlike `invalid_path` — it deliberately NAMES the location and
+    # why, in the message and as `path` + `reason` (`system_root` | `sensitive_path`) inside the
+    # error object: the picker's own default location can be the refused one, and a refusal that
+    # names neither left the user with an empty listing and nothing to act on.
+    "path_protected": "The folder is a protected system or credential location the directory "
+    "picker will not open or create in; the message names it and says why.",
     "not_found": "The addressed resource does not exist.",
     "forbidden": "The caller is not permitted to touch this resource.",
     "confirmation_required": "The operation is destructive and needs an explicit confirm.",
@@ -244,6 +251,10 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "one_link_required": "A one-link target is required.",
     "one_link_rejected": "The submitted one-link target was rejected.",
     "project_not_found": "No such project.",
+    # `PUT /api/projects/settings` (the default project). 409 rather than 404: the project exists
+    # and the request is valid once it is restored — an archived project is off every picker, so
+    # it cannot be where new work starts.
+    "project_archived": "The project is archived; restore it before new work can start in it.",
     "prompt_card_failed": "Rendering the prompt card failed.",
     "prompt_card_rejected": "The submitted prompt card was rejected.",
     "rejection_incomplete": "A rejection must carry a reason.",

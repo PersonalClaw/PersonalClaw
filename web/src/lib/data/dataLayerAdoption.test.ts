@@ -192,6 +192,14 @@ describe('§3 the remaining hand-rolled server-data caches are a shrinking, name
     // (`Math.random()`) and identifies this browser profile to the push-subscribe route. No
     // server response is cached, so there is nothing that could paint stale.
     'app/pushClient.ts': "this browser profile's own push device id",
+    // Same discriminator, same verdict: the stored value is the display name and handle the operator
+    // is TYPING — keystrokes, never a server response. It exists because identity is committed once
+    // at the end of first run, so mid-flow the typed name lived only in React state and a refresh
+    // threw it away (measured: the server reported step 3, the reload showed step 1 with both fields
+    // empty). `sessionStorage` is the exact scope of that problem — a refresh keeps it, a new tab
+    // does not — and `finish()` deletes it at the moment `setName` commits for real. Nothing fetched
+    // in the module is ever written to storage, so nothing here can paint stale.
+    'app/Onboarding.tsx': 'the name and handle being typed, before they are committed',
     // Same discriminator, same verdict. The stored value is `composer-resth2`: the resting HEIGHT
     // the reader dragged the composer to — a number minted by a pointer, never a server response.
     // The module's one api call reads the "Send on Enter" preference through `useQuery`, so the

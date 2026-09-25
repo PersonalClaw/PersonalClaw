@@ -13,6 +13,7 @@ const doc: UiDoc = {
     { name: 'tone', description: "Semantic tone from the closed set: 'ok' | 'warn' | 'danger' | 'info' | 'primary' | 'neutral'. Picks BOTH the 16% tint ground and the ink, so the pair can never disagree — never recolor via className or style." },
     { name: 'pad', description: 'Emit the seed padding (px-1.5). Default true; set false when the pill genuinely needs other metrics and bring your own — cx is a plain joiner, so two padding utilities would race.' },
     { name: 'sized', description: 'Emit the seed type size (text-[0.75rem]). Default true; set false when the pill genuinely reads at another size and bring your own text utility — cx is a plain joiner, so two text-size utilities would race.' },
+    { name: 'groundedOn', description: 'Composite the 16% tint against this OPAQUE tier instead of transparent, so the pill\'s ground stops depending on what is painted beneath it. For a pill on a tier that is not a reference ground, or on one that MOVES (a card with hover:bg-surface-high). Measured: the ok tint reads 4.4543 dark / 4.4625 light over --color-surface-high (under AA, axe-reportable) and 5.0903 / 5.0075 over --color-surface-container — same ink, same strength, only the compositing base is pinned. Default undefined keeps the translucent wash, so every existing pill is byte-identical. Opt in only where the ground is MEASURED to break AA (see pages/settings/fitChipGround.test.ts).' },
   ],
   bestPractices: [
     { guidance: true, description: 'Reach for StatusPill for every tinted verdict/state label; it carries the sanctioned tint strength and the closed tone vocabulary in one place.' },
@@ -20,7 +21,7 @@ const doc: UiDoc = {
     { guidance: false, description: 'Do not hand-roll the color-mix tint inline; the statusTint ratchet holds the inline count down, and a hand-rolled percent can leave the audited 18% contrast budget.' },
     { guidance: false, description: 'Do not add borders or side stripes to carry the tone — the tint + ink pair IS the tone (Tone-Not-Line, sideStripeDoctrine).' },
   ],
-  anatomy: ['span.inline-flex.shrink-0.items-center.rounded-pill.px-1.5', 'sized text-[0.75rem] (default) or consumer type utility', 'style: 16% color-mix tint ground + tone ink from the closed map', 'children (short label; full meaning via aria-label/title when longer)'],
+  anatomy: ['span.inline-flex.shrink-0.items-center.rounded-pill.px-1.5', 'sized text-[0.75rem] (default) or consumer type utility', 'style: 16% color-mix tint ground (over transparent, or over groundedOn when pinned) + tone ink from the closed map', 'children (short label; full meaning via aria-label/title when longer)'],
 }
 
 export default doc

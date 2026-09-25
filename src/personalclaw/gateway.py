@@ -2865,6 +2865,7 @@ class GatewayOrchestrator:
         provider is attached when one is configured, enabling poll/history; otherwise
         polling no-ops. Attached to the dashboard state in ``_init_dashboard`` (which
         runs after this)."""
+        from personalclaw.identity import operator_name
         from personalclaw.inbox import InboxState, InboxStore
         from personalclaw.inbox_service import InboxService
 
@@ -2900,7 +2901,7 @@ class GatewayOrchestrator:
             provider=provider,
             # The OPERATOR's name (drafts are written on behalf of the human —
             # "reply as {{user_name}}"), NOT agent.bot_name (the assistant's name).
-            user_name=(self._cfg.dashboard.user_name or "").strip() or "the user",
+            user_name=operator_name() or "the user",
             style_rules="\n".join(sec.style_rules or []),
         )
         # Background loop: polls the wired provider (when any). Cheap when idle.

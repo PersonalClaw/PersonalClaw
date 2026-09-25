@@ -143,7 +143,7 @@ From a WSL2 shell (Ubuntu or any distro), install exactly as on Linux — with
 
 ```bash
 uv tool install personalclaw
-personalclaw setup      # interactive: name + first provider credential
+personalclaw setup      # interactive: workspace directory + timezone
 personalclaw gateway
 ```
 
@@ -230,7 +230,8 @@ curl.exe -fsSLO https://raw.githubusercontent.com/PersonalClaw/PersonalClaw/main
 # optional: put a .env next to it
 ```
 
-Open `.env` and set at least one provider key. **Paths in `.env` must be
+Open `.env` and set any provider keys you use. All of them are optional, and with none
+set, first-run setup can still download the small default model. **Paths in `.env` must be
 container paths, not Windows paths** — the gateway runs inside Linux, so
 `C:\Users\you\...` means nothing to it. Leave `PERSONALCLAW_HOME` alone; compose
 already sets it to `/data`, backed by a named volume.

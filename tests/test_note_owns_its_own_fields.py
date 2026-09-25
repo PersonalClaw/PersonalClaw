@@ -50,7 +50,7 @@ def state(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "personalclaw.dashboard.state._persist_notification", lambda note: persisted.append(note)
     )
-    monkeypatch.setattr(st, "_operator_name", lambda: "", raising=False)
+    monkeypatch.setattr("personalclaw.identity.operator_name", lambda: "")
     monkeypatch.setattr(st, "_push_target", lambda kind, note: None, raising=False)
     st.captured = {"broadcast": broadcast, "persisted": persisted}
     return st
@@ -253,7 +253,6 @@ def _fresh():
     st._sessions = {}
     broadcast: list[dict[str, Any]] = []
     st._broadcast = lambda note: broadcast.append(note)  # type: ignore[method-assign]
-    st._operator_name = lambda: ""  # type: ignore[method-assign]
     st._push_target = lambda kind, note: None  # type: ignore[method-assign]
     st.captured = {"broadcast": broadcast, "persisted": []}
     state_mod._persist_notification = lambda note: None  # type: ignore[assignment]

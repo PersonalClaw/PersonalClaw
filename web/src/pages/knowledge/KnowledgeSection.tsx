@@ -4,6 +4,7 @@ import { KnowledgeDetailPage } from './KnowledgeDetailPage'
 import { SourcesPage } from './SourcesPage'
 import { SourceCreatePage } from './SourceCreatePage'
 import { ReportsPage } from './ReportsPage'
+import { MODELS_PATH } from '../chat/NoModelSetupState'
 import type { RouteProps } from '../../app/useQueryState'
 
 /** Knowledge navigation — URL-addressable: `#/knowledge` (list; view toggle
@@ -28,5 +29,5 @@ export function KnowledgeSection({ sub, navigate, query, setQuery, navEpoch }: R
   // `onOpenReader` is the same destination with the reading mode already on (`?read=1`, the param
   // KnowledgeDetailPage reads) — the library home's continue-reading shelf resumes INTO the reader,
   // not into the metadata view, because the position it saved belongs to the reader's scroller.
-  return <KnowledgeListPage key={navEpoch} onCreate={() => navigate('knowledge/new')} onOpenItem={(id) => navigate(`knowledge/item/${id}`)} onOpenReader={(id) => navigate(`knowledge/item/${id}?read=1`)} onOpenSources={() => navigate('knowledge/sources')} onOpenReports={() => navigate('knowledge/reports')} onOpenChat={() => navigate('chat')} query={query} setQuery={setQuery} />
+  return <KnowledgeListPage key={navEpoch} onCreate={() => navigate('knowledge/new')} onOpenItem={(id) => navigate(`knowledge/item/${id}`)} onOpenReader={(id) => navigate(`knowledge/item/${id}?read=1`)} onOpenSources={() => navigate('knowledge/sources')} onOpenReports={() => navigate('knowledge/reports')} onOpenChat={() => navigate('chat')} onOpenModels={() => navigate(MODELS_PATH)} query={query} setQuery={setQuery} />
 }

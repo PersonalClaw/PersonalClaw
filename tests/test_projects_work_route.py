@@ -99,6 +99,68 @@ async def test_runs_loops_and_tasks_all_appear_on_one_board(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_every_done_row_says_how_it_ended(tmp_path):
+    """`done` is the board's "nothing left to do" group, and a cancelled task belongs in it —
+    but measured on a project page, a cancelled task sat there with the same glyph as the
+    completed task beside it, so the board said the press kit had shipped. Each DONE row now
+    carries its OWN ending, from every source, and a row that has not ended carries none."""
+    from personalclaw.loop import store as loop_store
+    from personalclaw.loop.loop import Loop, LoopStatus, LoopStopReason
+    from personalclaw.workflows import store as run_store
+    from personalclaw.workflows.models import RunStatus, WorkflowRun
+
+    async with _client(tmp_path) as client:
+        pid = await _mk_project(client)
+        for title, status in (
+            ("Draft copy", "done"),
+            ("Press kit", "cancelled"),
+            ("Optional teaser", "skipped"),
+            ("Pricing sheet", "open"),
+        ):
+            r = await client.post("/api/tasks", json={"title": title, "project_id": pid})
+            tid = (await r.json())["id"]
+            if status != "open":
+                r = await client.put(f"/api/tasks/{tid}", json={"status": status})
+                assert r.status == 200, await r.text()
+        for name, status, reason in (
+            ("Genuine", LoopStatus.COMPLETE, LoopStopReason.DONE),
+            ("Out of budget", LoopStatus.COMPLETE, LoopStopReason.CYCLE_BUDGET),
+            ("Halted", LoopStatus.STOPPED, LoopStopReason.USER),
+            ("Crashed", LoopStatus.FAILED, LoopStopReason.WORKER_FAILED),
+        ):
+            lp = loop_store.create(
+                Loop(id="", kind="goal", name=name, task=name * 5, project_id=pid)
+            )
+            loop_store.update_status(lp.id, LoopStatus.RUNNING)
+            loop_store.update_status(lp.id, status, stop_reason=reason)
+        for name, status in (
+            ("run-ok", RunStatus.COMPLETE),
+            ("run-bad", RunStatus.FAILED),
+            ("run-off", RunStatus.CANCELLED),
+        ):
+            run_store.create(WorkflowRun(id="", workflow_name=name, status=status, project_id=pid))
+
+        body = await (await client.get(f"/api/projects/{pid}/work")).json()
+        by_state = {
+            g["state"]: {row["title"]: row["outcome"] for row in g["rows"]} for g in body["board"]
+        }
+        assert by_state["done"] == {
+            "Draft copy": "completed",
+            "Press kit": "cancelled",
+            "Optional teaser": "skipped",
+            "Genuine": "completed",
+            "Out of budget": "ended_early",
+            "Halted": "stopped",
+            "Crashed": "failed",
+            "run-ok": "completed",
+            "run-bad": "failed",
+            "run-off": "cancelled",
+        }
+        # A row that has not ended claims no ending.
+        assert by_state["queued"] == {"Pricing sheet": ""}
+
+
+@pytest.mark.asyncio
 async def test_needs_input_group_is_pinned_first(tmp_path):
     from personalclaw.loop import store as loop_store
     from personalclaw.loop.loop import Loop, LoopStatus

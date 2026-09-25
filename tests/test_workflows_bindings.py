@@ -171,11 +171,21 @@ class TestFirstIterationLast:
     `unresolved reference at 'last'`, and its `| default(...)` guard could not help: a pipe
     runs only after the reference resolves.
 
-    The rescue is keyed on a POSITIVE first-iteration signal rather than on the root simply
-    being absent. That distinction is the whole design: the engine does not yet hand a loop
-    BODY its previous iteration at all, so an absence-keyed rescue would render
-    "(this is the first pass)" on iteration 50 — a prompt quietly missing its input while the
-    run reports success, which is worse than the failure it replaced.
+    The rescue is keyed on a POSITIVE in-a-loop-body signal (`iter_index is not None` with no
+    `foreach` item rebinding it) rather than on the root simply being absent. That distinction
+    is the whole design: an absence-keyed rescue would render "(this is the first pass)" for a
+    `last` read somewhere no iteration exists at all — a prompt quietly missing its input while
+    the run reports success, which is worse than the failure it replaced.
+
+    **The signal widened from `iter_index == 0` to `iter_index is not None` in #3524**, and the
+    reason is that the seam it was guarding against got built. `RunController._context_for` now
+    computes `last` for every node it dispatches (`_last_output`), so inside a loop body "no
+    `last`" is a MEASUREMENT — either this is the first iteration, or the previous one produced
+    no output at all — and both are honest `| default(...)` cases. Before that, `iter_index` 1+
+    with no `last` meant "the engine never wired this", which is why it had to raise: six bundled
+    templates spent iterations 2..N failing on `unresolved reference at 'last'` while their guard
+    sat there unused. `test_last_outside_any_loop_still_raises` is what keeps the rescue from
+    degenerating into absence-keyed, and it is load-bearing rather than incidental.
     """
 
     def test_a_first_iteration_last_resolves_to_its_default(self) -> None:
@@ -189,14 +199,36 @@ class TestFirstIterationLast:
         resolver does not additionally require it, or the two rails would disagree."""
         assert resolve("{{last.output.summary}}", BindingContext(iter_index=0)) is None
 
-    def test_a_later_iteration_with_no_last_still_raises(self) -> None:
-        """`absent-is-not-zero`. Iteration 1 with no `last` is a real gap, and the run must say
-        so instead of telling the model this is the first pass for the rest of the loop."""
-        with pytest.raises(BindingError) as exc:
+    def test_a_later_iteration_with_no_last_reads_the_default(self) -> None:
+        """INVERTED in #3524, and the inversion is the fix rather than a weakening.
+
+        This test used to assert the OPPOSITE — that iteration 1 with no `last` raises — on the
+        ground that an absent `last` there was "a real gap" the run must report. It was: nothing
+        supplied one. Now `RunController._context_for` supplies it for every dispatched node, so
+        `has_last` False inside a loop body no longer means "unwired", it means the engine looked
+        and the previous iteration produced nothing. Rendering the author's own documented default
+        for that is honest; raising made six bundled templates unable to reach iteration 2.
+
+        The claim the old test was protecting has not been dropped, it has moved to the signal that
+        can still carry it: `test_last_outside_any_loop_still_raises` and
+        `test_a_foreach_item_index_is_not_a_first_iteration` are what keep this from becoming
+        absence-keyed, and
+        `TestPriorCycleFieldMiss.test_an_unwired_last_still_raises_where_nothing_can_supply_one`
+        carries the same `absent-is-not-zero` claim one layer deeper, at the two inputs that can
+        still exhibit it.
+
+        Under a SUPPLIED `last` a wrong path is still an error, and that is two separate tests
+        rather than one because #3544 rescues exactly one of the shapes:
+        `TestPriorCycleFieldMiss.test_the_same_miss_with_NO_default_still_raises` for a field the
+        author declared no fallback for, and `test_a_wrong_second_segment_still_raises` for a
+        misspelling of the envelope itself, which raises even carrying a default.
+        """
+        assert (
             resolve(
                 '{{last.output.summary | default("(first pass)")}}', BindingContext(iter_index=1)
             )
-        assert "unresolved reference at 'last'" in str(exc.value)
+            == "(first pass)"
+        )
 
     def test_last_outside_any_loop_still_raises(self) -> None:
         """No `iter_index` means no enclosing loop, so there is no iteration for `last` to
@@ -286,13 +318,56 @@ class TestPriorCycleFieldMiss:
             resolve('{{last.typo.summary | default("x")}}', self._ctx())
         assert "unresolved reference at 'typo'" in str(exc.value)
 
-    def test_an_unwired_last_still_raises_on_a_later_iteration(self) -> None:
-        """`absent-is-not-zero`, preserved. The rescue demands the root be PRESENT, so a `last`
-        the engine failed to supply on iteration 5 is still the real gap it was — it does not
-        decay into "(first pass)" forever, which is the failure `_first_cycle_miss` refuses."""
-        with pytest.raises(BindingError) as exc:
-            resolve('{{last.output.summary | default("x")}}', BindingContext(iter_index=5))
-        assert "unresolved reference at 'last'" in str(exc.value)
+    def test_an_unwired_last_still_raises_where_nothing_can_supply_one(self) -> None:
+        """`absent-is-not-zero`, preserved — RE-SCOPED in #3524, not weakened.
+
+        The claim is condition 2: this rescue reaches INTO a prior cycle the engine really handed
+        over, so an ABSENT root must still raise rather than decaying into `"x"` forever. What
+        moved is the INPUT that can exhibit it, and the old one is now unreachable rather than
+        merely inconvenient.
+
+        This test read `BindingContext(iter_index=5)` — a later iteration with no `last` — because
+        pre-#3524 that meant *nothing supplied one*, a wiring gap. `RunController._context_for` now
+        computes `last` for every node it dispatches (`_last_output`), so inside a loop body
+        `has_last` False is a MEASUREMENT: either this is the first iteration or the previous one
+        produced nothing. `_first_cycle_miss` therefore rescues that cell before `_walk_path` ever
+        runs, and asserting a raise there would be pinning a state the engine can no longer
+        produce — under the old rule six bundled templates could not reach iteration 2 at all.
+
+        **Enumerated rather than reasoned about.** Over `iter_index` x `has_item` x `has_last` for
+        `{{last.output.summary | default("x")}}`, the raise-at-the-ROOT outcome survives in exactly
+        three cells, and the two asserted here cover both of their shapes:
+
+        * `iter_index is None` — no enclosing loop, so no iteration exists to supply a `last`;
+        * `has_item` at ANY index, including 5 — a `foreach` rebinds `iter_index` to an ITEM index,
+          and nothing supplies `last` over items.
+
+        The one cell that inverted is precisely the one #3524 built the wiring for. Every other
+        root-absent cell still raises, which is what keeps the rescue root-presence-keyed instead
+        of absence-keyed.
+
+        The raise must name the ROOT rather than the field: that is what proves NEITHER rescue
+        reached into the path. And the positive control is the same expression with the root
+        supplied — without it, this would also pass against a resolver that had stopped rescuing
+        anything at all.
+        """
+        for ctx, why in (
+            (BindingContext(), "no enclosing loop at all"),
+            (
+                self._ctx(iter_index=5, item={"id": 1}, has_item=True, has_last=False),
+                "a `foreach` at item index 5",
+            ),
+        ):
+            with pytest.raises(BindingError) as exc:
+                resolve('{{last.output.summary | default("x")}}', ctx)
+            assert "unresolved reference at 'last'" in str(exc.value), (
+                f"with {why} the raise no longer names the absent ROOT, so a rescue reached into "
+                f"the path after all: {exc.value}"
+            )
+
+        assert (
+            resolve('{{last.output.summary | default("x")}}', self._ctx()) == "x"
+        ), "the control failed: the rescue fires for no input, so the raises above prove nothing"
 
     def test_a_foreach_is_excluded(self) -> None:
         """`last` means nothing over an ITEM index — the same exclusion `_first_cycle_miss` draws
@@ -421,7 +496,10 @@ class TestFailureRemediation:
     """
 
     def test_a_root_miss_does_not_ask_for_a_default_pipe(self) -> None:
-        c = BindingContext(iter_index=2)
+        # A `last` read OUTSIDE any loop body — the case that still misses now that a body node is
+        # handed its previous iteration (#3524). The remediation text under test is the same one:
+        # `_unresolved_remediation` keys on the ROOT, not on why it is absent.
+        c = BindingContext()
         with pytest.raises(BindingError) as exc:
             resolve('{{last.output.summary | default("(first pass)")}}', c)
         fix = exc.value.remediation
@@ -463,7 +541,9 @@ class TestFailureRemediation:
                 "config": {"prompt": 'x {{last.output.summary | default("(first pass)")}}'},
             }
         )
-        resolved, failure = resolve_config(node, BindingContext(iter_index=2))
+        # No `iter_index`: a `last` read outside a loop body, which is the root miss that survives
+        # #3524. Inside one the engine now supplies `last`, so the same expression resolves.
+        resolved, failure = resolve_config(node, BindingContext())
         assert resolved == {}
         # INTERNAL, not USER: the head reads a prior cycle's output, and the reader is not the
         # person who wrote the template. See `TestBindingFailureReachesTheRightAudience`.

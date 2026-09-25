@@ -14,9 +14,11 @@ from pathlib import Path
 import pytest
 
 from personalclaw.identity import (
+    DEFAULT_USER_NAME,
     USERNAME_MAX_LEN,
     current_username,
     is_valid_username,
+    operator_name,
     slugify_username,
 )
 
@@ -163,6 +165,53 @@ class TestConfigRoundTrip:
 
         monkeypatch.setattr("personalclaw.config.loader.AppConfig.load", classmethod(_boom))
         assert current_username() == ""
+
+
+class TestOperatorName:
+    """The ONE answer to "what is the owner's name" — the name a name-mention rule matches.
+
+    `DashboardState.notify` used to answer it from `agent.bot_name`, so the toggle "Escalate on
+    name mention — upgrade when the text mentions you by name" fired on the assistant's name.
+    """
+
+    @staticmethod
+    def _config(tmp_path, monkeypatch, **dashboard):
+        import json
+
+        import personalclaw.config.loader as loader
+
+        monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+        doc = {"dashboard": dashboard, "agent": {"bot_name": "Jarvis"}}
+        (tmp_path / "config.json").write_text(json.dumps(doc))
+
+    def test_it_is_the_users_name_never_the_assistants(self, tmp_path, monkeypatch):
+        self._config(tmp_path, monkeypatch, user_name="  Ada Lovelace  ")
+        assert operator_name() == "Ada Lovelace"
+
+    @pytest.mark.parametrize("stored", ["", "   ", DEFAULT_USER_NAME])
+    def test_no_name_given_is_empty(self, tmp_path, monkeypatch, stored):
+        """Unset, blank, and the placeholder the UI stores for a name nobody gave — none of them
+        is a name to match. The assistant's name is set in every case and must not leak in."""
+        self._config(tmp_path, monkeypatch, user_name=stored)
+        assert operator_name() == ""
+
+    def test_it_never_raises(self, monkeypatch):
+        def _boom(cls):
+            raise RuntimeError("config exploded")
+
+        monkeypatch.setattr("personalclaw.config.loader.AppConfig.load", classmethod(_boom))
+        assert operator_name() == ""
+
+    def test_the_placeholder_still_equals_the_frontends(self):
+        """The rail for the mirrored constant, the same shape as the cap rail above: if the UI
+        starts storing a different word for "no name", this module would match it as a name."""
+        src = (REPO / "web" / "src" / "app" / "identity.tsx").read_text(encoding="utf-8")
+        match = re.search(r"export const DEFAULT_USER_NAME = '([^']*)'", src)
+        assert match, "web/src/app/identity.tsx must export DEFAULT_USER_NAME"
+        assert match.group(1) == DEFAULT_USER_NAME, (
+            f"the frontend placeholder ({match.group(1)!r}) drifted from "
+            f"identity.DEFAULT_USER_NAME ({DEFAULT_USER_NAME!r}) — change both together"
+        )
 
 
 class TestTaskAttribution:

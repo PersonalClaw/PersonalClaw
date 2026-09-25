@@ -325,6 +325,23 @@ describe('skipping is free', () => {
     expect(onSkip).toHaveBeenCalled()
     expect(runOnboardingImport).not.toHaveBeenCalled()
   })
+
+  it('🔴 and it survives a FAILED scan — an optional step must not become a wall', async () => {
+    // Measured with the gateway dead: the error branch was an early `return <LoadError …/>` that
+    // replaced the whole body, taking the skip link with it. The only buttons left on the screen
+    // were "Go back to step 1", "Retry" and "Skip setup" — so on a step whose own heading asks
+    // "Already use another local agent tool?", a transient fetch failure made the answer "no"
+    // unreachable: backwards, retry a server that is down, or abandon setup entirely.
+    // `EssentialsStep`'s catalog-error branch always kept its escape; this is the same shape.
+    onboardingImportScan.mockRejectedValue(new Error('gateway down'))
+    // `mounted()` waits for the scan CONTENT; there is none on this path, so mount directly.
+    mount()
+    // The error is still stated, with its retry — nothing about that regressed.
+    expect(await screen.findByRole('button', { name: /Retry/ })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Skip this' }))
+    expect(onSkip).toHaveBeenCalled()
+    expect(runOnboardingImport).not.toHaveBeenCalled()
+  })
 })
 
 describe('summaryOfReport names every non-zero outcome', () => {

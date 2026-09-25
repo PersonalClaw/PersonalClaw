@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { api, type TaskItem, type ExitCriterion, type ActionPlanItem, type TaskNote, type ProjectItem, type TaskListItem } from '../../lib/api'
-import { getActiveProject } from '../../lib/activeProject'
-import { STATUSES, PRIORITIES } from './taskMeta'
+import { STATUSES, PRIORITIES, isExitComplete } from './taskMeta'
 import { prereqIds } from './dag'
+import { useDefaultProject } from '../../lib/defaultProject'
 import { Field, TextInput, TextArea, DateInput, Segmented, ChipInput, Select } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { ChecklistEditor, DependencyEditor, NotesEditor } from './formControls'
@@ -17,7 +17,21 @@ export function emptyDraft(): TaskDraft {
   return { title: '', description: '', status: 'open', priority: 'medium', labels: [], task_list_id: '', assignee: '', due: '', exit_criteria: [], action_plan: [], notes: [], research_notes: [], execution_notes: [], agent_instructions_template: '', depends_on: [] }
 }
 export function toDraft(t: TaskItem): TaskDraft {
-  return { ...t, labels: t.labels ?? [], exit_criteria: t.exit_criteria ?? [], action_plan: t.action_plan ?? [], notes: t.notes ?? [], research_notes: t.research_notes ?? [], execution_notes: t.execution_notes ?? [], depends_on: prereqIds(t) }
+  return { ...t, labels: t.labels ?? [], exit_criteria: (t.exit_criteria ?? []).map(draftCriterion), action_plan: t.action_plan ?? [], notes: t.notes ?? [], research_notes: t.research_notes ?? [], execution_notes: t.execution_notes ?? [], depends_on: prereqIds(t) }
+}
+
+/** An exit criterion as the form edits it: ONE done flag (`met`), never two.
+ *
+ *  🔴 A TICK IN THE EDIT FORM WAS SILENTLY THROWN AWAY. The server stores a criterion as
+ *  `{description, status, comment, met}` and, when both are present, reads `status` and ignores
+ *  `met` (`models.normalize_exit_criterion`). The form's checklist flips `met` only, so a loaded
+ *  criterion ticked here went back as `{status: 'incomplete', met: true}` and was stored
+ *  incomplete — the form showed it ticked, the Save answered 200, the task still read 0/1. Choosing
+ *  Completed in the same Save was then refused by name for the criterion the user had just
+ *  ticked. The draft drops `status` and carries the criterion's real state in `met`, which is
+ *  the one field the checklist reads and writes and the one the server honours when it is alone. */
+function draftCriterion(e: ExitCriterion): ExitCriterion {
+  return { description: e.description, ...(e.comment ? { comment: e.comment } : {}), met: isExitComplete(e) }
 }
 
 /** The single form behind both the create PAGE and the in-panel edit mode.
@@ -40,15 +54,24 @@ export function TaskForm({ draft, onChange, compact, allTasks = [] }: { draft: T
       </Section>
 
       <Section title="Classification" compact={compact}>
-        <Field label="Status"><Segmented options={STATUSES.map((s) => ({ key: s.key, label: s.label, tone: s.tone, icon: s.icon }))} value={draft.status ?? 'open'} onChange={(v) => set('status', v)} /></Field>
+        {/* `collapse="wrap"`: six icon+label statuses measure 649px, and the edit form lives in a
+            420px side panel (320px at its narrowest). Unwrapped, Completed was cut off, Cancelled
+            and Skipped sat outside the panel, and choosing one scrolled the whole form sideways —
+            38px by click, 245px by arrow key — clipping every label. Wrapping keeps all six options
+            visible and keeps the control a radiogroup with its arrow-key contract. */}
+        <Field label="Status"><Segmented collapse="wrap" options={STATUSES.map((s) => ({ key: s.key, label: s.label, tone: s.tone, icon: s.icon }))} value={draft.status ?? 'open'} onChange={(v) => set('status', v)} /></Field>
         <Field label="Priority">
-          <Segmented options={PRIORITIES.map((p) => ({ key: p.key, label: p.label, tone: p.tone }))} value={draft.priority ?? 'medium'} onChange={(v) => set('priority', v)} />
+          <Segmented collapse="wrap" options={PRIORITIES.map((p) => ({ key: p.key, label: p.label, tone: p.tone }))} value={draft.priority ?? 'medium'} onChange={(v) => set('priority', v)} />
         </Field>
         <div className={`grid grid-cols-2 ${compact ? 'gap-m' : 'gap-l'}`}>
           <ProjectListPicker taskListId={draft.task_list_id ?? ''} onChange={(id) => set('task_list_id', id)}
             onProjectChange={draft.id ? undefined : (id) => set('project_id', id)} />
         </div>
-        <div className={`grid grid-cols-2 ${compact ? 'gap-m' : 'gap-l'} items-start`}>
+        {/* `auto-fit`, not `grid-cols-2`: a native date input cannot shrink below its content, so in
+            the side panel at its 320px minimum the Due field spilled 5px past the panel and focusing
+            it scrolled the form sideways. The two fields stack there and sit side by side (50/50,
+            as before) wherever two 10rem columns fit. */}
+        <div className={`grid grid-cols-[repeat(auto-fit,minmax(10rem,1fr))] ${compact ? 'gap-m' : 'gap-l'} items-start`}>
           <Field label="Assignee"><TextInput value={draft.assignee ?? ''} onChange={(v) => set('assignee', v)} placeholder="Who owns it" /></Field>
           <Field label="Due"><DateInput value={draft.due ?? ''} onChange={(v) => set('due', v)} /></Field>
         </div>
@@ -103,26 +126,37 @@ function ProjectListPicker({ taskListId, onChange, onProjectChange }: { taskList
   const [newName, setNewName] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  // The user's DEFAULT project — an account setting, the same one in every browser.
+  const { defaultProjectId, settled: defaultSettled, error: defaultErr } = useDefaultProject()
 
   useEffect(() => {
     let alive = true
     Promise.all([api.projects(), api.taskLists()]).then(([ps, ls]) => {
       if (!alive) return
-      setProjects(ps); setLists(ls)
-      // Derive the selected project: the current task list (edit case) wins; else the
-      // user's ACTIVE project (what they're working on, set by the create pickers) if
-      // it still exists; else the default (Personal) catch-all; else the first project.
-      const cur = ls.find((l) => l.id === taskListId)
-      const active = getActiveProject()
-      const activeOk = active && ps.some((p) => p.id === active) ? active : ''
-      // `||` (not `??`): the intermediate fallbacks are empty STRINGS, not null, so
-      // each must fall through to the next when blank.
-      const derived = cur?.project_id || activeOk || ps.find((p) => p.is_builtin)?.id || ps[0]?.id || ''
-      setProjectId(derived)
-      onProjectChange?.(derived)
+      setProjects(ps); setLists(ls); setLoaded(true)
     }).catch(() => {})
     return () => { alive = false }
   }, [])
+
+  // Derive the starting project ONCE, when both reads have answered: the current task list
+  // (edit case) wins; else the user's default project if it still exists; else the Personal
+  // catch-all; else the first project. Waiting for the default is what keeps a new task from
+  // opening on Personal and jumping a moment later.
+  const derived = useRef(false)
+  useEffect(() => {
+    if (derived.current || !loaded) return
+    const cur = lists.find((l) => l.id === taskListId)
+    // The task's own list decides an edit; only a task without one waits for the default.
+    if (!cur?.project_id && !defaultSettled) return
+    derived.current = true
+    const preferred = defaultProjectId && projects.some((p) => p.id === defaultProjectId) ? defaultProjectId : ''
+    // `||` (not `??`): the intermediate fallbacks are empty STRINGS, not null, so
+    // each must fall through to the next when blank.
+    const start = cur?.project_id || preferred || projects.find((p) => p.is_builtin)?.id || projects[0]?.id || ''
+    setProjectId(start)
+    onProjectChange?.(start)
+  }, [loaded, defaultSettled, defaultProjectId, lists, projects, taskListId, onProjectChange])
 
   const projectLists = lists.filter((l) => l.project_id === projectId)
 
@@ -167,7 +201,9 @@ function ProjectListPicker({ taskListId, onChange, onProjectChange }: { taskList
 
   return (
     <>
-      <Field label="Project">
+      {/* A failed default read is SAID, on a new task only: the form still offers every project,
+          but "Personal" pre-selected must not read as the user's choice when it was a fallback. */}
+      <Field label="Project" hint={onProjectChange && defaultErr ? 'Couldn’t load your default project — pick the one this task belongs to.' : undefined}>
         <Select value={projectId}
           onChange={(id) => { if (id === NEW) { setCreating('project'); setNewName('') } else { setProjectId(id); onChange(''); onProjectChange?.(id) } }}
           options={[

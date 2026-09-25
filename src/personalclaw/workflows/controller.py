@@ -87,8 +87,11 @@ from personalclaw.workflows.effects import (
 )
 from personalclaw.workflows.engine import (
     NodeResult,
+    apply_judge_contract,
+    apply_schema_notice,
     dispatch,
     node_commits_effects,
+    parse_json_loose,
     release_execution_claim,
 )
 from personalclaw.workflows.engine_support import DEFAULT_MODEL_TIERS, resolve_axis_model
@@ -1793,6 +1796,30 @@ class RunController:
             node_id = node.id if node else ""
             error = str(getattr(info, "error", "") or "")
             reaped = bool(getattr(info, "reaped", False))
+            # 🔴 The child's USAGE, which this method used to leave on the floor. `_apply` books it
+            # for an awaited dispatch (`self.run.total_tokens += result.tokens`, :3331) and a
+            # spawned `stage` returns at the RUNNING branch before that line — so for a template
+            # whose only leaves are stages (`general-project`: `loop[sequence[stage, stage]]`) the
+            # run row counted NOTHING, no matter how many nodes completed or which provider they
+            # billed. Measured on the owner's instance: run 61899886, eight `done` nodes against a
+            # remote provider, `total_tokens: 0`.
+            #
+            # Read off `SubagentInfo`, where it is ALREADY measured: `input_tokens`/`output_tokens`/
+            # `cost_usd`/`model` are populated from the child's `EVENT_COMPLETE`
+            # (``subagent.py:2239-2252``) before `done` is set, and the same three feed the spend
+            # meter (``subagent.py:1491``) and the usage ledger (`_record_subagent_usage`). So this
+            # is a ROLL-UP of an existing observation, not a second measurement — the fan-out's own
+            # ceiling has been seeing this spend all along; only the run row could not.
+            #
+            # `getattr` with a default, like `error`/`reaped` above: the manager is injected, so a
+            # stand-in that does not model usage must read as zero rather than crash the tick.
+            tokens = int(getattr(info, "input_tokens", 0) or 0) + int(
+                getattr(info, "output_tokens", 0) or 0
+            )
+            # On the instance for BOTH outcomes, exactly as `_apply` does it (:3248, outside its
+            # success gate): a reaped stage burned its whole deadline, and a node record claiming it
+            # spent nothing is the most misleading row in the ledger.
+            inst.tokens = tokens
             if error:
                 failure = Failure(
                     # The manager reaps on its OWN deadline, so a reaped child is a timeout.
@@ -1847,7 +1874,13 @@ class RunController:
             else:
                 inst.state = InstanceState.DONE
                 inst.completed_at = _now()
-                output = {"result": str(getattr(info, "result", "") or "")}
+                stage_result = self._settled_stage_output(
+                    node, str(getattr(info, "result", "") or "")
+                )
+                output = stage_result.output
+                # What the declared `schema` asked for and the subagent did not return (#3545), on
+                # the instance, the row below and the event, as `_apply` does for a dispatched node.
+                inst.schema_shortfall = stage_result.schema_shortfall
                 ref, preview = self.journal.store_output(path, output)
                 inst.output_ref = ref
                 if node_id:
@@ -1855,6 +1888,12 @@ class RunController:
                     # existed a downstream `{{nodes.X}}` on a stage could only ever have read
                     # the placeholder the RUNNING branch left behind.
                     self._outputs[node_id] = preview
+                # The RUN total, and only on success — the same gate `_apply` applies (:3331 sits
+                # under `if result.state in SUCCESS_STATES`), and the same gate the ledger reader
+                # applies (`ledger/reader.py:106` sums `tokens` from STEP_COMPLETED rows alone). A
+                # stage that charged the run here while an `infer` node did not would give one run
+                # row two accounting rules.
+                self.run.total_tokens += tokens
                 self.journal.step_completed(
                     path,
                     node_id,
@@ -1866,7 +1905,19 @@ class RunController:
                     cache_key="",
                     state=InstanceState.DONE,
                     retries=max(0, inst.attempt - 1),
+                    # The ledger fields the roll-up above is derived from, so a reader reconciling
+                    # the run row against the rows under it arrives at the same number. `tokens`
+                    # also decides `run_totals()["tokens_recorded"]` (`ledger/reader.py:108`), which
+                    # is what `_prepare` pre-charges a capped resume from — without it a capped
+                    # stage-bodied run could not resume at all (:642 pauses on an unrecorded spend).
+                    # `provider` is deliberately left unset: no dispatcher populates
+                    # `NodeResult.provider` either, so naming one only here would make the stage the
+                    # single kind in the ledger that carries it.
+                    tokens=tokens,
+                    model=str(getattr(info, "model", "") or ""),
+                    cost_usd=float(getattr(info, "cost_usd", 0.0) or 0.0),
                     output_ref=ref,
+                    schema_shortfall=inst.schema_shortfall,
                 )
                 if node is not None:
                     self._record_terminal_effect(node, path, inst, inst.state, output)
@@ -1896,11 +1947,79 @@ class RunController:
                     "instance_path": path,
                     "status": inst.state.value,
                     "node_epoch": inst.epoch,
+                    # Only when there is something to name (#3545), as `_apply`'s event does. Empty
+                    # on every branch but DONE: `_launch` clears it per attempt.
+                    **(
+                        {"schema_shortfall": inst.schema_shortfall} if inst.schema_shortfall else {}
+                    ),
                 },
             )
             settled = True
         if settled:
             self._persist_state()
+            # The RUN ROW too, not just instance state. `service.status()` is a pure store read
+            # (`store.get(run_id)`), so a `total_tokens` that lives only in this object is a number
+            # no surface can see until `_finish` happens to flush it — and a run the user is
+            # watching would report zero for its whole life. `_persist_state` writes instances
+            # only, which is why the counter needs its own flush here.
+            self._save_run()
+
+    def _settled_stage_output(self, node: Node | None, text: str) -> NodeResult:
+        """A spawned stage's settled result, its output in the shape its own `config` DECLARES.
+
+        This settle path is the ONLY place a `stage` output is produced — `dispatch_stage` returns
+        RUNNING at the spawn — so every seam that reads a stage's declared shape has to be applied
+        here or it is inert. Two were:
+
+        * **The declared `schema`.** The output used to be `{"result": "<the subagent's raw
+          text>"}` unconditionally, so a stage's declared keys reached no binding, no
+          `progress_field` and no judge contract. Measured consequences on the shipped library:
+          `general-project` declares `progress_field: meaningful_progress`, `_progress_value` never
+          found it, `_iteration_is_dry` fell back to the whole-output rule, a non-empty
+          `{"result": …}` is never dry — so `until_dry` degenerated into `max_iterations` and the
+          run escalated with "the loop reached its iteration ceiling" (#3524's wrong headline).
+          `{{last.output.summary}}` and `{{nodes.work.output.summary}}` could not resolve either,
+          which is why closing #3524's `last` gap alone only moves the error from
+          `unresolved reference at 'last'` to `unresolved reference at 'summary'`. An `infer` node
+          in the same run has always been parsed (`engine.parse_json_loose` at its DONE branch) —
+          that asymmetry between two node kinds reading the same templates was the whole defect.
+        * **`judge_contract`.** `engine.apply_judge_contract` runs at the dispatch seam so "a node
+          kind cannot skip it", and a `stage` skipped it anyway: at that seam a stage's result is
+          still `RUNNING` with `{"subagent_id": …}`, which the contract declines. ALL SEVEN
+          `judge_contract` nodes in the bundled library are stages, so the contract validated
+          nothing, ever — the engine's recomputed `overall`, its `valid` flag and its `shortfalls`
+          (which three templates bind as `{{last.output.shortfalls}}`) were never produced.
+        * **The declared-schema notice (#3545).** The dispatch seam's own
+          `engine.apply_schema_notice`, observing the subagent's TEXT rather than the output built
+          from it. The `{"result": text}` envelope would be named as a `result` key the worker never
+          wrote, and the judge contract writes every key a judge schema declares whatever the model
+          said, so the settled output of a judge that answered in prose carries all of them.
+
+        A stage that declares NO schema keeps `{"result": text}` — unstructured output is a real
+        thing a stage may return, and that is its shape, not a fallback. A stage that declares one
+        and returns unparseable text also keeps it: the binding then fails naming the key it wanted,
+        which is what happens today, so this cannot turn a run that passes into one that fails. It
+        can only ADD resolvable keys.
+        """
+        if node is None:
+            return NodeResult(state=InstanceState.DONE, output={"result": text})
+        cfg = node.config or {}
+        parsed: Any = None
+        if isinstance(cfg.get("schema"), dict) and cfg["schema"]:
+            parsed = parse_json_loose(text)
+        output: Any = parsed if isinstance(parsed, dict) else {"result": text}
+        # Through the same helper the dispatch seam uses, so there is ONE definition of what a
+        # validated verdict is — a second copy here would drift from the gate's.
+        settled = apply_judge_contract(
+            node,
+            NodeResult(state=InstanceState.DONE, output=output),
+            judge_hints_from_dict(
+                (self.spec.get("runtime_hints") or {}).get("judge")
+                if isinstance(self.spec.get("runtime_hints"), dict)
+                else None
+            ),
+        )
+        return apply_schema_notice(node, settled, text)
 
     def _reap_watchers(self) -> None:
         """Stop `until_cancelled` watchers whose accompanied work has finished.
@@ -2535,6 +2654,10 @@ class RunController:
         # rewind reset sites: every path to a terminal state runs through this dispatch, so a
         # re-run after a rewind cannot leave the previous epoch's `cached` behind.
         inst.cached = False
+        # The declared-schema notice (#3545) is per ATTEMPT for the same reason. A spawned stage
+        # settles out of band through several paths and only its DONE path sets it, so a rewound
+        # stage that then fails must not keep the previous attempt's notice on its row.
+        inst.schema_shortfall = ""
         if item.has_item and not inst.item_label:
             # Stamped once, at first launch. The items list is re-resolved from a binding on
             # every tick, so after an upstream output changes the label would be unrecoverable
@@ -3058,6 +3181,12 @@ class RunController:
                     result = NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
                 self._apply(entry, result)
             self._persist_state()
+            # `_apply` writes the RUN ROW as well as instance state — `total_tokens` (:3331) and
+            # `agent_count` (the RUNNING branch) both live there — and `_persist_state` cannot see
+            # either, so without this flush a live run's usage counters stayed in memory until some
+            # unrelated caller happened to save. `service.status()` reads the store, so that is the
+            # difference between a running run showing its spend and showing zero.
+            self._save_run()
 
     def _node_stall_window(self, path: str) -> int:
         """This node's stall window: its own `timeout_stall_secs`, else the run-level default.
@@ -3174,7 +3303,26 @@ class RunController:
             # re-derived, because the holder is a fresh uuid per attempt.
             inst.state = InstanceState.RUNNING
             if isinstance(result.output, dict):
-                inst.subagent_id = str(result.output.get("subagent_id", "") or "")
+                spawned = str(result.output.get("subagent_id", "") or "")
+                # 🔴 `run.agent_count`'s ONLY writer. Before this the field had exactly one
+                # assignment in the tree — `WorkflowRun.from_dict` reading its own persisted zero
+                # (`models.py:1146`) — so it was a declared column, a `to_dict` key and a SQLite
+                # DEFAULT 0 that nothing ever incremented. Every run ever recorded reports
+                # `agent_count: 0`, which is why the owner's eight-node run did.
+                #
+                # Counted at the SPAWN, not at the settle, and that is the whole reason it lives in
+                # this branch rather than in `_reconcile_dispatched_stages` beside the token
+                # roll-up: a run holding three live subagents must not report zero agents while
+                # they work. `dispatch_stage` is the only dispatcher that can reach here — the
+                # `ast` rail in `test_workflows_stage_completion` pins RUNNING to it — so this is
+                # once per subagent the run actually started.
+                #
+                # Gated on the id CHANGING, so it is exactly-once per distinct child: a re-applied
+                # RUNNING result (or a retry that re-dispatches the same node) must not inflate the
+                # count, and a re-adopted run whose instance already carries the id adds nothing.
+                if spawned and spawned != inst.subagent_id:
+                    self.run.agent_count += 1
+                inst.subagent_id = spawned
             inst.claim_target = result.claim_target
             inst.claim_holder = result.claim_holder
             return
@@ -3275,6 +3423,11 @@ class RunController:
         inst.state = result.state
         inst.completed_at = _now()
         inst.degraded_reason = result.degraded_reason
+        # What this node's declared `schema` asked for and did not get (#3545). Carried onto the
+        # instance beside `degraded_reason` rather than folded into it: a shortfall is not a
+        # degradation — the node did its work and produced an output the run goes on to use — and
+        # reusing that field would flip the row's rendering and lose the distinction.
+        inst.schema_shortfall = result.schema_shortfall
         inst.failure = result.failure
         inst.tokens = result.tokens
         self._decline(inst, result.declined_edges)
@@ -3383,6 +3536,7 @@ class RunController:
                 resolved_prompt_redacted=result.prompt_redacted,
                 resolved_prompt_scan=result.prompt_scan_categories,
                 output_ref=ref,
+                schema_shortfall=result.schema_shortfall,
             )
             self._project_task(item, inst, result)
         else:
@@ -3430,6 +3584,12 @@ class RunController:
                 "node_epoch": inst.epoch,
                 "degraded_reason": result.degraded_reason,
                 "output_preview": _preview(result.output),
+                # Only when there is something to name (#3545), the way `cached` rides only on a
+                # hit: the fold clears the row on an event without it, which is what lets a re-run
+                # that now honours its schema drop yesterday's notice.
+                **(
+                    {"schema_shortfall": result.schema_shortfall} if result.schema_shortfall else {}
+                ),
             },
         )
 
@@ -3801,11 +3961,68 @@ class RunController:
     def _surface_loop(self, parent_path: str, node: Node, *, reason: str, detail: str) -> None:
         """Hand a loop to a human. ESCALATED, deliberately NOT FAILED: "I gave up and a human
         must decide" is a different fact from "this broke", and collapsing them loses what the
-        user needs to act on."""
+        user needs to act on.
+
+        **The reason is re-derived when the iterations were not work (#3524).** A budget trip says
+        the loop ran out of room; it does not say whether it spent that room WORKING. Measured on a
+        `general-project` run: the banner read "the loop reached its iteration ceiling at project /
+        reached 6 iterations", which a user reads as "my task was too big" — while five of the six
+        iterations had failed instantly on a binding and never called a model at all. The engine
+        knew both facts and surfaced neither: the wrong one of two possible sentences is worse than
+        a vague one, because it sends the reader to shrink a task that was never the problem.
+
+        So a loop whose iterations FAILED escalates as `iterations_failed`, and the detail carries
+        the count and the first failure's own message. The original budget token is kept in the
+        detail rather than dropped — it is still true, and it is what a reader greps for.
+        """
+        failed, attempted, first_error = self._iteration_failures(parent_path)
+        if failed:
+            detail = (
+                f"{failed} of {attempted} iterations failed instead of finishing their work"
+                + (f", the first with: {first_error}" if first_error else "")
+                + f". The loop then stopped on `{reason}`"
+                + (f" ({detail})" if detail else "")
+                + "."
+            )
+            reason = "iterations_failed"
         loop_inst = self._instance(parent_path)
         loop_inst.state = InstanceState.ESCALATED
         loop_inst.completed_at = _now()
         self._escalate(parent_path, node.id, reason=reason, detail=detail)
+
+    def _iteration_failures(self, loop_path: str) -> tuple[int, int, str]:
+        """`(iterations with a failed body node, iterations attempted, the first failure's cause)`.
+
+        The measurement behind `iterations_failed`. Derived from the instances rather than from a
+        counter, because no counter distinguishes the two endings — `self._iterations` only says how
+        far the loop got, which is identical for a loop that worked six times and one that failed
+        six times.
+
+        An iteration counts as attempted once any instance exists under its `body@<n>` prefix, so an
+        iteration the scheduler never opened is not counted against the loop.
+        """
+        failed = attempted = 0
+        first_error = ""
+        for index in range(int(self._iterations.get(loop_path, 0)) + 1):
+            prefix = f"{loop_path}.body@{index}"
+            members = [
+                inst
+                for path, inst in self.instances.items()
+                if path == prefix or path.startswith(f"{prefix}.")
+            ]
+            if not members:
+                continue
+            attempted += 1
+            broken = [i for i in members if i.state is InstanceState.FAILED]
+            if not broken:
+                continue
+            failed += 1
+            if not first_error:
+                first_error = next(
+                    (i.failure.cause_plain for i in broken if i.failure and i.failure.cause_plain),
+                    "",
+                )
+        return failed, attempted, first_error
 
     def _advance_loop(self, path: str, node_id: str) -> None:
         """Advance a loop's iteration counter when its body finished an iteration.
@@ -3886,12 +4103,19 @@ class RunController:
         # so the STEERING event is journaled regardless; only the injection needs a next iteration.
         self._consume_steering(parent_path, node, iteration)
 
+        # ONE definition of `{{last.output}}`, shared with the body (`_last_output`). The loop's
+        # own `condition` used to read the LAST SETTLED LEAF's output instead, which is a
+        # different value the moment the body is a container: `goal-pursuit-verifiable` ends its
+        # body on `judge` and tests `{{last.output.command_passed}}`, a key only its `fix` stage
+        # emits, so that condition could never resolve and the loop exited `condition_unresolvable`
+        # every time. A leaf body layers exactly one mapping, so nothing changes there.
+        layered, _ = self._iteration_output(parent_path, iteration)
         ctx = BindingContext(
             inputs=self.run.inputs,
             node_outputs=self._outputs,
             node_artifacts=self._node_artifacts(),
             iter_index=iteration,
-            last_output=output,
+            last_output=layered,
             has_last=True,
         )
         keep_going, reason = loop_should_continue(
@@ -4276,6 +4500,7 @@ class RunController:
     def _context_for(self, item: ReadyNode) -> BindingContext:
         watcher_path = self._enclosing_watcher(item.path)
         seen = self._seen.get(watcher_path) if watcher_path else None
+        last_output, has_last = self._last_output(item.path)
         return BindingContext(
             inputs=dict(self.run.inputs),
             node_outputs=dict(self._outputs),
@@ -4283,6 +4508,8 @@ class RunController:
             item=item.item,
             has_item=item.has_item,
             iter_index=item.iter_index,
+            last_output=last_output,
+            has_last=has_last,
             sibling_outputs=self._sibling_outputs(item.path),
             previous_output=self._previous_output(item.path),
             has_previous=self._previous_output(item.path) is not None,
@@ -4366,6 +4593,53 @@ class RunController:
             if value is not None:
                 acc.append(value)
         return acc
+
+    def _last_output(self, path: str) -> tuple[Any, bool]:
+        """`{{last.output}}` — the previous ITERATION of the loop this node is in.
+
+        Returns `(value, present?)`. `present` is separate from the value because `None` is a
+        legitimate previous output and absence is not, the same reason `_progress_value` returns
+        a pair: collapsing them would make a body that legitimately returned nothing
+        indistinguishable from a body this engine never handed anything to.
+
+        **What one ITERATION's output IS, when the body is a container.** The iteration's
+        produced outputs, LAYERED in document order — each mapping's keys merge in, a later node
+        wins a collision. That is the contract the bundled templates were written against and the
+        only one that can serve them: `general-project`'s body prompt reads `summary` (its
+        worker's key) and `verdict` (its judge's key) in one breath, so no single child's output
+        is the answer. A one-node body layers exactly one mapping and is therefore identical to
+        handing that node's output straight through, which is what keeps `design-project`
+        unchanged.
+
+        A NON-mapping output has nothing to merge into, so the latest word wins outright — the
+        rule `_advance_loop` has always applied to the loop's own `condition`.
+
+        Read through `_accumulated_outputs` (the journal's stored outputs) rather than
+        `self._outputs`, which is keyed by NODE ID: a loop body overwrites its own entry every
+        iteration, so reading that map would hand iteration 3 its own output as if it were
+        iteration 2's.
+        """
+        loop_path, iteration = _loop_parent(path)
+        if loop_path is None or iteration <= 0:
+            # No enclosing loop, or the first iteration — there is no previous one either way.
+            # `bindings._first_cycle_miss` turns the second case into the documented
+            # `| default(...)`; the first still raises, because `last` outside a loop names
+            # nothing.
+            return None, False
+        return self._iteration_output(loop_path, iteration - 1)
+
+    def _iteration_output(self, loop_path: str, iteration: int) -> tuple[Any, bool]:
+        """One iteration's layered output. See `_last_output` for the contract it implements."""
+        produced = self._accumulated_outputs(f"{loop_path}.body@{iteration}")
+        if not produced:
+            return None, False
+        layered: Any = {}
+        for value in produced:
+            if isinstance(value, dict) and isinstance(layered, dict):
+                layered.update(value)
+            else:
+                layered = value
+        return layered, True
 
     def _previous_output(self, path: str) -> Any:
         """The prior successful cycle of the enclosing loop, for diff-aware synthesis.

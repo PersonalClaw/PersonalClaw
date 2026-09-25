@@ -60,13 +60,41 @@ describe('a revisitable step is reachable without a mouse', () => {
     expect(screen.queryByRole('button', { name: /Go back to step/ })).toBeNull()
   })
 
-  it('an UPCOMING row is not a button — there is nothing to go back to yet', () => {
+  it('a row the flow has NOT unlocked is not a button — the caller withholds the handler', () => {
+    // Reachability is the caller's judgement, because only it knows the run's high-water mark. A row
+    // it has not unlocked arrives with no `onActivate` and must not gain a tab stop that does
+    // nothing.
+    render(
+      <ol>
+        <StepRow index={3} icon={User} title="Try one" state="upcoming" />
+      </ol>,
+    )
+    expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  it('🔴 an UPCOMING row the flow HAS unlocked is a button — this is the trap that was closed', () => {
+    // The old predicate was `!active && done && !!onActivate`, so a row could only be revisited once
+    // it was FINISHED. Measured consequence: a run that reached step 5 and went back to step 1
+    // re-derived steps 2-5 as `upcoming`, which removed every header button — the page was left with
+    // Continue and Skip, and the only way forward was to walk all four steps again. A step the run
+    // has already stood on, or jumped over on a resume, is unfinished AND reachable, and both of
+    // those rows are `upcoming`.
     render(
       <ol>
         <StepRow index={3} icon={User} title="Try one" state="upcoming" onActivate={() => {}} />
       </ol>,
     )
-    expect(screen.queryByRole('button')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Go back to step 4: Try one' }).tagName).toBe('BUTTON')
+  })
+
+  it('a SKIPPED row is revisitable too — walking past a step is not finishing with it', () => {
+    render(
+      <ol>
+        <StepRow index={1} icon={User} title="Bring your setup over" state="skipped"
+          doneSummary="Skipped" onActivate={() => {}} />
+      </ol>,
+    )
+    expect(screen.getByRole('button', { name: 'Go back to step 2: Bring your setup over' })).toBeTruthy()
   })
 
   it('a done row with NO onActivate is not a button either — the predicate is the affordance', () => {
@@ -83,7 +111,7 @@ describe('a revisitable step is reachable without a mouse', () => {
     // The original bug was a `cursor: pointer` that promised an interaction the element could not
     // accept. One predicate now decides both, so they cannot drift apart again.
     const src = stepStack()
-    expect(src).toMatch(/const revisitable = !active && done && !!onActivate/)
+    expect(src).toMatch(/const revisitable = !active && !!onActivate/)
     expect(src, 'the element choice is derived from it').toMatch(/const Header = revisitable \? motion\.button : motion\.div/)
     expect(src, 'and so is the cursor').toMatch(/revisitable \? 'cursor-pointer' : 'cursor-default'/)
     expect(src, 'no bare onClick left on the row container').not.toMatch(/<motion\.li[\s\S]{0,400}?onClick=/)

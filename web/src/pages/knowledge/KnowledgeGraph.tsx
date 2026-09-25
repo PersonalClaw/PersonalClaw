@@ -1,8 +1,84 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Network, Sparkles } from 'lucide-react'
+import { Cpu, Loader2, Network, Sparkles } from 'lucide-react'
+import type { KnowledgeEnrichment } from '../../lib/api'
 import { GraphZoomControls } from '../../ui/GraphZoomControls'
 import { EmptyState, LoadError } from '../../ui/ListScaffold'
 import { PartialCount } from '../../ui/MoreRow'
+
+/** What the 0-entity state offers: run extraction, connect the model it needs, or nothing. */
+export type GraphEmptyAction = 'regenerate' | 'setup-model' | null
+export interface GraphEmptyCopy { title: string; hint: string; action: GraphEmptyAction }
+
+const countOf = (n: number) => `${n} item${n === 1 ? '' : 's'}`
+
+/** The one thing the empty graph may truthfully say, from the library's enrichment tally.
+ *
+ *  🔴 IT USED TO SAY ONE SENTENCE FOR EVERY CAUSE, and on a no-model home that sentence was false.
+ *  Every item there had been through entity extraction and FAILED — each item's page showed
+ *  Entities ✕ — while this said "Your items have not been through entity extraction" and offered
+ *  to run it, which then failed the same way with nothing on screen. Never-tried, tried-and-failed,
+ *  running and ran-and-found-nothing are four different facts, so they are four different copies.
+ *
+ *  The precondition is read up front too: with no model set up, "Regenerate" cannot succeed (the
+ *  route refuses with `model_unresolved`), so the action offered is the one that can — connect a
+ *  model. `enrichment` absent (the stats read failed, or has not landed) claims nothing it cannot
+ *  know: zero entities means none has been extracted, and that is all it says. */
+export function graphEmptyCopy(e?: KnowledgeEnrichment | null): GraphEmptyCopy {
+  const t = e?.entities
+  if (!e || !t || t.ran + t.failed + t.running + t.skipped + t.not_run === 0) {
+    return {
+      title: 'No entities extracted yet',
+      hint: 'No entities have been extracted from your items yet, so there is nothing to draw. Regenerating intelligence re-runs enrichment for the items missing it.',
+      action: 'regenerate',
+    }
+  }
+  if (t.running > 0) {
+    return {
+      title: 'Extracting entities…',
+      hint: `Entity extraction is running on ${countOf(t.running)}; the graph fills in as they finish.`,
+      action: null,
+    }
+  }
+  if (t.failed > 0) {
+    return e.model_available
+      ? {
+          title: 'Entity extraction failed',
+          hint: `It ran on ${countOf(t.failed)} and failed — the model was unavailable at the time. Regenerating runs it again.`,
+          action: 'regenerate',
+        }
+      : {
+          title: 'Entity extraction failed',
+          hint: `It ran on ${countOf(t.failed)} and failed because no model is set up, so there is nothing to draw. Connect a model, then regenerate intelligence.`,
+          action: 'setup-model',
+        }
+  }
+  if (t.not_run > 0) {
+    const have = t.not_run === 1 ? 'has' : 'have'
+    return e.model_available
+      ? {
+          title: 'No entities extracted yet',
+          hint: `${countOf(t.not_run)} ${have} not been through entity extraction yet, so there is nothing to draw.`,
+          action: 'regenerate',
+        }
+      : {
+          title: 'No entities extracted yet',
+          hint: `${countOf(t.not_run)} ${have} not been through entity extraction, and it needs a model — none is set up. Connect one, then regenerate intelligence.`,
+          action: 'setup-model',
+        }
+  }
+  if (t.ran > 0) {
+    return {
+      title: 'No entities found',
+      hint: 'Entity extraction ran on your items and found no people, places or topics to connect yet.',
+      action: null,
+    }
+  }
+  return {
+    title: 'No entities to draw',
+    hint: 'Entity extraction does not run on these items: their sources are set to skip AI enrichment, or they have no text.',
+    action: null,
+  }
+}
 
 interface GraphNode {
   id: string
@@ -212,7 +288,7 @@ export function weightWidth(f: number, active: boolean): number {
  *  shared zoom buttons and a reset-to-fit control. Hover highlights a node + its edges; click selects
  *  it (opens the entity in the sidebar). Relation weight is on colour and width; entity names are
  *  placed by collision, largest node first. */
-export function KnowledgeGraph({ selectedId, onSelect, onRegenerate, regenerating }: {
+export function KnowledgeGraph({ selectedId, onSelect, onRegenerate, regenerating, enrichment, onSetupModel, reloadKey }: {
   selectedId?: string | null
   onSelect?: (name: string) => void
   /** Runs the ingestion node-graph over items missing insights — the ONLY thing that turns
@@ -220,6 +296,15 @@ export function KnowledgeGraph({ selectedId, onSelect, onRegenerate, regeneratin
    *  so on this tab it is off screen; the empty state below carries it instead of describing it. */
   onRegenerate?: () => void
   regenerating?: boolean
+  /** The library's enrichment tally (`stats.enrichment`) — what lets the empty state say WHY it
+   *  is empty instead of guessing. See `graphEmptyCopy`. */
+  enrichment?: KnowledgeEnrichment | null
+  /** Opens Settings → Models, for the empty state whose cause is "no model is set up". */
+  onSetupModel?: () => void
+  /** Re-read the graph when this changes. The parent keys it on the entity/relation counts it
+   *  polls while items enrich, so extraction that lands draws without leaving the tab — the
+   *  graph used to be read once on mount and stayed empty until the user navigated away. */
+  reloadKey?: string | number
 } = {}) {
   const [graph, setGraph] = useState<{ nodes: GraphNode[]; edges: GraphEdge[]; thinning?: GraphThinning } | null>(null)
   const [err, setErr] = useState<unknown>(null)
@@ -249,7 +334,7 @@ export function KnowledgeGraph({ selectedId, onSelect, onRegenerate, regeneratin
       .then((d) => { if (alive) { setErr(null); setGraph(d) } })
       .catch((e) => { if (alive) setErr(e) })
     return () => { alive = false }
-  }, [])
+  }, [reloadKey])
 
   // Track the CTM scale so the label floor is measured against real pixels. A width of 0 (before
   // layout, and in jsdom, which does not lay out) leaves the 1:1 default in place rather than
@@ -353,12 +438,19 @@ export function KnowledgeGraph({ selectedId, onSelect, onRegenerate, regeneratin
   // so it is off screen from here. The empty state carries the action itself rather than pointing at
   // a button the user cannot see. Through the `EmptyState` primitive, like every other empty state
   // on this page — the hand-rolled centered div was also the `emptystate` lens's outlier here.
+  //
+  // WHICH of those causes it is comes from `graphEmptyCopy` — see its docstring for the no-model
+  // home where one fixed sentence here was false for every item in the library.
   if (graph.nodes.length === 0) {
+    const copy = graphEmptyCopy(enrichment)
     return (
       <div className="grid h-full place-items-center">
-        <EmptyState icon={Network} title="No entities extracted yet"
-          hint="Your items have not been through entity extraction, so there is nothing to draw. Running it re-derives insights for items that are missing them."
-          action={onRegenerate ? { label: regenerating ? 'Extracting…' : 'Regenerate intelligence', onClick: regenerating ? () => {} : onRegenerate, icon: Sparkles } : undefined} />
+        <EmptyState icon={Network} title={copy.title} hint={copy.hint}
+          action={copy.action === 'regenerate' && onRegenerate
+            ? { label: regenerating ? 'Extracting…' : 'Regenerate intelligence', onClick: regenerating ? () => {} : onRegenerate, icon: Sparkles }
+            : copy.action === 'setup-model' && onSetupModel
+              ? { label: 'Connect a model', onClick: onSetupModel, icon: Cpu }
+              : undefined} />
       </div>
     )
   }

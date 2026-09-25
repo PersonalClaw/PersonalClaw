@@ -75,7 +75,7 @@ def test_declared_targets_reach_the_pre_install_consent_payload():
             "permissions": {"appMessaging": ["receiver", "mail-*"]},
         }
     )
-    perms, _crons = _manifest_consent(m)
+    perms, _crons, _deps = _manifest_consent(m)
     assert perms["appMessaging"] == ["receiver", "mail-*"]
 
 

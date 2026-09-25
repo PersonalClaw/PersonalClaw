@@ -58,10 +58,36 @@ describe("LoadError's what composes a grammatical headline", () => {
     expect(values.length, 'LoadError what= values across the tree').toBeGreaterThanOrEqual(45)
   })
 
-  it('no value carries a leading article — the headline always renders', () => {
-    const bad = values.filter((v) => /^(the|this|a|an)\s/i.test(v.value))
+  it('no value carries a leading article OR a leading `your` — the headline always renders', () => {
+    // 🪤 `your` WAS THE HOLE, AND THE TEMPLATE ITSELF IS WHAT MAKES IT ONE (#3394, 2026-09-24). The
+    // headline is `Couldn't load your {what}`, so the determiner the rail has to worry about is not
+    // only the four articles — it is anything the template already supplies, and it supplies exactly
+    // one: `your`. A value of `"your edit history"` renders **"Couldn't load your your edit
+    // history"**, which is the same defect as `"the store catalog"` and was not caught, because the
+    // list of banned words had been written from the one instance that had occurred rather than from
+    // the sentence. Measured when it was widened: **2** sites in the tree, both landing in the same
+    // commit that widened it, and **0** pre-existing — so this cost nobody a rewrite and would have
+    // cost two if it had waited.
+    //
+    // ⚠️ SCOPED TO `LoadError`, AND THAT IS LOAD-BEARING. `whatValues()` matches `<LoadError\b`, which
+    // does NOT match `<InlineLoadError` (no word boundary between `e` and `L`), and the distinction is
+    // real rather than incidental: `InlineLoadError` composes through `loadErrorMessage`, which emits
+    // `Couldn't load {what}.` with no possessive — so `what="your agents"` is CORRECT there and is in
+    // the tree. Banning `your` tree-wide across both components would red a grammatical site.
+    const leadingDeterminer = /^(the|this|a|an|your)\s/i
+    // POSITIVE CONTROL ON THE PREDICATE, not just on the population. A zero here is only news if the
+    // regex can still fire, and a negated assertion that cannot match reads exactly like a clean tree.
+    // Every banned word gets a hit, and the near-misses get a miss — `a` must not swallow `agents`,
+    // and `your` must not swallow `yourself`.
+    for (const w of ['the store catalog', 'this prompt', 'a project', 'an agent', 'your edit history']) {
+      expect(leadingDeterminer.test(w), `the predicate must still catch "${w}"`).toBe(true)
+    }
+    for (const w of ['agents', 'theme settings', 'answers', 'anagram list', 'projects']) {
+      expect(leadingDeterminer.test(w), `and must NOT catch "${w}"`).toBe(false)
+    }
+    const bad = values.filter((v) => leadingDeterminer.test(v.value))
       .map((v) => `${v.rel}: "Couldn't load your ${v.value}"`)
-    expect(bad, `an article makes the headline ungrammatical:\n${bad.join('\n')}`).toEqual([])
+    expect(bad, `a leading article or possessive makes the headline ungrammatical:\n${bad.join('\n')}`).toEqual([])
   })
 
   it('every value is lowercase-leading unless it is a proper noun', () => {

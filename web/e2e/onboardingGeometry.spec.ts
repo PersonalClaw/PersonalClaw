@@ -233,6 +233,100 @@ async function readGeometry(page: Page): Promise<Geometry> {
   )
 }
 
+/** How many consecutive animation frames must agree before the layout counts as at rest. Eight is
+ *  ~130 ms at 60 Hz: well under the ~450 ms the step transition takes, so it costs the run nothing,
+ *  and long enough that the near-plateau inside that transition (five consecutive samples at 800–801
+ *  px of content height) cannot satisfy it — the elements under the collapsing body keep moving
+ *  through it, which is why the fingerprint below is not `scrollHeight` alone. */
+const SETTLE_FRAMES = 8
+
+/** Wait until the layout this rail measures has STOPPED MOVING, and fail loudly if it never does.
+ *
+ *  🔴 THE BOTTOM-EDGE LEG BELOW HAS A ~450 ms WINDOW IN WHICH IT IS WRONG, and this is what closes
+ *  it. Advancing a step collapses step 1's body BEFORE step 2's expands, so the scroller's content
+ *  height DIPS while step 2's controls are already laid out at their final places. Measured at
+ *  1280×700, sampling every ~45 ms from the Continue click:
+ *
+ *      t(ms)   scrollHeight   running finite animations   elements past scrollHeight
+ *       1061        925                  2                           0
+ *       1151        846                  4                           4
+ *       1287        801                  2                           5
+ *       1507        800                  2                           5
+ *       1552       1319                  1                           0
+ *       1598       1319                  0                           0    ← at rest, and stays there
+ *
+ *  So for ~450 ms the box reports 800 px of content while `Import selected` sits at 972.6 px, and the
+ *  leg's own message reads "5 element(s) extend past the scroller's content height" about a frame no
+ *  user ever sees. It is this rail's race and NOT a regression: the identical trough is on
+ *  `origin/main` (739–851 px against a resting 1257, six elements stranded), so only the numbers move
+ *  with whatever content the build renders.
+ *
+ *  🪤 WHAT THE PREVIOUS WAIT ACTUALLY GUARANTEED, precisely — because it is less than it looks. It was
+ *  `getAnimations().filter(running).every((a) => iterations === Infinity)`, and `Array.every` on an
+ *  EMPTY list is `true`, so it returns on any poll that finds nothing running. It also `.catch()`-ed
+ *  its own timeout and measured anyway. Neither hole was caught FIRING here: sampling all 90 frames
+ *  after the advance, that predicate was satisfied on 0 frames while anything overflowed (27 frames
+ *  overflowed). What it depends on is a COINCIDENCE — that some WAAPI animation outlasts the height
+ *  spring, which framer drives in JS and which therefore never appears in `getAnimations()` itself.
+ *  On this host the coincidence held on every frame; the CI frame that fired is not reproduced here,
+ *  and a wait whose correctness rests on one animation outliving another is exactly the kind that
+ *  holds on the box you test it on.
+ *
+ *  🔑 SO THE WAIT IS ON WHAT IS MEASURED, and it takes BOTH conditions, because each alone is
+ *  satisfiable mid-flight. `scrollHeight` plateaus INSIDE the trough (801, 801, 801, 800, 800 across
+ *  five samples, while the collapsing body still moves every element under it), and "nothing finite is
+ *  animating" is exactly what the old wait already believed. Together they held on 0 of those same 90
+ *  frames while anything overflowed, and they stop depending on any particular animator: a stable
+ *  content height AND a stable content bottom, for eight consecutive frames, is a claim about the
+ *  geometry rather than about who was moving it.
+ *
+ *  It THROWS on timeout instead of measuring anyway. A page that never comes to rest is an absence of
+ *  evidence about its geometry, so "first run never settled" is the honest failure — where the old
+ *  `.catch()` produced a bottom-overflow list naming a defect that was not there. */
+async function settle(page: Page): Promise<void> {
+  await page.evaluate(() => { delete (window as unknown as Record<string, unknown>).__pcSettleRun })
+  await page.waitForFunction(
+    ({ frames, operableSelector }) => {
+      const w = window as unknown as { __pcSettleRun?: { key: string; n: number } }
+      const moving = document.getAnimations()
+        .filter((a) => a.playState === 'running')
+        .some((a) => a.effect?.getComputedTiming().iterations !== Infinity)
+      const s = Array.from(document.querySelectorAll<HTMLElement>('div')).find((el) => {
+        const oy = getComputedStyle(el).overflowY
+        return oy === 'auto' || oy === 'scroll'
+      })
+      if (!s || moving) {
+        w.__pcSettleRun = undefined
+        return false
+      }
+      // The fingerprint is the inequality's own inputs: the content height, and how far down the
+      // content the last operable thing ends. Taken in CONTENT space (minus `scrollTop`) so that a
+      // smooth `scrollIntoView` — which is not a Web Animation and so is invisible above — cannot
+      // hold the wait open forever over a layout that is already at rest.
+      const sr = s.getBoundingClientRect()
+      const originY = sr.top + s.clientTop - s.scrollTop
+      const bottoms = Array.from(document.querySelectorAll<HTMLElement>(operableSelector))
+        .map((el) => el.getBoundingClientRect().bottom - originY)
+      const key = `${s.scrollHeight}|${Math.round(Math.max(0, ...bottoms) * 10)}`
+      const prev = w.__pcSettleRun
+      w.__pcSettleRun = prev && prev.key === key ? { key, n: prev.n + 1 } : { key, n: 1 }
+      return w.__pcSettleRun.n >= frames
+    },
+    { frames: SETTLE_FRAMES, operableSelector: OPERABLE },
+    // 15 s is ~30× the transition it waits on. A budget this loose cannot mask a slow animation; it
+    // only stops a starved host from being reported as a broken layout.
+    { timeout: 15_000 },
+  ).catch(() => {
+    throw new Error(
+      'first run never came to rest: the scroller\'s content height and the bottom of its content\n' +
+        `kept changing (or a finite animation kept running) for 15s, so no ${SETTLE_FRAMES}-frame\n` +
+        'window was stable enough to measure. Every geometry number below would be about a frame\n' +
+        'nobody sees, which is an absence of evidence and not a defect — do NOT re-baseline anything\n' +
+        'from this run.',
+    )
+  })
+}
+
 /** Set the scroller's `scrollTop` and report what the box ACCEPTED.
  *
  *  Returning the read-back value rather than the requested one is the whole point: a box that
@@ -285,10 +379,7 @@ async function renderFirstRun(page: Page): Promise<void> {
   ).toBeVisible({ timeout: 20_000 })
   // Let the entrance spring and the step body's height animation land: a mid-animation height is a
   // real number about a frame nobody sees, and this rail must measure the resting layout.
-  await page.waitForFunction(() => {
-    const running = document.getAnimations().filter((a) => a.playState === 'running')
-    return running.every((a) => a.effect?.getComputedTiming().iterations === Infinity)
-  }, undefined, { timeout: 8_000 }).catch(() => { /* reported by the assertions, not hidden by a throw */ })
+  await settle(page)
 }
 
 /** Step 2's subtitle. `StepStack` renders a step's subtitle ONLY while that step is active, so this
@@ -302,10 +393,7 @@ async function advanceToImportStep(page: Page): Promise<void> {
   await page.getByRole('textbox', { name: 'Your name' }).fill('Keyur')
   await page.getByRole('button', { name: 'Continue' }).click()
   await expect(page.getByText(STEP_2_ACTIVE)).toBeVisible({ timeout: 10_000 })
-  await page.waitForFunction(() => {
-    const running = document.getAnimations().filter((a) => a.playState === 'running')
-    return running.every((a) => a.effect?.getComputedTiming().iterations === Infinity)
-  }, undefined, { timeout: 8_000 }).catch(() => { /* the assertions report an unsettled page */ })
+  await settle(page)
 }
 
 /** One line per measured element, so a failure carries its own before/after table. */

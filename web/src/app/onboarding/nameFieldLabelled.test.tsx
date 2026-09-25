@@ -48,16 +48,20 @@ vi.mock('../identity', async (orig) => {
   // PARTIAL mock, so the real `suggestHandle` still feeds the second field — this file only needs
   // the flow to render, and a full mock would have to be edited every time the module grows.
   const real = await orig<typeof import('../identity')>()
-  return { ...real, useIdentity: () => ({ setName: vi.fn(), username: '' }) }
+  return { ...real, useIdentity: () => ({ name: '', setName: vi.fn(), username: '' }) }
 })
 vi.mock('../../ui/DotGlow', () => ({ DotGlow: () => null }))
 
-import { Onboarding } from '../Onboarding'
+import { OnboardingHarness } from '../../test/onboardingHarness'
 import { AppearanceProvider } from '../appearance'
 
 const ORIGINAL_MATCH_MEDIA = window.matchMedia
 
 beforeEach(() => {
+  // The flow persists the typed name in `sessionStorage` so a refresh mid-flow keeps it, which
+  // makes it shared state BETWEEN TESTS: without this, a later test that skips setup without typing
+  // a name inherits the previous test's draft and reads as a rename instead of the default.
+  sessionStorage.clear()
   vi.clearAllMocks()
   // jsdom has no matchMedia and the appearance provider's useIsMobile calls it unguarded.
   Object.defineProperty(window, 'matchMedia', {
@@ -78,7 +82,7 @@ afterEach(() => {
 })
 
 async function renderFlow() {
-  render(<AppearanceProvider><Onboarding /></AppearanceProvider>)
+  render(<AppearanceProvider><OnboardingHarness /></AppearanceProvider>)
   // The flow reads its resume point on mount; asserting before that lands races the fetch.
   await waitFor(() => expect(onboarding).toHaveBeenCalled())
 }

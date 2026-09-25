@@ -90,8 +90,14 @@ function nodesFor(t: ChatTurn[]): Map<number, Element> {
   return new Map(t.map((_, i) => [i, document.createElement('div')]))
 }
 
+/** Which marks are coral, in order.
+ *
+ *  Reads `color`, not `background`: since the Codex redesign the painted element is the LINE inside
+ *  the mark's row and it inherits the tone through `currentColor`, so the row carries `color` and a
+ *  32×10 pressable row is never filled. `SessionMapRail.test.tsx` owns the tone vocabulary itself;
+ *  this file only needs to know which marks are in the current region. */
 const coralOf = (c: HTMLElement) =>
-  [...c.querySelectorAll('[data-session-mark]')].map((m) => (m as HTMLElement).style.background === 'var(--color-primary)')
+  [...c.querySelectorAll('[data-session-mark]')].map((m) => (m as HTMLElement).style.color === 'var(--color-primary)')
 
 /** Report an intersection change to the rail's observer, exactly as the platform would: only the
  *  entries that CHANGED, so a rail that treats a callback as the whole truth fails here. */

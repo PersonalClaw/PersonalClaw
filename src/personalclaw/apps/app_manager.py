@@ -366,6 +366,64 @@ def _reject_core_dependency_conflicts(manifest: AppManifest, reqs: list[str]) ->
             )
 
 
+def describe_python_dependencies(manifest: AppManifest) -> list[dict[str, Any]]:
+    """The app's declared ``pythonDependencies``, each tagged with whether CORE owns it —
+    the install-consent disclosure for :func:`_install_python_deps`.
+
+    Installing an app runs ``pip install`` into the **shared** venv the gateway is
+    running out of, under a live process that has already imported those modules. That
+    is materially more consequential than most of what the consent dialog already
+    enumerates, and the dialog said nothing about it: it listed gateway permissions,
+    app messaging, desktop and network reach and dashboard code, and never that a
+    third-party package lands in the interpreter holding the owner's credentials,
+    filesystem and network. ``docs/security/limitations.md`` §3 documents the
+    behaviour, which does not discharge the duty of the surface where consent is
+    actually given — a user clicking through a modal does not read the threat model.
+    So this exists to put the real specifiers on that screen.
+
+    ``coreOwned`` is the distinction that makes the disclosure honest rather than
+    alarming, and it is read from :func:`_core_requirement_pins` — the SAME authority
+    :func:`_reject_core_dependency_conflicts` gates on, never a hand-kept list:
+
+      * ``False`` — core does not declare this name, so pip genuinely installs new code
+        into the gateway's interpreter. The provider SDKs (``openai``, ``anthropic``,
+        ``slack-sdk``) land here: they are core *extras*, which
+        :func:`_core_requirement_pins` excludes on purpose.
+      * ``True`` — core declares it (``Pillow``, ``numpy``). Nothing new enters: the
+        guard admits the pin only while the version already installed satisfies it and
+        refuses the install otherwise, so this reads as "a version you already have is
+        acceptable", not as "new code enters your interpreter".
+
+    ``True`` is claimed only when PROVEN. Best-effort by design — this runs per app on
+    every catalog scan, so a shape surprise must not break the Store — and an
+    unreadable core pin set degrades every spec to ``False``, i.e. to the LOUDER of the
+    two disclosures. That is the same fail-closed direction the guard takes, one
+    surface along: over-disclosing a package is safe, under-disclosing one is the
+    defect being fixed. The specs themselves are always returned verbatim, because
+    losing them is the only outcome worse than mis-grouping them.
+    """
+    reqs = [str(s) for s in manifest.dependencies.pythonDependencies]
+    if not reqs:
+        return []
+    try:
+        from packaging.requirements import Requirement
+        from packaging.utils import canonicalize_name
+
+        core = _core_requirement_pins()
+    except Exception:  # noqa: BLE001 — no evaluator ⇒ every spec reads as new code
+        logger.debug("consent: cannot read core's own pins for %s", manifest.name, exc_info=True)
+        return [{"spec": s, "coreOwned": False} for s in reqs]
+
+    out: list[dict[str, Any]] = []
+    for spec in reqs:
+        try:
+            owned = canonicalize_name(Requirement(spec).name) in core
+        except Exception:  # noqa: BLE001 — an unparseable spec is refused at install
+            owned = False
+        out.append({"spec": spec, "coreOwned": owned})
+    return out
+
+
 def _install_python_deps(manifest: AppManifest) -> bool:
     """Pip-install an app's declared ``pythonDependencies`` into the shared core
     venv. Core ships lean; the app that needs a heavy lib brings it.

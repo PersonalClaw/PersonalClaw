@@ -160,6 +160,76 @@ class TestCreateHonoursTheDoneGate:
         _run(_t())
 
 
+class TestTheDoneGateJudgesTheWriteItself:
+    """The DONE gates judge the task AS THIS WRITE LEAVES IT, not as it was before.
+
+    Measured through the dashboard: the task edit form sends one PUT carrying `status` BEFORE
+    `exit_criteria` and `dependencies`, and the gates ran inside the field loop — so ticking the
+    last criterion and choosing Completed in one Save was refused against the pre-edit checklist
+    ("cannot complete: unfinished exit criteria — Copy reviewed by Sam", about a criterion the
+    same request completed). The inverse leaked: a write that completed a task while ADDING an
+    unmet criterion passed the gate and stored an invalid DONE row. `create_task` already gated
+    the constructed task; update now agrees with it in both directions.
+    """
+
+    def test_ticking_the_last_criterion_and_completing_in_one_write_completes(self, provider):
+        async def _t():
+            t = await provider.create_task(
+                title="Draft", exit_criteria=[{"description": "Copy reviewed by Sam"}]
+            )
+            # Dict order is the dashboard's payload order: status first.
+            done = await provider.update_task(
+                t.id,
+                **{
+                    "status": "done",
+                    "exit_criteria": [{"description": "Copy reviewed by Sam", "met": True}],
+                },
+            )
+            assert done.status is TaskStatus.DONE
+            assert (await provider.get_task(t.id)).status is TaskStatus.DONE
+
+        _run(_t())
+
+    def test_completing_while_adding_an_unmet_criterion_is_refused_and_stores_nothing(
+        self, provider
+    ):
+        async def _t():
+            t = await provider.create_task(title="Draft")
+            with pytest.raises(ValueError, match="unfinished exit criteria — New check"):
+                await provider.update_task(
+                    t.id,
+                    **{"status": "done", "exit_criteria": [{"description": "New check"}]},
+                )
+            # The refusal is total: neither the status nor the criterion was written.
+            again = await provider.get_task(t.id)
+            assert again.status is TaskStatus.OPEN
+            assert again.exit_criteria == []
+
+        _run(_t())
+
+    def test_the_order_of_the_fields_in_the_write_does_not_change_the_verdict(self, provider):
+        async def _t():
+            t = await provider.create_task(title="Draft", exit_criteria=[{"description": "a"}])
+            done = await provider.update_task(
+                t.id,
+                **{"exit_criteria": [{"description": "a", "met": True}], "status": "done"},
+            )
+            assert done.status is TaskStatus.DONE
+
+        _run(_t())
+
+    def test_dropping_the_open_prerequisite_and_completing_in_one_write_completes(self, provider):
+        async def _t():
+            a = await provider.create_task(title="Prereq")
+            b = await provider.create_task(
+                title="Dependent", dependencies=[{"depends_on_task_id": a.id}]
+            )
+            done = await provider.update_task(b.id, **{"status": "done", "dependencies": []})
+            assert done.status is TaskStatus.DONE
+
+        _run(_t())
+
+
 # ── #457: deleting a project cascades its tasks ──
 
 

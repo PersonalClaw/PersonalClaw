@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { render } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { FormFooter } from './FormFooter'
 
 // ── Sticky edit-mode action bar contract (design-system consistency S2/T2.2) ──
@@ -38,5 +38,39 @@ describe('FormFooter', () => {
     expect(have).toContain('mt-2')
     expect(have).toContain('sticky')
     expect(have).toContain('justify-end')
+  })
+
+  // ── The action's failure lives IN the bar, beside the action ─────────────────────────────
+  // Every adopter used to render its save error just above this bar — the END of the scrolling
+  // form. On the task panel that put a refusal 803px below the fold with focus on <body>, so a
+  // refused save looked like nothing happened. These pin the three halves of "seen": in the bar,
+  // before the actions it describes, and focused.
+  it('renders an error inside the sticky bar, before the actions', () => {
+    const { container } = render(<FormFooter error="Couldn't save this task: refused."><button>Save</button></FormFooter>)
+    const bar = container.firstElementChild as HTMLElement
+    const alert = screen.getByRole('alert')
+    expect(bar).toContainElement(alert)
+    expect(alert.textContent).toContain("Couldn't save this task: refused.")
+    expect(alert.compareDocumentPosition(screen.getByText('Save')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // It takes the bar's full first row, so a long refusal cannot squeeze the buttons.
+    expect(classOf(alert)).toContain('basis-full')
+    expect(classOf(bar)).toContain('flex-wrap')
+  })
+
+  it('moves focus to the error when one appears, and again when it changes', () => {
+    const { rerender } = render(<FormFooter error=""><button>Save</button></FormFooter>)
+    expect(screen.queryByRole('alert')).toBeNull()
+    rerender(<FormFooter error="first refusal"><button>Save</button></FormFooter>)
+    expect(document.activeElement).toBe(screen.getByRole('alert'))
+    screen.getByText('Save').focus()
+    rerender(<FormFooter error="second refusal"><button>Save</button></FormFooter>)
+    expect(document.activeElement).toBe(screen.getByRole('alert'))
+  })
+
+  it('does not pull focus on a re-render with the same error', () => {
+    const { rerender } = render(<FormFooter error="refused"><button>Save</button></FormFooter>)
+    screen.getByText('Save').focus()
+    rerender(<FormFooter error="refused"><button>Save</button></FormFooter>)
+    expect(document.activeElement).toBe(screen.getByText('Save'))
   })
 })

@@ -128,8 +128,19 @@ describe('an unmapped reason is shown, not smoothed', () => {
     for (const reason of [
       'retries_exhausted', 'max_iterations', 'repeated_error', 'identical_output',
       'token_cap', 'identical_call', 'hypothesis_exhausted', 'no_progress',
+      'iterations_failed',
     ]) {
       expect(escalationHeadline(reason), `${reason} has no sentence`).not.toBe(reason)
     }
+  })
+
+  it('does not say "iteration ceiling" for a loop whose iterations failed', () => {
+    // #3524: the measured banner read "the loop reached its iteration ceiling" on a run where five
+    // of six iterations never called a model. The two tokens are one word apart in the engine and
+    // opposite in meaning to a reader, so the sentences must not be near-duplicates of each other —
+    // a reader who sees "ceiling" shrinks a task that was never too big.
+    expect(escalationHeadline('iterations_failed')).not.toContain('ceiling')
+    expect(escalationHeadline('iterations_failed')).toContain('failing')
+    expect(escalationHeadline('max_iterations')).toContain('ceiling')
   })
 })

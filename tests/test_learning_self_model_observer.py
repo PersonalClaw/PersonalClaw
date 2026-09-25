@@ -355,5 +355,5 @@ def test_the_snapshot_reaches_the_allocator_self_model_slot(svc, home):
         },
     )
     block = _self_model_snapshot(svc)
-    rendered = _render_ambient(self_model=block)
+    rendered = _render_ambient(self_model=block, window=200_000)
     assert "Run the targeted suite before the full run." in rendered

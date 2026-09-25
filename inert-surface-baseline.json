@@ -8,16 +8,9 @@
       ]
     },
     "src/personalclaw/config/loader.py": {
-      "inert": 12,
+      "inert": 5,
       "surfaces": [
-        "config_reader:agent.self_qa.fix_branch_enabled",
-        "config_reader:ambient.genui_enabled",
-        "config_reader:ambient.surfaces_max_layer",
-        "config_reader:ambient.tiles_enabled",
-        "config_reader:ambient.tray_enabled",
-        "config_reader:packs.connector_catalog_url",
         "config_reader:routing.energy_sampling",
-        "config_reader:sources.daily_request_budget",
         "config_reader:voice.confirmation_phrases",
         "config_reader:voice.duplex_mute_enabled",
         "config_reader:voice.exit_phrases",
@@ -58,7 +51,7 @@
       ]
     },
     "src/personalclaw/sdk/channel.py": {
-      "inert": 95,
+      "inert": 93,
       "surfaces": [
         "sdk_export:AcpError",
         "sdk_export:AcpProcessDied",
@@ -81,7 +74,6 @@
         "sdk_export:LINK_WINDOW_SECS",
         "sdk_export:MAX_SESSION_TTL_SECS",
         "sdk_export:MemoryService",
-        "sdk_export:ProviderSettings",
         "sdk_export:STOP_REASON_CANCELLED",
         "sdk_export:STOP_REASON_END_TURN",
         "sdk_export:STOP_REASON_STOPPED_BY_USER",
@@ -102,7 +94,6 @@
         "sdk_export:build_cancelled_turn_preamble",
         "sdk_export:compress_thread_history",
         "sdk_export:compute_next_run_ts",
-        "sdk_export:config_dir",
         "sdk_export:config_path",
         "sdk_export:create_pairing_code",
         "sdk_export:dashboard_origin",
@@ -170,11 +161,10 @@
       ]
     },
     "src/personalclaw/sdk/diarization.py": {
-      "inert": 4,
+      "inert": 3,
       "surfaces": [
         "sdk_export:DiarizationModel",
         "sdk_export:DiarizationProvider",
-        "sdk_export:LocalModelProvider",
         "sdk_export:ensure_ffmpeg_in_path"
       ]
     },
@@ -211,12 +201,6 @@
       "inert": 1,
       "surfaces": [
         "sdk_export:KnowledgeProvider"
-      ]
-    },
-    "src/personalclaw/sdk/local_model.py": {
-      "inert": 1,
-      "surfaces": [
-        "sdk_export:LocalModelProvider"
       ]
     },
     "src/personalclaw/sdk/manifest.py": {
@@ -290,12 +274,6 @@
         "sdk_export:fence_untrusted"
       ]
     },
-    "src/personalclaw/sdk/settings.py": {
-      "inert": 1,
-      "surfaces": [
-        "sdk_export:ProviderSettings"
-      ]
-    },
     "src/personalclaw/sdk/skill.py": {
       "inert": 2,
       "surfaces": [
@@ -326,11 +304,10 @@
       ]
     },
     "src/personalclaw/sdk/util.py": {
-      "inert": 4,
+      "inert": 3,
       "surfaces": [
         "sdk_export:app_data_dir",
         "sdk_export:atomic_write",
-        "sdk_export:config_dir",
         "sdk_export:sandbox_wrap_argv"
       ]
     },
@@ -375,12 +352,12 @@
   "totals": {
     "by_kind": {
       "config": 0,
-      "config_reader": 13,
+      "config_reader": 6,
       "editable_config": 0,
       "enum": 8,
-      "sdk_export": 159,
+      "sdk_export": 153,
       "trigger_kind": 0
     },
-    "inert": 180
+    "inert": 167
   }
 }

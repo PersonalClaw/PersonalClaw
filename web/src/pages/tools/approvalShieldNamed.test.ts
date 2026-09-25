@@ -17,7 +17,7 @@ import { join } from 'node:path'
 // 🔑 AND THE FORM IS SETTLED, four sites over. An informational lucide glyph is named DIRECTLY:
 //   · `settings/AuditPanel:296`  — this same `ShieldAlert`, `aria-label="Integrity check failed …"`
 //   · `skills/SkillsPage:161`    — `role="img"` + `aria-label="Integrity verified"`
-//   · `projects/ProjectsSection` — `Star` "Active project", `Lock` "Name locked"
+//   · `projects/ProjectsSection` — `Star` "Default project", `Lock` "Name locked"
 //   · `knowledge/KnowledgeListPage:741` — `Star` "Favorite"
 // `role="img"` is included because `design/ariaProhibitedAttr.test.ts` declares it for "a graphic whose
 // label is its only text", and the `title` gives sighted users the hover the glyph cannot.

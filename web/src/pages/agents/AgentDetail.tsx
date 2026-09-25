@@ -67,8 +67,7 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
     return (
       <div className="flex flex-col gap-l">
         <AgentForm draft={draft} onChange={setDraft} nameLocked compact />
-        {err && <FieldError>{err}</FieldError>}
-        <FormFooter>
+        <FormFooter error={err}>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(agent)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} loading={saving}><Check size={15} /> Save</Button>
         </FormFooter>

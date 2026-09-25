@@ -89,7 +89,7 @@ describe('ConsentModal passes the fact through to the row', () => {
       <ConsentModal
         label="ui-app" busy={false} result={guarded}
         permissions={{ api: ['/api/tasks'] }} hostUi={{ page: true, components: false }}
-        crons={undefined} onConfirm={() => {}} onClose={() => {}}
+        pythonDeps={undefined} crons={undefined} onConfirm={() => {}} onClose={() => {}}
       />,
     )
     // `Modal` renders through a portal, so the RTL container is empty — read the document.

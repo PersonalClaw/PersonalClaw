@@ -305,7 +305,7 @@ function ModelEntitySection({ exts, availableByProvider, openProvider, openCfg, 
       )}
       <div>
         <div data-type="caption" className="mb-2 text-on-surface-low uppercase tracking-wide">Remote (multi-instance)</div>
-        <RemoteModelProviders />
+        <RemoteModelProviders onChanged={onChanged} />
       </div>
     </div>
   )

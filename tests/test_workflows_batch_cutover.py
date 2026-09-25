@@ -453,10 +453,94 @@ def test_the_claim_is_PER_NODE_so_the_fanout_still_fans_out(tmp_path, monkeypatc
     assert first is not None and second is not None
 
 
+#: The engine key of the node instance under test — what `dispatch` threads from
+#: `RunController._dispatch_ready`'s `item.path`. Both dispatches below use this SAME value, because
+#: the claim's unit is the instance and two dispatches of one instance are the double execution the
+#: lease exists to refuse. It is not the node id: a node id names a position in the SPEC, and a
+#: `loop` or `foreach` body executes one id many times at many paths (#3524), so keying on the id
+#: made iteration 2 a "duplicate" of iteration 1. See `engine.claim_key`.
+STAGE_INSTANCE_PATH = "root.children[0]"
+
+
 def test_dispatch_stage_takes_the_claim_BEFORE_it_spawns(tmp_path, monkeypatch):
     """The ORDER is the control. A claim taken after the spawn records the claim without preventing
     the double execution — both workers would already have spawned by the time either looked. So
     the second dispatch must not reach `spawn` at all.
+
+    Both dispatches are handed the SAME `instance_path`, which is what makes them the same unit of
+    work. Handing the second a different path would make it genuinely different work that the lease
+    is *supposed* to allow, and this test would pass while asserting nothing.
+    """
+    import asyncio
+
+    monkeypatch.setattr("personalclaw.workflows.leases.config_dir", lambda: tmp_path)
+
+    from personalclaw.workflows.bindings import BindingContext
+    from personalclaw.workflows.engine import claim_key, dispatch_stage
+    from personalclaw.workflows.models import InstanceState, Node, NodeKind
+
+    spawns: list[str] = []
+    #: The target `dispatch_stage` actually consults, recorded at the lease seam. Without this the
+    #: test could not tell "the second dispatch was refused" from "no claim was ever taken" — the
+    #: falsy-`claim_target` skip makes those two look identical from the outside.
+    targets: list[str] = []
+    real_acquire = leases.acquire_claim
+
+    def recording_acquire(target, holder, **kw):
+        targets.append(target)
+        return real_acquire(target, holder, **kw)
+
+    monkeypatch.setattr("personalclaw.workflows.leases.acquire_claim", recording_acquire)
+
+    class FakeSubagents:
+        def spawn(self, **kw):
+            spawns.append(kw.get("task", ""))
+            return type("Info", (), {"id": "sub1", "error": ""})()
+
+    node = Node(kind=NodeKind.STAGE, id="cache_0", config={"prompt": "do the thing"})
+    ctx = BindingContext()
+
+    first = asyncio.run(
+        dispatch_stage(
+            node,
+            ctx,
+            subagents=FakeSubagents(),
+            run_id="run-lease",
+            depth=0,
+            instance_path=STAGE_INSTANCE_PATH,
+        )
+    )
+    assert first.state is InstanceState.RUNNING
+    assert len(spawns) == 1
+
+    second = asyncio.run(
+        dispatch_stage(
+            node,
+            ctx,
+            subagents=FakeSubagents(),
+            run_id="run-lease",
+            depth=0,
+            instance_path=STAGE_INSTANCE_PATH,
+        )
+    )
+    assert len(spawns) == 1, "the second dispatch SPAWNED — the lease did not prevent it"
+    assert second.state is InstanceState.DEGRADED
+    assert "not executing twice" in (second.degraded_reason or "")
+    # The positive control on the refusal: a claim was TAKEN, twice, on ONE target. Without it a
+    # deleted claim would also produce "one spawn, then DEGRADED" for some other reason.
+    assert (
+        targets == [claim_key("run-lease", STAGE_INSTANCE_PATH)] * 2
+    ), f"both dispatches must contend for the same claim target; the lease saw {targets!r}"
+
+
+def test_a_SECOND_INSTANCE_of_the_same_node_id_is_allowed_to_run(tmp_path, monkeypatch):
+    """The other direction, and the reason the key moved off the node id (#3524).
+
+    A `loop` body re-executes one node id per iteration at a different instance path, so those are
+    DIFFERENT units of work and the lease must let both through. Keyed on the node id, iteration 2
+    was refused as a duplicate of iteration 1 and every stage-bodied loop stalled after one pass.
+    Paired with the test above, the two pin the claim from both sides: same instance → refused,
+    different instance → allowed.
     """
     import asyncio
 
@@ -473,21 +557,66 @@ def test_dispatch_stage_takes_the_claim_BEFORE_it_spawns(tmp_path, monkeypatch):
             spawns.append(kw.get("task", ""))
             return type("Info", (), {"id": "sub1", "error": ""})()
 
-    node = Node(kind=NodeKind.STAGE, id="cache_0", config={"prompt": "do the thing"})
+    node = Node(kind=NodeKind.STAGE, id="judge", config={"prompt": "grade it"})
     ctx = BindingContext()
 
-    first = asyncio.run(
-        dispatch_stage(node, ctx, subagents=FakeSubagents(), run_id="run-lease", depth=0)
-    )
-    assert first.state is InstanceState.RUNNING
-    assert len(spawns) == 1
+    states = [
+        asyncio.run(
+            dispatch_stage(
+                node,
+                ctx,
+                subagents=FakeSubagents(),
+                run_id="run-loop",
+                depth=0,
+                instance_path=f"root.body@{iteration}.children[0]",
+            )
+        ).state
+        for iteration in (1, 2, 3)
+    ]
 
-    second = asyncio.run(
-        dispatch_stage(node, ctx, subagents=FakeSubagents(), run_id="run-lease", depth=0)
+    assert states == [InstanceState.RUNNING] * 3, f"an iteration was refused its own turn: {states}"
+    assert len(spawns) == 3, f"a loop iteration never reached spawn: {len(spawns)} of 3"
+
+
+def test_a_run_attached_stage_with_NO_instance_path_REFUSES_instead_of_spawning(
+    tmp_path, monkeypatch
+):
+    """The claim must not be skippable by omission (AGENTS.md fail-open vs fail-closed).
+
+    `instance_path` is a defaulted keyword, so leaving it off makes `claim_key` return "" and the
+    lease is never consulted — the control reads as present and prevents nothing. A spawn is
+    irreversible, so a default that performs one is not a permissive default: with no instance
+    identity there is no way to distinguish a first execution from a second, and the only safe
+    answer is to refuse. Asserted on `spawn` never being reached, not just on the returned state.
+    """
+    import asyncio
+
+    monkeypatch.setattr("personalclaw.workflows.leases.config_dir", lambda: tmp_path)
+
+    from personalclaw.workflows.bindings import BindingContext
+    from personalclaw.workflows.engine import dispatch_stage
+    from personalclaw.workflows.models import FailureClass, InstanceState, Node, NodeKind
+
+    spawns: list[str] = []
+
+    class FakeSubagents:
+        def spawn(self, **kw):
+            spawns.append(kw.get("task", ""))
+            return type("Info", (), {"id": "sub1", "error": ""})()
+
+    node = Node(kind=NodeKind.STAGE, id="cache_0", config={"prompt": "do the thing"})
+
+    result = asyncio.run(
+        dispatch_stage(
+            node, BindingContext(), subagents=FakeSubagents(), run_id="run-lease", depth=0
+        )
     )
-    assert len(spawns) == 1, "the second dispatch SPAWNED — the lease did not prevent it"
-    assert second.state is InstanceState.DEGRADED
-    assert "not executing twice" in (second.degraded_reason or "")
+
+    assert not spawns, "an unclaimable stage SPAWNED — the claim was skipped, not enforced"
+    assert result.state is InstanceState.FAILED
+    assert result.failure is not None
+    assert result.failure.failure_class is FailureClass.INTERNAL
+    assert "instance path" in result.failure.cause_plain
 
 
 # ── clause 2: the tool-handler seam ──────────────────────────────────────────

@@ -32,10 +32,18 @@ export function NotificationsPanel() {
   // The per-kind rules matrix. Not persisted to the cache: it's the authoritative view of
   // policy, and serving a stale copy after an edit would show the user a rule they just
   // changed back to its old value.
-  // The rules matrix keeps its own fallback: it DECORATES this panel (a per-kind policy table below the
-  // settings), so losing it degrades one section rather than fabricating the switches above.
-  const { data: rules, refresh: refreshRules } = useQuery<NotificationRulesDoc | null>(
-    'settings:notification-rules', () => api.notificationRules().catch(() => null), { persist: false },
+  // 🔴 THE "IT ONLY DECORATES" ARGUMENT DID NOT SURVIVE READING WHAT IT GATES (#3394). This read
+  // used to carry `.catch(() => null)` and bind no `error` — both halves of the contract defeated at
+  // once — on the reasoning that the matrix "DECORATES this panel, so losing it degrades one section
+  // rather than fabricating the switches above". But `rules` gates TWO sections, and the comment four
+  // lines above calls the same payload "the authoritative view of policy". One of the two is
+  // `<NotificationRulesMatrix>` — every per-kind rule the user came here to change — and the other is
+  // `<DigestSchedule>`, which is a CONTROL, not a readout. A failed read therefore deleted the page's
+  // per-kind half with no alert, no retry, and nothing to distinguish it from "you have no rules".
+  // The fallback is gone and the failure is now stated where the sections were. The panel's GATING
+  // read keeps its own separate branch, so an unreadable matrix still leaves every global control up.
+  const { data: rules, error: rulesErr, refresh: refreshRules } = useQuery<NotificationRulesDoc | null>(
+    'settings:notification-rules', () => api.notificationRules(), { persist: false },
   )
   const reloadRules = () => { invalidateKeys('settings:notification-rules'); refreshRules() }
 
@@ -87,9 +95,17 @@ export function NotificationsPanel() {
 
       {/* Per-kind rules sit BELOW the global controls because that's the order they apply
           in: the gate above decides whether anything is delivered at all, and these decide
-          how. Rendered only once loaded — an empty matrix would read as "no kinds exist". */}
-      {rules && <NotificationRulesMatrix doc={rules} onSaved={reloadRules} />}
-      {rules && <DigestSchedule schedule={rules.digest.schedule} onSaved={reloadRules} />}
+          how. Rendered only once loaded — an empty matrix would read as "no kinds exist".
+          And the failure branch precedes them for the same reason: `!rules` is true while
+          loading AND on failure, so an arm placed after them could never run. */}
+      {!rules && rulesErr
+        ? <LoadError what="per-kind notification rules" error={rulesErr} onRetry={reloadRules} />
+        : (
+          <>
+            {rules && <NotificationRulesMatrix doc={rules} onSaved={reloadRules} />}
+            {rules && <DigestSchedule schedule={rules.digest.schedule} onSaved={reloadRules} />}
+          </>
+        )}
     </div>
   )
 }

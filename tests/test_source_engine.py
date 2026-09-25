@@ -109,7 +109,6 @@ def _cfg(**over):
         network_floor_secs=0,
         max_sources=100,
         max_items_per_poll=50,
-        daily_request_budget=288,
     )
     base.update(over)
     return SourcesConfig(**base)
@@ -346,7 +345,6 @@ def test_sources_config_roundtrips(tmp_path, monkeypatch):
         cfg.sources.network_floor_secs = 1800
         cfg.sources.max_sources = 42
         cfg.sources.max_items_per_poll = 25
-        cfg.sources.daily_request_budget = 500
         cfg.save()
 
         raw = json.loads(p.read_text(encoding="utf-8"))
@@ -358,7 +356,6 @@ def test_sources_config_roundtrips(tmp_path, monkeypatch):
         assert reloaded.sources.enabled is False
         assert reloaded.sources.network_floor_secs == 1800
         assert reloaded.sources.max_items_per_poll == 25
-        assert reloaded.sources.daily_request_budget == 500
 
 
 def test_sources_editable_config_keys_present():
@@ -370,9 +367,29 @@ def test_sources_editable_config_keys_present():
         "sources.network_floor_secs",
         "sources.max_sources",
         "sources.max_items_per_poll",
-        "sources.daily_request_budget",
     ):
         assert key in _EDITABLE_CONFIG
+
+
+def test_no_rolling_day_request_budget_is_allowlisted_or_declared():
+    """The other half of the row above: ``sources.daily_request_budget`` is GONE (issue #3490).
+
+    Asserted as an absence on BOTH surfaces, because the defect was that they agreed. The leaf
+    was declared on ``SourcesConfig``, allowlisted for PATCH and given a Settings control, and
+    nothing counted a request against it — ``SourceEngine._emit_poll_completed`` records the
+    measurement that no shipped provider reports ``requests_used`` at all. A dataclass field
+    with no field-level reader still round-trips perfectly, which is exactly why
+    ``test_config_roundtrip.py`` could not see this and why the absence is pinned here.
+    """
+    from dataclasses import fields
+
+    from personalclaw.config.loader import SourcesConfig
+    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+    assert "sources.daily_request_budget" not in _EDITABLE_CONFIG
+    assert "daily_request_budget" not in {f.name for f in fields(SourcesConfig)}
+    # The control that HAS a reader is the one that stays: per-source, per-poll.
+    assert "sources.max_items_per_poll" in _EDITABLE_CONFIG
 
 
 def test_sources_config_in_to_dict():

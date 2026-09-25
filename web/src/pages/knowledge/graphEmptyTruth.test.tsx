@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { KnowledgeGraph } from './KnowledgeGraph'
+import { KnowledgeGraph, graphEmptyCopy } from './KnowledgeGraph'
 
 // ── The Graph tab's two empty states were exactly inverted ────────────────────────────────────
 //
@@ -73,6 +73,94 @@ describe('the graph empty state tells the truth about why it is empty', () => {
     // a hand-rolled local `EmptyState` would no longer satisfy it.
     expect(src).toMatch(/import \{[^}]*\bEmptyState\b[^}]*\} from '\.\.\/\.\.\/ui\/ListScaffold'/)
     expect(src, 'the hand-rolled empty div is gone').not.toMatch(/place-items-center text-on-surface-low text-\[0\.8125rem\]/)
+  })
+})
+
+// ── …and says WHICH truth, from the library's enrichment tally (B6, day-7 live validation) ─────────
+//
+// On a home with no model bound, every item had been through entity extraction and FAILED — each
+// item's page showed Entities ✕ — while this state said "Your items have not been through entity
+// extraction" and offered a run that failed the same way, silently. Never-tried, tried-and-failed,
+// running and ran-found-nothing are different facts; `stats.enrichment` carries which one this is.
+
+const tally = (over: Partial<{ ran: number; failed: number; running: number; skipped: number; not_run: number }>) =>
+  ({ ran: 0, failed: 0, running: 0, skipped: 0, not_run: 0, ...over })
+
+describe('the graph empty state names the cause from the enrichment tally', () => {
+  const original = globalThis.fetch
+
+  beforeEach(() => {
+    globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ nodes: [], edges: [] }) })) as never
+  })
+  afterEach(() => { globalThis.fetch = original })
+
+  it('tried and failed with no model: says so, and offers the fix that can work', async () => {
+    const onRegenerate = vi.fn()
+    const onSetupModel = vi.fn()
+    render(<KnowledgeGraph onRegenerate={onRegenerate} onSetupModel={onSetupModel}
+      enrichment={{ model_available: false, entities: tally({ failed: 2 }) }} />)
+    await waitFor(() => expect(screen.getByText('Entity extraction failed')).toBeTruthy())
+    const text = document.body.textContent ?? ''
+    expect(text).toMatch(/It ran on 2 items and failed because no model is set up/)
+    // The defect's exact claim, gone.
+    expect(text).not.toMatch(/have not been through entity extraction/)
+    // Regenerate cannot succeed without a model (the route refuses), so it is not what is offered.
+    expect(screen.queryByRole('button', { name: /Regenerate intelligence/i })).toBeNull()
+    ;(screen.getByRole('button', { name: /Connect a model/i }) as HTMLButtonElement).click()
+    expect(onSetupModel).toHaveBeenCalledTimes(1)
+    expect(onRegenerate).not.toHaveBeenCalled()
+  })
+
+  it('tried and failed with a model now bound: offers to run it again', async () => {
+    const onRegenerate = vi.fn()
+    render(<KnowledgeGraph onRegenerate={onRegenerate} onSetupModel={() => {}}
+      enrichment={{ model_available: true, entities: tally({ failed: 1 }) }} />)
+    await waitFor(() => expect(screen.getByText('Entity extraction failed')).toBeTruthy())
+    expect(document.body.textContent).toMatch(/It ran on 1 item and failed — the model was unavailable/)
+    ;(screen.getByRole('button', { name: /Regenerate intelligence/i }) as HTMLButtonElement).click()
+    expect(onRegenerate).toHaveBeenCalledTimes(1)
+  })
+
+  it('never tried: the old sentence, now only where it is true', async () => {
+    render(<KnowledgeGraph onRegenerate={() => {}}
+      enrichment={{ model_available: true, entities: tally({ not_run: 3 }) }} />)
+    await waitFor(() => expect(screen.getByText('No entities extracted yet')).toBeTruthy())
+    expect(document.body.textContent).toMatch(/3 items have not been through entity extraction yet/)
+    expect(screen.getByRole('button', { name: /Regenerate intelligence/i })).toBeTruthy()
+  })
+
+  it('running: shows progress, not an invitation to start another run', async () => {
+    render(<KnowledgeGraph onRegenerate={() => {}}
+      enrichment={{ model_available: true, entities: tally({ running: 2, failed: 1 }) }} />)
+    await waitFor(() => expect(screen.getByText('Extracting entities…')).toBeTruthy())
+    expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  it('ran and found nothing, or skipped by design: no action that cannot change the answer', async () => {
+    const { unmount } = render(<KnowledgeGraph onRegenerate={() => {}}
+      enrichment={{ model_available: true, entities: tally({ ran: 4 }) }} />)
+    await waitFor(() => expect(screen.getByText('No entities found')).toBeTruthy())
+    expect(screen.queryByRole('button')).toBeNull()
+    unmount()
+    render(<KnowledgeGraph onRegenerate={() => {}}
+      enrichment={{ model_available: true, entities: tally({ skipped: 2 }) }} />)
+    await waitFor(() => expect(screen.getByText('No entities to draw')).toBeTruthy())
+    expect(document.body.textContent).toMatch(/set to skip AI enrichment/)
+  })
+
+  it('re-reads the graph when the parent says the counts moved', async () => {
+    const { rerender } = render(<KnowledgeGraph reloadKey="0:0" />)
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(1))
+    rerender(<KnowledgeGraph reloadKey="0:0" />)
+    rerender(<KnowledgeGraph reloadKey="5:3" />)
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2))
+  })
+
+  it('graphEmptyCopy claims nothing it cannot know when the tally is absent', () => {
+    const copy = graphEmptyCopy(undefined)
+    expect(copy.title).toBe('No entities extracted yet')
+    expect(copy.hint).not.toMatch(/have not been through/)
+    expect(copy.action).toBe('regenerate')
   })
 })
 

@@ -5,6 +5,7 @@ import { useQuery, invalidateKeys } from '../../lib/data'
 import { PanelHeader, Section } from './settingsUI'
 import { ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { DisclosureCard } from '../../ui/DisclosureCard'
+import { StatusPill } from '../../ui/StatusPill'
 import { TextLink } from '../../ui/TextLink'
 
 // Canonical search use-cases (matches the backend SEARCH_USE_CASES). Single-select:
@@ -106,6 +107,58 @@ export function SearchPanel() {
   )
 }
 
+/** A row in a use-case's provider picker: a registered provider, or a binding whose
+ *  provider is NO LONGER REGISTERED (its app was uninstalled or deactivated).
+ *
+ *  Both variants carry `name`, so the row's selection test stays the plain
+ *  `activeProviders.includes(row.name)` — the spelling `exclusiveChoiceNamed`'s membership
+ *  matcher sweeps for. Hoisting the name out into a local instead would leave that detector
+ *  matching nothing here, which reads exactly like a clean tree. */
+export type PickableProvider =
+  | { kind: 'registered'; name: string; provider: SearchProviderInfo }
+  | { kind: 'stale'; name: string }
+
+/** Which providers a use-case may bind, PLUS every provider it is ALREADY bound to.
+ *
+ *  The second half is the part that was missing. `eligible` alone is what the registry
+ *  currently offers, and a binding outlives the thing it points at: uninstalling (or
+ *  deactivating) a bound provider app deregisters the provider and leaves
+ *  `active_search_providers.json` untouched — deliberately, so reinstalling restores the
+ *  choice. The write path already refuses to CREATE that state
+ *  (`search_registry.api_search_active_set`: "silently stranding the use-case on a dead
+ *  provider name"), and the resolver already stops using it
+ *  (`search_providers/registry.py`: "a bound name whose provider isn't registered
+ *  (disabled/removed) → fall through to the implicit fallback"). Only the picker still
+ *  believed it: the row's subtitle printed the stored name as the active binding while its
+ *  body said "No search providers configured", and — because the chip list was built from
+ *  `eligible` alone — offered no control to clear it. A binding the user cannot see the
+ *  state of and cannot remove is the phantom binding `ModelsPanel.capableModels` adds its
+ *  synthetic row for; this is the same rule for the Search entity.
+ *
+ *  One rule covers both reasons a binding can be absent from `eligible`: the provider is
+ *  gone (`stale`), or it is registered but not eligible for THIS use-case (a `fetch-article`
+ *  binding to a provider without `supports_fetch`). The second still resolves at runtime —
+ *  step 1 checks registration, not capability — so it is shown as itself, not as stale.
+ *  Pure + exported for unit testing. */
+export function pickableProviders(
+  useCase: string, providers: SearchProviderInfo[], activeProviders: string[],
+): PickableProvider[] {
+  // For fetch-article, only a provider that can extract content is a sensible bind;
+  // every other use-case can bind any provider.
+  const eligible = useCase === 'fetch-article'
+    ? providers.filter((p) => p.capabilities.supports_fetch)
+    : providers
+  const out: PickableProvider[] = eligible.map((p) => ({ kind: 'registered', name: p.name, provider: p }))
+  for (const name of activeProviders) {
+    if (eligible.some((p) => p.name === name)) continue
+    const registered = providers.find((p) => p.name === name)
+    out.push(registered
+      ? { kind: 'registered', name, provider: registered }
+      : { kind: 'stale', name })
+  }
+  return out
+}
+
 function UseCaseRow({ useCase, activeProviders, providers, onChanged }: {
   useCase: string; activeProviders: string[]; providers: SearchProviderInfo[]; onChanged: () => void
 }) {
@@ -113,11 +166,11 @@ function UseCaseRow({ useCase, activeProviders, providers, onChanged }: {
   // component ever used it for.
   const [saving, setSaving] = useState(false)
   const meta = USE_CASE_META[useCase] ?? { label: useCase, description: '', icon: Globe }
-  // For fetch-article, only a provider that can extract content is a sensible bind;
-  // every other use-case can bind any provider.
-  const eligible = useCase === 'fetch-article'
-    ? providers.filter((p) => p.capabilities.supports_fetch)
-    : providers
+  const rows = pickableProviders(useCase, providers, activeProviders)
+  // The count pill is how many this use-case can BIND, so it counts registered rows only —
+  // a stale binding is not an option on offer.
+  const bindable = rows.filter((r) => r.kind === 'registered').length
+  const staleActive = activeProviders.filter((n) => !providers.some((p) => p.name === n))
 
   const setActive = async (names: string[]) => {
     setSaving(true)
@@ -128,10 +181,16 @@ function UseCaseRow({ useCase, activeProviders, providers, onChanged }: {
   const toggle = (name: string) => setActive(activeProviders.includes(name) ? [] : [name])
 
   return (
-    <DisclosureCard icon={meta.icon} label={meta.label} active={activeProviders.length > 0} count={eligible.length}
-      subtitle={activeProviders.length > 0 ? activeProviders[0] : <span className="italic">none — falls back to General</span>}>
+    <DisclosureCard icon={meta.icon} label={meta.label} active={activeProviders.length > 0} count={bindable}
+      subtitle={activeProviders.length > 0
+        ? (staleActive.includes(activeProviders[0])
+          // Not "duckduckgo" on its own: the provider is gone, so the name alone claims an
+          // active binding that nothing can serve. Say what it resolves to instead.
+          ? <span>{activeProviders[0]} <span className="italic text-on-surface-low">— not installed; falls back to any available provider</span></span>
+          : activeProviders[0])
+        : <span className="italic">none — falls back to General</span>}>
       <p data-type="body-s" className="text-on-surface-low">{meta.description}</p>
-      {eligible.length === 0 ? (
+      {rows.length === 0 ? (
         <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low italic">
           {useCase === 'fetch-article'
             ? 'No configured provider can extract page content. Bind one with fetch support (e.g. Tavily), or leave this unset to use the native fetch pipeline.'
@@ -144,10 +203,10 @@ function UseCaseRow({ useCase, activeProviders, providers, onChanged }: {
         //    "General search provider" and "News search provider", not four identical lists.
         <div role="group" aria-label={`${meta.label} provider`}
           className="-m-1 flex flex-col gap-0.5 p-1" style={{ opacity: saving ? 0.6 : 1 }}>
-          {eligible.map((p) => {
-            const on = activeProviders.includes(p.name)
+          {rows.map((row) => {
+            const on = activeProviders.includes(row.name)
             return (
-              <button key={p.name} type="button" onClick={() => toggle(p.name)} disabled={saving}
+              <button key={row.name} type="button" onClick={() => toggle(row.name)} disabled={saving}
                 aria-pressed={on}
                 className="flex items-center gap-2.5 rounded-md px-3 py-2 text-left transition-colors hover:bg-surface-high"
                 style={on ? { background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' } : undefined}>
@@ -155,14 +214,27 @@ function UseCaseRow({ useCase, activeProviders, providers, onChanged }: {
                   style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>
                   {on && <Check size={10} strokeWidth={3} className="text-on-primary" />}
                 </span>
-                <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">{p.display_name}</span>
-                <CapChips caps={p.capabilities} />
-                <span data-type="caption" className="shrink-0 rounded-pill px-1.5 py-0.5"
-                  style={p.available
-                    ? { background: 'color-mix(in srgb, var(--color-ok) 16%, transparent)', color: 'var(--color-ok)' }
-                    : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
-                  {p.available ? 'ready' : 'not configured'}
+                <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">
+                  {row.kind === 'registered' ? row.provider.display_name : row.name}
                 </span>
+                {row.kind === 'registered' && <CapChips caps={row.provider.capabilities} />}
+                {/* Three distinct facts, three distinct words. `ready` and `not configured` are both
+                    about a provider that EXISTS; `not installed` is about one that does not, and it
+                    is the only one whose remedy is the Store rather than a key. Clicking it clears
+                    the binding — the one action a provider that is gone can still offer.
+                    The two TONED states ride ui/StatusPill: the 16% tint + ink pair is the
+                    primitive's business, and the copies of it left at call sites are exactly what
+                    `design/statusTint.test.ts` counts down. `not configured` keeps its solid fill
+                    here, because that is a neutral GROUND rather than a tone tint and so is not the
+                    primitive's business — the same split `settings/bento.tsx`'s local pill draws
+                    (toned variants compose the primitive, `muted` stays local), recorded as its
+                    `composes` verdict in `design/primitiveShadowing.test.ts`. */}
+                {row.kind === 'stale'
+                  ? <StatusPill tone="warn" className="py-0.5">not installed</StatusPill>
+                  : row.provider.available
+                    ? <StatusPill tone="ok" className="py-0.5">ready</StatusPill>
+                    : <span data-type="caption" className="shrink-0 rounded-pill px-1.5 py-0.5"
+                      style={{ background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>not configured</span>}
               </button>
             )
           })}

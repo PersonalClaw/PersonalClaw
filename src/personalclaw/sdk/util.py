@@ -8,6 +8,12 @@
   shells out runs under the same confinement core does).
 - ``atomic_write(path, data)`` — crash-safe file write (an app persisting config/state
   uses the same durable write core does).
+- ``single_flight(key)`` — the host's cross-process/cross-thread "only one of us does this"
+  lock. Exposed because an app that downloads a large artifact into the SHARED home has
+  exactly the problem it solves: two gateways started against one home would otherwise both
+  pull the same 138 MiB file. Rolling a lockfile per app would be N implementations of one
+  invariant in a directory they all share, and the failure they would trade for is a
+  half-written artifact a later run treats as complete.
 
 Keep this surface tiny: an app reaching for more than these is a sign the boundary is
 wrong (promote the need to a proper SDK submodule, or vendor it into the app).
@@ -20,6 +26,7 @@ from pathlib import Path
 
 from personalclaw.apps.manager import app_data_dir, shared_dir_env_name  # noqa: F401
 from personalclaw.atomic_write import atomic_write  # noqa: F401
+from personalclaw.concurrency import single_flight  # noqa: F401
 from personalclaw.config.loader import config_dir  # noqa: F401
 from personalclaw.sandbox import wrap_argv as sandbox_wrap_argv  # noqa: F401
 
@@ -79,4 +86,5 @@ __all__ = [
     "shared_app_data_dir",
     "sandbox_wrap_argv",
     "atomic_write",
+    "single_flight",
 ]

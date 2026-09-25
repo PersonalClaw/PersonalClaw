@@ -642,7 +642,11 @@ export interface ModelItem { name: string; model_name: string; description: stri
 // pages/apps and docs/security/limitations.md §2.
 export interface AppPermissionsWire {
   api?: string[]; events?: string[]; mcpTools?: string[]
-  storage?: boolean; network?: boolean; memory?: string; cron?: boolean; agent?: boolean
+  // #3501: `memory` is a boolean grant, not a tier. It was `"" | "app-scoped" | "shared"`
+  // and `app-scoped` granted nothing on any path (the gateway checked for `"shared"`), so
+  // the consent bullet interpolated a tier name the user was told they had approved and
+  // that the gateway never honoured. One grant, absent when not held.
+  storage?: boolean; network?: boolean; memory?: boolean; cron?: boolean; agent?: boolean
   // Apps this app may send a brokered message to (exact name, or a
   // trailing-`*` prefix pattern). Enforced — `POST /api/apps/message` is the only
   // app-to-app path and refuses an undeclared target 403 + SEL. Absent = may message
@@ -807,6 +811,21 @@ export interface AppCronSummary {
    *  not be described — the raw `cron_expr` is the honest fallback there. */
   cadence?: string
 }
+/** One declared `pythonDependencies` entry, classified server-side by
+ *  `app_manager.describe_python_dependencies`.
+ *
+ *  `spec` is the manifest's requirement string VERBATIM (`anthropic>=0.20`) — a user
+ *  deciding about that pin has to see that pin, not a generic "this app installs
+ *  packages".
+ *
+ *  `coreOwned` is whether core itself declares the package, read from the same pin set
+ *  `_reject_core_dependency_conflicts` gates on. It is the difference between "new code
+ *  enters your interpreter" (`false`) and "a version you already have is acceptable"
+ *  (`true`, because the guard refuses the install rather than moving a core dependency).
+ *  Claimed `true` only when proven: if core's pin set cannot be read server-side every
+ *  spec arrives `false`, which is the louder of the two disclosures and the same
+ *  fail-closed direction the guard takes. */
+export interface AppPythonDependency { spec: string; coreOwned: boolean }
 export interface AppCatalogEntry {
   name: string; displayName: string; description: string; version: string
   icon: string; heroUrl?: string; author: string
@@ -831,6 +850,12 @@ export interface AppCatalogEntry {
    *  none yet, so empty permissions there mean "not known", not "declared none". */
   consentKnown?: boolean
   crons?: AppCronSummary[]
+  /** The Python packages installing this app pip-installs into the venv the GATEWAY runs
+   *  out of — the consent fact the permission block cannot state, because no gateway
+   *  permission bounds a module once it is importable in-process. `[]` for an app that
+   *  declares none and for a registry pointer; `consentKnown` says which. Read only
+   *  through `consentPythonDeps`, which owns that distinction. */
+  pythonDependencies?: AppPythonDependency[]
   /** #492 — does this app ship browser code? Same two field names and meanings as
    *  `AppSummary` above, so ONE reading serves the pre-install card and the installed
    *  one (`consentHostUi`). A UI bundle runs in the dashboard PAGE, which the
@@ -1379,10 +1404,13 @@ export interface ProjectKnowledgeItem {
 // source degrades ONE section, never the board); `board` is the state-grouped view with
 // needs-input pinned first.
 export type WorkState = 'needs_input' | 'working' | 'queued' | 'suspended' | 'review' | 'done'
+/** How a `done` row ended (`containers.BoardOutcome`); `''` on a row that has not ended. */
+export type WorkOutcome = 'completed' | 'cancelled' | 'skipped' | 'failed' | 'stopped' | 'ended_early'
 export interface WorkClaim { holder: string; expires_at: number; taken_at: number; renewals: number }
 export interface WorkRow {
   run_id: string; title: string; state: WorkState; origin: string; project_id: string
   claim: WorkClaim | null; collapsed: boolean; attention: boolean; resumable: boolean
+  outcome: WorkOutcome | ''
 }
 export interface WorkGroup { state: WorkState; count: number; attention: number; rows: WorkRow[] }
 export interface WorkSection { name: string; items: WorkRow[]; status: 'ok' | 'loading' | 'error'; error: string; loadedAt: number }
@@ -1391,6 +1419,8 @@ export interface WorkBoard {
   completeness: 'complete' | 'inferred' | 'partial' | 'error'
   attention: number; loadedAt: number
 }
+/** `GET/PUT /api/projects/settings`. */
+export interface ProjectSettings { default_project_id: string }
 /** The server-side cap on a project or task-list NAME, mirroring `hierarchy.MAX_NAME_LEN`.
  *  Kept in step by `projectNameCap.test.ts`, which reads the Python constant — a name field
  *  bounded here but not there (or vice versa) is exactly the drift that let 3000 characters
@@ -1591,6 +1621,11 @@ export interface WorkflowNodeState {
   // forward across events (a re-run after a rewind emits `node_done` WITHOUT it, and carrying
   // the old value would keep claiming a cache hit the run just superseded).
   cached?: boolean
+  // What this node's declared `schema` asked for that its output did not carry (#3545). A step
+  // that ignored its schema still reports `done` — the run is not failed and must not read as
+  // failed — so this is the only thing on the row that says the `done` was reached without the
+  // declared shape. Absent (not "") when there was nothing to report, like `cached`.
+  schema_shortfall?: string
 }
 export interface WorkflowRunSummary {
   id: string; workflow_name: string; status: WorkflowRunStatus; spec_version: number
@@ -3364,7 +3399,18 @@ export interface IntentOutcome {
   item_id: string | null; item_title?: string
   takeaway?: string; fields?: IntentOutcomeField[]; created_at?: string
 }
-export interface KnowledgeStats { items: number; entities: number; relations: number; embeddings: { enabled: boolean; model?: string; embedded_items?: number; stale_items?: number } }
+/** How far the library's model-backed enrichment can go and has gone (`GET /api/knowledge/stats`).
+ *  `model_available` is the precondition `POST /api/knowledge/regenerate-intelligence` refuses on
+ *  (409 `model_unresolved`). `entities` counts the rows the library LISTS by their persisted
+ *  entity-extraction phase, so "never tried" and "tried and failed" are two numbers — the graph's
+ *  empty state used to say the first while the second was true. */
+export interface KnowledgeEnrichment {
+  model_available: boolean
+  /** `skipped` is BY DESIGN (a source set to no AI, an item with no text) — neither a failure
+   *  nor "never tried". */
+  entities: { ran: number; failed: number; running: number; skipped: number; not_run: number }
+}
+export interface KnowledgeStats { items: number; entities: number; relations: number; embeddings: { enabled: boolean; model?: string; embedded_items?: number; stale_items?: number }; enrichment?: KnowledgeEnrichment }
 // Inbox is a GENERAL entity: message-source providers (filesystem now;
 // slack/email future) feed incoming messages into an AI-triage layer that adds
 // classification + confidence + an optional drafted reply. Shape matches the
@@ -4647,13 +4693,35 @@ export interface OnboardingEssentials {
   speech: boolean
   channel: string | null
 }
-/** The resume points of the guided first run, in order — `STEPS` in `onboarding.py`. */
-export type OnboardingStep = 'name' | 'essentials' | 'first_success' | 'done'
+/** The resume points of the guided first run, in order — `STEPS` in `onboarding.py`.
+ *
+ *  Every step has one, and the stored value is the HIGH-WATER MARK: the furthest step the run
+ *  has stood on, written on entry and never lowered. `first_success` is the `try` step's stored
+ *  spelling; `app/onboarding/steps.ts` owns that mapping. */
+export type OnboardingStep = 'name' | 'import' | 'essentials' | 'first_success' | 'ready' | 'done'
 /** `GET /api/onboarding` — the live readiness triple PLUS the persisted first-run
  *  progress from `entity_settings/onboarding.json`. The readiness fields are computed
  *  per request and never stored; the progress fields are what let a reload resume. */
 export interface OnboardingState {
   needs_model: boolean; has_model_provider: boolean; has_chat_binding: boolean
+  /** The active chat chain — `["provider_name:model_id", …]`, position 0 = default —
+   *  read live from `active_models.json`. This is what a surface saying "Chat model"
+   *  must name; `essentials.model` below is the **app** the lane installed, and rendering
+   *  that one under those words is #3528. `lib/modelRef` owns the reading. */
+  chat_model_refs?: string[]
+  /** Chat is about to be answered by the BUNDLED zero-config floor model rather
+   *  than anything the user chose. True only with no explicit chat binding AND every capable
+   *  provider entry declaring itself a floor, so binding anything turns it off. Optional
+   *  because an older backend omits it; `BundledFloorNotice` treats absent as false. */
+  chat_is_bundled_floor?: boolean
+  /** A chat model this machine could DOWNLOAD but has not, or `null`. Carries the
+   *  BYTES because the offer is shown before the user agrees to it, and a download offer
+   *  without a size is the one thing this surface must never be. Derived generically from the
+   *  local-model registry (any provider whose app declares `chat` with an undownloaded model),
+   *  so no vendor name reaches the client. */
+  chat_download_offer?: {
+    provider: string; model: string; bytes: number; licence: string; description: string
+  } | null
   step?: OnboardingStep
   essentials?: OnboardingEssentials
   first_success?: { knowledge: boolean; trigger: boolean; loop: boolean }
@@ -6985,6 +7053,11 @@ export const api = {
   createProject: (body: { name: string; brief?: string; agent_instructions_template?: string; workspace_dir?: string; name_locked?: boolean }) => post<ProjectItem>('/api/projects', body),
   updateProject: (id: string, body: Record<string, unknown>) => put<ProjectItem>(`/api/projects/${encodeURIComponent(id)}`, body),
   deleteProject: (id: string, force = false) => del(`/api/projects/${encodeURIComponent(id)}${force ? '?force=true' : ''}`),
+  // The user's default project — where the dashboard's create forms (a new task, a new loop)
+  // start. An account preference in `entity_settings/projects.json`, so it follows the user to
+  // every browser; `""` when none, or when the stored one is deleted or archived.
+  projectSettings: () => get<ProjectSettings>('/api/projects/settings'),
+  updateProjectSettings: (body: ProjectSettings) => put<ProjectSettings>('/api/projects/settings', body),
   // Legibility §7 — render the marker-fenced PClaw context block into the project's
   // bound workspace_dir adapter files (CLAUDE.md / AGENTS.md / .cursorrules), replace-
   // in-place. Gated server-side on legibility.context_adapters + a bound workspace_dir.

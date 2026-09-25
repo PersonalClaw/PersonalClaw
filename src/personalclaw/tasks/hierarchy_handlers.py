@@ -10,6 +10,8 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.http_download import attachment_disposition
+from personalclaw.http_errors import json_error
+from personalclaw.record_ids import UnsafeRecordId
 from personalclaw.request_validation import (
     MISSING,
     json_object_body,
@@ -224,6 +226,87 @@ async def api_projects_get(request: web.Request) -> web.Response:
     return web.json_response(_project_payload(store, project))
 
 
+# ── Project settings (the user's default project) ──
+#
+# The DEFAULT PROJECT is the one the dashboard's create forms (a new task, a new loop) start
+# on. It is the user's preference, so it lives in `entity_settings/projects.json` and follows
+# them to every browser, the desktop app and the phone. It used to be a `localStorage` key while
+# the project page called it "Default project": set it in one browser, open another, and the
+# same project read "Make default" there and new tasks started in Personal.
+#
+# It is a UI default only. Agent-created work does not read it — an unscoped agent save stays
+# unscoped, because filing work under a project the user did not choose is worse than filing it
+# under none (`mcp_artifacts._current_project_id`).
+
+#: `entity_settings/<key>.json`.
+_PROJECT_SETTINGS_ENTITY = "projects"
+
+
+def _effective_default_project_id(store: HierarchyStore) -> str:
+    """The stored default, if it still names an ACTIVE project; else "".
+
+    Resolved at read time rather than cleaned up at write time, so a delete, an archive or a
+    hand-edited file can never leave the setting naming a project new work cannot start in —
+    and a restored project is the default again, which is what the user last chose.
+
+    Fail-OPEN, the availability-surface rule: an unreadable file reads as "no default", whose
+    only effect is that a create form pre-selects Personal. Nothing irreversible hangs off it.
+    """
+    from personalclaw.providers.entity_routes import _load_entity_settings
+
+    stored = (_load_entity_settings(_PROJECT_SETTINGS_ENTITY) or {}).get("default_project_id")
+    if not isinstance(stored, str) or not stored:
+        return ""
+    try:
+        project = store.get_project(stored)
+    except UnsafeRecordId:  # a hand-edited id that is not one path segment
+        return ""
+    if project is None or project.status == "archived":
+        return ""
+    return stored
+
+
+async def api_projects_settings_get(request: web.Request) -> web.Response:
+    """GET /api/projects/settings — the user's default project (`""` when none)."""
+    return web.json_response({"default_project_id": _effective_default_project_id(_store())})
+
+
+async def api_projects_settings_put(request: web.Request) -> web.Response:
+    """PUT /api/projects/settings — set the default project; `""` or null clears it."""
+    from personalclaw.providers.entity_routes import (
+        _load_entity_settings,
+        _save_entity_settings,
+    )
+
+    body = await json_object_body(request)
+    if "default_project_id" not in body:
+        # An empty body is not a request to clear: a client that sends nothing must not wipe
+        # the user's choice. Clearing is an explicit "".
+        return json_error(
+            "field_required",
+            message='default_project_id is required ("" clears the default).',
+            status=400,
+        )
+    wanted = string_field(body, "default_project_id")
+    store = _store()
+    if wanted:
+        try:
+            project = store.get_project(wanted)
+        except UnsafeRecordId:
+            return json_error("invalid_id", status=400)
+        if project is None:
+            return json_error("project_not_found", message=f"no project {wanted!r}", status=400)
+        if project.status == "archived":
+            return json_error(
+                "project_archived",
+                message=f"{project.name!r} is archived — restore it before making it the default.",
+                status=409,
+            )
+    stored = _load_entity_settings(_PROJECT_SETTINGS_ENTITY) or {}
+    _save_entity_settings(_PROJECT_SETTINGS_ENTITY, {**stored, "default_project_id": wanted})
+    return web.json_response({"default_project_id": wanted})
+
+
 async def api_projects_linked(request: web.Request) -> web.Response:
     """GET /api/projects/{project_id}/linked — the work units scoped under this
     project: Goal Loops (loop.project_id) + Code projects (code.tasks_project_id).
@@ -364,6 +447,28 @@ _TASK_STATE = {
     "open": containers.BoardState.QUEUED,
 }
 
+#: How a `DONE` row from each source ended (`containers.BoardOutcome`). Keyed by exactly the
+#: statuses the two maps above send to `DONE`, so a row filed there always says how it got there.
+_TASK_OUTCOME = {
+    "done": containers.BoardOutcome.COMPLETED,
+    "cancelled": containers.BoardOutcome.CANCELLED,
+    "skipped": containers.BoardOutcome.SKIPPED,
+}
+_LOOP_OUTCOME = {
+    "complete": containers.BoardOutcome.COMPLETED,
+    "stopped": containers.BoardOutcome.STOPPED,
+    "failed": containers.BoardOutcome.FAILED,
+}
+
+
+def _loop_outcome(status: str, stop_reason: str) -> containers.BoardOutcome | None:
+    """A loop's ending. A `complete` loop whose `stop_reason` names a ceiling rather than `done`
+    ended early — the rule `lib/loopStatus.effectiveLoopStatus` applies on every other surface."""
+    outcome = _LOOP_OUTCOME.get(status)
+    if outcome is containers.BoardOutcome.COMPLETED and stop_reason not in ("", "done"):
+        return containers.BoardOutcome.ENDED_EARLY
+    return outcome
+
 
 def _as_board_row(d: dict) -> containers.BoardRow:
     """Rebuild a `BoardRow` from its dict form, for the flatten→group pass.
@@ -385,6 +490,11 @@ def _as_board_row(d: dict) -> containers.BoardRow:
         state = containers.BoardState(str(d.get("state", "") or ""))
     except ValueError:
         state = containers.BoardState.WORKING
+    raw_outcome = str(d.get("outcome", "") or "")
+    try:
+        outcome = containers.BoardOutcome(raw_outcome) if raw_outcome else None
+    except ValueError:
+        outcome = None
     return containers.BoardRow(
         run_id=str(d.get("run_id", "") or ""),
         title=str(d.get("title", "") or ""),
@@ -395,6 +505,7 @@ def _as_board_row(d: dict) -> containers.BoardRow:
         collapsed=bool(d.get("collapsed", False)),
         attention=bool(d.get("attention", False)),
         resumable=bool(d.get("resumable", False)),
+        outcome=outcome,
     )
 
 
@@ -428,6 +539,7 @@ def _loop_rows(pid: str) -> list[dict]:
                 project_id=pid,
                 resumable=state is containers.BoardState.SUSPENDED,
                 attention=state is containers.BoardState.NEEDS_INPUT,
+                outcome=_loop_outcome(str(lp.status), str(lp.stop_reason or "")),
             ).to_dict()
         )
     return rows
@@ -453,6 +565,7 @@ def _task_rows(tasks: list, pid: str) -> list[dict]:
                 origin="task",
                 project_id=pid,
                 attention=state is containers.BoardState.NEEDS_INPUT,
+                outcome=_TASK_OUTCOME.get(status),
             ).to_dict()
         )
     return rows
@@ -1131,6 +1244,8 @@ def register_hierarchy_routes(app: web.Application) -> None:
     """Register /api/projects/* and /api/task-lists/* routes."""
     # Static sub-paths BEFORE the dynamic /{project_id} matcher, else `import` reads as an id.
     app.router.add_post("/api/projects/import", api_projects_import)
+    app.router.add_get("/api/projects/settings", api_projects_settings_get)
+    app.router.add_put("/api/projects/settings", api_projects_settings_put)
     app.router.add_get("/api/projects", api_projects_list)
     app.router.add_post("/api/projects", api_projects_create)
     app.router.add_get("/api/projects/{project_id}", api_projects_get)

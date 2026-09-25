@@ -9,7 +9,14 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 // someone tries to resume. These tests pin the writer: every transition of the step
 // stack persists its resume point through the ONE existing write path
 // (`POST /api/onboarding/state`), using the canonical step vocabulary from
-// `personalclaw/onboarding.py` — `name → essentials → first_success → done`.
+// `personalclaw/onboarding.py` — `name → import → essentials → first_success → ready → done`.
+//
+// 🔑 EVERY STEP HAS A POINT NOW, AND IT IS WRITTEN ON ENTRY. The first three-value version meant
+// "the next step you have not finished", which left the import step and the recap with no id at
+// all — measured cost on a fresh home: stopped on the import step the file still said `name`, so a
+// reload restarted at the beginning; stopped on the recap it said `first_success`, so a reload
+// walked the user BACK a step. The field is the HIGH-WATER MARK: the furthest step the run has
+// stood on, raised on entry and never lowered, which is the only reading a reload can resume from.
 //
 // The step component itself is stubbed here on purpose: what is under test is the
 // shell's wiring, and `essentialsStep.test.tsx` owns the step's own behaviour.
@@ -42,7 +49,9 @@ vi.mock('./identity', async (orig) => {
     ...real,
     // `username` is the STORED handle the flow seeds its handle field from;
     // '' is a fresh install, which is what these tests are.
-    useIdentity: () => ({ setName, username: '' }),
+    // `name` is the STORED display name (offered back on a deliberate re-run); `username` the stored
+    // handle. Both '' here, which is a fresh install — the case every test in this file is about.
+    useIdentity: () => ({ name: '', setName, username: '' }),
   }
 })
 // The 3D backdrop needs a real canvas; the flow's logic does not.
@@ -76,13 +85,17 @@ vi.mock('./onboarding/TryOneStep', () => ({
   ),
 }))
 
-import { Onboarding } from './Onboarding'
+import { OnboardingHarness } from '../test/onboardingHarness'
 import { AppearanceProvider } from './appearance'
 import { readNavDisclosure } from './navDisclosure'
 
 const ORIGINAL_MATCH_MEDIA = window.matchMedia
 
 beforeEach(() => {
+  // The flow persists the typed name in `sessionStorage` so a refresh mid-flow keeps it, which
+  // makes it shared state BETWEEN TESTS: without this, a later test that skips setup without typing
+  // a name inherits the previous test's draft and reads as a rename instead of the default.
+  sessionStorage.clear()
   vi.clearAllMocks()
   // jsdom has no matchMedia and the appearance provider's useIsMobile calls it unguarded.
   Object.defineProperty(window, 'matchMedia', {
@@ -102,7 +115,7 @@ afterEach(() => {
 })
 
 function renderFlow() {
-  return render(<AppearanceProvider><Onboarding /></AppearanceProvider>)
+  return render(<AppearanceProvider><OnboardingHarness /></AppearanceProvider>)
 }
 
 async function enterName() {
@@ -127,13 +140,13 @@ async function enterNameAndImport() {
 
 
 describe('every step transition persists its resume point', () => {
-  it('records nothing for the import step, then `essentials` when it is left', async () => {
-    // PEP-5 put a step between `name` and `essentials` that has no id in `STEPS`. Writing a
-    // point on the way IN would claim the user finished a step they are standing on; writing
-    // `import` would be a fifth stored value `merge_onboarding_state` rejects with a 400.
+  it('records `import` on ENTRY, then `essentials` when it is left', async () => {
+    // The mark names where the user IS, not what they have finished — that is the only reading a
+    // reload can resume from. Before this, standing on the import step recorded nothing, so a
+    // refresh there threw away the name AND two steps of visible progress.
     await enterName()
     expect(await screen.findByRole('button', { name: 'stub-imported' })).toBeTruthy()
-    expect(saveOnboardingState).not.toHaveBeenCalled()
+    await waitFor(() => expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'import' }))
     fireEvent.click(screen.getByRole('button', { name: 'stub-imported' }))
     await waitFor(() => expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'essentials' }))
   })
@@ -170,21 +183,20 @@ describe('every step transition persists its resume point', () => {
     // the name and the handle cannot disagree about whether first run happened. The second
     // is the suggestion the untouched field was visibly showing.
     expect(setName).toHaveBeenCalledWith('Ada Lovelace', 'ada-lovelace')
-    // Still exactly three resume points, because `STEPS` in `onboarding.py` has no id between
-    // `first_success` and `done`: the step IS `first_success`, so leaving it for the recap
-    // writes nothing new and a user who reloads on the recap resumes at the unfinished step.
+    // One point per step entered, in order, with no repeats — the mark rising once per move.
     const steps = saveOnboardingState.mock.calls.map(([p]) => p.step)
-    expect(steps).toEqual(['essentials', 'first_success', 'done'])
+    expect(steps).toEqual(['import', 'essentials', 'first_success', 'ready', 'done'])
   })
 
-  it('leaving the first-success step does NOT invent a fourth resume point', async () => {
+  it('records `ready` for the recap — the step that used to have nowhere to be recorded', async () => {
     await enterNameAndImport()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-continue' }))
     fireEvent.click(await screen.findByRole('button', { name: 'stub-tried' }))
-    // `merge_onboarding_state` rejects an unknown step value with a 400, so a spelled-out
-    // `try`/`ready` here would be a silent 400 on every first run.
+    // `merge_onboarding_state` rejects an unknown step value with a 400, so every value spelled here
+    // has to be a member of `STEPS` — `ready` is one now, which is what makes a reload on the recap
+    // stay on the recap instead of walking the user back to the try step.
     const steps = saveOnboardingState.mock.calls.map(([p]) => p.step)
-    expect(steps).toEqual(['essentials', 'first_success'])
+    expect(steps).toEqual(['import', 'essentials', 'first_success', 'ready'])
   })
 
   it('skipping the first-success step reaches the recap too', async () => {
@@ -297,29 +309,66 @@ describe('re-entering the flow resumes at the persisted step', () => {
     expect(screen.queryByRole('button', { name: 'stub-continue' })).toBeNull()
   })
 
-  it('does not walk the stored resume point backwards', async () => {
-    // Recording `essentials` on the way INTO first_success would cost the user that step
-    // again on their next reload — the resume would decay one step per reload.
+  it('does not walk the stored resume point backwards — or rewrite one it already has', async () => {
+    // Recording `essentials` on the way INTO first_success would cost the user that step again on
+    // their next reload: the resume would decay one step per reload. The mark only ever RISES, so
+    // resuming to the step it already names writes nothing at all.
     onboarding.mockResolvedValue({
       needs_model: false, has_model_provider: true, has_chat_binding: true, step: 'first_success',
     })
     await enterName()
-    await waitFor(() => expect(saveOnboardingState).toHaveBeenCalled())
-    expect(saveOnboardingState.mock.calls.map(([p]) => p.step)).toEqual(['first_success'])
+    expect(await screen.findByRole('button', { name: 'stub-tried' })).toBeTruthy()
+    expect(saveOnboardingState).not.toHaveBeenCalled()
+  })
+
+  it('the recap names the BUNDLED floor rather than "a configured provider"', async () => {
+    // A re-entry on a home that bound nothing: chat resolves, but what resolves it is the
+    // 135M bundled weight. The floor is never a binding, so `chat_model_refs` is empty and the
+    // recap has no model to name — and the no-ref sentence #3528 gave the implicit-provider case
+    // is the one sentence about the floor that is not true. The words are the step summary's
+    // own, so a first pass and a re-entered pass say the same thing.
+    onboarding.mockResolvedValue({
+      needs_model: false, has_model_provider: true, has_chat_binding: false,
+      chat_model_refs: [], chat_is_bundled_floor: true, step: 'first_success',
+      essentials: { model: null, search: false, speech: false, channel: null },
+      first_success: { knowledge: false, trigger: false, loop: false },
+    })
+    await enterName()
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
+    expect(
+      await screen.findByText('Chat model: Ready — using the small model PersonalClaw downloaded'),
+    ).toBeTruthy()
+    expect(screen.queryByText('Chat model: Ready — using a configured provider')).toBeNull()
+  })
+
+  it('does not call an implicit real provider the floor (OU-14 control)', async () => {
+    // The same empty chain, with the floor flag OFF: resolution is #3528's implicit
+    // "first capable configured provider" rule, and the floor sentence must not leak into it.
+    onboarding.mockResolvedValue({
+      needs_model: false, has_model_provider: true, has_chat_binding: false,
+      chat_model_refs: [], chat_is_bundled_floor: false, step: 'first_success',
+      essentials: { model: null, search: false, speech: false, channel: null },
+      first_success: { knowledge: false, trigger: false, loop: false },
+    })
+    await enterName()
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
+    expect(await screen.findByText('Chat model: Ready — using a configured provider')).toBeTruthy()
+    expect(screen.queryByText(/small model PersonalClaw downloaded/)).toBeNull()
   })
 
   it('restates what the earlier visit set up, checked against live readiness', async () => {
     onboarding.mockResolvedValue({
       needs_model: false, has_model_provider: true, has_chat_binding: true,
+      chat_model_refs: ['my-anthropic:claude-sonnet-4-5'],
       step: 'first_success', essentials: { model: 'anthropic-models', search: false, speech: false, channel: null },
       first_success: { knowledge: true, trigger: false, loop: false },
     })
     await enterName()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
-    // The collapsed essentials row AND the recap both state the app the earlier visit
-    // installed — the row as its done summary, the recap as the chat-model line.
-    expect(await screen.findByText('anthropic-models')).toBeTruthy()
-    expect(screen.getByText('Chat model: anthropic-models')).toBeTruthy()
+    // The collapsed essentials row AND the recap both state the MODEL the earlier visit bound
+    // — the row as its done summary, the recap as the chat-model line.
+    expect(await screen.findByText('claude-sonnet-4-5')).toBeTruthy()
+    expect(screen.getByText('Chat model: claude-sonnet-4-5')).toBeTruthy()
     // …and the card completed BEFORE the reload still counts as a first success, even though
     // this visit's cards started idle (only the flags survive a reload, not the outcomes).
     // 🪤 Scoped to the summary PARAGRAPH. A bare `getByText(/1 of 3 tried/)` matches every
@@ -327,6 +376,61 @@ describe('re-entering the flow resumes at the persisted step', () => {
     // (needed to make a done row keyboard-reachable) made this find two nodes. The property
     // asserted is that the summary is VISIBLE, which the scoped query states directly.
     expect(screen.getByText(/1 of 3 tried/, { selector: 'p' })).toBeTruthy()
+  })
+
+  // ── #3528: the recap names the bound MODEL, never the app that provides it ──────────
+  //
+  // Measured in a browser on a fresh 0.1.3 container, against a loopback Ollama. First pass
+  // through step 3: `Chat model: qwen2.5vl:7b` — correct. Reload (first-run progress is
+  // server-side, so the flow resumes) and reach the recap: `Chat model: ollama-models`, and
+  // the collapsed step-3 row repeated it. `active_models.json` held
+  // `{"chat": ["Local Ollama:qwen2.5vl:7b"]}` the whole time — the binding was right and only
+  // the sentence was wrong.
+  //
+  // The cause was that the correct label lived in `EssentialsStep`'s component state, which a
+  // reload drops, while the field the flow PERSISTS (`essentials.model`) is the app the lane
+  // installed. So the recap fell back to a field that answers "which model-provider app did
+  // you install" and rendered it under the words "Chat model".
+  //
+  // 🔴 THESE ASSERT THE RENDERED SENTENCE, not the state behind it. A test on the state would
+  // have passed throughout: the binding was never wrong. The sentence is the contract.
+  it('#3528 names the bound model on a re-entered run, not the app that provides it', async () => {
+    onboarding.mockResolvedValue({
+      needs_model: false, has_model_provider: true, has_chat_binding: true,
+      // The app the lane installed — still recorded, still the honest answer to its own
+      // question, and still not a model.
+      step: 'first_success', essentials: { model: 'ollama-models', search: false, speech: false, channel: null },
+      // What `active_models.json` actually holds. The provider name carries a space and the
+      // model id carries its own colon, which is the pair that catches a careless split.
+      chat_model_refs: ['Local Ollama:qwen2.5vl:7b'],
+      first_success: { knowledge: false, trigger: false, loop: false },
+    })
+    await enterName()
+    // SURFACE 1 — the collapsed step-3 row, read before walking on.
+    const essentialsRow = screen.getByText('Essential apps').closest('li') as HTMLElement
+    expect(essentialsRow.textContent).toContain('qwen2.5vl:7b')
+    expect(essentialsRow.textContent).not.toContain('ollama-models')
+
+    // SURFACE 2 — the "All set" recap, the last screen of first-run setup.
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
+    expect(await screen.findByText('Chat model: qwen2.5vl:7b')).toBeTruthy()
+    // The app name appears NOWHERE on the screen that is telling the user what they now have.
+    expect(screen.queryByText(/ollama-models/)).toBeNull()
+  })
+
+  it('#3528 names the mechanism, not a model, when the home has no explicit binding', async () => {
+    // `needs_model: false` with an empty chain means resolution comes from the implicit
+    // "first capable configured provider" rule. There is no model the user chose, so the recap
+    // may not name one — and it may not fall back to the app name either.
+    onboarding.mockResolvedValue({
+      needs_model: false, has_model_provider: true, has_chat_binding: false,
+      chat_model_refs: [],
+      step: 'first_success', essentials: { model: 'ollama-models', search: false, speech: false, channel: null },
+    })
+    await enterName()
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
+    expect(await screen.findByText('Chat model: Ready — using a configured provider')).toBeTruthy()
+    expect(screen.queryByText(/ollama-models/)).toBeNull()
   })
 
   it('does not promise a model the home no longer resolves', async () => {
@@ -373,13 +477,16 @@ describe('skip at any step lands in a working dashboard', () => {
   it('names the default it will use, rather than renaming you silently', async () => {
     renderFlow()
     await waitFor(() => expect(onboarding).toHaveBeenCalled())
-    expect(screen.getByRole('button', { name: /Skip setup — start as Operator/ })).toBeTruthy()
+    // The link stayed short and the consequence moved into the caption beside it, which also says
+    // where to come back — the two things the old one-line label left out.
+    expect(screen.getByRole('button', { name: 'Skip setup for now' })).toBeTruthy()
+    expect(screen.getByText(/you'll be called "Operator" until you pick a name/)).toBeTruthy()
   })
 
   it('skips from a MIDDLE step, keeping the name that was typed', async () => {
     await enterNameAndImport()
     expect(await screen.findByRole('button', { name: 'stub-continue' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Skip setup and go to the dashboard' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Skip the rest of setup' }))
     // Both halves of identity survive the skip: the name that was typed, and the handle the
     // untouched field was showing when the name step was passed.
     await waitFor(() => expect(setName).toHaveBeenCalledWith('Ada Lovelace', 'ada-lovelace'))

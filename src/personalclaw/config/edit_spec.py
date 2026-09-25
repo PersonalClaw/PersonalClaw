@@ -153,8 +153,11 @@ def coerce_edit_value(path_key: str, value: Any, spec: dict) -> Any:
         if values_fn and value not in values_fn():
             raise ConfigValueError(f"invalid value for {path_key}", f"{path_key}={value}")
         # Normalise at the WRITE boundary so the file matches what load() will
-        # produce — otherwise the file carries the raw value (e.g. markdown/brace
-        # syntax in bot_name) while runtime sees the sanitized one: split-brain.
+        # produce — otherwise the file carries the raw value while runtime sees the
+        # sanitized one: split-brain. A sanitizer only makes changes that alter no
+        # meaning (surrounding whitespace, spacing); a value it could only "fix" by
+        # dropping part of it, it refuses by raising `ConfigValueError` — bot_name's
+        # does, for the reason this module's docstring gives.
         sanitize = spec.get("sanitize")
         if sanitize:
             value = sanitize(value)

@@ -1,5 +1,7 @@
 """Tests for /api/browse-dirs endpoint."""
 
+import os
+import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -166,13 +168,115 @@ class TestCreateDir:
         # browse-dirs refuses to navigate system roots; create-dir must refuse to
         # create under them too (consistency + a dir there would be unreachable in
         # the picker, and is_sensitive_path doesn't cover /etc & friends).
-        import os
-
         async with TestClient(TestServer(_make_app())) as client:
-            # _SYSTEM_ROOTS now matches the Code engine's validation list, so creating
+            # The subtree list is the Code engine's validation list, so creating
             # under any OS-managed tree (not just /etc) is refused — so a stray folder
             # can't be materialized in a location a workspace bind would then reject.
             for p in ("/etc/pclaw-x", "/usr/pclaw-x", "/System/pclaw-x", "/Library/pclaw-x"):
                 resp = await client.post("/api/create-dir", json={"path": p})
                 assert resp.status == 403, p
                 assert not os.path.exists(p), p
+
+
+class TestBrowseRefusalIsLegible:
+    """A refusal the workspace picker shows must say WHICH folder and WHY.
+
+    Measured in a real browser against a gateway running as root: the picker's first browse (the
+    gateway's home) answered ``403 {"error": "Access denied"}`` — no path, no reason — and the
+    picker rendered exactly that, above an empty listing it had never read. The only record of
+    what was refused was a ``security_events.jsonl`` row the user cannot see.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_refusal_names_the_path_and_the_reason(self, mock_sel):
+        async with TestClient(TestServer(_make_app())) as client:
+            resp = await client.get("/api/browse-dirs?path=/etc")
+            body = await resp.json()
+        assert resp.status == 403
+        err = body["error"]
+        refused = os.path.realpath("/etc")  # macOS answers for /private/etc, and says so
+        assert err["code"] == "path_protected"
+        assert err["reason"] == "system_root"
+        assert err["path"] == refused
+        assert refused in err["message"]
+        assert "protected system location" in err["message"]
+
+    @pytest.mark.asyncio
+    async def test_a_refused_default_location_names_the_home_it_tried(self, mock_sel, monkeypatch):
+        # The failure the picker hit: no `path` at all, so the client cannot know what was refused
+        # unless the answer says. A home inside a system tree is refused for any account.
+        monkeypatch.setenv("HOME", "/usr/share")
+        async with TestClient(TestServer(_make_app())) as client:
+            resp = await client.get("/api/browse-dirs")
+            err = (await resp.json())["error"]
+        home = os.path.realpath("/usr/share")
+        assert resp.status == 403
+        assert err["path"] == home
+        assert home in err["message"]
+
+    @pytest.mark.asyncio
+    async def test_a_credentials_folder_is_refused_for_its_own_reason(
+        self, tmp_path, mock_sel, monkeypatch
+    ):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        (tmp_path / ".ssh").mkdir()
+        async with TestClient(TestServer(_make_app())) as client:
+            resp = await client.get(f"/api/browse-dirs?path={tmp_path}/.ssh")
+            err = (await resp.json())["error"]
+        assert resp.status == 403
+        assert err["reason"] == "sensitive_path"
+        assert "credentials" in err["message"]
+        # The audit record is unchanged: same operation, same reason string as before.
+        mock_sel.log_api_access.assert_called_with(
+            caller="dashboard",
+            operation="browse_dirs",
+            outcome="denied",
+            resources=os.path.realpath(tmp_path / ".ssh"),
+            error="sensitive path",
+        )
+
+
+class TestCreateDirNeverAtFilesystemRoot:
+    """``create-dir`` refuses a parent ``browse-dirs`` would refuse — today, that means the root.
+
+    The handler's own comment assumed "the picker always creates inside a dir it just navigated
+    to". It did not: with its first browse refused, the picker built ``'' + '/' + 'q4-launch'``
+    and this route answered 200 for ``/q4-launch`` — a new root-owned folder at the top of the
+    disk, then bound as the project's workspace. The assumption is now a rule the server enforces.
+    """
+
+    @pytest.mark.asyncio
+    async def test_never_creates_a_folder_directly_under_the_filesystem_root(
+        self, mock_sel, monkeypatch
+    ):
+        # A spy, not a real mkdir: a gateway (or a CI runner) that runs as root would otherwise
+        # really create the folder the test is about.
+        made: list[str] = []
+        monkeypatch.setattr(os, "mkdir", lambda p, *a, **k: made.append(p))
+        target = f"/pclaw-root-probe-{uuid.uuid4().hex[:8]}"
+        async with TestClient(TestServer(_make_app())) as client:
+            resp = await client.post("/api/create-dir", json={"path": target})
+            body = await resp.json()
+        assert resp.status == 403
+        assert made == []
+        err = body["error"]
+        assert err["code"] == "path_protected"
+        assert err["path"] == "/"
+        assert "/" in err["message"]
+        mock_sel.log_api_access.assert_called_with(
+            caller="dashboard",
+            operation="create_dir",
+            outcome="denied",
+            resources=target,
+            error="unbrowsable parent (system root)",
+        )
+
+    @pytest.mark.asyncio
+    async def test_still_creates_inside_a_folder_the_picker_can_open(self, tmp_path, mock_sel):
+        # Positive control: the rule is "only where you can browse", not "never".
+        async with TestClient(TestServer(_make_app())) as client:
+            browsed = await client.get(f"/api/browse-dirs?path={tmp_path}")
+            assert browsed.status == 200
+            resp = await client.post("/api/create-dir", json={"path": f"{tmp_path}/q4-launch"})
+        assert resp.status == 200
+        assert (tmp_path / "q4-launch").is_dir()

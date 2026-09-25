@@ -1982,7 +1982,20 @@ _TIMELINE_KINDS = (
     "decision",
     "steering",
     "breaker_trip",
+    # `iteration` is FILTERED, not simply allowlisted — see `_TRIPPED_ITERATION` below. A loop's
+    # per-round bookkeeping is the noise this whitelist exists to keep out (an `until_cancelled`
+    # watcher writes one row per cycle for months), but the subset that records a TRIPPED BREAKER is
+    # the opposite: measured on a `general-project` run, `breaker:identical_output` was journaled
+    # twice and reachable from no user surface at all (#3524). `breaker_trip` above is a kind only
+    # the LOOP noun writes (`introspection.RAIL_PRODUCERS` declares the asymmetry), so the run-side
+    # trip has no other row to travel on.
+    "iteration",
 )
+
+#: The prefix `controller._advance_loop` writes into an `iteration` row's `outcome` when
+#: `check_breaker` tripped. Everything else it writes (`continue`, `dry_streak`, `condition_met`, …)
+#: is bookkeeping a reader does not need one row per round of.
+_TRIPPED_ITERATION = "breaker:"
 
 
 def introspection_timeline(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -2000,7 +2013,11 @@ def introspection_timeline(events: list[dict[str, Any]]) -> list[dict[str, Any]]
     for event in events or []:
         if not isinstance(event, dict):
             continue
-        if str(event.get("kind") or "") not in _TIMELINE_KINDS:
+        kind = str(event.get("kind") or "")
+        if kind not in _TIMELINE_KINDS:
+            continue
+        outcome = str(event.get("outcome") or "")
+        if kind == "iteration" and not outcome.startswith(_TRIPPED_ITERATION):
             continue
         row = {
             "kind": str(event.get("kind") or ""),
@@ -2014,7 +2031,10 @@ def introspection_timeline(events: list[dict[str, Any]]) -> list[dict[str, Any]]
             "cost_usd": event.get("cost_usd"),
             "model": str(event.get("model") or ""),
             "approved": event.get("approved"),
-            "detail": event.get("detail") or event.get("error") or "",
+            # `outcome` joins the chain for the `iteration` rows above: it is the only field that
+            # names WHICH breaker tripped, and a row reading just `iteration` with a blank detail
+            # would surface the event while still hiding the signal.
+            "detail": event.get("detail") or event.get("error") or outcome,
         }
         out.append(journal_mod.redact(row))
     return out
@@ -2575,6 +2595,12 @@ def _nodes_of(run_id: str) -> list[dict[str, Any]]:
             "degraded_reason": inst.degraded_reason,
             "failure": inst.failure.to_dict() if inst.failure else None,
         }
+        # What this node's declared `schema` asked for and did not get (#3545), so the run view can
+        # say it on the row that produced it. Omitted rather than sent as "" for the same reason
+        # `cached` is: absence already means "there was nothing to report", and an empty string on
+        # every row of a normal run is twenty fields carrying no information.
+        if inst.schema_shortfall:
+            row["schema_shortfall"] = inst.schema_shortfall
         # Cache-origin (WF2-A1), so "did my edit actually re-run anything?" is answerable from
         # the run's own node list rather than by opening a per-node drawer on each row in turn.
         #

@@ -39,6 +39,8 @@ import {
   type GuardedResult, type GuardedInstall,
 } from '../../lib/useGuardedInstall'
 import { catalogApps } from '../../lib/appCatalog'
+import { readableErrText } from '../../lib/errText'
+import { reportingWrite } from '../../app/reportingWrite'
 import { provenance, registryListing } from '../../lib/provenance'
 import { dayStamp } from '../../lib/epoch'
 import { AppIcon } from './appIcon'
@@ -49,7 +51,7 @@ import { AppConfigFields, useAppConfig } from './appConfigForm'
 import { isInNav, setInNav } from './navApps'
 import { PageTitle } from '../../ui/PageTitle'
 // The install-consent surface is shared with the first-run essential-apps step.
-import { ScanReport, ConsentModal, PermissionList, CronConsentList, consentPermissions, consentHostUi } from './installConsent'
+import { ScanReport, ConsentModal, PermissionList, CronConsentList, consentPermissions, consentHostUi, consentPythonDeps } from './installConsent'
 import { BUSY_REASON } from '../../ui/unavailable'
 
 /** An install held at the consent gate. `entry` is the catalog row the install came
@@ -214,9 +216,17 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
       case 'uninstall': setRemoveFor(app.name); return
       case 'force-uninstall': setUninstallFor(app.name); return
       case 'toggle': {
+        // The CARD/menu twin of `AppDetailPanel.toggle()` below, and it had the same defect in a
+        // different syntactic dress: `p.then(reload).finally(clear)` attaches no rejection handler
+        // at all, so a refused activate/deactivate was an unhandled rejection — the row stopped
+        // spinning with its old label and nothing said why. Reported and gated, same sentence, so
+        // the two routes to one action cannot answer differently.
         setBusyName(app.name)
-        const p = app.enabled ? api.disableApp(app.name) : api.enableApp(app.name)
-        p.then(() => reload()).finally(() => setBusyName(null))
+        const verb = app.enabled ? 'deactivate' : 'activate'
+        const run = () => (app.enabled ? api.disableApp(app.name) : api.enableApp(app.name))
+        void reportingWrite(`${verb} ${app.name}`, run)
+          .then((ok) => { if (ok) reload() })
+          .finally(() => setBusyName(null))
         return
       }
     }
@@ -918,6 +928,7 @@ export function StoreView({ catalog, catalogError, result, totalKnown, installed
           busy={guarded.busy}
           permissions={consentPermissions(pending.entry)}
           hostUi={consentHostUi(pending.entry)}
+          pythonDeps={consentPythonDeps(pending.entry)}
           crons={pending.entry?.crons}
           onConfirm={confirmPending}
           onClose={() => { setPending(null); guarded.reset() }}
@@ -1106,6 +1117,7 @@ export function SourcesPanel({ catalog, catalogError, reloadCatalog, onInstalled
           busy={guarded.busy}
           permissions={consentPermissions(pending.entry)}
           hostUi={consentHostUi(pending.entry)}
+          pythonDeps={consentPythonDeps(pending.entry)}
           crons={pending.entry?.crons}
           onConfirm={confirmPending}
           onClose={() => { setPending(null); guarded.reset() }}
@@ -1142,12 +1154,18 @@ export function SourcesPanel({ catalog, catalogError, reloadCatalog, onInstalled
                     badge and two controls beside it a long URL renders as "htt…", and naming
                     the source at fault is the entire point of the badge (issue 408). */}
                 <span title={url} className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{url}</span>
+                {/* `no-git` may NOT promise the automatic retry: a git source is read by
+                    shelling out to git, so with no git on PATH every retry fails the same
+                    way forever. Naming the missing dependency is the only thing that gets
+                    the user out of it. */}
                 {unavailable && (
                   <span data-testid="store-source-unavailable" title={unavailable === 'budget'
                     ? 'Skipped — the catalog scan ran out of time before reaching this source.'
-                    : 'Could not be reached on the last listing read. It will be retried automatically.'}
+                    : unavailable === 'no-git'
+                      ? 'Needs git, which is not installed on this machine. Install git to read this source.'
+                      : 'Could not be reached on the last listing read. It will be retried automatically.'}
                     className="shrink-0 rounded-pill bg-surface-highest px-2 py-0.5 text-warn text-[0.75rem]">
-                    {unavailable === 'budget' ? 'Skipped' : 'Unavailable'}
+                    {unavailable === 'budget' ? 'Skipped' : unavailable === 'no-git' ? 'Needs git' : 'Unavailable'}
                   </span>
                 )}
                 {isDefault && (
@@ -1609,8 +1627,18 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
 
   async function toggle() {
     setBusy(true)
-    try { app.enabled ? await api.disableApp(app.name) : await api.enableApp(app.name); onChanged() }
-    finally { setBusy(false) }
+    try {
+      // Reported, and the repaint GATED on the answer. This was a bare `try { … } finally { … }`
+      // with no catch: a refused activate/deactivate rejected unhandled, the spinner stopped, the
+      // Activate/Deactivate button kept its old label and nothing named the reason — which is
+      // exactly what a successful no-op would look like. Toast rather than an inline slot because
+      // this is a button ROW with nowhere to put a sentence (the two dialogs below report inline,
+      // where they do have somewhere); the same split `dashboard/PinnedTiles` already draws.
+      const verb = app.enabled ? 'deactivate' : 'activate'
+      const run = () => (app.enabled ? api.disableApp(app.name) : api.enableApp(app.name))
+      if (!(await reportingWrite(`${verb} ${app.name}`, run))) return
+      onChanged()
+    } finally { setBusy(false) }
   }
 
   const toggleNav = () => { const next = !inNav; setInNav(app.name, next); setInNavState(next) }
@@ -1821,7 +1849,8 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
           silence), while a registry pointer — whose manifest isn't fetched until install —
           says the permissions aren't known YET rather than pretending they're none. */}
       {item.consentKnown ? (
-        <PermissionList perms={item.permissions ?? {}} hostUi={consentHostUi(item)} />
+        <PermissionList perms={item.permissions ?? {}} hostUi={consentHostUi(item)}
+          pythonDeps={consentPythonDeps(item)} />
       ) : (
         <div data-type="body-s" className="text-on-surface-low">
           Permissions: not known yet — this is a registry listing, and its manifest is
@@ -1845,7 +1874,8 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
 
       {consent && guarded.blocked && (
         <ConsentModal label={item.displayName} result={guarded.blocked} busy={guarded.busy}
-          permissions={consentPermissions(item)} hostUi={consentHostUi(item)} crons={item.crons}
+          permissions={consentPermissions(item)} hostUi={consentHostUi(item)}
+          pythonDeps={consentPythonDeps(item)} crons={item.crons}
           onConfirm={async () => { const r = await guarded.confirmInstall(); if (r?.ok) { setConsent(null); onInstalled() } }}
           onClose={() => { setConsent(null); guarded.reset() }} />
       )}
@@ -1925,9 +1955,10 @@ function KeptDepsList({ kept }: { kept: AppDepClassification[] }) {
  *  because "we kept your 4 notes" and "this app had nothing stored" and "it had a
  *  data folder and it was empty" are three different promises, and a dialog that
  *  makes the same one in all three cases is wrong in two of them. */
-function RemoveAppModal({ name, onClose, onDone }: { name: string; onClose: () => void; onDone: () => void }) {
+export function RemoveAppModal({ name, onClose, onDone }: { name: string; onClose: () => void; onDone: () => void }) {
   const { data } = useQuery(`app-uninstall:${name}`, () => api.appUninstallPreview(name), { persist: false })
   const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
   const kept = (data?.dependencies ?? []).filter((d) => d.disposition !== 'removable')
   const facts = data?.data
   // Issue 2585. An earlier copy of this app's data/ still on disk makes the backend REFUSE
@@ -1942,7 +1973,18 @@ function RemoveAppModal({ name, onClose, onDone }: { name: string; onClose: () =
 
   async function remove() {
     setBusy(true)
+    setErr('')
+    // 🔑 REPORTED INSIDE THE DIALOG, and the dialog deliberately STAYS OPEN. This was a bare
+    // `try { … } finally { setBusy(false) }`: a refused uninstall rejected unhandled, so the
+    // spinner stopped, the dialog sat there, `onDone()` never ran and nothing said why — the
+    // #3540 symptom on the uninstall path. And the refusal it hides is one this very dialog
+    // documents above: the backend fails CLOSED on an earlier data/ copy and renders that as
+    // `404 app not installed`, which a user can only act on if they are shown it.
+    // Not a toast: the eye is on the dialog, and `refusedWriteVisible`'s ruling is that a
+    // surface with a place to put the sentence puts it there. Not closing either — closing is
+    // this dialog's success signal, and the app is still installed.
     try { await api.removeApp(name); onDone() }
+    catch (e) { setErr(readableErrText(e) || 'That uninstall did not go through, and the app is still installed.') }
     finally { setBusy(false) }
   }
 
@@ -1987,6 +2029,7 @@ function RemoveAppModal({ name, onClose, onDone }: { name: string; onClose: () =
           </div>
         </div>
         <KeptDepsList kept={kept} />
+        {err && <FieldError>{err}</FieldError>}
         <div className="flex justify-end gap-2">
           {/* Cancel first in tab order — the safe option gets the focus, not the one
               that removes things.
@@ -2016,16 +2059,22 @@ function RemoveAppModal({ name, onClose, onDone }: { name: string; onClose: () =
   )
 }
 
-function UninstallModal({ name, onClose, onDone }: { name: string; onClose: () => void; onDone: () => void }) {
+export function UninstallModal({ name, onClose, onDone }: { name: string; onClose: () => void; onDone: () => void }) {
   const { data } = useQuery(`app-uninstall:${name}`, () => api.appUninstallPreview(name), { persist: false })
   const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
   const deps: AppDepClassification[] = data?.dependencies ?? []
   const kept = deps.filter((d) => d.disposition !== 'removable')
   const facts = data?.data
 
   async function forceUninstall() {
     setBusy(true)
+    setErr('')
+    // Same fix and same reasoning as `RemoveAppModal.remove()` above — and it matters more here,
+    // because this dialog's own copy promises "it cannot be undone": a silent failure leaves the
+    // user unable to tell a deletion that happened from one that did not.
     try { await api.uninstallApp(name, true); onDone() }  // force=true → delete files
+    catch (e) { setErr(readableErrText(e) || 'That force uninstall did not go through, and nothing was deleted.') }
     finally { setBusy(false) }
   }
 
@@ -2047,6 +2096,7 @@ function UninstallModal({ name, onClose, onDone }: { name: string; onClose: () =
           {kept.length > 0 && ' Shared dependencies still used by other apps will be kept.'}
         </div>
         <KeptDepsList kept={kept} />
+        {err && <FieldError>{err}</FieldError>}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button variant="danger" loading={busy} onClick={forceUninstall}><Trash2 size={16} /> Force uninstall

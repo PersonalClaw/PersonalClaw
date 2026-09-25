@@ -631,3 +631,68 @@ def test_the_session_context_char_cap_reports_its_drop(builder, monkeypatch):
     assert notices, "an assembly-time drop the user never hears about is a silent drop"
     assert "dropped" in notices[0]
     assert "200" in notices[0]
+
+
+# ── The bundled-floor regression: a refusal must be actionable on a FIRST turn ──────
+
+
+def test_a_refusal_names_the_bound_model_not_just_the_number():
+    """ "naming the model and the limit": a number alone is not a decision a user can make.
+
+    The window carries the ref it describes so the refusal can say WHICH model to change.
+    """
+    win = Window(
+        tokens=2_048,
+        output_reserve_tokens=1_024,
+        input_tokens=1_024,
+        source="catalog",
+        ref="bundled-chat:SmolLM2-135M-Instruct-Q8_0",
+    )
+    verdict = check(
+        [Component(name="system prompt", text="S" * 8_000, compressible=False)], window=win
+    )
+    assert verdict.state is HeadroomState.CANNOT_FIT
+    assert "bundled-chat:SmolLM2-135M-Instruct-Q8_0" in verdict.reason
+    assert "bundled-chat:SmolLM2-135M-Instruct-Q8_0" in verdict.fix
+    # An unbound model is named honestly rather than as a fabricated id.
+    assert Window(tokens=1, output_reserve_tokens=0, input_tokens=1, source="catalog").label == (
+        "the bound chat model"
+    )
+
+
+def test_a_first_turn_refusal_does_not_prescribe_compact_as_the_remedy():
+    """The measured defect: a 2,048-token model refused the FIRST message of a new chat
+    while being told to "run /compact to summarize the history" of a conversation that had
+    not happened yet — so the one remedy it named was the one that could not work.
+
+    The text must state what the turn NEEDS beside what the model OFFERS, and may not
+    assert that a history exists.
+    """
+    win = Window(
+        tokens=2_048,
+        output_reserve_tokens=1_024,
+        input_tokens=1_024,
+        source="catalog",
+        ref="bundled-chat:SmolLM2-135M-Instruct-Q8_0",
+    )
+    verdict = check(
+        [
+            # 6,560 chars ≈ 1,640 tokens — the measured assembled size of a real first turn
+            # on a fresh home once the window-scaled budgets are applied. Paired here with a
+            # deliberately tighter 1,024-token room so the refusal branch is exercised; the
+            # shipped bundled floor leaves 1,728 and now fits.
+            Component(name="system prompt", text="S" * 6_560, compressible=False),
+            Component(name="the user's request", text="hello", compressible=False),
+        ],
+        window=win,
+    )
+    assert verdict.state is HeadroomState.CANNOT_FIT
+    fix = verdict.fix
+    # It no longer ASSERTS a history to summarize; /compact is conditional if named at all.
+    assert "run /compact to summarize the history" not in fix
+    if "/compact" in fix:
+        assert "only if" in fix
+    # Both sides of the arithmetic are present, so "bind something bigger" is decidable.
+    assert f"{verdict.assembled_tokens:,}" in fix
+    assert "1,024" in fix
+    assert "2,048" in fix

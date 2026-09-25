@@ -57,6 +57,7 @@ import { Markdown } from '../ui/Markdown'
 import { useWidgetActionBridge, takePendingWidgetAction } from '../ui/widget/useWidgetActionBridge'
 import { InlineError } from '../ui/InlineError'
 import { NoModelSetupState, isNoModelSetupError, MODELS_PATH } from './chat/NoModelSetupState'
+import { BundledFloorNotice } from './chat/BundledFloorNotice'
 import { ToolCard } from './chat/ToolCard'
 import { onToolResultFull } from './chat/toolResultBridge'
 import { SdlcProgressCard, sdlcRefFromTool } from './chat/SdlcProgressCard'
@@ -105,6 +106,7 @@ import { useAppearance } from '../app/appearance'
 import { TOKENS } from '../design/tokenRegistry'
 import { applyCoalescedFlush, insertActivity, TextRunOwnership } from './chat/coalesceReducers'
 import { StreamFinalizationFence } from './chat/streamFinalizationFence'
+import { resolveStalledStream } from './chat/streamStall'
 import { useQuery, invalidateKeys, peekQuery, writeQuery } from '../lib/data'
 import { sessionRecencyMs, sessionActivitySeconds, epochSeconds } from '../lib/epoch'
 import { sessionTitle } from '../lib/sessionTitle'
@@ -674,10 +676,42 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // what send() actually branches on, so a `false` here would reopen the window a layer
   // below the button's label.
   const streamingRef = useRef(streaming)
+  // How many times a turn has been declared OVER on this instance. It settles ONE
+  // ordering: the `[sessionId]` load effect below issues `chatSessionDetail` the instant
+  // a send creates the session — while the turn is still running — so that snapshot
+  // honestly reports `running: true`. A turn that fails FAST (a context refusal, a 401,
+  // a rate limit: measured at ~1.4 s against the bundled model) terminates before the
+  // response lands, and re-arming streaming from it put the composer back on Stop the
+  // moment the turn had ended. Capturing this counter at ISSUE time and comparing it at
+  // RESOLVE time makes the stale response unable to win — no delay, no reordering, no
+  // "has it been N ms" guess. It is simply not allowed to describe a turn that has since
+  // ended.
+  //
+  // With the #3444 handoff above, the composer's full measured sequence on a fast-failing
+  // first turn was Stop (correct — the run was live) → Send (correct — `chat_done`) → Stop
+  // FOREVER, that third step being this snapshot landing late. Only the third is wrong,
+  // and only this guard removes it.
+  //
+  // 🔑 DISTINCT FROM `resolveStalledStream`, AND UPSTREAM OF IT. That reconciler is the
+  // safety net: it heals a false streaming claim from the server, whatever produced it,
+  // after the silent window has elapsed. This prevents one specific claim from being made
+  // at all — which matters because during that window the composer offers Stop/Steer, and
+  // a message sent into it takes the mid-stream path. Measured against a tree carrying only
+  // the reconciler: right after the terminal event the composer read **Stop**, the live
+  // region read *"Assistant is responding…"*, and a message sent there went out with
+  // `queue_mode: 'steer'` and rendered nowhere.
+  //
+  // 🪤 Counted UNCONDITIONALLY, not only on a `true → false` transition — because the
+  // terminal event is often not one. `streamingAtMount` hands off a live run only when
+  // ChatPage has one to hand off; every other way to arrive at a running session (a
+  // reload, a deep link, opening it from history) mounts with `streamingRef` already
+  // `false`, and there the frame that ends the turn changes nothing to key off.
+  const turnsEndedRef = useRef(0)
   // Bumped when a turn settles (streaming → false) so the session-skills review
   // (skill-ephemeral-promotion) re-checks for drafts the agent just captured.
   const [sessionSkillsEpoch, setSessionSkillsEpoch] = useState(0)
   const markStreaming = (v: boolean) => {
+    if (!v) turnsEndedRef.current += 1
     if (streamingRef.current && !v) {
       setSessionSkillsEpoch((n) => n + 1)
       // The turn-settled cue point. This branch is the ONE
@@ -1062,6 +1096,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     setBranchedFrom(null)  // lineage is per-session; the load below re-reads it
     if (!sessionId) { setTurns([]); setLoadingHistory(false); return }
     let alive = true
+    // The terminal-event watermark as this read is ISSUED; compared again when it
+    // resolves, so a snapshot taken before the turn ended cannot re-arm streaming
+    // after it (see turnsEndedRef).
+    const endedAtIssue = turnsEndedRef.current
     // Only skeleton if we have nothing seeded from cache; a cache hit already
     // painted the transcript and we revalidate silently underneath it.
     if (!seededDetail) setLoadingHistory(true)
@@ -1072,7 +1110,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       writeCachedDetail(sessionId, d)
       // hydrate the FULL segment model (text + tool + approval) so a refreshed /
       // revisited session renders identically to a live one.
-      const hydrated = hydrateTurns(d.messages || [], d.running)
+      // Is this snapshot still describing a LIVE turn? A read ISSUED before a terminal
+      // event cannot answer that, however honest it was when taken (see turnsEndedRef).
+      // Decided once, because two things downstream read it: the arm below, and
+      // `hydrateTurns`, whose `running` leaves the last tool card spinning.
+      const stillRunning = !!d.running && turnsEndedRef.current === endedAtIssue
+      const hydrated = hydrateTurns(d.messages || [], stillRunning)
       // BUT: this effect also fires right after a NEW chat's first send navigates
       // `new → chat/{key}` (sessionId change → REMOUNT). At that instant the just-sent
       // user turn was painted from the instant-paint seed and the assistant reply is
@@ -1168,7 +1211,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       }
       // resuming a still-running turn: show the live indicators and make the first
       // incoming chunk start a fresh text run (don't concat onto hydrated text).
-      if (d.running) {
+      // `stillRunning`, not `d.running`, is what keeps a FAST failure out of this branch:
+      // a turn that ended while this read was in flight is over, whatever it says.
+      if (stillRunning) {
         markStreaming(true)
         // A persisted assistant message can become visible while the backend still
         // reports the turn as running, before its terminal WS status reaches this
@@ -1582,16 +1627,21 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   }, [])
   useChatSocket(onWs, resyncOnReconnect, setWsConnected)
 
-  // Idle approval-reconciler. A turn that parks on an approval sends no `chat_done`
-  // and goes silent; if the `approval` WS frame was lost/early (arrived before the
-  // socket delivered it, with no reconnect to trigger resyncOnReconnect), the card
-  // never appears and the turn looks stuck until a manual reload. So while
-  // streaming, if the WS has been quiet for a beat, reconcile from session detail:
-  // when it reports pending_approval but the transcript shows no unresolved
-  // approval segment, re-hydrate (which surfaces the persisted permission card).
-  // Self-healing + cheap (fires only during a silent-while-streaming window).
+  // Idle stream-reconciler. A streaming claim can outlive the turn it describes in two
+  // ways, and BOTH are silent — no `chat_done`, no error, and nothing on screen that says
+  // the page has stopped tracking the run. So while streaming, once the WS has been quiet
+  // for a beat, read session detail and let the server settle it. `resolveStalledStream`
+  // owns the two readings and the reasoning for each (a turn parked on an approval whose
+  // card never arrived; a turn that FINISHED while nothing was listening), and lives beside
+  // this file because nothing in `web/` can mount it — the rule is assertable, the render is
+  // not. Self-healing + cheap: fires only inside a silent-while-streaming window, and tears
+  // itself down the moment the claim is corrected.
   useEffect(() => {
     if (!streaming) return
+    // Restarts on every transcript change (the `turns` dep), so a turn that is still
+    // painting can never satisfy the settled grace. That is what keeps a send whose dispatch
+    // has not landed yet out of it — see STREAM_SETTLED_GRACE_MS.
+    const transcriptChangedAt = Date.now()
     const iv = window.setInterval(() => {
       const s = sessionRef.current
       if (!s) return
@@ -1600,9 +1650,27 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       if (showingApproval) return  // card already up
       api.chatSessionDetail(s).then((d) => {
         if (sessionRef.current !== s) return
-        if (!d.pending_approval) return  // genuinely just quiet (e.g. long model think) — leave it
-        // Server is parked on an approval the client isn't showing → recover it.
-        setTurns(hydrateTurns(d.messages || [], d.running))
+        const stall = resolveStalledStream({
+          serverRunning: !!d.running,
+          serverPendingApproval: !!d.pending_approval,
+          msSinceTranscriptChange: Date.now() - transcriptChangedAt,
+        })
+        if (stall === 'wait') return  // genuinely just quiet (e.g. long model think) — leave it
+        // The server's transcript is authoritative for both readings, so hydrate from it
+        // first and act second. `settled` is by definition `!d.running`, so the one flag
+        // serves both branches.
+        setTurns(hydrateTurns(d.messages || [], !!d.running))
+        if (stall === 'settled') {
+          // The server holds no task for this session, so nothing is in flight and the
+          // composer's Stop button and the suppressed assistant action row are both lying.
+          // `dropTextRun` rather than `endTextRun`: the transcript tail has just been
+          // replaced from history, so landing a buffered tail would write the old answer
+          // into it — the boundary that comment calls the CLIENT's to make.
+          dropTextRun()
+          markStreaming(false); setStatusText(''); setLatestActivity(null)
+          return
+        }
+        // Server is parked on an approval the client isn't showing → recovered above.
         lastWsActivityRef.current = Date.now()  // don't re-fire every tick
       }).catch(() => {})
     }, 2000)
@@ -1947,12 +2015,40 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // (11 other uses), and it is what `DesignCockpitPage.sendNudge` does for the
     // same shape — a rule `loops/loopActionReported.test.ts` states in prose as
     // "the nudge KEEPS its text on failure".
+    //
+    // 🔴 AND THERE IS A FOURTH OUTCOME — THE SERVER RAN IT AS A FRESH TURN. The two
+    // success shapes above are the only ones this branch used to render, and the server
+    // gates on ITS OWN `session.running`, not on our `queue_mode`: when the turn is
+    // already over it ignores the steer, persists the message and dispatches a NORMAL
+    // turn, answering `{ok, session}` with neither `steered` nor `queued`. On that path
+    // the backend also suppresses its own user echo, on the standing contract that the
+    // FE adds the bubble optimistically — which this branch does not. So a message sent
+    // on a stale belief that a turn was running was accepted, persisted and RUNNING,
+    // with nothing on screen anywhere: the composer cleared and the text was gone
+    // (measured: `queue: []`, a persisted `user` row, no bubble, no reply). The server
+    // needs no change — it already refuses to queue into a session that is not running.
+    // The client has to believe what it answered.
+    //
+    // 🔑 This is the floor UNDER the streaming-claim fixes, not a duplicate of them.
+    // `turnsEndedRef` stops one stale claim being made and `resolveStalledStream` heals a
+    // claim that outlived its turn — but both are corrections to a belief, and any
+    // remaining way for `streamingRef` to be stale re-opens this branch. Nothing here
+    // should lose a message even when the belief IS wrong.
     if (isStreaming) {
+      // Stamped for the same reason the normal send path stamps one: the server stores
+      // the ts we send, and Edit & resend locates a message by it.
+      const steerTs = new Date().toISOString()
       ensureSession()
-        .then((s) => api.sendChat(t, s, undefined, 'steer'))
+        .then((s) => api.sendChat(t, s, { client_ts: steerTs }, 'steer'))
         .then((r) => {
           setInput((cur) => (cur === t ? '' : cur))
-          if (r?.steered) setSteered((prev) => [...prev, t])
+          if (r?.steered) { setSteered((prev) => [...prev, t]); return }
+          if (r?.queued) return  // the paired queue_push frame renders the strip card
+          // Dispatched as a fresh turn. Render exactly what the normal send path would:
+          // the user's bubble, then arm streaming so its reply has somewhere to land.
+          setTurns((prev) => [...prev, userTurn(t, steerTs)])
+          markStreaming(true)
+          dropTextRun()
         })
         .catch(reportActionFailure('steer this turn'))
       return
@@ -3056,6 +3152,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           <ChatPlanGate session={sessionRef.current} refreshKey={turns.length}
             onTaskMode={(m) => setSelection((sel) => ({ ...sel, taskMode: m }))} />
         )}
+        {/* The honest label on the bundled zero-config floor model, immediately above
+            the composer so it is read where the answers arrive. Mounted unconditionally and
+            renders nothing unless chat really is resolving to a floor provider — which is
+            false on every home that has bound anything. */}
+        <BundledFloorNotice />
         <ComposerStage ref={composerRef} value={input} onChange={(v) => { setInput(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length && v.trim().length >= 3) setFollowups([]) }} onSend={() => send()}
           streaming={streaming} onStop={stop} controls={CHAT_CONTROLS} data={data}
           selection={selection} onSelect={applySelection} onAttach={attach} onFocusChange={setComposerFocused}

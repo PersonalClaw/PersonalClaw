@@ -53,8 +53,12 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
    *    callers are unaffected — the liquid layoutId indicator is untouched).
    *  - 'scroll': keep the strip, let it scroll horizontally on overflow.
    *  - 'menu': below the fit threshold, collapse to a single pill showing the
-   *    active option that opens the full list in a Popover. */
-  collapse?: 'scroll' | 'menu'
+   *    active option that opens the full list in a Popover.
+   *  - 'wrap': the options wrap onto further rows inside the container, so every
+   *    one stays visible — for a FORM field in a narrow panel, where the value is
+   *    chosen once and hiding options behind a scroll or a menu costs a reader the
+   *    alternatives. Still one radiogroup, same arrow-key order. */
+  collapse?: 'scroll' | 'menu' | 'wrap'
 }) {
   const sm = size === 'sm'
   const reduce = useReducedMotion()
@@ -146,11 +150,18 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
   // edge. Overflow is the job of `collapse` ('scroll' / 'menu'), not of silently crushing every
   // target: a strip that cannot fit should scroll or fold, and an option 15px wide is neither
   // legible nor tappable.
+  // `wrap` keeps `inline-flex` (the track still shrinks to its options when they fit, so an
+  // unwrapped strip is unchanged) and caps it at the container, which is what makes the options
+  // wrap. The track's radius is HALF ONE ROW's height (`lgi` = 20px of a 40px row, `lg` clamps to
+  // 14px of a 28px one) rather than `rounded-pill`: one row still reads as the pill, and two rows
+  // read as a rounded panel instead of a stadium whose curve cuts across the corner options.
+  const wrap = collapse === 'wrap'
+  const shape = wrap ? `flex-wrap max-w-full ${sm ? 'rounded-lg' : 'rounded-lgi'}` : 'rounded-pill'
   const strip = (
     <div role="radiogroup"
       aria-labelledby={claimsFieldLabel ? fieldLabelId : undefined}
       aria-label={claimsFieldLabel ? undefined : ariaLabel}
-      className={`inline-flex items-center gap-0.5 rounded-pill ${sm ? 'p-0.5 bg-surface-container/60' : 'p-1 bg-surface-container'} ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
+      className={`inline-flex items-center gap-0.5 ${shape} ${sm ? 'p-0.5 bg-surface-container/60' : 'p-1 bg-surface-container'} ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
       {options.map((o, idx) => {
         const on = o.key === value
         const Icon = o.icon
@@ -192,9 +203,10 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
     </div>
   )
 
-  // Default (no collapse): the bare strip, exactly as before — no wrapper, no
-  // measuring, so every existing consumer + the liquid indicator are untouched.
-  if (!collapse) return strip
+  // Default (no collapse) and 'wrap': the bare strip — no wrapper, no measuring, so every
+  // existing consumer + the liquid indicator are untouched. 'wrap' needs nothing measured: the
+  // browser's own line breaking is the fit decision.
+  if (!collapse || wrap) return strip
 
   // collapse='scroll': keep the strip but let it scroll horizontally when it
   // exceeds the container instead of wrapping/squishing.

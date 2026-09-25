@@ -1,0 +1,95 @@
+{
+  "name": "bundled-chat",
+  "version": "0.1.0",
+  "displayName": "Bundled offline model",
+  "description": "The small Apache-2.0 chat model that ships with PersonalClaw so a fresh install can hold a conversation before any provider is bound. Runs on your machine with no account, no API key and no network. It is deliberately tiny, so it is only ever the floor: bind a real model in Settings → Models and this stops being used.",
+  "icon": "HardDriveDownload",
+  "author": "PersonalClaw",
+  "tags": [
+    "model",
+    "llm",
+    "local",
+    "offline",
+    "bundled"
+  ],
+  "provider": {
+    "type": "model",
+    "providerType": "bundled-chat",
+    "implementation": "provider:create_provider",
+    "multiInstance": false,
+    "capabilities": [
+      "chat"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "properties": {
+        "offer_as_fallback": {
+          "type": "boolean",
+          "default": true,
+          "x-meta": {
+            "label": "Answer when nothing else is bound",
+            "help": "On by default: with no provider configured, this model answers chat so a fresh install is not a dead end. Turn it off to go back to the calm “set up a model” state instead."
+          }
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 320,
+          "x-meta": {
+            "label": "Maximum reply length",
+            "help": "Tokens. This model runs on the CPU at roughly 5–50 tokens per second, so a long cap means a long wait."
+          }
+        },
+        "context_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 4096,
+          "x-meta": {
+            "label": "Prompt budget",
+            "help": "Tokens of conversation sent to the model. The weight can take 8192, but every token costs a full pass over the weights; the oldest turns are dropped first. Lowering this below 4096 speeds up replies and can start refusing longer questions.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0,
+          "x-meta": {
+            "label": "Temperature",
+            "help": "0 is greedy decoding, which is the most coherent setting at this model size. Above 0 samples with nucleus (top-p) selection.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "top_p": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0.95,
+          "x-meta": {
+            "label": "Top-p",
+            "help": "Nucleus sampling mass. Ignored when temperature is 0.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        },
+        "repeat_penalty": {
+          "type": "number",
+          "minimum": 0,
+          "default": 1.12,
+          "x-meta": {
+            "label": "Repetition penalty",
+            "help": "Small models loop without this. 1.0 disables it.",
+            "tags": [
+              "advanced"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "native": true
+}

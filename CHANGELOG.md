@@ -9,6 +9,76 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ## [Unreleased]
 
 ### Added
+
+- **A fresh install can hold a conversation without an account, an API key or a provider — after one download it tells you about first.**
+- **A workflow step whose output ignored its declared `schema` now says so on its own row.**
+
+### Fixed
+
+- **"Escalate on name mention" now escalates a notification that mentions *you*, not one that mentions the assistant.**
+- **Knowledge says what actually failed when no model is set up.**
+- **A refused task save now appears next to Save, and ticking the missing criterion in the same form fixes it.**
+- **The task panel's Status choices fit inside the panel.**
+- **A cancelled task no longer shows as done on a project's Work board.**
+- **An artifact saved from a project's workspace now appears on that project.**
+- **Your default project is now the same on every device.**
+- **A judged loop now works past its first iteration: a loop body is handed its previous iteration, a stage's output arrives in its declared shape, and each iteration takes its own execution claim.**
+- **An escalation no longer blames the iteration ceiling for iterations that never ran, and a tripped breaker is visible.**
+- **First-run setup's "All set" recap no longer calls the model-provider app your chat model after a reload.**
+- **The loop cockpit names the whole model, so `ollama:qwen2.5vl:7b` no longer reads `7b`.**
+- **A reload on first-run setup's "All set" recap no longer says `Chat model — set up later in Settings` for a model that is bound.**
+- **An assistant name with an accent, an apostrophe or a non-Latin script is saved as typed, and "Saved" no longer sits beside a name the server did not store.**
+- **The workspace picker could create your project folder at the root of the disk.**
+- **The Files page no longer goes blank the first time you open a file of a new type.**
+- **An empty folder in Files now shows how to fill it.**
+- **The README and the guides describe the small default model, and say plainly what it can't do.**
+
+### Security
+
+- **A gateway running as root can now use its own home directory as a workspace — and its credentials under it stay refused.**
+
+## [0.2.0] — 2026-09-23
+
+The first release since 0.1.3 (2026-07-30). The theme is **surfaces that tell you the
+truth**: controls that now do what their label says, numbers that admit when they were
+never measured rather than showing a confident `0`, and unattended work bounded by
+something you can read and audit.
+
+**Run `personalclaw snapshot` before upgrading.** This is a pre-1.0 clean break — state
+shapes changed with no automatic migration, several defaults flipped, and some routes now
+refuse input they used to accept. The breaking list below is not optional reading.
+
+### Highlights
+
+- **Updates track releases, not `main` — and the update you get is the one you chose.**
+- **Unattended work is read-only by default, and bounded by a ceiling you control.**
+- **An approval is a brief, not a name and four buttons.**
+- **Cost and context stop lying to you.**
+- **Your library is searchable by what is inside documents.**
+- **Scheduled automations fire when you meant.**
+- **Chat craft: Stop stops, and you can branch, plan and rewind.**
+- **A fresh install boots with a working chat provider.**
+- **Backups you can step through.**
+- **Secrets stay secret.**
+- **Apps are honest about what they can reach.**
+- **The dashboard stops showing an old number and quietly changing it.**
+- **Phone, devices and the desktop shell on Linux and macOS.**
+
+### ⚠️ Breaking changes — read before upgrading
+
+- **Updates.**
+- **Timed triggers change the hour they fire.**
+- **Existing automations now honour the action denylist**
+- **Hooks, cron scripts and app backends no longer inherit PersonalClaw's environment.**
+- **Python 3.14 is refused at install time**
+- **Config fields removed**
+- **`inbound` is renamed `external_access`**
+- **API breaks.**
+- **State shapes changed with no migration.**
+- **SDK breaks for app authors.**
+- **Chat's Activity → Index tab is gone**
+
+### Added
 - **A first-time contributor's three dead ends are closed: a compose service that runs a command the CLI does not have, a Discussions category that does not exist, and a dev setup that fails on the `python3` most machines have.**
 - **The `WF_*` workflow error codes now have a registry and a both-directions rail: `workflows/error_codes.py` (`WF_ERROR_CODES`), 162 codes with a meaning each.**
 - **"When PersonalClaw is not the right tool (yet)" gains an eleventh scenario: there is no spend cap on a fresh install, and the ceilings that exist never cover the chat window.**
@@ -45,6 +115,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - `personalclaw gateway --seed …` gains **`--seed-local-model`**, which binds a local Ollama provider into the seeded `$PERSONALCLAW_HOME` so a demo home can actually run a turn.
 - The dashboard gains a **Desktop live view** widget: the computer-use action feed straight off the audit log (every attempt, allowed or refused), an optional picture-in-picture mirror of the screenshots the model already read, and an optional cursor-motion overlay that draws where a click will land.
 - The desktop app now ships for **Linux x86-64**: every release attaches an AppImage and a `.deb`, built and smoke-tested by CI from the release tag.
+- The desktop app now ships for **macOS (Apple silicon)**: every release attaches `PersonalClaw-<version>-arm64.dmg`, built and smoke-tested by CI on a macOS runner from the release tag (the smoke executes the dmg's bundled backend, so a bundle that packages but cannot start fails the release).
+- **The macOS build is now deterministically ad-hoc signed, and that fact is verified rather than assumed**
 - Durable tmux-backed run workers gain their **spawn** half.
 - **An MCP server can now ask *you* a question mid-tool-call, through the approval card PersonalClaw already had**
 - The Learning page gains a **Lab vs field** panel: one row per subject (bundled template or registered action type) showing its pinned lab score beside its live field record — 👍/👎 rate, edit-before-approve rate, and approval/rejection/undo rates derived from the feedback and earned-autonomy ledgers, computed by query and stored nowhere new.
@@ -55,6 +127,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The app SDK now exports every type its own published surface names — 25 of them were unimportable, so apps had to derive or re-declare them.**
 - **The SDK surface is now closed under its published *functions* too, not only fields and methods — 22 more types an app could not name, and one collision resolved.**
 - **The published docs stop sending readers after internal plan identifiers they cannot resolve.**
+- **The Session Map rail is redesigned after Codex's, and LENGTH is now the channel that carries it.**
 - **The five Settings switches that relax a security or safety default now confirm before they take effect.**
 - **`workflow_start` now validates inputs against the same tree-derived parameter contract shown by `workflow_plan`.**
 - **Loop end-state labels now come from the structured `stop_reason`, not free-text `error_message` prose.**
@@ -77,11 +150,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The eval report can now tell "not recorded" from "recorded as zero/none"**
 
 ### Removed
+- **⚠️ Four Settings controls that wrote config keys nobody read are gone, and so are the keys: Ambient surfaces → **Surface layers** (`ambient.surfaces_max_layer`) and **Menu-bar companion** (`ambient.tray_enabled`), Watched sources → **Daily request budget per source** (`sources.daily_request_budget`), and Packs → **Connector catalog URL** (`packs.connector_catalog_url`).**
+- **⚠️ The app permission `memory: "app-scoped"` is gone; `memory` is now a boolean grant.**
 - **⚠️ Four remaining runtime-editable config paths that governed nothing are gone: `workflows.max_active_runs`, `knowledge.conflict_model_pass`, `knowledge.lint_every_n_persists`, and `learning.min_session_score`.**
 - **⚠️ Two earlier runtime-editable config fields that governed nothing are gone: `knowledge.idempotent_persist` and `workflows.max_concurrent_nodes`.**
 - **Chat's Activity → **Index** tab is gone; the Session Map is the session's index.**
 
 ### Fixed
+- **Settings → Search no longer shows a search binding whose provider app was uninstalled as the active provider — and no longer makes it unremovable.**
+- **A chat whose finishing frame went missing no longer strands: it now recovers the finished turn from the server instead of claiming "Assistant is responding…" forever.**
+- **A small-window chat model refused the FIRST message of a new chat, because the context assembler and the headroom contract disagreed about that model's window by 97.7x.**
+- **A context refusal no longer prescribes `/compact` to a chat with no history, and it names the model.**
+- **A chat turn that fails FAST no longer puts the composer on Stop at all, and the message you send next is no longer swallowed.**
+- **`personalclaw doctor` said `(Python Python 3.13.14)` on a pipx or system install — and the rail that forbids exactly that could not see the branch it happened in.**
 - **App installs that declare Python dependencies were refused on every clean install: `packaging` was never a declared dependency of core.**
 - **The install-consent dialog no longer freezes on "Install anyway" when a confirmed install fails for a reason the scanner never anticipated.**
 - **A failed workflow stage can be retried immediately, instead of being refused by its own no-double-execution claim for fifteen minutes.**
@@ -89,17 +170,25 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Every field in an app's Configure form now has an accessible name: 16 of 16 were unnamed.**
 - **The published tree no longer cites an internal authority a reader cannot resolve, and six user-facing claims that the code contradicts are now true.**
 - **Emptying a stored provider credential field now actually clears it, instead of silently surviving under the new-looking blank form.**
+- **The app install-consent dialog now says that installing an app `pip install`s into the interpreter your gateway is running out of, and names the packages.**
+- **A workflow run of `stage` nodes now reports what it spent, and its token cap can actually fire.**
+- **An app uninstall, a force uninstall, an activate/deactivate and a highlight delete now say when they fail, instead of stopping the spinner and leaving you to guess.**
 - **An empty code fence no longer paints the literal word `undefined` into a chat answer.**
 - **A `<widget>` shown inside a code fence is now shown, not run — and the fence keeps the line it was about.**
 - **A `javascript:` URL with a tab in its scheme no longer survives the HTML sanitizer, and a URL it cannot classify is now rejected instead of kept.**
 - **A room's member picker no longer says "Loading…" forever when the agent list cannot be read, and no longer tells a user with no agents that they are all already in the room.**
+- **The learning panel's "out of scope" day drew its pass count in a border token at 3.18:1, and the rail that should have caught it only looked at one file.**
 - **The default accent was under AA as chip text on every light surface — 3.52:1 on a page every user visits — so `--color-primary`'s light value is retuned across all 12 schemes.**
 - **The `neutral` status pill is readable: its text was drawn in a border token at 1.63:1, and the contrast rail that should have caught it measured four of the six tones.**
 - **The shell no longer corrects away the two routes it renders itself: `#/companion` — the PWA's own `start_url` — is reachable again, and every deep-link out of first-run setup lands where its button says.**
 - **A local-model download now shows real progress from the moment you start it, instead of freezing at `0 MiB` through completion.**
+- **Five surfaces now say a load failed instead of spinning forever or showing an empty picker, and the ratchet that guards the contract learned the third way it was being defeated.**
+- **Three Settings switches that governed nothing now govern what they promise: Ambient surfaces → **Composable home**, Ambient surfaces → **Generative UI**, and Agent defaults → **Propose fix branches**.**
 - **A handled tool failure now reaches the wire AND the audit log as a failure, so a refused destructive operation is no longer recorded as one that ran.**
 - **Doctor is clean on a fresh install: the last two "in NO snapshot" paths are now recorded as deliberately not state, with the reasoning beside them.**
 - **A misspelled permission in `app.json` is now refused at install by name, instead of vanishing silently from both the manifest and the consent screen.**
+- **Adding a model-provider instance now shows on screen that it landed, instead of leaving the section you acted in saying "No remote model providers yet."**
+- **`personalclaw doctor` no longer fails a fresh install over ffmpeg, and no longer tells a Linux user to run `brew`.**
 - **An unreadable spend ceiling no longer reads as an unlimited one, and the four unattended seams now refuse rather than spend against an unknown.**
 - **First run no longer tells you your name is saved before it has been saved.**
 - **The audit-outcome rail now sees the outcome words a subsystem names as CONSTANTS, and its raisable ceiling is replaced by a named ledger — so the better practice is no longer the one that evades the rail.**
@@ -116,8 +205,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A first chat no longer shows the assistant's finalized reply twice until reload.**
 - **A `config.json` that cannot be parsed no longer re-widens a deliberately narrowed security posture — it now fails CLOSED.**
 - **The composer no longer reports itself idle while the previous run is still live, so a message sent in that window is not silently absorbed.**
+- **First-run setup no longer tells you no model provider exists when it simply could not read its app sources — and it names a missing `git` instead of blaming the network.**
 - **A browse run that got stuck or was refused by the egress policy now explains itself in a sentence instead of printing a reason code.**
 - **First-run setup no longer tells you a chat model is ready when chat cannot use it, and when it cannot, it names the actual reason.**
+- **First-run setup is navigable: you can see where you are, go back without losing anything, refresh without starting over, and come back later without wiping your name.**
 - **A credential typed into a project name no longer reaches the download filename, and download filenames now carry non-ASCII names instead of dropping them.**
 - **`personalclaw config --help` no longer advertises a key the command refuses, and a rail now holds every key it advertises to that standard.**
 - **`personalclaw config set --file` no longer reports `✅` for a deletion it did not apply, and `config unset` gives removal a path at all.**
@@ -137,6 +228,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A failed model-catalog or file-roots read no longer renders as "you have none".**
 - **`LedgerRailsPanel` no longer renders a token FLOOR as a plain number on the same run page where `IntrospectPanel` discloses it.**
 - **A never-fired store trigger no longer reads `never run` in the list and ok-green "Firing on its own" one click later.**
+- **The context gauge is monotone, in range, and honest about a window nobody declared.**
 - **The macOS sandbox wrap no longer resolves its own enforcement binaries through the PATH of the child it is about to confine.**
 - **An unreadable `entity_settings/inbox.json` no longer ENABLES retention cleanup and deletes the items you told it to keep.**
 - **A workflow loop whose body is an agent step now runs more than one round.**

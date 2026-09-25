@@ -40,7 +40,7 @@ vi.mock('./identity', async (orig) => {
   const real = await orig<typeof import('./identity')>()
   return {
     ...real,
-    useIdentity: () => ({ name: 'Ada', username: 'ada', onboarded: true, loaded: true, setName: async () => {}, clearName: async () => {} }),
+    useIdentity: () => ({ name: 'Ada', username: 'ada', onboarded: true, loaded: true, setName: async () => {} }),
   }
 })
 

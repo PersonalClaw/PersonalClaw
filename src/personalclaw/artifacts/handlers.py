@@ -94,6 +94,31 @@ def _session_key(request: web.Request) -> str | None:
     return sk.split(":", 1)[-1] if ":" in sk else sk
 
 
+def _project_for_source_path(source_path: str) -> str:
+    """The project a file-backed save belongs to when the caller names none: the one active
+    project whose workspace or context directory holds the file, else ``""``.
+
+    Measured on a project with a bound workspace: saving ``launch-brief.md`` from that workspace
+    through Files → Save as artifact produced an artifact its own project page never listed. The
+    agent's ``artifact_save`` stamps the turn's bound project; the dashboard's three manual file
+    saves (Files, a chat's file panel, the Code cockpit) stamped nothing, because none of them
+    knows about projects. The server does, and the file's location says which project it is.
+
+    Fail-OPEN: an inference that cannot be made leaves the artifact unscoped, which is exactly
+    what every such save produced before — never a default project.
+    """
+    if not source_path:
+        return ""
+    try:
+        from personalclaw.tasks.hierarchy import HierarchyStore
+
+        project = HierarchyStore().project_for_path(source_path)
+    except Exception:  # noqa: BLE001 — fail-open to "unscoped", the pre-existing outcome
+        logger.warning("could not resolve a project for artifact source %s", source_path)
+        return ""
+    return project.id if project else ""
+
+
 def _audit(request: web.Request, operation: str, outcome: str, resources: str = "") -> None:
     try:
         sel().log_api_access(
@@ -205,6 +230,12 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
                 },
                 status=409,
             )
+    # A caller that names a project (even "", unscoped) is obeyed; one that names none gets the
+    # project whose directory holds the file it is saving.
+    if "project_id" in body:
+        project_id = str(body.get("project_id", "")).strip()
+    else:
+        project_id = _project_for_source_path(source_path)
     try:
         art = prov.create(
             name=name,
@@ -217,7 +248,7 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
             tags=body.get("tags"),
             actor="user",
             session_id=session_id,
-            project_id=str(body.get("project_id", "")).strip(),
+            project_id=project_id,
             collection=str(body.get("collection", "")).strip(),
         )
     except (ValueError, PermissionError) as e:

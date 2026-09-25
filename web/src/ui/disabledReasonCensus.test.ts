@@ -250,8 +250,10 @@ describe('the disabled-reason census', () => {
     expect(code('ui/widget/WidgetFrame.tsx'),
       'and the name really does state the gate').toMatch(/pinned \? 'Pinned to dashboard'/)
 
+    // The Project field may carry a `hint` (a failed default-project read says so), so the shape is
+    // "a Field labelled Project", not one exact attribute list.
     expect(code('pages/tasks/TaskForm.tsx'),
-      'and the Project field it depends on is right above').toMatch(/<Field label="Project">/)
+      'and the Project field it depends on is right above').toMatch(/<Field label="Project"[\s>]/)
 
     for (const rel of ['pages/settings/ProjectionRulesPanel.tsx', 'pages/settings/DurabilityPanel.tsx']) {
       expect(code(rel), `${rel} takes disabled from a caller`)

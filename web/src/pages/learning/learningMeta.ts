@@ -223,8 +223,37 @@ export function dayState(day: StagingDay, firstPassDay?: string): DayState {
   return 'ok'
 }
 
+/** `DayState → ink`. Spread straight into `color:` on the pass-count span in `LearningPage`'s
+ *  `WeekPanel`, so every value here is TEXT INK and carries AA's 4.5:1 for 12–14px type.
+ *
+ *  🔴 `out_of_scope` WAS `--color-outline`, A HAIRLINE TOKEN, AT 3.1833:1 IN LIGHT (#3504). A
+ *  border/divider value exists to be *barely* separable from its surface, which is the opposite of
+ *  what text needs — the same defect #3493 fixed one tone map over, where `StatusPill`'s `neutral`
+ *  drew in `--color-outline-variant`. `--color-outline` carries an extra structural tell: it is
+ *  `#8e918f` in BOTH modes, and an ink that does not invert with the mode cannot be readable in
+ *  both. Measured on the cell's own `bg-surface-container`:
+ *
+ *      out_of_scope  --color-outline          light 3.1833   dark 5.1861   <- under AA in light
+ *      silent        --color-warn             light 6.3144   dark 7.1839
+ *      error         --color-danger           light 6.4389   dark 5.7037
+ *      produced      --color-primary          light 4.8314   dark 5.9008
+ *      ok            --color-on-surface-low   light 9.3938   dark 5.9295
+ *
+ *  It is now `--color-on-surface-var`, the ink ramp's muted tier, which clears AA on all FOUR
+ *  resting surface tiers in BOTH modes (worst 5.4738 on the light canvas, best 11.2481) — so it is
+ *  admissible as ink regardless of which tier a future caller paints this map onto, not merely on
+ *  the one tier `WeekPanel` happens to hard-code today.
+ *
+ *  `--color-on-surface-low` also clears AA and was rejected: `ok` already ships it, so picking it
+ *  would collapse "out of scope" and "ran, produced nothing" into one grey and delete a distinction
+ *  the panel exists to draw. `--color-on-surface-var` keeps them 1.55:1 apart in light and 1.63:1 in
+ *  dark, and it is the muted-text tier `TIER_TONE.low` in this same file already uses — so the two
+ *  maps agree instead of minting a second muted grey.
+ *
+ *  Not a dash-only cell: `dayState` returns `out_of_scope` BEFORE it checks `passes === 0`, so a
+ *  real pass count can land in this ink too. */
 export const DAY_TONE: Record<DayState, string> = {
-  out_of_scope: 'var(--color-outline)',
+  out_of_scope: 'var(--color-on-surface-var)',
   silent: 'var(--color-warn)',
   error: 'var(--color-danger)',
   produced: 'var(--color-primary)',

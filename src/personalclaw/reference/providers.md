@@ -41,6 +41,7 @@ The extension-provider taxonomy (the capability types an app can contribute) and
 - **filesystem-inbox** — type `inbox` / `` (enabled); capabilities: approvals, inputs
 - **native-knowledge** — type `knowledge` / `` (enabled); capabilities: bookmarks, documents, search
 - **native-vector-memory** — type `memory` / `` (enabled); capabilities: semantic_search, episodic, preferences
+- **bundled-chat** — type `model` / `bundled-chat` (enabled); capabilities: chat
 - **ollama-models** — type `model` / `` (enabled); capabilities: chat, embedding
 - **native-prompts** — type `prompt` / `` (enabled); capabilities: list, read, write, render
 - **native-skills** — type `skills` / `` (enabled); capabilities: crud, triggers, auto_generation

@@ -11,7 +11,7 @@ system, crons, and the MCP bridge. Paths are relative to
 
 | Tier | Location | Notes |
 |---|---|---|
-| Native (31) | `apps/native/` in-package | seeded on first run, locked on (e.g. `native-agents`, `personalclaw-memory`, `ollama-models`, the action bundles); may own its provider code — see [the native capability contract](#the-native-capability-contract-appsnative_contractpy) |
+| Native (32) | `apps/native/` in-package | seeded on first run, locked on (e.g. `native-agents`, `personalclaw-memory`, `ollama-models`, `bundled-chat`, the action bundles); may own its provider code — see [the native capability contract](#the-native-capability-contract-appsnative_contractpy) |
 | First-party (68) | workspace `apps/` | Slack channel, hosted model providers, speech, Minutes/Growth dashboards |
 | Third-party | user sources → `~/.personalclaw/apps/` | fixtures at `third-party-apps/` (`hello-search`, `demo-dashboard`) |
 
@@ -51,7 +51,7 @@ The manifest's `permissions` block is enforced, with one documented exception
 | `events` | WebSocket fan-out filter — an app's socket only receives event types it declared |
 | `eventSubscriptions` | which **platform** events (`apps/app_events.py`: `session.created`, `knowledge.ingested`, `task.completed`) are delivered to the app. A DIFFERENT axis from `events` above, deliberately: `events` is the WS type allowlist, these are core-emitted facts, and holding one grants nothing about the other. `app_events.emit` is the only delivery path and is the whole gate — deny by default and **exact name only** (no prefix, no `*`), so a typo denies rather than widens. Delivered into the app's broker-owned inbox (the `appMessaging` queue, sender `@platform`, which no app can be named), drained over `GET /api/apps/message`. Payloads carry identifiers only, never prose: a subscription grants timing, not content an app's `api` scope may not cover. |
 | `mcpTools` | which MCP tools the app may invoke |
-| `memory` | tiered scopes (app-scoped by default) |
+| `memory` | one boolean grant on `/api/memory/*`, refused unless declared. NOT a tier: this was `"app-scoped"`/`"shared"` until #3501 and `app-scoped` granted nothing on any path — the checker only answered True for it when asked about the app-scoped scope, and the gateway's single call site asked about `"shared"`. Deleted rather than implemented: core has no per-app memory partition (`memory_record.MemoryScope` is `session\|workspace\|agent\|global`), so the schema was offering a choice that did nothing on a *permission* the user approves at install. A leftover string value is an install error, never reinterpreted. |
 | `cron` | whether manifest crons register |
 | `storage` | a private DATA_DIR handed to the backend |
 | `agent` | two independent gates for agent invocation |

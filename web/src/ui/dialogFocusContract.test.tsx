@@ -182,8 +182,19 @@ describe('the rail: a hand-rolled modal over live content owes containment', () 
   it('Onboarding is exempt because it REPLACES the shell, and that is asserted', () => {
     // The structural fact: App renders it instead of the app, not on top of it. If this line ever
     // becomes a conditional overlay beside the shell, this test fails and the exemption is void.
-    expect(read('app/App.tsx'), 'Onboarding must still be rendered INSTEAD of the shell')
-      .toMatch(/return <Onboarding \/>/)
+    // Props and a sibling toast host are allowed — the flow takes the router (`sub`/`navigate`) so its
+    // steps are real history entries, and it needs `<Toaster />` beside it or its own `notify()`
+    // calls have nowhere to render. What the exemption rests on is what is NOT there: no shell. The
+    // branch returns the flow and the toast host and nothing else, so it still REPLACES the app
+    // rather than floating over a mounted page.
+    const app = read('app/App.tsx')
+    const at = app.indexOf("if (route === 'onboarding' || !onboarded)")
+    expect(at, 'the onboarding branch must exist').toBeGreaterThan(0)
+    const branch = app.slice(at, at + 900)
+    expect(branch, 'the flow is returned, with the router').toMatch(/<Onboarding sub=\{sub\} navigate=\{navigate\}/)
+    expect(branch, 'and its toast host').toMatch(/<Toaster \/>/)
+    expect(branch.slice(0, branch.indexOf('</>')), 'and no shell chrome beside it')
+      .not.toMatch(/<NavRail|<ShellCorners|<CommandPalette/)
     // And it must not have grown a dialog's dismissal semantics in the meantime, which would make it
     // one of these after all.
     expect(/aria-modal/.test(read('app/Onboarding.tsx'))).toBe(false)

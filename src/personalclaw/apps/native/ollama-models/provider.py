@@ -52,6 +52,7 @@ from personalclaw.sdk.model import (  # noqa: F401
     CancelOutcome,
     Capability,
     ConnectionResult,
+    ContextGauge,
     Credential,
     LLMEvent,
     ModelInfo,
@@ -67,7 +68,7 @@ from personalclaw.sdk.model import (  # noqa: F401
     get_default_registry,
     infer_capabilities,
     make_think_splitter,
-    model_context_window,
+    prompt_text_chars,
 )
 
 logger = logging.getLogger(__name__)
@@ -396,6 +397,10 @@ class OllamaProvider(ModelProvider):
         # the gauge is ``None`` — was never reachable. History then grew unbounded until
         # Ollama silently truncated the prompt.
         self._last_context_pct: float | None = None
+        # The context gauge for THIS binding. Stateful because truncation detection is
+        # ordinal — Ollama truncates silently and reports the truncated count, and the only
+        # reference that catches it is the largest prompt this binding already measured.
+        self._gauge = ContextGauge()
         # Served window per model id, memoized from ``/api/ps``. Ollama publishes the
         # window it ACTUALLY serves, so this provider never has to guess; the probe is
         # vendor-specific, which is why it lives in this app and not in core.
@@ -589,7 +594,9 @@ class OllamaProvider(ModelProvider):
         if assistant_text:
             self._history.append({"role": "assistant", "content": assistant_text})
 
-        self._last_context_pct = await self._context_pct(self._model, input_tokens)
+        self._last_context_pct = await self._context_pct(
+            self._model, input_tokens, body["messages"]
+        )
 
         yield LLMEvent(
             kind=EVENT_COMPLETE,
@@ -723,7 +730,9 @@ class OllamaProvider(ModelProvider):
                 tool_input=bucket.get("arguments", ""),
             )
 
-        self._last_context_pct = await self._context_pct(model or self._model, input_tokens)
+        self._last_context_pct = await self._context_pct(
+            model or self._model, input_tokens, body["messages"]
+        )
 
         yield LLMEvent(
             kind=EVENT_COMPLETE,
@@ -764,8 +773,8 @@ class OllamaProvider(ModelProvider):
 
     # ── Context accounting ────────────────────────────────────────────
 
-    async def _served_window(self, model: str) -> int:
-        """Tokens this Ollama runtime actually SERVES for ``model``.
+    async def _served_window(self, model: str) -> int | None:
+        """Tokens this Ollama runtime actually SERVES for ``model``, or ``None``.
 
         Resolution order, most-authoritative first:
 
@@ -778,8 +787,16 @@ class OllamaProvider(ModelProvider):
            same architectural figure. Measured on 0.34.2: ``/api/ps`` reports 32768;
            dividing by the architectural 262144 — or by an adapter default of 128000 —
            understates usage by 4-8x, which is what made the compaction gate unreachable;
-        3. :func:`model_context_window` with ``local=True`` — the conservative floor for a
-           runtime that told us nothing.
+        3. ``None`` — nothing told us, so the gauge reports nothing.
+
+        🪤 (3) used to be ``model_context_window(model, local=True)``, i.e. the 4096-token
+        conservative FLOOR, and that was the same defect as an adapter default in the
+        other direction: the floor exists for the char ESTIMATE, and dividing a real
+        26682-token report by it displays 651%. ``model_windows.model_context_window``
+        says so in its own trap note — "a displayed measurement may not err at all" — so
+        a failed probe now yields an unmeasured gauge, and the floor keeps its one honest
+        job on the estimate path in ``runtime._estimated_context_pct`` (which is reachable
+        precisely because this returns ``None``).
 
         The probe is memoized per model id: the served window cannot change without a
         reload, and this runs on the completion path of every turn. It is also strictly
@@ -807,9 +824,11 @@ class OllamaProvider(ModelProvider):
                     return served
         except Exception as exc:  # noqa: BLE001 - best-effort probe, never fatal
             logger.debug("ollama: /api/ps served-window probe failed (%s)", exc)
-        return model_context_window(model or None, local=True)
+        return None
 
-    async def _context_pct(self, model: str, input_tokens: int) -> float | None:
+    async def _context_pct(
+        self, model: str, input_tokens: int, messages: list[dict]
+    ) -> float | None:
         """Input tokens as a percentage of the SERVED window, or ``None`` if unknown.
 
         ``None`` rather than 0.0 when there is nothing to report: the composer renders a
@@ -817,13 +836,19 @@ class OllamaProvider(ModelProvider):
         the native loop's char-based compaction backstop is reachable only while the
         gauge is ``None``. Reporting 0.0 therefore both fabricates a reading and disables
         the fallback that exists to cover the absence.
+
+        ``messages`` is the request body we just sent, and it is what makes the reading
+        monotone. Ollama's ``prompt_eval_count`` is what it ACCEPTED: past the served
+        window it truncates silently, returns HTTP 200, and reports half the window
+        forever, so this gauge used to peak at 98.39% and then read a flat 50.01% for
+        every larger prompt (#3405). :func:`context_gauge_pct` calls that what it is —
+        a full context — instead of dividing the truncated figure.
         """
-        if input_tokens <= 0:
-            return None
-        window = await self._served_window(model)
-        if window <= 0:
-            return None
-        return (input_tokens / window) * 100
+        return self._gauge.measure(
+            reported_tokens=input_tokens,
+            sent_chars=prompt_text_chars(messages),
+            window=await self._served_window(model),
+        )
 
     # ── Status ────────────────────────────────────────────────────────
 

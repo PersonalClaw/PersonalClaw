@@ -34,6 +34,15 @@ const detectLocalModel = vi.fn()
 const scanLocalModels = vi.fn()
 const bindLocalModel = vi.fn()
 const onboardingModelCheck = vi.fn()
+// The model lane now renders `<BundledModelOffer />`, which polls `/api/onboarding` and
+// tracks download jobs. Mocked HERE rather than by stubbing the component, because the lane's
+// own floor-copy test below asserts on what that offer/floor state renders — a stub would make
+// that assertion pass against the stub. The defaults are the "nothing to download" answer, so
+// every other test in this file sees the lane exactly as it was.
+const onboarding = vi.fn()
+const modelDownloads = vi.fn()
+const startModelDownload = vi.fn()
+const cancelModelDownload = vi.fn()
 
 vi.mock('../../lib/api', () => ({
   api: {
@@ -50,6 +59,11 @@ vi.mock('../../lib/api', () => ({
     scanLocalModels: () => scanLocalModels(),
     bindLocalModel: (...a: unknown[]) => bindLocalModel(...a),
     onboardingModelCheck: () => onboardingModelCheck(),
+    onboarding: () => onboarding(),
+    modelDownloads: () => modelDownloads(),
+    startModelDownload: (...a: unknown[]) => startModelDownload(...a),
+    cancelModelDownload: (...a: unknown[]) => cancelModelDownload(...a),
+    downloadStreamUrl: (id: string) => `/api/models/downloads/${id}/stream`,
   },
 }))
 vi.mock('../../app/appSdk', () => ({ launchChat: vi.fn(), notify: vi.fn() }))
@@ -148,6 +162,16 @@ beforeEach(() => {
   // The lane's PROOF: by default the build check passes, so every test above walks the flow
   // exactly as it did before verification existed. The tests that falsify it override this.
   onboardingModelCheck.mockResolvedValue({ ok: true, source: 'binding', bound: ['openai:gpt-5'] })
+  // OU-14 default: NOTHING to download. So the bundled-model offer renders nothing and every
+  // test above is the lane exactly as it was before this change — the offer is proved on its own
+  // surface in bundledModelOffer.test.tsx rather than by perturbing all of these.
+  onboarding.mockResolvedValue({
+    needs_model: true, has_model_provider: false, has_chat_binding: false,
+    chat_download_offer: null,
+  })
+  modelDownloads.mockResolvedValue([])
+  startModelDownload.mockResolvedValue({ id: 'j', state: 'running', model: 'm', provider: 'p' })
+  cancelModelDownload.mockResolvedValue(undefined)
 })
 
 // ── the lane classifier ──────────────────────────────────────────────────────
@@ -309,10 +333,42 @@ describe('the model lane completes entirely in-flow', () => {
     expect(createModelProvider).not.toHaveBeenCalled()
   })
 
-  it('asks for nothing when chat already resolves', async () => {
+  it('asks for nothing when chat already resolves, and names the bound model', async () => {
     renderStep({ readiness: { needs_model: false, has_model_provider: true, has_chat_binding: true } })
-    expect(await screen.findByText(/A chat model is configured/)).toBeTruthy()
+    // #3528 — the default `bound: ['openai:gpt-5']`. On a re-entered run there is no component
+    // state holding a label, so this sentence can only come from the verdict's own refs; before
+    // that it read the generic "a chat model is configured" and the recap read the APP name.
+    expect(await screen.findByText('Chat model: gpt-5')).toBeTruthy()
     expect(chatModels).not.toHaveBeenCalled()
+  })
+
+  it('names the BUNDLED floor rather than calling it a finished model setup', async () => {
+    // The first thing a new user reads about their model. Before OU-14 this lane could only
+    // be satisfied by a real provider, so "you're ready" was true; now it is also satisfied by
+    // a 135M bundled weight, and a bare "ready" there would be the one surface presenting the
+    // tiny default as finished setup — the exact conclusion-about-the-product the honesty
+    // requirement exists to prevent. The verdict must describe the home the readiness does:
+    // the floor is never a binding, so it resolves through the FALLBACK with no refs. The
+    // file's default verdict is a binding, which on a floor home would be impossible (#3528).
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'fallback', bound: [] })
+    renderStep({ readiness: {
+      needs_model: false, has_model_provider: true, has_chat_binding: false,
+      chat_model_refs: [], chat_is_bundled_floor: true,
+    } })
+    expect(await screen.findByText(/small model PersonalClaw downloaded/)).toBeTruthy()
+    expect(screen.queryByText(/A chat model is configured/)).toBeNull()
+  })
+
+  it('names the bound model, not the floor, when a REAL provider is what resolves', async () => {
+    // The control arm: the floor copy must not leak onto a properly-bound home. Since #3528
+    // the done copy names the model from the verdict's own `bound` refs — here the file's
+    // default binding verdict, `openai:gpt-5`.
+    renderStep({ readiness: {
+      needs_model: false, has_model_provider: true, has_chat_binding: true,
+      chat_model_refs: ['openai:gpt-5'], chat_is_bundled_floor: false,
+    } })
+    expect(await screen.findByText('Chat model: gpt-5')).toBeTruthy()
+    expect(screen.queryByText(/small model PersonalClaw downloaded/)).toBeNull()
   })
 
   it('applies a corrected key to the existing instance instead of dead-ending on 409', async () => {
@@ -477,6 +533,64 @@ describe('a failed catalog fetch says so', () => {
     expect(await screen.findByText(/No web search app is available/)).toBeTruthy()
     expect(screen.getAllByText(/first-party source/)[0]).toBeTruthy()
   })
+
+  // A REQUEST that failed is covered above. This is the other half and it is the one that
+  // shipped: the request SUCCEEDS, 200, and the sources inside it are what failed. The
+  // payload says so in `unavailableSources` — the field `AppsSection.tsx` already reads for
+  // the Store badge — and the step ignored it, so four empty lanes rendered as four facts
+  // about the world. Measured on a fresh `python:3.13-slim` container from the published
+  // wheel, where the REQUIRED model lane said "No model provider app is available…".
+  const UNREADABLE = {
+    bundled: [], gitSources: ['https://github.com/PersonalClaw/PersonalClawApps.git'],
+    localApps: [], remoteApps: [], gitApps: [],
+    unavailableSources: [{ source: 'https://github.com/PersonalClaw/PersonalClawApps.git', reason: 'no-git' }],
+  }
+
+  it('does not assert that no app exists when the sources could not be read', async () => {
+    appCatalog.mockResolvedValue(UNREADABLE)
+    renderStep()
+    expect(await screen.findByTestId('onboarding-sources-unreadable')).toBeTruthy()
+    // The lie, gone from EVERY lane — not just the required one.
+    expect(screen.queryByText(/No model provider app is available/)).toBeNull()
+    expect(screen.queryByText(/No web search app is available/)).toBeNull()
+    expect(screen.queryByText(/No speech app is available/)).toBeNull()
+    expect(screen.queryByText(/No messaging channel app is available/)).toBeNull()
+  })
+
+  it('names the missing dependency and the source at fault, and offers a retry', async () => {
+    appCatalog.mockResolvedValue(UNREADABLE)
+    renderStep()
+    const notice = await screen.findByTestId('onboarding-sources-unreadable')
+    expect(notice.textContent).toMatch(/git is not installed on this machine/)
+    // The source, so a user can tell which one — the whole point of `unavailableSources`.
+    expect(notice.textContent).toContain('https://github.com/PersonalClaw/PersonalClawApps.git')
+    // A dead end became recoverable: before this there was no retry on this step at all.
+    fireEvent.click(await screen.findByRole('button', { name: /Try reading the app sources again/ }))
+    await waitFor(() => expect(appCatalog).toHaveBeenCalledTimes(2))
+  })
+
+  it('does not blame git when git is present and the source is merely unreachable', async () => {
+    appCatalog.mockResolvedValue({
+      ...UNREADABLE,
+      unavailableSources: [{ source: 'https://github.com/PersonalClaw/PersonalClawApps.git', reason: 'unreachable' }],
+    })
+    renderStep()
+    const notice = await screen.findByTestId('onboarding-sources-unreadable')
+    expect(notice.textContent).toMatch(/could not read its app sources/)
+    // Not `/git/` — the source URL itself ends in `.git`. The claim under test is that the
+    // notice does not name a missing DEPENDENCY on a machine that has one.
+    expect(notice.textContent).not.toMatch(/git is not installed/)
+    expect(notice.textContent).toMatch(/Check this machine’s network/)
+  })
+
+  it('states the cause once, not once per lane', async () => {
+    appCatalog.mockResolvedValue(UNREADABLE)
+    renderStep()
+    await screen.findByTestId('onboarding-sources-unreadable')
+    // Four lanes, one explanation. The per-lane line claims nothing about what exists.
+    expect(screen.getAllByText(/could not be read/)).toHaveLength(4)
+    expect(screen.getAllByText(/git is not installed on this machine/)).toHaveLength(1)
+  })
 })
 
 // ── The local + LAN Ollama zero-key on-ramp ──────────────────────────────────
@@ -610,6 +724,11 @@ describe('#3529 — a provider type whose app is already installed is not a dead
   it('drives the SAME schema-driven ConfigureProvider the catalog path uses, end to end', async () => {
     modelProviderTypes.mockResolvedValue([OLLAMA_TYPE])
     chatModels.mockResolvedValue([{ name: 'ollama/llama3.2:3b', model_id: 'llama3.2:3b', provider: 'ollama' }])
+    // The verification reads the binding back, so the verdict has to agree with the ref the
+    // bind below writes — the default fixture's `openai:gpt-5` would be a home this test never
+    // configured. This IS the fix: the reported model comes from `active_models.json`, so a
+    // mock that disagrees with it is a mock describing an impossible home (#3528).
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'binding', bound: ['ollama:llama3.2:3b'] })
     const { onDone, onProgress } = renderStep()
 
     fireEvent.click(await screen.findByRole('button', { name: /Configure Ollama/ }))
@@ -740,7 +859,7 @@ describe('the model lane reads ready only after a build check', () => {
   it('verifies a home the coarse probe already calls ready, instead of trusting it', async () => {
     renderStep({ readiness: READY })
     await waitFor(() => expect(onboardingModelCheck).toHaveBeenCalled())
-    expect(await screen.findByText(/A chat model is configured/)).toBeTruthy()
+    expect(await screen.findByText('Chat model: gpt-5')).toBeTruthy()
   })
 
   it('known-false: a claimed-ready home whose provider cannot build is NOT reported ready', async () => {
@@ -881,7 +1000,7 @@ describe('the model lane reads ready only after a build check', () => {
     onboardingModelCheck.mockResolvedValue({ ok: true, source: 'binding', bound: ['my-openai:gpt-4o'] })
     renderStep({ readiness: READY })
     fireEvent.click(await screen.findByRole('button', { name: /Check again/ }))
-    expect(await screen.findByText(/A chat model is configured/)).toBeTruthy()
+    expect(await screen.findByText('Chat model: gpt-4o')).toBeTruthy()
     expect(onboardingModelCheck).toHaveBeenCalledTimes(2)
   })
 
@@ -893,6 +1012,32 @@ describe('the model lane reads ready only after a build check', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /Continue/ }).getAttribute('aria-disabled')).not.toBe('true'))
     fireEvent.click(screen.getByRole('button', { name: /Continue/ }))
     expect(onDone).toHaveBeenCalledWith('Ready — using a configured provider')
+  })
+
+  it('and names the BUNDLED FLOOR when that is what the fallback resolved to', async () => {
+    // 🔴 The same `source: 'fallback'` verdict, two very different causes. One is a provider the
+    // user configured but never pinned; the other is a downloaded 135M model they were never
+    // asked about. "Ready — using a configured provider" is the one sentence about the second
+    // that is not true, and this is the surface whose words the done-screen recap repeats — so
+    // getting it wrong here mislabels the model on the last screen of onboarding too.
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'fallback', bound: [] })
+    const { onDone } = renderStep({ readiness: { ...READY, chat_is_bundled_floor: true } })
+    await waitFor(() => expect(screen.getByRole('button', { name: /Continue/ }).getAttribute('aria-disabled')).not.toBe('true'))
+    fireEvent.click(screen.getByRole('button', { name: /Continue/ }))
+    expect(onDone).toHaveBeenCalledWith('Ready — using the small model PersonalClaw downloaded')
+  })
+
+  it('an explicit pick still wins over both fallback sentences', async () => {
+    // The precedence arm: the model the verdict names as bound is a stronger statement than
+    // either mechanism sentence, and the floor flag must not overwrite it — on a home where a
+    // real provider is bound, `chat_is_bundled_floor` is false anyway, so a flag that won here
+    // would be reporting a state the backend says does not exist. Since #3528 the summary
+    // names that model from the verdict's own `bound` refs, so it is the model, not a phrase.
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'binding', bound: ['openai:gpt-5'] })
+    const { onDone } = renderStep({ readiness: { ...READY, chat_is_bundled_floor: true } })
+    await waitFor(() => expect(screen.getByRole('button', { name: /Continue/ }).getAttribute('aria-disabled')).not.toBe('true'))
+    fireEvent.click(screen.getByRole('button', { name: /Continue/ }))
+    expect(onDone).toHaveBeenCalledWith('gpt-5')
   })
 })
 

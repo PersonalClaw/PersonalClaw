@@ -22,6 +22,16 @@ So the on-disk store persists only what is user-owned: user-created views (full)
 the artifact tiles overlaid on each view (presets included). A preset's core refs are
 never written — they are reconstructed from code on every load, so a preset can never
 drift from the shipped layout.
+
+``ambient.tiles_enabled`` is the master switch over exactly that additive registry, and
+fact 2 above is why it can be honoured in one place: OFF means the overlay reads as empty
+(:func:`_overlay_tiles`) and a new pin is REFUSED (:func:`add_tile`), which by that fact is
+identical to the fixed shipped layout. It gates COMPOSITION and WRITES, never the stored
+data — turning the composable home off must not destroy pins, and turning it back on must
+restore exactly the view the user had. The switch had shipped with a Settings control and no
+reader at all (issue #3490); the two bounds beside it (``max_tiles``,
+``default_refresh_ttl_secs``) were already read here and in ``tile_refresh.py``, so the
+section's master switch was the only inert one.
 """
 
 from __future__ import annotations
@@ -266,10 +276,29 @@ def _tile_from_dict(d: dict) -> DashboardTile:
     )
 
 
+def tiles_enabled() -> bool:
+    """``ambient.tiles_enabled`` — whether the composable home composes at all.
+
+    Fails OPEN (unreadable config ⇒ True) because the field's own default is True and this
+    gates a read-only composition: a config blip must not blank a dashboard the user
+    populated. That is the opposite polarity from a capability gate, deliberately — nothing
+    here writes, fetches or spends.
+    """
+    try:
+        return bool(config_loader.AppConfig.load().ambient.tiles_enabled)
+    except Exception:
+        logger.debug("ambient.tiles_enabled unreadable — composing tiles", exc_info=True)
+        return True
+
+
 def _overlay_tiles(data: dict, view_id: str) -> list[DashboardTile]:
-    """Artifact tiles overlaid on ``view_id`` (sorted by order), from disk."""
+    """Artifact tiles overlaid on ``view_id`` (sorted by order), from disk.
+
+    Reads as EMPTY when ``ambient.tiles_enabled`` is off, which by the module docstring's
+    fact 2 is exactly the shipped fixed layout. The rows stay on disk untouched.
+    """
     raw = data["overlay"].get(view_id, [])
-    if not isinstance(raw, list):
+    if not isinstance(raw, list) or not tiles_enabled():
         return []
     tiles = [_tile_from_dict(t) for t in raw if isinstance(t, dict) and t.get("ref")]
     return sorted(tiles, key=lambda t: t.order)
@@ -423,8 +452,18 @@ def add_tile(view_id: str, ref: str, size: str = "m", added_by: str = "user") ->
     Only ``artifact:<slug>`` refs are addable — first-party ``core:`` widgets stay
     hard imports and are never registry entries (§1.2). Adding to a preset writes to
     the view's overlay, never the locked core composition. Bounded by ``max_tiles``.
+
+    REFUSED while ``ambient.tiles_enabled`` is off, rather than written to a surface that
+    renders nothing: a pin that reports success and then does not appear is a swallowed
+    write, and the caller (the pin-to-dashboard control, an agent proposal) can only say so
+    if this says no.
     """
     ref = ref.strip()
+    if not tiles_enabled():
+        raise ValueError(
+            "the composable home is off — turn on Settings → Ambient surfaces → "
+            "Composable home to pin artifact tiles"
+        )
     if not ref.startswith("artifact:"):
         raise ValueError("only artifact:<slug> tiles can be added (core widgets are hard imports)")
     if size not in _SIZES:

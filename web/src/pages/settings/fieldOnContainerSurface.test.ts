@@ -20,7 +20,14 @@ import { join } from 'node:path'
 //   the three, identical in both themes — all fixed here:
 //     #/settings/companion  "e.g. Living room Mac"                 rgb(30,31,32) on rgb(30,31,32)
 //     #/settings/sources    "~/notes/today.md"
-//     #/settings/packs      "https://example.com/connector_..."
+//     #/settings/packs      "https://example.com/connector_..."    ← THE FIELD IS GONE (see below)
+//
+// 🔴 THE PACKS SITE NO LONGER EXISTS, so its two cases are deleted rather than relaxed. The field was
+// the Connector catalog URL, and it wrote `packs.connector_catalog_url` — an allowlisted config leaf
+// with no reader anywhere, removed with its control in issue #3490. The measurement above stays as a
+// record of what the sweep found; what is gone is the thing it measured. Re-derive this rail from a
+// fresh sweep rather than re-adding a case, because the sweep is the honest detector (the note at the
+// bottom of this block says why a regex cannot decide it).
 //
 // `surface="high"` is the form the rest of the app already uses for a field on a container backdrop
 // (ArchivePanel, AuditPanel, MemoryPanel, ModelBackends, MultiInstanceCard), so this converges the
@@ -74,15 +81,13 @@ describe('a settings field on a container backdrop lifts its surface', () => {
     wrapsRowsOnAContainerSurface('SourcesPanel')
   })
 
-  it('PacksPanel TextRow passes surface="high"', () => {
-    const src = read('pages/settings/PacksPanel.tsx')
-    const tag = src.match(/<TextInput[\s\S]{0,300}?onKeyDown/)?.[0] ?? ''
-    expect(tag, 'the shared TextRow field must exist').toContain('<TextInput')
-    expect(tag).toContain('surface="high"')
-  })
-
-  it('PacksPanel TextRow callers sit on a container surface', () => {
-    wrapsRowsOnAContainerSurface('PacksPanel')
+  it('PacksPanel ships no text field for this rail to judge', () => {
+    // The replacement for the two deleted PacksPanel cases, and it is an ABSENCE assertion on
+    // purpose: the sweep's third site was the Connector catalog URL field, whose config leaf had no
+    // reader (#3490), so the panel now renders no `TextInput` at all. Asserted rather than simply
+    // dropped, so a future text field on this panel arrives with this rail's question already asked
+    // — a silently-deleted case is how a measured site stops being covered without anyone deciding.
+    expect(read('pages/settings/PacksPanel.tsx')).not.toContain('<TextInput')
   })
 
   it('CompanionPanel instance-name field passes surface="high"', () => {

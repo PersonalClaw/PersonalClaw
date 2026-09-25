@@ -111,3 +111,37 @@ def current_username() -> str:
     except Exception:
         logger.debug("identity: username unreadable — writing without attribution")
         return ""
+
+
+#: The name the dashboard stores when the owner declines to give one — mirrored from
+#: ``DEFAULT_USER_NAME`` in ``web/src/app/identity.tsx`` and railed to it by
+#: ``tests/test_identity.py``. Skipping setup commits it (the route guard needs a non-empty
+#: name) and Settings → Account refuses to save an empty one, so through the UI it is what
+#: "no name given" looks like on disk.
+DEFAULT_USER_NAME = "Operator"
+
+
+def operator_name() -> str:
+    """The owner's name — Settings → Account → "Your name" — or ``""`` when there is none.
+
+    THE resolver for "the operator's name": what a notification rule's name-mention condition
+    matches (``DashboardState.notify`` and both inbox ingestion paths) and whose behalf an inbox
+    draft is written on. It was resolved in three places, and the one in ``notify`` read
+    ``agent.bot_name`` — the ASSISTANT's name — so "Escalate on name mention" escalated when a
+    note named the assistant and never when it named you. One function, so the fact cannot fork
+    again.
+
+    ``""`` also for :data:`DEFAULT_USER_NAME`: that is the placeholder for a name nobody gave, and
+    matching it would escalate every note that says "operator".
+
+    Never raises: a name-mention check is a refinement on a delivery path, so a config problem
+    degrades to "no name" (nothing escalates on a mention) rather than failing the note.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        name = (AppConfig.load().dashboard.user_name or "").strip()
+    except Exception:
+        logger.debug("identity: operator name unreadable — name-mention conditions cannot match")
+        return ""
+    return "" if name == DEFAULT_USER_NAME else name

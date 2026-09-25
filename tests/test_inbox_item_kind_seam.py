@@ -107,7 +107,7 @@ def _svc(tmp_path, monkeypatch, provider) -> InboxService:
         store=InboxStore(tmp_path / "inbox.json"),
         provider=provider,
     )
-    monkeypatch.setattr(InboxService, "_operator_name", staticmethod(lambda: ""))
+    monkeypatch.setattr(mod, "operator_name", lambda: "")
     monkeypatch.setattr(mod, "_dashboard_state", lambda: None)
     return svc
 

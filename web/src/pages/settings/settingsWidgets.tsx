@@ -13,6 +13,7 @@ import { notify } from '../../app/appSdk'
 // So the import list shrinking by fourteen names is not tidying, it is the measure of how much of
 // this file existed to describe data the server never sent.
 import { api, type SavedAgent } from '../../lib/api'
+import { modelIdOf } from '../../lib/modelRef'
 // One spelling for a poll cadence: `#/knowledge/sources` renders every source row's cadence
 // through THIS function (`SourcesPage.tsx:177`, `· every {fmtInterval(poll_interval_secs)}`), and
 // the number this tile shows is the DEFAULT those rows fall back to. A second formatter here would
@@ -45,8 +46,6 @@ export interface SettingsWidget {
   /** Render the card. `query` drives highlight; `go` opens the subpage. */
   render: (query: string, go: (id: string) => void) => React.ReactNode
 }
-
-const shortModel = (ref: string) => { const i = ref.indexOf(':'); return i >= 0 ? ref.slice(i + 1) : ref }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-subpage data hooks (cache keys mirror each panel so paint is shared/instant)
@@ -430,7 +429,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     description: 'Which model serves each use case (chat, embeddings, voice).',
     useSearchText() {
       const { data: a } = useModelsActive()
-      const parts = ['chat', 'embedding', 'stt', 'tts'].map((uc) => `${uc} ${(a?.[uc] ?? []).map(shortModel).join(' ')}`)
+      const parts = ['chat', 'embedding', 'stt', 'tts'].map((uc) => `${uc} ${(a?.[uc] ?? []).map(modelIdOf).join(' ')}`)
       return `models bindings use case ${parts.join(' ')}`
     },
     render(query, go) {
@@ -448,8 +447,8 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
         <BentoCard icon={Cpu} title="Models" query={query} onClick={() => go('models')} loading={active === undefined} stale={activeStale} failed={activeStatus === 'error'} error={activeErr} onRetry={activeRefresh}>
           {active && (anyBound ? <KVList query={query} rows={CORE.map(([uc, label]) => {
             const bound = (active[uc] ?? [])[0]
-            return { k: label, mono: true, vText: bound ? shortModel(bound) : '—', v: bound
-              ? <span className="inline-flex items-center gap-1"><CheckCircle2 size={11} className="shrink-0 text-ok" /> <span className="truncate">{shortModel(bound)}</span></span>
+            return { k: label, mono: true, vText: bound ? modelIdOf(bound) : '—', v: bound
+              ? <span className="inline-flex items-center gap-1"><CheckCircle2 size={11} className="shrink-0 text-ok" /> <span className="truncate">{modelIdOf(bound)}</span></span>
               : <span className="text-on-surface-low">—</span> }
           })} /> : <div data-type="body-s" className="text-on-surface-low">No models bound yet. Set up a model provider and the bindings for chat, embeddings, and voice appear here.</div>)}
         </BentoCard>
@@ -762,8 +761,8 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   // 🪤 AND NONE OF THE FOUR CARRIES A LIVE SWITCH, unlike Inbox/Notifications/Legibility. Not an
   // omission: each of these master toggles spends something the card cannot explain — LAN
   // discovery ANNOUNCES this gateway on your network, watched sources starts FETCHING third-party
-  // URLs on a schedule, fingerprinting SCANS your project directories, and `surfaces_max_layer`
-  // is the panel's own "safe-mode knob". A one-click flip on a hub tile, with the consent
+  // URLs on a schedule, fingerprinting SCANS your project directories, and the composable home
+  // decides what the DASHBOARD composes. A one-click flip on a hub tile, with the consent
   // sentence one navigation away, is the wrong trade for all four. They report state and open the
   // page that explains it — the `Documents`/`Diagnostics` shape, which is also a shipped one.
   {
@@ -835,9 +834,9 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     useSearchText() {
       const { data: s } = useSourcesCfg()
       const live = s
-        ? `${s.enabled ? 'on enabled polling' : 'off disabled parked'} interval ${s.poll_interval_default_secs} floor ${s.network_floor_secs} max ${s.max_sources} sources ${s.max_items_per_poll} items budget ${s.daily_request_budget}`
+        ? `${s.enabled ? 'on enabled polling' : 'off disabled parked'} interval ${s.poll_interval_default_secs} floor ${s.network_floor_secs} max ${s.max_sources} sources ${s.max_items_per_poll} items`
         : ''
-      return `watched sources poll polling feeds rss pages directories folders ingest knowledge library schedule interval network floor rate limit budget artifacts scratchpad ${live}`
+      return `watched sources poll polling feeds rss pages directories folders ingest knowledge library schedule interval network floor rate limit artifacts scratchpad ${live}`
     },
     render(query, go) {
       const { data: s, error: srcErr, stale: sStale, status: sStatus, refresh: sRefresh } = useSourcesCfg()
@@ -907,26 +906,28 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   },
   {
     id: 'ambient', group: 'Workspace', label: 'Ambient surfaces', icon: LayoutDashboard, size: 'sm',
-    description: 'Your composable home, agent-authored widgets, and the menu-bar companion.',
+    description: 'Your composable home and agent-authored widgets.',
     useSearchText() {
       const { data: a } = useAmbient()
       const live = a
-        ? `tiles ${a.tiles_enabled ? 'on' : 'off'} max ${a.max_tiles} refresh ${a.default_refresh_ttl_secs} genui ${a.genui_enabled ? 'on' : 'off'} layers ${a.surfaces_max_layer} tray ${a.tray_enabled ? 'on' : 'off'}`
+        ? `tiles ${a.tiles_enabled ? 'on' : 'off'} max ${a.max_tiles} refresh ${a.default_refresh_ttl_secs} genui ${a.genui_enabled ? 'on' : 'off'}`
         : ''
-      return `ambient surfaces composable home dashboard tiles pinned artifacts refresh generative ui genui agent-authored widgets surface layers safe mode menu-bar menubar companion tray macos ${live}`
+      // No `surface layers` / `menu-bar` / `tray` terms: their controls and config leaves are
+      // gone (issue #3490), and a search term that routes to a panel with no matching row is
+      // the same broken promise one level up.
+      return `ambient surfaces composable home dashboard tiles pinned artifacts refresh generative ui genui agent-authored widgets ${live}`
     },
     render(query, go) {
       const { data: a, error: ambErr, stale: aStale, status: aStatus, refresh: aRefresh } = useAmbient()
-      // Three independent switches and no headline among them, so the tile lists all three by the
-      // labels the panel gives them. On/Off in WORDS, not by tone: three coral-vs-grey pills would
-      // carry the whole state in hue (WCAG 1.4.1) on the one card whose content IS three booleans.
+      // Two independent switches and no headline between them, so the tile lists both by the
+      // labels the panel gives them. On/Off in WORDS, not by tone: coral-vs-grey pills would
+      // carry the whole state in hue (WCAG 1.4.1) on the one card whose content IS booleans.
       const onOff = (v: unknown) => (v ? 'On' : 'Off')
       return (
-        <BentoCard icon={LayoutDashboard} title="Ambient surfaces" query={query} onClick={() => go('ambient')} loading={a === undefined} rows={3} stale={aStale} failed={aStatus === 'error'} error={ambErr} onRetry={aRefresh}>
+        <BentoCard icon={LayoutDashboard} title="Ambient surfaces" query={query} onClick={() => go('ambient')} loading={a === undefined} rows={2} stale={aStale} failed={aStatus === 'error'} error={ambErr} onRetry={aRefresh}>
           {a && <KVList query={query} rows={[
             { k: 'Composable home', v: onOff(a.tiles_enabled), vText: onOff(a.tiles_enabled) },
             { k: 'Generative UI', v: onOff(a.genui_enabled), vText: onOff(a.genui_enabled) },
-            { k: 'Menu-bar companion', v: onOff(a.tray_enabled), vText: onOff(a.tray_enabled) },
           ]} />}
         </BentoCard>
       )

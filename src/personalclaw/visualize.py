@@ -13,6 +13,13 @@ One shared mechanism behind every producer — the ``visualize`` MCP tool, the
 WORKFLOWS-V2 ``visualize`` node, cockpit summaries, tiles, digests, "chart this"
 chat asks. Keeping the single ``one_shot_completion`` call here (not duplicated in
 each caller) is why only THIS file appears in the degraded-contract lint map.
+
+That single funnel is also why ``ambient.genui_enabled`` is honoured HERE. The switch
+shipped with a Settings control and ZERO readers (issue #3490) while promising to gate
+"agent-authored widgets"; the promise is keepable in one place precisely because every
+producer of a widget spec goes through :func:`visualize`. Off raises
+:class:`GenUiDisabled` before a prompt is built, so the switch also costs no tokens —
+both call sites already map an exception to their own surface's refusal.
 """
 
 from __future__ import annotations
@@ -22,6 +29,36 @@ from dataclasses import dataclass
 from typing import Any
 
 from personalclaw.genui import library_prompt
+
+
+class GenUiDisabled(RuntimeError):
+    """``ambient.genui_enabled`` is off, so no widget spec may be authored.
+
+    A distinct type rather than a bare ``RuntimeError`` because the two callers must tell
+    "the user turned this off" apart from "no reasoning model is bound" — the messages point
+    at different Settings pages, and a refusal naming the wrong one is worse than none.
+    """
+
+
+#: The message every surface shows for a disabled generative UI. Defined once so the MCP
+#: tool and the workflow node cannot describe one switch two ways.
+GENUI_DISABLED_MESSAGE = (
+    "generative UI is off — turn on Settings → Ambient surfaces → Generative UI to render "
+    "agent-authored widgets, or present the data as text"
+)
+
+
+def genui_enabled() -> bool:
+    """``ambient.genui_enabled``. Fails OPEN (unreadable config ⇒ True) to match the
+    field's own default: a config blip must not silently stop rendering widgets a user
+    has enabled, and authoring a widget spends only the reasoning call this module
+    already owns."""
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return bool(AppConfig.load().ambient.genui_enabled)
+    except Exception:
+        return True
 
 
 @dataclass(frozen=True)
@@ -96,7 +133,13 @@ async def visualize(
     without a live provider; production leaves it ``None`` and this resolves
     :func:`one_shot_completion` on the reasoning axis. Raises on a provider/model
     failure (the caller maps it to its own surface's degraded floor: no
-    visualization produced, the raw data still available)."""
+    visualization produced, the raw data still available).
+
+    Raises :class:`GenUiDisabled` when ``ambient.genui_enabled`` is off — checked before
+    the prompt is built, and before ``completion`` is consulted, so a disabled switch is
+    honoured identically on the injected and the production path."""
+    if not genui_enabled():
+        raise GenUiDisabled(GENUI_DISABLED_MESSAGE)
     prompt = _build_prompt(data, hint)
     if completion is not None:
         text = await completion(prompt, use_case="reasoning")

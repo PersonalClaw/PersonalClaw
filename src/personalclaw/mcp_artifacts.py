@@ -1018,6 +1018,7 @@ def _visualize(args: dict[str, Any], _audit: Any) -> str:
     keeps the raw data — so this returns an honest, actionable message rather than
     fabricating a widget.
     """
+    from personalclaw.visualize import GenUiDisabled
     from personalclaw.visualize import visualize as _visualize_primitive
 
     if "data" not in args:
@@ -1027,6 +1028,12 @@ def _visualize(args: dict[str, Any], _audit: Any) -> str:
     title = str(args.get("title", "") or "Visualization")
     try:
         result = _run_async(_visualize_primitive(args["data"], hint, title=title))
+    except GenUiDisabled as e:
+        # Named BEFORE the generic arm: the user turned this off, which is not a degraded
+        # model stack, and the "bind a reasoning model" advice below would send them to the
+        # wrong Settings page for a switch they set themselves.
+        _audit("denied", error="genui disabled")
+        return tool_failure(str(e))
     except Exception as e:  # noqa: BLE001 — a model/provider failure is a caller-facing refusal
         _audit("error", error=str(e))
         return tool_failure(

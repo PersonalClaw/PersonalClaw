@@ -454,6 +454,53 @@ def _doctor_maintenance() -> None:
         print(f"  health:      ⚠️  could not measure ({str(exc)[:120]})")
 
 
+def _ffmpeg_install_hint(platform: str | None = None) -> str:
+    """The ffmpeg install line for THIS platform.
+
+    Doctor's whole job on a fault line is to hand back a command that works where it is
+    read, and `brew` works on exactly one of the three platforms this ships to. Measured
+    inside the published Linux container: `Fix: brew install ffmpeg`, on a machine with no
+    brew and no way to get one. Pure + parameterised so every branch is testable without
+    faking `sys.platform` globally.
+    """
+    plat = sys.platform if platform is None else platform
+    if plat == "darwin":
+        return "brew install ffmpeg"
+    if plat.startswith("win"):
+        return "winget install ffmpeg"
+    return "apt install ffmpeg (or your distribution's package manager)"
+
+
+def _venv_interpreter() -> Path | None:
+    """The interpreter of a venv installed beside the sources, or None.
+
+    This is the single input that selects which Runtime rows doctor prints: an
+    editable checkout has `<repo>/.venv`, while a pipx or system install does not.
+    Naming it is what lets the Runtime rail drive BOTH branches — as a bare
+    `is_file()` inside `_doctor()` it was decided by whatever happened to be on the
+    developer's disk, so CI (always a venv) never rendered the other branch.
+    """
+    venv_py = Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python3"
+    return venv_py if venv_py.is_file() else None
+
+
+def _probe_python_version(python: str | Path) -> str:
+    """Run ``<python> --version`` and return the BARE version, e.g. "3.13.14".
+
+    ``--version`` prints "Python 3.13.14", and every caller renders the result inside
+    a row whose label already says python — so the prefix reads "(Python 3.13.14)".
+    Stripping it here, at the one place the string is obtained, is deliberate: the
+    venv row stripped it and the fallback row did not, which is exactly the drift a
+    second `removeprefix` at a second call site invites back.
+
+    Raises on a failed or slow probe; both call sites report that as a row rather
+    than letting a probe failure fail the doctor.
+    """
+    result = subprocess.run([str(python), "--version"], capture_output=True, text=True, timeout=5)
+    result.check_returncode()
+    return result.stdout.strip().removeprefix("Python ").strip()
+
+
 def _doctor() -> None:
     """Verify PersonalClaw setup — check dependencies, config, credentials, connectivity."""
 
@@ -515,8 +562,7 @@ def _doctor() -> None:
         issues.append("sqlite fts5")
 
     # Unified venv detection — used for runtime section
-    venv_py = Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python3"
-    is_venv_install = venv_py.is_file()
+    venv_py = _venv_interpreter()
 
     # ── Project ──
     print("\nProject")
@@ -709,16 +755,9 @@ def _doctor() -> None:
     print("\nRuntime")
     print(f"  python:      ✅ {sys.executable} ({sys.version.split()[0]})")
     print(f"  backend:     ✅ {_pc_version}")
-    if is_venv_install:
+    if venv_py is not None:
         try:
-            py_result = subprocess.run(
-                [str(venv_py), "--version"], capture_output=True, text=True, timeout=5
-            )
-            py_result.check_returncode()
-            # `python3 --version` prints "Python 3.13.14"; the label already says
-            # python, so the prefix would read "(Python 3.13.14)" beside the row
-            # above's bare "(3.13.14)" for the same fact.
-            ver = py_result.stdout.strip().removeprefix("Python ").strip()
+            ver = _probe_python_version(venv_py)
             print(f"  venv python: ✅ {venv_py} ({ver})")
         except Exception as exc:
             print(f"  venv python: ❌ broken: {exc}")
@@ -738,14 +777,12 @@ def _doctor() -> None:
         # Non-venv install: fall back to checking the system python.
         sys_py = shutil.which("python3")
         if sys_py:
-            py_result = subprocess.run(
-                [sys_py, "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            ver = py_result.stdout.strip()
-            print(f"  fallback:    ⚠️  {sys_py} ({ver})")
+            try:
+                print(f"  fallback:    ⚠️  {sys_py} ({_probe_python_version(sys_py)})")
+            except Exception as exc:
+                # The probe shares the venv row's policy now that it shares its
+                # helper: report the failure as a row, never fail the doctor.
+                print(f"  fallback:    ⚠️  {sys_py} (version unavailable: {exc})")
             try:
                 subprocess.run(
                     [sys_py, "-c", "import websockets, aiohttp"],
@@ -825,10 +862,21 @@ def _doctor() -> None:
     ffmpeg_bin = shutil.which("ffmpeg")
     if ffmpeg_bin:
         print(f"  ffmpeg:      ✅ {ffmpeg_bin}")
-    elif stt_active:
+    elif stt_active and stt_resolved is not None:
+        # Gated on a RESOLVED model, the same predicate the faster-whisper probe below
+        # uses — and the one the `stt_resolved is None` branch above already reasoned out
+        # loud: "a fresh core is expected to boot without media backends". Gated on
+        # `stt_active` alone it was not, because that flag DEFAULTS TO TRUE, so every
+        # install with no ffmpeg and no STT model — a slim container, the published image,
+        # any machine where nobody ran a package manager — exited `❌ Fix these issues:
+        # ffmpeg`, demanding a transcoder for a feature that has nothing to transcode with.
+        # Two branches of one check must not disagree about whether unconfigured STT is a
+        # fault.
         print("  ffmpeg:      ❌ not found")
-        print("               Fix: brew install ffmpeg")
+        print(f"               Fix: {_ffmpeg_install_hint()}")
         issues.append("ffmpeg")
+    elif stt_active:
+        print("  ffmpeg:      ⏭  not installed (not needed until an STT model is bound)")
     else:
         print("  ffmpeg:      ⏭  not installed (not needed)")
 

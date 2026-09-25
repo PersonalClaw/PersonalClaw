@@ -26,9 +26,25 @@ import { join } from 'node:path'
 // 🔑 EVERY VOICE CONTROL PUTs ON CHANGE, so its version is the integrity one: a user "correcting" a switch
 // that was never loaded writes the opposite of what they believe is stored.
 //
-// 🔑 WHAT KEEPS ITS FALLBACK, AND WHY — the decorating reads. `notificationRules` (a per-kind policy table
-// BELOW the settings), `changelog` (a section further down), `modelsActive` (a readiness chip). Losing one
-// degrades a section; losing the gating read fabricates the panel.
+// 🔑 WHAT KEEPS ITS FALLBACK, AND WHY — the decorating reads. `changelog` (a section further down),
+// `modelsActive` (a readiness chip). Losing one degrades a section; losing the gating read fabricates
+// the panel. That discriminator is right and this file still runs on it.
+//
+// 🔴 BUT `notificationRules` WAS ON THE WRONG SIDE OF IT, AND THE PIN THAT SAID SO INVERTED INTO A
+// DEMAND THAT THE DEFECT COME BACK (#3394, 2026-09-24). This file used to REQUIRE
+// `api.notificationRules().catch(() => null)` — "the rules matrix decorates" — so the commit that
+// removed the swallow reded here. That is the hazard `ui/loadErrorState.test.tsx` states in its own
+// vacuity block: *"a pin on a site someone FIXES inverts into a demand that the defect come back."*
+// The re-reading that moved it is one line of counting. `rules` does not gate one decoration; it gates
+// TWO things — `<NotificationRulesMatrix>`, which `NotificationsPanel.tsx` itself describes four lines
+// above the read as "the authoritative view of policy", and `<DigestSchedule>`, which is a **control**,
+// not a readout. So a failed read silently deleted the per-kind HALF of a settings page.
+//
+// 🔑 SO THERE IS A THIRD CATEGORY, AND NAMING IT IS THE POINT: a **secondary** read, which gates its own
+// section and cannot fabricate the panel. It takes its own error branch, beside (never instead of) the
+// gating read's. The distinction from a sweep is exact and asserted below in both directions: the
+// panel's gating branch is untouched and still separate, the OTHER two decorating fallbacks are still
+// here, and the rules half now names its own failure rather than vanishing.
 
 const SETTINGS = join(process.cwd(), 'src', 'pages', 'settings')
 const read = (f: string) => readFileSync(join(SETTINGS, f), 'utf8')
@@ -69,9 +85,31 @@ describe('a settings panel whose gating read fails says so', () => {
 
   it('the decorating reads KEEP their fallbacks — this is not a no-catch sweep', () => {
     // Pinned, because a future "finish the job" pass would blank a panel that could have rendered.
-    expect(codeOf('NotificationsPanel.tsx'), 'the rules matrix decorates').toMatch(/api\.notificationRules\(\)\.catch\(\(\) => null\)/)
+    // These two are genuinely decoration: a changelog section further down the page, and a readiness
+    // CHIP. Neither gates a control and neither composes a count or a sentence from the substitute.
+    // They stay here — untouched by #3394 — and that is what makes this not a sweep.
     expect(codeOf('UpdatesPanel.tsx'), 'the changelog decorates').toMatch(/api\.changelog\(\)\.catch\(\(\) => ''\)/)
     expect(codeOf('VoicePanel.tsx'), 'the readiness chip decorates').toMatch(/api\.modelsActive\(\)\.catch\(\(\) =>/)
+  })
+
+  it('the SECONDARY read takes its own error branch without touching the gating one', () => {
+    // 🔴 The row that moved, asserted as the DISTINCTION rather than as an absence — see the header.
+    // An absence check alone ("no `.catch` on the rules read") would also pass if someone deleted the
+    // whole read, or folded it into the gating one, which are the two ways this could go wrong.
+    const code = codeOf('NotificationsPanel.tsx')
+    // 1. The read still happens, and now propagates.
+    expect(code, 'the rules read must still be made').toContain('api.notificationRules()')
+    const line = code.split('\n').find((l) => l.includes('api.notificationRules()')) ?? ''
+    expect(line, 'and must no longer resolve its own rejection').not.toMatch(/\.catch\(/)
+    // 2. Its rejection is bound and rendered — a branch of its own, naming its own half.
+    expect(code, 'the rules read must bind its error').toMatch(/error:\s*rulesErr/)
+    expect(code, 'and render it for the per-kind half').toMatch(/<LoadError what="per-kind notification rules"/)
+    // 3. And the GATING read's branch is still separate and intact. This is the assertion that keeps
+    //    the change from being the "blank the panel" move the header warns about: the two failures are
+    //    independent, so an unreadable rules matrix still leaves every global control on screen.
+    expect(code, "the gating read's own branch must survive").toContain('<LoadError what="notification settings" error={loadErr} onRetry={refresh} />')
+    expect(code, 'and the panel still renders its own controls').toMatch(/<Toggle\b/)
+    expect(/error:\s*rulesErr/.test(code) && /error:\s*loadErr/.test(code), 'two reads, two errors').toBe(true)
   })
 
   it('the census that found exactly these three is reproducible', () => {

@@ -15,6 +15,7 @@ import { TextInput } from '../../ui/forms'
 import { OllamaModelManager } from './OllamaModelManager'
 import { fvs } from '../../design/fontWeight'
 import { reportingWrite } from '../../app/reportingWrite'
+import { notify } from '../../app/appSdk'
 import { SchemaFields } from '../tools/schema'
 
 // Provider types + their config forms are NOT hardcoded here — they come from
@@ -44,8 +45,15 @@ function RemoteProvidersSkeleton() {
 /** Remote model providers — multi-instance connections (Ollama / OpenAI-Compatible
  *  / Anthropic-Compatible). Each instance contributes models to the pool you bind
  *  in Models. Add (with known-service endpoint prefill), test, inspect models,
- *  edit, delete. Backed by /api/model-providers + /api/models/available. */
-export function RemoteModelProviders() {
+ *  edit, delete. Backed by /api/model-providers + /api/models/available.
+ *
+ *  `onChanged` is the PANEL's refresh, and it is required rather than optional: an instance
+ *  of any type has to appear somewhere, and an Ollama one appears ONLY in the panel's Native
+ *  (bundled) section — which reads `settings:providers` + `settings:models-available`, two
+ *  keys this component does not own. Refreshing just the local list left the single surface
+ *  that could show a new Ollama instance on its pre-write cache until a full page reload
+ *  (#3488). */
+export function RemoteModelProviders({ onChanged }: { onChanged: () => void }) {
   const [adding, setAdding] = useState(false)
   // Cached + session-persisted: revisiting Providers (or reloading) paints the
   // remote-provider list instantly from cache and revalidates in the background,
@@ -67,7 +75,7 @@ export function RemoteModelProviders() {
     for (const r of rows) map[r.name] = [...(map[r.name] ?? []), ...(r.models ?? [])]
     return { providers: provs, available: map }
   }, { persist: true })
-  const reload = () => { invalidateKeys('settings:remote-model-providers'); refresh() }
+  const reload = () => { invalidateKeys('settings:remote-model-providers'); refresh(); onChanged() }
   const available = data?.available ?? {}
 
   // A region inside the Providers panel, not a page body — so the failure is the canonical
@@ -83,10 +91,22 @@ export function RemoteModelProviders() {
   // (bundled) section with the unified download card, NOT here. Filter it out so it
   // isn't listed twice. (Its endpoint config remains editable via that card's provider.)
   const providers = data.providers.filter((p) => p.type !== 'ollama')
+  // The empty state is computed from the FILTERED list, so it used to deny an instance that
+  // exists: the only thing `Add instance` can create on a fresh install is an Ollama one (its
+  // type select has a single option), and that is precisely the type filtered out here. The
+  // sentence now names the instances and where they render, so a successful add is visible in
+  // the section the user acted in rather than only after a reload (#3488).
+  const elsewhere = data.providers.filter((p) => p.type === 'ollama').map((p) => p.name)
   return (
     <div>
       {providers.length === 0 ? (
-        <p data-type="body-s" className="mb-3 text-on-surface-low">No remote model providers yet. Add an instance to contribute models to the pool.</p>
+        elsewhere.length > 0 ? (
+          <p data-type="body-s" className="mb-m text-on-surface-low">
+            {elsewhere.join(', ')} {elsewhere.length === 1 ? 'is' : 'are'} listed under Native (bundled) above — Ollama serves models from this machine. No other remote model providers yet.
+          </p>
+        ) : (
+          <p data-type="body-s" className="mb-m text-on-surface-low">No remote model providers yet. Add an instance to contribute models to the pool.</p>
+        )
       ) : (
         <div className="mb-3 flex flex-col gap-2">
           {providers.map((p) => (
@@ -324,7 +344,14 @@ function AddInstanceForm({ onDone }: { onDone: (created: boolean) => void }) {
       const v = (values[k] ?? String(f.default ?? '')).trim()
       if (v) options[k] = v
     }
-    try { await api.createModelProvider({ name: name.trim(), type: selected.type, model: '', options }); onDone(true) }
+    try {
+      await api.createModelProvider({ name: name.trim(), type: selected.type, model: '', options })
+      // Say it landed. The only feedback for a successful add used to be the section's own
+      // "No remote model providers yet." — a sentence that contradicted it — and a user shown
+      // no evidence clicks again, which the backend answers 409 "already exists" (#3488).
+      notify(`Added ${name.trim()}.`, 'success')
+      onDone(true)
+    }
     catch (e) {
       let msg = e instanceof Error ? e.message : 'Failed to add instance'
       try { const p = JSON.parse(msg); msg = p.error || msg } catch { /* raw */ }

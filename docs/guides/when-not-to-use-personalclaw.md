@@ -36,14 +36,23 @@ a newer PersonalClaw is subject to the same clean breaks.
 **Come back when:** the README's pre-1.0 banner is gone. It is removed on a judgment
 about architectural stability, not on a date.
 
-## 2. Your machine cannot reach a model
+## 2. You have no model of your own
 
-**Walk away if:** the machine is air-gapped and has no local inference server, or you
-were expecting a model to be included.
+**Walk away if:** you need real work done and have no model to connect, meaning no local
+inference server and no provider account.
 
-No model weights and no hosted model ship with PersonalClaw, and **a fresh install has
-no chat model bound.** Concretely:
+No model weights ship inside PersonalClaw's packages: not the wheel, not the container
+image, not the desktop build. A fresh install can download one small model, and that
+model is a floor rather than a way to get work done. Concretely:
 
+- The `bundled-chat` app (`src/personalclaw/apps/native/bundled-chat/`) offers a one-time
+  138 MiB download of `SmolLM2-135M-Instruct` (Apache-2.0) in onboarding and on the chat
+  screen. After it, the model runs on the CPU with no key and no network, so a new install
+  can chat. It has 135 million parameters and no tools, and it doesn't see your memory,
+  skills or knowledge. [Security limitations §5](../security/limitations.md#5-the-bundled-default-model-is-a-floor-not-an-assistant)
+  records what it did with real requests, and
+  [bundled-model-signoff.txt](../architecture/bundled-model-signoff.txt) records the model,
+  its licence and its digest.
 - Core contains `llm/anthropic.py` and `llm/openai.py`, but these are *wire-protocol
   clients only* — neither registers itself as a provider at import. Registration is
   owned by the `anthropic-models` and `openai-models` app bundles, which live in the
@@ -53,17 +62,20 @@ no chat model bound.** Concretely:
 - The Store's default source is that repo's git URL
   (`_DEFAULT_GIT_SOURCES` in `src/personalclaw/apps/catalog.py`), so installing a
   hosted-model provider needs a reachable `github.com`.
-- The one model provider the wheel *does* bundle is `ollama-models` — it is seeded into
-  your home at first boot and cannot be uninstalled, so it needs no network to appear.
-  But it is a client for [Ollama](https://ollama.com), defaulting to
-  `http://localhost:11434`. It needs Ollama actually running with a model pulled.
+- The wheel bundles two model providers, both seeded into your home at first boot and
+  neither one uninstallable: `bundled-chat` (above) and `ollama-models`. The second is a
+  client for [Ollama](https://ollama.com), defaulting to `http://localhost:11434`, and
+  needs Ollama actually running with a model pulled.
 
-So a genuinely offline install works **only** if you bring your own Ollama with a pulled
-model. An air-gapped machine with no local inference server cannot complete setup into a
-working chat, and nothing in the product will pretend otherwise.
+So an offline install can chat, after one download or after you copy
+`models/bundled-chat/` from a home that has it, but only at that small model's level.
+Offline real work still needs your own Ollama with a pulled model. An air-gapped machine
+with no Ollama and no copied weight cannot complete setup into a working chat, and nothing
+in the product will pretend otherwise.
 
 This is a design boundary, not a gap: the provider-agnostic core is the reason no vendor
-is baked in, and it is the same reason none is included.
+is baked in, and the default model is small on purpose. Its sign-off caps the download at
+150 MiB, so it gets a new install talking rather than replacing a model you choose.
 
 ## 3. More than one person needs an account
 

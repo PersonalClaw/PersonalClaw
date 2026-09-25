@@ -27,7 +27,7 @@ import uuid
 from pathlib import Path
 
 from personalclaw.config import loader as config_loader
-from personalclaw.record_ids import is_safe_record_id, record_path
+from personalclaw.record_ids import UnsafeRecordId, is_safe_record_id, record_path
 from personalclaw.tasks.models import (
     BUILTIN_PROJECTS,
     PERSONAL_PROJECT,
@@ -271,6 +271,49 @@ class HierarchyStore:
             if p.name == name:
                 return p
         return None
+
+    def project_for_path(self, path: str) -> Project | None:
+        """The one ACTIVE project whose own directory holds ``path``, else ``None``.
+
+        A project's own directories are its bound ``workspace_dir`` and its ``context/`` dir.
+        The most specific directory wins, so a workspace nested inside another project's
+        workspace belongs to the inner project. Two projects claiming the same directory
+        equally is ambiguous and answers ``None``: filing work under a project the user did not
+        choose is worse than filing it under none — the rule `artifact_save`'s project stamp
+        already follows. Archived projects are skipped for the reason the pickers skip them:
+        this is the system choosing a project for NEW work on the user's behalf.
+        """
+        raw = str(path or "").strip()
+        if not raw:
+            return None
+        try:
+            target = Path(raw).expanduser().resolve()
+        except (OSError, RuntimeError):
+            return None
+        best_depth = -1
+        best: dict[str, Project] = {}
+        for project in self._all_projects_raw():
+            if project.status == "archived":
+                continue
+            try:
+                roots = [self._project_dir(project.id) / "context"]
+            except UnsafeRecordId:
+                continue
+            if project.workspace_dir:
+                roots.append(Path(project.workspace_dir).expanduser())
+            for root in roots:
+                try:
+                    resolved = root.resolve()
+                except (OSError, RuntimeError):
+                    continue
+                if not target.is_relative_to(resolved):
+                    continue
+                depth = len(resolved.parts)
+                if depth > best_depth:
+                    best_depth, best = depth, {project.id: project}
+                elif depth == best_depth:
+                    best[project.id] = project
+        return next(iter(best.values())) if len(best) == 1 else None
 
     def find_or_create_project(self, name: str) -> Project:
         text = require_text(name, field="name")

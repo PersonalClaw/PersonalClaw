@@ -24,8 +24,11 @@ import { readableErrText } from '../lib/errText'
  *
  * Extracted rather than fixed twice because this module's own contract is that "ONE module owns the
  * sentence in both forms, so the two cannot drift into different wording" — two copies of the new
- * conditional would be exactly the drift that line exists to prevent. */
-function failureSentence(what: string, e: unknown): string {
+ * conditional would be exactly the drift that line exists to prevent.
+ *
+ * EXPORTED for the third form, the INLINE one: a failure shown beside the control that caused it
+ * (an edit form's sticky footer) rather than in a toast. Same sentence, same owner. */
+export function failureSentence(what: string, e: unknown): string {
   const detail = readableErrText(e)
   return detail ? `Couldn't ${what}: ${detail}` : `Couldn't ${what}.`
 }

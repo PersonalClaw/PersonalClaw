@@ -1262,32 +1262,42 @@ async def _probe_credential_backend(_ctx: DoctorContext) -> ProbeResult:
 
 
 async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
-    """knowledge — which ingested items CANNOT be found by search? (RET-2, RET-4)
+    """knowledge — which ingested items can search NOT fully reach? (RET-2, RET-4)
 
     🔴 WHY THIS EXISTS. Measured before RET-2: an image-only PDF and a document ingested
-    with no embedding provider both persisted ``processing_status='done'`` while nothing
-    could retrieve either — the AnythingLLM #6143 shape, where the app reports success and
-    RAG returns no sources. The ingest runner now persists ``unsearchable`` + a typed reason
-    instead; this is the surface that makes those items VISIBLE rather than a status value
-    in a table nobody opens.
+    with no embedding provider both persisted ``processing_status='done'`` while part of
+    retrieval could not see either — the AnythingLLM #6143 shape, where the app reports
+    success and RAG returns no sources. The ingest runner now persists ``unsearchable`` + a
+    typed reason instead; this is the surface that makes those items VISIBLE rather than a
+    status value in a table nobody opens.
+
+    🔴 AND WHAT IT MAY CLAIM ABOUT THEM. This row used to say "they are in the library and no
+    query can reach them" — measured false in live validation, where keyword search found
+    both notes in the library and through ``knowledge_search`` (whose note printed the same
+    claim, then listed the match). Three of the four reasons remove only SEMANTIC reach. The
+    sentence is therefore :attr:`~personalclaw.knowledge.searchability.Degradation.summary`,
+    the one the search tool prints too; this probe composes no claim of its own.
 
     **Reports failed, not degraded**, and that is the deliberate half. Doctor's other
     knowledge probes report degraded because a slower-but-correct search is not an outage.
-    An item the user uploaded and can never find is not slower — it is absent, while the
-    library says it is there. A row a user must act on (bind an embedder, add a text
-    version, re-ingest) is exactly what ``ok=False`` is for. Per §1.3 it still degrades only
-    this capability: it never marks the gateway unhealthy and never justifies a restart.
+    An item half of search cannot see is a gap the user must act on (bind an embedder, add
+    a text version, re-ingest), which is exactly what ``ok=False`` is for. Per §1.3 it still
+    degrades only this capability: it never marks the gateway unhealthy and never justifies
+    a restart.
 
-    **One row per item.** The count is exact; ``items`` carries a row each so the surface
-    names WHICH document is unreachable — a bare "3 items are unsearchable" cannot be acted
-    on. Read-only throughout: ``knowledge.db`` is opened ``mode=ro`` with ``create=False``,
-    so a health check on an install that has never used knowledge creates nothing.
+    **One row per item, counted the way the library counts.** ``items`` carries a row per
+    LIBRARY item, so the surface names WHICH document is affected and the number matches the
+    list a user can check it against. Rows the library deliberately never lists — an
+    artifact's search mirror, a report's finding — go under ``unlisted_items`` and are named
+    apart in the sentence ("2 items and 1 artifact"), never folded into "items". Read-only
+    throughout: ``knowledge.db`` is opened ``mode=ro`` with ``create=False``, so a health
+    check on an install that has never used knowledge creates nothing.
 
-    **RET-4 folds in one more way to be unreachable**: an item whose PASSAGE vectors came
-    from a different embedding model than the one bound now (``stale_index``). It is the same
-    user-visible fact — content in the library that no query reaches — so it belongs in this
-    row rather than in a second probe a user has to correlate. Its remedy is different and
-    the row says so: a re-index, not a re-ingest.
+    **RET-4 folds in one more gap**: an item whose PASSAGE vectors came from a different
+    embedding model than the one bound now (``stale_index``). Keyword search still reaches
+    it and semantic search skips it, the same user-visible shape as a missing embedding, so
+    it belongs in this row rather than in a second probe a user has to correlate. Its remedy
+    is different and the row says so: a re-index, not a re-ingest.
     """
     from personalclaw.knowledge.embedding_fingerprint import (
         active_fingerprint,
@@ -1296,7 +1306,13 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
         stale_chunk_items,
         stale_rows,
     )
-    from personalclaw.knowledge.searchability import UNSEARCHABLE, degradations_from, rows_from
+    from personalclaw.knowledge.searchability import (
+        LIBRARY_SHELF,
+        UNSEARCHABLE,
+        degradations_from,
+        row_select,
+        rows_from,
+    )
     from personalclaw.knowledge.store import knowledge_db_path
     from personalclaw.sqlite_compat import sqlite3 as store_sqlite3
 
@@ -1318,10 +1334,13 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
                 ev["items_table"] = False
                 return ev
             ev["items_table"] = True
+            # The table's REAL columns: a ``mode=ro`` reader cannot migrate, so a column an
+            # older build never added must read as NULL rather than fail the probe.
+            present = [r[1] for r in conn.execute("PRAGMA table_info(items)").fetchall()]
             records = [
-                (r[0], r[1], r[2])
+                tuple(r)
                 for r in conn.execute(
-                    "SELECT id, title, file_metadata FROM items "
+                    f"SELECT {row_select(present)} FROM items "  # noqa: S608 — fixed columns
                     "WHERE processing_status = ? AND COALESCE(is_archived, 0) = 0 "
                     "ORDER BY created_at, id",
                     (UNSEARCHABLE,),
@@ -1340,10 +1359,16 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
         finally:
             conn.close()
         rows = rows_from(records) + stale
-        ev["unsearchable"] = len(rows)
-        ev["items"] = [r.to_dict() for r in rows]
-        ev["by_reason"] = {d.reason: d.item_count for d in degradations_from(rows)}
-        ev["reasons"] = [d.detail for d in degradations_from(rows)]
+        listed = [r for r in rows if r.shelf == LIBRARY_SHELF]
+        unlisted = [r for r in rows if r.shelf != LIBRARY_SHELF]
+        degradations = degradations_from(rows)
+        ev["unsearchable"] = len(listed)
+        ev["items"] = [r.to_dict() for r in listed]
+        ev["unlisted"] = len(unlisted)
+        ev["unlisted_items"] = [r.to_dict() for r in unlisted]
+        ev["by_reason"] = {d.reason: d.item_count for d in degradations if d.item_count}
+        ev["reasons"] = [d.detail for d in degradations]
+        ev["summaries"] = [d.summary for d in degradations]
         return ev
 
     try:
@@ -1355,28 +1380,22 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
 
     if not ev.get("db_present") or not ev.get("items_table"):
         return ProbeResult(ok=True, detail="no knowledge library on disk", evidence=ev)
-    count = int(ev.get("unsearchable") or 0)
-    if not count:
+    if not (ev.get("unsearchable") or ev.get("unlisted")):
         return ProbeResult(
-            ok=True, detail="every ingested item is reachable by search", evidence=ev
+            ok=True, detail="every ingested item is fully reachable by search", evidence=ev
         )
-    reasons = ", ".join(sorted((ev.get("by_reason") or {}).keys()))
     ev["remedy"] = (
-        "Each item under `items` is in your library but cannot be found by search. Fix its "
-        "named reason — bind an embedding model (Settings → Providers) and re-index for "
-        "`no_embedding_provider`/`not_indexed`; for `no_extractable_text` the file is a scan, "
-        "so add a text version or bind an OCR/vision model — then re-ingest the item. For "
-        "`stale_index` the item is fine and its vectors are not: they came from a different "
-        "embedding model, so run the embedding re-index — nothing needs re-ingesting."
+        "Each row under `items` is in your library and missing from part of search; its "
+        "reason names which part. `no_embedding_provider`/`not_indexed`: keyword search "
+        "already finds the item, so bind an embedding model (Settings → Models) and re-index "
+        "to add semantic search. `no_extractable_text`: the file is a scan, so add a text "
+        "version or bind an OCR/vision model, then re-ingest the item. `stale_index`: the item "
+        "is fine and its vectors are not — they came from a different embedding model, so run "
+        "the embedding re-index; nothing needs re-ingesting. Rows under `unlisted_items` are "
+        "search copies the library does not list (an artifact's mirror, a report's finding) "
+        "and take the same fix."
     )
-    return ProbeResult(
-        ok=False,
-        detail=(
-            f"{count} ingested item{'s' if count != 1 else ''} cannot be found by search "
-            f"({reasons}) — they are in the library and no query can reach them"
-        ),
-        evidence=ev,
-    )
+    return ProbeResult(ok=False, detail="; ".join(ev["summaries"]), evidence=ev)
 
 
 async def _probe_knowledge_vault(ctx: DoctorContext) -> ProbeResult:
@@ -1779,7 +1798,7 @@ def _register_builtin_probes() -> None:
             "knowledge",
             Tier.CAPABILITY,
             _probe_knowledge_searchability,
-            "Ingested items that no search can reach",
+            "Items search cannot fully reach",
         )
     )
     register_probe(

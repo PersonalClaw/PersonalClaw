@@ -103,14 +103,20 @@ export function SourcesPanel() {
         </RowGroup>
       </Section>
 
+      {/* 🔴 "Daily request budget per source" IS GONE, and `sources.daily_request_budget` with
+          it (issue #3490). It PATCHed 200 and survived a reload while NOTHING counted a request
+          against it: a rolling-day cap needs a per-source tally, and `SourceEngine.
+          _emit_poll_completed` records the measurement that no shipped provider reports
+          `requests_used` at all — so the hint's "enforced by the fetching providers" was a
+          promise the code ignored. The allowance that IS enforced is per-source and per-poll
+          (`budget.max_requests` on the source row, counted by `web_source._Budget`), which the
+          create flow exposes per source rather than as one global number. */}
       <Section title="Limits" hint="Bounds so a busy feed or a runaway config cannot flood ingestion.">
         <RowGroup>
           <NumberRow label="Max active sources" cfg={cfg} field="max_sources" min={1} max={1000} patch={patch}
             hint="Cap on how many enabled sources the engine arms per tick." />
           <NumberRow label="Max items per poll" cfg={cfg} field="max_items_per_poll" min={1} max={1000} patch={patch}
             hint="How many new items one poll may ingest before the rest wait for the next cycle." />
-          <NumberRow label="Daily request budget per source" cfg={cfg} field="daily_request_budget" min={1} max={100000} patch={patch}
-            hint="Upper bound on network requests one source may make in a rolling day (enforced by the fetching providers)." />
         </RowGroup>
       </Section>
 

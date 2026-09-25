@@ -238,3 +238,128 @@ def test_core_pins_exclude_extras_by_marker_not_by_name_list() -> None:
     # `personalclaw` self-references appear only under extras (dev/all bundles).
     assert "personalclaw" not in core
     assert json.dumps(sorted(core))  # names are plain strings, safely serializable
+
+
+# ── The DISCLOSURE half: what the consent surface is told ──────────────────────
+#
+# The guard above refuses a pin that would move a core dependency. It says nothing about
+# the pins it ADMITS, and neither did the install-consent dialog: it enumerated gateway
+# permissions, app messaging, desktop capabilities, network reach and dashboard code, and
+# never that installing an app pip-installs a third-party package into the interpreter the
+# gateway runs in — holding the owner's credentials, filesystem and network reach. Measured
+# on a fresh `python:3.13-slim` container: four of nine Store installs did exactly that.
+#
+# `describe_python_dependencies` is that disclosure, and it reads `coreOwned` from
+# `_core_requirement_pins` — the SAME set the guard gates on — so the two cannot drift.
+# These tests pin the properties the UI copy depends on being TRUE.
+
+
+def test_the_disclosure_reads_core_ownership_from_the_guards_own_pin_set() -> None:
+    """A core-owned name and a non-core one must classify differently, and the split must
+    come from the guard's authority rather than a second list."""
+    deps = app_manager.describe_python_dependencies(
+        _manifest([f"{_CORE_NAME}>=1.24", "openai>=1.0", "anthropic>=0.20"])
+    )
+    assert deps == [
+        {"spec": f"{_CORE_NAME}>=1.24", "coreOwned": True},
+        {"spec": "openai>=1.0", "coreOwned": False},
+        {"spec": "anthropic>=0.20", "coreOwned": False},
+    ]
+    # The provider SDKs are core EXTRAS, which `_core_requirement_pins` excludes on
+    # purpose — so they correctly read as new code entering the interpreter. That is the
+    # same exclusion `test_extras_are_not_core_so_provider_apps_stay_installable` relies
+    # on, read from the other side.
+    core = app_manager._core_requirement_pins()
+    assert "openai" not in core and "anthropic" not in core
+
+
+def test_the_spec_is_returned_VERBATIM_because_the_specifier_is_the_disclosure() -> None:
+    """A user deciding about `anthropic>=0.20` has to see that string. Normalising it
+    (canonicalised name, re-rendered specifier) would silently change what the screen
+    claims the manifest says."""
+    raw = ["Pillow>=10,<13", "slack_sdk>=3.27,<4", "  numpy>=1.24  "]
+    out = app_manager.describe_python_dependencies(_manifest(raw))
+    assert [d["spec"] for d in out] == raw
+    # …while the CLASSIFICATION still canonicalises, so `slack_sdk` resolves against
+    # `slack-sdk` and `Pillow` against `pillow`. Verbatim display, canonical matching.
+    by_spec = {d["spec"]: d["coreOwned"] for d in out}
+    assert by_spec["Pillow>=10,<13"] is True  # core-declared
+    assert by_spec["slack_sdk>=3.27,<4"] is False  # an extra, not core
+    assert by_spec["  numpy>=1.24  "] is True  # whitespace must not defeat the match
+
+
+def test_an_app_declaring_nothing_discloses_nothing() -> None:
+    """`[]`, not a placeholder row. An empty "Python packages: none" box on the consent
+    screen would alarm without informing — five of the nine measured installs declared no
+    dependency at all."""
+    assert app_manager.describe_python_dependencies(_manifest([])) == []
+
+
+def test_an_unreadable_pin_set_degrades_to_the_LOUDER_disclosure() -> None:
+    """The one fail direction that is safe. `packaging` is genuinely absent on a fresh
+    container (issue #3539 — measured: `import packaging` raises there), which is also the
+    condition that makes the guard REFUSE the install. The disclosure must not vanish and
+    must not quietly claim a package is core-owned: every spec degrades to `coreOwned:
+    False`, i.e. to "new code enters your interpreter", which over-discloses rather than
+    under-discloses. Over-disclosing a package is safe; under-disclosing one is the defect
+    being fixed."""
+
+    def no_pins():
+        raise ModuleNotFoundError("No module named 'packaging'")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(app_manager, "_core_requirement_pins", no_pins)
+        out = app_manager.describe_python_dependencies(_manifest([f"{_CORE_NAME}>=1.24"]))
+    # The spec survives — losing it is the only outcome worse than mis-grouping it.
+    assert out == [{"spec": f"{_CORE_NAME}>=1.24", "coreOwned": False}]
+
+
+def test_an_unparseable_spec_still_discloses_and_does_not_claim_core_ownership() -> None:
+    """`AppManifest.validate()` does not vet specifiers, so an unparseable one reaches
+    here. The install will be REFUSED for it (see `test_an_unparseable_pin_is_refused`), and
+    until then the string is shown as-is rather than dropped: a disclosure that silently
+    omits the thing it cannot parse is how a surface understates what it is consenting to."""
+    out = app_manager.describe_python_dependencies(_manifest(["=not a requirement="]))
+    assert out == [{"spec": "=not a requirement=", "coreOwned": False}]
+
+
+def test_the_catalog_carries_the_disclosure_to_every_scanned_card() -> None:
+    """The three scan paths (git, local, native) build a `CatalogEntry` from a manifest, and
+    all three read the consent facts from ONE helper — which is what stops a fourth scan
+    site from surfacing permissions and crons while forgetting the packages. Asserted
+    structurally, because the defect being fixed was precisely an omission."""
+    import inspect
+
+    from personalclaw.apps import catalog
+
+    src = inspect.getsource(catalog)
+    assert src.count("_perms, _crons, _deps = _manifest_consent(m)") == 3
+    assert src.count("pythonDependencies=_deps,") == 3
+    # A registry POINTER must NOT get one: its manifest is unread, and `consentKnown=False`
+    # is what the frontend reads to say "unknown" rather than "none".
+    pointer = inspect.getsource(catalog._pointer_to_entry)
+    assert "pythonDependencies" not in pointer
+    assert (
+        catalog._pointer_to_entry(
+            "https://example.invalid/r.git",
+            catalog.RegistryPointer(name="p", repo="https://example.invalid/r.git"),
+            is_git=True,
+        ).to_dict()["pythonDependencies"]
+        == []
+    )
+
+
+def test_a_scanned_manifest_with_deps_reaches_the_wire_classified() -> None:
+    """End to end through the real helper: manifest → `_manifest_consent` → the wire shape
+    the consent UI reads."""
+    from personalclaw.apps import catalog
+
+    _perms, _crons, deps = catalog._manifest_consent(
+        _manifest([f"{_CORE_NAME}>=1.24", "openai>=1.0"])
+    )
+    assert deps == [
+        {"spec": f"{_CORE_NAME}>=1.24", "coreOwned": True},
+        {"spec": "openai>=1.0", "coreOwned": False},
+    ]
+    # And the no-dep case stays empty rather than becoming a placeholder.
+    assert catalog._manifest_consent(_manifest([]))[2] == []

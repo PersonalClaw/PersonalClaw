@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { fvs } from '../design/fontWeight'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -29,7 +29,16 @@ const FOCUSABLE = 'button:not([disabled]),[href],input:not([disabled]),select:no
  *  The same composer renders in two very different places — docked low in a chat
  *  (open upward) and high on the dashboard launcher (upward would clip off the top
  *  of the page) — so a fixed direction is wrong for one of them no matter which is
- *  chosen. Mirrors the flip the composer's own SlashMenu/MentionMenu already do. */
+ *  chosen. Mirrors the flip the composer's own SlashMenu/MentionMenu already do.
+ *
+ *  ``placement="right"`` is the SIDE form: the flyout sits beside the trigger,
+ *  vertically CENTRED on it, rather than above or below. It exists for a trigger in
+ *  a dense vertical list — `pages/chat/SessionMapRail`'s marks sit on a 10px pitch,
+ *  so a flyout placed below one covers the twenty under it and the list stops being
+ *  sweepable. Unlike `top`/`bottom` it does not flip: a vertical list's neighbours are
+ *  the thing being avoided, so flipping to `bottom` would reintroduce exactly the
+ *  occlusion the side placement is for. Horizontal overflow is handled the way it
+ *  already is for the other two — `portalPos` clamps `left` into the viewport. */
 export function Popover({
   trigger, children, align = 'left', width, placement = 'top', openSignal, portal = false,
 }: {
@@ -37,7 +46,7 @@ export function Popover({
   children: (close: () => void) => ReactNode
   align?: 'left' | 'right'
   width?: number
-  placement?: 'top' | 'bottom'
+  placement?: 'top' | 'bottom' | 'right'
   /** Monotonic counter — each increment forces the popover open. Lets a host
    *  open it programmatically (e.g. a "/model" slash command opening the model
    *  pill) without making it fully controlled. */
@@ -51,7 +60,7 @@ export function Popover({
   const [anchor, setAnchor] = useState<DOMRect | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   // The side actually used this time — `placement` flipped when it wouldn't fit.
-  const [side, setSide] = useState<'top' | 'bottom'>(placement)
+  const [side, setSide] = useState<'top' | 'bottom' | 'right'>(placement)
   // Open on each new signal value (ignore the initial mount / 0).
   const lastSignal = useRef(openSignal ?? 0)
   useEffect(() => {
@@ -97,7 +106,10 @@ export function Popover({
    *  the OTHER side is genuinely roomier, so a menu taller than both sides keeps
    *  its caller's preference rather than thrashing.
    */
-  const resolveSide = (): 'top' | 'bottom' => {
+  const resolveSide = (): 'top' | 'bottom' | 'right' => {
+    // The side form is not a preference — see the prop doc. A dense list's neighbours are what it
+    // exists to avoid, so there is no roomier alternative to flip to.
+    if (placement === 'right') return 'right'
     const rect = ref.current?.getBoundingClientRect()
     if (!rect) return placement
     const above = rect.top
@@ -123,14 +135,35 @@ export function Popover({
   // estimate-based clamp (à la ContextMenu) over-shifts small menus, and the
   // menu height here varies with folders/tags count.
   useEffect(() => {
-    if (!open || !portal) return
+    if (!open || !portal || side === 'right') return
     const el = menuRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
     const pad = 8
     if (r.bottom > window.innerHeight - pad) { el.style.top = `${Math.max(pad, window.innerHeight - pad - r.height)}px`; el.style.bottom = 'auto' }
     if (r.top < pad) { el.style.top = `${pad}px`; el.style.bottom = 'auto' }
-  }, [open, portal, anchor])
+  }, [open, portal, anchor, side])
+
+  /** `placement="right"`: centre the flyout on its anchor, then clamp into the viewport.
+   *
+   *  🔑 A LAYOUT EFFECT, AND `offsetHeight` RATHER THAN A RECT — both for reasons the effect above
+   *  records the other half of. Centring needs the flyout's REAL height, which only exists after it
+   *  mounts, so `portalPos` cannot compute it; running the correction in `useEffect` would place the
+   *  flyout at its anchor's top for one painted frame and then jump it. And `getBoundingClientRect`
+   *  is measured THROUGH `overlayEnter`'s scale, so on the entrance frame it reports a height the
+   *  flyout is animating out of — `offsetHeight` ignores transforms and reports the laid-out one.
+   *
+   *  Separate from the clamp above rather than folded into it: that effect governs 30 call sites, and
+   *  promoting it to a layout effect to serve one new placement would change when all of them run. */
+  useLayoutEffect(() => {
+    if (!open || !portal || side !== 'right' || !anchor) return
+    const el = menuRef.current
+    if (!el) return
+    const pad = 8
+    const centred = anchor.top + anchor.height / 2 - el.offsetHeight / 2
+    el.style.top = `${Math.max(pad, Math.min(centred, window.innerHeight - pad - el.offsetHeight))}px`
+    el.style.bottom = 'auto'
+  }, [open, portal, anchor, side])
 
   // ── Portaled mode only: move focus INTO the flyout on open ───────────────────────────────────────
   //
@@ -224,9 +257,11 @@ export function Popover({
           variants={overlayEnter} initial="initial" animate="animate" exit="exit"
           className={portal
             ? 'glass fixed z-[var(--z-menu)] rounded-lgi p-s'
-            : `glass absolute z-30 rounded-lgi p-s ${side === 'bottom' ? 'top-full mt-s' : 'bottom-full mb-s'} ${align === 'right' ? 'right-0' : 'left-0'}`}
+            : `glass absolute z-30 rounded-lgi p-s ${inlineSide(side)} ${side === 'right' ? '' : align === 'right' ? 'right-0' : 'left-0'}`}
           style={{
-            transformOrigin: `${side === 'bottom' ? 'top' : 'bottom'} ${align === 'right' ? 'right' : 'left'}`,
+            transformOrigin: side === 'right'
+              ? 'left center'
+              : `${side === 'bottom' ? 'top' : 'bottom'} ${align === 'right' ? 'right' : 'left'}`,
             width, minWidth: 200,
             ...(portal && anchor ? portalPos(anchor, side, align, width ?? 200) : null),
           }}
@@ -245,15 +280,26 @@ export function Popover({
   )
 }
 
+/** The inline (non-portaled) flyout's own offset from the trigger, per side. */
+function inlineSide(side: 'top' | 'bottom' | 'right'): string {
+  if (side === 'right') return 'left-full ml-s top-1/2 -translate-y-1/2'
+  return side === 'bottom' ? 'top-full mt-s' : 'bottom-full mb-s'
+}
+
 /** Fixed-position coordinates for a portaled flyout: same placement/align
  *  semantics as the inline mode (relative to the trigger rect), horizontally
  *  clamped to the viewport with an 8px gutter. Vertical overflow is corrected
- *  after mount by the measure-nudge effect (real height beats an estimate). */
-function portalPos(anchor: DOMRect, placement: 'top' | 'bottom', align: 'left' | 'right', w: number) {
+ *  after mount by the measure-nudge effect (real height beats an estimate).
+ *
+ *  `right` seeds `top` with the anchor's own top and leaves the CENTRING to the layout effect,
+ *  which is the only place the flyout's real height exists. `align` does not apply: a side flyout's
+ *  horizontal edge is the anchor, not a choice. */
+function portalPos(anchor: DOMRect, placement: 'top' | 'bottom' | 'right', align: 'left' | 'right', w: number) {
   const gap = 6, pad = 8
-  const left = align === 'right' ? anchor.right - w : anchor.left
+  const left = placement === 'right' ? anchor.right + gap : align === 'right' ? anchor.right - w : anchor.left
   const pos: React.CSSProperties = { left: Math.min(Math.max(pad, left), Math.max(pad, window.innerWidth - w - pad)) }
-  if (placement === 'bottom') pos.top = anchor.bottom + gap
+  if (placement === 'right') pos.top = anchor.top
+  else if (placement === 'bottom') pos.top = anchor.bottom + gap
   else pos.bottom = window.innerHeight - anchor.top + gap
   return pos
 }

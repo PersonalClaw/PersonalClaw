@@ -385,7 +385,13 @@ class TestHandlers:
             return body
 
         req.json = _json
-        resp = _run(H.regenerate_intelligence(req))
+        # These tests are about WHICH items get queued, so a model must resolve: with none,
+        # the route refuses before selecting anything (test_knowledge_failures_told_truthfully
+        # owns that half). Pinned rather than inherited from the machine running the suite.
+        with patch(
+            "personalclaw.providers.provider_bridge.can_resolve_use_case", lambda use_case: True
+        ):
+            resp = _run(H.regenerate_intelligence(req))
         return json.loads(resp.body), enq
 
     def test_regenerate_missing_only(self, store):

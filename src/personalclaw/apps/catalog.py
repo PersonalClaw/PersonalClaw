@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -199,6 +200,17 @@ class CatalogEntry:
     # registry-index card (pointer-only, manifest not yet fetched — surfaced post-clone).
     permissions: dict[str, Any] = field(default_factory=dict)
     crons: list[dict[str, Any]] = field(default_factory=list)
+    # The Python packages installing this app pip-installs into the venv the GATEWAY
+    # runs out of, each tagged with whether core owns the name — from
+    # ``app_manager.describe_python_dependencies``, which reads the same core pin set the
+    # install guard gates on. Consent enumerated permissions, messaging, desktop reach,
+    # network and dashboard code and never this, which is the more consequential of the
+    # lot: a third-party package enters the interpreter holding the owner's credentials,
+    # filesystem and network reach. Empty ``[]`` for an app declaring none (the surface
+    # then renders nothing — an empty section would alarm without informing) and for a
+    # registry-index pointer, whose manifest is not read until install; ``consentKnown``
+    # is again the one authority for which of those two silences it is.
+    pythonDependencies: list[dict[str, Any]] = field(default_factory=list)  # noqa: N815
     # #492. Whether this app ships browser code — the one consent fact the permission
     # block cannot state. A UI bundle is imported into the DASHBOARD PAGE
     # (`appSdk.loadContributedModule`, no iframe), so it runs with the host DOM, the
@@ -676,6 +688,25 @@ def _mark_unavailable(sink: list[dict[str, str]] | None, source: str, reason: st
         sink.append({"source": source, "reason": reason})
 
 
+def _git_source_failure_reason() -> str:
+    """Why a git source failed: ``"no-git"`` when this machine has no ``git``, else
+    ``"unreachable"``.
+
+    Every git source is read by shelling out to ``git clone`` (:func:`_fetch_registry_index`,
+    :func:`_scan_git_source`), so on a machine with no ``git`` on PATH the failure is not a
+    network fact at all — it is certain, it applies to every git source, and retrying will
+    never fix it. Measured on a minimal ``python:3.13-slim`` container, which is what a
+    ``pip install personalclaw`` on a fresh machine can look like: ``github.com`` resolved
+    and an HTTPS ``GET`` of the repository's ``info/refs`` returned **200**, while the whole
+    catalog reported ``reason: "unreachable"`` — so the one reason a user could act on was
+    reported as the one thing they could do nothing about.
+
+    Distinguishing them is what lets the Store drop "it will be retried automatically" (it
+    will not help) and lets first-run setup name a missing dependency instead of asserting
+    that no app exists."""
+    return "unreachable" if shutil.which("git") else "no-git"
+
+
 def _scan_registries(
     *, now: float, deadline: float | None = None, unavailable: list[dict[str, str]] | None = None
 ) -> list[CatalogEntry]:
@@ -707,7 +738,7 @@ def _scan_registries(
         # at all is not a failure (it falls through to the subdir scan), so only an actual
         # failure record counts — including one we just inherited from a previous round.
         if backed_off or url in _registry_failures:
-            _mark_unavailable(unavailable, url, "unreachable")
+            _mark_unavailable(unavailable, url, _git_source_failure_reason())
     for root in list_local_sources():
         for p in _fetch_registry_index(root, is_git=False, now=now, deadline=deadline) or []:
             out.append(_pointer_to_entry(root, p, is_git=False))
@@ -796,7 +827,7 @@ def _scan_git_source(url: str, *, now: float, deadline: float | None = None) -> 
                     exc_info=True,
                 )
                 continue
-            _perms, _crons = _manifest_consent(m)
+            _perms, _crons, _deps = _manifest_consent(m)
             entries.append(
                 CatalogEntry(
                     name=m.name,
@@ -817,6 +848,7 @@ def _scan_git_source(url: str, *, now: float, deadline: float | None = None) -> 
                     permissions=_perms,
                     consentKnown=True,
                     crons=_crons,
+                    pythonDependencies=_deps,
                     hasUI=bool(m.ui.pages),
                     uiComponents=m.ui.components,
                     coreCompatibility=m.core_compatibility().to_dict(),
@@ -860,7 +892,7 @@ def _scan_git_sources(
             # legitimately contributes nothing here. Only flag one the registry pass also
             # failed on, so a healthy single-app repo is never reported as unavailable.
             if url in _registry_failures:
-                _mark_unavailable(unavailable, url, "unreachable")
+                _mark_unavailable(unavailable, url, _git_source_failure_reason())
         out.extend(entries)
     return out
 
@@ -1264,10 +1296,19 @@ def _humanized_cadence(expr: str, tz_name: str) -> str:
     return "" if text.strip() == expr.strip() else text.strip()
 
 
-def _manifest_consent(m: AppManifest) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """(permissions, crons) an app declares — the P29 install-consent surface, extracted
-    from a scanned manifest so the Store can show what the app will be granted + what
-    recurring jobs it will run BEFORE install. Best-effort; empty on any shape surprise."""
+def _manifest_consent(
+    m: AppManifest,
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    """(permissions, crons, pythonDependencies) an app declares — the P29 install-consent
+    surface, extracted from a scanned manifest so the Store can show what the app will be
+    granted, what recurring jobs it will run, and what Python packages it will install into
+    the gateway's own venv, all BEFORE install. Best-effort; empty on any shape surprise.
+
+    All three facts are returned TOGETHER rather than read per scan site, which is what
+    makes a new scan site unable to surface two of them and forget the third: the
+    ``pythonDependencies`` disclosure was missing from the consent dialog entirely, and a
+    third-party package entering the interpreter the gateway runs in is the most
+    consequential of the three."""
     try:
         perms = m.permissions.to_dict() if m.permissions else {}
     except Exception:
@@ -1303,7 +1344,16 @@ def _manifest_consent(m: AppManifest) -> tuple[dict[str, Any], list[dict[str, An
             )
     except Exception:
         crons = []
-    return perms, crons
+    try:
+        # Imported here, not at module scope: the classifier reads the installed
+        # ``personalclaw`` distribution's metadata, and ``app_manager`` is the install
+        # path — a catalog scan must not pull it in just to render a card.
+        from personalclaw.apps.app_manager import describe_python_dependencies
+
+        deps = describe_python_dependencies(m)
+    except Exception:
+        deps = []
+    return perms, crons, deps
 
 
 def _scan_local_sources() -> list[CatalogEntry]:
@@ -1333,7 +1383,7 @@ def _scan_local_sources() -> list[CatalogEntry]:
                 continue
             # First-party default source → badge as "first-party"; user dirs → "local".
             kind = "first-party" if root in first_party_sources() else "local"
-            _perms, _crons = _manifest_consent(m)
+            _perms, _crons, _deps = _manifest_consent(m)
             out.append(
                 CatalogEntry(
                     name=m.name,
@@ -1353,6 +1403,7 @@ def _scan_local_sources() -> list[CatalogEntry]:
                     permissions=_perms,
                     consentKnown=True,
                     crons=_crons,
+                    pythonDependencies=_deps,
                     hasUI=bool(m.ui.pages),
                     uiComponents=m.ui.components,
                     coreCompatibility=m.core_compatibility().to_dict(),
@@ -1436,7 +1487,7 @@ def available_bundled() -> list[CatalogEntry]:
             continue
         if not m.native:
             continue  # only native apps live in this dir; skip a stray non-native
-        _perms, _crons = _manifest_consent(m)
+        _perms, _crons, _deps = _manifest_consent(m)
         out.append(
             CatalogEntry(
                 name=m.name,
@@ -1456,6 +1507,7 @@ def available_bundled() -> list[CatalogEntry]:
                 permissions=_perms,
                 consentKnown=True,
                 crons=_crons,
+                pythonDependencies=_deps,
                 hasUI=bool(m.ui.pages),
                 uiComponents=m.ui.components,
                 coreCompatibility=m.core_compatibility().to_dict(),
@@ -1712,6 +1764,8 @@ def available_catalog() -> dict[str, Any]:
         # Sources that contributed nothing THIS build because they were unreachable or the
         # scan budget ran out (#408). The information used to be discarded, which is why a
         # single typo'd source read as "the Store is broken" rather than "remove that one".
-        # ``reason`` is "unreachable" (git failed → backed off) or "budget" (cut off).
+        # ``reason`` is "unreachable" (git failed → backed off), "no-git" (this machine has
+        # no ``git``, so every git source fails and no retry can help — see
+        # :func:`_git_source_failure_reason`) or "budget" (cut off).
         "unavailableSources": unavailable,
     }

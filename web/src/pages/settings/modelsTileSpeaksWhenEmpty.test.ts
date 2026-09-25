@@ -26,6 +26,6 @@ describe('the Models tile speaks when nothing is bound', () => {
     const modelsTile = src.slice(src.indexOf("id: 'models'"), src.indexOf("id: 'routing'"))
     expect(modelsTile, 'the tile still derives anyBound from the CORE use cases').toMatch(/anyBound/)
     expect(modelsTile, 'partial bindings still render the KVList').toContain('anyBound ? <KVList')
-    expect(modelsTile, 'the per-row dash for a partially-bound list survives').toContain("vText: bound ? shortModel(bound) : '—'")
+    expect(modelsTile, 'the per-row dash for a partially-bound list survives').toContain("vText: bound ? modelIdOf(bound) : '—'")
   })
 })

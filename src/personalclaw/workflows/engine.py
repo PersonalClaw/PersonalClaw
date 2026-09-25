@@ -28,6 +28,7 @@ keeps a template portable across a user's provider setup.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import time
@@ -131,6 +132,18 @@ class NodeResult:
     #: runtime and never reach the journal, so the ledger would show a published artifact with no
     #: record of the publish.
     published: dict[str, Any] | None = None
+    #: What this step's declared `schema` asked for that its output did not carry (#3545). Empty
+    #: when the node declared no schema, or when the output honoured it — so a non-empty value is
+    #: always an observation, never a default.
+    #:
+    #: An OBSERVATION, deliberately not a failure and not a retry. Failing the step would break
+    #: runs that complete today, and retrying would spend more money on the same non-conforming
+    #: worker; the producing step is simply the only place that knows both what the schema declared
+    #: and what came back, so it is the only place that can say so. A DECLARED field for the same
+    #: reason as `published`: an attribute set on the instance would work at runtime and never
+    #: reach the journal, so the ledger would show a step that ignored its schema with no record
+    #: that anything noticed.
+    schema_shortfall: str = ""
     #: The no-double-execution claim THIS ATTEMPT holds, and the holder identity it holds it with
     #: (#3533). Set only by `dispatch_stage`, and only on the one result that leaves the claim
     #: taken — the spawn is still live when that result is returned, so the attempt outlives the
@@ -433,7 +446,7 @@ async def dispatch_infer(
 
     output: Any = text
     if want_json:
-        parsed = _parse_json_loose(text)
+        parsed = parse_json_loose(text)
         if parsed is None:
             return NodeResult(
                 state=InstanceState.FAILED,
@@ -484,12 +497,18 @@ async def dispatch_visualize(
         )
     hint = str(cfg.get("hint", "") or "")
     title = str(cfg.get("title", "") or "Visualization")
+    from personalclaw.visualize import GenUiDisabled
     from personalclaw.visualize import visualize as _visualize_primitive
 
     try:
         result = await _visualize_primitive(cfg["data"], hint, title=title, completion=completion)
     except asyncio.CancelledError:
         raise
+    except GenUiDisabled as exc:
+        # USER, not the transport class `classify_exception` would assign: the run is
+        # refused because the operator turned generative UI off, and only they can change
+        # it — so the failure must carry the fix rather than read as a provider fault.
+        return _fail(FailureClass.USER, str(exc), "turn on Generative UI, or drop this node")
     except Exception as exc:  # provider/transport failures
         return NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
     if not result.dsl.strip():
@@ -504,13 +523,33 @@ async def dispatch_visualize(
     )
 
 
-def claim_key(run_id: str, node_id: str) -> str:
-    """The lease target for one branch.
+def claim_key(run_id: str, instance_path: str) -> str:
+    """The lease target for one node INSTANCE.
 
-    Per-NODE, not per-run: a run's leaves are meant to execute concurrently, so a run-scoped claim
-    would serialize the fan-out the lease exists to protect.
+    Per-INSTANCE, not per-run: a run's leaves are meant to execute concurrently, so a run-scoped
+    claim would serialize the fan-out the lease exists to protect.
+
+    And per-instance rather than per-NODE-ID (#3524), because a node id is not a unit of work — a
+    `loop` body and a `foreach` body both execute the SAME node id many times, at different
+    instance paths. Keyed by node id, the first execution took the claim and held it for the whole
+    TTL, so every later one was refused as a duplicate of work that had already finished: measured
+    on `general-project`, iterations 2..6 of the body's `judge` stage each returned DEGRADED with
+    "another worker holds the claim … for another 674s". A fan-out was worse — twelve `foreach`
+    items sharing one node id meant eleven of them never ran. The claim is supposed to stop ONE
+    unit of work executing twice, and the instance path is what names that unit.
+
+    DIGESTED rather than spelled out, for two reasons that both come from `leases._lease_path`:
+    it truncates a target id to 64 characters (a deep nested path plus a run id exceeds that, and
+    a truncated id collides), and it rewrites `.`/`@`/`[`/`#` all to `_` — so `body@1.children[1]`
+    and `body#1.children[1]` sanitize to the same filename. Either would silently reintroduce the
+    exact false refusal this fixes. The node id is not in the key because the claim's own
+    `holder` carries it (`claim_holder` → `workflow:<run>:<node_id>#<uuid>`), so a human reading a
+    lease file still sees which node holds it.
     """
-    return f"{run_id}:{node_id}" if run_id and node_id else ""
+    if not run_id or not instance_path:
+        return ""
+    digest = hashlib.sha256(instance_path.encode("utf-8")).hexdigest()[:16]
+    return f"{run_id}:{digest}"
 
 
 def claim_holder(run_id: str, node_id: str) -> str:
@@ -589,6 +628,9 @@ async def dispatch_stage(
     subagents: Any = None,
     depth: int = 0,
     run_id: str = "",
+    #: This instance's engine key (`root.body@2.children[1]`). The claim's target — see
+    #: `claim_key` on why a node id is not one.
+    instance_path: str = "",
     cwd: str = "",
 ) -> NodeResult:
     """One subagent execution, with tools and a session.
@@ -637,9 +679,27 @@ async def dispatch_stage(
     # No double-execution. Taken BEFORE the spawn, because a lease acquired
     # after the work started would record the claim without preventing the thing it exists to
     # prevent — two co-tenant workers would both have spawned by the time either checked. The claim
-    # is per-NODE (`run_id:node_id`), not per-run: a run's leaves are meant to execute concurrently,
-    # so a run-scoped claim would serialize the fan-out it was written to protect.
-    claim_target = claim_key(run_id, node.id or "")
+    # is per-INSTANCE, not per-run and not per-node-id: see `claim_key`.
+    #
+    # FAIL CLOSED when a run-attached dispatch carries no instance path. `instance_path` is a
+    # defaulted keyword, so an omission is silent: `claim_key` returns "", the `if claim_target`
+    # below skips the lease entirely, and the control reads as present while protecting nothing —
+    # both dispatches of one unit of work spawn. AGENTS.md settles the direction: a default that
+    # PERFORMS something irreversible is not a permissive default, and a spawn is irreversible. So
+    # refuse rather than skip, because with no instance identity there is no way to tell a first
+    # execution from a second. INTERNAL, not USER: the only way to get here is a caller that did
+    # not thread the path.
+    #
+    # A dispatch with no `run_id` is the other case and stays unclaimed as before: it belongs to no
+    # run, so there is no run to scope a claim to and no co-tenant worker that could hold one.
+    if run_id and not instance_path:
+        return _fail(
+            FailureClass.INTERNAL,
+            "stage dispatched without an instance path, so its no-double-execution claim "
+            "cannot be keyed — not spawning",
+            "thread the node's instance path through `dispatch` into `dispatch_stage`",
+        )
+    claim_target = claim_key(run_id, instance_path)
     holder = claim_holder(run_id, node.id or "")
     if claim_target:
         granted, reason = leases.acquire_claim(claim_target, holder)
@@ -2287,7 +2347,7 @@ def check_output_contract(value: Any, contract: dict[str, Any]) -> str:
     """
     if contract.get("must_be_json"):
         if isinstance(value, str):
-            if _parse_json_loose(value) is None:
+            if parse_json_loose(value) is None:
                 return "expected JSON, got unparseable text"
         elif not isinstance(value, (dict, list)):
             return f"expected JSON object/array, got {type(value).__name__}"
@@ -2296,7 +2356,7 @@ def check_output_contract(value: Any, contract: dict[str, Any]) -> str:
     if isinstance(required, list) and required:
         target = value
         if isinstance(target, str):
-            target = _parse_json_loose(target)
+            target = parse_json_loose(target)
         if not isinstance(target, dict):
             return "required_keys declared but output is not an object"
         missing = [k for k in required if str(k) not in target]
@@ -2320,14 +2380,125 @@ def check_output_contract(value: Any, contract: dict[str, Any]) -> str:
     return ""
 
 
+#: How many key names a shortfall notice names before it summarizes the rest. A notice reaches a
+#: ledger row, and an output with four hundred keys would otherwise write four hundred names into
+#: one; naming the first few and counting the remainder stays actionable at a bounded size.
+_SHORTFALL_NAMES = 8
+
+
+def _name_list(names: list[str]) -> str:
+    head = names[:_SHORTFALL_NAMES]
+    rest = len(names) - len(head)
+    return ", ".join(head) + (f" (+{rest} more)" if rest > 0 else "")
+
+
+#: What arrived instead of an object, in words a template author reads rather than Python's type
+#: names: "got text, not an object" says what happened, "got a str" makes them translate it.
+_ARRIVED_KIND = {
+    str: "text",
+    list: "a list",
+    int: "a number",
+    float: "a number",
+    bool: "true or false",
+    type(None): "nothing",
+}
+
+
+def schema_shortfall(schema: Any, value: Any) -> str:
+    """What `schema` declared that `value` did not carry — "" when it conformed (#3545).
+
+    KEYS ONLY, deliberately. The defect this names is a worker that ignored the declared shape:
+    the output arrives without the keys the prompt asked for, a downstream `{{last.output.x}}`
+    then resolves to its declared `default`, and nothing says the value is a fallback rather than
+    an answer. Comparing declared TYPES as well would widen this from an observation into a
+    judgement — `"number"` against an int-valued float, `"object"` against a list of one object —
+    and a notice that fires on conforming output is worse than no notice at all.
+
+    Returns a sentence naming BOTH facts, because only naming one sends an author hunting: what
+    the schema asked for, and what actually arrived.
+    """
+    if not isinstance(schema, dict) or not schema:
+        return ""
+    declared = sorted(str(k) for k in schema)
+    target = value
+    if isinstance(target, str):
+        # An `infer` node's own parse already ran; this catches a model that answered with a JSON
+        # STRING ("…prose…") — valid JSON, and no object could ever carry the declared keys.
+        parsed = parse_json_loose(target)
+        if parsed is not None:
+            target = parsed
+    if not isinstance(target, dict):
+        # A blank answer is not "text": a stage whose subagent returned nothing would otherwise
+        # read as one that answered in prose.
+        blank = isinstance(target, str) and not target.strip()
+        kind = "nothing" if blank else _ARRIVED_KIND.get(type(target), f"a {type(target).__name__}")
+        return (
+            f"the output ignored its declared schema: it asked for "
+            f"{_name_list(declared)} and got {kind}, not an object"
+        )
+    missing = [k for k in declared if k not in target]
+    if not missing:
+        return ""
+    arrived = sorted(str(k) for k in target)
+    # "1 of 2 declared keys is missing": the noun follows the declared count, the verb the missing.
+    noun = "key" if len(declared) == 1 else "keys"
+    verb = "is" if len(missing) == 1 else "are"
+    return (
+        f"the output ignored its declared schema: {len(missing)} of {len(declared)} declared "
+        f"{noun} {verb} missing ({_name_list(missing)}); got {_name_list(arrived) or 'no keys'}"
+    )
+
+
+def apply_schema_notice(node: Node, result: NodeResult, observed: Any) -> NodeResult:
+    """Name a declared schema the node's work ignored, on the step that produced it (#3545).
+
+    `observed` is what the node's own work returned (a dispatcher's output, or a spawned stage's
+    text), taken BEFORE the engine's seams add keys to it. The final output cannot answer the
+    question: `apply_judge_contract` writes every key a judge schema declares whatever the model
+    said, so a judge that answered in prose settles with `verdict="REJECT"`, `reasoning=""`,
+    `scores={}` and the rest. Measured over the bundled library, a check on the settled output is
+    silent on all 7 judge stages whose model answered in prose. The artifact gate adds `artifacts`
+    the same way. A key the engine supplied is not the worker honouring its schema.
+
+    The gates read the FINAL `result`, because a seam can still fail the node:
+
+    * **A non-empty dict `schema`.** Nothing is declared otherwise, so there is nothing to ignore.
+    * **A SUCCESS state.** A FAILED step already carries a `Failure` saying why, and `infer`'s own
+      unparseable-output branch is that case — a notice there would restate a legible failure. A
+      spawned stage is still RUNNING at the dispatch seam, so it is named at its settle instead
+      (`RunController._settled_stage_output`), through this same helper.
+    * **Something observed.** `dispatch_stage`'s two DEGRADED paths (a restricted-origin skip, a
+      claim already held) produce `output=None`; why they produced nothing is already in
+      `degraded_reason`, and re-reading it as "the schema was ignored" would be false.
+
+    Never changes `state`, `output` or `failure`: the run completes exactly as it would without the
+    notice.
+    """
+    from personalclaw.workflows.models import SUCCESS_STATES
+
+    schema = (node.config or {}).get("schema")
+    if not isinstance(schema, dict) or not schema:
+        return result
+    if result.state not in SUCCESS_STATES or observed is None:
+        return result
+    shortfall = schema_shortfall(schema, observed)
+    if shortfall:
+        result.schema_shortfall = shortfall
+    return result
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
-def _parse_json_loose(text: Any) -> Any:
+def parse_json_loose(text: Any) -> Any:
     """Parse JSON, stripping markdown fencing first.
 
     Fenced output is the dominant real-world format failure and stripping it fixes most
     cases with ZERO retries — measurably cheaper than a retry round-trip.
+
+    PUBLIC because a stage's output is not produced at a dispatch seam: `dispatch_stage` returns at
+    the spawn, so `RunController._settled_stage_output` is where a subagent's text becomes an output
+    and it has to apply the same parse an `infer` node gets here (#3524).
     """
     import json
 
@@ -2363,7 +2534,7 @@ def _action_output(result: Any) -> Any:
     """A provider's canonical output. Prefers parsed JSON stdout (the BYOI contract is
     "stdout = one JSON object"), falling back to raw text."""
     stdout = getattr(result, "stdout", "") or ""
-    parsed = _parse_json_loose(stdout)
+    parsed = parse_json_loose(stdout)
     if parsed is not None:
         return parsed
     return {
@@ -2407,8 +2578,9 @@ async def dispatch(
     #: This node instance's engine key (`root.children[0]`, `root.body#2`). Threaded for the third
     #: time for the same reason as `run_id`/`project_id`, and it is the one id a provider CANNOT
     #: reconstruct: a ledger row stamped with a bare node id lands outside every per-node slice
-    #: `inspect_node` builds, so it is written and still invisible in the runs surface. Only the
-    #: ACTION branch reads it.
+    #: `inspect_node` builds, so it is written and still invisible in the runs surface. Read by the
+    #: ACTION branch for that, and by the STAGE branch as its no-double-execution claim target — a
+    #: node id names a SPEC position, not a unit of work, so it cannot be one (`claim_key`).
     instance_path: str = "",
     cwd: str = "",
     tiers: dict[str, str] | None = None,
@@ -2470,6 +2642,11 @@ async def dispatch(
         compaction_saves=compaction_saves,
         judge_hints=judge_hints,
     )
+    # What the node's own work returned, BEFORE the seams below add keys to it: the only value the
+    # schema notice may compare (#3545). The judge contract writes every key a judge schema
+    # declares whatever the model said, so the final output cannot tell "the model answered in the
+    # declared shape" from "the engine filled it in".
+    observed = result.output
     # One seam, so a new node kind cannot silently skip the artifact gate.
     result = apply_artifact_gate(node, result, cwd or None)
     # The SAME seam for the judge contract: a node declaring `judge_contract: true`
@@ -2479,7 +2656,11 @@ async def dispatch(
     # publish path instead of quietly dropping a declared output. Ordered after the gate
     # deliberately — publishing the output of a node that failed its own artifact gate would
     # store a deliverable the run does not stand behind.
-    return apply_publish(node, result, run_id=run_id, cwd=cwd or None)
+    result = apply_publish(node, result, run_id=run_id, cwd=cwd or None)
+    # The SAME seam for the declared-schema notice (#3545): after the gates, so it reads the final
+    # state (a gate can still fail the node), but comparing `observed` rather than the output the
+    # gates rebuilt. An observation only: it never changes `state`, `output` or `failure`.
+    return apply_schema_notice(node, result, observed)
 
 
 _LEAF_DISPATCHERS = {
@@ -2536,7 +2717,15 @@ async def _dispatch_inner(
     if dispatcher is dispatch_visualize:
         return await dispatcher(node, ctx, completion=completion)
     if dispatcher is dispatch_stage:
-        return await dispatcher(node, ctx, subagents=subagents, depth=depth, run_id=run_id, cwd=cwd)
+        return await dispatcher(
+            node,
+            ctx,
+            subagents=subagents,
+            depth=depth,
+            run_id=run_id,
+            instance_path=instance_path,
+            cwd=cwd,
+        )
     if dispatcher is dispatch_branch:
         return await dispatcher(node, ctx)
     if dispatcher is dispatch_action:

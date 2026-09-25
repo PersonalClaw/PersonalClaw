@@ -75,8 +75,26 @@ This provider resolves it in three steps, most authoritative first:
    the number neither the model table nor `/api/show` has — both return the architectural
    maximum. Probed after the first turn (the endpoint lists only *loaded* models) and
    memoized, since the served window cannot change without a reload.
-3. **A conservative default** when the runtime says nothing. Deliberately small: compacting
-   early is wasteful, whereas overestimating truncates the prompt with no error at all.
+3. **Nothing, when the runtime says nothing.** The composer then shows a plain dot instead
+   of a ring and tells you the usage is unknown, because a percentage of a window nobody
+   declared is a made-up measurement, not a cautious one. Compaction is not left without a
+   trigger: PersonalClaw falls back to a character-based *estimate* against a deliberately
+   small local window, which may compact early — cheap — where a too-large denominator
+   truncates the prompt with no error at all. Set `context_window` to replace the estimate
+   with a real reading.
+
+### The gauge past the window
+
+Once the prompt no longer fits, Ollama does not reject it: it keeps part of the prompt,
+returns HTTP 200, and reports the *truncated* token count — measured at half the served
+window, for every prompt size above the cliff. Taken at face value the ring would then
+**fall** as the context grew, which is why a session could sail past the compaction
+threshold and never see it again. So the gauge also remembers the largest prompt this
+binding has had measured, and applies one rule: a provider handed a larger prompt cannot
+honestly report fewer input tokens. When that happens the ring reads **full**. The rule is
+deliberately ordinal — it makes no guess about how many characters a token is worth,
+because measured on one host and one model that figure ranged from 4.5 to 8.0 depending
+only on the text.
 
 ## License
 
