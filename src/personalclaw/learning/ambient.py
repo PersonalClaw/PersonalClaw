@@ -72,6 +72,20 @@ logger = logging.getLogger(__name__)
 BASELINE_WINDOW = 200_000
 MAX_BUDGET_MULTIPLE = 5.0
 
+#: The most of a model's window the ambient blocks may ever claim. This is what makes
+#: `budget_for_window` scale DOWN as well as up: the 1.0 floor on the baseline multiple cannot,
+#: by construction, and a small-window model was handed the 200k-calibrated budget verbatim.
+#: 0.125 is chosen to be INERT above the baseline (a 200k window's cap is 25,000 tokens against a
+#: 4,000-token base) so no existing binding changes, and to leave the overwhelming majority of a
+#: small window for the system prompt and the user's own message — the two pieces that may not be
+#: dropped. `tests/test_mem_adaptive_budget.py` pins both directions.
+MAX_WINDOW_FRACTION = 0.125
+
+#: The ambient budget never reaches zero. A 0-token budget renders no block at all, which is
+#: indistinguishable from the feature being switched off — the honest outcome on a tiny window is
+#: a LEANER index, not a silently absent one.
+MIN_BUDGET_TOKENS = 64
+
 #: Which allocator KIND each named block enters the pool as. Reused from the allocator's existing
 #: vocabulary rather than extended — `allocate()` maps kind → slot internally, and a sixth kind
 #: would need a sixth slot, which is how "one budget" becomes six again.
@@ -117,15 +131,31 @@ _SKILL_FOOTER = "[End of skills]"
 def budget_for_window(window: int | None, base: int) -> int:
     """The per-turn ambient budget, scaled to the model window.
 
-    Same multiple and same clamp as `context._memory_caps`: `window/200k` in [1.0, 5.0]. An unknown
-    window returns the base — the safe direction, because guessing a large window would let the
-    ambient blocks crowd a small one.
+    Same multiple and same clamp as `context._memory_caps`: `window/200k`, ceilinged at
+    MAX_BUDGET_MULTIPLE. An unknown window returns the base.
+
+    🪤 The 1.0 floor is kept, but it is no longer the LAST word, because on its own it made this
+    function scale in ONE direction only: a 2,048-token window received exactly the same budget as
+    a 200,000-token one, since `max(1.0, 2048/200000)` is 1.0. The docstring already named the
+    hazard it then failed to prevent — "guessing a large window would let the ambient blocks crowd
+    a small one" — which is precisely what a flat floor guarantees for every window below the
+    baseline. Measured on the OU-14 bundled floor (a 2,048-token card, 1,728 tokens of input room
+    after its declared 320-token reply reserve): the skill index alone arrived at 2,482 tokens, and
+    the first message of a new chat was refused before the user had said anything of substance.
+
+    So the scaled budget is additionally capped at :data:`MAX_WINDOW_FRACTION` of the window. That
+    cap is INERT for every window that can comfortably afford the baseline — a 128k window's cap is
+    32,000 tokens against a 4,000-token base, so it stays at exactly the baseline as before — and
+    binds only where the flat floor was lying. :data:`MIN_BUDGET_TOKENS` keeps the result non-zero:
+    an ambient budget of 0 is indistinguishable from the feature being switched off, and "no room
+    for the skill index" should yield a leaner index, not a silently absent one.
     """
     if base <= 0:
         return 0
     win = window or BASELINE_WINDOW
     mult = max(1.0, min(MAX_BUDGET_MULTIPLE, win / BASELINE_WINDOW))
-    return int(base * mult)
+    scaled = int(base * mult)
+    return max(MIN_BUDGET_TOKENS, min(scaled, int(win * MAX_WINDOW_FRACTION)))
 
 
 def lesson_candidates(block: str) -> list[Candidate]:
