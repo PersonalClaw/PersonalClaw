@@ -8,7 +8,7 @@ import { SearchField } from '../../ui/SearchField'
 import { Button } from '../../ui/Button'
 import { Toggle } from '../../ui/Toggle'
 import { api, type PromptItem, type PromptVariable } from '../../lib/api'
-import { seedRenderValues } from '../prompts/promptMeta'
+import { isBundled, seedRenderValues } from '../prompts/promptMeta'
 import { BUSY_REASON } from '../../ui/unavailable'
 
 /** Composer prompt palette — pick a USER prompt, fill its variables (the merged
@@ -36,8 +36,11 @@ export function PromptPalette({ onInsert, onSend, onClose }: {
   const [loadErr, setLoadErr] = useState<unknown>(null)
   const [reloadKey, setReloadKey] = useState(0)
 
+  // The user's OWN prompts. `?kind=user` alone also returned the 39 internal prompts PersonalClaw
+  // sends as the user turn of its own calls, so the picker led with "Eval Judge" and "Task Code
+  // Classify" — `kind` is a prompt's role in a call, not its audience (see `isBundled`).
   useEffect(() => {
-    api.prompts('user').then(setItems).catch(setLoadErr)
+    api.prompts('user').then((all) => setItems(all.filter((p) => !isBundled(p)))).catch(setLoadErr)
   }, [reloadKey])
 
   const filtered = useMemo(() => {

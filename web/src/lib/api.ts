@@ -21,8 +21,8 @@ const SK = { 'X-Session-Key': 'dashboard:ui', ...apiVersionHeaders }
  *  callers that branch read `.status`/`.code`.
  *
  *  🔑 `.code` is the field the panels needed and did not have. `http_errors.py` mints a
- *  DISTINCT code per meaning — `/api/evals/ablation` answers 404 as `evals_disabled` (the
- *  switch is off) or `ablation_absent` (nothing has run) — and the status alone cannot tell
+ *  DISTINCT code per meaning — `/api/evals/studies/{id}` answers 404 as `evals_disabled` (the
+ *  switch is off) or `study_absent` (no such study) — and the status alone cannot tell
  *  them apart. Before this, a panel's only handle was the human sentence, which never
  *  contains the code, so every code branch was dead. `''` when the body carried no code. */
 export class ApiError extends Error {
@@ -2141,12 +2141,13 @@ export interface PromptSyntaxFn { name: string; category: string; signature: str
 export interface PromptSyntaxConstruct { category: string; label: string; snippet: string; description: string }
 export interface PromptSyntax { functions: PromptSyntaxFn[]; constructs: PromptSyntaxConstruct[] }
 // `provenance` is HOW the skill came to exist and is orthogonal to `source`, which is the
-// tier it lives in (#576). Optional, and `''` for a hand-authored skill — the common case.
+// tier it lives in (#576): `dashboard` (created with New skill), `taught`, `auto`, or `''` when
+// nothing recorded one — a hand-placed or bundled copy. Optional.
 /** `feedback_producer` is present only on a SYNTHESIZED (`provenance: 'auto'`) skill — the
  *  ('skill_synthesis', key) identity the inspector's thumbs attribute to. Absent on taught and
  *  hand-authored skills: a verdict there would retire the extractor over a skill the user chose
  *  themselves. Read it, never derive it — the server decides which skills carry one. */
-export interface SkillItem { key: string; name: string; description: string; always: boolean; path?: string; source: string; provenance?: 'auto' | 'taught' | ''; type: string; loaded_by_agents: string[]; integrity?: 'intact' | 'tampered' | 'unverified'; agent?: string; feedback_producer?: FeedbackProducer }
+export interface SkillItem { key: string; name: string; description: string; always: boolean; path?: string; source: string; provenance?: 'dashboard' | 'auto' | 'taught' | ''; type: string; loaded_by_agents: string[]; integrity?: 'intact' | 'tampered' | 'unverified'; agent?: string; feedback_producer?: FeedbackProducer }
 export interface EphemeralDraft { slug: string; title: string; body: string; created_at: string }
 /** `trigger` is the STUMBLE that produced a refine proposal (`correction` | `failure_retry` |
  *  `rejection`), or absent/'' for one a model proposed. It is the review surface's answer to
@@ -2554,6 +2555,18 @@ export interface AttentionScope {
   debt: number
   /** '' means "not enough runs to call it" — render as unmeasured, never as flat. */
   trend: '' | 'rising' | 'falling' | 'flat'
+}
+
+/** What every eval REPORT read answers while `evals.enabled` is off (`handlers/evals.py:_off`):
+ *  a decided state the panel renders, not an error. These reads used to 404 `evals_disabled`,
+ *  which logged one console error per panel on every visit to `#/learning` for a feature a
+ *  default install has merely not turned on. No eval view carries a top-level `enabled`, so the
+ *  flag alone tells the two apart. */
+export interface EvalsOffView { enabled: false }
+
+export function isEvalsOff(v: unknown): v is EvalsOffView {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+    && (v as { enabled?: unknown }).enabled === false
 }
 
 export interface JudgeBenchView {
@@ -7151,15 +7164,16 @@ export const api = {
     ),
   /** The judge tier-recommendation table (ES-4). Read-only: the RUN is
    *  `personalclaw judge-bench`, because the full matrix is 540 judge calls and a click
-   *  must not start one. 404 carries a distinct code for "no benchmark yet" vs "evals off". */
-  judgeBench: () => get<JudgeBenchView>('/api/evals/judge-bench'),
+   *  must not start one. "Evals off" is a 200 `EvalsOffView`; "no benchmark yet" is a 404
+   *  with its own code. */
+  judgeBench: () => get<JudgeBenchView | EvalsOffView>('/api/evals/judge-bench'),
   /** The newest keep/remove/lighten ablation report (ES-7 §3.1). Read-only for the bench's
    *  reason: a POST would hold a request open for a multi-cell matrix and spend real money on
-   *  a click. The RUN is `personalclaw ablation` or the monthly cadence. 404 carries THREE
-   *  distinct codes — `evals_disabled`, `ablation_absent`, and a 500 `ablation_unreadable` —
-   *  because they send a user to three different places (the switch, the registry, a bug), and
+   *  a click. The RUN is `personalclaw ablation` or the monthly cadence. THREE distinct
+   *  non-reports — a 200 `EvalsOffView`, a 404 `ablation_absent`, and a 500 `ablation_unreadable`
+   *  — because they send a user to three different places (the switch, the registry, a bug), and
    *  one state for all of them would make the panel's empty state a guess. */
-  ablation: () => get<AblationView>('/api/evals/ablation'),
+  ablation: () => get<AblationView | EvalsOffView>('/api/evals/ablation'),
   /** The skill-impact benchmark: does an approved skill make the next run better? (LV-7)
    *
    *  Read-only, and for the sharpest reason on this route family: §3 pairs k=5 trials per arm
@@ -7170,9 +7184,9 @@ export const api = {
    *  The verdict is computed by the runner (its thresholds live in `harness/fanout_measure.py`,
    *  outside the wheel) and written into the report. Neither the gateway nor this page can
    *  synthesise one — which is exactly why an unmeasured task arrives as `verdict: null` and
-   *  renders as "not measured" instead of as a zero. 404 carries a distinct code for "no
-   *  benchmark yet" vs "evals off". */
-  learningBenchmark: () => get<BenchmarkView>('/api/evals/learning-benchmark'),
+   *  renders as "not measured" instead of as a zero. "Evals off" is a 200 `EvalsOffView`;
+   *  "no benchmark yet" is a 404 with its own code. */
+  learningBenchmark: () => get<BenchmarkView | EvalsOffView>('/api/evals/learning-benchmark'),
   /** Pre-registered template A/B studies (ES-5). Read-only for the same reason as the
    *  bench: a k=5 paired study is ten template runs plus six judge calls per pair. §2.1 is
    *  also explicit that the human REGISTERS and the substrate RUNS, so there is deliberately
@@ -7181,8 +7195,9 @@ export const api = {
    *  reason than the bench's: retrieval costs no model calls, but §5.1 forbids the harness
    *  writing to knowledge.db or memory.db at all, and the cheapest way to keep that promise
    *  on a web surface is to have no run trigger on it. The RUN is `personalclaw
-   *  retrieval-eval`. 404 carries a distinct code for "no run yet" vs "evals off". */
-  retrievalBench: () => get<RetrievalBenchView>('/api/evals/retrieval'),
+   *  retrieval-eval`. "Evals off" is a 200 `EvalsOffView`; "no run yet" is a 404 with its own
+   *  code. */
+  retrievalBench: () => get<RetrievalBenchView | EvalsOffView>('/api/evals/retrieval'),
   /** §5.2's hand-label card for one store. `store` is REQUIRED — the two stores never share
    *  a corpus, so a card built for the wrong one would collect labels against ids the other
    *  has never heard of, and the backend refuses a missing one rather than defaulting. */
@@ -7194,12 +7209,12 @@ export const api = {
   saveRetrievalLabels: (store: string, labels: Record<string, string[]>) =>
     post<{ ok: boolean; store: string; queries: number; hand_labelled: number }>(
       '/api/evals/retrieval/labels', { store, labels }),
-  evalStudies: () => get<{ studies: StudyRow[] }>('/api/evals/studies'),
+  evalStudies: () => get<{ studies: StudyRow[] } | EvalsOffView>('/api/evals/studies'),
   evalStudy: (studyId: string) =>
     get<StudyView>(`/api/evals/studies/${encodeURIComponent(studyId)}`),
   /** ES-9's lab-vs-field table — one row per subject, divergence verdicts decided
    *  server-side. Read-only: the demotion the flag feeds is the gateway sweep's. */
-  evalFieldMetrics: () => get<{ subjects: FieldMetricsRow[] }>('/api/evals/field-metrics'),
+  evalFieldMetrics: () => get<{ subjects: FieldMetricsRow[] } | EvalsOffView>('/api/evals/field-metrics'),
   /** The proposals queue AND the ladder's last pass, from one read. Returns the whole
    *  feed rather than unwrapping to the array: `lastReview` is what makes an empty
    *  `proposals` falsifiable, and a second accessor over the same route would be two

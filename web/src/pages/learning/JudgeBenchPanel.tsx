@@ -1,8 +1,8 @@
 import { Gavel, ShieldAlert } from 'lucide-react'
 import { LoadError } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
-import { hasApiCode } from '../../lib/api'
-import type { JudgeBenchRecommendation, JudgeBenchRow, JudgeBenchView } from '../../lib/api'
+import { hasApiCode, isEvalsOff } from '../../lib/api'
+import type { EvalsOffView, JudgeBenchRecommendation, JudgeBenchRow, JudgeBenchView } from '../../lib/api'
 import { EvalsOff } from './EvalsOff'
 
 /** The judge tier-recommendation table (EVALUATION-SUBSTRATE §6 / ES-4).
@@ -21,22 +21,23 @@ import { EvalsOff } from './EvalsOff'
  *  rate is exactly WHY a row is inadequate; drawing 0.00 for it would read as a flawless
  *  score, which is the most confident possible way to say the opposite of what happened. */
 export function JudgeBenchPanel({ bench, error, onRetry }: {
-  bench: JudgeBenchView | undefined
+  bench: JudgeBenchView | EvalsOffView | undefined
   error: unknown
   onRetry: () => void
 }) {
-  // A 404 is the ordinary state here — the substrate is off, or no benchmark has run — so both
-  // render as guidance, not as a failure. Any other error is surfaced: the panel's subject is
-  // "can I trust the judge?", and a swallowed fetch would answer it with silence.
+  // The ordinary states here are "the substrate is off" (a decided 200) and "no benchmark has
+  // run" (a 404 with its own code), and both render as guidance, not as a failure. Any other
+  // error is surfaced: the panel's subject is "can I trust the judge?", and a swallowed fetch
+  // would answer it with silence.
+  if (isEvalsOff(bench)) {
+    return (
+      <section className="flex flex-col gap-s" aria-labelledby="judge-bench-heading">
+        <Heading />
+        <EvalsOff what="judge benchmark" />
+      </section>
+    )
+  }
   if (bench === undefined && error) {
-    if (hasApiCode(error, 'evals_disabled')) {
-      return (
-        <section className="flex flex-col gap-s" aria-labelledby="judge-bench-heading">
-          <Heading />
-          <EvalsOff what="judge benchmark" />
-        </section>
-      )
-    }
     if (hasApiCode(error, 'judge_bench_absent')) {
       return (
         <section className="flex flex-col gap-s" aria-labelledby="judge-bench-heading">

@@ -62,6 +62,31 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   weight you copy into place is checked for size, not sha256. Smaller fixes in the same pass: the
   platforms guide said `personalclaw setup` asks for a provider credential and that `.env` needs
   a provider key, and the app-platform tier table still counted 31 native apps.
+- **New skill works on the first try, and a skill you create there says so.** The dialog's
+  SKILL.md template started with `name: my-skill`, which nothing updated, while the server
+  requires that line to match the name you type. So typing a name and pressing Create always
+  failed with "frontmatter name must match skill key", and worked only after editing the
+  frontmatter by hand. The name line now follows the Name field as you type, and a name that
+  starts or ends with a dash is refused before anything is sent. A skill created this way records
+  `source: dashboard` in its frontmatter (added only when the file declares no `source` of its
+  own), so the inspector says "created in the dashboard" instead of "bundled or hand-placed".
+- **Your prompts are no longer buried under PersonalClaw's own.** The Prompts page's User tab
+  listed 39 built-in prompts around yours, and the chat prompt picker opened with "Eval Judge"
+  and "Task Code Classify". Both filtered on a prompt's kind, which says whether its text is sent
+  as a system prompt or as a user message, not who it is for, and 35 of the 42 prompts
+  PersonalClaw ships are sent as a user message by the system itself. User and System now list
+  only your prompts. Everything PersonalClaw and its apps ship is on a new Bundled tab, still
+  editable, and neither the Insert-a-prompt palette nor the `@` menu offers it. The Source filter
+  now appears only on Snippets, the one tab where yours and the shipped ones still mix.
+- **The Learning page no longer logs six errors on every visit when evals are off.** The six
+  eval report reads (`/api/evals/judge-bench`, `field-metrics`, `studies`, `retrieval`,
+  `ablation`, `learning-benchmark`) answered the default "evals off" state with a 404. They now
+  answer `200 {"enabled": false}`, the same way the gateway's other switched-off reads answer, and
+  each panel shows its "turn on Evals enabled" notice as before. A client that treated that 404 as
+  "off" should read the flag instead. One study, one store's label card and saving labels still
+  answer 404 `evals_disabled` while evals are off. The capture strip also said "out of scope" under
+  every day on a fresh install. Nothing had been scoped out. Capture had simply never run, so the
+  days now read "not started".
 
 ### Security
 

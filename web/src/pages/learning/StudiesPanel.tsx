@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, FlaskConical, ShieldAlert } from 'lucide-rea
 import { LoadError } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
 import { useQuery } from '../../lib/data'
-import { api, hasApiCode, type StudyPair, type StudyRow, type StudyView } from '../../lib/api'
+import { api, isEvalsOff, type EvalsOffView, type StudyPair, type StudyRow, type StudyView } from '../../lib/api'
 import { EvalsOff } from './EvalsOff'
 import { studyDetailKey } from './proposalCache'
 
@@ -32,29 +32,28 @@ import { studyDetailKey } from './proposalCache'
  *  server does not serve them (§2.2), so there is nothing here to render. The rubric's hash
  *  is shown instead: enough to prove the pin, not enough to satisfy it. */
 export function StudiesPanel({ studies, error, onRetry }: {
-  studies: StudyRow[] | undefined
+  studies: StudyRow[] | EvalsOffView | undefined
   error: unknown
   onRetry: () => void
 }) {
   const [open, setOpen] = useState('')
 
-  // The one 404 this route really answers is `evals_disabled`, and it is NOT "no study has been
-  // registered" — the switch being off and the register being empty send a user to two different
-  // places. Any other failure is surfaced, because "no studies" and "we could not read the
-  // studies" are a third place again.
+  // The switch being off is a decided answer (`{"enabled": false}`), and it is NOT "no study has
+  // been registered" — the two send a user to two different places. Any failure is surfaced,
+  // because "no studies" and "we could not read the studies" are a third place again.
   //
   // 🪤 An empty register is a 200 `{"studies": []}`, handled by the `length === 0` line below.
-  // `study_absent` used to be OR'd into this predicate; `api_evals_studies` cannot return it (it
-  // belongs to `/api/evals/studies/{id}`), so that arm was unreachable twice over and is gone.
+  // `study_absent` used to be OR'd into the error predicate; `api_evals_studies` cannot return it
+  // (it belongs to `/api/evals/studies/{id}`), so that arm was unreachable twice over and is gone.
+  if (isEvalsOff(studies)) {
+    return (
+      <section className="flex flex-col gap-s" aria-labelledby="studies-heading">
+        <Heading />
+        <EvalsOff what="study" />
+      </section>
+    )
+  }
   if (studies === undefined && error) {
-    if (hasApiCode(error, 'evals_disabled')) {
-      return (
-        <section className="flex flex-col gap-s" aria-labelledby="studies-heading">
-          <Heading />
-          <EvalsOff what="study" />
-        </section>
-      )
-    }
     return <LoadError what="studies" error={error} onRetry={onRetry} />
   }
   if (!studies) return null

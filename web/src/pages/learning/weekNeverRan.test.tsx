@@ -88,7 +88,7 @@ describe('the silent-days chip waits for a first run', () => {
     // The floor is the SERVER's (`staging.py` emits a day only when `day >= first_pass_day`, and
     // `test_days_before_the_first_pass_are_not_silent` holds that line), so a pre-floor entry in
     // `silent_days` is a payload no backend can produce. The chip counts what it is served; the
-    // per-day tiles still derive their own `out of scope` from `buckets` + `first_pass_day`.
+    // per-day tiles still derive their own `not started` from `buckets` + `first_pass_day`.
     learningStagingWeek.mockResolvedValue(week({
       first_pass_day: '2026-09-02',
       buckets: [
@@ -111,8 +111,27 @@ describe('the silent-days chip waits for a first run', () => {
 
     expect(await screen.findByText(/1 silent/)).toBeTruthy()
     expect(screen.queryByText(/2 silent/)).toBeNull()
-    expect(screen.getByText('out of scope')).toBeTruthy()
+    expect(screen.getByText('not started')).toBeTruthy()
     expect(screen.getByText('silent')).toBeTruthy()
+  })
+
+  it('labels a never-ran week "not started", never "out of scope"', async () => {
+    // Measured on a default install (#/learning, day-7): all seven tiles read "out of scope" —
+    // the state's internal name printed as copy. Nothing scopes a day out; the only fact is that
+    // no capture pass had run yet, which is what the header beside the tiles already says.
+    learningStagingWeek.mockResolvedValue(week({
+      first_pass_day: '',
+      silent_days: [],
+      buckets: ['2026-09-19', '2026-09-20', '2026-09-21'].map((d) => ({
+        day: d, passes: 0, by_outcome: {}, produced: 0, errors: 0,
+        staged: 0, cost_usd: 0, proposal_ids: [],
+      })),
+    }))
+    render(<LearningPage navigate={() => {}} />)
+
+    expect(await screen.findByText(/no capture pass has run yet/)).toBeTruthy()
+    expect(screen.getAllByText('not started')).toHaveLength(3)
+    expect(screen.queryByText(/out of scope/)).toBeNull()
   })
 
   it('defaults a MISSING field to showing the chip, so a stale payload cannot calm a real gap', async () => {

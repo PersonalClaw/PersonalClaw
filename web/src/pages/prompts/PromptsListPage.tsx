@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Plus, FileText, Puzzle, Maximize2, User, Cog } from 'lucide-react'
+import { Plus, FileText, Puzzle, Maximize2, User, Cog, Package } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
@@ -10,19 +10,32 @@ import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaff
 import { SidePanel } from '../../ui/SidePanel'
 import { ContextMenu, type ContextMenuItem, Disintegrate } from '../../ui/motion'
 import { useQuery, invalidateKeys } from '../../lib/data'
-import { api, type PromptItem, type PromptSnippet } from '../../lib/api'
-import { promptVars, sourceTone, sourceLabel } from './promptMeta'
+import { api, type PromptItem, type PromptKind, type PromptSnippet } from '../../lib/api'
+import { isBundled, promptVars, sourceTone, sourceLabel } from './promptMeta'
 import { PromptDetail } from './PromptDetail'
 import { SnippetDetail } from './SnippetDetail'
 import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryState'
 import { PageTitle } from '../../ui/PageTitle'
 
-type Tab = 'system' | 'user' | 'snippets'
+/** `user` / `system` are YOUR prompts of that kind; `bundled` is every prompt PersonalClaw and its
+ *  apps ship, whatever its kind. Origin decides first, because `kind` is a prompt's role in a model
+ *  call, not its audience — see `isBundled`. The internal prompts used to be split across User and
+ *  System by kind, so the default tab listed 39 of them around the user's own. */
+type Tab = 'system' | 'user' | 'bundled' | 'snippets'
 const TABS: { key: Tab; label: string; icon: typeof User }[] = [
   { key: 'user', label: 'User', icon: User },
   { key: 'system', label: 'System', icon: Cog },
+  { key: 'bundled', label: 'Bundled', icon: Package },
   { key: 'snippets', label: 'Snippets', icon: Puzzle },
 ]
+
+const BUNDLED_HINT = 'Shipped with PersonalClaw and its apps, and run by them for their own work — agent system prompts, titles, classifiers, judges. Editing one changes how that task behaves. They stay out of your chat prompt picker.'
+
+/** The tab a prompt lives on — the same rule the list filters with, so "Open full page" and its
+ *  Back land on the tab the row came from. */
+function tabOf(p: PromptItem): Tab {
+  return isBundled(p) ? 'bundled' : ((p.kind ?? 'user') as Tab)
+}
 
 type SortKey = 'name' | 'updated' | 'source' | 'vars'
 const SORTS: { key: SortKey; label: string }[] = [
@@ -87,7 +100,7 @@ function OpenFullPageBar({ onOpen }: { onOpen: () => void }) {
 }
 
 export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }: {
-  onCreate: (tab: Tab) => void
+  onCreate: (kind: PromptKind | 'snippets') => void
   onOpen: (tab: Tab, name: string, opts?: { edit?: boolean }) => void
 } & Pick<RouteProps, 'navigate' | 'query' | 'setQuery'>) {
   // No `.catch(() => [])` on either fetcher. Swallowing the rejection inside the fetcher hands the
@@ -104,12 +117,19 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
   const [openNameRaw, setOpenName] = useQueryParam(query, setQuery, 'open', '')
   const openName = openNameRaw || null
   const [editing, setEditing] = useEditFlag(query, setQuery)
+  const isSnips = tab === 'snippets'
+  // The Source filter and sort exist only where origins still MIX — the snippets. On a prompt tab
+  // the tab already is the origin, so "Bundled" there could only ever filter the User tab to
+  // nothing — and a `src` left in the URL would do that with no visible control to clear it.
+  const sorts = isSnips ? SORTS : SORTS.filter((s) => s.key !== 'source')
   const [sortRaw, setSort] = useQueryParam(query, setQuery, 'sort', 'name', { replace: true })
-  const sort = (SORTS.some((s) => s.key === sortRaw) ? sortRaw : 'name') as SortKey
-  const [source, setSource] = useQueryParam(query, setQuery, 'src', 'all', { replace: true })
+  const sort = (sorts.some((s) => s.key === sortRaw) ? sortRaw : 'name') as SortKey
+  const [sourceRaw, setSource] = useQueryParam(query, setQuery, 'src', 'all', { replace: true })
+  const source = isSnips ? sourceRaw : 'all'
+  // A new prompt is always the user's own; from the Bundled tab it starts as a user prompt.
+  const createKind: PromptKind | 'snippets' = tab === 'bundled' ? 'user' : tab
 
   const load = () => { invalidateKeys('prompts'); invalidateKeys('prompt-snippets'); refresh(); refreshSnips() }
-  const isSnips = tab === 'snippets'
 
   // A just-deleted record's row DISINTEGRATES in place before the list reloads —
   // the deletion is confirmed server-side by the time the detail panel calls
@@ -120,12 +140,12 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
   const onDeleted = (name: string) => { setOpenName(''); setDeletingName(name) }
   const finishDelete = () => { setDeletingName(null); load() }
 
-  // Active-tab rows (prompts of the tab's kind, or snippets) through search/sort/filter.
+  // Active-tab rows (prompts on the tab, or snippets) through search/sort/filter.
   const rows = useMemo<Row[] | null>(() => {
     if (isSnips) return snippets ? applyView(snippets as Row[], q, sort, source) : null
     if (!items) return null
-    const byKind = (items as Row[]).filter((p) => (p.kind ?? 'user') === tab)
-    return applyView(byKind, q, sort, source)
+    const onTab = (items as Row[]).filter((p) => tabOf(p) === tab)
+    return applyView(onTab, q, sort, source)
   }, [isSnips, items, snippets, q, sort, source, tab])
 
   const openPrompt = items?.find((p) => p.name === openName) ?? null
@@ -139,8 +159,8 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
   const anyItems = isSnips ? (snippets === undefined || (snippets?.length ?? 0) > 0) : (items === undefined || (items?.length ?? 0) > 0)
 
   const filterSections: FilterSectionDef[] = [
-    { title: 'Sort by', value: sort, defaultKey: 'name', onChange: (k) => setSort(k), options: SORTS.map((s) => ({ key: s.key, label: s.label })) },
-    { title: 'Source', value: source, defaultKey: 'all', onChange: (k) => setSource(k), options: SOURCES.map((s) => ({ key: s.key, label: s.label })) },
+    { title: 'Sort by', value: sort, defaultKey: 'name', onChange: (k) => setSort(k), options: sorts.map((s) => ({ key: s.key, label: s.label })) },
+    ...(isSnips ? [{ title: 'Source', value: source, defaultKey: 'all', onChange: (k: string) => setSource(k), options: SOURCES.map((s) => ({ key: s.key, label: s.label })) }] : []),
   ]
 
   return (
@@ -154,8 +174,8 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
             // together, no clip on mobile). Search / sort / source-filter live on the
             // page (controls bar).
             <HeaderActions>
-              <HeaderSegmented ariaLabel="Prompt kind" value={tab} onChange={(v) => { setTab(v as Tab); setQuery({ open: null, edit: null }) }} options={TABS} />
-              <HeaderControl icon={Plus} label={isSnips ? 'New snippet' : 'New prompt'} variant="primary" priority="primary" onClick={() => onCreate(tab)} />
+              <HeaderSegmented ariaLabel="Prompts view" value={tab} onChange={(v) => { setTab(v as Tab); setQuery({ open: null, edit: null }) }} options={TABS} />
+              <HeaderControl icon={Plus} label={isSnips ? 'New snippet' : 'New prompt'} variant="primary" priority="primary" onClick={() => onCreate(createKind)} />
             </HeaderActions>
           }
         />
@@ -177,7 +197,7 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
             ))
           : (openPrompt && (
               <SidePanel key={openPrompt.name} fillHeight storeKey="prompt-panel-w" icon={<FileText size={18} style={{ color: sourceTone(openPrompt.source) }} />} title={openPrompt.name} onClose={() => setQuery({ open: null, edit: null })}>
-                <OpenFullPageBar onOpen={() => onOpen((openPrompt.kind ?? 'user') as Tab, openPrompt.name)} />
+                <OpenFullPageBar onOpen={() => onOpen(tabOf(openPrompt), openPrompt.name)} />
                 <PromptDetail prompt={openPrompt} editing={editing} onEditingChange={setEditing} onSaved={() => load()} onDeleted={() => onDeleted(openPrompt.name)} onNavigate={navigate} />
               </SidePanel>
             ))
@@ -189,11 +209,16 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
         ) : loading ? <ListSkeleton rows={6} what={isSnips ? 'snippets' : 'prompts'} /> : count === 0 ? (
           isSnips ? (
             <EmptyState icon={Puzzle} title={q ? 'No matching snippets' : 'No snippets'} hint={q ? 'Try a different term.' : 'Snippets are reusable fragments other prompts include with {{> name}}. Their variables merge into the including prompt.'} action={!q ? { label: 'New snippet', onClick: () => onCreate('snippets'), icon: Plus } : undefined} />
+          ) : tab === 'bundled' ? (
+            <EmptyState icon={Package} title={q ? 'No matching prompts' : 'No bundled prompts'} hint={q ? 'Try a different term.' : BUNDLED_HINT} />
           ) : (
-            <EmptyState icon={FileText} title={q ? 'No matching prompts' : `No ${tab} prompts`} hint={q ? 'Try a different term.' : tab === 'system' ? 'System prompts are bound to a use-case (chat / background / code / goal loop) and injected as the agent system prompt.' : 'User prompts are invoked in chat with filled-in {{variables}}.'} action={!q ? { label: 'New prompt', onClick: () => onCreate(tab), icon: Plus } : undefined} />
+            <EmptyState icon={FileText} title={q ? 'No matching prompts' : `No ${tab} prompts`} hint={q ? 'Try a different term.' : `${tab === 'system' ? 'System prompts are bound to a use-case (chat / background / code / goal loop) and injected as the agent system prompt.' : 'User prompts are invoked in chat with filled-in {{variables}}.'} The prompts PersonalClaw ships for its own work are on the Bundled tab.`} action={!q ? { label: 'New prompt', onClick: () => onCreate(createKind), icon: Plus } : undefined} />
           )
         ) : (
           <div className="flex flex-col gap-s">
+            {/* The Bundled tab says what it holds, since its rows are not the reader's own and the
+                tab name alone does not say why they are kept apart. */}
+            {tab === 'bundled' && <p data-type="body-s" className="mb-xs text-on-surface-low">{BUNDLED_HINT}</p>}
             {rows!.map((r, i) => {
               const Icon = isSnips ? Puzzle : FileText
               const vars = promptVars(r)
@@ -203,7 +228,7 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
               // panel's OpenFullPageBar uses (tab-resolved per snippet vs kind).
               const menuItems: ContextMenuItem[] = [
                 { icon: <Icon size={15} />, label: 'Open', onSelect: () => setQuery({ open: r.name, edit: null }) },
-                { icon: <Maximize2 size={15} />, label: 'Open full page', onSelect: () => onOpen(isSnips ? 'snippets' : ((r.kind ?? 'user') as Tab), r.name) },
+                { icon: <Maximize2 size={15} />, label: 'Open full page', onSelect: () => onOpen(isSnips ? 'snippets' : tabOf(r), r.name) },
               ]
               return (
                 <Disintegrate key={r.name} active={deletingName === r.name} onDone={finishDelete}>

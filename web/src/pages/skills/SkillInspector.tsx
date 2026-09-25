@@ -9,7 +9,7 @@ import { TextArea, FieldError } from '../../ui/forms'
 import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type SkillItem, type SkillFile, type SkillIntegrity } from '../../lib/api'
-import { SOURCE_TONE, provenanceMeta } from './skillMeta'
+import { SOURCE_TONE, noBaselineReason, provenanceMeta } from './skillMeta'
 import { toneChipSkin } from '../../design/accent'
 import { reportingWrite } from '../../app/reportingWrite'
 
@@ -120,7 +120,8 @@ type ReverifyOutcome =
 
 /** S6 integrity: shows the install-time status from the list, plus a Re-verify action
  *  that re-hashes on-disk files against the .pclaw-lock.json baseline and reports drift.
- *  A skill with no lock (bundled / hand-placed) is "unverified" — expected, not an error. */
+ *  A skill with no lock (not installed from a marketplace) is "unverified" — expected, not an
+ *  error — and the line says why there is none as far as the skill's origin is recorded. */
 function IntegritySection({ skill }: { skill: SkillItem }) {
   const [outcome, setOutcome] = useState<ReverifyOutcome>({ kind: 'idle' })
   const [busy, setBusy] = useState(false)
@@ -142,7 +143,7 @@ function IntegritySection({ skill }: { skill: SkillItem }) {
   const Icon = status === 'intact' ? ShieldCheck : status === 'tampered' ? ShieldAlert : ShieldQuestion
   const label = status === 'intact' ? 'Verified — matches install baseline'
     : status === 'tampered' ? 'Tampered — files changed since install'
-    : 'Unverified — no install baseline (bundled or hand-placed)'
+    : `Unverified — no install baseline (${noBaselineReason(skill)})`
   const drift = outcome.kind === 'ok' && (outcome.data.mutated.length + outcome.data.missing.length + outcome.data.added.length > 0)
   const outcomeLine = outcome.kind === 'idle' ? ''
     : outcome.kind === 'error' ? outcome.message

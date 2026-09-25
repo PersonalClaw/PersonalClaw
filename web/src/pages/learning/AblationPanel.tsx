@@ -2,9 +2,9 @@ import { Scissors, ShieldAlert } from 'lucide-react'
 import { LoadError } from '../../ui/ListScaffold'
 import { Table, THead, Th, Td } from '../../ui/Table'
 import { fvs } from '../../design/fontWeight'
-import { hasApiCode } from '../../lib/api'
+import { hasApiCode, isEvalsOff } from '../../lib/api'
 import type {
-  AblationArmAggregate, AblationHistoryEntry, AblationRegistryRow, AblationView,
+  AblationArmAggregate, AblationHistoryEntry, AblationRegistryRow, AblationView, EvalsOffView,
 } from '../../lib/api'
 import { EvalsOff } from './EvalsOff'
 
@@ -25,24 +25,25 @@ import { EvalsOff } from './EvalsOff'
  *  rather than `remove`, and drawing 0.000 for it would turn "we never measured this" into
  *  "this scored nothing", which is the strongest possible case for retiring the component. */
 export function AblationPanel({ view, error, onRetry }: {
-  view: AblationView | undefined
+  view: AblationView | EvalsOffView | undefined
   error: unknown
   onRetry: () => void
 }) {
-  // THREE states, not two. The backend mints a distinct code for each on purpose (see
+  // THREE states, not two. The backend answers each distinctly on purpose (see
   // `handlers/evals.py:api_evals_ablation`) because they send the reader to three different
-  // places: the switch, the registry, and a bug report. Collapsing any of them into the others
-  // makes this panel's empty state a guess — and a failed fetch rendering as "nothing has run
-  // yet" is the specific confusion this section is built to refuse.
+  // places: the switch (a decided `{"enabled": false}`), the registry (`ablation_absent`), and a
+  // bug report. Collapsing any of them into the others makes this panel's empty state a guess —
+  // and a failed fetch rendering as "nothing has run yet" is the specific confusion this section
+  // is built to refuse.
+  if (isEvalsOff(view)) {
+    return (
+      <section className="flex flex-col gap-s" aria-labelledby="ablation-heading">
+        <Heading />
+        <EvalsOff what="ablation" />
+      </section>
+    )
+  }
   if (view === undefined && error) {
-    if (hasApiCode(error, 'evals_disabled')) {
-      return (
-        <section className="flex flex-col gap-s" aria-labelledby="ablation-heading">
-          <Heading />
-          <EvalsOff what="ablation" />
-        </section>
-      )
-    }
     if (hasApiCode(error, 'ablation_absent')) {
       return (
         <section className="flex flex-col gap-s" aria-labelledby="ablation-heading">

@@ -15,7 +15,8 @@ import { useEditFlag, type RouteProps } from '../../app/useQueryState'
  *  SnippetDetail (which already handle view ↔ in-place edit). Edit mode is the same
  *  ?edit=1 URL flag the side-panel uses, so it survives refresh + Back/forward. */
 export function PromptViewPage({ kind, name, onBack, navigate, query, setQuery }: {
-  kind: 'system' | 'user' | 'snippets'
+  /** The list tab this record was opened from — only `snippets` changes what is fetched. */
+  kind: 'system' | 'user' | 'bundled' | 'snippets'
   name: string
   onBack: () => void
 } & Pick<RouteProps, 'navigate' | 'query' | 'setQuery'>) {

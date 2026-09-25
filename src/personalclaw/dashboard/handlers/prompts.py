@@ -10,7 +10,12 @@ from aiohttp import web
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
 from personalclaw.security import redact_for_display, restore_masked_spans
-from personalclaw.skills.loader import DIRECT_SKILL_MAX_CONTENT_CHARS, validate_skill_md
+from personalclaw.skills.loader import (
+    DASHBOARD_SKILL_SOURCE_VALUE,
+    DIRECT_SKILL_MAX_CONTENT_CHARS,
+    validate_skill_md,
+    with_source_marker,
+)
 
 from ._shared import _get_skills, _list_marketplace_skills
 
@@ -1028,7 +1033,18 @@ async def api_skill_detail(request: web.Request) -> web.Response:
 
 
 async def api_skills_create(request: web.Request) -> web.Response:
-    """POST /api/skills — create a new skill."""
+    """POST /api/skills — create a new skill.
+
+    The body's frontmatter ``name`` must equal the key (``validate_skill_md``): the key is the
+    skill's directory and the id every other skills route addresses it by, so a body that names
+    a different skill is refused rather than rewritten. The dashboard's dialog keeps its template's
+    ``name:`` in step with the key as the user types, which is what lets its default path succeed.
+
+    The route also records HOW the skill came to exist — ``source: dashboard``, appended to the
+    frontmatter when the body declares no ``source`` of its own — because it is the only party
+    that knows: a body pasted into the dialog cannot say where it is being created. The stamped
+    body is what gets validated, so the stored file passes the same check a later edit applies.
+    """
     state: DashboardState = request.app["state"]
     try:
         body = await request.json()
@@ -1051,6 +1067,7 @@ async def api_skills_create(request: web.Request) -> web.Response:
     safe_name = re.sub(r"/+", "/", safe_name)  # collapse multiple slashes
     if not safe_name:
         return web.json_response({"error": "invalid skill name"}, status=400)
+    content = with_source_marker(content, DASHBOARD_SKILL_SOURCE_VALUE)
     refusal = _skill_write_refusal(safe_name, content)
     if refusal is not None:
         return refusal

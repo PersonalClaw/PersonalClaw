@@ -14,9 +14,21 @@ one would hold a request open for minutes and spend real money on a click. So th
 preflight — and this route publishes what it produced. That is also §6's posture verbatim:
 the harness recommends, the human rebinds on the existing Models panel.
 
-404 when nothing has run, with a distinct code from "evals disabled": "no benchmark yet"
-and "the feature is off" send a user to two different places, and one code for both would
-make the panel's empty state a guess.
+**Switched off is a decided answer, not an error.** While ``evals.enabled`` is off, the six
+report reads the Learning page loads on every visit (judge-bench, field-metrics, studies,
+retrieval, ablation, learning-benchmark) answer ``200 {"enabled": false}``, which the page
+renders as its off notice. That is how every other switched-off read here answers — the
+terminal list and auto-nudge (``{"enabled": false, …}``), the routing policy, knowledge
+embeddings, and the triage digest (``state: "off"``, whose off-card copy the eval panels
+already share). These reads used to 404 ``evals_disabled``, so a default install logged six
+console errors per visit for a feature it had merely not turned on. A drill-down (one study,
+one store's label card) and the one write still refuse with 404 ``evals_disabled``: they
+address an artifact of a switched-off surface, and the page never asks for one while the
+report read says off.
+
+"Nothing has run yet" is a 404 with its own code per route: "no benchmark yet" and "the
+feature is off" send a user to two different places, and one answer for both would make the
+panel's empty state a guess.
 """
 
 from __future__ import annotations
@@ -46,6 +58,16 @@ def _enabled() -> bool:
         return False
 
 
+def _off() -> web.Response:
+    """What a report read answers while the switch is off — see the module docstring.
+
+    One body for all six, and no empty collection beside the flag: ``{"studies": []}`` would
+    tell a client that ignores ``enabled`` "no study has been registered", which is a
+    different fact from "the substrate is off".
+    """
+    return web.json_response({"enabled": False})
+
+
 async def api_evals_judge_bench(request: web.Request) -> web.Response:
     """GET /api/evals/judge-bench — the newest tier-recommendation table.
 
@@ -55,12 +77,7 @@ async def api_evals_judge_bench(request: web.Request) -> web.Response:
     harness, and the copy shipping the permissive answer would be the UI.
     """
     if not _enabled():
-        return json_error(
-            "evals_disabled",
-            message="The eval substrate is off. Turn on `evals.enabled` to publish "
-            "benchmark results.",
-            status=404,
-        )
+        return _off()
     from personalclaw.evals.judge_bench import latest_bench_view
 
     try:
@@ -92,12 +109,7 @@ async def api_evals_studies(request: web.Request) -> web.Response:
     deliberate invocation; this publishes what they produced.
     """
     if not _enabled():
-        return json_error(
-            "evals_disabled",
-            message="The eval substrate is off. Turn on `evals.enabled` to publish "
-            "study results.",
-            status=404,
-        )
+        return _off()
     from personalclaw.evals.studies import study_index
 
     try:
@@ -181,12 +193,7 @@ async def api_evals_ablation(request: web.Request) -> web.Response:
     surface a ``keep``/``lighten`` verdict has at all.
     """
     if not _enabled():
-        return json_error(
-            "evals_disabled",
-            message="The eval substrate is off. Turn on `evals.enabled` to publish "
-            "ablation reports.",
-            status=404,
-        )
+        return _off()
     from personalclaw.evals.ablation import latest_ablation_view
 
     try:
@@ -231,12 +238,7 @@ async def api_evals_learning_benchmark(request: web.Request) -> web.Response:
     places: the config switch, the runner, and a broken artifact.
     """
     if not _enabled():
-        return json_error(
-            "evals_disabled",
-            message="The eval substrate is off. Turn on `evals.enabled` to publish "
-            "benchmark reports.",
-            status=404,
-        )
+        return _off()
     from personalclaw.evals import learning_bench
 
     try:
@@ -287,12 +289,7 @@ async def api_evals_retrieval(request: web.Request) -> web.Response:
     boundary forbids.
     """
     if not _enabled():
-        return json_error(
-            "evals_disabled",
-            message="The eval substrate is off. Turn on `evals.enabled` to publish "
-            "retrieval ablation reports.",
-            status=404,
-        )
+        return _off()
     from personalclaw.evals import retrieval_bench as rb
 
     try:
@@ -435,12 +432,7 @@ async def api_evals_field_metrics(request: web.Request) -> web.Response:
     threaded.
     """
     if not _enabled():
-        return json_error(
-            "evals_disabled",
-            message="The eval substrate is off. Turn on `evals.enabled` to publish "
-            "lab-vs-field rows.",
-            status=404,
-        )
+        return _off()
     import asyncio
 
     from personalclaw.evals import field_metrics as fm

@@ -5,7 +5,7 @@ import { Button } from '../../ui/Button'
 import { Checkbox } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { fvs } from '../../design/fontWeight'
-import { api, hasApiCode, type RetrievalArmContribution, type RetrievalBenchView, type RetrievalLabelCard, type RetrievalMaskRow, type RetrievalStoreReport } from '../../lib/api'
+import { api, hasApiCode, isEvalsOff, type EvalsOffView, type RetrievalArmContribution, type RetrievalBenchView, type RetrievalLabelCard, type RetrievalMaskRow, type RetrievalStoreReport } from '../../lib/api'
 import { EvalsOff } from './EvalsOff'
 import { BUSY_REASON } from '../../ui/unavailable'
 
@@ -25,23 +25,23 @@ import { BUSY_REASON } from '../../ui/unavailable'
  *  is "there was nothing to be precise about". The `no candidates` column is how many
  *  queries that was, so the absence is legible rather than merely missing. */
 export function RetrievalBenchPanel({ bench, error, onRetry }: {
-  bench: RetrievalBenchView | undefined
+  bench: RetrievalBenchView | EvalsOffView | undefined
   error: unknown
   onRetry: () => void
 }) {
-  // A 404 is the ordinary state — the substrate is off, or no benchmark has run — so both render
-  // as guidance rather than as a failure. Only the second offers the labelling card: hand labels
-  // are read BY a run, so collecting them while the substrate is off would bank work for a
-  // machine that has been told not to start.
+  // The ordinary states — the substrate is off (a decided 200), or no benchmark has run (a 404
+  // with its own code) — both render as guidance rather than as a failure. Only the second offers
+  // the labelling card: hand labels are read BY a run, so collecting them while the substrate is
+  // off would bank work for a machine that has been told not to start.
+  if (isEvalsOff(bench)) {
+    return (
+      <section className="flex flex-col gap-s" aria-labelledby="retrieval-bench-heading">
+        <Heading />
+        <EvalsOff what="retrieval benchmark" />
+      </section>
+    )
+  }
   if (bench === undefined && error) {
-    if (hasApiCode(error, 'evals_disabled')) {
-      return (
-        <section className="flex flex-col gap-s" aria-labelledby="retrieval-bench-heading">
-          <Heading />
-          <EvalsOff what="retrieval benchmark" />
-        </section>
-      )
-    }
     if (hasApiCode(error, 'retrieval_absent')) {
       return (
         <section className="flex flex-col gap-s" aria-labelledby="retrieval-bench-heading">
