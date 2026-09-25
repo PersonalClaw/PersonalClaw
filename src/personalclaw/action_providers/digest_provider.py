@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 #: without touching a user's hand-made ones.
 DIGEST_JOB_NAME = "system:notification-digest"
 
+#: What the Triggers page calls it. The id above is an identifier, not a label.
+DIGEST_DISPLAY_NAME = "Notification digest"
+
 
 class NotificationDigestActionProvider(ActionProvider):
     """Collapse the queued notifications into a single digest inbox item."""
@@ -81,7 +84,10 @@ def reconcile_digest_cron(store: Any) -> None:
     from personalclaw.triggers import screen as _screen
     from personalclaw.triggers.arm import arm as _arm
     from personalclaw.triggers.models import Trigger
-    from personalclaw.triggers.system_singleton import converge_system_singleton
+    from personalclaw.triggers.system_singleton import (
+        converge_display_name,
+        converge_system_singleton,
+    )
 
     try:
         schedule = notification_rules.digest_settings()["schedule"]
@@ -107,7 +113,7 @@ def reconcile_digest_cron(store: Any) -> None:
         try:
             trigger = Trigger(
                 id=DIGEST_JOB_NAME,
-                name=DIGEST_JOB_NAME,
+                name=DIGEST_DISPLAY_NAME,
                 kind="clock",
                 # True unless a retired duplicate says the user had switched this off — see
                 # `converge_system_singleton`. `None` means nothing was retired: a fresh install.
@@ -137,6 +143,7 @@ def reconcile_digest_cron(store: Any) -> None:
     # `job.schedule.cron_expr`, and reading a FLAT attribute off the job always returned None —
     # which made the old convergence fire on every single startup).
     trigger = row.trigger
+    converge_display_name(store, trigger, name=DIGEST_DISPLAY_NAME)
     spec = trigger.spec if isinstance(trigger.spec, dict) else {}
     current = spec.get("expr")
     if current != schedule:

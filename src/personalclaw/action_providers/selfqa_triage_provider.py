@@ -73,6 +73,11 @@ class SelfQaTriageActionProvider(ActionProvider):
     def display_name(self) -> str:
         return "Triage Commits for Self-QA"
 
+    @property
+    def internal(self) -> bool:
+        # A step of the Self-QA loop, configured by that loop — not an action to pick by hand.
+        return True
+
     async def execute(
         self,
         action_config: dict[str, Any],

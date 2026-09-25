@@ -114,22 +114,17 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def _create(state, *, name, every):
-    resp = _run(
-        T.api_trigger_create(
-            _req(
-                "POST",
-                "/api/triggers",
-                state,
-                body={
-                    "trigger_type": "schedule",
-                    "name": name,
-                    "every": every,
-                    "action": {"provider": "invoke-agent", "config": {"task_template": "go"}},
-                },
-            )
-        )
-    )
+AGENT = {"provider": "invoke-agent", "config": {"task_template": "go"}}
+NOTIFY = {"provider": "notify", "config": {"title_template": "Standup nudge: review Q4 tasks"}}
+
+
+def _create(state, *, name, every=None, cron=None, action=AGENT):
+    body = {"trigger_type": "schedule", "name": name, "action": action}
+    if every is not None:
+        body["every"] = every
+    if cron is not None:
+        body["cron"] = cron
+    resp = _run(T.api_trigger_create(_req("POST", "/api/triggers", state, body=body)))
     data = _body(resp)
     assert "error" not in data, data
     return data["trigger"]
@@ -457,3 +452,84 @@ def test_changing_the_TIMEZONE_still_re_arms(home, state, monkeypatch):
     after = _spec(home, "clock:hourly")
     assert after["spec"]["timezone"] == "America/Los_Angeles"
     assert after["next_fire_at"] != armed_before
+
+
+# ── the floor governs only an action that can call a model (B10, 2026-09-25) ──
+
+
+def test_a_NOTIFY_trigger_under_the_floor_is_NOT_warned(home, state):
+    """🔴 THE FALSE WARNING. Measured live: a notify trigger firing every 60s wore "60s is below
+    the 900s floor for an LLM-invoking trigger" as its "check schedule" chip — on an automation
+    that makes no model call at all. The floor's premise is the model call; without one it is noise
+    that trains the user to skip the chip on the trigger where it is true."""
+    _create(state, name="standup nudge", every=60, action=NOTIFY)
+    row = _row_from_list(state, "schedule:clock:standup-nudge")
+    assert row["warnings"] == [] and row["broken"] == []
+
+
+def test_the_SAME_cadence_on_an_agent_trigger_still_warns(home, state):
+    """The control for the test above: identical cadence, a model-invoking action — so what changed
+    the verdict is the ACTION, not a floor that stopped firing for everyone."""
+    _create(state, name="standup nudge", every=60, action=AGENT)
+    row = _row_from_list(state, "schedule:clock:standup-nudge")
+    assert row["warnings"] and str(MIN_CLOCK_INTERVAL_SECS) in row["warnings"][0]
+
+
+def test_the_DOCTOR_agrees_for_both_floors_interval_and_cron(home, state):
+    """Both copies of the floor read the action: the interval one (`validate_spec`, via the store's
+    load) and the cron one (`arm.semantic_spec_issues`, the doctor's semantic half). A per-minute
+    cron notify is quiet; the same cron on an agent is reported."""
+    _create(state, name="minutely notify", cron="* * * * *", action=NOTIFY)
+    _create(state, name="interval notify", every=60, action=NOTIFY)
+    report = _body(_run(T.api_triggers_doctor(_req("GET", "/api/triggers/doctor", state))))
+    assert report["healthy"] is True and report["findings"] == [], report["findings"]
+
+    _create(state, name="minutely agent", cron="* * * * *", action=AGENT)
+    report = _body(_run(T.api_triggers_doctor(_req("GET", "/api/triggers/doctor", state))))
+    flagged = {f["trigger_id"] for f in report["findings"]}
+    assert flagged == {"schedule:clock:minutely-agent"}, report["findings"]
+
+
+def test_an_UNCLASSIFIED_provider_keeps_the_floor():
+    """The table lists zero-token providers, never model ones, so anything it does not name — an
+    app-contributed action, a resume target, an unreadable row — keeps the advisory. Fail loud: a
+    wrong warning costs a sentence, a missing one a per-minute model call."""
+    from personalclaw.triggers.models import action_invokes_model
+
+    assert action_invokes_model({"inline": {"provider": "notify"}}) is False
+    assert action_invokes_model({"provider": "bash", "config": {}}) is False
+    for workflow in (
+        {"inline": {"provider": "invoke-agent"}},
+        {"inline": {"provider": "some-app-action"}},
+        {"resume": {"run_id": "r1"}},
+        {},
+        None,
+        "not a dict",
+    ):
+        assert action_invokes_model(workflow) is True, workflow
+
+
+def test_every_ZERO_TOKEN_entry_names_a_REAL_provider_and_no_model_one_is_listed():
+    """The table's two failure modes. A phantom id suppresses a warning for nothing that exists; a
+    model-invoking provider on it silences the floor exactly where it matters."""
+    from personalclaw.action_providers.registry import dispatchable_action_providers
+    from personalclaw.triggers.models import ZERO_TOKEN_PROVIDERS
+
+    assert ZERO_TOKEN_PROVIDERS <= dispatchable_action_providers(), (
+        ZERO_TOKEN_PROVIDERS - dispatchable_action_providers()
+    )
+    model_invoking = {
+        "invoke-agent",
+        "run-prompt",
+        "run-workflow",
+        "best-of-n",
+        "second-opinion",
+        "browse",
+        "triage-digest",
+        "source-digest",
+        "identity-report",
+        "knowledge-report",
+        "knowledge-consolidate",
+        "selfqa-commit-watch",
+    }
+    assert not (ZERO_TOKEN_PROVIDERS & model_invoking), ZERO_TOKEN_PROVIDERS & model_invoking

@@ -1489,9 +1489,9 @@ async def api_trigger_run(request: web.Request) -> web.Response:
     Lifecycle triggers have no standalone "run" (they fire on agent events) — use
     the test endpoint instead.
 
-    ``?dry_run=1`` (or JSON ``{"dry_run": true}``) runs a **dry-run replay** (T9):
-    write-capable tools don't execute, so it previews what the trigger's current
-    action WOULD do with no side effects — tagged ``trigger="replay"`` in history.
+    ``?dry_run=1`` (or JSON ``{"dry_run": true}``) is a **dry run**: nothing executes and
+    nothing is recorded — the answer carries the gate plan and ``would_run``, the action a real
+    run would dispatch, and that answer is the whole result (see ``_run_store``).
 
     Reads no `state` at all since S110 — the clearest evidence the manual-run path is fully
     store-backed.
@@ -1749,7 +1749,23 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
     if dry_run:
         # Reuse tools.run for the gate plan — the API and the chat tool report identically.
         result = T.run(store, trigger_id=raw, dry_run=True)
-        return web.json_response({"ok": result.ok, "result": result.data, "text": result.text})
+        # 🔴 THE RESPONSE IS THE RESULT. A dry run executes nothing, records no run and moves no
+        # `last_run_ts`, so this answer is the only place its outcome will ever exist. The Run
+        # button used to treat it as a started run and wait for a history row that never came —
+        # "Running…" for as long as the panel stayed open. `would_run` is the resolved action in
+        # the one canonical `{provider, config}` shape, so a surface can say what a real run would
+        # do without re-deriving the two stored action shapes itself.
+        from personalclaw.triggers.schedule_view import _inline_action
+
+        return web.json_response(
+            {
+                "ok": result.ok,
+                "name": row.trigger.name,
+                "result": result.data,
+                "text": result.text,
+                "would_run": _inline_action(row.trigger),
+            }
+        )
 
     # A real run: mirror tools.run's guards (broken row refused; a PAUSED trigger still runnable by
     # hand — pausing means "stop firing on your own", and refusing a hand-driven run would remove
@@ -1835,7 +1851,16 @@ async def _dispatch_store_action(
     # `last_success_at`/`last_failure_at` stamp, tagged `manual` — see its docstring for why
     # `run_count` (the fire budget) is not spent. A `view.rendered` refresh (WF2AUT-6) flows through
     # this same recorder, so a pull-on-view fire leaves the same run evidence a manual Run does.
-    ctx = ActionContext(event=event, context="", payload=payload)
+    from personalclaw.triggers.delivery import status_url
+
+    # The same `status_url` the autonomous path hands the provider, so a hand-run notify links back
+    # to its trigger exactly as a scheduled one does.
+    ctx = ActionContext(
+        event=event,
+        context="",
+        payload=payload,
+        status_url=status_url(trigger_id=str(getattr(trigger, "id", "") or "")),
+    )
     started = time.time()
     try:
         result = await provider.execute(action.get("config") or {}, ctx)
@@ -2388,7 +2413,7 @@ async def api_triggers_doctor(request: web.Request) -> web.Response:
     from personalclaw.triggers.calendar import Finding
 
     for row in store_rows:
-        for issue in semantic_spec_issues(row.trigger.kind, row.trigger.spec):
+        for issue in semantic_spec_issues(row.trigger.kind, row.trigger.spec, row.trigger.workflow):
             is_error = issue.severity == "error"
             report.findings.append(
                 Finding(

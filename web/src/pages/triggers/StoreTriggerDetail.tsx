@@ -4,10 +4,11 @@ import { Trash2, Play, FlaskConical, AlertTriangle, Users } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Toggle } from '../../ui/Toggle'
 import { confirmDelete } from '../../ui/dialog'
-import { api, type Trigger as WireTrigger } from '../../lib/api'
+import { api, type ActionProvider, type Trigger as WireTrigger, type TriggerRunResult } from '../../lib/api'
 import { RunHistory } from '../schedule/ScheduleDetail'
 import { triggerStatusMeta, explainsCause } from '../schedule/scheduleMeta'
 import { actionLabel } from './triggerMeta'
+import { DryRunResult } from './DryRunResult'
 import { reportingWrite } from '../../app/reportingWrite'
 import { BUSY_REASON } from '../../ui/unavailable'
 
@@ -20,13 +21,17 @@ import { BUSY_REASON } from '../../ui/unavailable'
  *  through the same /api/triggers store namespace the backend added (S94), which itself reuses the
  *  chat tools' own functions, so this panel and a chat command cannot answer differently.
  */
-export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
+export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDeleted }: {
   trigger: WireTrigger
+  providers?: ActionProvider[]
   onChanged: () => void
   onDeleted: () => void
 }) {
   const [busy, setBusy] = useState(false)
   const [runFlash, setRunFlash] = useState<string | null>(null)
+  // A dry run's response, rendered by the SAME `DryRunResult` the schedule panel uses — two
+  // inspectors that described one dry run two ways is how a user learns to trust neither.
+  const [dry, setDry] = useState<TriggerRunResult | null>(null)
   // Bumped after a real run so the history reloads — a fire the user just triggered has to appear
   // without a manual refresh, or the panel looks like it did nothing.
   const [histKey, setHistKey] = useState(0)
@@ -37,6 +42,9 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
   // the ones the backend would refuse to honour.
   const readOnly = trigger.read_only === true
   const broken = trigger.broken ?? []
+  // The row's advisories, in words — the list badges them "check schedule", and this panel is where
+  // a user comes to learn why. Yields to `broken`, as the list's badge does.
+  const warnings = broken.length === 0 ? (trigger.warnings ?? []) : []
   const paths = Array.isArray(trigger.spec?.paths) ? (trigger.spec!.paths as string[]) : []
 
   async function toggle() {
@@ -82,22 +90,30 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
             ? 'Firing on its own'
             : 'Paused — it will not fire until re-enabled'
 
-  async function run(dry: boolean) {
+  async function run(isDry: boolean) {
     setBusy(true)
     setErr('')
     setRunFlash(null)
+    setDry(null)
     try {
-      const r = await api.runStoreTrigger(trigger.raw_id, dry)
+      const r = await api.runStoreTrigger(trigger.raw_id, isDry)
+      if (isDry) {
+        // The response IS the dry run's result — nothing ran and nothing was recorded, so there is
+        // no history to reload and nothing to wait for. `ok: false` is a row that cannot even plan.
+        if (r.ok === false) { setErr(r.text || 'This automation cannot be dry-run.'); return }
+        setDry(r)
+        return
+      }
       // 🔴 A 200 is not a success (#395). The backend answers `ok: false` when the fire was refused
       // (incident mode) or the action could not be resolved — flashing "Ran" for those is how a
       // silent no-op looked like a completed run for a whole release. `result`/`refused` carry the
       // reason, so show it instead of inventing one.
-      if (!dry && r.ok === false) {
+      if (r.ok === false) {
         setErr(r.refused || (typeof r.result === 'string' && r.result) || 'This automation did not run.')
         return
       }
-      setRunFlash(dry ? 'Dry run — nothing executed' : 'Ran')
-      if (!dry) setHistKey((k) => k + 1)
+      setRunFlash('Ran')
+      setHistKey((k) => k + 1)
       onChanged()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Run failed')
@@ -128,6 +144,14 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
           <div>
             <div style={{ fontWeight: 500 }}>This automation has a problem and will not fire.</div>
             <div className="mt-0.5">{broken[0]}</div>
+          </div>
+        </div>
+      )}
+      {warnings.length > 0 && (
+        <div role="note" className="flex items-start gap-s text-warn">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+          <div data-type="body-s" className="flex min-w-0 flex-1 flex-col gap-xs">
+            {warnings.map((w) => <p key={w} className="break-words">{w}</p>)}
           </div>
         </div>
       )}
@@ -195,8 +219,11 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
           lived inside `ScheduleDetail` behind a hardcoded `schedule:` id — so a `web_watch` or
           `file` automation showed "When it runs" and "What it runs" and nothing about whether it
           ever HAD. Reusing the exported `RunHistory` rather than writing a second one: a duplicate
-          renderer is how two surfaces start disagreeing about what a run looks like. */}
-      <RunHistory triggerId={trigger.id} reloadKey={histKey} />
+          renderer is how two surfaces start disagreeing about what a run looks like.
+          The key carries `run_count` as well as the Run-now counter: a fire the automation made on
+          its own while the panel was open advances `run_count` (the list poll carries it), and the
+          history has to re-read with it rather than keep saying "No runs recorded yet." */}
+      <RunHistory triggerId={trigger.id} reloadKey={`${histKey}:${trigger.run_count ?? 0}`} />
 
       {trigger.created_by === 'agent' && (
         <div className="text-on-surface-low text-[0.75rem]">Created for you automatically. Manage it here or ask in chat to change it.</div>
@@ -204,6 +231,7 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
 
       {err && <FieldError>{err}</FieldError>}
       {runFlash && !err && <div className="text-on-surface-low text-[0.8125rem]">{runFlash}</div>}
+      {dry && <DryRunResult result={dry} providers={providers} onDismiss={() => setDry(null)} />}
 
       {/* No action row at all for a foreign automation — Run now, Dry run and Delete are all
           writes to somebody else's row. Rendering them disabled would still assert they are

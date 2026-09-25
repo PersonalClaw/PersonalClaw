@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Bell, Check, CheckCheck, Filter, Trash2, Undo2, X, Target } from 'lucide-react'
+import { ArrowUpRight, Bell, Check, CheckCheck, Filter, Trash2, Undo2, X, Target } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
@@ -22,7 +22,7 @@ import { rowSubject } from '../../lib/rowSubject'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type NotificationItem } from '../../lib/api'
 import { useAutonomyLadder } from '../../lib/rungs'
-import { kindMeta, kindsPresent, bucketOf, BUCKET_ORDER, relTime, clockTime, firstLine, toneChipBg } from './notificationMeta'
+import { kindMeta, kindsPresent, bucketOf, BUCKET_ORDER, relTime, clockTime, firstLine, toneChipBg, notificationLink } from './notificationMeta'
 import { fvs } from '../../design/fontWeight'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { PageTitle } from '../../ui/PageTitle'
@@ -96,6 +96,7 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
   }, [filtered, now])
 
   const open = items?.find((n) => n.ts === openTs) ?? null
+  const openLink = open ? notificationLink(open) : null
 
   // Every mutation below is followed by `load()`, so a swallowed failure REVERTS the row and the click
   // reads as a no-op — the user marks something read, it stays unread, and nothing explains why. Same
@@ -187,6 +188,14 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
             </div>
             <div className="text-on-surface-var text-[0.9375rem] leading-relaxed"><Markdown>{open.body}</Markdown></div>
             <div className="flex flex-wrap gap-s border-t border-outline-variant/40 pt-l">
+              {/* The note's own deep link (R18 `statusUrl`) — a trigger fire opens that trigger's
+                  panel, a run opens the run. Same shape as "Open loop" below: reading the thing a
+                  note is about is what the note was for, so following it marks it read. */}
+              {openLink && (
+                <Button size="sm" onClick={() => { ack(open); navigate(openLink.path) }}>
+                  <ArrowUpRight size={14} /> {openLink.label}
+                </Button>
+              )}
               {/* A loop notification carries the loop_id — let the user jump straight to
                   it (a 'needs your input' / 'stalled' notice is actionable). Route by the
                   loop KIND: a code loop lives at #/code/<id> (the mini-IDE cockpit), every

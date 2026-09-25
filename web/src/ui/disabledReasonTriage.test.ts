@@ -228,10 +228,9 @@ describe('a disabled Button that a user could unblock says how', () => {
   it('never parks the reason on a wrapper the keyboard user cannot reach', () => {
     const parked = walk(SRC).flatMap((f) => {
       const src = readFileSync(f, 'utf8')
+      // No exemptions: `ScheduleDetail`'s dry-run tooltip, the one static action title that used to
+      // sit on a wrapper, now rides the Button's own `title`, which is how any such title should.
       return [...src.matchAll(/<(span|div)[^>]{0,200}?\btitle=[^>]{0,240}>\s*\n?\s*<Button\b[^>]{0,400}?disabled=/gs)]
-        // A static title explaining the ACTION is fine; what must not live there is the blocked
-        // reason. `ScheduleDetail`'s dry-run tooltip is that legitimate case.
-        .filter((m) => !/Dry-run replay/.test(m[0]))
         .map(() => f.slice(SRC.length + 1))
     })
     expect(parked, 'a wrapper title is a hover tooltip; a natively disabled button inside it is unreachable').toEqual([])

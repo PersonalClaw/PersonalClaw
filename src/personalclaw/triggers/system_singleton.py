@@ -52,6 +52,25 @@ def inline_provider(trigger: "Trigger") -> str:
     return provider if isinstance(provider, str) else ""
 
 
+def converge_display_name(store: "TriggerStore", trigger: "Trigger", *, name: str) -> None:
+    """Rename a system row that still carries its machine id as its name. Idempotent.
+
+    Three reconcilers used to create their row with `name=<id>`, so a fresh home's Triggers page
+    opened on `system:notification-digest`, `system:usage-recap` and `system:source-digest` — raw
+    ids where every other row has words. New rows are created with the human name; this brings an
+    EXISTING row along, keyed on inspecting it: only a name still equal to the id is ours to
+    change, so a row the user renamed keeps their name. Best-effort, like every step of a boot
+    reconcile — a failed write leaves the old name for the next boot.
+    """
+    if trigger.name != trigger.id or trigger.name == name:
+        return
+    try:
+        trigger.name = name
+        store.upsert(trigger)
+    except Exception:
+        logger.debug("could not rename system trigger %s", trigger.id, exc_info=True)
+
+
 def converge_system_singleton(
     store: "TriggerStore", *, canonical_id: str, provider: str
 ) -> bool | None:

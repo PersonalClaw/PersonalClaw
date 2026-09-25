@@ -9,20 +9,25 @@ import { Toggle } from '../../ui/Toggle'
 import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { confirmDelete } from '../../ui/dialog'
-import { api, type ScheduleJob, type ScheduleRun } from '../../lib/api'
+import { api, type ActionProvider, type ScheduleJob, type ScheduleRun, type TriggerRunResult } from '../../lib/api'
 import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, triggerStatusMeta, isInertOutcome, partitionRunsByFold, relFuture, relPast, absTime, mdToPlain } from './scheduleMeta'
 import { actionLabel, actionIcon } from '../triggers/triggerMeta'
+import { ActionFieldList, DryRunResult, actionFields } from '../triggers/DryRunResult'
 import {
-  ScheduleForm, toDraft, draftToPayload, scheduleDraftInvalidReason, type ScheduleDraft,
+  ScheduleForm, toDraft, draftToPayload, scheduleDraftInvalidReason, draftProvider, type ScheduleDraft,
 } from './ScheduleForm'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { InlineLoadError } from '../../ui/ListScaffold'
 
 /** Schedule inspector for the SidePanel: view ↔ in-panel edit (same pattern as
  *  WorkflowDetail), the schedule + execution summary, last result/error, and a
- *  paginated run history that expands each run to its full trace. */
-export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, onEditingChange }: {
+ *  paginated run history that expands each run to its full trace.
+ *
+ *  `providers` is the action catalog the list page already loads — the labels for an action's
+ *  fields and whether it can call a model (the cadence floor) are read from it, not re-derived. */
+export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChanged, editing, onEditingChange }: {
   job: ScheduleJob
+  providers?: ActionProvider[]
   onSaved: () => void
   onDeleted: () => void
   onChanged: () => void
@@ -36,7 +41,6 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [note, setNote] = useState('')
-  const [histKey, setHistKey] = useState(0)  // bump to refetch run history after a run
   // Local "I just triggered a run" flag. The backend dispatches the run in the
   // background and returns immediately, and job.is_running only updates on the
   // next list poll (~10s), so without this the UI would look like nothing
@@ -47,6 +51,8 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
   // drives the opacity transition before we clear the flash.
   const [ranFlash, setRanFlash] = useState<null | 'ok' | 'error'>(null)
   const [fading, setFading] = useState(false)
+  // The last dry run's RESPONSE — its whole result, since a dry run records nothing anywhere else.
+  const [dry, setDry] = useState<TriggerRunResult | null>(null)
   const runStartRef = useRef<number | null>(null)  // job.last_run_ts at trigger time
   const km = kindMeta(deriveKind(job))
   const mm = modeMeta(deriveMode(job))
@@ -58,19 +64,23 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
   const ActionIcon = provider ? actionIcon(provider) : mm.icon
   const actLabel = provider ? actionLabel(provider) : mm.label
   const running = job.is_running || triggered
+  // The edited draft's action, as the catalog classifies it: the cadence floor only speaks for an
+  // action that can call a model. Unknown (catalog still loading, an app provider it does not
+  // list) keeps the floor — the same direction the backend's table takes.
+  const draftInvokesModel = providers.find((p) => p.name === draftProvider(draft, provider))?.invokes_model !== false
 
   useEffect(() => { setDraft(toDraft(job)) }, [job.id])
 
   // While a run we triggered is in flight, actively poll (the parent list's own
   // poll is every 10s — too slow for responsive feedback). Detect completion
   // when the job reports not-running AND its last_run_ts advanced past where it
-  // was at trigger time; then refresh history + confirm.
+  // was at trigger time; then confirm. The history re-reads by itself: it is keyed
+  // on that same `last_run_ts` (below).
   useEffect(() => {
     if (!triggered) return
     const finished = !job.is_running && job.last_run_ts != null && job.last_run_ts !== runStartRef.current
     if (finished) {
       setTriggered(false)
-      setHistKey((k) => k + 1)
       setRanFlash(job.last_status === 'error' ? 'error' : 'ok')
       return
     }
@@ -105,7 +115,7 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
     try { await api.deleteSchedule(job.id); onDeleted() } catch { setErr('Delete failed') }
   }
   async function runNow() {
-    setBusy(true); setErr(''); setNote('')
+    setBusy(true); setErr(''); setNote(''); setDry(null)
     runStartRef.current = job.last_run_ts ?? null
     try {
       const r = await api.runSchedule(job.id)
@@ -131,14 +141,21 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
       setErr(/already running/i.test(msg) ? 'This schedule is already running.' : msg)
     } finally { setBusy(false) }
   }
+  // 🔴 A DRY RUN IS OVER WHEN ITS RESPONSE ARRIVES (failure mode 3). This used to `setTriggered(true)`
+  // like a real run, which starts the completion watcher above — and that watcher waits for a
+  // `last_run_ts` a dry run never moves, because it executes and records nothing. Measured: the
+  // button read "Running…" 110s after a dry run of a disabled trigger, and on an enabled one it
+  // cleared only when the next REAL scheduled fire landed. The note it showed ("See history for the
+  // result") promised a row no code writes. The response is the result, so it is rendered and
+  // nothing waits: the buttons are back the moment the request returns.
   async function dryRun() {
-    setBusy(true); setErr(''); setNote('')
-    runStartRef.current = job.last_run_ts ?? null
+    setBusy(true); setErr(''); setNote(''); setDry(null)
     try {
-      await api.runSchedule(job.id, true)
-      setTriggered(true)
-      setNote('Dry-run replay started — write tools are previewed (no side effects). See history for the result.')
-      onChanged()
+      const r = await api.runSchedule(job.id, true)
+      // `ok: false` is a dry run that could not even plan (a row with a parse error): the reason is
+      // the answer, not a preview of anything.
+      if (r.ok === false) { setErr(r.text || 'This schedule cannot be dry-run.'); return }
+      setDry(r)
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Dry run failed'
       setErr(/already running/i.test(msg) ? 'This schedule is already running.' : msg)
@@ -161,7 +178,7 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
   if (editing) {
     return (
       <div className="flex flex-col gap-l">
-        <ScheduleForm draft={draft} onChange={setDraft} compact />
+        <ScheduleForm draft={draft} onChange={setDraft} compact invokesModel={draftInvokesModel} />
         <FormFooter error={err}>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(job)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} loading={saving}
@@ -185,6 +202,8 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
     state: job.state,
     hasRun: job.last_run_ts != null || (job.run_count ?? 0) > 0,
   })
+  const warnings = job.warnings ?? []
+  const otherFields = mm.key === 'other' ? actionFields(cfg, providers.find((p) => p.name === provider)) : []
   return (
     <div className="flex flex-col gap-l">
       {/* action row */}
@@ -204,13 +223,16 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
             {running ? 'Running…' : ranFlash === 'ok' ? 'Run finished' : ranFlash === 'error' ? 'Run failed' : 'Run now'}
           </span>
         </Button>
-        <span title="Dry-run replay — preview what this would do, with no side effects (write tools are not executed)">
-          <Button size="sm" variant="ghost" onClick={dryRun} disabled={busy || running || !!ranFlash}
-            disabledReason={ranFlash ? undefined : BUSY_REASON}>
-            <FlaskConical size={14} /> Dry run
-          </Button>
-        </span>
-        <Button size="sm" variant="ghost" onClick={() => setEditing(true)}><Pencil size={14} /> Edit</Button>
+        {/* The explanation rides the button's own `title` (which `Button` joins to a blocked reason)
+            rather than a wrapper's: a wrapper tooltip is unreachable from the keyboard. And it says
+            what a dry run IS — the old "Dry-run replay … write tools are not executed" described a
+            replay that no longer exists. */}
+        <Button size="sm" variant="ghost" onClick={dryRun} disabled={busy || running || !!ranFlash}
+          title="Preview what a run would do — nothing is executed and nothing is recorded"
+          disabledReason={ranFlash ? undefined : BUSY_REASON}>
+          <FlaskConical size={14} /> Dry run
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => { setDry(null); setEditing(true) }}><Pencil size={14} /> Edit</Button>
         {job.has_result && <Button size="sm" variant="ghost" onClick={openChat} disabled={busy} disabledReason={BUSY_REASON}><MessagesSquare size={14} /> Open as chat</Button>}
         <Button size="sm" variant="ghost" onClick={del}><Trash2 size={14} /> Delete</Button>
         <label className="ml-auto inline-flex items-center gap-2 text-[0.8125rem] cursor-pointer">
@@ -220,6 +242,7 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
       </div>
       {err && <FieldError>{err}</FieldError>}
       {note && !running && <p className="text-ok text-[0.8125rem]">{note}</p>}
+      {dry && <DryRunResult result={dry} providers={providers} onDismiss={() => setDry(null)} />}
 
       {/* `toneChipSkin`, not a tint of the tone itself. `scheduleMeta` makes TWO of these coral —
           the `cron` kind and the `agent` mode — and coral ink over a 16% tint of itself measures
@@ -236,6 +259,18 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
         {job.enabled && job.next_run_ts && <span className="text-on-surface-low text-[0.8125rem]">next {relFuture(job.next_run_ts)} · {absTime(job.next_run_ts)}</span>}
       </div>
 
+      {/* The row's advisories IN WORDS (the cadence floor, an unknown spec key). The list badges
+          them "check schedule"; the reason used to exist only as that badge's hover title, so a
+          user who opened the trigger to find out why still could not see it. */}
+      {warnings.length > 0 && (
+        <div role="note" className="flex items-start gap-s text-warn">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+          <div data-type="body-s" className="flex min-w-0 flex-1 flex-col gap-xs">
+            {warnings.map((w) => <p key={w} className="break-words">{w}</p>)}
+          </div>
+        </div>
+      )}
+
       {/* what runs — provider-aware: show the action's defining field(s) */}
       {provider === 'run-prompt' ? (
         <Section label="Prompt">
@@ -249,6 +284,17 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
             {String(cfg.workflow_id || '—')}
           </div>
         </Section>
+      ) : mm.key === 'other' ? (
+        // 🔴 NOT A COMMAND BOX. Every provider this form cannot edit (notify, the digests, …) fell
+        // into the branch below and got a "Command" section reading `job.command` — which is null
+        // for all of them, so a notify trigger showed an empty COMMAND box (c1b-068). Such an
+        // action is defined by its own config, labelled the way its create form labels it; one
+        // with no config (the system digests) simply has nothing to show here.
+        otherFields.length > 0 && (
+          <Section label="Settings">
+            <ActionFieldList fields={otherFields} />
+          </Section>
+        )
       ) : (
         <Section label={mm.key === 'agent' ? 'Prompt' : mm.key === 'script' ? 'Script' : 'Command'}>
           <div className="rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] leading-relaxed whitespace-pre-wrap break-words font-mono">
@@ -284,7 +330,10 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
         {job.last_result && <div className="mt-2 rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] leading-relaxed"><Markdown>{job.last_result}</Markdown></div>}
       </Section>
 
-      <RunHistory triggerId={`schedule:${job.id}`} reloadKey={histKey} />
+      {/* Keyed on `last_run_ts`, not on a counter only Run now bumped. A run the SCHEDULER fired
+          while this panel was open moved "Last run" (the list poll carries it) and left the history
+          as it was: measured, "Last run: ok · just now" directly above "No runs recorded yet." */}
+      <RunHistory triggerId={`schedule:${job.id}`} reloadKey={job.last_run_ts ?? 0} />
     </div>
   )
 }
@@ -305,7 +354,7 @@ function Chip({ children }: { children: React.ReactNode }) {
  *
  *  `supported: false` is rendered as its REASON, not as an empty list: a lifecycle trigger keeps no
  *  run store, and "no runs recorded yet" would be a false claim about a kind that records none. */
-export function RunHistory({ triggerId, reloadKey = 0 }: { triggerId: string; reloadKey?: number }) {
+export function RunHistory({ triggerId, reloadKey = 0 }: { triggerId: string; reloadKey?: number | string }) {
   const [runs, setRuns] = useState<ScheduleRun[] | null>(null)
   const [total, setTotal] = useState(0)
   const [limit, setLimit] = useState(5)

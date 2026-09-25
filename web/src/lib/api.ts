@@ -1267,6 +1267,10 @@ export interface ChatHistoryMsg {
 export interface NotificationItem {
   kind: string; title: string; body: string; ts: string
   job_id?: string; loop_id?: string; loop_kind?: string; acked: boolean
+  /** R18's deep link into the thing this note is ABOUT — `#/triggers?open=<id>` for a trigger fire,
+   *  `#/workflows/runs/<id>` for a run. Caller-supplied meta, so it is followed only as an in-app
+   *  route (`notificationLink`), never as a URL. */
+  statusUrl?: string
   /** AUTONOMY-GUARDRAILS §6.1 — set on the passive notice an `auto_with_undo` action leaves.
    *  `reversal_id` is the RECORD id the undo endpoint takes; `reversal` is the provider's own
    *  opaque handle, carried for the audit trail only and never sent back by the UI. */
@@ -2369,6 +2373,12 @@ function _triggerToHook(t: Trigger): HookItem {
 export interface ActionProvider {
   name: string; display_name: string; supports_blocking: boolean
   settingsSchema: { type?: string; properties?: Record<string, unknown>; required?: string[] }
+  /** A step of a system-owned automation (the Self-QA loop's), not an action a person picks.
+   *  Still listed so a row that names one renders its label; the create form's picker omits it. */
+  internal?: boolean
+  /** Whether firing this action can call a model — the backend's `ZERO_TOKEN_PROVIDERS`, read here
+   *  so the cadence-floor hint and the list's "check schedule" warning answer alike. */
+  invokes_model?: boolean
 }
 // Server-sourced trigger $variable catalog (GET /api/triggers/variables). The UIs
 // read this instead of mirroring the per-event var lists — backend is the source
@@ -2391,7 +2401,15 @@ export interface TriggerVariables { schedule: string[]; lifecycle: LifecycleEven
 // guardrail/config outcome is not a malformed request (#395: this used to answer `ok: true` with the
 // failure as prose, so a silent no-op was indistinguishable from a completed run). `refused` carries
 // the kill-switch reason when incident mode suspended the fire.
-export interface TriggerRunResult { ok: boolean; name?: string; result?: unknown; refused?: string; running?: boolean }
+export interface TriggerRunResult {
+  ok: boolean; name?: string; result?: unknown; refused?: string; running?: boolean
+  /** A DRY run's whole outcome, because nothing else records one: the action a real run would
+   *  dispatch (`{}` when the row names none — a resume target, a workflow ref). */
+  would_run?: Partial<TriggerAction>
+  text?: string
+}
+/** The gate plan a dry run reports (`triggers.tools.manual_gate_plan`). */
+export interface ManualGatePlan { enforced?: string[]; bypassed?: string[]; dry_run?: boolean; executes?: boolean }
 // The Proposal Inbox row (GET /api/learning/proposals). `renderable` is the backend's own honesty
 // flag: a row missing provenance cannot be shown weighably, and `bulk_acceptable` already accounts
 // for it — the FE must not re-derive either, or the two will disagree about what is safe to accept.

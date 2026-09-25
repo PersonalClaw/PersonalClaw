@@ -283,6 +283,72 @@ def test_a_dry_run_reports_the_gate_plan_and_executes_nothing(home, state):
     assert set(data["result"]["plan"]["bypassed"]) == {"quiet", "duty"}
 
 
+@pytest.mark.parametrize(
+    "workflow",
+    [
+        {"inline": {"provider": "notify", "config": {"title_template": "Standup: review Q4"}}},
+        {"provider": "notify", "config": {"title_template": "Standup: review Q4"}},
+    ],
+    ids=["inline", "flat"],
+)
+def test_a_schedule_DRY_RUN_answers_with_what_WOULD_run_and_records_nothing(
+    home, state, monkeypatch, workflow
+):
+    """🔴 Failure mode 3. The Run button treated a dry run as a started run and waited for a
+    `last_run_ts` that never moves — "Running…" for 110s on a disabled trigger — because a dry run
+    executes and records nothing. So the ANSWER has to carry the result: `would_run` is the action
+    a real run would dispatch, in one canonical shape whichever shape the row stores.
+
+    And "nothing" is asserted, not assumed: the provider refuses to be called, and neither the run
+    store nor the trigger's last-run stamp moves — the very thing the old watcher waited on."""
+    from personalclaw.action_providers.registry import (
+        _ensure_default_providers_registered,
+        get_action_provider,
+    )
+    from personalclaw.triggers.models import Trigger
+
+    _ensure_default_providers_registered()
+
+    async def must_not_run(action_config, ctx, timeout=30):
+        raise AssertionError("a dry run executed its action")
+
+    monkeypatch.setattr(get_action_provider("notify"), "execute", must_not_run)
+    _store(home).upsert(
+        Trigger(
+            id="clock:standup",
+            name="Standup",
+            kind="clock",
+            enabled=False,
+            spec={"kind": "interval", "interval_secs": 60},
+            workflow=workflow,
+        )
+    )
+    resp = _run(
+        T.api_trigger_run(
+            _req(
+                "POST",
+                "/api/triggers/x/run",
+                state,
+                body={"dry_run": True},
+                match_info={"id": "schedule:clock:standup"},
+            )
+        )
+    )
+    data = _body(resp)
+    assert data["ok"] is True
+    assert data["would_run"] == {
+        "provider": "notify",
+        "config": {"title_template": "Standup: review Q4"},
+    }
+    assert data["result"]["plan"]["executes"] is False
+    assert data["result"]["trigger"]["enabled"] is False, "the panel says so for a paused one"
+
+    _runs, total = _run(T._runs_store().list_for_job("clock:standup", 0, 10))
+    assert total == 0, "a dry run must record no history row"
+    live = _store(home).get("clock:standup").trigger
+    assert not live.last_run_id and not live.last_success_at and not live.last_failure_at
+
+
 def test_a_real_run_dispatches_the_action(home, state, monkeypatch):
     """A Run button fires through the same action-provider registry the autonomous path uses."""
     from personalclaw.triggers.models import Trigger
@@ -346,6 +412,34 @@ def _notify_spy(monkeypatch):
 
     monkeypatch.setattr(get_action_provider("notify"), "execute", spy)
     return calls
+
+
+def test_a_HAND_RUN_notify_links_its_note_back_to_the_trigger(home, state, monkeypatch):
+    """The manual twin of the autonomous path's link (B8): `Run now` on a notify trigger raises the
+    user's note, and that note has to lead back to the trigger exactly as a scheduled fire's does —
+    it is the only notification the fire makes. Driven through the REAL notify provider."""
+    from types import SimpleNamespace as NS
+
+    import personalclaw.action_providers.notify_provider as notify_mod
+
+    sent: list[dict] = []
+
+    def notify(kind, title, body, *, meta=None):
+        sent.append({"title": title, "meta": meta or {}})
+
+    monkeypatch.setattr(notify_mod, "get_action_services", lambda: NS(state=NS(notify=notify)))
+    _upsert_nested(home, title="Standup: review Q4")
+    resp = _run(
+        T.api_trigger_run(
+            _req(
+                "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
+            )
+        )
+    )
+    assert _body(resp)["ok"] is True
+    assert sent == [
+        {"title": "Standup: review Q4", "meta": {"statusUrl": "#/triggers?open=file:notes"}}
+    ]
 
 
 def _upsert_nested(home, *, tid="file:notes", title="nested-title"):

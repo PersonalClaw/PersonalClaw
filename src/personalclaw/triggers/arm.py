@@ -375,7 +375,9 @@ def _cron_fires_on_date(expr: str, day: "date", tz_name: str) -> bool:
     return bool(nxt.astimezone(tz).strftime("%Y-%m-%d") == day.isoformat())
 
 
-def semantic_spec_issues(kind: str, spec: dict[str, Any] | None) -> "list[Any]":
+def semantic_spec_issues(
+    kind: str, spec: dict[str, Any] | None, workflow: Any = None
+) -> "list[Any]":
     """Semantic problems in a clock spec — the half ``models.validate_spec`` leaves out.
 
     ``validate_spec`` deliberately owns STRUCTURE only ("Structure here, semantics
@@ -387,7 +389,10 @@ def semantic_spec_issues(kind: str, spec: dict[str, Any] | None) -> "list[Any]":
       promise five fields (#612),
     * a valid 5-field expression whose sampled gap sits under the
       ``MIN_CLOCK_INTERVAL_SECS`` floor gets the same WARNING the interval kind gets —
-      overridable, but never the accident you get from a typo (#612),
+      overridable, but never the accident you get from a typo (#612). Like the interval
+      floor it governs only an action that can call a model: ``workflow`` is the
+      trigger's action (``models.action_invokes_model``), and omitted means unknown, so
+      the floor applies,
     * a skip date that is not ``YYYY-MM-DD`` can never match the fire path's
       ``%Y-%m-%d`` string comparison, so it is protection the user believes in and
       does not have (#270),
@@ -397,7 +402,7 @@ def semantic_spec_issues(kind: str, spec: dict[str, Any] | None) -> "list[Any]":
     Pure, never raises, and returns ``models.Issue`` rows so callers fold them into
     the same reporting the structural checks use.
     """
-    from personalclaw.triggers.models import MIN_CLOCK_INTERVAL_SECS, Issue
+    from personalclaw.triggers.models import MIN_CLOCK_INTERVAL_SECS, Issue, action_invokes_model
 
     issues: list[Issue] = []
     if kind != "clock" or not isinstance(spec, dict):
@@ -464,7 +469,7 @@ def semantic_spec_issues(kind: str, spec: dict[str, Any] | None) -> "list[Any]":
         else:
             cron_usable = True
             gap = _min_cron_gap_secs(expr)
-            if 0 < gap < MIN_CLOCK_INTERVAL_SECS:
+            if 0 < gap < MIN_CLOCK_INTERVAL_SECS and action_invokes_model(workflow):
                 # WARNING, not error — same overridability contract as the interval
                 # floor above (models.py S109): a fast local-model poll is a legitimate
                 # choice, it just should not be an accident.

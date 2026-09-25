@@ -70,6 +70,11 @@ def status_url(*, run_id: str = "", trigger_id: str = "") -> str:
 
     Returns "" when neither is known rather than a bare `#/` — a link that goes to the dashboard
     root tells the user nothing and costs them a click to discover that.
+
+    `trigger_id` is the STORE id (`clock:standup-nudge`), which is what every caller holds. The
+    Triggers page lists that row under a namespaced id (`schedule:clock:standup-nudge`), and it
+    resolves `?open=` against both — see `resolveOpenTrigger` in `web/.../triggerMeta.ts`. Until
+    that resolver existed, every link this built opened the list with no panel.
     """
     if run_id:
         return f"#/workflows/runs/{run_id}"
@@ -277,6 +282,33 @@ def build_delivery(
         kind=kind,
         meta=meta,
     )
+
+
+#: Action providers whose successful fire IS a dashboard notification.
+#:
+#: 🔴 WHY THIS EXISTS. Measured on a live gateway: a `notify` trigger firing every minute produced
+#: TWO notifications per fire — 5 fires, 10 notes. One was the action itself ("Standup nudge:
+#: review Q4 tasks", the title the user wrote); the other was this module's run-completion report
+#: ("Standup nudge finished", empty body). Both describe the same event, and the second says nothing
+#: the first did not. The bundled triggers whose OUTPUT is a notification already knew this — the
+#: digest, usage-recap and source-digest reconcilers store `delivery: "none"` because "a
+#: cron-result notification about it would be a notification about your notification". A
+#: user-authored notify trigger had nobody to set that for it.
+#:
+#: Decided per fire by `gateway._deliver_fire_outcome`, not stored as `delivery: "none"` at create
+#: time: a stored route would go stale the moment the action is edited, would fix no trigger that
+#: already exists, and would overwrite a setting the user owns. It is also not a ROUTE (`route_for`
+#: still answers where a report would go) — it is whether there is a report at all. A FAILED fire
+#: is unaffected: the action's own note never went out, so the failure report is the only word the
+#: user gets.
+SELF_NOTIFYING_PROVIDERS: frozenset[str] = frozenset({"notify"})
+
+
+def notifies_on_its_own(trigger: Any) -> bool:
+    """Whether *trigger*'s action already put a notification in front of the user when it ran."""
+    from personalclaw.triggers.schedule_view import _inline_action
+
+    return str(_inline_action(trigger).get("provider") or "") in SELF_NOTIFYING_PROVIDERS
 
 
 def route_for(trigger: Any, *, ok: bool) -> str:

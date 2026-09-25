@@ -284,6 +284,69 @@ CLOCK_KINDS: frozenset[str] = frozenset({"cron", "at", "sequence", "interval", "
 #: it just should not be the accident you get from typing `* * * * *`.
 MIN_CLOCK_INTERVAL_SECS = 900
 
+#: Action providers that can never reach a model call, so the floor above does not govern them.
+#:
+#: 🔴 WHY THIS EXISTS. The floor warned on EVERY sub-900s clock. Measured on a live gateway: a
+#: `notify` trigger firing every 60s wore "60s is below the 900s floor for an LLM-invoking trigger"
+#: as its "check schedule" chip, on an automation that makes no model call at all. A floor that
+#: fires on work it does not govern is noise, and noise is how the one real warning gets trained
+#: away.
+#:
+#: Listed in THIS direction — the zero-token providers, not the model ones — so an unclassified
+#: provider keeps the floor: every app-contributed action, and any core provider added without a
+#: line here. The floor is an advisory, so a wrong warning costs a sentence while a missing one
+#: costs a per-minute model call nobody chose. The same direction `screen.READ_ONLY_PROVIDERS`
+#: takes.
+#:
+#: Each entry is classified from its own module, and "never" is the bar, not "usually": a provider
+#: whose run can queue or reach a model call stays OFF this list. That is why `knowledge-persist`
+#: (its enrichment rides the ingest queue: embedding and entity extraction), `knowledge-retrieve`
+#: (its vector tier embeds the query) and `self-remediation` (it can run the embedding re-index) are
+#: absent though their own docstrings say "zero-token" about the write itself.
+ZERO_TOKEN_PROVIDERS: frozenset[str] = frozenset(
+    {
+        "bash",  # a shell command — the schedule's deterministic mode
+        "run-script",  # a sandboxed `file.py:func` — "the zero-token counterpart to invoke-agent"
+        "notify",  # raises a dashboard notification
+        "send-message",  # posts rendered text to a channel (or a dashboard note)
+        "create-task",  # files a task row
+        "inbox-op",  # archive / mark read / mute / dismiss / write a supplied draft
+        "notification-digest",  # "Deterministic, no model call."
+        "usage-recap",  # "Deterministic, no model call."
+        "check-work",  # bounded filesystem reads, no command runner
+        "net-fetch",  # one guarded HTTP GET
+        "artifact-update",  # writes content the engine already resolved
+        "artifact_inspect",  # reads a run's own artifacts
+        "knowledge-health",  # deterministic store health report
+        "knowledge-gaps",  # referenced-but-unwritten entities, from the store alone
+        "knowledge-relate",  # persists relations a model ALREADY proposed upstream
+        "render-report",  # renders a declarative spec, no model call
+        "selfqa-triage",  # read-only git inspection
+        "selfqa-file-finding",  # one inbox item + one task
+        "selfqa-evidence",  # ffmpeg + hashes + one artifact
+    }
+)
+
+
+def action_invokes_model(workflow: Any) -> bool:
+    """Whether a trigger whose action is `workflow` can call a model when it fires.
+
+    Reads both stored action shapes — `{"inline": {provider, …}}` and the flat `{provider, …}` —
+    for the reason `schedule_view._inline_action` records: both exist in a real store. Anything
+    that names no provider (a `resume` target, a workflow `ref`, an unreadable row) answers True,
+    because a resumed or referenced workflow run is exactly the work the floor exists for.
+    """
+    if not isinstance(workflow, dict):
+        return True
+    inline = workflow.get("inline")
+    action = inline if isinstance(inline, dict) else workflow
+    return not provider_is_zero_token(action.get("provider"))
+
+
+def provider_is_zero_token(provider: Any) -> bool:
+    """Whether the named action provider can never reach a model call (`ZERO_TOKEN_PROVIDERS`)."""
+    return isinstance(provider, str) and provider in ZERO_TOKEN_PROVIDERS
+
 
 def _agent_scope_issues(spec: dict[str, Any] | None) -> list[Issue]:
     """Structural issues in an `event` trigger's `agent_scope` (§1.4 decision 2 — S131).
@@ -346,7 +409,7 @@ def _agent_scope_issues(spec: dict[str, Any] | None) -> list[Issue]:
     return []
 
 
-def validate_spec(kind: str, spec: dict[str, Any]) -> list[Issue]:
+def validate_spec(kind: str, spec: dict[str, Any], workflow: Any = None) -> list[Issue]:
     """Structural issues in one kind's spec. NEVER raises.
 
     Reports unknown keys with a suggestion and missing required ones as errors.
@@ -354,6 +417,10 @@ def validate_spec(kind: str, spec: dict[str, Any]) -> list[Issue]:
     validate a cron expression or a URL: those need the libraries the service owns, and a parse
     failure at author time would reject a trigger the service could have run. Structure here,
     semantics there.
+
+    `workflow` is the trigger's action, read by exactly one rule: the interval floor, which governs
+    only a trigger that can call a model (`action_invokes_model`). Omitted, the action is unknown
+    and the floor applies — the direction a caller that cannot see the action should get.
     """
     issues: list[Issue] = []
     known = SPEC_KEYS.get(kind)
@@ -434,11 +501,14 @@ def validate_spec(kind: str, spec: dict[str, Any]) -> list[Issue]:
             # local-model poll is a legitimate choice — it just should not be the accident you get
             # from typing `* * * * *`"). An error would refuse a trigger the plan says to allow; a
             # silent pass is what let this go unnoticed. So: it fires, and it is visibly flagged.
+            #
+            # Only for an action that can call a model — the floor's own premise. A 60s `notify`
+            # spends nothing, and flagging it trains the user to skip the chip on a 60s agent turn.
             try:
                 secs = int((spec or {}).get("interval_secs") or 0)
             except (TypeError, ValueError):
                 secs = 0
-            if 0 < secs < MIN_CLOCK_INTERVAL_SECS:
+            if 0 < secs < MIN_CLOCK_INTERVAL_SECS and action_invokes_model(workflow):
                 issues.append(
                     Issue(
                         path="spec.interval_secs",
@@ -1002,7 +1072,7 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
     raw_gates = data.get("gates")
     spec: dict[str, Any] = dict(raw_spec) if isinstance(raw_spec, dict) else {}
     gates: dict[str, Any] = dict(raw_gates) if isinstance(raw_gates, dict) else {}
-    issues.extend(validate_spec(kind, spec))
+    issues.extend(validate_spec(kind, spec, data.get("workflow")))
     issues.extend(validate_gates(gates))
     issues.extend(_inline_credential_issues(data.get("workflow")))
     issues.extend(_resume_target_issues(data.get("workflow")))

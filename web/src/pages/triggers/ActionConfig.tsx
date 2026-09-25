@@ -24,9 +24,14 @@ export function ActionConfig({ providers, provider, config, onProvider, onConfig
   onRetryProviders?: () => void
 }) {
   const selected = providers.find((p) => p.name === provider)
-  const options = useMemo(() => providers.map((p) => ({
+  // An INTERNAL provider (the Self-QA loop's steps) is a system automation's plumbing: its config is
+  // written by the reconciler that installs it, so offering it here offers an action nobody can
+  // configure. It stays in the catalog — a row already naming one still has to render — and it is
+  // kept as an option only while it is the CURRENT value, so an existing trigger's picker never
+  // blanks out the action it actually runs.
+  const options = useMemo(() => providers.filter((p) => !p.internal || p.name === provider).map((p) => ({
     value: p.name, label: p.display_name, description: p.supports_blocking ? 'can block the event' : undefined,
-  })), [providers])
+  })), [providers, provider])
   const { props, required } = useMemo(() => schemaProps(selected?.settingsSchema), [selected])
 
   const setField = (k: string, v: unknown) => onConfig({ ...config, [k]: v })

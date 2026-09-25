@@ -198,6 +198,15 @@ export function draftToPayload(d: ScheduleDraft): Record<string, unknown> {
   return body
 }
 
+/** The action provider a draft's WHAT would dispatch — the name `_scheduleBodyToWire` writes for
+ *  each mode, and the STORED provider for 'other', which this form leaves exactly as it is. */
+export function draftProvider(d: ScheduleDraft, stored?: string): string {
+  if (d.mode === 'agent') return 'invoke-agent'
+  if (d.mode === 'script') return 'run-script'
+  if (d.mode === 'command') return 'bash'
+  return stored ?? ''
+}
+
 /** Shared schedule form behind the create PAGE and the in-panel edit. Three
  *  axes: WHEN (interval/cron/one-shot), WHAT (agent prompt / script / command),
  *  and delivery/context (timezone, channel, silent, strict, skip dates).
@@ -206,8 +215,13 @@ export function draftToPayload(d: ScheduleDraft): Record<string, unknown> {
  *  the name (the Triggers page owns it) and the WHAT/action block (the Triggers
  *  page configures the action separately via the unified ActionConfig). This is
  *  how Schedule appears inside the Triggers page, where Trigger and Action are
- *  cleanly separated. */
-export function ScheduleForm({ draft, onChange, compact, triggerOnly }: { draft: ScheduleDraft; onChange: (d: ScheduleDraft) => void; compact?: boolean; triggerOnly?: boolean }) {
+ *  cleanly separated.
+ *
+ *  `invokesModel` says whether the action this schedule fires can call a model — the owner is the
+ *  action catalog's `invokes_model`, read by the caller because the action may live outside this
+ *  form (`triggerOnly`). It gates only the cadence-floor advisory, and defaults to TRUE: a caller
+ *  that cannot say keeps the floor. */
+export function ScheduleForm({ draft, onChange, compact, triggerOnly, invokesModel = true }: { draft: ScheduleDraft; onChange: (d: ScheduleDraft) => void; compact?: boolean; triggerOnly?: boolean; invokesModel?: boolean }) {
   const set = <K extends keyof ScheduleDraft>(k: K, v: ScheduleDraft[K]) => onChange({ ...draft, [k]: v })
   const { options: agentOptions } = useAgentCatalog()
   // The catalog's rejection is bound, not discarded: an unreachable `/api/models` used to render
@@ -229,7 +243,7 @@ export function ScheduleForm({ draft, onChange, compact, triggerOnly }: { draft:
       <Field label="When" right={km.soon ? <SoonTag /> : undefined} hint={km.hint}>
         <Segmented options={KINDS.map((k) => ({ key: k.key, label: k.label, tone: k.tone, icon: k.icon }))} value={draft.kind} onChange={(v) => set('kind', v as ScheduleKind)} />
       </Field>
-      {draft.kind === 'every' && <IntervalField draft={draft} set={set} />}
+      {draft.kind === 'every' && <IntervalField draft={draft} set={set} invokesModel={invokesModel} />}
       {draft.kind === 'cron' && <CronField value={draft.cron} onChange={(v) => set('cron', v)} />}
       {draft.kind === 'at' && (
         <input type="datetime-local" value={draft.at} onChange={(e) => set('at', e.target.value)}
@@ -374,10 +388,14 @@ function CheckRow({ label, hint, checked, onChange }: { label: string; hint: str
  *  refuse a cadence the API accepts. Before this, `min={1}` was the whole story and the floor was
  *  mentioned nowhere, so the one thing standing between a typo and a per-minute LLM invocation was a
  *  warning the backend computed and every surface then dropped (issue 531).
+ *
+ *  And ONLY for an action that can call a model — the floor's own premise, and the backend's rule
+ *  (`models.action_invokes_model`). "Every 60s is below the 900s floor for an LLM-invoking trigger"
+ *  under a Dashboard Notification was a false statement about the trigger being built.
  */
-function IntervalField({ draft, set }: { draft: ScheduleDraft; set: <K extends keyof ScheduleDraft>(k: K, v: ScheduleDraft[K]) => void }) {
+function IntervalField({ draft, set, invokesModel }: { draft: ScheduleDraft; set: <K extends keyof ScheduleDraft>(k: K, v: ScheduleDraft[K]) => void; invokesModel: boolean }) {
   const secs = intervalToSecs(draft.intervalValue, draft.intervalUnit)
-  const belowFloor = secs > 0 && secs < MIN_INTERVAL_SECS
+  const belowFloor = invokesModel && secs > 0 && secs < MIN_INTERVAL_SECS
   return (
     <div className="flex flex-col gap-s">
       <div className="flex items-center gap-s">

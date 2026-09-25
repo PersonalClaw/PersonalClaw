@@ -1145,8 +1145,16 @@ class GatewayOrchestrator:
 
         # The context the provider will receive, built HERE rather than at the `execute` call so
         # the denylist gate below judges the same `(config, ctx)` pair the provider is handed —
-        # the call shape the other two seams already use.
-        ctx = ActionContext(event=event, context="", payload=payload)
+        # the call shape the other two seams already use. `status_url` is this trigger's own row,
+        # so an action whose effect is a notification can link back to what fired it.
+        from personalclaw.triggers.delivery import status_url as _trigger_status_url
+
+        ctx = ActionContext(
+            event=event,
+            context="",
+            payload=payload,
+            status_url=_trigger_status_url(trigger_id=str(getattr(trigger, "id", "") or "")),
+        )
 
         # 🔴 THE DENYLIST, at the seam that lost it (AUTONOMY-GUARDRAILS §1.2 — AG-12). §1.2 says
         # the denylist is enforced at the THREE dispatch seams every action-provider execution
@@ -1602,6 +1610,14 @@ class GatewayOrchestrator:
 
             state = getattr(self, "dashboard_state", None)
             if state is None:
+                return
+            # 🔴 ONE NOTIFICATION PER FIRE. A `notify` action's success already put the user's own
+            # note in front of them — measured: 5 fires of a per-minute notify trigger made 10
+            # notifications, each fire's "Standup nudge: review Q4 tasks" followed by an empty
+            # "Standup nudge finished". The report would be a note about the note, so it is not
+            # sent; the action's note carries the trigger link instead (`ActionContext.status_url`).
+            # A failure still reports: in that case the action's own note never went out.
+            if ok and _delivery.notifies_on_its_own(trigger):
                 return
             if not hasattr(self, "_delivered_event_ids"):
                 self._delivered_event_ids: set[str] = set()

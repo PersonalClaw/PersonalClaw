@@ -207,13 +207,14 @@ describe('the seven OU-6 surfaces route their empty case through the primitive',
 //       `Tasks › Graph`. The finding was recorded before the taxonomy could be applied to it,
 //       precisely because the file was fenced.
 //   (a) A fresh home is NOT trigger-empty — `reconcile_digest_cron` registers
-//       `system:notification-digest` at every boot, so a newcomer's first visit is machine-named
-//       system rows and NO empty state, since the preset grid is gated on `counts.all === 0`.
+//       `system:notification-digest` at every boot, so a newcomer's first visit is system rows
+//       (named in words since 2026-09-25 — "Notification digest", not the id) and NO empty state,
+//       since the preset grid is gated on `counts.all === 0`.
 //       `TriggersListPage.tsx` therefore stays fenced, but for a DIFFERENT reason than before: its
 //       code does carry an on-ramp (`PresetEmptyState` + `TRIGGER_PRESETS`), so 'on-ramp' would pass
 //       this file's own assertion while being unreachable in practice. Classifying it either way
-//       would assert something false, and whether those rows are hidden, counted separately, or
-//       renamed is an owner scope call (tracked as TC-8). **Do not classify it to close the hole.**
+//       would assert something false, and whether those rows are hidden or counted separately is an
+//       owner scope call (tracked as TC-8). **Do not classify it to close the hole.**
 const PEP2_CENSUS: {
   surface: string
   file: string

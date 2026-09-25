@@ -228,7 +228,11 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
             <Segmented options={TRIGGER_KINDS.map((k) => ({ key: k.key, label: k.label, tone: k.tone, icon: k.icon }))} value={kind} onChange={(v) => setKind(v as TriggerKind)} />
           </Field>
           {kind === 'schedule' ? (
-            <ScheduleForm draft={sched} onChange={setSched} triggerOnly />
+            // The cadence floor governs an action that can call a model, and the action is picked
+            // in section 2 — so the catalog's verdict for it is threaded up here. Nothing picked, or
+            // a provider the catalog does not classify, keeps the floor.
+            <ScheduleForm draft={sched} onChange={setSched} triggerOnly
+              invokesModel={providers.find((p) => p.name === provider)?.invokes_model !== false} />
           ) : kind === 'lifecycle' ? (
             <>
               <Field label="Fires on" hint={em.desc}>
