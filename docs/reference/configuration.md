@@ -69,7 +69,7 @@ substituted.
 |---|---|---|---|---|
 | `agent.approval_mode` | enum: `auto`, `interactive`, `trust_reads` | `auto` | Settings → Agent defaults | Tool approval mode. `trust_reads` auto-approves read-only tools and asks for everything else. |
 | `agent.provider` | string | `native` | backend-only (restart) | Default agent runtime for agents that don't set their own: `native` (in-process loop, models governed by Settings → Models), `acp`, or `acp:<cli>` to pin a connected CLI runtime. Per-agent `provider` overrides this. File-only by design — switching it mid-flight would strand live sessions. |
-| `agent.yolo` | boolean | `false` | Settings → Agent defaults | Skip every tool-approval confirmation. Only use inside a sandbox or for trusted automation. |
+| `agent.yolo` | boolean | `false` | Settings → Agent defaults | Skip every tool-approval confirmation. Only use inside a sandbox or for trusted automation. Settings asks before turning it on, and `PATCH /api/config/personalclaw` refuses `true` without `"confirm": true` (`400 confirmation_required`); turning it off never needs consent. |
 | `agent.acp_concurrent_sessions` | boolean | `false` | Settings → Agent defaults | Run multiple ACP chat sessions on ONE backend process (multiplexing) instead of one process per session — for backends that support session interleaving. |
 | `agent.bot_name` | string (≤50 chars) | `""` | Settings → Account | Custom name the assistant identifies as. Letters and combining marks from any script, digits, spaces, apostrophes, `-`, `.` and `_`. A save carrying any other character (braces, markdown, symbols, control or invisible characters) is refused with a 400 naming it; `load()` strips the same characters from a hand-edited file. Empty = default. |
 | `agent.orchestrator_skill` | boolean | `false` | Settings → Agent defaults | Enable agent delegation — generates and loads the orchestrator skill with the agent roster. |
@@ -302,6 +302,7 @@ makes the voice loop noisier, never less safe.
 | `default_agent` | string | `""` | Settings → Agent defaults | Active agent name from the `agents` section (also `PUT /api/config/default-agent`). |
 | `memory_stores` | object | `{}` | backend-only | Named memory store definitions; `memory_stores.<name>.description` is a human-readable purpose. Stores are referenced by agent profiles. |
 | `updates.auto` | string | `"off"` | Settings → Updates | Opt-in unattended-apply mode (retired the legacy `auto_update` bool). `"off"` only notifies; `"staged"` applies at the next safe point — held while a session/subagent is in flight, and only ever the resolved channel/pin release tag, never raw `main`. |
+| `updates.pin` | string | `""` | Settings → Updates | Stay on one exact release (`0.1.3`, or `0.3.0-rc.1` for a release candidate), overriding the channel. Only a release version is accepted — a version line, range or typo is refused when saved, here and by `personalclaw update --to`. A pin no published release carries offers and installs nothing, and Settings → Updates says so. Empty follows the channel. |
 | `timezone` | string | `""` (system) | set by `personalclaw setup` | IANA timezone (e.g. `Asia/Tokyo`) for schedules and the clock the LLM sees. Per-job trigger timezones override it. |
 | `snapshot_dir` | string | `""` | backend-only | Where `personalclaw snapshot` writes/reads portability snapshots. Empty = `~/.personalclaw/snapshots`. |
 
@@ -361,7 +362,7 @@ instance's gateway — with its own home, config and state — so a guess is a c
 read or write, not a degraded local call.
 
 - `GET /api/config/personalclaw` — full config as JSON (owner-only).
-- `PATCH /api/config/personalclaw {path, value}` — single-field writes, allowlisted; non-editable paths return 400.
+- `PATCH /api/config/personalclaw {path, value}` — single-field writes, allowlisted; non-editable paths return 400. Turning `agent.yolo` on also needs `"confirm": true` in the body (the JSON literal), or it answers `400 confirmation_required`.
 - `GET /api/config/schema` — the full field registry (labels, help, types, defaults, deprecations) auto-derived from the config dataclasses. This document is generated against it.
 - `personalclaw config get|set <key> [value]` — CLI equivalent; `set` validates through the same loader. `get` withholds credential-named fields (`api_key`, `bot_token`, …) unless `--reveal` is passed.
 

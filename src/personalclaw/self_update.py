@@ -392,6 +392,44 @@ def record_running_version(current: str) -> str:
     return previous
 
 
+#: The shape of a version a pin can name: ``X.Y.Z`` or ``X.Y.Z-<prerelease>`` (``0.3.0-rc.1``),
+#: the release-TAG convention (§3.6) with its leading ``v`` already stripped. A pin is matched
+#: EXACTLY against the tags (:func:`select_target`), so nothing else can ever name a release:
+#: not a version line (``0.2``, ``0.2.x``), not a PEP 440 range (``>=0.2``), not the PyPI
+#: spelling of a prerelease (``0.3.0rc1``, whose tag is ``v0.3.0-rc.1``).
+_PIN_SHAPE = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?")
+
+
+def normalize_pin(pin: str) -> str:
+    """The storable spelling of a version pin; raises :class:`ValueError` for one that is not.
+
+    THE one rule for what ``updates.pin`` may hold, shared by the dashboard PATCH (through its
+    ``_EDITABLE_CONFIG`` sanitizer) and ``personalclaw update --to`` (:func:`set_version_pin`),
+    so the two cannot disagree about which pins are storable.
+
+    A pin that could never match a release used to be stored at 200, and then every update
+    quietly stopped: the check reported nothing available and every apply refused, because a
+    pin-miss must never fall back to the channel's newest release. Refusing the SHAPE at write
+    time turns that into an answer while the user is still looking at the box. A well-shaped
+    pin that matches no release (``0.2.1`` before 0.2.1 exists) cannot be refused here without
+    the network, so :func:`build_update_status` reports it as ``pin_miss`` instead.
+
+    ``""`` (after trimming) clears the pin; a leading ``v`` is stripped, the spelling the
+    resolvers compare. Emptiness is judged BEFORE that strip, so a bare ``v`` is refused as
+    the malformed version it is rather than quietly clearing the pin.
+    """
+    raw = (pin or "").strip()
+    if not raw:
+        return ""
+    value = normalize_version(raw)
+    if len(value) > 64 or not _PIN_SHAPE.fullmatch(value):
+        raise ValueError(
+            f"{raw!r} is not a release version — pin an exact release such as 0.1.3 "
+            "(or 0.3.0-rc.1 for a release candidate), or leave it empty to follow the channel"
+        )
+    return value
+
+
 def set_version_pin(version: str) -> bool:
     """Pin ``updates.pin`` to *version* so every apply path targets that release.
 
@@ -401,13 +439,16 @@ def set_version_pin(version: str) -> bool:
     :func:`resolve_wheel_target`, :func:`select_image_tag` — so pinning IS the
     rollback mechanism; nothing else needs a downgrade-specific code path.
 
-    *version* is normalized (a leading ``v`` stripped) to match what the resolvers
-    compare and what ``_EDITABLE_CONFIG`` accepts on the same field. Returns
-    ``False`` without writing when it is empty or longer than the field's 64-char
-    bound, so the CLI and the PATCH boundary refuse the same values.
+    *version* goes through :func:`normalize_pin`, the rule the PATCH boundary applies to
+    the same field. Returns ``False`` without writing when it is not a release version,
+    or empty — ``--to`` names a release to go to, so an empty one is not a request to
+    clear the pin.
     """
-    version = normalize_version(version)
-    if not version or len(version) > 64:
+    try:
+        version = normalize_pin(version)
+    except ValueError:
+        return False
+    if not version:
         return False
     return write_updates_fields({"pin": version})
 
@@ -491,6 +532,20 @@ async def build_update_status(current: str) -> dict[str, object]:
     non-empty ``pin`` or the ``beta`` channel. ``stable`` is ``releases/latest`` by
     definition, and ``nightly`` tracks a branch with no release tag at all, so
     neither pays for a second call.
+
+    **``checked`` says whether this comparison had anything to compare against.** It is
+    THE update check for every kind that is not a git checkout, and it used to report
+    nothing about itself: the dashboard's ``checked`` came only from the git half, so a
+    pip, container or desktop install that had just compared itself with the newest
+    release still read "No update check yet", and the hub tile, which ignored ``checked``,
+    read "Up to date" for an install that had never been compared with anything. True when
+    the release this channel/pin resolves against was known (fetched now or cached from an
+    earlier check); False offline with nothing cached.
+
+    **``pin_miss`` is the one "no release matches this pin" signal.** True only when a pin is
+    set AND a releases list was actually read AND no release in it carries that version.
+    ``latest == ""`` alone cannot say it: an offline install with nothing cached reads the
+    same, and telling that user their pin names no release would be a guess.
     """
     from personalclaw.config.loader import AppConfig
 
@@ -498,6 +553,8 @@ async def build_update_status(current: str) -> dict[str, object]:
     cfg = AppConfig.load()
     channel, pin = cfg.updates.channel, cfg.updates.pin
     release = await fetch_latest_release()
+    checked = bool(release.get("tag"))
+    pin_miss = False
     if pin or channel == "beta":
         # 🔴 THE EGRESS KILL SWITCH COVERS THIS SECOND PROBE TOO (RUM-3). `check_enabled=false`
         # promises ZERO outbound calls from the check, and `fetch_releases` — unlike its sibling
@@ -511,6 +568,9 @@ async def build_update_status(current: str) -> dict[str, object]:
             else _releases_from_cache(read_releases_cache())
         )
         resolved_tag = select_target(releases, channel, pin)
+        # The list is what this arm resolves against, so it — not `releases/latest` — decides
+        # whether there was an answer to give.
+        checked = bool(releases)
         if resolved_tag:
             release = next(
                 (r for r in releases if str(r.get("tag") or "") == resolved_tag),
@@ -520,6 +580,7 @@ async def build_update_status(current: str) -> dict[str, object]:
             # A pin naming no release: report nothing available rather than the
             # stable latest, which is the release the pin exists to refuse.
             release = {}
+            pin_miss = bool(releases)
     latest_tag = str(release.get("tag") or "")
     latest = normalize_version(latest_tag)
 
@@ -549,6 +610,8 @@ async def build_update_status(current: str) -> dict[str, object]:
         "current": normalize_version(current),
         "latest": latest,
         "update_available": update_available,
+        "checked": checked,
+        "pin_miss": pin_miss,
         "commits_behind": commits_behind,
         "apply_method": _APPLY_METHOD.get(kind, "instructions"),
         "instructions": instructions,

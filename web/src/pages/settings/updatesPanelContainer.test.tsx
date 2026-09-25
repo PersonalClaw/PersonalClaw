@@ -6,9 +6,14 @@ import type { UpdateCheck } from '../../lib/api'
 //
 // The backend (build_update_status) now emits `instructions` carrying
 // `PERSONALCLAW_IMAGE_TAG=<tag>` for the resolved channel/pin. The panel must render THOSE
-// commands verbatim — not a hard-coded `latest` — and, on a pin that matches no release
-// (empty `instructions` + a `pin`), must say so rather than silently falling back to a bare
-// `latest` pull. Both are things only the frontend can get wrong, so they are locked here.
+// commands verbatim — not a hard-coded `latest` — and, on a pin that matches no release,
+// must say so rather than silently falling back to a bare `latest` pull. Both are things
+// only the frontend can get wrong, so they are locked here.
+//
+// 🪤 The pin-miss case used to be asserted with `available: true` — a payload the server
+// cannot send: a pin that names no release resolves nothing, so nothing is available. The
+// notice was gated on `available`, so it passed here and was unreachable on every real
+// install. It is asserted with the wire's real shape now (`available: false`, `pin_miss`).
 
 // Drive the data layer directly: `useQuery` returns the query result the panel destructures.
 const useQuery = vi.fn()
@@ -48,14 +53,17 @@ describe('UpdatesPanel container commands (RUM-7)', () => {
   it('refuses a pin that matches no release instead of offering a bare latest', async () => {
     const { container } = mountWith({
       ...BASE,
+      available: false, // what the server sends for a pin-miss: it resolves no release
+      latest: '',
       channel: 'stable',
       pin: '9.9.9',
+      pin_miss: true,
       image_tag: '',
       instructions: [], // pin-miss: the backend emits no commands
     })
-    await waitFor(() => expect(container.textContent).toContain('No published release matches'))
+    await waitFor(() => expect(container.textContent).toContain('No release matches pin 9.9.9'))
     const text = container.textContent ?? ''
-    expect(text).toContain('9.9.9')
+    expect(text).toContain('Nothing is offered or installed while this pin stands')
     // The whole point of the refusal: NO pull command is offered (no silent `latest`).
     expect(text).not.toContain('docker compose')
     expect(container.querySelector('[aria-label="Update commands"]')).toBeNull()

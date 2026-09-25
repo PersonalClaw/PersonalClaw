@@ -3033,10 +3033,12 @@ class UpdatesConfig:
         default="",
         metadata=_meta(
             "Version Pin",
-            "Stay on an exact version (e.g. '0.2.1') or a version line, overriding the "
-            "channel: 'update available' and any apply respect the pin. Empty (the default) "
-            "means follow the channel. This is the 'stay on 0.2.x' and rollback story — "
-            "artifacts are immutable and every version is kept.",
+            "Stay on one exact release (e.g. '0.1.3'), overriding the channel: 'update "
+            "available' and any apply respect the pin, and a pin that names no published "
+            "release offers and installs nothing. Only a release version is accepted — a "
+            "version line or range can never match one. Empty (the default) means follow "
+            "the channel. This is the rollback story — artifacts are immutable and every "
+            "version is kept.",
         ),
     )
     auto: Literal["off", "staged"] = field(

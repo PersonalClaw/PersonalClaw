@@ -186,8 +186,10 @@ carried on `PERSONALCLAW_IMAGE_TAG`:
 - **stable** (default) → the moving minor `:X.Y` (e.g. `:0.2`) — stays on the
   0.2.x line;
 - **beta** → `:beta` — the newest prerelease line;
-- a **pin** (`updates.pin=0.2.1`) → that exact immutable `:0.2.1`. A pin that
-  matches no published release is refused rather than silently pulling `latest`.
+- a **pin** (`updates.pin=0.1.3`) → that exact immutable `:0.1.3`. A pin must be a
+  release version (`0.1.3`, or `0.3.0-rc.1` for a release candidate) — anything else
+  is refused when you save it. A well-formed pin that matches no published release
+  pulls nothing (never a silent `latest`), and Settings → Updates says so.
 
 ```bash
 # the tag is prefixed on BOTH commands so the recreate matches the pull:

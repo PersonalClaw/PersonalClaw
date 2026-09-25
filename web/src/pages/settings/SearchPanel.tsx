@@ -7,6 +7,7 @@ import { ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { DisclosureCard } from '../../ui/DisclosureCard'
 import { StatusPill } from '../../ui/StatusPill'
 import { TextLink } from '../../ui/TextLink'
+import { hasSearchTool, SEARCH_TOOL, SEARCH_TOOL_APP } from './searchTool'
 
 // Canonical search use-cases (matches the backend SEARCH_USE_CASES). Single-select:
 // one provider per use-case; an unbound one falls back to the general binding.
@@ -18,18 +19,8 @@ const USE_CASE_META: Record<string, { label: string; description: string; icon: 
 }
 const USE_CASE_ORDER = ['search-general', 'search-news', 'search-financial', 'fetch-article']
 
-/** The tool that CALLS whatever is bound here. A search provider is inert without it:
- *  binding one registers a provider, not a tool the agent can invoke (#278 — a user
- *  installed DuckDuckGo, bound it, saw `available: true`, and chat still answered
- *  "no web-search tool in the catalog"). Predicated on the TOOL NAME, not on the app
- *  that ships it, so any app providing `web_search` satisfies the panel and no bundle
- *  name gates the check. */
-const SEARCH_TOOL = 'web_search'
-/** The app that ships `web_search` today — named in COPY and in a Store deep link only
- *  (the user has to find it there), never in the predicate above. `open=<name>` opens that
- *  Store card's detail panel; an unknown name degrades to the plain Store grid rather than
- *  erroring, so this link cannot strand a user if the bundle is ever renamed. */
-const SEARCH_TOOL_APP = { name: 'web-tools', label: 'Native Tools (Web)' }
+/** The Store card of the app that ships the search tool (see `searchTool.ts` for why a stale name
+ *  cannot strand anyone)… */
 const SEARCH_TOOL_APP_HREF = `#/apps?view=store&open=${SEARCH_TOOL_APP.name}`
 /** …and the seven search-provider apps, deep-linked by the `search` tag every one of them
  *  declares — the bare Store is 38 cards. */
@@ -72,9 +63,11 @@ export function SearchPanel() {
   // use-case is unbound (search_providers/registry.py "2. Implicit fallback"), so a provider is
   // enough to make the missing tool the only thing standing between the user and a web search.
   const missingSearchTool = providers !== undefined && providers.length > 0
-    && tools !== null && !tools.some((t) => t.name === SEARCH_TOOL)
+    && tools !== null && !hasSearchTool(tools)
 
-  const reloadActive = () => { invalidateKeys('settings:search'); refresh() }
+  // PREFIX mode, so a binding change also reaches the hub tile's own `settings:search-card` — a key
+  // of its own because its reads are bare where this panel's are not (see `useSearchEntity`).
+  const reloadActive = () => { invalidateKeys('settings:search', true); refresh() }
 
   // Error BEFORE the skeleton, or it is unreachable — `providers` is undefined for the loading AND
   // the failed case, so the skeleton would run forever on a 500. Same one-line shape `PacksPanel`

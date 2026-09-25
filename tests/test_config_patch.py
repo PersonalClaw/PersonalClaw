@@ -757,10 +757,11 @@ class TestYoloAppliesLive:
         # audit sink fails the WHOLE patch closed (500) — the yolo seam never
         # runs in either direction. This pins the ordering: the seam sits AFTER
         # the write-audit, so a future reorder cannot grant an unaudited bypass.
+        # Consent is sent, so this reaches the write-audit rather than the consent refusal.
         state = _FakeState()
         with patch("personalclaw.sel.sel", side_effect=RuntimeError("sel down")):
             async with TestClient(TestServer(_make_app_with_state(state))) as c:
-                resp = await _patch(c, "agent.yolo", True)
+                resp = await _patch_consented(c, "agent.yolo", True)
                 assert resp.status == 500
         assert state.calls == []
 
@@ -770,7 +771,7 @@ class TestYoloAppliesLive:
         # key means the same thing whether it was read at startup or patched live.
         state = _FakeState()
         async with TestClient(TestServer(_make_app_with_state(state))) as c:
-            resp = await _patch(c, "agent.yolo", True)
+            resp = await _patch_consented(c, "agent.yolo", True)
             assert resp.status == 200
         assert ("enable", True) in state.calls
         # …and it still persists for the restart path.
@@ -782,7 +783,118 @@ class TestYoloAppliesLive:
         # The seam degrades to persist-only when no dashboard state is attached
         # (test apps, early startup) — never a 500 on the config write itself.
         async with TestClient(TestServer(_make_app())) as c:
-            resp = await _patch(c, "agent.yolo", True)
+            resp = await _patch_consented(c, "agent.yolo", True)
             assert resp.status == 200
         saved = json.loads(tmp_config.read_text(encoding="utf-8"))
         assert saved["agent"]["yolo"] is True
+
+
+async def _patch_consented(client, path, value):
+    return await client.patch(
+        "/api/config/personalclaw", json={"path": path, "value": value, "confirm": True}
+    )
+
+
+# ── Turning YOLO ON needs the owner's consent ON THE WIRE, not only in a dialog ──
+#
+# The Settings hub's tile switch PATCHed `agent.yolo: true` one click and ~41 ms after the
+# click, while the Agent defaults panel one click away asked first. The dialog was the only
+# gate, so the second writer skipped it by not knowing it existed. The core now refuses the
+# relaxing direction without `confirm: true` — so a writer that forgets the dialog fails
+# loudly instead of silently turning every tool-approval confirmation off.
+
+
+class TestYoloOnNeedsConsent:
+    @pytest.mark.asyncio
+    async def test_yolo_on_without_consent_is_refused_and_nothing_changes(self, tmp_config) -> None:
+        state = _FakeState()
+        before = tmp_config.read_text(encoding="utf-8")
+        async with TestClient(TestServer(_make_app_with_state(state))) as c:
+            resp = await _patch(c, "agent.yolo", True)
+            assert resp.status == 400
+            body = await resp.json()
+        assert body["error"]["code"] == "confirmation_required"
+        # The sentence names what is being consented to, not just the flag.
+        assert "tool-approval" in body["error"]["message"]
+        assert tmp_config.read_text(encoding="utf-8") == before, "nothing may be written"
+        assert state.calls == [], "and the bypass must not go live"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("consent", ["true", 1, "yes", {"ok": True}, False, None])
+    async def test_only_the_json_literal_true_is_consent(self, tmp_config, consent) -> None:
+        # `safety_flags.confirm_granted`'s rule, the one every consent door shares: a stringified
+        # or truthy value is not a yes (`confirm: "false"` once deleted data at HTTP 200).
+        state = _FakeState()
+        async with TestClient(TestServer(_make_app_with_state(state))) as c:
+            resp = await c.patch(
+                "/api/config/personalclaw",
+                json={"path": "agent.yolo", "value": True, "confirm": consent},
+            )
+            assert resp.status == 400
+        assert state.calls == []
+
+    @pytest.mark.asyncio
+    async def test_yolo_on_with_consent_is_written_and_goes_live(self, tmp_config) -> None:
+        state = _FakeState()
+        async with TestClient(TestServer(_make_app_with_state(state))) as c:
+            resp = await _patch_consented(c, "agent.yolo", True)
+            assert resp.status == 200
+        assert json.loads(tmp_config.read_text(encoding="utf-8"))["agent"]["yolo"] is True
+        assert ("enable", True) in state.calls
+
+    @pytest.mark.asyncio
+    async def test_yolo_off_never_needs_consent(self, tmp_config) -> None:
+        # Revoking the bypass is the direction a broken or confused client must always be able
+        # to take — a consent requirement there would be a lock on the emergency exit.
+        state = _FakeState()
+        async with TestClient(TestServer(_make_app_with_state(state))) as c:
+            resp = await _patch(c, "agent.yolo", False)
+            assert resp.status == 200
+        assert ("disable",) in state.calls
+
+
+# ── `updates.pin` must be a release VERSION, refused at write time otherwise ──
+#
+# The resolvers match a pin EXACTLY against the release tags, so a pin shaped like anything
+# else can never name a release — and storing one silently stopped every update: the check
+# reported nothing available and every apply refused (a pin-miss never falls back to latest).
+
+
+class TestVersionPinShape:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "bad",
+        ["not-a-version!!", "0.2", "0.2.x", ">=0.2", "latest", "0.3.0rc1", "v", "0.1.3 extra"],
+    )
+    async def test_a_pin_that_can_never_name_a_release_is_refused(self, tmp_config, bad) -> None:
+        before = tmp_config.read_text(encoding="utf-8")
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await _patch(c, "updates.pin", bad)
+            assert resp.status == 400
+            error = (await resp.json())["error"]
+        # The refusal teaches the accepted shape with a release that exists.
+        assert "not a release version" in error
+        assert "0.1.3" in error
+        assert tmp_config.read_text(encoding="utf-8") == before
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "sent, stored",
+        [
+            ("0.1.3", "0.1.3"),
+            # Well-shaped but unpublished: storable — only the network knows it names nothing,
+            # and the update check reports that as `pin_miss` instead.
+            ("0.2.1", "0.2.1"),
+            ("v0.1.3", "0.1.3"),  # the resolvers' spelling
+            ("  0.1.3  ", "0.1.3"),
+            ("0.3.0-rc.1", "0.3.0-rc.1"),
+            ("", ""),  # clearing the pin — back to following the channel
+        ],
+    )
+    async def test_a_release_version_is_stored_in_the_resolvers_spelling(
+        self, tmp_config, sent, stored
+    ) -> None:
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await _patch(c, "updates.pin", sent)
+            assert resp.status == 200, await resp.text()
+        assert json.loads(tmp_config.read_text(encoding="utf-8"))["updates"]["pin"] == stored

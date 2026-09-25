@@ -85,10 +85,13 @@ describe('ToggleRow.confirmOn — the shared opt-in gate', () => {
 })
 
 describe('AgentDefaultsPanel — YOLO mode and propose-fix-branches', () => {
+  // YOLO no longer rides the generic `patchConfig`: the panel and the hub tile both write it through
+  // `agentYolo.setAgentYolo`, which asks first and sends the consent flag (`yoloOneWriter.test.ts`).
   const mountPanel = async (confirmed: boolean) => {
     vi.resetModules()
     sessionStorage.clear()
     const patchConfig = vi.fn(() => Promise.resolve({}))
+    const setAgentYolo = vi.fn(() => Promise.resolve({}))
     const confirmSpy = vi.fn((_req: ConfirmOptions) => Promise.resolve(confirmed))
     vi.doMock('../../ui/dialog', () => ({ confirm: confirmSpy }))
     vi.doMock('../../lib/api', () => ({
@@ -100,6 +103,7 @@ describe('AgentDefaultsPanel — YOLO mode and propose-fix-branches', () => {
         setDefaultAgent: () => Promise.resolve({}),
         agentRunners: () => Promise.resolve([]),
         patchConfig,
+        setAgentYolo,
       },
     }))
     vi.doMock('../../lib/agents', () => ({
@@ -111,27 +115,64 @@ describe('AgentDefaultsPanel — YOLO mode and propose-fix-branches', () => {
     }))
     const { AgentDefaultsPanel } = await import('./AgentDefaultsPanel')
     await act(async () => { render(<AgentDefaultsPanel />); await flush() })
-    return { patchConfig, confirmSpy }
+    return { patchConfig, setAgentYolo, confirmSpy }
   }
 
   it('turning on YOLO mode confirms; a decline leaves the config untouched', async () => {
-    const { patchConfig, confirmSpy } = await mountPanel(false)
+    const { patchConfig, setAgentYolo, confirmSpy } = await mountPanel(false)
     await act(async () => {
       screen.getByRole('switch', { name: 'YOLO mode' }).click()
       await flush()
     })
     expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(setAgentYolo, 'declining must not write').not.toHaveBeenCalled()
     expect(patchConfig, 'declining must not PATCH').not.toHaveBeenCalled()
   })
 
-  it('confirming turns YOLO mode on', async () => {
-    const { patchConfig, confirmSpy } = await mountPanel(true)
+  it('confirming turns YOLO mode on — through the one writer, and the switch follows the server', async () => {
+    const { patchConfig, setAgentYolo, confirmSpy } = await mountPanel(true)
+    const sw = screen.getByRole('switch', { name: 'YOLO mode' })
+    await act(async () => {
+      sw.click()
+      await flush()
+    })
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(setAgentYolo).toHaveBeenCalledWith(true)
+    expect(patchConfig, 'never the generic patch, which carries no consent').not.toHaveBeenCalled()
+    expect(sw.getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('turning YOLO mode OFF never confirms — tightening stays one click', async () => {
+    vi.resetModules()
+    sessionStorage.clear()
+    const setAgentYolo = vi.fn(() => Promise.resolve({}))
+    const confirmSpy = vi.fn((_req: ConfirmOptions) => Promise.resolve(true))
+    vi.doMock('../../ui/dialog', () => ({ confirm: confirmSpy }))
+    vi.doMock('../../lib/api', () => ({
+      api: {
+        personalclawConfig: () => Promise.resolve({ agent: { yolo: true, self_qa: {} } }),
+        agents: () => Promise.resolve({ default_agent: '' }),
+        setDefaultAgent: () => Promise.resolve({}),
+        agentRunners: () => Promise.resolve([]),
+        patchConfig: vi.fn(() => Promise.resolve({})),
+        setAgentYolo,
+      },
+    }))
+    vi.doMock('../../lib/agents', () => ({
+      useAgentCatalog: () => ({ options: [], loading: false, discovered: [] }),
+      ensureBindableAgentName: (v: string) => Promise.resolve(v),
+    }))
+    vi.doMock('../../lib/persistClaim', () => ({
+      durableWorkersHint: () => '', usePersistAvailable: () => true,
+    }))
+    const { AgentDefaultsPanel } = await import('./AgentDefaultsPanel')
+    await act(async () => { render(<AgentDefaultsPanel />); await flush() })
     await act(async () => {
       screen.getByRole('switch', { name: 'YOLO mode' }).click()
       await flush()
     })
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
-    expect(patchConfig).toHaveBeenCalledWith('agent.yolo', true)
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(setAgentYolo).toHaveBeenCalledWith(false)
   })
 
   it('the YOLO dialog names the consequence, not a generic "are you sure"', async () => {
