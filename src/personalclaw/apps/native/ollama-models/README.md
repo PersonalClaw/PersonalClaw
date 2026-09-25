@@ -80,4 +80,4 @@ This provider resolves it in three steps, most authoritative first:
 
 ## License
 
-MIT — see the apps repo [LICENSE](../LICENSE).
+MIT — see [LICENSE](./LICENSE) beside this file.

@@ -1,30 +1,51 @@
 #!/usr/bin/env python3
 """Committed docs-lint + plan-hygiene baseline generator (PLATFORM-HARDENING-FLOORS §6.2).
 
-CLAUDE.md and EXECUTION-PROTOCOL §3 both require docs to move with the change, but nothing
-mechanical enforced it: docs routinely drift from code (a governance doc documenting a
-matcher the code has since removed) and plan ``**Status:**`` headers drift from their own
-execution logs (the 2026-08-04 audit found 25 of 66 headers wrong). This generator is the
-census that makes that drift visible. It scans tracked ``docs/**/*.md`` and emits a
-deterministic per-file counter of three finding kinds to a committed
-``docs-lint-baseline.json``; a companion test (``tests/test_docs_lint_baseline.py``)
-regenerates in-memory and asserts every per-file counter **may only shrink** — a NEW dead
-link, stale citation, or stale header raises a file's count and reds CI, naming the file
-and the finding; a cleanup that removes one lowers it and is welcome.
+``AGENTS.md`` requires docs to move with the change, but nothing mechanical enforced it:
+docs routinely drift from code (a governance doc documenting a matcher the code has since
+removed) and plan ``**Status:**`` headers drift from their own execution logs (the
+2026-08-04 audit found 25 of 66 headers wrong). This generator is the census that makes
+that drift visible. It scans **every tracked ``*.md`` file** and emits a deterministic
+per-file counter of three finding kinds to a committed ``docs-lint-baseline.json``; a
+companion test (``tests/test_docs_lint_baseline.py``) regenerates in-memory and asserts
+every per-file counter **may only shrink** — a NEW dead link, stale citation, or stale
+header raises a file's count and reds CI, naming the file and the finding; a cleanup that
+removes one lowers it and is welcome.
+
+The scan set is EVERY tracked markdown file, not ``docs/**`` — that narrower scope was
+measured at **76 of 267** tracked ``*.md`` files, which excluded the whole reader-facing
+repo root (``README.md``, ``SHOWCASE.md``, ``CONTRIBUTING.md``, ``AGENTS.md``) plus every
+README under ``src/``, ``web/``, ``mobile/`` and the bundled app directories. A gate whose
+only public claim is "docs links are checked" must cover the documents a reader actually
+opens first, and widening it surfaced two real dead links that had been invisible to it:
+a find-replace accident in ``mobile/store/play-data-safety.md`` whose link *target* had
+become a disclaimer sentence, and a wrong-depth ``../LICENSE`` in the bundled
+``ollama-models`` README. Both are fixed in the same change that widened the scope, so the
+census still lands at its measured population rather than baselining a known defect.
 
 The three checks (each deliberately calibrated to UNDER-report rather than cry wolf, so a
 red is always a real regression):
 
-1. ``dead_link`` — a *relative* markdown link ``[text](target)`` whose ``target`` (after
-   stripping any ``#anchor``) resolves, relative to the linking file's directory, to a repo
-   path that is not tracked. External schemes (``http(s)://``, ``mailto:``, ``tel:``,
-   ``ftp://``, protocol-relative ``//``), pure ``#anchor`` intra-doc links, and
-   absolute (``/``-leading) targets are skipped — none of those are relative repo-file
-   links. Links inside fenced code blocks and inline code spans are stripped before
-   matching (DSL/example syntax like ``[field](value)`` is not a link), and only path-like
-   targets (containing ``/`` or a known file extension) are considered. We do NOT validate
-   that a ``#anchor`` exists inside the target file — anchor text is unstable and that would
-   cry wolf; a missing *file* is the unambiguous signal.
+1. ``dead_link`` — a *relative* markdown link ``[text](target)`` **or image**
+   ``![alt](target)`` whose ``target`` (after stripping any ``#anchor``) resolves, relative
+   to the linking file's directory, to a repo path that is not tracked. External schemes
+   (``http(s)://``, ``mailto:``, ``tel:``, ``ftp://``, protocol-relative ``//``), pure
+   ``#anchor`` intra-doc links, and absolute (``/``-leading) targets are skipped — none of
+   those are relative repo-file links. Links inside fenced code blocks and inline code
+   spans are stripped before matching (DSL/example syntax like ``[field](value)`` is not a
+   link), and only path-like targets (containing ``/`` or a known file extension) are
+   considered.
+
+   Images are IN SCOPE: a broken image is a visibly broken document, and including them
+   was measured to cost **zero** new findings on the tree that widened this scope, so the
+   coverage is free. What is still out of scope is a raw-HTML ``<img src=…>`` — the four in
+   ``README.md``/``SHOWCASE.md`` are checked by no rule here, and the reason is that this
+   checker parses markdown link syntax, not HTML.
+
+   We do NOT validate that a ``#anchor`` exists inside the target file — anchor text is
+   unstable and that would cry wolf; a missing *file* is the unambiguous signal. Stated
+   plainly because a dead **anchor** therefore passes this gate silently: a link to a real
+   file with a nonexistent ``#heading`` is not a finding, and nothing else catches it.
 
 2. ``stale_citation`` — a ``path/to/file.py:NNN`` citation in docs prose whose FILE cannot
    be found in the repository. Citations are matched with ``([\\w/.-]+\\.py):(\\d+)`` and a
@@ -48,9 +69,11 @@ red is always a real regression):
    A plan under ``docs/roadmap/plans/`` whose ``**Status:**`` header
    matches a stale shape (``DESIGNED``/``PROPOSED``/``READY``/``NOT STARTED``) while the file
    carries a populated ``## Execution log`` containing a ``DONE`` entry: the exact "plan
-   headers lie" drift the 2026-08-04 audit surfaced. The ``**Status:**`` line is parsed with
-   the SAME regex ``tools/gen_roadmap_dashboard.py`` uses, so the two agree. This is a
-   heuristic, not a proof — it reproduces the known audit finding on a seeded stale header;
+   headers lie" drift the 2026-08-04 audit surfaced. The ``**Status:**`` regex was taken
+   from the maintainer's roadmap dashboard generator, which — like the plans themselves — is
+   not in this repository, so that agreement cannot be checked here and is not claimed as an
+   invariant. This is a heuristic, not a proof — it reproduces the audit finding on a seeded
+   stale header;
    it does not attempt to adjudicate every real header against reality (the log and the code
    win over the header, so this ratchets rather than blocks).
 
@@ -93,9 +116,12 @@ KIND_DEAD_LINK = "dead_link"
 KIND_STALE_CITATION = "stale_citation"
 KIND_STALE_HEADER = "stale_header"
 
-# A relative markdown link ``[text](target ...)``; the negative lookbehind skips images
-# (``![alt](src)``). Only the destination up to whitespace or ``)`` is captured.
-_LINK_RE = re.compile(r"(?<!\!)\[[^\]]*\]\(\s*([^)\s]+)")
+# A relative markdown link ``[text](target ...)`` OR image ``![alt](target ...)`` — images
+# are in scope because a broken image is a visibly broken document. Only the destination up
+# to whitespace or ``)`` is captured, which is what makes a ``(target "title")`` form work
+# and what catches a find-replace accident whose target became a sentence (the first
+# whitespace-delimited word is then a path that resolves nowhere).
+_LINK_RE = re.compile(r"\[[^\]]*\]\(\s*([^)\s]+)")
 
 # Link destinations that are never relative repo-file links.
 _LINK_SKIP_PREFIXES = ("http://", "https://", "mailto:", "tel:", "ftp://", "//", "#", "/")
@@ -110,7 +136,8 @@ _FILE_EXT_RE = re.compile(
 # A ``file.py:NNN`` citation. Same shape the §6.2 task specifies.
 _CITATION_RE = re.compile(r"([\w/.-]+\.py):(\d+)")
 
-# ``**Status:**`` header — the SAME regex ``tools/gen_roadmap_dashboard.py`` uses.
+# ``**Status:**`` header — taken from the maintainer's roadmap dashboard generator, which is
+# not in this repository, so the agreement cannot be checked here (see check 3).
 _STATUS_RE = re.compile(r"^\*\*Status:\*\*\s*(.+?)(?:\n\n|\n##|\n\*\*)", re.S | re.M)
 
 # Stale-shape status words: a header claiming the work is not yet done.
@@ -145,9 +172,15 @@ def _tracked_files() -> list[str]:
     return sorted(p for p in proc.stdout.splitlines() if p)
 
 
-def _docs_md(tracked: list[str]) -> list[str]:
-    """Tracked ``docs/**/*.md`` files (sorted)."""
-    return [p for p in tracked if p.startswith("docs/") and p.endswith(".md")]
+def _tracked_md(tracked: list[str]) -> list[str]:
+    """Every tracked ``*.md`` file (sorted) — the scan set.
+
+    Deliberately NOT ``docs/**``: that scope was measured at 76 of 267 tracked markdown
+    files and excluded the repo root a reader opens first. There is no exclusion list here
+    on purpose — a path this census skips is a path whose links nothing checks, so any
+    future narrowing has to be argued for in this docstring rather than added quietly.
+    """
+    return [p for p in tracked if p.endswith(".md")]
 
 
 def _strip_code(text: str) -> str:
@@ -259,7 +292,7 @@ def build_inventory() -> dict[str, Any]:
         KIND_STALE_CITATION: 0,
         KIND_STALE_HEADER: 0,
     }
-    for rel_md in _docs_md(tracked_list):
+    for rel_md in _tracked_md(tracked_list):
         text = (root / rel_md).read_text(encoding="utf-8", errors="replace")
         findings = _findings_for(rel_md, text, tracked)
         if not findings:
