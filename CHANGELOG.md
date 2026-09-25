@@ -3501,6 +3501,30 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   A malformed comment body now answers 400 instead of failing with a server error.
 - **`personalclaw app new` no longer names your app as its own copyright holder, and every licence file in the tree is now held to the real MIT grant.** The scaffolder wrote `_license_text(author or display, …)`, so an app generated without `--author` got `Copyright (c) 2026 Channel Null` — a grant naming an **artefact**, which holds no copyright and leaves nobody to ask for permission. Four published exemplar repositories shipped it. The fallback is now an obviously-unfilled `<your name>` placeholder and the CLI says so on the way out (`fill in LICENSE's copyright holder … or re-run with --author`), because a placeholder nobody is told about is the same defect with extra steps. `--author` still lands verbatim. The reason this survived is worth recording: every existing case in `tests/test_app_scaffold.py` passed `author="Scaffold Test"`, so the fallback branch was exercised by **nothing**. **Two gaps closed in the rail, not one.** `tests/test_licence_governance.py` pinned the root `LICENSE`'s grant by sha256 and checked every other file only for the string `MIT` — so the five sibling licence files (the bundled `ollama-models` app's, the app template's, the three registry fixtures') were pinned by nothing, and a *paraphrased* grant under an intact `MIT License` title was invisible by construction. The grant check now covers every licence file in the tree. And because that hash deliberately excludes the copyright line, the **holder** was checked by nothing at all: two new assertions require every licence file to name `PersonalClaw contributors`, and — the generator's rule, defined once and driven from the scaffolder's own test rather than re-derived — forbid any licence naming the app beside it, in all three spellings the broken fallback could produce (`displayName`, the bare kebab `name`, and the title-cased expansion `channel-null` → `Channel Null` that appears in no file as a field value). Both new rails were falsified before being trusted: mutating the bundled app's holder to `Ollama Models` reds the two holder checks while the grant check stays green, paraphrasing its grant reds the grant check alone, and restoring `author or display` reds the scaffolder's test naming `'Channel Null'` exactly. The census in `docs/architecture/licence-identity.txt` gains its judgment for all of this, and one stale claim in it is **corrected**: it named the Store consent card and `apps/quality.py` as the readers of a bundled app's licence. Neither reads one — `apps/quality.py` contains the string zero times. The real readers are the apps repo's `manifest-validate` job and the registry's `validate_registry.py:check_license`, both verified in code.
 
+### Security
+
+- **Seven known vulnerabilities were shipping in the dashboard's bundled dependencies, and the
+  usual way of checking said there were none.** The diagram renderer and the code editor each
+  carried their own private copy of DOMPurify, lodash and uuid, and those copies were old: one
+  **high**-severity flaw letting crafted input run code through a lodash template, one prototype-
+  pollution flaw in the same library, and **four** separate DOMPurify flaws through which markup
+  that should have been neutralised could still execute — a sanitiser bypass, permanently poisoned
+  attribute rules, a custom-element hole, and a trusted-types policy that outlived the config it
+  belonged to. Together those four are the ones that matter most here, because DOMPurify is the
+  thing standing between model-authored or crawled markup and your browser: anything it fails to
+  strip runs with the dashboard's own privileges, which includes your gateway token. A seventh,
+  a missing bounds check in uuid, affected only a build-time tool for the mobile project and never
+  reached a running app. All seven are now resolved to their patched versions. **Why they went
+  unnoticed is the part worth recording:** the top-level copy of all three libraries was already
+  up to date, so every check that asks "which version is installed?" answered correctly while the
+  outdated duplicates sat one level deeper, pinned there by the exact versions their parents
+  demanded. `npm update` cannot move a dependency pinned to a single version, so the fix is a
+  resolution forced from the top of the tree, and a new test now walks **every** copy in the
+  lockfile — not just the visible one — so a stale duplicate cannot reappear unnoticed. Nothing
+  about what the dashboard renders changes: the new sanitiser was compared against the old one
+  across two dozen inputs, from script tags and `javascript:` links through tables, inline SVG and
+  data-URI images, and produced byte-identical output on every one.
+
 ## [0.1.3] — 2026-07-30
 
 The **attention-and-access** release. Two themes:
