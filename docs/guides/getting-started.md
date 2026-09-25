@@ -10,9 +10,10 @@ channels. This guide takes you from **nothing installed** to your first chat.
 ## Prerequisites
 
 - macOS or Linux (Windows: use the Docker Compose path below)
-- An API key for at least one model provider (Anthropic, OpenAI, an
-  OpenAI-compatible endpoint, AWS Bedrock credentials, or a local Ollama —
-  anything from the Store's model-provider apps)
+- For real work, a model provider: a local Ollama, or an API key for Anthropic,
+  OpenAI, an OpenAI-compatible endpoint or AWS Bedrock (anything from the Store's
+  model-provider apps). You don't need one to start, because first-run setup can
+  download a [small default model](#the-small-default-model) instead.
 
 You do **not** need to install Python or Node yourself for the recommended
 paths: `uv` provides its own Python 3.12, and the release wheel ships the
@@ -130,6 +131,37 @@ sweeps only your own private (RFC-1918) subnet for an Ollama, is time-bounded, a
 never runs until you press it. Nothing scans your network on first boot, and no
 credential is stored either way. Otherwise, configure a provider below.
 
+**No account and no Ollama?** In step 3, **Essential apps**, the model lane lists
+**Bundled offline model** under *Already installed*. Choose **Configure** on it and the
+lane offers *No account? Download a small model instead*, with a **Download 138 MiB**
+button. If you skip setup, the chat screen offers the same download. It happens once,
+it can be cancelled, and declining costs nothing.
+
+### The small default model
+
+The download is `SmolLM2-135M-Instruct` (the Q8_0 GGUF build
+`unsloth/SmolLM2-135M-Instruct-GGUF`, Apache-2.0) from Hugging Face, checked against
+the sha256 in [`bundled-model-signoff.txt`](../architecture/bundled-model-signoff.txt)
+before it is installed. It is not in the wheel, the container image or the desktop
+build, so the first chat with it needs network. It lands in
+`$PERSONALCLAW_HOME/models/bundled-chat/`, stays there across upgrades, and from then on
+runs on your CPU inside the gateway with no key and no network.
+
+It answers only when nothing else is set up, and the chat screen says when it is the one
+answering. Bind any model in [§3](#3-configure-a-model-provider) and it stops being used,
+with nothing to undo. To remove it, delete it under **Settings → Providers**.
+
+Treat it as a way to start. It has 135 million parameters and no tools, it doesn't see
+your memory, skills or knowledge, and past a greeting or a simple factual question its
+answers get unreliable.
+[Security limitations §5](../security/limitations.md#5-the-bundled-default-model-is-a-floor-not-an-assistant)
+lists what it did with real requests.
+
+For a machine with no network, download it once on a machine that has one and copy
+`models/bundled-chat/` into the offline home. PersonalClaw checks a copied file's size,
+not its sha256, so compare the digest with the record first. From a source checkout,
+`PERSONALCLAW_HOME=/path make bundled-model` fetches it without the dashboard.
+
 ## 3. Configure a model provider
 
 Model providers are installable apps — nothing is hardwired to a vendor.
@@ -157,6 +189,9 @@ Open the dashboard's **Chat** page and send a message — or from the terminal:
 ```bash
 personalclaw chat -m "hello"
 ```
+
+If the small default model is all you have, chat from the dashboard. `personalclaw chat`
+doesn't load it, so the terminal prints a setup message instead of a reply.
 
 Tool calls the agent wants to make appear as approval prompts (default
 `agent.approval_mode: auto`; see the
@@ -285,6 +320,9 @@ hand. This is a separate switch from `updates.auto`: one governs whether Persona
 - **Model errors in chat** — check **Settings → Models** has a chat binding and
   the provider's **Test** passes; `personalclaw doctor` reports the live
   binding and any missing optional dependency with the exact install command.
+- **Short, off-topic answers and no tool calls** — you are talking to the small
+  default model, and the notice above the composer says so. Bind a real model under
+  **Settings → Models**.
 - **Dashboard shows nothing / 404 assets** (source checkouts only) — the SPA
   isn't built: run `make web-build`, then restart the gateway. Wheel, uv, pipx,
   and Docker installs ship the prebuilt dashboard, so this never applies to them.

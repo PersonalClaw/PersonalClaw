@@ -149,7 +149,8 @@ bound, the row says so rather than letting you find out after installing.
 | Looking for | What ships today | Details |
 |---|---|---|
 | **RAG · retrieval · vector search** | A knowledge base over your own documents: keyword search (SQLite FTS5) is always available, and on top of it semantic **vector** retrieval, entity extraction, and a knowledge graph feed chat context with citations. **Caveat:** the vector half needs an embedding-provider app bound — with none bound, embeddings are off and retrieval stays keyword-only. | [Knowledge & memory](docs/architecture/knowledge-memory.md) |
-| **Ollama · local models** | Run chat against a local Ollama with no API key: setup probes `localhost:11434`, and an opt-in, time-bounded sweep can find one elsewhere on your own private network. Downloading and managing local models is a first-class provider axis. **Caveat:** you supply Ollama itself — core ships the detection and the binding, not the inference server. The `ollama-models` bundle that owns that binding is the one model provider packaged in the wheel: it is seeded into your home at first boot and, like every native app, locked against disable and uninstall. Every *other* model provider is an app you install from the Store. | [App platform](docs/architecture/app-platform.md) |
+| **Ollama · local models** | Run chat against a local Ollama with no API key: setup probes `localhost:11434`, and an opt-in, time-bounded sweep can find one elsewhere on your own private network. Downloading and managing local models is a first-class provider axis. **Caveat:** you supply Ollama itself — core ships the detection and the binding, not the inference server. The `ollama-models` bundle that owns that binding is one of two model providers packaged in the wheel, both seeded into your home at first boot and, like every native app, locked against disable and uninstall. The other is `bundled-chat`, the small default model in the next row. Every *other* model provider is an app you install from the Store. | [App platform](docs/architecture/app-platform.md) |
+| **No API key · offline chat** | A small default model, `SmolLM2-135M-Instruct` (Apache-2.0), that first-run setup offers to download once (138 MiB). After that it runs on your CPU inside the gateway with no key and no network, and it answers only when nothing else is set up. **Caveat:** it exists so a new install can chat, and it is not an assistant: it has no tools, doesn't see your memory or skills, and is unreliable past simple questions. The weight is not in the wheel, so the first chat with it needs network. | [Getting started](docs/guides/getting-started.md#the-small-default-model) · [What it can't do](docs/security/limitations.md#5-the-bundled-default-model-is-a-floor-not-an-assistant) |
 | **web search** | `web_search` and `web_fetch` tools, plus the research flows built on them, served by a search-**provider app** you bind. **Caveat:** no search provider ships bundled, so nothing is bound out of the box — this is a provider seam you fill, not a batteries-included search feature. | [App platform](docs/architecture/app-platform.md) |
 | **MCP — both directions** | PersonalClaw **connects out to any MCP server** you configure in `~/.personalclaw/mcp.json` — stdio or remote SSE/HTTP — and calls its tools inside the native agent loop. It also works the other way: it **exposes** six read-only tools of its own to your editor's assistant. **Caveat:** the outbound client needs the optional `personalclaw[mcp]` extra; without it the server registry is simply empty. | [Use it from your editor](docs/guides/use-from-your-ide.md) · [API](docs/reference/api-routes.md) |
 | **SSO · SAML · OIDC login** | **Not shipped, by design** — PersonalClaw is single-user and self-hosted, so there is no directory to federate with. The gateway's selectable auth is a local token, or none when bound to loopback only; `api_key` and `oauth2` exist as half-implementations that no configuration can select, and the runtime says so out loud. Reaching it from outside is a tunnel plus password and TOTP 2FA instead. | [Remote access](docs/guides/remote-access.md) · [Security model](docs/architecture/security.md) |
@@ -164,7 +165,7 @@ means a design boundary we expect to still hold at 1.0**, not a backlog item:
 | If you… | Today | Because |
 |---|---|---|
 | need your data to survive upgrades | **no** | pre-1.0 clean breaks, and there is no migration machinery |
-| have no model your machine can reach | **no** | no model ships; a fully offline install needs your own Ollama |
+| have no model of your own to connect | **no** | the one model it can fetch for you is a 135M-parameter floor (one 138 MiB download, then offline) with no tools; real work needs your own Ollama or a provider app |
 | need accounts for more than one person | **never** | single-user by construction — *"no hub in core, ever"* |
 | want a native phone app | **no** | the phone is the dashboard installed as a PWA, not a store app |
 | need a native Windows install | **no** | WSL2 or Docker Desktop only; the native port was ruled no-go |
@@ -278,6 +279,9 @@ and updates in the [container guide](docs/guides/containers.md).
 The dashboard opens at `http://localhost:10000`. Install a model-provider app from the
 Store, add your API key under **Settings → Providers**, and bind a chat model under
 **Settings → Models** — full walkthrough in [Getting started](docs/guides/getting-started.md).
+No account yet? First-run setup can download a
+[small default model](docs/guides/getting-started.md#the-small-default-model) instead
+(138 MiB, once). It is enough to try PersonalClaw and not enough to rely on.
 
 ### Updating
 
@@ -298,8 +302,8 @@ refused rather than quietly upgrading you (`select_target`, `src/personalclaw/se
 Everything is in **Settings → Updates** too: the **channel** (`stable` · `beta` ·
 `nightly` for contributors), a **version pin**, **automatic applies**
 (`updates.auto=staged`, opt-in, held while work is in flight), the **check cadence**, and
-one-click **rollback**. The release check is the one outbound call this project makes and
-it can be switched off — see [Privacy](#privacy). Per-platform details:
+one-click **rollback**. The release check is the one outbound call this project makes on
+its own, and it can be switched off — see [Privacy](#privacy). Per-platform details:
 [Updating](docs/guides/getting-started.md#updating) ·
 [containers](docs/guides/containers.md#updates) ·
 [desktop](docs/guides/desktop.md#updating).
@@ -343,6 +347,10 @@ often it runs. `updates.auto` is a separate, orthogonal control — it gates whe
 update is *applied*, not whether the check happens: `off` (the default) only notifies, while
 `staged` applies at the next safe point (held while a session or subagent is running, and only
 ever the resolved release tag, never raw `main`).
+
+**The small default model is a download you start.** It is fetched once, only when you ask for
+it, from a pinned revision on Hugging Face, and checked against a recorded sha256 before it is
+installed.
 
 ## Supply chain
 
