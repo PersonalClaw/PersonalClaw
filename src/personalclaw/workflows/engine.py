@@ -132,6 +132,18 @@ class NodeResult:
     #: runtime and never reach the journal, so the ledger would show a published artifact with no
     #: record of the publish.
     published: dict[str, Any] | None = None
+    #: What this step's declared `schema` asked for that its output did not carry (#3545). Empty
+    #: when the node declared no schema, or when the output honoured it — so a non-empty value is
+    #: always an observation, never a default.
+    #:
+    #: An OBSERVATION, deliberately not a failure and not a retry. Failing the step would break
+    #: runs that complete today, and retrying would spend more money on the same non-conforming
+    #: worker; the producing step is simply the only place that knows both what the schema declared
+    #: and what came back, so it is the only place that can say so. A DECLARED field for the same
+    #: reason as `published`: an attribute set on the instance would work at runtime and never
+    #: reach the journal, so the ledger would show a step that ignored its schema with no record
+    #: that anything noticed.
+    schema_shortfall: str = ""
     #: The no-double-execution claim THIS ATTEMPT holds, and the holder identity it holds it with
     #: (#3533). Set only by `dispatch_stage`, and only on the one result that leaves the claim
     #: taken — the spawn is still live when that result is returned, so the attempt outlives the
@@ -2368,6 +2380,116 @@ def check_output_contract(value: Any, contract: dict[str, Any]) -> str:
     return ""
 
 
+#: How many key names a shortfall notice names before it summarizes the rest. A notice reaches a
+#: ledger row, and an output with four hundred keys would otherwise write four hundred names into
+#: one; naming the first few and counting the remainder stays actionable at a bounded size.
+_SHORTFALL_NAMES = 8
+
+
+def _name_list(names: list[str]) -> str:
+    head = names[:_SHORTFALL_NAMES]
+    rest = len(names) - len(head)
+    return ", ".join(head) + (f" (+{rest} more)" if rest > 0 else "")
+
+
+#: What arrived instead of an object, in words a template author reads rather than Python's type
+#: names: "got text, not an object" says what happened, "got a str" makes them translate it.
+_ARRIVED_KIND = {
+    str: "text",
+    list: "a list",
+    int: "a number",
+    float: "a number",
+    bool: "true or false",
+    type(None): "nothing",
+}
+
+
+def schema_shortfall(schema: Any, value: Any) -> str:
+    """What `schema` declared that `value` did not carry — "" when it conformed (#3545).
+
+    KEYS ONLY, deliberately. The defect this names is a worker that ignored the declared shape:
+    the output arrives without the keys the prompt asked for, a downstream `{{last.output.x}}`
+    then resolves to its declared `default`, and nothing says the value is a fallback rather than
+    an answer. Comparing declared TYPES as well would widen this from an observation into a
+    judgement — `"number"` against an int-valued float, `"object"` against a list of one object —
+    and a notice that fires on conforming output is worse than no notice at all.
+
+    Returns a sentence naming BOTH facts, because only naming one sends an author hunting: what
+    the schema asked for, and what actually arrived.
+    """
+    if not isinstance(schema, dict) or not schema:
+        return ""
+    declared = sorted(str(k) for k in schema)
+    target = value
+    if isinstance(target, str):
+        # An `infer` node's own parse already ran; this catches a model that answered with a JSON
+        # STRING ("…prose…") — valid JSON, and no object could ever carry the declared keys.
+        parsed = parse_json_loose(target)
+        if parsed is not None:
+            target = parsed
+    if not isinstance(target, dict):
+        kind = _ARRIVED_KIND.get(type(target), f"a {type(target).__name__}")
+        return (
+            f"the output ignored its declared schema: it asked for "
+            f"{_name_list(declared)} and got {kind}, not an object"
+        )
+    missing = [k for k in declared if k not in target]
+    if not missing:
+        return ""
+    arrived = sorted(str(k) for k in target)
+    # "1 of 2 declared keys is missing": the noun follows the declared count, the verb the missing.
+    noun = "key" if len(declared) == 1 else "keys"
+    verb = "is" if len(missing) == 1 else "are"
+    return (
+        f"the output ignored its declared schema: {len(missing)} of {len(declared)} declared "
+        f"{noun} {verb} missing ({_name_list(missing)}); got {_name_list(arrived) or 'no keys'}"
+    )
+
+
+def apply_schema_notice(node: Node, result: NodeResult) -> NodeResult:
+    """Name a declared schema the output ignored, on the step that produced it (#3545).
+
+    ONE seam, beside the artifact gate / judge contract / publish, and LAST among them so what it
+    observes is the output a binding will actually read — `apply_judge_contract` recomputes a
+    judge's `overall`/`valid`/`shortfalls` onto the output, and observing before it ran would
+    report keys as absent that the contract was about to add.
+
+    Never changes `state`, `output` or `failure`: the run must complete exactly as it does today
+    with only the notice added.
+
+    Three gates, and each is load-bearing:
+
+    * **A non-empty dict `schema`.** Nothing is declared otherwise, so there is nothing to ignore.
+    * **A SUCCESS state.** A FAILED step already carries a `Failure` saying why, and `infer`'s own
+      unparseable-output branch is that case — a notice there would restate a legible failure.
+    * **An output that exists.** `dispatch_stage`'s two DEGRADED paths (a restricted-origin skip,
+      a claim already held) return `output=None`; the reason they produced nothing is already in
+      `degraded_reason`, and re-reading it as "the schema was ignored" would be false.
+
+    🔴 A spawned `stage` is excluded here STRUCTURALLY, not by a kind test, and that is the point.
+    On `main` no stage output is ever compared against its declared schema:
+    `RunController._reconcile_dispatched_stages` stores `{"result": "<raw text>"}` for every stage
+    regardless of `schema`, so measured over the bundled library a check reaching that settle would
+    fire on **47 of 47** schema-declaring stage nodes — it would be measuring the absence of the
+    feature rather than a model's behaviour. `dispatch_stage` returns RUNNING at the spawn and
+    RUNNING is not in `SUCCESS_STATES`, so a stage never reaches the comparison below, and the
+    out-of-band settle that produces its output does not pass through this seam at all. The seam
+    that applies a declared schema to a stage output is #3531's second one; the stage half of this
+    notice belongs with it, on or after it, and not before.
+    """
+    from personalclaw.workflows.models import SUCCESS_STATES
+
+    schema = (node.config or {}).get("schema")
+    if not isinstance(schema, dict) or not schema:
+        return result
+    if result.state not in SUCCESS_STATES or result.output is None:
+        return result
+    shortfall = schema_shortfall(schema, result.output)
+    if shortfall:
+        result.schema_shortfall = shortfall
+    return result
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -2532,7 +2654,11 @@ async def dispatch(
     # publish path instead of quietly dropping a declared output. Ordered after the gate
     # deliberately — publishing the output of a node that failed its own artifact gate would
     # store a deliverable the run does not stand behind.
-    return apply_publish(node, result, run_id=run_id, cwd=cwd or None)
+    result = apply_publish(node, result, run_id=run_id, cwd=cwd or None)
+    # The SAME seam for the declared-schema notice (#3545), LAST so it observes the output a
+    # binding will actually read — after the judge contract has recomputed its keys onto it. An
+    # observation only: it never changes `state`, `output` or `failure`.
+    return apply_schema_notice(node, result)
 
 
 _LEAF_DISPATCHERS = {

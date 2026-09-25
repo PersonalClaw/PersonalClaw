@@ -2595,6 +2595,12 @@ def _nodes_of(run_id: str) -> list[dict[str, Any]]:
             "degraded_reason": inst.degraded_reason,
             "failure": inst.failure.to_dict() if inst.failure else None,
         }
+        # What this node's declared `schema` asked for and did not get (#3545), so the run view can
+        # say it on the row that produced it. Omitted rather than sent as "" for the same reason
+        # `cached` is: absence already means "there was nothing to report", and an empty string on
+        # every row of a normal run is twenty fields carrying no information.
+        if inst.schema_shortfall:
+            row["schema_shortfall"] = inst.schema_shortfall
         # Cache-origin (WF2-A1), so "did my edit actually re-run anything?" is answerable from
         # the run's own node list rather than by opening a per-node drawer on each row in turn.
         #

@@ -1246,6 +1246,15 @@ class NodeInstance:
     #: rewind and the re-dispatch the instance is PENDING and this still holds the previous
     #: epoch's answer, which is stale for a node that has not run yet.
     cached: bool = False
+    #: What this node's declared `schema` asked for that its output did not carry (#3545). Empty
+    #: for a node that declared no schema or whose output honoured it, so a non-empty value is
+    #: always an observation.
+    #:
+    #: PERSISTED, for the reason the notice exists: the ledger row is written once as the step
+    #: settles, and a run opened tomorrow reads its node list from this state file. Held only in
+    #: memory, the one surface a user actually looks at would forget by the next page load — which
+    #: is the silence #3545 is about, reintroduced one layer down.
+    schema_shortfall: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1267,6 +1276,7 @@ class NodeInstance:
             "claim_target": self.claim_target,
             "claim_holder": self.claim_holder,
             "cached": self.cached,
+            "schema_shortfall": self.schema_shortfall,
         }
 
     @classmethod
@@ -1296,4 +1306,5 @@ class NodeInstance:
             claim_target=str(d.get("claim_target", "") or ""),
             claim_holder=str(d.get("claim_holder", "") or ""),
             cached=bool(d.get("cached", False)),
+            schema_shortfall=str(d.get("schema_shortfall", "") or ""),
         )

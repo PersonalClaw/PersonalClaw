@@ -3400,6 +3400,11 @@ class RunController:
         inst.state = result.state
         inst.completed_at = _now()
         inst.degraded_reason = result.degraded_reason
+        # What this node's declared `schema` asked for and did not get (#3545). Carried onto the
+        # instance beside `degraded_reason` rather than folded into it: a shortfall is not a
+        # degradation — the node did its work and produced an output the run goes on to use — and
+        # reusing that field would flip the row's rendering and lose the distinction.
+        inst.schema_shortfall = result.schema_shortfall
         inst.failure = result.failure
         inst.tokens = result.tokens
         self._decline(inst, result.declined_edges)
@@ -3508,6 +3513,7 @@ class RunController:
                 resolved_prompt_redacted=result.prompt_redacted,
                 resolved_prompt_scan=result.prompt_scan_categories,
                 output_ref=ref,
+                schema_shortfall=result.schema_shortfall,
             )
             self._project_task(item, inst, result)
         else:
@@ -3555,6 +3561,12 @@ class RunController:
                 "node_epoch": inst.epoch,
                 "degraded_reason": result.degraded_reason,
                 "output_preview": _preview(result.output),
+                # Only when there is something to name (#3545), the way `cached` rides only on a
+                # hit: the fold clears the row on an event without it, which is what lets a re-run
+                # that now honours its schema drop yesterday's notice.
+                **(
+                    {"schema_shortfall": result.schema_shortfall} if result.schema_shortfall else {}
+                ),
             },
         )
 

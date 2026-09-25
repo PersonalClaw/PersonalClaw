@@ -42,6 +42,9 @@ export interface WorkflowEventEnvelope {
   status?: string
   degraded_reason?: string
   cached?: boolean
+  /** What a step's declared `schema` asked for that its output did not carry (#3545), on the
+   *  `node_done` that settled it. */
+  schema_shortfall?: string
   /** Per-item foreach context (WF2-R5), present only on an iterated node's events. */
   item_index?: number
   item_total?: number
@@ -291,6 +294,10 @@ function patchNode(
     // claiming a cache hit the edit just invalidated, which is the exact question the flag
     // exists to answer.
     cached: env.cached === true,
+    // A declared schema this step's output ignored (#3545). Read from THIS event for the same
+    // reason `cached` is: only the settle knows it, and a re-run after a rewind that now honours
+    // the schema must clear the notice rather than inherit yesterday's.
+    schema_shortfall: (env.schema_shortfall as string) || '',
     failure: existing?.failure ?? null,
     // Per-item context arrives on `node_started` and is NOT re-sent on `node_done` — so it is
     // carried forward rather than overwritten, or a finished item would lose the label that

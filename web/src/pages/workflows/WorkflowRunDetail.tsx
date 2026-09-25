@@ -582,6 +582,24 @@ export function WorkflowRunDetail({ runId, onBack, deepLinkNodeId = null }: {
                       {n.failure?.remediation && (
                         <div data-type="caption" className="truncate text-on-surface-low">{n.failure.remediation}</div>
                       )}
+                      {/* This step's declared `schema` asked for something its output did not carry
+                          (#3545). `text-warning`, not the dimmed `on-surface-low` the lines above
+                          use, and NOT title-only: the row beside it says "Done", the run really did
+                          complete, and a loop can spend six iterations like this while every step
+                          reports success. Dimming the one line that contradicts the status badge
+                          would reproduce the silence. Deliberately not a failed/degraded badge —
+                          the step is not either of those, and saying it is would break runs that
+                          complete today. `title` carries the untruncated text. */}
+                      {n.schema_shortfall && (
+                        <div
+                          data-type="caption"
+                          data-testid="node-schema-shortfall"
+                          className="truncate text-warning"
+                          title={n.schema_shortfall}
+                        >
+                          {n.schema_shortfall}
+                        </div>
+                      )}
                     </div>
                     {/* Cache-origin (WF2-A1), at a glance on the ROW rather than only inside the
                         per-node drawer. "Did my edit actually re-run anything?" is a question about
