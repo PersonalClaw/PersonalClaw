@@ -133,11 +133,29 @@ export function useGuardedInstall(run: (confirm: boolean) => Promise<GuardedResu
       // signature), OR a P21 client-install directive → surface it in the panel
       // (findings / the copy-paste one-liner) rather than dead-ending on a bare error.
       if (isBlockingResult(r)) { setBlocked(r); return r }
+      // 🔑 A CONFIRMED re-attempt that fails for a reason the scan gate never
+      // anticipated (a python-dependency admission refusal, an onInstall hook failure,
+      // an "already installed" race — anything past the gate) is NOT a re-offer of the
+      // same findings, and `blocked` must not be left holding the FIRST attempt's
+      // warning. It previously wasn't cleared here (only at the top of a non-confirm
+      // attempt), so `ConsentModal` — gated on `blocked` alone by every caller — stayed
+      // mounted showing the stale scan report forever, with THIS error rendered by
+      // `GuardedFailure` in the normal page flow the modal's own backdrop covers. The
+      // user saw "Install anyway" do nothing: no close, no install, no visible reason
+      // (issue #3540). Clearing it here — for the exact same non-blocking failure this
+      // branch already handles — is a no-op on the first attempt (already null) and the
+      // fix on a confirmed one: the modal closes and the real error becomes the next
+      // thing on screen, exactly as a plain first-attempt failure already reads.
+      setBlocked(null)
       setError(r.error || 'install failed')
       // APE-8: a build/hook failure carries a fenced log → offer "Fix with AI".
       if (r.fixPrompt) setFixPrompt(r.fixPrompt)
       return r
     } catch (e) {
+      // Same reasoning as above: a thrown exception (network drop, aborted fetch) during
+      // a CONFIRMED re-attempt is exactly as unblocking as a plain `ok:false` — the stale
+      // modal must not survive it either.
+      setBlocked(null)
       setError(String((e as Error)?.message || e))
       return null
     } finally {
