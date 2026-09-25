@@ -111,6 +111,20 @@ out-of-process providers — today an app's provider code is imported in-process
 there is no import boundary to scope a path to. That is a platform-seam change,
 recorded as such rather than approximated here.
 
+**What the consent surface tells you:** the declared specifiers, verbatim, on the
+install-consent screen itself — `anthropic>=0.20`, not "this app installs some
+packages". `app_manager.describe_python_dependencies` classifies each against the
+same core pin set the guard above gates on, so a package core does not own reads as
+new code entering the interpreter, while a core-owned pin (`Pillow>=10,<13`) reads
+as "the version you already have must satisfy this, or the install is refused". An
+app declaring none shows nothing at all. This section documenting the behaviour is
+not a substitute for that: a user consenting in a modal does not read a threat
+model, so the duty belongs to the surface where consent is given.
+
+When core's own pin set cannot be read — which is also when the guard refuses the
+install outright — every specifier degrades to the *new code* reading rather than
+disappearing. Over-disclosing a package is safe; under-disclosing one is not.
+
 **What this means for you:** an installed app can add libraries to the gateway's
 environment, so install apps you trust — the supply-chain scanner (quarantine →
 scan → consent → install, with `dangerous` terminal) is the control that vets them.

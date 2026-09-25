@@ -83,7 +83,7 @@ def test_declared_proposals_reach_the_pre_install_consent_payload():
     ``to_dict``."""
     from personalclaw.apps.catalog import _manifest_consent
 
-    perms, _crons = _manifest_consent(_manifest(proposals=[{"kind_suffix": "draft"}]))
+    perms, _crons, _deps = _manifest_consent(_manifest(proposals=[{"kind_suffix": "draft"}]))
     assert perms["proposals"] == [{"kind_suffix": "draft", "label": "draft"}]
 
 

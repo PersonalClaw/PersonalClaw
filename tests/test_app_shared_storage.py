@@ -193,7 +193,7 @@ def test_consent_surface_lists_the_grant():
             "permissions": {"storageRead": ["note-keeper", "mail-*"]},
         }
     )
-    perms, _crons = _manifest_consent(consumer)
+    perms, _crons, _deps = _manifest_consent(consumer)
     assert perms["storageRead"] == ["note-keeper", "mail-*"]
 
     sharer = AppManifest.from_dict(
@@ -205,5 +205,5 @@ def test_consent_surface_lists_the_grant():
             "permissions": {"storageShared": True},
         }
     )
-    perms2, _ = _manifest_consent(sharer)
+    perms2, _crons2, _deps2 = _manifest_consent(sharer)
     assert perms2["storageShared"] is True

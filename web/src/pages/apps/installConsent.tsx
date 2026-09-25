@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { SCAN_FINDINGS_SHOWN, hiddenFindingsNote, ruleGloss } from '../../lib/scanFindings'
 import { trustTierLabel } from '../../lib/trustTier'
-import { ShieldAlert, ShieldCheck, ShieldQuestion, BadgeCheck, AlertTriangle, Terminal, CalendarClock, Bot, Globe, LayoutDashboard, Copy, Check } from 'lucide-react'
+import { ShieldAlert, ShieldCheck, ShieldQuestion, BadgeCheck, AlertTriangle, Terminal, CalendarClock, Bot, Globe, LayoutDashboard, PackagePlus, Copy, Check } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Modal } from '../../ui/Modal'
 import { SquareIconButton } from '../../ui/SquareIconButton'
-import type { AppSummary, AppInstallResult, AppCronSummary, AppScanReport, AppCatalogEntry } from '../../lib/api'
+import type { AppSummary, AppInstallResult, AppCronSummary, AppScanReport, AppCatalogEntry, AppPythonDependency } from '../../lib/api'
 import { terminalRefusalReason, type GuardedResult } from '../../lib/useGuardedInstall'
 import { copyText } from '../../app/clipboard'
 
@@ -189,11 +189,44 @@ export function consentHostUi(
   return { page: Boolean(a.hasUI), components: Boolean(a.uiComponents) }
 }
 
-export function ConsentModal({ label, result, busy, permissions, hostUi, crons, onConfirm, onClose }: {
+/** The Python packages this install will pip-install into the gateway's own venv, or
+ *  `undefined` when the manifest has NOT been read.
+ *
+ *  🔑 The consent surface never said this. It enumerated gateway permissions, app
+ *  messaging, desktop capabilities, network reach and dashboard code, and told the user
+ *  "Installing fetches this app behind the security scanner" — and said nothing about a
+ *  third-party package landing in the interpreter the gateway runs in, holding the
+ *  owner's credentials, their filesystem and their network reach. Measured on a fresh
+ *  container: of nine apps installed from the Store, FOUR ran `pip install` (`anthropic`,
+ *  `openai`, `slack_sdk`, and a `Pillow>=10,<13` pin) with nothing on the consent screen
+ *  naming any of them. `docs/security/limitations.md` §3 documents the shared-venv
+ *  behaviour, which is not the same as disclosing it where consent is given — a user
+ *  clicking a modal does not read the threat model.
+ *
+ *  Same `consentKnown` gate as {@link consentPermissions}, for the same reason and read
+ *  from the same flag: a registry POINTER ships `pythonDependencies: []` because its
+ *  manifest is not fetched until install, and "installs no packages" is a CLAIM that must
+ *  not be made about an app nobody has read. An app that genuinely declares none also
+ *  ships `[]`, and that renders nothing — an empty scare-section would alarm without
+ *  informing (five of those nine apps declared no dependency at all). */
+export function consentPythonDeps(
+  entry: Pick<AppCatalogEntry, 'pythonDependencies' | 'consentKnown'> | undefined,
+): AppPythonDependency[] | undefined {
+  if (!entry?.consentKnown) return undefined
+  return entry.pythonDependencies ?? []
+}
+
+export function ConsentModal({ label, result, busy, permissions, hostUi, pythonDeps, crons, onConfirm, onClose }: {
   label: string; result: GuardedResult; busy: boolean
   permissions: AppSummary['permissions'] | undefined
   /** #492 — what browser code the app ships, from {@link consentHostUi}. */
   hostUi: { page: boolean; components: boolean } | undefined
+  /** What the install pip-installs into the gateway's own venv, from
+   *  {@link consentPythonDeps}. REQUIRED for the same reason `permissions` and `crons` are:
+   *  a package entering the interpreter the gateway runs in is part of what the user is
+   *  agreeing to, and four callers remembering an optional prop is the failure mode this
+   *  file already learned once. */
+  pythonDeps: AppPythonDependency[] | undefined
   crons: AppCronSummary[] | undefined
   onConfirm: () => void; onClose: () => void
 }) {
@@ -242,11 +275,17 @@ export function ConsentModal({ label, result, busy, permissions, hostUi, crons, 
             store on a schedule". Rendered on a refusal too: a user is owed the reason the
             platform said no, and the grants are why the findings matter. */}
         {permissions
-          ? <PermissionList perms={permissions} hostUi={hostUi} />
+          ? <PermissionList perms={permissions} hostUi={hostUi} pythonDeps={pythonDeps} />
           : (
             <div data-type="body-s" className="text-on-surface-low">
+              {/* The Python-package disclosure is gated on the SAME `consentKnown` flag
+                  (`consentPythonDeps`), so it is unknown here for exactly the same reason and
+                  cannot diverge. It is named in this one sentence rather than given a second
+                  box repeating it: "the manifest was not read" is a single fact about every
+                  disclosure on this screen. */}
               PersonalClaw could not read this app's declared permissions before installing —
-              its manifest is fetched as part of the install. Open the app in the Store to see
+              its manifest is fetched as part of the install, so any Python packages it adds to
+              this gateway's environment are unknown too. Open the app in the Store to see
               them, or review them on its page once installed.
             </div>
           )}
@@ -367,10 +406,81 @@ function HostPageRow({ hostUi }: { hostUi: { page: boolean; components: boolean 
   )
 }
 
-export function PermissionList({ perms, hostUi }: {
+/** Comma-separated requirement specifiers, each in monospace — because the specifier IS
+ *  the disclosure. A user deciding about `anthropic>=0.20` has to see that string; "this
+ *  app installs some Python packages" is a category, not a fact they can weigh. */
+function specList(specs: string[]) {
+  return specs.map((s, i) => (
+    <span key={s}>{i > 0 ? ', ' : ''}<code className="font-mono text-on-surface">{s}</code></span>
+  ))
+}
+
+// The install runs `pip install` into the venv the GATEWAY runs out of. This row is that
+// disclosure, and it belongs with `network` and the host-page row rather than in the
+// bullets above them — the same argument EI-12 D2 made for `network` and #492 made for
+// dashboard code. The bullets are grants the gateway ENFORCES; a module that is importable
+// in-process has no chokepoint to enforce at, so rendering it as a bullet would read as a
+// capability the platform polices, which is the one thing that is false about it.
+//
+// It lives INSIDE `PermissionList` rather than at each consent surface, which is what puts
+// it on all four `ConsentModal` call sites, the Store detail panel and the onboarding card
+// by construction — the mechanism this module's header already leans on ("a comment asking
+// four callers to remember is what failed here"). `consentPythonDepsRendered.test.ts` is
+// the call-site rail that keeps it that way.
+//
+// 🔑 IT IS NOT "ADVISORY ONLY", AND MUST NOT BORROW THAT PHRASE. Its two neighbours say
+// advisory because a manifest DECLARATION is not enforced there. Here the packages really
+// do install: the sentence is about something that will happen, not about a claim the
+// platform declines to police.
+//
+// 🔑 A CORE-OWNED PIN IS A DIFFERENT STATEMENT, and the split comes from the installer's own
+// authority (`app_manager._core_requirement_pins`, the set `_reject_core_dependency_conflicts`
+// gates on), never a list kept here. `Pillow>=10,<13` means "the version you already have
+// must satisfy this, or the install is refused" — nothing new enters the process. Grouping
+// the two rather than qualifying every row keeps the loud half loud: a user scanning this
+// should see which packages are actually new at a glance.
+function PythonDepsRow({ deps }: { deps: AppPythonDependency[] }) {
+  const fresh = deps.filter((d) => !d.coreOwned).map((d) => d.spec)
+  const owned = deps.filter((d) => d.coreOwned).map((d) => d.spec)
+  return (
+    <div className="mt-s flex gap-s rounded-md border border-outline-variant bg-surface-high p-m">
+      <PackagePlus size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-on-surface-low" />
+      <div data-type="body-s" className="text-on-surface-low">
+        <span className="text-on-surface">
+          Python packages added to this gateway: {fresh.length ? specList(fresh) : 'none new'}
+        </span>
+        {fresh.length > 0 ? (
+          <>
+            {' — installing this app runs '}<code className="font-mono">pip install</code>
+            {' into the shared virtualenv the gateway is running out of, under a live process '}
+            that has already imported those modules. There is no per-app site-packages, so
+            this code becomes importable by PersonalClaw itself and by every other app you
+            install, and none of the permissions above bound it.
+          </>
+        ) : ' — every package it declares is one PersonalClaw already ships.'}
+        {owned.length > 0 && (
+          <div className="mt-xs">
+            It also pins {specList(owned)} — {owned.length === 1 ? 'a package' : 'packages'}{' '}
+            PersonalClaw itself depends on. {owned.length === 1 ? 'That pin is' : 'Those pins are'}{' '}
+            checked against the version this gateway already runs, and the install is refused
+            rather than changing it, so a version you already have is what gets used.
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export function PermissionList({ perms, hostUi, pythonDeps }: {
   perms: AppSummary['permissions']
   /** #492 — what browser code the app ships, from {@link consentHostUi}. */
   hostUi?: { page: boolean; components: boolean }
+  /** The packages the install pip-installs into the gateway's venv, from
+   *  {@link consentPythonDeps}. Omitted (an installed app's wire does not carry it) or `[]`
+   *  renders NOTHING: an empty section would alarm without informing, and there is no claim
+   *  in the silence — unlike `hostUi`, absence here cannot be read as a promise, because the
+   *  surrounding surface already says whether the manifest was read at all. */
+  pythonDeps?: AppPythonDependency[]
 }) {
   const rows: string[] = []
   if (perms.api?.length) rows.push(`API: ${perms.api.join(', ')}`)
@@ -464,6 +574,7 @@ export function PermissionList({ perms, hostUi }: {
         </div>
       </div>
       {hostUi && <HostPageRow hostUi={hostUi} />}
+      {(pythonDeps ?? []).length > 0 && <PythonDepsRow deps={pythonDeps!} />}
     </div>
   )
 }

@@ -9,7 +9,7 @@ import { listItemEnter, stagger, spring } from '../../design/motion'
 import { useQuery } from '../../lib/data'
 import { useGuardedInstall, guardedFromApp } from '../../lib/useGuardedInstall'
 import { catalogApps } from '../../lib/appCatalog'
-import { ConsentModal, PermissionList, CronConsentList, consentPermissions, consentHostUi } from '../../pages/apps/installConsent'
+import { ConsentModal, PermissionList, CronConsentList, consentPermissions, consentHostUi, consentPythonDeps } from '../../pages/apps/installConsent'
 import { SchemaField } from '../../pages/settings/ModelBackends'
 import { SchemaFields } from '../../pages/tools/schema'
 import { api, type AppCatalogEntry, type ChatModelOption, type LocalModelEndpoint, type ModelProviderType, type OnboardingModelCheck, type OnboardingState, type OnboardingStatePatch } from '../../lib/api'
@@ -420,7 +420,8 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
         <ConsentModal label={pendingRef.current.displayName || pendingRef.current.name}
           result={guarded.blocked} busy={guarded.busy}
           permissions={consentPermissions(pendingRef.current)}
-          hostUi={consentHostUi(pendingRef.current)} crons={pendingRef.current.crons}
+          hostUi={consentHostUi(pendingRef.current)}
+          pythonDeps={consentPythonDeps(pendingRef.current)} crons={pendingRef.current.crons}
           onConfirm={confirmInstall} onClose={() => guarded.reset()} />
       )}
     </div>
@@ -466,7 +467,8 @@ function AppCard({ entry, open, installed, busy, error, onToggle, onInstall }: {
            *  skips only lines that start with a comment marker, so an unmarked JSX
            *  comment line is linted as code — and `#492` parses as a 3-digit hex.) */}
           {entry.consentKnown ? (
-            <PermissionList perms={entry.permissions ?? {}} hostUi={consentHostUi(entry)} />
+            <PermissionList perms={entry.permissions ?? {}} hostUi={consentHostUi(entry)}
+              pythonDeps={consentPythonDeps(entry)} />
           ) : (
             <div data-type="body-s" className="text-on-surface-low">
               Permissions: not known yet — this is a registry listing, and its manifest is

@@ -436,7 +436,7 @@ def test_declared_grants_reach_the_pre_install_consent_payload():
             },
         }
     )
-    perms, _crons = _manifest_consent(m)
+    perms, _crons, _deps = _manifest_consent(m)
     assert perms["backgroundTasks"] is True
     assert perms["eventSubscriptions"] == ["session.created"]
 
