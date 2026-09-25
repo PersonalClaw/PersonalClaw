@@ -13,6 +13,13 @@ git actually does, and the interesting behaviours are the ones a mock would pape
 * The pool bound is asserted as a NUMBER under a monkeypatched ``cpu_count``, both above
   and below the ceiling — on an 18-core dev box an unbounded pool would look identical
   to a bounded one.
+* The fan-out claim is asserted as OVERLAP, never as wall clock. Nothing in this file may
+  gate on a duration or on a ratio between two durations: the pool's win is bounded by
+  git's brief repo lock, so on a shared runner the two samples are taken under different
+  load and the comparison decides a coin flip rather than a property. Measured under
+  #3477 with batching removed (``max_workers=1``): the old ``batched <= serial * 1.6``
+  gate still PASSED, while peak-in-flight failed with ``assert 1 > 1``. A timing gate
+  here is therefore both flaky and vacuous — add a concurrency counter instead.
 
 Every worktree, branch and repo lives under ``tmp_path``; ``config_dir`` is redirected
 so the worktrees root never touches a real PersonalClaw home.
@@ -468,26 +475,58 @@ class TestPoolBound:
             assert "src/app.py" in _tree(path)
             assert "docs/guide.md" not in _tree(path)
 
-    def test_batch_runs_concurrently(self, tmp_path, monkeypatch):
-        """Peak-in-flight > 1 — a sequential loop through the same specs fails this."""
+    def test_batch_overlaps_where_serial_creation_cannot(self, tmp_path, monkeypatch):
+        """HC-2's fan-out clause, as OVERLAP rather than wall clock: peak in-flight is
+        > 1 for a four-way batch and exactly 1 for the same four specs created one at a
+        time through the same counter.
+
+        This shape replaced a comparative timing gate (``batched <= serial * 1.6``),
+        deleted in #3477, which was flaky AND vacuous. Measured with ``add_worktrees``
+        pinned to ``max_workers=1`` — batching removed entirely — the ratio assertion
+        still PASSED while this peak-in-flight assertion failed with ``assert 1 > 1``.
+        A ratio between two wall-clock samples taken at different moments on a shared
+        runner cannot separate "the pool works" from "the serial arm ran in a quieter
+        window", so it red unrelated PRs while guarding nothing. Overlap is a structural
+        claim: it fails if the pool is removed and holds at any host load.
+
+        The serial arm is this instrument's vacuity floor — a counter that always read
+        > 1 would satisfy the batched assertion on its own, exactly as
+        ``test_cpu_count_binds_below_the_ceiling`` floors the ceiling assertion above.
+        """
         ws = _repo(tmp_path)
         lock = threading.Lock()
-        state = {"live": 0, "peak": 0}
         real_add = wt.add_worktree
 
-        def counting(*a, **kw):
-            with lock:
-                state["live"] += 1
-                state["peak"] = max(state["peak"], state["live"])
-            try:
-                return real_add(*a, **kw)
-            finally:
-                with lock:
-                    state["live"] -= 1
+        def peak_in_flight(run) -> int:
+            state = {"live": 0, "peak": 0}
 
-        monkeypatch.setattr(wt, "add_worktree", counting)
-        wt.add_worktrees(ws, [(f"t-c{i}", ["src"]) for i in range(4)])
-        assert state["peak"] > 1, "batch ran sequentially"
+            def counting(*a, **kw):
+                with lock:
+                    state["live"] += 1
+                    state["peak"] = max(state["peak"], state["live"])
+                try:
+                    return real_add(*a, **kw)
+                finally:
+                    with lock:
+                        state["live"] -= 1
+
+            with monkeypatch.context() as mp:
+                mp.setattr(wt, "add_worktree", counting)
+                run()
+            return state["peak"]
+
+        serial_specs = [(f"t-c-serial{i}", ["src"]) for i in range(4)]
+        batch_specs = [(f"t-c-batch{i}", ["src"]) for i in range(4)]
+
+        def serially():
+            for tid, scope in serial_specs:
+                wt.add_worktree(ws, tid, scope=scope)
+
+        serial_peak = peak_in_flight(serially)
+        batch_peak = peak_in_flight(lambda: wt.add_worktrees(ws, batch_specs))
+
+        assert serial_peak == 1, f"the counter cannot read 1, so > 1 is vacuous: {serial_peak}"
+        assert batch_peak > 1, f"batch ran sequentially: peak in flight was {batch_peak}"
 
     def test_a_single_spec_skips_the_pool(self, tmp_path, monkeypatch):
         import concurrent.futures as cf
@@ -650,32 +689,3 @@ def test_conflict_redo_resets_then_falls_back_to_teardown():
         assert wt.reset_worktree(ws, "t-cone") is True
         assert wt.sparse_scope(path) == ["src"]
         assert "docs/guide.md" not in _tree(path)
-
-
-def test_fanout_of_four_is_faster_than_serial_creation(tmp_path):
-    """HC-2's ``fan-out timing assertion``. Deliberately a RELATIVE comparison against
-    serial creation in the same process and the same repo — an absolute millisecond
-    budget would be a flake generator on a loaded CI box (HC-1 measured a 7.5 s spread
-    across four samples on this machine under load).
-
-    The claim under test is only that the batch is not SLOWER than the serial path it
-    replaced; the pool's win is bounded by git's brief repo lock, so a modest margin is
-    the honest assertion.
-    """
-    import time
-
-    ws = _repo(tmp_path)
-    serial_ids = [f"t-s{i}" for i in range(4)]
-    t0 = time.perf_counter()
-    for tid in serial_ids:
-        assert wt.add_worktree(ws, tid, scope=["src"]) is not None
-    serial = time.perf_counter() - t0
-    for tid in serial_ids:
-        wt.remove_worktree(ws, tid)
-
-    t0 = time.perf_counter()
-    got = wt.add_worktrees(ws, [(f"t-b{i}", ["src"]) for i in range(4)])
-    batched = time.perf_counter() - t0
-
-    assert all(p is not None for p in got.values())
-    assert batched <= serial * 1.6, f"batched {batched:.3f}s vs serial {serial:.3f}s"
