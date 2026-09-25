@@ -80,7 +80,7 @@ print_container() {
 Run PersonalClaw in one container (nothing to check out, no .env) — from an empty
 directory on a machine with only Docker:
 
-  docker run -d --name personalclaw -p 127.0.0.1:10000:10000 -e PERSONALCLAW_BIND_HOST=0.0.0.0 -v personalclaw_home:/data ghcr.io/personalclaw/personalclaw-gateway:latest
+  docker run -d --name personalclaw --restart unless-stopped -p 127.0.0.1:10000:10000 -e PERSONALCLAW_BIND_HOST=0.0.0.0 -v personalclaw_home:/data ghcr.io/personalclaw/personalclaw-gateway:latest
   docker exec personalclaw personalclaw token   # prints the dashboard URL + token
 
 Or with Docker Compose, which adds a TLS proxy (self-hosters / Windows):

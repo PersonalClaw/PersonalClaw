@@ -64,7 +64,6 @@ from typing import Any
 import numpy as np
 
 from personalclaw.sdk.local_model import (
-    DECLARATION_RELPATH,
     DOWNLOAD_BAD_STATUS,
     DOWNLOAD_TRUNCATED,
     DOWNLOAD_UNREACHABLE,
@@ -837,11 +836,9 @@ def installed_weight() -> Path | None:
 
 
 def _declaration() -> BundleDeclaration | None:
-    """The sign-off record that ships beside this app in the wheel.
+    """The sign-off record that ships beside this app — :data:`DECLARATION_PATH`.
 
-    ``repo_declaration`` resolves it relative to a root, and the root here is the *installed*
-    package's own copy — ``docs/`` is not in the wheel, so the record is read from the path the
-    manifest data glob actually carries. Cached: it is parsed on every status poll.
+    Cached: it is parsed on every status poll.
     """
     global _DECLARATION
     if _DECLARATION is _UNSET:
@@ -850,15 +847,18 @@ def _declaration() -> BundleDeclaration | None:
 
 
 def _read_declaration() -> BundleDeclaration | None:
-    for candidate in _DECLARATION_CANDIDATES:
-        if candidate.is_file():
-            try:
-                return parse_declaration(candidate.read_text(encoding="utf-8"))
-            except BundleDeclarationError:
-                logger.exception("bundled-chat: %s is not a readable sign-off record", candidate)
-                return None
-    logger.warning("bundled-chat: no sign-off record found in %s", _DECLARATION_CANDIDATES)
-    return None
+    if not DECLARATION_PATH.is_file():
+        logger.warning(
+            "bundled-chat: no sign-off record at %s, so this install can neither offer nor "
+            "fetch the default chat model — the package was built without it",
+            DECLARATION_PATH,
+        )
+        return None
+    try:
+        return parse_declaration(DECLARATION_PATH.read_text(encoding="utf-8"))
+    except BundleDeclarationError:
+        logger.exception("bundled-chat: %s is not a readable sign-off record", DECLARATION_PATH)
+        return None
 
 
 def reset_declaration_cache() -> None:
@@ -870,14 +870,12 @@ def reset_declaration_cache() -> None:
 _UNSET = object()
 _DECLARATION: object = _UNSET
 
-#: Where to look for the sign-off record, nearest first. The app dir's own copy is what a real
-#: install has (the repo's ``docs/`` tree is not in the wheel); the repo path is what a source
-#: checkout and the tests have. Two candidates rather than one because a record that resolved
-#: only in a checkout would make every installed gateway unable to say what it would download.
-_DECLARATION_CANDIDATES: tuple[Path, ...] = (
-    Path(__file__).resolve().parent / "bundled-model-signoff.txt",
-    Path(__file__).resolve().parents[4] / DECLARATION_RELPATH,
-)
+#: The sign-off record: a real file beside this module, shipped by the
+#: ``apps/native/*/bundled-model-signoff.txt`` package-data glob, and the ONE place every
+#: install — checkout, wheel, container image, desktop bundle — reads it from. It is
+#: deliberately not a link into ``docs/``: an install carries only the package, so a record
+#: that resolved through anything outside it would exist in a checkout and nowhere else.
+DECLARATION_PATH = Path(__file__).resolve().parent / "bundled-model-signoff.txt"
 
 
 def offer() -> dict[str, Any] | None:
@@ -1132,7 +1130,7 @@ def load_bundled_model(path: Path | None = None) -> LlamaCpuModel:
             # act on.
             raise BundleUnavailable(
                 f"the default chat model is not downloaded yet ({resolved or weight_path()}). It "
-                "is a one-time download; start it from the chat screen or Settings → Models."
+                "is a one-time download; start it from the chat screen or Settings → Providers."
             )
         logger.info("bundled-chat: loading %s", resolved.name)
         model = LlamaCpuModel(GgufModel(resolved))

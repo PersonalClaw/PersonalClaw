@@ -20,8 +20,8 @@ failure modes:
    ``can_resolve_use_case("chat")`` report True, retire OU-12's calm setup state, and then
    fail the turn.
 
-**Why no test here needs the shipped 138 MiB weight.** It is not in git (see
-``docs/architecture/bundled-model-signoff.txt``), so a test that required it would SKIP in CI —
+**Why no test here needs the shipped 138 MiB weight.** It is not in git (see the app's
+``bundled-model-signoff.txt``), so a test that required it would SKIP in CI —
 and a skipped test is exactly the arm that hides a broken executor. Every test below builds its
 own tiny GGUF, so the whole file runs everywhere, always. The shipped weight is driven
 separately and end to end by ``scripts/ou14_zero_config_drive.py`` (and by
@@ -964,6 +964,28 @@ def test_an_unfetched_weight_surfaces_as_bundle_unavailable_not_a_broken_turn(
 
     with pytest.raises(rail.BundleUnavailable, match="one-time download"):
         asyncio.run(drive())
+
+
+def test_the_not_downloaded_sentence_names_the_page_that_offers_the_download(
+    rail, home, monkeypatch
+) -> None:
+    """🔴 The sentence a failed first chat shows sent the user to Settings → Models.
+
+    That page BINDS models and offers no download. The download card — ``LocalModelManager``,
+    one per local provider — renders on Settings → Providers. Measured on the container image
+    (2026-09-25) once it could offer the model: onboarding and the chat screen showed the offer,
+    Settings → Providers listed the model with its download control, and Settings → Models had
+    no mention of it. So the sentence names Providers, and this pins the page it names to the
+    component that really carries the download.
+    """
+    sign_off(rail, monkeypatch, home)
+    with pytest.raises(rail.BundleUnavailable) as raised:
+        rail.load_bundled_model()
+    message = str(raised.value)
+    assert "start it from the chat screen or Settings → Providers" in message, message
+    assert "Settings → Models" not in message, message
+    panel = Path(__file__).resolve().parents[1] / "web/src/pages/settings/ProvidersPanel.tsx"
+    assert "<LocalModelManager" in panel.read_text(encoding="utf-8")
 
 
 def test_greedy_decoding_penalises_repeats(rail) -> None:

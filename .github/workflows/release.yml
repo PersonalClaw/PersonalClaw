@@ -62,7 +62,9 @@ jobs:
           # wheel, installs it into a scratch venv from the wheel alone (this runner
           # has Node for the SPA build, but the verify venv installs only the wheel),
           # boots `personalclaw gateway --test-mode`, and probes / (200 HTML) +
-          # /api/healthz (200). Replaces the old shallow namelist check.
+          # /api/healthz (200). Replaces the old shallow namelist check. It also reads
+          # the bundled-model sign-off record out of the INSTALLED package and requires
+          # /api/onboarding to offer the default model's download.
           python scripts/verify_wheel.py --wheel "dist/*.whl"
       - name: SBOM (syft SPDX-JSON over the built dist)
         uses: anchore/sbom-action@v0
@@ -165,7 +167,11 @@ jobs:
     # carrying the SPA mount point, and the shell's FIRST script fetched and required to come
     # back as JavaScript — plus its own negative control, because a fabricated `/assets/*.js`
     # answered by the SPA's index.html fallback is 200 too, and a status-only check calls that
-    # green. Exit 1 = no dashboard; exit 2 = the run could not measure, which is never a pass.
+    # green. It then asks the image's INSTALLED package for the default chat model's sign-off
+    # record and requires `/api/onboarding` to offer the download: the image once shipped
+    # without that record behind all-200 responses, and the wheel gate, which read the record
+    # from the repository, could not see it (2026-09-25). Exit 1 = the image is broken; exit 2
+    # = the run could not measure, which is never a pass.
     #
     # amd64 ONLY, stated rather than implied: this boots a real gateway, and arm64 under QEMU
     # is a far slower, different measurement. `images`' per-arch `--entrypoint ''` smoke

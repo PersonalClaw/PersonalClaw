@@ -23,8 +23,10 @@ whatever ``:latest`` resolves to while reporting on the commit under review.
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -609,3 +611,208 @@ def test_the_asset_assertion_accepts_a_real_bundle_with_the_control_firing(
         },
     )
     smoke._assert_asset("http://127.0.0.1:1", "/assets/index-abc123.js")
+
+
+# ---------------------------------------------------------------------------
+# The one-liner survives a crash, and the image keeps work on the volume
+# ---------------------------------------------------------------------------
+#
+# Measured on the image as uid 10001 (2026-09-25): after an out-of-memory kill the dashboard
+# stayed down until someone ran `docker start`, because the README command set no restart
+# policy; and only `/data` is a volume while the workspace root defaulted to
+# `/home/personalclaw/workplace/…`, so the default chat workspace and every project folder
+# made at the picker's starting point were gone after `docker rm` + `docker run`.
+
+
+def _runtime_stage(text: str) -> str:
+    """The Dockerfile's `runtime` stage — the one `--target runtime` builds and ships."""
+    start = text.index("AS runtime")
+    return text[start:]
+
+
+def test_readme_command_comes_back_by_itself_after_a_crash() -> None:
+    """`unless-stopped`: an OOM kill or a Docker restart must not leave the dashboard dead."""
+    argv, _image = smoke.retarget(smoke.readme_docker_run(_README), None, "n", "v")
+    assert "--restart" in argv, f"the README command sets no restart policy: {argv}"
+    assert argv[argv.index("--restart") + 1] == "unless-stopped"
+
+
+def test_the_image_defaults_the_workspace_onto_its_one_volume() -> None:
+    """The workspace root must be under the image's VOLUME, so the one-liner needs no extra flag.
+
+    Parsed from the runtime stage rather than grepped from the file: a `PERSONALCLAW_WORKSPACE`
+    set in the builder stage, or in a comment, would not reach the shipped image.
+    """
+    runtime = _runtime_stage(_DOCKERFILE.read_text(encoding="utf-8"))
+    volumes = re.findall(r'^VOLUME \["([^"]+)"\]', runtime, re.MULTILINE)
+    assert volumes == ["/data"], volumes
+    env = dict(re.findall(r"\b(PERSONALCLAW_[A-Z_]+)=(\S+)", runtime))
+    assert env.get("PERSONALCLAW_HOME") == "/data"
+    workspace = env.get("PERSONALCLAW_WORKSPACE", "")
+    assert workspace.startswith("/data/"), (
+        f"PERSONALCLAW_WORKSPACE={workspace!r} in the runtime stage — the workspace must live on "
+        "the /data volume or it is lost on `docker rm` + `docker run`"
+    )
+
+
+def test_the_image_workspace_is_the_one_compose_sets_and_the_inventory_claims() -> None:
+    """One path, three places that must agree: the image, compose, and the home inventory.
+
+    Compose keeps its own copy on purpose — the documented rollback runs today's compose.yaml
+    against an older image tag that does not carry the default.
+    """
+    from personalclaw.durability.inventory import claim_for
+
+    runtime = _runtime_stage(_DOCKERFILE.read_text(encoding="utf-8"))
+    image = dict(re.findall(r"\b(PERSONALCLAW_[A-Z_]+)=(\S+)", runtime))["PERSONALCLAW_WORKSPACE"]
+    compose = yaml.safe_load((_REPO / "deploy/compose/compose.yaml").read_text(encoding="utf-8"))
+    env = compose["services"]["personalclaw-gateway"]["environment"]
+    assert env["PERSONALCLAW_WORKSPACE"] == image
+    # A workspace the inventory did not claim would read as an unclaimed path in the Doctor and
+    # would be left out of snapshots.
+    assert claim_for(image.removeprefix(env["PERSONALCLAW_HOME"]).strip("/")) is not None
+
+
+# ---------------------------------------------------------------------------
+# Steps 5 and 6: the image can offer its default chat model
+# ---------------------------------------------------------------------------
+
+
+def _fake_probe(monkeypatch: pytest.MonkeyPatch, report: dict, calls: list | None = None) -> None:
+    """`docker exec … python -I -c <probe>` answering with *report*, no daemon needed."""
+
+    def _fake(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        if calls is not None:
+            calls.append(args)
+        return subprocess.CompletedProcess(
+            args=list(args), returncode=0, stdout=json.dumps(report) + "\n", stderr=""
+        )
+
+    monkeypatch.setattr(smoke, "_docker", _fake)
+
+
+_RECORD_PATH = (
+    "/opt/venv/lib/python3.13/site-packages/personalclaw/apps/native/bundled-chat/"
+    "bundled-model-signoff.txt"
+)
+
+
+def test_the_record_step_refuses_the_image_that_shipped_without_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """🔑 The measured image: the installed app looked for its record and found nothing."""
+    _fake_probe(
+        monkeypatch,
+        {
+            "record": {"path": _RECORD_PATH, "is_symlink": False, "is_file": False},
+            "declaration": None,
+            "declaration_error": "",
+            "licence": None,
+        },
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        smoke._assert_installed_record("pc-smoke")
+    assert excinfo.value.code == 1
+
+
+def test_the_record_step_runs_the_shared_probe_inside_the_image(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Positive control, and the wiring: the probe's SOURCE goes to the container's own python.
+
+    `-I` keeps the container's cwd and `PYTHON*` variables out of the import path, so the answer
+    is the image's site-packages; the source is the file `verify_wheel.py` also runs, so the two
+    gates cannot drift into two readings of one question.
+    """
+    calls: list = []
+    _fake_probe(
+        monkeypatch,
+        {
+            "record": {"path": _RECORD_PATH, "is_symlink": False, "is_file": True},
+            "declaration": {"model_id": "unsloth/x", "licence": "Apache-2.0", "size_bytes": 1},
+            "declaration_error": "",
+            "licence": {"permitted": True, "reason": "ok"},
+        },
+        calls,
+    )
+    smoke._assert_installed_record("pc-smoke")
+    assert "signed off under Apache-2.0" in capsys.readouterr().out
+    (args,) = calls
+    assert args[:5] == ("exec", "pc-smoke", "python", "-I", "-c")
+    assert args[5] == (_REPO / "scripts" / "installed_bundled_model_probe.py").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_the_offer_step_refuses_a_fresh_volume_with_no_offer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All-200, offer null: what the validator measured on three fresh boots."""
+    body = json.dumps({"needs_model": True, "chat_download_offer": None})
+    _fake_http(monkeypatch, {"/api/onboarding?token=": (200, "application/json", body)})
+    with pytest.raises(SystemExit) as excinfo:
+        smoke._assert_download_offer("http://127.0.0.1:1", _SYNTHETIC_TOKEN)
+    assert excinfo.value.code == 1
+
+
+def test_the_offer_step_accepts_an_offer(monkeypatch: pytest.MonkeyPatch) -> None:
+    offer = {"provider": "bundled-chat", "model": "SmolLM2", "bytes": 144_811_072}
+    body = json.dumps({"needs_model": True, "chat_download_offer": offer})
+    _fake_http(monkeypatch, {"/api/onboarding?token=": (200, "application/json", body)})
+    smoke._assert_download_offer("http://127.0.0.1:1", _SYNTHETIC_TOKEN)
+
+
+def test_main_runs_both_steps_after_the_dashboard_ones() -> None:
+    """A step with no call site guards nothing; asserted on `main`'s AST."""
+    import ast
+
+    tree = ast.parse((_REPO / "tools" / "docker_single_container_smoke.py").read_text())
+    main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+    order = [
+        node.func.id
+        for node in sorted(ast.walk(main), key=lambda n: (getattr(n, "lineno", 0), 0))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    ]
+    for step in ("_assert_installed_record", "_assert_download_offer"):
+        assert step in order, f"main() never runs {step}: {order}"
+        assert order.index("_assert_asset") < order.index(step)
+
+
+def test_the_teardown_stops_the_container_before_removing_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The README command now carries `--restart unless-stopped`, and the smoke runs it verbatim.
+
+    An explicit stop is what that policy honours. Measured on Finch: with only `rm -f`, the
+    container outlived a run that printed PASS, still serving the README's port with its volume
+    attached, so the next run could not measure at all. Driven through `main()` with the daemon
+    faked, asserting on the calls the teardown actually makes.
+    """
+    readme = tmp_path / "README.md"
+    readme.write_text(
+        "```bash\ndocker run -d --name personalclaw --restart unless-stopped "
+        "-p 127.0.0.1:19999:10000 -v personalclaw_home:/data img:1\n```\n"
+    )
+    calls: list[tuple[str, ...]] = []
+
+    def fake_docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess(args=list(args), returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(smoke, "_docker", fake_docker)
+    monkeypatch.setattr(smoke, "_require_free_port", lambda port: None)
+    monkeypatch.setattr(
+        smoke.subprocess,
+        "run",
+        lambda argv, **kw: subprocess.CompletedProcess(argv, 0, stdout="", stderr=""),
+    )
+    for step in ("_await_healthz", "_assert_asset", "_assert_download_offer"):
+        monkeypatch.setattr(smoke, step, lambda *a, **k: None)
+    monkeypatch.setattr(smoke, "_mint_token", lambda name: _SYNTHETIC_TOKEN)
+    monkeypatch.setattr(smoke, "_assert_shell", lambda base, token: "/assets/x.js")
+    monkeypatch.setattr(smoke, "_assert_installed_record", lambda name: None)
+    monkeypatch.setattr(sys, "argv", ["smoke", "--readme", str(readme), "--image", "local:ci"])
+
+    assert smoke.main() == 0
+    teardown = [c[:2] if c[0] == "volume" else c[:1] for c in calls if c[0] != "version"]
+    assert teardown == [("logs",), ("stop",), ("rm",), ("volume", "rm")], calls

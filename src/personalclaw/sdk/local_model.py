@@ -39,7 +39,6 @@ beside the app that needs it.
 """
 
 from personalclaw.bundled_model import (  # noqa: F401
-    DECLARATION_RELPATH,
     DOWNLOAD_BAD_STATUS,
     DOWNLOAD_DIGEST_MISMATCH,
     DOWNLOAD_TRUNCATED,
@@ -66,7 +65,6 @@ __all__ = [
     "BundleDeclarationError",
     "DownloadResult",
     "LicenceDecision",
-    "DECLARATION_RELPATH",
     "DOWNLOAD_UNREACHABLE",
     "DOWNLOAD_BAD_STATUS",
     "DOWNLOAD_TRUNCATED",

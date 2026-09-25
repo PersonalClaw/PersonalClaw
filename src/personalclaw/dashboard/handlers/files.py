@@ -3152,18 +3152,33 @@ async def api_file_search(request: web.Request) -> web.Response:
     )
 
 
+def _default_browse_dir() -> str:
+    """Where the folder picker opens when no folder is asked for: the WORKSPACE root.
+
+    The same answer the Terminal gives (``terminal.py``'s cwd chain, #544), for the same reason:
+    a folder the user creates from here is where their work lives. It used to be ``$HOME``, and in
+    the container image that is ``/home/personalclaw`` — outside the ``/data`` volume — so a
+    project folder made with "New folder here" at the picker's starting point was gone after
+    ``docker rm`` + ``docker run``, while the project page kept showing its path.
+    ``default_workspace_dir()`` is ``""`` when the root is missing or sensitive, and then the
+    home is still the answer.
+    """
+    from personalclaw.config.loader import default_workspace_dir
+
+    return default_workspace_dir() or os.path.realpath(os.path.expanduser("~"))
+
+
 async def api_browse_dirs(request: web.Request) -> web.Response:
-    """GET /api/browse-dirs?path=... — list subdirectories for directory browser."""
+    """GET /api/browse-dirs?path=... — list subdirectories for directory browser.
+
+    With no ``path`` it lists :func:`_default_browse_dir` — the workspace root.
+    """
 
     from personalclaw.security import is_sensitive_path  # noqa: F811
 
     caller = request.get("user", "dashboard")
     raw = request.query.get("path", "").strip()
-    base = (
-        os.path.realpath(os.path.expanduser(raw))
-        if raw
-        else os.path.realpath(os.path.expanduser("~"))
-    )
+    base = os.path.realpath(os.path.expanduser(raw)) if raw else _default_browse_dir()
     if not os.path.isdir(base):
         # Distinguish the cases a path-bar user actually hits, instead of a blanket
         # "Not a directory": a path that doesn't exist (typo/stale), one that's a FILE,

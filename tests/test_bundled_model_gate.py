@@ -46,6 +46,8 @@ import ast
 import hashlib
 import importlib.util
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -440,7 +442,7 @@ def test_the_repository_record_signs_off_a_complete_permissive_bundle() -> None:
     """
     declaration = repo_declaration(_REPO_ROOT)
     assert declaration is not None, (
-        "no bundled model is signed off in docs/architecture/bundled-model-signoff.txt — "
+        f"no bundled model is signed off in {rail.DECLARATION_RELPATH} — "
         "OU-14's whole point is that one is"
     )
     assert declaration.model_id == "unsloth/SmolLM2-135M-Instruct-GGUF"
@@ -480,12 +482,33 @@ def test_packaging_ships_no_weight_glob_and_does_ship_the_record() -> None:
         "not shipped, and a 138 MiB member puts the wheel over PyPI's 100 MiB per-file limit."
     )
     assert "apps/native/*/bundled-model-signoff.txt" in globs
-    # The app-dir copy is a SYMLINK to the one authority under docs/, so git holds exactly one
-    # record and setuptools dereferences it into the wheel. Two committed copies would be two
-    # things that can disagree about which model an install fetches.
-    link = _REPO_ROOT / "src/personalclaw/apps/native/bundled-chat/bundled-model-signoff.txt"
-    assert link.is_symlink(), f"{link} must be a symlink to the docs/ record, not a copy"
-    assert link.resolve() == (_REPO_ROOT / rail.DECLARATION_RELPATH).resolve()
+
+
+def test_the_record_is_one_real_file_inside_the_app_that_reads_it() -> None:
+    """The record lives where it ships — a regular file, the only copy git holds.
+
+    🔴 It used to be the reverse: this test asserted the app-dir record WAS a symlink into
+    ``docs/architecture/``, on the theory that setuptools dereferences it. It does — when
+    ``docs/`` sits beside ``src/``. The container image copies ``src/`` alone, so there the link
+    dangled, no record was installed, and the gateway could neither offer nor fetch its default
+    model. So: a regular file at the path the runtime reads, and exactly one of it — two copies
+    would be two things that can disagree about which model an install fetches.
+    """
+    record = _REPO_ROOT / rail.DECLARATION_RELPATH
+    assert record.is_file() and not record.is_symlink(), (
+        f"{rail.DECLARATION_RELPATH} must be a real file: an install carries only the package, "
+        "so a link to anything outside it resolves in a checkout and nowhere else"
+    )
+    tracked = subprocess.run(
+        ["git", "-C", str(_REPO_ROOT), "ls-files", "-s", "--", "*bundled-model-signoff.txt"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split("\n")
+    entries = [line.split(maxsplit=3) for line in tracked if line]
+    assert [(mode, path) for mode, _sha, _stage, path in entries] == [
+        ("100644", rail.DECLARATION_RELPATH)
+    ], f"git must hold exactly one record, as a regular file, in the app dir: {entries}"
 
 
 def test_the_record_documents_every_key_it_requires() -> None:
@@ -767,83 +790,303 @@ def test_the_drive_refuses_the_real_home() -> None:
     module._refuse_real_home(Path("/tmp/ou14-not-a-real-home"))
 
 
-# ── the call sites: a perfect rail with no caller is the failure mode this repo keeps finding ──
+# ── the release gate asks the INSTALLED artifact, never this repository ───────────────────────
+#
+# 🔴 2026-09-25, a release blocker. Assertion 7 imported `personalclaw.bundled_model` from `src/`
+# and read the sign-off record out of `docs/`. The container image's installed package had NO
+# record — it was a symlink into `docs/`, and the image copies only `src/` — and no gate could see
+# it, because every gate asked the repository, which always has one. So the record check now runs
+# inside the artifact through `scripts/installed_bundled_model_probe.py`, which the image gate
+# (`tools/docker_single_container_smoke.py`) shares. The rails below drive that probe against
+# packages shaped like the broken image, and pin that the wheel gate reads nothing from the tree.
+
+_PROBE = _REPO_ROOT / "scripts" / "installed_bundled_model_probe.py"
 
 
 def _verify_wheel_module():
     return _load_by_path(_VERIFY_WHEEL, "_verify_wheel_ou14")
 
 
-def test_the_release_gate_has_the_bundled_model_assertion_at_all() -> None:
-    """Vacuity floor. ``getattr`` so a MISSING function reports as this, not an AttributeError."""
-    module = _verify_wheel_module()
-    assert getattr(module, "_assert_no_bundled_weight_in_wheel", None) is not None, (
-        "scripts/verify_wheel.py no longer defines _assert_no_bundled_weight_in_wheel — the "
-        "bundled-model size/licence gate has left the release path"
-    )
+def _probe_module():
+    return _load_by_path(_PROBE, "_installed_bundled_model_probe_under_test")
 
 
-def test_main_actually_calls_the_bundled_model_assertion() -> None:
-    """Asserted on the AST of ``main``, because a detector with no call site guards nothing.
+def _installed_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, record: str) -> Path:
+    """Stand up an "installed package" whose bundled-chat app carries *record*, and point the probe
+    at it. Returns the app directory.
 
-    The same shape as ``test_verify_wheel_contract.py``'s assertion-6 call-site check, and for
-    the same reason: this repository has repeatedly shipped a correct check that nothing ran.
+    A copy of the REAL app — the module the gateway loads — with the record replaced: ``real``
+    keeps the shipped file; ``absent`` deletes it, which is what the image's installed package
+    held; ``dangling`` restores the old symlink into a ``docs/`` that is not there. The probe finds
+    the app through ``native_contract.NATIVE_DIR`` and the loader caches by module name, so both are
+    redirected for this test only — and the provider registry is a throwaway, because loading a
+    second copy of the module registers its provider type, and the conftest restores registry
+    ENTRIES and the singleton but not types.
     """
-    tree = ast.parse(_VERIFY_WHEEL.read_text(encoding="utf-8"))
-    main = next((n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main"), None)
-    assert main is not None, "scripts/verify_wheel.py has no main()"
-    called = {
-        node.func.id
-        for node in ast.walk(main)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-    }
-    assert "_assert_no_bundled_weight_in_wheel" in called, (
-        "main() does not call _assert_no_bundled_weight_in_wheel — the gate is defined and never "
-        f"runs. Calls found: {sorted(called)}"
+    from personalclaw.apps import native_contract
+    from personalclaw.llm.registry import ProviderRegistry, set_default_registry
+
+    native = tmp_path / "site-packages" / "personalclaw" / "apps" / "native"
+    app = native / "bundled-chat"
+    shutil.copytree(
+        native_contract.NATIVE_DIR / "bundled-chat",
+        app,
+        ignore=shutil.ignore_patterns("__pycache__"),
     )
+    signoff = app / "bundled-model-signoff.txt"
+    if record in ("absent", "dangling"):
+        signoff.unlink()
+    if record == "dangling":
+        os.symlink("../../../../../docs/architecture/bundled-model-signoff.txt", signoff)
+    monkeypatch.setattr(native_contract, "NATIVE_DIR", native)
+    monkeypatch.setitem(
+        sys.modules, native_contract.namespaced_module_name("bundled-chat", "provider"), None
+    )
+    set_default_registry(ProviderRegistry())
+    return app
 
 
-def test_the_release_gate_admits_the_wheel_we_actually_build(tmp_path: Path, capsys) -> None:
-    """The direction that matters most: a NORMAL wheel must PASS.
-
-    This is the arm a mis-pointed gate breaks. On 2026-09-23 assertion 7 required the wheel to
-    CARRY the signed-off weight; if it had been left that way, every release from then on would
-    have failed here — and it would have failed on a tag, after the version bump. Driven through
-    the REAL assertion so a future flip reds on a PR instead.
-    """
-    module = _verify_wheel_module()
+def test_the_probe_reads_the_record_the_installed_app_reads(tmp_path: Path, monkeypatch) -> None:
+    """The passing arm, on the real record, through the real app loader, with the wheel gate."""
+    app = _installed_app(tmp_path, monkeypatch, "real")
+    judges = _probe_module()
     wheel = _wheel(tmp_path, {"personalclaw/__init__.py": b"x = 1\n"})
-    module._assert_no_bundled_weight_in_wheel(wheel)
+    report = judges.probe(str(wheel))
+    assert report["record"] == {
+        "path": str((app / "bundled-model-signoff.txt").resolve()),
+        "is_symlink": False,
+        "is_file": True,
+    }
+    assert report["declaration"]["model_id"] == "unsloth/SmolLM2-135M-Instruct-GGUF"
+    assert judges.record_failures(report, wheel_gate_required=True) == []
+
+
+@pytest.mark.parametrize(
+    "record,needle",
+    [
+        # The measured image: no record in the installed package at all.
+        ("absent", "carries no sign-off record"),
+        # The same defect one step earlier: the link shipped, its target did not.
+        ("dangling", "is a SYMLINK"),
+    ],
+)
+def test_the_probe_names_a_package_built_without_the_record(
+    tmp_path: Path, monkeypatch, record: str, needle: str
+) -> None:
+    """🔑 The image defect's two shapes, each refused in words a maintainer can act on."""
+    _installed_app(tmp_path, monkeypatch, record)
+    judges = _probe_module()
+    failures = judges.record_failures(judges.probe())
+    assert len(failures) == 1, failures
+    assert needle in failures[0], failures[0]
+
+
+def test_the_probe_refuses_a_wheel_path_it_cannot_open_instead_of_crashing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A wheel path the probe cannot open is a NAMED refusal, never a traceback.
+
+    The defect this backs up: ``verify_wheel.py`` handed the probe a RELATIVE ``--wheel``, the
+    probe runs in the scratch home, and ``gate_wheel`` died with ``FileNotFoundError`` before the
+    report was written. The record was fine. The gate reported a crash, and nothing said the
+    record was fine. So a path that is not a file from the probe's own working directory
+    becomes a refusal that names the path and the directory, and the record half of the report
+    still arrives.
+    """
+    _installed_app(tmp_path, monkeypatch, "real")
+    monkeypatch.chdir(tmp_path)
+    judges = _probe_module()
+    report = judges.probe("dist/personalclaw-0.2.0-py3-none-any.whl")
+    assert report["declaration"]["model_id"] == "unsloth/SmolLM2-135M-Instruct-GGUF"
+    gate = report["wheel_gate"]
+    assert gate["ok"] is False, gate
+    refusal = " ".join(gate["refusals"])
+    assert "'dist/personalclaw-0.2.0-py3-none-any.whl'" in refusal, refusal
+    assert str(Path.cwd()) in refusal, refusal
+    failures = " | ".join(judges.record_failures(report, wheel_gate_required=True))
+    assert "absolute path" in failures, failures
+
+
+@pytest.mark.parametrize(
+    "mutation,needle",
+    [
+        ({"declaration_error": "licence: Apache-2.0 declares … but not [...]"}, "unreadable"),
+        ({"declaration": None}, "signs off no model"),
+        (
+            {"licence": {"permitted": False, "reason": "licence 'gemma' is NOT on the allowlist"}},
+            "gemma",
+        ),
+        ({"wheel_gate": {"ok": False, "summary": "REFUSED", "refusals": ["a weight"]}}, "a weight"),
+    ],
+)
+def test_the_judge_refuses_every_unsound_record(mutation: dict, needle: str) -> None:
+    """Each way an installed record can be present and still useless reds, naming why."""
+    judges = _probe_module()
+    report = {
+        "record": {"path": "/x/bundled-model-signoff.txt", "is_symlink": False, "is_file": True},
+        "declaration": {"model_id": "m", "licence": "Apache-2.0", "size_bytes": 1},
+        "declaration_error": "",
+        "licence": {"permitted": True, "reason": "ok"},
+        "wheel_gate": {"ok": True, "summary": "ADMITTED", "refusals": []},
+    }
+    assert judges.record_failures(report) == [], "the control arm must pass"
+    report.update(mutation)
+    joined = " | ".join(judges.record_failures(report))
+    assert needle in joined, joined
+
+
+def test_a_wheel_verdict_that_never_ran_is_not_a_pass() -> None:
+    """The wheel gate hands the probe a wheel; a report with no verdict measured nothing."""
+    judges = _probe_module()
+    report = {
+        "record": {"path": "/x", "is_symlink": False, "is_file": True},
+        "declaration": {"model_id": "m", "licence": "Apache-2.0", "size_bytes": 1},
+        "declaration_error": "",
+        "licence": {"permitted": True, "reason": "ok"},
+    }
+    assert judges.record_failures(report) == []
+    assert "measured nothing" in " ".join(judges.record_failures(report, wheel_gate_required=True))
+
+
+@pytest.mark.parametrize(
+    "payload,needle",
+    [
+        ({"needs_model": True, "chat_download_offer": None}, "chat_download_offer = null"),
+        ({"chat_download_offer": {"model": "m"}}, "positive size"),
+        ({"chat_download_offer": {"model": "m", "bytes": 0}}, "positive size"),
+        (["not", "an", "object"], "JSON object"),
+    ],
+)
+def test_the_offer_judge_refuses_a_fresh_home_with_nothing_to_download(payload, needle) -> None:
+    """``null`` behind a 200 is the image defect exactly as the validator measured it."""
+    failure = _probe_module().offer_failure(payload)
+    assert failure is not None and needle in failure, failure
+
+
+def test_the_offer_judge_accepts_a_real_offer() -> None:
+    offer = {
+        "provider": "bundled-chat",
+        "model": "m",
+        "bytes": 144_811_072,
+        "licence": "Apache-2.0",
+    }
+    assert _probe_module().offer_failure({"chat_download_offer": offer}) is None
+
+
+def test_the_release_gate_refuses_an_install_without_the_record(tmp_path: Path) -> None:
+    """🔑 Assertion 7 fails the release on the image's shape — the measured hole, closed.
+
+    Driven through the REAL assertion with the probe's answer for a record-less package, because
+    the defect was never the judge: it was that the gate asked the repository, where the answer is
+    always "present".
+    """
+    module = _verify_wheel_module()
+    module._installed_bundled_model_report = lambda py, home, wheel: {  # type: ignore[attr-defined]
+        "record": {
+            "path": "/opt/venv/…/bundled-model-signoff.txt",
+            "is_symlink": False,
+            "is_file": False,
+        },
+        "declaration": None,
+        "declaration_error": "",
+        "licence": None,
+        "wheel_gate": {"ok": True, "summary": "ADMITTED", "refusals": []},
+    }
+    with pytest.raises(SystemExit) as exit_info:
+        module._assert_installed_bundled_model(tmp_path / "py", tmp_path, tmp_path / "w.whl")
+    assert exit_info.value.code == 1
+
+
+def test_the_release_gate_admits_an_install_that_carries_the_record(tmp_path: Path, capsys) -> None:
+    """The arm a mis-pointed gate breaks: a sound install must PASS, and say where it read."""
+    module = _verify_wheel_module()
+    module._installed_bundled_model_report = lambda py, home, wheel: {  # type: ignore[attr-defined]
+        "record": {
+            "path": "/opt/venv/…/bundled-model-signoff.txt",
+            "is_symlink": False,
+            "is_file": True,
+        },
+        "declaration": {"model_id": "unsloth/x", "licence": "Apache-2.0", "size_bytes": 1},
+        "declaration_error": "",
+        "licence": {"permitted": True, "reason": "ok"},
+        "wheel_gate": {"ok": True, "summary": "ADMITTED: carries no model weight", "refusals": []},
+    }
+    module._assert_installed_bundled_model(tmp_path / "py", tmp_path, tmp_path / "w.whl")
     printed = capsys.readouterr().out
-    assert "signed off under Apache-2.0" in printed, printed
+    assert "read from the installed package, not the repository" in printed, printed
     assert "carries no model weight" in printed, printed
 
 
-def test_the_release_gate_fails_the_build_on_a_weight_in_the_wheel(tmp_path: Path) -> None:
-    """The refusal reaches the RELEASE, not just the rail: a non-zero exit, with the reason.
+def test_the_release_gate_refuses_a_boot_that_offers_nothing(monkeypatch) -> None:
+    """Assertion 8 on the measured response: 200, and ``chat_download_offer: null``."""
+    module = _verify_wheel_module()
+    monkeypatch.setattr(
+        module,
+        "_http_get",
+        lambda url, timeout=10.0, limit=4096: (
+            200,
+            "application/json",
+            json.dumps({"needs_model": True, "chat_download_offer": None}),
+        ),
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        module._assert_download_offer("http://127.0.0.1:1")
+    assert exit_info.value.code == 1
 
-    A weight in the wheel is the defect now. PyPI's 100 MiB per-file limit means the alternative
-    place to learn this is a rejected upload of an already-tagged release.
+
+def test_the_release_gate_reads_the_whole_onboarding_body(monkeypatch) -> None:
+    """The boot probe's GET read 4096 bytes; a JSON verdict needs the whole body."""
+    module = _verify_wheel_module()
+    seen: dict[str, object] = {}
+
+    def fake(url, timeout=10.0, limit=4096):
+        seen["limit"] = limit
+        return (
+            200,
+            "application/json",
+            json.dumps({"chat_download_offer": {"model": "m", "bytes": 5}}),
+        )
+
+    monkeypatch.setattr(module, "_http_get", fake)
+    module._assert_download_offer("http://127.0.0.1:1")
+    assert seen["limit"] is None
+
+
+def _calls_in(function_name: str) -> list[tuple[int, str]]:
+    tree = ast.parse(_VERIFY_WHEEL.read_text(encoding="utf-8"))
+    fn = next(
+        (n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == function_name), None
+    )
+    assert fn is not None, f"scripts/verify_wheel.py has no {function_name}()"
+    return sorted(
+        (node.lineno, node.func.id)
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    )
+
+
+def test_main_asks_the_installed_package_after_installing_it() -> None:
+    """A perfect assertion with no call site guards nothing — and before the install there is no
+    artifact to ask, so the ORDER is part of the contract."""
+    calls = _calls_in("main")
+    names = [name for _line, name in calls]
+    assert "_assert_installed_bundled_model" in names, f"main() never runs assertion 7: {names}"
+    assert names.index("_pip_install_wheel") < names.index("_assert_installed_bundled_model")
+
+
+def test_the_boot_probe_asks_for_the_download_offer() -> None:
+    names = [name for _line, name in _calls_in("_boot_and_probe")]
+    assert "_assert_download_offer" in names, f"assertion 8 has no call site: {names}"
+
+
+def test_the_release_gate_reads_nothing_from_the_repository() -> None:
+    """The audit, pinned: no import of the tree's package, no read of the tree's record.
+
+    Both were how the image defect stayed invisible. ``sys.path`` manipulation is what put the
+    repository's ``src/`` in front of the artifact, and ``repo_declaration`` is what read the
+    record from it.
     """
-    module = _verify_wheel_module()
-    wheel = _wheel(tmp_path, {"personalclaw/weights/smuggled.gguf": b"w" * (2 * 1024 * 1024)})
-    with pytest.raises(SystemExit) as exit_info:
-        module._assert_no_bundled_weight_in_wheel(wheel)
-    assert exit_info.value.code == 1
-
-
-def test_the_release_gate_still_reads_the_record_and_its_licence(tmp_path: Path) -> None:
-    """The record is not decorative on the release path even though the weight is not in the
-    wheel: it carries the source pin, the digest and the size that every install's first-run
-    fetch depends on, so a release shipping an unreadable or non-permissive one ships an install
-    that can never fetch its model. Asserted by pointing the rail at a tree whose record is
-    broken and checking the gate exits."""
-    module = _verify_wheel_module()
-    wheel = _wheel(tmp_path, {"personalclaw/__init__.py": b"x = 1\n"})
-    broken = tmp_path / "root"
-    (broken / "docs" / "architecture").mkdir(parents=True)
-    (broken / rail.DECLARATION_RELPATH).write_text("licence: Apache-2.0\n", encoding="utf-8")
-    module._load_bundled_model_rail = lambda: (broken, rail)  # type: ignore[attr-defined]
-    with pytest.raises(SystemExit) as exit_info:
-        module._assert_no_bundled_weight_in_wheel(wheel)
-    assert exit_info.value.code == 1
+    source = _VERIFY_WHEEL.read_text(encoding="utf-8")
+    assert "repo_declaration" not in source
+    assert "sys.path.insert" not in source
+    assert 'importlib.import_module("personalclaw' not in source

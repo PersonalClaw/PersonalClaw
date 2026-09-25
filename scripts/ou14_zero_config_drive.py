@@ -25,8 +25,9 @@ error message blames a missing provider and the cause is an unbootstrapped proce
 CONSISTENCY between what the repository declares and what the rig observes, not whether the
 promise is kept:
 
-* exit 0 — the observation agrees with ``docs/architecture/bundled-model-signoff.txt``. With a
-  model signed off AND its weight fetched into the tree, that means chat resolved and answered.
+* exit 0 — the observation agrees with the bundled-chat app's ``bundled-model-signoff.txt``.
+  With a model signed off AND its weight fetched into the tree, that means chat resolved and
+  answered.
   With the record filled but no weight present (a source checkout that never ran
   ``scripts/fetch_bundled_model.py``), it means chat correctly does NOT resolve — that is the
   honest state of a dev tree, not a contradiction, and ``weight_present`` distinguishes it.

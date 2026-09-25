@@ -143,12 +143,15 @@ def superuser_home(tmp_path, monkeypatch):
 class TestThePickerOnARootGateway:
     @pytest.mark.asyncio
     async def test_the_default_location_opens(self, superuser_home, monkeypatch, mock_sel):
+        # The default location is the workspace root, which with nothing configured is
+        # `<home>/workplace/personalclaw-workspace` — inside the superuser's own home, so it must
+        # open here exactly as the home itself does.
         monkeypatch.setenv("HOME", superuser_home)
         async with TestClient(TestServer(_make_app())) as client:
             resp = await client.get("/api/browse-dirs")
             body = await resp.json()
         assert resp.status == 200
-        assert body["path"] == superuser_home
+        assert body["path"] == os.path.join(superuser_home, "workplace", "personalclaw-workspace")
 
     @pytest.mark.asyncio
     async def test_a_new_project_folder_lands_in_the_home(

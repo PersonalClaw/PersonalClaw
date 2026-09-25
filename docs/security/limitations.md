@@ -192,7 +192,7 @@ model you can download: `SmolLM2-135M-Instruct`, in the Q8_0 GGUF build
 it inside the gateway, on your CPU, with numpy
 (`src/personalclaw/apps/native/bundled-chat/provider.py`). The model, its licence, its
 pinned source and its sha256 are recorded in
-[`bundled-model-signoff.txt`](../architecture/bundled-model-signoff.txt).
+[`bundled-model-signoff.txt`](../../src/personalclaw/apps/native/bundled-chat/bundled-model-signoff.txt).
 
 It is there so a new install is not a dead end. At 135 million parameters it can greet you
 and answer a simple factual question, and it gets unreliable quickly after that. When it

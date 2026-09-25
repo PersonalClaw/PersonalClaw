@@ -5,8 +5,11 @@
 # healthz-only assertion: the gateway image used to answer `/api/healthz` 200 while serving
 # no dashboard at all, because `setup.py`'s `BuildWithWeb` grafts `web/dist` into the
 # installed package only when `web/dist` is in the build tree and nothing in
-# `Dockerfile.backend` ever built it. `tools/docker_single_container_smoke.py` owns the
-# assertion (and its negative control); this file only decides WHICH image it runs against.
+# `Dockerfile.backend` ever built it. It also asserts the image can offer its default chat
+# model — the installed sign-off record and a non-null `chat_download_offer` — because the
+# image once shipped without that record behind all-200 responses (2026-09-25).
+# `tools/docker_single_container_smoke.py` owns the assertions (and their negative control);
+# this file only decides WHICH image it runs against.
 #
 # 🪤 IT BUILDS THE IMAGE, IT DOES NOT PULL `:latest`. Two reasons, and the first is the
 # important one:
@@ -36,6 +39,11 @@ on:
       - web/**
       - package.json
       - package-lock.json
+      # What steps 5-6 of the smoke judge: the probe, the record, and the package-data glob
+      # that ships it into the image's installed package.
+      - pyproject.toml
+      - scripts/installed_bundled_model_probe.py
+      - src/personalclaw/apps/native/bundled-chat/bundled-model-signoff.txt
       - tools/docker_single_container_smoke.py
       - .github/workflows/docker-single-container.yml
   push:
@@ -49,6 +57,11 @@ on:
       - web/**
       - package.json
       - package-lock.json
+      # What steps 5-6 of the smoke judge: the probe, the record, and the package-data glob
+      # that ships it into the image's installed package.
+      - pyproject.toml
+      - scripts/installed_bundled_model_probe.py
+      - src/personalclaw/apps/native/bundled-chat/bundled-model-signoff.txt
       - tools/docker_single_container_smoke.py
       - .github/workflows/docker-single-container.yml
   workflow_dispatch:
