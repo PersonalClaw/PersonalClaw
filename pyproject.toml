@@ -56,6 +56,19 @@ dependencies = [
     # import so a stripped env degrades to stdlib rather than crashing.
     "numpy>=1.21,<3",
     "snowballstemmer>=1.0",
+    # 🔴 packaging is a CORE dep because the APP INSTALLER cannot run without it.
+    # `apps/app_manager.py::_reject_core_dependency_conflicts` (EI-12 D3) imports
+    # `packaging.requirements` + `packaging.utils` to prove an app's declared
+    # `pythonDependencies` cannot move a gateway dependency, and it fails CLOSED — no
+    # evaluator means it refuses the install. Undeclared, that refusal fired for EVERY app
+    # declaring `pythonDependencies` on a clean wheel install: `openrouter-models`,
+    # `claude-subscription` and both speech apps all failed with "cannot verify app X's
+    # python dependencies against core's (No module named 'packaging')". A dev checkout
+    # never saw it, because pip's own build tooling puts `packaging` in the venv
+    # transitively — so this is a defect only the shipped artifact has. The rail is
+    # `tests/test_app_installer_deps_declared.py`, which asserts the DECLARATION rather
+    # than importability, since importability is true in dev either way.
+    "packaging>=23.0",
     "pysqlite3-binary>=0.5.4; sys_platform == 'linux' and platform_machine == 'x86_64'",
     # sqlite-vec is a CORE dep, and NOT faiss (owner ruling 2026-07-29). The knowledge store
     # is SQLite-first (items + FTS5 + graph tables in one file), so a vector index shipped as a
