@@ -3,6 +3,7 @@ import { notify } from '../../app/appSdk'
 import { unavailableWhen } from '../../ui/unavailable'
 import { CheckCircle2, AlertTriangle, ArrowRight, Plus, Trash2, RefreshCw, Check, X, Wand2 } from 'lucide-react'
 import { api, type LexiconTerm, type LexiconCorrection } from '../../lib/api'
+import { modelIdOf, splitModelRef } from '../../lib/modelRef'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { PanelHeader, Section, RowGroup, Row, Field, Toggle, SavedToast, ToggleRow } from './settingsUI'
 import { FormSkeleton, InlineLoadError, ListSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -82,7 +83,7 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
         settings={ttsSettings} setSettings={setTtsSettings} go={go}
         extras={(s, save, boundModel) => {
           const speed = typeof s.speed === 'number' ? s.speed : 1.0
-          const provider = boundModel.includes(':') ? boundModel.split(':', 1)[0] : ''
+          const { provider } = splitModelRef(boundModel)
           const isRemoteVoice = !!provider && !PIPER_PROVIDERS.includes(provider)
           const speechVoice = typeof s.speech_voice === 'string' && s.speech_voice ? s.speech_voice : 'alloy'
           // One stored number, two consumer semantics (#657): Piper feeds it to
@@ -318,7 +319,7 @@ function UseCaseVoiceSection({
   const enabled = Boolean(settings.enabled)
   const bound = !!boundModel
   // boundModel is a "provider:id" ref — show the model id without the provider prefix.
-  const modelLabel = boundModel.includes(':') ? boundModel.split(':').slice(1).join(':') : boundModel
+  const modelLabel = modelIdOf(boundModel)
 
   const saveSettings = async (patch: Record<string, unknown>) => {
     const prev = settings

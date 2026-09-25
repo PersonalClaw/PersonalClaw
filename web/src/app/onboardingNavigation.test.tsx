@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, cleanup, act } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -278,6 +278,39 @@ describe('🔴 a step whose outcome is unknown reads unknown, never complete', (
     fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
     // The card that succeeded before the reload still counts as a first success.
     expect(await screen.findByText('First success: 1 of 3 tried')).toBeTruthy()
+  })
+
+  it('🔑 …nor undone: a reload on the recap claims nothing until the stored record is read', async () => {
+    // The converse of the check-mark rule above. Measured before the fix: a reload on the recap
+    // painted `Chat model — set up later in Settings` and `Nothing tried yet` while
+    // `GET /api/onboarding` was still out, then swapped in the bound model when it answered. Both
+    // sentences are claims about a home the screen had not read yet, and one of them was false.
+    await startAndPassName()
+    await waitFor(() => expect(announced()).toBe('Step 2 of 5: Bring your setup over'))
+    cleanup()
+    // The reload, with the read still on the wire.
+    let answer: (state: unknown) => void = () => {}
+    onboarding.mockReturnValue(new Promise((resolve) => { answer = resolve }))
+    renderFlow('ready')
+    await mounted()
+    // Positive control: the recap painted, so every absence below is about its lines.
+    expect(await screen.findByText('Hello, Ada')).toBeTruthy()
+    expect(screen.queryByText(/set up later/)).toBeNull()
+    expect(screen.queryByText(/Nothing tried yet/)).toBeNull()
+    expect(screen.queryByText(/^Chat model:/)).toBeNull()
+    // The two lines are still there, neutral: each names its subject and says it is loading.
+    expect(screen.getByText('Chat model').parentElement?.textContent).toBe('Chat modelLoading…')
+    expect(screen.getByText('First success').parentElement?.textContent).toBe('First successLoading…')
+
+    // The read answers: the bound model, and one card the earlier visit completed.
+    await act(async () => answer({
+      ...FRESH, needs_model: false, has_model_provider: true, has_chat_binding: true,
+      chat_model_refs: ['Local Ollama:qwen2.5vl:7b'], step: 'ready',
+      first_success: { knowledge: true, trigger: false, loop: false },
+    }))
+    expect(await screen.findByText('Chat model: qwen2.5vl:7b')).toBeTruthy()
+    expect(screen.getByText('First success: 1 of 3 tried')).toBeTruthy()
+    expect(screen.queryByText(/set up later/)).toBeNull()
   })
 })
 

@@ -580,7 +580,7 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
               <StepRow ref={rowRefs.ready} index={ORDER.indexOf('ready')} total={ORDER.length} icon={Sparkles} title={TITLES.ready}
                 subtitle={`You're ready, ${firstNameOf(savedName)}.`}
                 state={stateOf('ready')} onActivate={activate('ready')}>
-                <DoneScreen name={savedName} model={records.essentials} tried={records.try}
+                <DoneScreen name={savedName} model={records.essentials} tried={records.try} settled={readiness !== null}
                   showEverything={showEverything} onShowEverything={setShowEverything}
                   onFinish={finish} onTakeTour={takeTour} onExitTo={exitTo} />
               </StepRow>
@@ -735,7 +735,7 @@ function PillField({ value, onChange, onEnter, ariaLabel, placeholder, described
  *  rather than replacing it: the recap above already hands over three controls, and a
  *  first-run screen whose only exit is a guided walk is a gate wearing an offer. Both
  *  buttons finish the flow; one of them then walks the app. */
-function DoneScreen({ name, model, tried: triedRec, showEverything, onShowEverything, onFinish, onTakeTour, onExitTo }: {
+function DoneScreen({ name, model, tried: triedRec, settled, showEverything, onShowEverything, onFinish, onTakeTour, onExitTo }: {
   name: string
   /** What the essentials / try steps RECORDED, or `undefined` when they recorded nothing.
    *
@@ -744,6 +744,14 @@ function DoneScreen({ name, model, tried: triedRec, showEverything, onShowEveryt
    *  claimed success. The outcome is now the thing being read, and the summary is only text. */
   model?: StepRecord
   tried?: StepRecord
+  /** Whether `GET /api/onboarding` has settled — the read that seeds `model` and `tried` for a
+   *  run this session did not walk.
+   *
+   *  🔴 UNTIL IT HAS, `undefined` MEANS "NOT READ YET", NOT "RECORDED NOTHING". A reload on the
+   *  recap paints before that read lands, so reading `undefined` as an outcome painted
+   *  `Chat model — set up later in Settings` for a home whose model was bound, then swapped in the
+   *  real name a moment later. A line with no evidence yet names its subject and claims nothing. */
+  settled: boolean
   showEverything: boolean
   onShowEverything: (v: boolean) => void
   onFinish: () => void
@@ -752,6 +760,8 @@ function DoneScreen({ name, model, tried: triedRec, showEverything, onShowEveryt
 }) {
   const chatReady = model?.outcome === 'done'
   const tried = triedRec?.outcome === 'done'
+  /** A line is unknown only while the read is out AND this session recorded nothing for it. */
+  const unread = (rec?: StepRecord) => !settled && rec === undefined
 
   /** The autonomy pointer's facts, read when the ready step opens (this component mounts
    *  only then — StepRow renders children on the active step). `null` = still loading
@@ -790,8 +800,12 @@ function DoneScreen({ name, model, tried: triedRec, showEverything, onShowEveryt
       <motion.div className="flex flex-col gap-1.5"
         initial="initial" animate="animate" variants={{ animate: { transition: stagger(0.06) } }}>
         <motion.div variants={listItemEnter}><Recap ok label={`Hello, ${firstNameOf(name)}`} /></motion.div>
-        <motion.div variants={listItemEnter}><Recap ok={chatReady} label={chatReady ? `Chat model: ${model?.summary}` : 'Chat model — set up later in Settings'} /></motion.div>
-        <motion.div variants={listItemEnter}><Recap ok={tried} label={tried ? `First success: ${triedRec?.summary}` : 'Nothing tried yet — the cards are in Discover'} /></motion.div>
+        <motion.div variants={listItemEnter}>{unread(model)
+          ? <Recap ok={null} label="Chat model" />
+          : <Recap ok={chatReady} label={chatReady ? `Chat model: ${model?.summary}` : 'Chat model — set up later in Settings'} />}</motion.div>
+        <motion.div variants={listItemEnter}>{unread(triedRec)
+          ? <Recap ok={null} label="First success" />
+          : <Recap ok={tried} label={tried ? `First success: ${triedRec?.summary}` : 'Nothing tried yet — the cards are in Discover'} />}</motion.div>
       </motion.div>
 
       <div className="flex flex-col gap-s">
@@ -876,11 +890,17 @@ function Pointer({ icon: Icon, title, body, children }: {
   )
 }
 
-function Recap({ ok, label }: { ok: boolean; label: string }) {
+/** One recap line. `ok: null` is a line still waiting on its evidence: the neutral badge carries
+ *  the same spinner the essentials step shows while that read is out, and the label is only the
+ *  subject, so the line makes no claim in either direction until the answer lands. */
+function Recap({ ok, label }: { ok: boolean | null; label: string }) {
   return (
     <div className="flex items-center gap-2 text-[0.8125rem]">
-      <span className="grid size-5 place-items-center rounded-full" style={{ background: ok ? 'var(--color-success)' : 'var(--color-surface-high)', color: ok ? 'var(--color-on-primary)' : 'var(--color-on-surface-low)' }}><Check size={12} /></span>
+      <span className="grid size-5 place-items-center rounded-full" style={{ background: ok ? 'var(--color-success)' : 'var(--color-surface-high)', color: ok ? 'var(--color-on-primary)' : 'var(--color-on-surface-low)' }}>
+        {ok === null ? <Loader2 size={12} className="animate-spin" aria-hidden="true" /> : <Check size={12} />}
+      </span>
       <span className="text-on-surface-var">{label}</span>
+      {ok === null && <LoadingStatus />}
     </div>
   )
 }

@@ -13,7 +13,26 @@
  *  provider/model split is on the FIRST colon only — the same rule
  *  `personalclaw.providers.use_cases.split_ref` applies server-side. Splitting on the last
  *  one turns `Local Ollama:qwen2.5vl:7b` into `7b`.
+ *
+ *  🔴 **Every surface that splits a ref reads it here.** The loop cockpit had its own copy
+ *  that kept the text after the LAST colon and then the last dot, so it showed
+ *  `ollama:qwen2.5vl:7b` as `7b` and `…claude-3.5-sonnet` as `5-sonnet`. Settings carried five
+ *  more private copies of the right split, across the hub's Models tile, the Models panel and
+ *  the Speech panel. A dot cannot be read either: `qwen2.5vl` and `claude-3.5-sonnet` carry
+ *  version dots, so no rule can tell a namespace dot from one.
  */
+
+/** Both halves of one ref, split on its FIRST colon.
+ *
+ *  LOSSLESS, so a surface may use the halves as identity and not only as text: for a qualified
+ *  ref, `${provider}:${model}` rebuilds it exactly. The Models picker relies on that to unbind a
+ *  row it synthesised from a ref, and the chain editor keys each row's health dot on `provider`.
+ *  An UNQUALIFIED ref has no provider half: `provider` is `''` and `model` is the whole ref.
+ */
+export function splitModelRef(ref: string): { provider: string; model: string } {
+  const at = ref.indexOf(':')
+  return at === -1 ? { provider: '', model: ref } : { provider: ref.slice(0, at), model: ref.slice(at + 1) }
+}
 
 /** The model half of one ref — what a surface labelled "model" may show.
  *
@@ -22,8 +41,7 @@
  *  with nothing to say about a binding that exists.
  */
 export function modelIdOf(ref: string): string {
-  const at = ref.indexOf(':')
-  return (at === -1 ? ref : ref.slice(at + 1)).trim()
+  return splitModelRef(ref).model.trim()
 }
 
 /** The bound chat model's name from an active-model chain, or `''` when nothing names one.
