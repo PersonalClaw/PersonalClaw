@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { createServer, type Server } from 'node:http'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { extname, join, normalize } from 'node:path'
@@ -46,12 +46,19 @@ const MIME: Record<string, string> = {
   '.webmanifest': 'application/manifest+json',
 }
 
-/** A static server for `dist/` plus one live API route.
+/** A static server for `dist/` plus one or two live API routes.
  *
  *  `/api/ping` answers with a COUNTER, which makes a cache hit unmistakable: a
  *  worker serving the API from cache would replay a number it has already served.
+ *
+ *  `userName` adds `/api/dashboard/config`, and it is the ONE thing that decides
+ *  whether the SPA's route guard is reachable at all: `onboarded` is DERIVED from a
+ *  non-empty SERVER-side name (`src/app/identity.tsx`), so without it every route
+ *  redirects to `#/onboarding` — which is exactly why the shell slot the first test
+ *  inspects is keyed `/#/onboarding`. Omitted by default, so the two tests that came
+ *  first see precisely the server they always saw.
  */
-function serveDist(): { server: Server; ready: Promise<void> } {
+function serveDist(opts: { userName?: string } = {}): { server: Server; ready: Promise<void> } {
   let calls = 0
   const server = createServer((req, res) => {
     const url = new URL(req.url || '/', ORIGIN)
@@ -59,6 +66,11 @@ function serveDist(): { server: Server; ready: Promise<void> } {
       calls += 1
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
       res.end(JSON.stringify({ call: calls, secret: `payload-${calls}` }))
+      return
+    }
+    if (opts.userName !== undefined && url.pathname === '/api/dashboard/config') {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+      res.end(JSON.stringify({ user_name: opts.userName, username: '' }))
       return
     }
     // Mirrors the gateway: sw.js and the manifest sit at the dist ROOT (a worker's
@@ -239,4 +251,62 @@ test.describe('service worker', () => {
       await shutdown(server)
     }
   })
+
+  // ── The start_url has to still be the URL after the SPA boots (#3506) ──────────
+  //
+  // Every other assertion about `start_url` in this repo is about the VALUE: this spec
+  // checks the manifest on disk and as Chrome parsed it, and `src/app/manifest.test.ts`
+  // checks App.tsx's declarations. All of them were green while an installed PWA opened on
+  // the dashboard, because `App.tsx`'s unknown-hash corrector (#306) tested `ROUTABLE`, and
+  // `companion` is deliberately outside it — the route renders from an early return, not
+  // from the nav switch. So the shell rewrote its own entry point a tick after boot.
+  //
+  // A declared entry point the app navigates away from is a bug no static check can see, so
+  // this one is behavioural: open the real built bundle at the real `start_url` and read the
+  // hash back once the guard has provably had its say.
+  test('the start_url is still the URL after the app boots', async ({ page, context }) => {
+    // A server-side name, because `onboarded` is derived from one and the corrector is
+    // downstream of the onboarding redirect — without it this would assert nothing but
+    // that `#/onboarding` wins, which it already does in the first test.
+    const { server, ready } = serveDist({ userName: 'Keyur' })
+    await ready
+    try {
+      const manifest = await (await page.request.get(`${ORIGIN}/manifest.webmanifest`)).json() as {
+        start_url: string
+      }
+      // 🪤 THE POSITIVE CONTROL COMES FIRST, and this test is worthless without it. The hash
+      // already IS the start_url at t=0, so "it is still the start_url" is equally true of a
+      // working guard, of an app that never booted, and of a guard that never ran — the first
+      // draft of this test used `expect.poll`, which satisfied itself on its first read and
+      // passed against the very build that has the bug. A route nothing can render MUST be
+      // corrected, in the same build, in the same window, before the real read means anything.
+      const control = await context.newPage()
+      expect(
+        await settledHash(control, '/definitely-not-a-route'),
+        'the URL corrector never ran, so nothing below is evidence about it',
+      ).toBe('#/dashboard')
+      await control.close()
+
+      expect(await settledHash(page, manifest.start_url.split('#')[1]))
+        .toBe('#/companion')
+    } finally {
+      await shutdown(server)
+    }
+  })
 })
+
+/** Navigate to a hash and read it back once the route guard has run.
+ *
+ *  The guard's effect fires when identity resolves — that is `GET /api/dashboard/config` — and
+ *  the correction it performs is a `history.replaceState`, which emits NO `hashchange`. So there
+ *  is no event to await after it: the honest read is "identity resolved, then settle". How long
+ *  that settle needs to be is not assumed either — the positive control above corrects a bogus
+ *  route inside the same window, in the same build. */
+async function settledHash(page: Page, hashPath: string): Promise<string> {
+  const identity = page.waitForResponse(
+    (r) => new URL(r.url()).pathname === '/api/dashboard/config')
+  await page.goto(`${ORIGIN}/#${hashPath}`)
+  await identity
+  await page.waitForTimeout(1_500)
+  return page.evaluate(() => location.hash)
+}

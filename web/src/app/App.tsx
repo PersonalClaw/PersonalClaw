@@ -107,6 +107,19 @@ const NAV: NavItem[] = [
 // reaches it. That is the palette's stated job (see its comment: the always-open door to a
 // surface the rail is holding back), not a workaround.
 const ROUTABLE = new Set([...NAV.map((n) => n.id), 'notifications', 'discover', 'loop', 'loops', 'code', 'app', 'mission-control'])
+/** The routes the shell renders ITSELF, full-screen, from an early return above the nav switch —
+ *  `#/onboarding` and `#/companion`. Deliberately outside `NAV`/`ROUTABLE` (neither is a rail
+ *  destination) and every bit as real as the ones inside it.
+ *
+ *  🔴 The URL corrector MUST consult this as well as `ROUTABLE` (#3506). Testing `ROUTABLE` alone
+ *  made it treat both as typos, which measured as two dead ends: `#/companion` — the PWA
+ *  `start_url` — silently settling on `#/dashboard`, and EVERY onboarding exit deep-link landing
+ *  on the dashboard, because the correction fires on the handoff commit while `route` is still the
+ *  stale `'onboarding'`. */
+const SHELL_ROUTES = new Set(['onboarding', 'companion'])
+/** Is there anything the shell can render for this hash — by the nav switch or by an early
+ *  return? The corrector's question, and the reason it is not `ROUTABLE.has`. */
+const renderable = (route: string): boolean => ROUTABLE.has(route) || SHELL_ROUTES.has(route)
 
 /** The Suspense fallback for every code-split route, so it is what a user sees on EVERY
  *  navigation whose chunk is not cached yet.
@@ -365,42 +378,43 @@ function AppInner() {
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('ne:run-in-terminal', onRun as EventListener); unsub() }
   }, [])
 
-  // Onboarding is a real route (#/onboarding), full-screen, no NavRail. A guard
-  // redirects TO it when there's no name and AWAY from it once onboarded.
+  // ── ONE effect decides where the browser must be. ────────────────────────────────────────────
   //
-  // The exit branch honours a destination the flow asked for (OU-3): a try-one card's
-  // outcome link and its failure path's Settings deep-link both need to LEAVE the flow
-  // and land somewhere specific. They cannot navigate there themselves — the `!onboarded`
-  // branch above would pull them straight back, and navigating after committing the name
-  // races this effect. So the flow hands the destination over and this one navigation
-  // resolves it. Absent (the ordinary finish), the dashboard default is unchanged.
+  // Onboarding is a real route (#/onboarding), full-screen, no NavRail: this redirects TO it when
+  // there's no name and AWAY from it once onboarded. The exit branch honours a destination the flow
+  // asked for (OU-3): a try-one card's outcome link and its failure path's Settings deep-link both
+  // need to LEAVE the flow and land somewhere specific. They cannot navigate there themselves — the
+  // `!onboarded` branch would pull them straight back, and navigating after committing the name
+  // races this effect. So the flow hands the destination over and this one navigation resolves it.
+  // Absent (the ordinary finish), the dashboard default is unchanged.
   //
-  // `peek` never consumes, because THIS EFFECT IS RE-ENTRANT: `navigate` sets `location.hash`
-  // and `route` only catches up on the browser's async `hashchange`, so the exit branch can run
-  // again with a stale `route === 'onboarding'`. A consuming read made the second run resolve to
-  // the default and overwrite the first run's correct hash — measured live, landing on
-  // `#/dashboard` instead of `#/settings/providers`. Peeking makes every run resolve identically;
-  // the destination is dropped in the third branch, once the route has provably left onboarding.
+  // `peek` never consumes, because THIS EFFECT IS RE-ENTRANT: `navigate` sets `location.hash` and
+  // `route` only catches up on the browser's async `hashchange`, so the exit branch can run again
+  // with a stale `route === 'onboarding'`. A consuming read made the second run resolve to the
+  // default and overwrite the first run's correct hash — measured live, landing on `#/dashboard`
+  // instead of `#/settings/providers`. Peeking makes every run resolve identically; the destination
+  // is dropped in the last branch, once the route has provably left onboarding.
+  //
+  // 🔴 The unknown-hash correction (#306) is the LAST branch of this same effect, not a second
+  // effect, and that is the fix for #3506. As two effects it could only be ordered by a gate, and
+  // the gate it had (`loaded && onboarded`) described the wrong window: at the instant `onboarded`
+  // flips, `route` is STILL the stale `'onboarding'`, so both effects fired on one commit — the
+  // guard pushed the handed-over destination and the corrector `replace`d it with the dashboard.
+  // Measured: one `history.replaceState('#/dashboard')` from `navigate(..., {replace:true})`, the
+  // push never reaching a listener. Precedence now holds by construction: while there is a route
+  // decision to make, correction cannot run, because it is downstream of `return`.
+  //
+  // `replace: true` on that branch is load-bearing: a push would leave the bogus hash in history,
+  // so Back would return the user to the broken URL they were just rescued from — and each Back
+  // press would re-run this effect, bouncing them forward again.
   useEffect(() => {
     if (!loaded) return
-    if (!onboarded && route !== 'onboarding') navigate('onboarding')
-    else if (onboarded && route === 'onboarding') navigate(peekOnboardingExit() || 'dashboard')
-    else if (onboarded) clearOnboardingExit()
-  }, [loaded, onboarded, route, navigate])
-
-  // An unknown hash CORRECTS ITSELF (#306). The clamp above picks what to render; this makes the
-  // URL agree, so the address bar stops claiming a route that does not exist.
-  //
-  // `replace: true` is the load-bearing half: a push would leave the bogus hash in history, so Back
-  // would return the user to the broken URL they were just rescued from — and each Back press would
-  // re-run this effect, bouncing them forward again.
-  //
-  // Gated on `loaded && onboarded` so it cannot race the onboarding effect above: while onboarding
-  // owns the route, `#/onboarding` is deliberately NOT in ROUTABLE, and correcting it here would
-  // fight that redirect.
-  useEffect(() => {
-    if (!loaded || !onboarded) return
-    if (route && !ROUTABLE.has(route)) navigate('dashboard', { replace: true })
+    if (!onboarded) { if (route !== 'onboarding') navigate('onboarding'); return }
+    if (route === 'onboarding') { navigate(peekOnboardingExit() || 'dashboard'); return }
+    // `renderable`, not `ROUTABLE.has` — `#/companion` is rendered by an early return below and is
+    // the PWA's `start_url`, so correcting it away made an installed app open on the wrong surface.
+    if (route && !renderable(route)) { navigate('dashboard', { replace: true }); return }
+    clearOnboardingExit()
   }, [loaded, onboarded, route, navigate])
 
   // ── Progressive disclosure over the rail (ONBOARDING-UX C4) ──
@@ -411,10 +425,14 @@ function AppInner() {
 
   // The REAL route to render (loops/code keep their own sections for detail/history/
   // planning sub-routes; only the BARE route was folded into the #/loop composer).
-  // An unknown route falls back to the home dashboard FOR THIS RENDER, and the effect below
+  // An unknown route falls back to the home dashboard FOR THIS RENDER, and the route effect above
   // then corrects the URL (#306). The clamp alone left `#/nonsense` in the address bar with the
   // dashboard underneath it — so a stale bookmark, a typo, or a link from an older version all
   // looked like the dashboard had simply moved there, with nothing to tell the user which.
+  //
+  // `ROUTABLE.has`, deliberately NOT `renderable`: this picks a case for the nav switch, and a
+  // SHELL_ROUTES member never reaches the switch — it returns early below. Widening it here would
+  // hand the switch a route with no case.
   const rendered = ROUTABLE.has(route) ? route : 'dashboard'
   // The nav-HIGHLIGHT route: loops launch from within Projects, so a bare #/loop
   // composer or a #/loops/<id> / #/code/<id> deep-link lights the Projects tile.

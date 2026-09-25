@@ -60,14 +60,25 @@ describe('manifest.webmanifest — installability', () => {
     expect(manifest.start_url).toBe('/#/companion')
   })
 
-  it('start_url points at a route the SPA actually serves', () => {
-    // A start_url nothing routes to installs an app that opens on a blank page.
-    // `#/companion` is a hash route registered in App.tsx (MC-3), deliberately
-    // outside NAV/ROUTABLE, so it is matched by string here rather than imported.
+  it('🔴 start_url is a route the shell will not correct away (#3506)', () => {
+    // This used to assert only that `App.tsx` CONTAINS the string `'companion'` — and it was
+    // green the whole time an installed PWA opened on the dashboard. The route was registered
+    // and then rewritten: `App.tsx`'s unknown-hash corrector (#306) tested `ROUTABLE`, and
+    // `companion` is deliberately outside it because it renders from an early return.
+    //
+    // "A route the SPA serves" therefore needs two facts, not one: the shell renders it, AND
+    // the corrector admits it. `SHELL_ROUTES` is the set that carries both, so that is what is
+    // read. Still by string rather than by import — importing App.tsx pulls in the whole SPA.
     const app = readFileSync(join(WEB_DIR, 'src', 'app', 'App.tsx'), 'utf8')
-    expect(app).toContain("'companion'")
     const hash = manifest.start_url!.split('#')[1]
     expect(hash).toBe('/companion')
+    const declared = app.match(/const SHELL_ROUTES = new Set\(\[([^\]]*)\]\)/)
+    expect(declared, 'App.tsx declares no SHELL_ROUTES for the corrector to consult').toBeTruthy()
+    const shellRoutes = [...declared![1].matchAll(/'([^']+)'/g)].map((m) => m[1])
+    expect(shellRoutes, `start_url ${manifest.start_url} is not a shell route`)
+      .toContain(hash.replace(/^\//, ''))
+    // The behavioural half — that the hash is still the hash after the app boots — is
+    // `web/e2e/pwa.spec.ts`, because no static read can see a navigation.
   })
 
   it('declares an installable display mode', () => {
