@@ -34,6 +34,7 @@ import json
 import logging
 import os
 import re as _re
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -375,16 +376,68 @@ def _vault_mode(memory_data: dict) -> str:
 
 
 _BOT_NAME_MAX = 50
-_BOT_NAME_RE = _re.compile(r"[^a-zA-Z0-9 _\-.]")
+
+# What an assistant name may contain: an ALLOWLIST by Unicode general category. The ASCII one it
+# replaced (`[a-zA-Z0-9 _\-.]`) turned `Zoë` into `Zo` and erased a name written in Devanagari or
+# Han to `""`. Judging by category also covers code points a later Unicode version adds, where a
+# list of bad characters covers only the ones someone thought of.
+#
+# The name is interpolated into every system prompt (`You are {{bot_name}} — …`) through the
+# prompt template engine. What the allowlist keeps out of it:
+#   * template syntax: every engine construct opens with `{` (`{{ }}`, `{% %}`, `{# #}`, `{{> }}`);
+#   * markup that restructures a prompt: markdown and HTML punctuation (`*`, backtick, `#`, `<`,
+#     `>`, `[`, `]`, `|`, `\`, …), and every other symbol, emoji included;
+#   * control characters (Cc): a newline would start a line of its own in the system prompt;
+#   * invisible text: format characters (Cf: bidi overrides, zero-width space, BOM, Unicode tag
+#     characters) and variation selectors make a name READ differently to the model than it LOOKS
+#     in Settings. The 256 variation selectors are a complete byte alphabet that changes no letter.
+_BOT_NAME_CATEGORIES = frozenset(
+    {
+        *("Lu", "Ll", "Lt", "Lm", "Lo"),  # letters, any script
+        *("Mn", "Mc", "Me"),  # combining marks: accents, Indic vowel signs and virama, harakat
+        "Nd",  # decimal digits, any script
+        "Zs",  # spaces, including the ideographic space a CJK input method types
+    }
+)
+# The punctuation names use (U+2019 is what a phone's smart punctuation types for the apostrophe
+# key), and the two joiners Persian and several Indic scripts spell names with: Sinhala "Sri" has a
+# ZERO WIDTH JOINER between its two consonants. `_` stays because the ASCII allowlist accepted it,
+# so a name saved under that one loads unchanged under this one.
+_BOT_NAME_EXTRA = frozenset("'\u2019-._\u200c\u200d")
+
+
+def _bot_name_char_allowed(ch: str) -> bool:
+    if ch in _BOT_NAME_EXTRA:
+        return True
+    cp = ord(ch)
+    if 0xFE00 <= cp <= 0xFE0F or 0xE0100 <= cp <= 0xE01EF:  # variation selectors, category Mn
+        return False
+    return unicodedata.category(ch) in _BOT_NAME_CATEGORIES
+
+
+def _bot_name_disallowed(name: str) -> list[str]:
+    """The distinct characters of *name* an assistant name may not contain, in first-seen order."""
+    return list(dict.fromkeys(ch for ch in name if not _bot_name_char_allowed(ch)))
 
 
 def _sanitize_bot_name(raw: str) -> str:
-    """Sanitize bot_name: strip markdown, braces, limit length."""
+    """Normalize ``agent.bot_name`` as ``load()`` reads it: drop every character a name may not
+    contain, trim surrounding whitespace, cap at 50 characters.
+
+    Kept: letters and combining marks from any script, decimal digits, spaces, the apostrophe
+    (``'`` and U+2019), ``-``, ``.``, ``_``, and ZERO WIDTH NON-JOINER / JOINER. Stripped:
+    everything else — braces (template syntax), markdown and HTML punctuation, all other symbols
+    and emoji, control characters, format characters (bidi overrides, zero-width space, BOM, tag
+    characters) and variation selectors.
+
+    This is the READ side, for a hand-edited ``config.json``. The write boundary refuses those
+    characters instead of stripping them (``_bot_name_validator``, ``dashboard/handlers/core.py``):
+    stripping there stored a name nobody typed while reporting success.
+    """
     if not isinstance(raw, str):
         return ""
-    name = raw.strip()[:_BOT_NAME_MAX]
-    name = name.replace("{", "").replace("}", "")
-    return _BOT_NAME_RE.sub("", name)
+    kept = "".join(ch for ch in raw if _bot_name_char_allowed(ch))
+    return kept.strip()[:_BOT_NAME_MAX].strip()
 
 
 @dataclass

@@ -64,7 +64,10 @@ export function AccountPanel() {
       })
   }
 
-  // Assistant name (agent.bot_name) — single-field PATCH; server sanitizes.
+  // Assistant name (agent.bot_name) — single-field PATCH. The server refuses a character a name
+  // cannot carry (the toast names it) and answers with the whole stored config, so the field shows
+  // the name from that ANSWER, as Username does. Setting it from the draft is how "Saved" once sat
+  // beside `Chloé's Aide` while the server had stored `Chlos Aide`.
   const [botName, setBotName] = useState('')
   const [botDraft, setBotDraft] = useState('')
   const [botSaved, setBotSaved] = useState(false)
@@ -76,9 +79,10 @@ export function AccountPanel() {
   }, [])
   const botDirty = botDraft.trim() !== botName
   const saveBot = () => {
-    const v = botDraft.trim()
-    api.patchConfig('agent.bot_name', v).then(() => {
-      setBotName(v); setBotSaved(true); setTimeout(() => setBotSaved(false), 1800)
+    api.patchConfig('agent.bot_name', botDraft.trim()).then((c) => {
+      const stored = String(c?.agent?.bot_name ?? '')
+      setBotName(stored); setBotDraft(stored)
+      setBotSaved(true); setTimeout(() => setBotSaved(false), 1800)
     }).catch((e) => {
       notify(`Couldn't save the assistant name: ${String((e as Error)?.message || e)}`, 'error')
     })
