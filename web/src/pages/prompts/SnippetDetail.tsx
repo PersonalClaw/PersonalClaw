@@ -61,9 +61,8 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
         <div className="flex items-center gap-s">
           <span data-type="body-s" className="inline-flex items-center gap-1.5 text-on-surface-low"><Pencil size={13} /> Editing</span>
         </div>
-        {err && <FieldError>{err}</FieldError>}
         <SnippetForm draft={draft} onChange={setDraft} nameLocked />
-        <FormFooter>
+        <FormFooter error={err}>
           <Button variant="ghost" size="sm" onClick={() => { if (full) setDraft(toSnippetDraft(full)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} loading={saving} disabled={saving || !draft.name.trim()}
             disabledReason={!draft.name.trim() ? 'Enter a name first' : undefined}><Check size={15} /> Save</Button>

@@ -600,6 +600,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/projects` — _(no summary)_
 - `POST /api/projects` — _(no summary)_
 - `POST /api/projects/import` — import a project archive (multipart `file`).
+- `GET /api/projects/settings` — the user's default project (`""` when none).
+- `PUT /api/projects/settings` — set the default project; `""` or null clears it.
 - `DELETE /api/projects/{project_id}` — _(no summary)_
 - `GET /api/projects/{project_id}` — _(no summary)_
 - `PUT /api/projects/{project_id}` — _(no summary)_

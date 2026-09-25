@@ -456,10 +456,18 @@ class NativeTaskProvider(TaskProvider):
             # the field loop because the loop mutates `task` in place.
             previous_status = task.status.value
             status_or_deps_changed = False
+            # The status this write asks for, applied AFTER every other field. The DONE gates below
+            # judge the task as this write will leave it, which they could not do from inside the
+            # loop: `status` precedes `exit_criteria` and `dependencies` in the dashboard's payload,
+            # so ticking the last criterion and choosing Completed in ONE save was refused against
+            # the pre-edit checklist — and a write that completed a task while adding an unmet
+            # criterion was accepted. `create_task` already gates the constructed task, so update
+            # now agrees with it.
+            requested_status: TaskStatus | None = None
             for key, val in fields.items():
                 if key == "status":
                     try:
-                        new_status = TaskStatus(val)
+                        requested_status = TaskStatus(val)
                     except ValueError:
                         # An invalid status must be a loud 400, not a silent no-op:
                         # the old `continue` made PUT /api/tasks/{id} return 200 with
@@ -472,30 +480,6 @@ class NativeTaskProvider(TaskProvider):
                             f"invalid status {val!r} — use one of: "
                             + ", ".join(s.value for s in TaskStatus)
                         ) from None
-                    # Exit-criteria gate: a task can only be completed when every
-                    # exit criterion is complete.
-                    if new_status == TaskStatus.DONE and not task.can_mark_complete():
-                        raise ValueError(
-                            "cannot complete: unfinished exit criteria — "
-                            + ", ".join(task.incomplete_exit_criteria())
-                        )
-                    # Dependency gate: a task cannot complete while a prerequisite is
-                    # still open. The exit-criteria gate above enforced only the task's
-                    # OWN checklist, so a kanban drag (or any PUT status=done) could mark
-                    # a task done with a non-terminal BLOCKS prerequisite — leaving a
-                    # `blocked_reason_kind="auto"` DONE row that reconcile never clears and
-                    # counting it toward graph completion. Same shape and 400-mapping as
-                    # the exit-criteria refusal; uses reconcile's own unfinished-prereq
-                    # predicate so the gate and the auto-block logic can never disagree.
-                    if new_status == TaskStatus.DONE:
-                        blocked = reconcile.block_reason(task, tasks)
-                        if blocked["is_blocked"]:
-                            raise ValueError(
-                                "cannot complete: waiting on unfinished prerequisite — "
-                                + ", ".join(blocked["blocking_task_titles"])
-                            )
-                    task.status = new_status
-                    status_or_deps_changed = True
                 elif key in ("dependencies", "depends_on"):
                     task.dependencies = self._coerce_dependencies(val)
                     status_or_deps_changed = True
@@ -540,6 +524,31 @@ class NativeTaskProvider(TaskProvider):
                     # A refusal is a `ValueError`, which both handlers already map to a 400.
                     task_setattr = models_coerce(key, val, strict=True)
                     setattr(task, key, task_setattr)
+            if requested_status is not None:
+                if requested_status == TaskStatus.DONE:
+                    # Exit-criteria gate: a task can only be completed when every
+                    # exit criterion is complete.
+                    if not task.can_mark_complete():
+                        raise ValueError(
+                            "cannot complete: unfinished exit criteria — "
+                            + ", ".join(task.incomplete_exit_criteria())
+                        )
+                    # Dependency gate: a task cannot complete while a prerequisite is
+                    # still open. The exit-criteria gate above enforced only the task's
+                    # OWN checklist, so a kanban drag (or any PUT status=done) could mark
+                    # a task done with a non-terminal BLOCKS prerequisite — leaving a
+                    # `blocked_reason_kind="auto"` DONE row that reconcile never clears and
+                    # counting it toward graph completion. Same shape and 400-mapping as
+                    # the exit-criteria refusal; uses reconcile's own unfinished-prereq
+                    # predicate so the gate and the auto-block logic can never disagree.
+                    blocked = reconcile.block_reason(task, tasks)
+                    if blocked["is_blocked"]:
+                        raise ValueError(
+                            "cannot complete: waiting on unfinished prerequisite — "
+                            + ", ".join(blocked["blocking_task_titles"])
+                        )
+                task.status = requested_status
+                status_or_deps_changed = True
             # Re-derive the project label if the task list changed.
             if "task_list_id" in fields:
                 task.project = self._derive_project_label(task.task_list_id)

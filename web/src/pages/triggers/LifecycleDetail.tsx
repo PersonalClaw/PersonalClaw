@@ -100,8 +100,7 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
           <TextInput value={matcher} onChange={setMatcher} placeholder={eventTakesToolMatcher(event) ? 'write_file' : '*'} />
         </Field>
         <ActionConfig providers={providers} provider={provider} config={config} onProvider={pickProvider} onConfig={setConfig} vars={em.vars} />
-        {err && <FieldError>{err}</FieldError>}
-        <FormFooter>
+        <FormFooter error={err}>
           <Button variant="ghost" size="sm" onClick={() => { restoreDraft(); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} loading={saving} disabled={saving || !name.trim()}
             disabledReason={!name.trim() ? 'Enter a name first' : undefined}><Check size={15} /> Save</Button>

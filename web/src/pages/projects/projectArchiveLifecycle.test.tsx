@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { api, type ProjectItem, type WorkBoard } from '../../lib/api'
+import { resetDataStore } from '../../lib/data'
 import { ProjectsSection } from './ProjectsSection'
 import { DialogHost } from '../../ui/dialog/DialogHost'
 
@@ -18,6 +19,8 @@ const EMPTY_WORK: WorkBoard = {
 
 let project: ProjectItem
 let updateProject: ReturnType<typeof vi.spyOn>
+let updateProjectSettings: ReturnType<typeof vi.spyOn>
+let defaultProjectId = ''
 
 function mount(status: ProjectItem['status'], isDefault = false) {
   project = {
@@ -27,7 +30,7 @@ function mount(status: ProjectItem['status'], isDefault = false) {
     brief: 'Ship the release notes.',
     context_dir: '/tmp/personalclaw-test/context',
   }
-  if (isDefault) localStorage.setItem('active-project', PROJECT_ID)
+  defaultProjectId = isDefault ? PROJECT_ID : ''
 
   vi.spyOn(api, 'project').mockImplementation(async () => project)
   vi.spyOn(api, 'taskLists').mockResolvedValue([])
@@ -38,6 +41,15 @@ function mount(status: ProjectItem['status'], isDefault = false) {
   updateProject = vi.spyOn(api, 'updateProject').mockImplementation(async (id, body) => {
     project = { ...project, ...body, id }
     return project
+  })
+  // The default project is server-stored (`GET/PUT /api/projects/settings`); an archived default
+  // resolves to "none" there, which this mock mirrors.
+  vi.spyOn(api, 'projectSettings').mockImplementation(async () => ({
+    default_project_id: project.status === 'archived' ? '' : defaultProjectId,
+  }))
+  updateProjectSettings = vi.spyOn(api, 'updateProjectSettings').mockImplementation(async (body) => {
+    defaultProjectId = body.default_project_id
+    return body
   })
 
   render(
@@ -56,11 +68,15 @@ function mount(status: ProjectItem['status'], isDefault = false) {
 
 beforeEach(() => {
   localStorage.clear()
+  sessionStorage.clear()
+  resetDataStore()
 })
 
 afterEach(() => {
   vi.restoreAllMocks()
   localStorage.clear()
+  sessionStorage.clear()
+  resetDataStore()
 })
 
 describe('project archive lifecycle', () => {
@@ -100,12 +116,32 @@ describe('project archive lifecycle', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('calls the unrelated local preference Default project, never project status', async () => {
+  it('calls the unrelated account preference Default project, never project status', async () => {
     mount('active', true)
 
     const defaultProject = await screen.findByRole('button', { name: /^Default project$/i })
     expect(defaultProject).toHaveAttribute('aria-pressed', 'true')
     expect(screen.queryByRole('button', { name: /Set active/i })).toBeNull()
+    // It says what it governs and that it is not this browser's alone.
+    expect(defaultProject.getAttribute('title')).toMatch(/new tasks and loops start here, on every device/)
+  })
+
+  it('makes a project the default through the server, not this browser', async () => {
+    mount('active')
+    await userEvent.click(await screen.findByRole('button', { name: /^Make default$/i }))
+    await waitFor(() => expect(updateProjectSettings).toHaveBeenCalledWith({ default_project_id: PROJECT_ID }))
+    expect(await screen.findByRole('button', { name: /^Default project$/i })).toHaveAttribute('aria-pressed', 'true')
+    expect(localStorage.getItem('active-project'), 'the per-browser pointer is gone').toBeNull()
+  })
+
+  it('an archived project cannot become the default, and says why', async () => {
+    mount('archived', true)
+    const makeDefault = await screen.findByRole('button', { name: /^Make default$/i })
+    expect(makeDefault, 'an archived default resolves to none').toHaveAttribute('aria-pressed', 'false')
+    expect(makeDefault).toHaveAttribute('aria-disabled', 'true')
+    expect(makeDefault.getAttribute('title')).toMatch(/Restore this project/)
+    await userEvent.click(makeDefault)
+    expect(updateProjectSettings).not.toHaveBeenCalled()
   })
 
   it('keeps exactly both status writers behind the one shared update sink', () => {

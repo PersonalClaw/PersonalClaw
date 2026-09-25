@@ -9,8 +9,8 @@
  *  🔑 CLIENT-SIDE ON PURPOSE, and the shelf does not depend on it. Shelf MEMBERSHIP is server
  *  truth (`read_state = 'reading'`, set through the existing read-state endpoint), so a fresh
  *  browser still shows the right articles — it just resumes them at the top until you scroll
- *  once. A position is a per-device convenience, in the same class as `lib/activeProject`; the
- *  fact that you are mid-article is library state and lives in the store.
+ *  once. A position is a per-device convenience — where THIS screen was scrolled — so it stays in
+ *  the browser; the fact that you are mid-article is library state and lives in the store.
  *
  *  Every accessor is failure-tolerant: private mode, a quota-full origin and a hand-corrupted
  *  value all read as "no saved position", which resumes at the top rather than throwing inside

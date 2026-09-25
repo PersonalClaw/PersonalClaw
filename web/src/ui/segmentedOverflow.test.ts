@@ -118,7 +118,7 @@ describe('a Segmented fed by a large registry declares how it collapses', () => 
         const big = s.registries.map((r) => `${r}=${SIZES.get(r)}`).join(',')
         return `${s.file}:${s.line} (${big})`
       })
-    expect(offenders, 'a strip this wide is cut off, not shrunk — pass collapse="scroll" or "menu"').toEqual([])
+    expect(offenders, 'a strip this wide is cut off, not shrunk — pass collapse="scroll", "menu" or "wrap"').toEqual([])
   })
 
   it('the artifacts kind filter — the site this rail was measured on — scrolls', () => {

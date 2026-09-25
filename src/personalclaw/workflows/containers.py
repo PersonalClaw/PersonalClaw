@@ -59,6 +59,28 @@ class BoardState(str, Enum):
     DONE = "done"
 
 
+class BoardOutcome(str, Enum):
+    """HOW a `DONE` row ended — carried on the row, because the group alone cannot say it.
+
+    `DONE` is the board's "nothing left for you to do" bucket, and that is right for grouping: a
+    cancelled task and a completed one ask the same thing of the reader. It is wrong as a claim
+    about the work. Measured on a project page: a cancelled task sat under "Done" with the same
+    glyph as the completed task beside it, so the board said the press kit had shipped. Every
+    source reports its own ending here in one closed vocabulary, and the words are the ones each
+    source's own registry already ships for the same state.
+    """
+
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    SKIPPED = "skipped"
+    FAILED = "failed"
+    STOPPED = "stopped"
+    #: A loop that completed on a ceiling (budget, deadline, cost) rather than on its goal — the
+    #: same carve-out `lib/loopStatus.effectiveLoopStatus` draws, so a budget stop never reads as
+    #: a finished goal here while it reads "Ended early" everywhere else.
+    ENDED_EARLY = "ended_early"
+
+
 #: Board order. Needs-input is pinned FIRST and unconditionally: it is the only group where the run
 #: is stopped waiting on the person reading the board, so burying it under twelve working rows is
 #: how a run sits blocked overnight.
@@ -302,6 +324,23 @@ def board_state_for(run: Any) -> BoardState:
     return BoardState.DONE
 
 
+#: A run's ending, for the rows `board_state_for` files under `DONE`. ESCALATED is absent on
+#: purpose: it projects to `REVIEW`, where something still waits on a judgement.
+_RUN_OUTCOME = {
+    RunStatus.COMPLETE: BoardOutcome.COMPLETED,
+    RunStatus.FAILED: BoardOutcome.FAILED,
+    RunStatus.CANCELLED: BoardOutcome.CANCELLED,
+}
+
+
+def run_outcome(run: Any) -> BoardOutcome | None:
+    """How a run on the `DONE` group ended; None for a run that has not ended."""
+    status = getattr(run, "status", None)
+    if board_state_for(run) is not BoardState.DONE or not isinstance(status, RunStatus):
+        return None
+    return _RUN_OUTCOME.get(status)
+
+
 @dataclass
 class BoardRow:
     """One row on the Work board.
@@ -309,6 +348,9 @@ class BoardRow:
     `collapsed` and `attention` are separate flags because they answer different questions: a
     subagent-tool run is collapsed (visual noise) but still counts toward attention if it is
     blocked, while a heartbeat run counts toward neither.
+
+    `outcome` is set on `DONE` rows only — see :class:`BoardOutcome` for why the group cannot
+    carry it.
     """
 
     run_id: str
@@ -320,6 +362,7 @@ class BoardRow:
     collapsed: bool = False
     attention: bool = False
     resumable: bool = False
+    outcome: BoardOutcome | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -332,6 +375,7 @@ class BoardRow:
             "collapsed": self.collapsed,
             "attention": self.attention,
             "resumable": self.resumable,
+            "outcome": self.outcome.value if self.outcome else "",
         }
 
 
@@ -354,6 +398,7 @@ def board_row(run: Any, *, claim_record: Claim | None = None, now: float = 0.0) 
         collapsed=origin in COLLAPSED_ORIGINS,
         attention=(state is BoardState.NEEDS_INPUT and origin not in UNATTENDED_ORIGINS),
         resumable=state is BoardState.SUSPENDED,
+        outcome=run_outcome(run),
     )
 
 

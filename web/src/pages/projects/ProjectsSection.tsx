@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
-import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CircleDot, Circle, AlertTriangle, RefreshCw, Download, BookMarked, Users, UserRound, Archive, ArchiveRestore, type LucideIcon } from 'lucide-react'
+import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CircleDot, Circle, AlertTriangle, OctagonAlert, CircleStop, TriangleAlert, RefreshCw, Download, BookMarked, Users, UserRound, Archive, ArchiveRestore, type LucideIcon } from 'lucide-react'
 import { statusMeta, TERMINAL } from '../tasks/taskMeta'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
@@ -22,12 +22,12 @@ import { Button } from '../../ui/Button'
 import { FieldHintProvider, FieldLabelProvider, TextArea, TextInput } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { WorkspacePicker } from '../code/WorkspacePicker'
-import { api, ApiError, MAX_NAME_LEN, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry, type WorkRow, type WorkState, type WorkBoard, type ProjectKnowledgeItem, type SharingPolicy } from '../../lib/api'
+import { api, ApiError, MAX_NAME_LEN, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry, type WorkRow, type WorkState, type WorkOutcome, type WorkBoard, type ProjectKnowledgeItem, type SharingPolicy } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
-import { getActiveProject, setActiveProject } from '../../lib/activeProject'
+import { DEFAULT_PROJECT_KEY, useDefaultProject } from '../../lib/defaultProject'
 import { notify } from '../../app/appSdk'
 import { PageTitle } from '../../ui/PageTitle'
-import { loopStatusLabel } from '../../lib/loopStatus'
+import { loopStatusColor, loopStatusLabel } from '../../lib/loopStatus'
 
 /** Projects navigation — the first-class work unit tying Goal Loops, Code projects,
  *  and Tasks together under one context-continuous container.
@@ -53,15 +53,10 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
   const [creating, setCreating] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
-  // The active project, so its row carries a star; kept in sync with the pointer.
-  const [activeId, setActiveId] = useState(getActiveProject)
-  useEffect(() => {
-    const onChange = () => setActiveId(getActiveProject())
-    window.addEventListener('ne:active-project', onChange)
-    return () => window.removeEventListener('ne:active-project', onChange)
-  }, [])
+  // The default project, so its row carries a star.
+  const { defaultProjectId, setDefaultProject } = useDefaultProject()
 
-  async function create(form: { name: string; brief: string; workspaceDir: string; setActive: boolean }) {
+  async function create(form: { name: string; brief: string; workspaceDir: string; makeDefault: boolean }) {
     const name = form.name.trim()
     if (!name || busy) return
     setBusy(true); setErr(null)
@@ -72,7 +67,7 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
         name, brief: form.brief.trim() || undefined, name_locked: true,
         workspace_dir: form.workspaceDir.trim() || undefined,
       })
-      if (form.setActive) setActiveProject(p.id)
+      if (form.makeDefault) await setDefaultProject(p.id)
       setCreating(false)
       invalidateKeys('projects:list'); refresh()
       onOpen(p.id)
@@ -117,10 +112,9 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
     }))) return
     const run = async (force: boolean) => {
       await api.deleteProject(proj.id, force)
-      // Keep the active-project pointer honest — a deleted project must not linger as
-      // the working context (the create pickers would then send a dead id + show a
-      // confusing bare label).
-      if (getActiveProject() === proj.id) setActiveProject('')
+      // A deleted default resolves to "none" server-side; drop the cached copy so no reader
+      // paints the dead id in the meantime.
+      invalidateKeys(DEFAULT_PROJECT_KEY)
     }
     try {
       await run(false)
@@ -220,7 +214,7 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
                   <FolderKanban size={16} className="shrink-0 text-on-surface-low" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
-                      {p.id === activeId && <Star size={12} className="shrink-0 text-primary" style={{ fill: 'var(--color-primary)' }} aria-label="Active project" />}
+                      {p.id === defaultProjectId && <Star size={12} className="shrink-0 text-primary" style={{ fill: 'var(--color-primary)' }} role="img" aria-label="Default project" />}
                       <span className="truncate text-on-surface text-[0.9375rem]">{p.name}</span>
                       {p.is_builtin && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low">Built-in</span>}
                       {p.status === 'archived' && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low">Archived</span>}
@@ -441,20 +435,20 @@ export function ProjectKnowledgeList({ items }: { items: ProjectKnowledgeItem[] 
   )
 }
 
-/** New-project modal: name + brief + an optional workspace binding + a set-active
+/** New-project modal: name + brief + an optional workspace binding + a make-default
  *  toggle — so the whole project can be set up in one step (the old inline form only
- *  took name + brief, leaving the user to bind a workspace + set active afterwards). */
+ *  took name + brief, leaving the user to bind a workspace + make it the default afterwards). */
 function NewProjectModal({ busy, onClose, onCreate }: {
   busy: boolean
   onClose: () => void
-  onCreate: (form: { name: string; brief: string; workspaceDir: string; setActive: boolean }) => void
+  onCreate: (form: { name: string; brief: string; workspaceDir: string; makeDefault: boolean }) => void
 }) {
   const [name, setName] = useState('')
   const [brief, setBrief] = useState('')
   const [workspaceDir, setWorkspaceDir] = useState('')
-  const [setActive, setSetActive] = useState(true)
+  const [makeDefault, setMakeDefault] = useState(true)
   const [pickWs, setPickWs] = useState(false)
-  const submit = () => { if (name.trim() && !busy) onCreate({ name, brief, workspaceDir, setActive }) }
+  const submit = () => { if (name.trim() && !busy) onCreate({ name, brief, workspaceDir, makeDefault }) }
   return (
     <Modal title="New project" icon={<FolderKanban size={18} className="text-primary" />} onClose={onClose}>
       <div className="flex flex-col gap-l">
@@ -501,8 +495,8 @@ function NewProjectModal({ busy, onClose, onCreate }: {
           </div>
         </Field>
         <label className="flex items-center gap-2 text-[0.8125rem] text-on-surface-var cursor-pointer">
-          <input type="checkbox" checked={setActive} onChange={(e) => setSetActive(e.target.checked)} className="size-4 accent-primary" />
-          Make this the active project (new work defaults here)
+          <input type="checkbox" checked={makeDefault} onChange={(e) => setMakeDefault(e.target.checked)} className="size-4 accent-primary" />
+          Make it your default project — new tasks and loops start here, on every device
         </label>
         <div className="flex items-center justify-end gap-2 pt-1">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
@@ -604,20 +598,16 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
     // dir panels are exactly the workspace/context dirs; encode which, not the raw path.
     setPanelTok(`dir:${p.path === project?.context_dir ? 'context' : 'workspace'}`)
   }
-  // Whether this is the user's active project (the working context the create
-  // pickers + manual task form default to). Tracked locally; synced via the event.
-  const [active, setActive] = useState(() => getActiveProject() === id)
-  useEffect(() => {
-    const onChange = () => setActive(getActiveProject() === id)
-    onChange()  // re-sync on mount + whenever `id` changes (soft nav between projects,
-                // or active set from another surface before this shell mounted)
-    window.addEventListener('ne:active-project', onChange)
-    return () => window.removeEventListener('ne:active-project', onChange)
-  }, [id])
+  // Whether this is the user's default project — where the create forms (a new task, a new
+  // loop) start. Server-stored, so it reads the same in every browser.
+  const { defaultProjectId, setDefaultProject, pending: defaultPending } = useDefaultProject()
+  const isDefault = defaultProjectId === id
 
   async function patch(body: Record<string, unknown>) {
     setErr(null)
-    try { await api.updateProject(id, body); invalidateKeys(`projects:detail:${id}`); invalidateKeys('projects:list'); refresh() }
+    // The settings key too: archiving the default project makes it resolve to "none", and
+    // restoring it brings it back, so the Default toggle must re-read after a status write.
+    try { await api.updateProject(id, body); invalidateKeys(`projects:detail:${id}`); invalidateKeys('projects:list'); invalidateKeys(DEFAULT_PROJECT_KEY); refresh() }
     catch (e) { setErr((e as Error).message || 'Could not update the project') }
   }
 
@@ -665,13 +655,13 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
     return <Shell onBack={onBack} title="Project"><div className="flex h-full flex-col items-center justify-center gap-3 text-center"><p className="text-on-surface text-[0.9375rem]">This project no longer exists.</p><Button onClick={onBack}><ListChecks size={15} /> Back to projects</Button></div></Shell>
   }
 
-  // Launch scoped under THIS project: set it active (so the composer's project picker
-  // seeds from it) + deep-link the unified Loop composer with the project + chosen KIND.
+  // Launch scoped under THIS project: deep-link the unified Loop composer with the project +
+  // chosen KIND. The link carries the project, so launching from here scopes that one piece of
+  // work and leaves the user's default project where they put it.
   const launchKind = (kind?: LoopKind) => {
-    setActiveProject(id)
     navigate(`loop?project=${encodeURIComponent(id)}` + (kind ? `&kind=${kind}` : ''))
   }
-  const launchChat = () => { setActiveProject(id); navigate(`chat?project=${encodeURIComponent(id)}`) }
+  const launchChat = () => { navigate(`chat?project=${encodeURIComponent(id)}`) }
   // Icons are the canonical per-kind glyphs (loopKind.ts) so the New menu reads the
   // same identity as the widgets, list, and cockpits. `general` deep-links with no kind.
   const NEW_KINDS: { kind?: LoopKind; label: string; hint: string; icon: LucideIcon }[] = [
@@ -735,10 +725,21 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
           <Archive size={14} /> Archive
         </Button>
       )}
-      <Button variant={active ? 'ghost-accent' : 'ghost'} size="xs" ariaPressed={active}
-        onClick={() => { const next = active ? '' : id; setActiveProject(next); setActive(!active) }}
-        title={active ? 'Default project — new work starts here' : 'Make this the default project'}>
-        <Star size={14} style={active ? { fill: 'var(--color-primary)' } : undefined} /> {active ? 'Default project' : 'Make default'}
+      {/* 🔑 THE LABEL IS TRUE ON EVERY DEVICE NOW. It said "Default project" while the pointer
+          lived in this browser's localStorage, so the same project read "Make default" in the next
+          browser and a new task there started in Personal. The value is server-stored, and the
+          title says what the setting governs — the create forms — and that it follows the user.
+          An archived project is off every picker, so it cannot be where new work starts: the
+          control stays reachable and says why rather than answering a click with a 409. */}
+      <Button variant={isDefault ? 'ghost-accent' : 'ghost'} size="xs" ariaPressed={isDefault}
+        onClick={() => { setDefaultProject(isDefault ? '' : id) }}
+        loading={defaultPending}
+        disabled={project.status === 'archived'}
+        disabledReason={project.status === 'archived' ? 'Restore this project to make it your default' : undefined}
+        title={isDefault
+          ? 'Your default project: new tasks and loops start here, on every device. Click to clear it.'
+          : 'Make this your default project: new tasks and loops start here, on every device.'}>
+        <Star size={14} style={isDefault ? { fill: 'var(--color-primary)' } : undefined} /> {isDefault ? 'Default project' : 'Make default'}
       </Button>
       <Popover align="right" width={220} placement="bottom"
         trigger={(open, toggle) => (
@@ -913,7 +914,26 @@ export const WORK_STATE_LABEL: Record<WorkState, string> = {
   queued: 'Queued',
   suspended: 'Suspended',
   review: 'Review',
-  done: 'Done',
+  // 🔴 NOT "Done". The server's `done` group is "nothing left for you to do", and a cancelled
+  // task, a skipped one and a failed run all belong in it — measured on a project page, a
+  // cancelled task sat under "DONE · 2" with the completed task's glyph, so the board said the
+  // press kit had shipped. The group is named for what it holds; each row says how it ended.
+  done: 'Closed',
+}
+
+/** How a Closed row ended — the icon, word and tone each row carries (`containers.BoardOutcome`).
+ *
+ *  The WORDS are the owning registries', by reference: a task's ending reads exactly as it does
+ *  on `#/tasks` (`taskMeta.statusMeta`) and a loop's as it does in the loop list
+ *  (`lib/loopStatus`), so no second vocabulary is minted here. The record is exhaustive over the
+ *  closed union, so a new outcome is a typecheck failure rather than an unlabelled row. */
+export const WORK_OUTCOME_LOOK: Record<WorkOutcome, { label: string; icon: LucideIcon; tone: string }> = {
+  completed: statusMeta('done'),
+  cancelled: statusMeta('cancelled'),
+  skipped: statusMeta('skipped'),
+  failed: { label: loopStatusLabel('failed'), icon: OctagonAlert, tone: loopStatusColor('failed') },
+  stopped: { label: loopStatusLabel('stopped'), icon: CircleStop, tone: loopStatusColor('stopped') },
+  ended_early: { label: loopStatusLabel('ended_early'), icon: TriangleAlert, tone: loopStatusColor('ended_early') },
 }
 
 /** The state-grouped Work board body (WORK-CONTAINERS §1/§5.2/§6.1). Exported so the
@@ -974,10 +994,20 @@ function WorkRowCard({ row, onResume }: { row: WorkRow; onResume: () => void }) 
       </button>
     )
   }
+  // A Closed row carries its ending: the owning registry's glyph, named, and the same word
+  // beside it in visible text — so "Cancelled" is read, not inferred from a colour.
+  const outcome = row.outcome ? WORK_OUTCOME_LOOK[row.outcome] : null
+  const OutcomeIcon = outcome?.icon
   return (
-    <div className="group flex items-center gap-2 rounded-md bg-surface-high/60 px-2.5 py-1.5 text-left text-[0.8125rem] text-on-surface-var">
-      <CircleDot size={13} className="shrink-0 text-primary" />
+    <div data-outcome={row.outcome || undefined}
+      className="group flex items-center gap-2 rounded-md bg-surface-high/60 px-2.5 py-1.5 text-left text-[0.8125rem] text-on-surface-var">
+      {outcome && OutcomeIcon
+        ? <OutcomeIcon size={13} className="shrink-0" style={{ color: outcome.tone }} role="img" aria-label={outcome.label} />
+        : <CircleDot size={13} className="shrink-0 text-primary" />}
       <span className="min-w-0 flex-1 truncate" title={row.title}>{row.title}</span>
+      {outcome && (
+        <span aria-hidden className="shrink-0 text-[0.75rem]" style={{ color: outcome.tone }}>{outcome.label}</span>
+      )}
       {row.claim && (
         <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low" title={`Claimed by ${row.claim.holder}`}>
           {row.claim.holder}

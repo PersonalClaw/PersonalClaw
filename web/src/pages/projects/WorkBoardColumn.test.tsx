@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, fireEvent, screen } from '@testing-library/react'
-import { WorkBoardColumn } from './ProjectsSection'
+import { render, fireEvent, screen, within } from '@testing-library/react'
+import { WorkBoardColumn, WORK_OUTCOME_LOOK, WORK_STATE_LABEL } from './ProjectsSection'
+import { statusMeta } from '../tasks/taskMeta'
 import type { WorkBoard, WorkGroup, WorkRow } from '../../lib/api'
 
 // ── The Work board's rendering contract (WORK-CONTAINERS §1/§5.2/§6.1) ──────────
@@ -15,7 +16,7 @@ import type { WorkBoard, WorkGroup, WorkRow } from '../../lib/api'
 function row(over: Partial<WorkRow> = {}): WorkRow {
   return {
     run_id: 'r1', title: 'A run', state: 'working', origin: 'manual', project_id: 'p1',
-    claim: null, collapsed: false, attention: false, resumable: false, ...over,
+    claim: null, collapsed: false, attention: false, resumable: false, outcome: '', ...over,
   }
 }
 function group(state: WorkGroup['state'], rows: WorkRow[]): WorkGroup {
@@ -98,5 +99,54 @@ describe('WorkBoardColumn', () => {
   it('shows the empty state when every section is ok and the board is empty', () => {
     render(<WorkBoardColumn work={board()} loading={false} onResume={() => {}} />)
     expect(screen.getByText(/No work here yet/)).toBeTruthy()
+  })
+
+  // ── Cancelled is not done ────────────────────────────────────────────────────────────────
+  // Measured on a project page: a cancelled task sat under "DONE · 2" with the same glyph as
+  // the completed task beside it, so the board said the press kit had shipped. The server's
+  // `done` group is "nothing left for you to do" — which a cancelled task genuinely is — so the
+  // group is named for that, and every row in it says how it ended.
+  it('names the terminal group Closed, not Done', () => {
+    expect(WORK_STATE_LABEL.done).toBe('Closed')
+    const wb = board({ board: [group('done', [row({ title: 'Shipped', state: 'done', outcome: 'completed' })])] })
+    render(<WorkBoardColumn work={wb} loading={false} onResume={() => {}} />)
+    const heading = screen.getByTestId('work-group-done').firstElementChild as HTMLElement
+    expect(heading.textContent).toMatch(/^Closed/)
+    expect(heading.textContent).not.toMatch(/Done/)
+  })
+
+  it('gives a cancelled row its own named glyph and word, distinct from a completed one', () => {
+    const wb = board({
+      board: [group('done', [
+        row({ run_id: 'a', title: 'Draft landing page copy', state: 'done', outcome: 'completed' }),
+        row({ run_id: 'b', title: 'Press kit outreach', state: 'done', outcome: 'cancelled' }),
+      ])],
+    })
+    render(<WorkBoardColumn work={wb} loading={false} onResume={() => {}} />)
+    const rows = screen.getByTestId('work-group-done').querySelectorAll('[data-outcome]')
+    const [done, cancelled] = [...rows] as HTMLElement[]
+    expect(done.getAttribute('data-outcome')).toBe('completed')
+    expect(cancelled.getAttribute('data-outcome')).toBe('cancelled')
+    // Named for assistive tech, and the word is visible for everyone else.
+    expect(within(cancelled).getByRole('img', { name: 'Cancelled' })).toBeTruthy()
+    expect(cancelled.textContent).toContain('Cancelled')
+    expect(within(done).getByRole('img', { name: 'Completed' })).toBeTruthy()
+    // Not the same glyph: the whole defect was two endings drawn identically.
+    const glyph = (el: HTMLElement) => el.querySelector('svg')?.getAttribute('class')
+    expect(glyph(cancelled)).not.toBe(glyph(done))
+  })
+
+  it('reads each ending from the owning registry, so the words match #/tasks', () => {
+    expect(WORK_OUTCOME_LOOK.completed.label).toBe(statusMeta('done').label)
+    expect(WORK_OUTCOME_LOOK.cancelled.label).toBe(statusMeta('cancelled').label)
+    expect(WORK_OUTCOME_LOOK.skipped.label).toBe(statusMeta('skipped').label)
+    expect(WORK_OUTCOME_LOOK.cancelled.icon).toBe(statusMeta('cancelled').icon)
+  })
+
+  it('a row that has not ended carries no ending', () => {
+    const wb = board({ board: [group('queued', [row({ title: 'Assemble pricing sheet', state: 'queued' })])] })
+    render(<WorkBoardColumn work={wb} loading={false} onResume={() => {}} />)
+    expect(screen.getByTestId('work-group-queued').querySelector('[data-outcome]')).toBeNull()
+    expect(screen.queryByRole('img')).toBeNull()
   })
 })

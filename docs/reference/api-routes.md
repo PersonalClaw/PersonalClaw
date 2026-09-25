@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **850 registrations** over **690 distinct paths** — 843 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **852 registrations** over **691 distinct paths** — 845 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -37,13 +37,13 @@ The 127 families the surface divides into, largest first.
 | `/api/voice` | 17 | 11 |
 | `/api/triggers` | 16 | 14 |
 | `/api/mcp` | 15 | 13 |
+| `/api/projects` | 14 | 10 |
 | `/api/sessions` | 14 | 11 |
 | `/api/dashboard` | 13 | 8 |
 | `/api/providers` | 13 | 9 |
 | `/api/tasks` | 13 | 9 |
 | `/api/agents` | 12 | 8 |
 | `/api/packs` | 12 | 12 |
-| `/api/projects` | 12 | 9 |
 | `/api/durability` | 11 | 11 |
 | `/api/model-providers` | 11 | 9 |
 | `/api/prompts` | 11 | 7 |
@@ -154,7 +154,7 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 843 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 845 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -752,6 +752,8 @@ The 843 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/projects` | _(no summary)_ |
 | `POST` | `/api/projects` | _(no summary)_ |
 | `POST` | `/api/projects/import` | import a project archive (multipart `file`). |
+| `GET` | `/api/projects/settings` | the user's default project (`""` when none). |
+| `PUT` | `/api/projects/settings` | set the default project; `""` or null clears it. |
 | `DELETE` | `/api/projects/{project_id}` | _(no summary)_ |
 | `GET` | `/api/projects/{project_id}` | _(no summary)_ |
 | `PUT` | `/api/projects/{project_id}` | _(no summary)_ |

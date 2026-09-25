@@ -16,17 +16,18 @@ const doc: UiDoc = {
     { name: 'ariaLabel', description: 'Accessible name for the role="radiogroup". Omit it inside a Field — the group claims the Field\'s visible label automatically; an explicit ariaLabel wins.' },
     { name: 'disabled', description: 'Dim + block interaction on the whole group.' },
     { name: 'size', description: "'md' (default) or 'sm' — a compact, low-key strip (shorter, smaller text, muted surface) for inconspicuous secondary controls." },
-    { name: 'collapse', description: "Responsive overflow behavior: unset (default) always the inline strip, no measuring; 'scroll' keeps the strip and scrolls it horizontally; 'menu' collapses below the fit threshold to one pill that opens the options in a Popover." },
+    { name: 'collapse', description: "Responsive overflow behavior: unset (default) always the inline strip, no measuring; 'scroll' keeps the strip and scrolls it horizontally; 'menu' collapses below the fit threshold to one pill that opens the options in a Popover; 'wrap' lets the options wrap onto further rows inside the container so every one stays visible (a form field in a narrow panel)." },
   ],
   bestPractices: [
     { guidance: true, description: 'Reach for Segmented for every mutually-exclusive "pick one of N" choice rather than hand-rolling toggle buttons — the sliding liquid indicator and roving-tabindex keyboard nav come built in and keep every such control identical.' },
     { guidance: false, description: 'Do not use it for a strip that reveals a PANEL. It announces itself as a radiogroup, which is the truth for a field whose value is one of N and nothing is revealed. A real tabbed interface needs role="tab" with an aria-controls\'d role="tabpanel" — hand-roll that, as ChatActivityPanel does.' },
     { guidance: true, description: 'Drive it controlled: pass value and set it in onChange.' },
     { guidance: true, description: "Set collapse='menu' when the strip may outgrow a tight header row — it swaps to a single Popover pill below the fit threshold and re-expands when space returns (no one-way latch)." },
+    { guidance: true, description: "Set collapse='wrap' for a FORM field that can land in a narrow panel (the task form's Status and Priority in the 420px side panel): the options wrap onto a second row instead of spilling past the panel and scrolling the whole form sideways." },
     { guidance: true, description: "Give options a `tone` only for semantic coloring (e.g. status); otherwise the default solid primary fill is the high-contrast choice." },
     { guidance: false, description: 'Do not hardcode colors or px — tones use color-mix over tokens and sizes route through the scale (the token-lint ratchet fails the build otherwise).' },
   ],
-  anatomy: ['role="radiogroup" strip (rounded-pill track)', 'per-option motion.button (role="radio" + aria-checked, press-scale)', 'liquid active fill (shared layoutId, slides + squishes)', 'off-flow probe + CollapsedSegmented pill → Popover of MenuRows (collapse="menu")'],
+  anatomy: ['role="radiogroup" strip (rounded-pill track)', 'per-option motion.button (role="radio" + aria-checked, press-scale)', 'liquid active fill (shared layoutId, slides + squishes)', 'off-flow probe + CollapsedSegmented pill → Popover of MenuRows (collapse="menu")', 'flex-wrap track with a one-row radius (collapse="wrap")'],
 }
 
 export default doc

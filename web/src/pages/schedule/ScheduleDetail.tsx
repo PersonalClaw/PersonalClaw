@@ -162,8 +162,7 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
     return (
       <div className="flex flex-col gap-l">
         <ScheduleForm draft={draft} onChange={setDraft} compact />
-        {err && <FieldError>{err}</FieldError>}
-        <FormFooter>
+        <FormFooter error={err}>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(job)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} loading={saving}
             disabled={saving || !draft.name.trim() || !!scheduleReason}
