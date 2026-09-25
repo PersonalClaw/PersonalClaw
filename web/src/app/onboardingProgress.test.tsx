@@ -324,15 +324,16 @@ describe('re-entering the flow resumes at the persisted step', () => {
   it('restates what the earlier visit set up, checked against live readiness', async () => {
     onboarding.mockResolvedValue({
       needs_model: false, has_model_provider: true, has_chat_binding: true,
+      chat_model_refs: ['my-anthropic:claude-sonnet-4-5'],
       step: 'first_success', essentials: { model: 'anthropic-models', search: false, speech: false, channel: null },
       first_success: { knowledge: true, trigger: false, loop: false },
     })
     await enterName()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
-    // The collapsed essentials row AND the recap both state the app the earlier visit
-    // installed — the row as its done summary, the recap as the chat-model line.
-    expect(await screen.findByText('anthropic-models')).toBeTruthy()
-    expect(screen.getByText('Chat model: anthropic-models')).toBeTruthy()
+    // The collapsed essentials row AND the recap both state the MODEL the earlier visit bound
+    // — the row as its done summary, the recap as the chat-model line.
+    expect(await screen.findByText('claude-sonnet-4-5')).toBeTruthy()
+    expect(screen.getByText('Chat model: claude-sonnet-4-5')).toBeTruthy()
     // …and the card completed BEFORE the reload still counts as a first success, even though
     // this visit's cards started idle (only the flags survive a reload, not the outcomes).
     // 🪤 Scoped to the summary PARAGRAPH. A bare `getByText(/1 of 3 tried/)` matches every
@@ -340,6 +341,61 @@ describe('re-entering the flow resumes at the persisted step', () => {
     // (needed to make a done row keyboard-reachable) made this find two nodes. The property
     // asserted is that the summary is VISIBLE, which the scoped query states directly.
     expect(screen.getByText(/1 of 3 tried/, { selector: 'p' })).toBeTruthy()
+  })
+
+  // ── #3528: the recap names the bound MODEL, never the app that provides it ──────────
+  //
+  // Measured in a browser on a fresh 0.1.3 container, against a loopback Ollama. First pass
+  // through step 3: `Chat model: qwen2.5vl:7b` — correct. Reload (first-run progress is
+  // server-side, so the flow resumes) and reach the recap: `Chat model: ollama-models`, and
+  // the collapsed step-3 row repeated it. `active_models.json` held
+  // `{"chat": ["Local Ollama:qwen2.5vl:7b"]}` the whole time — the binding was right and only
+  // the sentence was wrong.
+  //
+  // The cause was that the correct label lived in `EssentialsStep`'s component state, which a
+  // reload drops, while the field the flow PERSISTS (`essentials.model`) is the app the lane
+  // installed. So the recap fell back to a field that answers "which model-provider app did
+  // you install" and rendered it under the words "Chat model".
+  //
+  // 🔴 THESE ASSERT THE RENDERED SENTENCE, not the state behind it. A test on the state would
+  // have passed throughout: the binding was never wrong. The sentence is the contract.
+  it('#3528 names the bound model on a re-entered run, not the app that provides it', async () => {
+    onboarding.mockResolvedValue({
+      needs_model: false, has_model_provider: true, has_chat_binding: true,
+      // The app the lane installed — still recorded, still the honest answer to its own
+      // question, and still not a model.
+      step: 'first_success', essentials: { model: 'ollama-models', search: false, speech: false, channel: null },
+      // What `active_models.json` actually holds. The provider name carries a space and the
+      // model id carries its own colon, which is the pair that catches a careless split.
+      chat_model_refs: ['Local Ollama:qwen2.5vl:7b'],
+      first_success: { knowledge: false, trigger: false, loop: false },
+    })
+    await enterName()
+    // SURFACE 1 — the collapsed step-3 row, read before walking on.
+    const essentialsRow = screen.getByText('Essential apps').closest('li') as HTMLElement
+    expect(essentialsRow.textContent).toContain('qwen2.5vl:7b')
+    expect(essentialsRow.textContent).not.toContain('ollama-models')
+
+    // SURFACE 2 — the "All set" recap, the last screen of first-run setup.
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
+    expect(await screen.findByText('Chat model: qwen2.5vl:7b')).toBeTruthy()
+    // The app name appears NOWHERE on the screen that is telling the user what they now have.
+    expect(screen.queryByText(/ollama-models/)).toBeNull()
+  })
+
+  it('#3528 names the mechanism, not a model, when the home has no explicit binding', async () => {
+    // `needs_model: false` with an empty chain means resolution comes from the implicit
+    // "first capable configured provider" rule. There is no model the user chose, so the recap
+    // may not name one — and it may not fall back to the app name either.
+    onboarding.mockResolvedValue({
+      needs_model: false, has_model_provider: true, has_chat_binding: false,
+      chat_model_refs: [],
+      step: 'first_success', essentials: { model: 'ollama-models', search: false, speech: false, channel: null },
+    })
+    await enterName()
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
+    expect(await screen.findByText('Chat model: Ready — using a configured provider')).toBeTruthy()
+    expect(screen.queryByText(/ollama-models/)).toBeNull()
   })
 
   it('does not promise a model the home no longer resolves', async () => {

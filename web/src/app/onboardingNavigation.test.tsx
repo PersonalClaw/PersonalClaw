@@ -240,6 +240,7 @@ describe('🔴 a step whose outcome is unknown reads unknown, never complete', (
     // nothing that could honestly mark it complete.
     onboarding.mockResolvedValue({
       ...FRESH, needs_model: false, has_model_provider: true, has_chat_binding: true,
+      chat_model_refs: ['my-anthropic:claude-sonnet-4-5'],
       step: 'first_success', essentials: { model: 'anthropic-models', search: false, speech: false, channel: null },
       first_success: { knowledge: false, trigger: false, loop: false },
     })
@@ -253,7 +254,8 @@ describe('🔴 a step whose outcome is unknown reads unknown, never complete', (
     // The essentials step DOES carry evidence — a live-resolvable chat model — so it is claimed.
     const essentialsRow = screen.getByText('Essential apps').closest('li') as HTMLElement
     expect(essentialsRow.querySelector('svg.lucide-check')).toBeTruthy()
-    expect(screen.getByText('anthropic-models')).toBeTruthy()
+    // …and its summary is the MODEL that resolves, not `essentials.model`'s app name (#3528).
+    expect(screen.getByText('claude-sonnet-4-5')).toBeTruthy()
   })
 
   it('a skipped step is marked skipped, not done', async () => {
