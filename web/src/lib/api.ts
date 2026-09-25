@@ -3394,7 +3394,18 @@ export interface IntentOutcome {
   item_id: string | null; item_title?: string
   takeaway?: string; fields?: IntentOutcomeField[]; created_at?: string
 }
-export interface KnowledgeStats { items: number; entities: number; relations: number; embeddings: { enabled: boolean; model?: string; embedded_items?: number; stale_items?: number } }
+/** How far the library's model-backed enrichment can go and has gone (`GET /api/knowledge/stats`).
+ *  `model_available` is the precondition `POST /api/knowledge/regenerate-intelligence` refuses on
+ *  (409 `model_unresolved`). `entities` counts the rows the library LISTS by their persisted
+ *  entity-extraction phase, so "never tried" and "tried and failed" are two numbers — the graph's
+ *  empty state used to say the first while the second was true. */
+export interface KnowledgeEnrichment {
+  model_available: boolean
+  /** `skipped` is BY DESIGN (a source set to no AI, an item with no text) — neither a failure
+   *  nor "never tried". */
+  entities: { ran: number; failed: number; running: number; skipped: number; not_run: number }
+}
+export interface KnowledgeStats { items: number; entities: number; relations: number; embeddings: { enabled: boolean; model?: string; embedded_items?: number; stale_items?: number }; enrichment?: KnowledgeEnrichment }
 // Inbox is a GENERAL entity: message-source providers (filesystem now;
 // slack/email future) feed incoming messages into an AI-triage layer that adds
 // classification + confidence + an optional drafted reply. Shape matches the

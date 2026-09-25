@@ -150,33 +150,40 @@ def count_stale_chunks(conn: Any, fingerprint: EmbeddingFingerprint) -> int:
 
 def stale_chunk_items(
     conn: Any, fingerprint: EmbeddingFingerprint, *, include_archived: bool = False
-) -> list[tuple[str, str]]:
-    """``(item_id, title)`` for every ACTIVE item holding at least one stale chunk vector.
+) -> list[tuple[str, str, str, str]]:
+    """``(item_id, title, item_type, kind)`` for every ACTIVE item holding a stale vector.
 
     One row per ITEM, not per chunk: the attention surfaces (search degradations, the
     Doctor row) name documents a user can act on, and a 60-chunk document would otherwise
-    drown a 1-chunk one out of the sample.
+    drown a 1-chunk one out of the sample. ``item_type`` and ``kind`` ride along so the
+    row can say which shelf it belongs to — an artifact's mirror is not a library item.
+    (Reading ``kind`` unguarded is safe here: callers reach this only past
+    :func:`has_fingerprint_columns`, and the fingerprint columns are far younger than it.)
     """
     archived = "" if include_archived else "AND COALESCE(i.is_archived, 0) = 0 "
     rows = conn.execute(
-        "SELECT i.id, i.title FROM items i JOIN chunks c ON c.item_id = i.id "
+        "SELECT i.id, i.title, i.item_type, i.kind FROM items i "
+        "JOIN chunks c ON c.item_id = i.id "
         f"WHERE c.embedding IS NOT NULL AND i.status = 'active' {archived}"
         f"AND {STALE_PREDICATE} "  # noqa: S608 — clauses are fixed literals
         "GROUP BY i.id ORDER BY MIN(i.created_at), i.id",
         fingerprint.params,
     ).fetchall()
-    return [(str(r[0]), str(r[1] or "")) for r in rows]
+    return [(str(r[0]), str(r[1] or ""), str(r[2] or ""), str(r[3] or "")) for r in rows]
 
 
-def stale_rows(records: Iterable[tuple[str, str]]) -> list:
+def stale_rows(records: Iterable[tuple[str, str, str, str]]) -> list:
     """Attention rows for :func:`stale_chunk_items` output, in RET-2's row shape.
 
     Lives here rather than in ``searchability`` so the reason token and the query that
-    finds its subjects sit together; the ROW TYPE and the grouping stay RET-2's.
+    finds its subjects sit together; the ROW TYPE, the shelf rule and the grouping stay
+    RET-2's.
     """
-    from personalclaw.knowledge.searchability import STALE_INDEX, UnsearchableItem
+    from personalclaw.knowledge.searchability import STALE_INDEX, UnsearchableItem, shelf_of
 
     return [
-        UnsearchableItem(item_id=item_id, title=title, reason=STALE_INDEX)
-        for item_id, title in records
+        UnsearchableItem(
+            item_id=item_id, title=title, reason=STALE_INDEX, shelf=shelf_of(item_type, kind)
+        )
+        for item_id, title, item_type, kind in records
     ]

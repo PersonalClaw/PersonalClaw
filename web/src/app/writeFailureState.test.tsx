@@ -364,9 +364,12 @@ const SILENT_WRITE_BUDGET: Record<string, number> = {
   // (a) The drawer copy's engagement toggle: a silent optimistic revert. Its own file already reports
   // `saveInboxSettings` correctly two functions up, so the panel answers for two of its three writes.
   'pages/inbox/InboxSettingsPanel.tsx': 1,
-  // (b) ×2 "surfaced by reload" — both are BACKFILL triggers (re-enrich, re-embed) whose progress the
-  // list's own badges render as they drain, so the reload genuinely is the surface.
-  'pages/knowledge/KnowledgeListPage.tsx': 2,
+  // (b) "surfaced by reload" — the re-embed BACKFILL trigger, whose progress the embedding chip renders
+  // on the refetch. It had a sibling here, the re-enrich trigger, on the same argument — and live
+  // validation measured that argument false for it: on a home with no model the route answered
+  // `{queued: 3}`, every job failed, and the reload surfaced nothing. That one now reports its outcome
+  // (and the route refuses up front), so this is 1. The remaining one rests on the same assumption.
+  'pages/knowledge/KnowledgeListPage.tsx': 1,
   // (b) A read-state latch reset so the next scroll tick retries. Auto-marking an article as "reading"
   // is inferred from scroll position; nobody asked, and nothing claims it happened.
   'pages/knowledge/ReadingView.tsx': 1,
