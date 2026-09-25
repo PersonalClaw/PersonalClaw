@@ -8,7 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from personalclaw.dashboard.chat import run_chat
-from personalclaw.dashboard.state import DashboardState, _ChatSession, parse_cls_meta
+from personalclaw.dashboard.state import (
+    DashboardState,
+    _ChatSession,
+    chat_approval_id,
+    parse_cls_meta,
+)
 from personalclaw.history import ConversationLog
 from personalclaw.hooks import ToolHookResult
 from personalclaw.llm.base import (
@@ -358,28 +363,46 @@ class TestTrustYoloPropagation:
 
 
 class TestResolveApprovalSessionFallback:
-    """resolve_approval falls through to session-level futures for chat tool approvals."""
+    """resolve_approval answers a chat-held approval, by its registry id, through the chat's
+    own decision path."""
+
+    @staticmethod
+    async def _held(state, session, request_id: str) -> tuple[asyncio.Future, str]:
+        fut: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        session._approval_futures[request_id] = fut
+        await state.hold_session_approval(
+            session,
+            request_id,
+            tool="fs_write",
+            tool_input="",
+            tool_purpose="",
+            agent="PersonalClaw",
+            risk="",
+            is_read_only=None,
+            grant_agent="",
+        )
+        return fut, chat_approval_id(session.key, request_id)
 
     @pytest.mark.asyncio
     async def test_resolves_session_future_when_state_has_none(self, tmp_path):
-        """resolve_approval finds futures in session._approval_futures."""
+        """resolve_approval reaches the future parked in session._approval_futures."""
         state, _ = _make_state(tmp_path)
         session = _make_session()
         state._sessions[session.key] = session
+        fut, approval_id = await self._held(state, session, "req-42")
+        assert approval_id == f"{session.key}:req-42"
 
-        loop = asyncio.get_running_loop()
-        fut: asyncio.Future[str] = loop.create_future()
-        session._approval_futures["req-42"] = fut
-
-        result = state.resolve_approval("req-42", True)
+        result = state.resolve_approval(approval_id, True)
 
         assert result is True
         assert fut.done()
         assert fut.result() == "approved"
         state.broadcast_ws.assert_called_with(
-            "approval_resolved", {"id": "req-42", "approved": True}
+            "approval_resolved",
+            {"id": approval_id, "request_id": "req-42", "session": session.key, "approved": True},
         )
         state.push_sessions_update.assert_called_once()
+        assert state._pending_approvals == {}
 
     @pytest.mark.asyncio
     async def test_session_reject(self, tmp_path):
@@ -387,15 +410,23 @@ class TestResolveApprovalSessionFallback:
         state, _ = _make_state(tmp_path)
         session = _make_session()
         state._sessions[session.key] = session
+        fut, approval_id = await self._held(state, session, "req-43")
 
-        loop = asyncio.get_running_loop()
-        fut: asyncio.Future[str] = loop.create_future()
-        session._approval_futures["req-43"] = fut
-
-        result = state.resolve_approval("req-43", False)
+        result = state.resolve_approval(approval_id, False)
 
         assert result is True
         assert fut.result() == "rejected"
+
+    @pytest.mark.asyncio
+    async def test_the_bare_request_id_is_not_a_registry_id(self, tmp_path):
+        """A chat's request_id is unique only inside that chat, so it answers nothing globally."""
+        state, _ = _make_state(tmp_path)
+        session = _make_session()
+        state._sessions[session.key] = session
+        fut, _approval_id = await self._held(state, session, "req-44")
+
+        assert state.resolve_approval("req-44", True) is False
+        assert not fut.done()
 
     @pytest.mark.asyncio
     async def test_state_futures_checked_first(self, tmp_path):

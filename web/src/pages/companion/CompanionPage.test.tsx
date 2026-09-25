@@ -49,9 +49,10 @@ vi.mock('../../lib/api', async (orig) => {
 })
 
 const AP: PendingApproval = {
-  id: 'ap-1', source: 'cron', tool: 'Bash',
+  id: 'ap-1', request_id: 'ap-1', source: 'cron', tool: 'Bash',
   tool_input: 'rm -rf /tmp/scratch', tool_purpose: 'Clear the scratch directory',
   session: 'cron:nightly', ts: Math.round(Date.now() / 1000) - 90,
+  session_title: '', agent: '', risk: '', grant_agent: '',
 }
 
 const route = { sub: '', navigate: vi.fn(), navEpoch: 0, query: {}, setQuery: vi.fn() }

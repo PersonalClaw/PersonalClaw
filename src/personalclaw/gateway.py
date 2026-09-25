@@ -3940,6 +3940,9 @@ class GatewayOrchestrator:
             # dashboard state exists) so the Inbox handlers reach draft/classify/digest.
             self.dashboard_state._inbox_svc = self.inbox_svc
             self.dashboard_state._inbox_restart = self._restart_inbox
+            # No approval survives a restart, so an Inbox row still asking for one from the
+            # previous run is asking for nothing — close those before anyone opens them.
+            self.dashboard_state.close_orphaned_approval_rows()
 
     async def _init_api_server(self) -> None:
         """Start a minimal API-only HTTP server for MCP tool transport."""

@@ -41,9 +41,11 @@ from personalclaw.dashboard.chat_utils import (
     persisted_history_key,
 )
 from personalclaw.dashboard.state import (
+    SESSION_APPROVAL_ACTIONS,
     DashboardState,
     _ChatSession,
     _mark_permission_resolved,
+    chat_approval_id,
 )
 from personalclaw.http_errors import json_error
 from personalclaw.loop import files as loop_files
@@ -2557,7 +2559,14 @@ async def api_chat_mode(request: web.Request) -> web.Response:
                     fut.set_result("approved")
                     # Persist resolved state into the permission message
                     _mark_permission_resolved(session.messages, aid, mode)
-                    state.broadcast_ws("approval_resolved", {"id": aid, "approved": True})
+                    # Off every surface, not just this chat's card: the registry row, the
+                    # Inbox row and Home's count all read the same entry.
+                    state.withdraw_approval(
+                        chat_approval_id(session.key, aid),
+                        approved=True,
+                        request_id=aid,
+                        session=session.key,
+                    )
                     try:
                         sel().log_api_access(
                             caller=f"dashboard:{session.key}",
@@ -2676,17 +2685,13 @@ async def api_chat_task_mode(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "task_mode": mode, "sessions": [s.key for s in targets]})
 
 
-# The approve endpoint's closed action vocabulary — must stay in step with the
-# frontend's ApproveAction union (web/src/pages/ChatPage.tsx). Past tense throughout:
-# "approved"/"rejected", NOT the "approve"/"reject" pair /api/approvals/{id}/{action}
-# takes. Anything outside this set is a 400, not a silent denial.
-_APPROVE_ACTIONS = frozenset(
-    {"approved", "rejected", "trust", "trust_agent", "trust_reads", "yolo"}
-)
-
-
 async def api_chat_session_approve(request: web.Request) -> web.Response:
-    """POST /api/chat/sessions/{session}/approve — resolve a pending tool approval."""
+    """POST /api/chat/sessions/{session}/approve — resolve a pending tool approval.
+
+    Parses and names the target; the decision itself is `DashboardState.decide_session_approval`,
+    the same path `POST /api/approvals/{id}/{action}` takes for a chat's approval, so the card and
+    every surface outside the chat cannot answer one call two different ways.
+    """
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
     session = state._sessions.get(name)
@@ -2699,146 +2704,31 @@ async def api_chat_session_approve(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
     action = body.get("action", "rejected")
-    # Reject an UNKNOWN verb loudly. The resolver below collapses everything it does
-    # not recognise to "rejected", so a typo (notably "approve" — the verb the sibling
+    # Reject an UNKNOWN verb loudly. The decision collapses everything it does not
+    # recognise to "rejected", so a typo (notably "approve" — the verb the sibling
     # /api/approvals/{id}/{action} surface uses) used to deny the tool while returning
     # 200 {"ok": true}: the caller reads success and the user sees a denial. Omitting
     # "action" entirely stays a deliberate fail-closed reject, so only an explicitly
     # supplied unknown verb is an error.
-    if action not in _APPROVE_ACTIONS:
+    if action not in SESSION_APPROVAL_ACTIONS:
         return web.json_response(
-            {"error": f"unknown action {action!r}", "allowed": sorted(_APPROVE_ACTIONS)},
+            {"error": f"unknown action {action!r}", "allowed": sorted(SESSION_APPROVAL_ACTIONS)},
             status=400,
         )
-    original_action = action
-    # What a `trust_agent` grant actually DID, reported to the client and recorded in the
-    # transcript. `None` for every other verb: a scope that grants nothing has no grant to
-    # describe, and an always-present object with `persisted: false` would read as a failed
-    # grant on an Allow-once (#541/#683).
-    grant: dict[str, object] | None = None
-    # Trust: auto-approve remaining tools for this session
-    if action == "trust":
-        session._trust = True
-        state.sessions.set_approval_policy(f"dashboard:{name}", "auto")
-        action = "approved"
-    # Trust-agent ("Always allow for this agent"): trust THIS chat now (like trust)
-    # AND persist the grant onto the bound agent's profile (approval_mode="auto") so
-    # every future chat with that agent starts auto-approving — seeded at session-open
-    # by chat_runner. One vocabulary, one gate: this just writes the persistent floor
-    # the runtime already consumes. Skipped for the default/unnamed agent (no editable
-    # profile) and reserved system agents (their config is fixed).
-    elif action == "trust_agent":
-        session._trust = True
-        state.sessions.set_approval_policy(f"dashboard:{name}", "auto")
-        action = "approved"
-        from personalclaw.agents.defaults import persistable_grant_target
-
-        # The grant target, resolved by the ONE owner that also feeds the card's promise at
-        # prompt time (chat_runner's perm_meta["grant_agent"]). Deciding it here a second
-        # way is what let the card and the write path disagree: the card said "in this chat
-        # and future ones" while this branch's `else` degraded the grant to session scope
-        # and told only the log. Now the outcome is a value, so it can be REPORTED — on the
-        # wire (below), in the transcript row, and in the SEL.
-        agent_name = ""
-        try:
-            cfg = AppConfig.load()
-            target = persistable_grant_target(session.agent or "", cfg)
-            if target:
-                prof = cfg.agents[target]
-                if prof.approval_mode != "auto":
-                    prof.approval_mode = "auto"
-                    cfg.save()
-                # Set only AFTER the write returned. A failed save is not a persisted
-                # grant, and the report below is read as a statement about the file.
-                agent_name = target
-        except Exception:
-            logger.warning("Failed to persist always-for-agent grant", exc_info=True)
-        grant = {"scope": "agent", "persisted": bool(agent_name), "agent": agent_name}
-        try:
-            # Best-effort, and OUTSIDE the block above: an audit that raises must not turn a
-            # grant that persisted into one this route reports as session-scope. Both
-            # outcomes get a row — "the user asked for a standing grant and did not get one"
-            # is exactly the event an auditor reconstructing a later ask would look for.
-            sel().log_api_access(
-                caller="dashboard:approval",
-                operation="mode_change:always_for_agent",
-                outcome="enabled" if agent_name else "session_scope_only",
-                resources=f"{name} agent={agent_name or (session.agent or '').strip() or '(default)'}",  # noqa: E501
-            )
-        except Exception:
-            logger.warning("SEL audit failed for always-for-agent grant", exc_info=True)
-    # Trust-reads: auto-approve read-only bash commands for this session
-    # Defer setting _trust_reads until after the approval future is consumed
-    # to prevent the frontend from seeing trust_reads=true while still pending.
-    elif action == "trust_reads":
-        action = "approved_trust_reads"
-    # YOLO: auto-approve all tools globally (all sessions)
-    elif action == "yolo":
-        state.enable_yolo()
-        for s in state._sessions.values():
-            state.sessions.set_approval_policy(f"dashboard:{s.key}", "auto")
-        action = "approved"
+    # Name the target BEFORE anything is granted: a trust/yolo verb aimed at an approval that is
+    # no longer pending must not raise the session's posture behind a 404.
+    pending_ids = [k for k, f in session._approval_futures.items() if not f.done()]
     request_id = body.get("request_id", "")
     if not request_id:
-        pending = [(k, f) for k, f in session._approval_futures.items() if not f.done()]
-        if len(pending) == 1:
-            request_id, fut = pending[0]
-        else:
-            fut = None
-    else:
-        fut = session._approval_futures.get(request_id)
-    if not fut or fut.done():
-        # Distinguish ambiguous (multiple pending) from truly empty
-        if not request_id and session._approval_futures:
-            pending_ids = [k for k, f in session._approval_futures.items() if not f.done()]
-            if len(pending_ids) > 1:
-                return web.json_response(
-                    {
-                        "error": "multiple approvals pending, specify request_id",
-                        "pending": pending_ids,
-                    },
-                    status=400,
-                )
+        if len(pending_ids) > 1:
+            return web.json_response(
+                {"error": "multiple approvals pending, specify request_id", "pending": pending_ids},
+                status=400,
+            )
+        request_id = pending_ids[0] if pending_ids else ""
+    if request_id not in pending_ids:
         return web.json_response({"error": "no pending approval"}, status=404)
-    resolved = action if action in ("approved", "approved_trust_reads") else "rejected"
-    fut.set_result(resolved)
-    # Persist resolved state into the permission message so it survives tab switches.
-    #
-    # The RECORD is not the future's value (#683). `trust_agent` is remapped to "approved"
-    # above because that is what the awaiting tool call must see, and the record used to
-    # inherit that remap — so a standing per-agent grant and a one-off Allow left
-    # byte-identical transcript rows, while their side effects differ by an auto-approval
-    # policy that explains every later silent run. The transcript is the permanent record of
-    # a security decision, so it keeps the verb the user chose.
-    #
-    # THREE outcomes, not two, because the grant has three (#541 + #683): allow-once,
-    # granted-and-persisted, and granted-but-session-scope-only. Collapsing the last two
-    # would re-lose exactly the fact #541 is about — whether "in this chat and future ones"
-    # actually happened. `trust`/`trust_reads` were already preserved and are unchanged.
-    if request_id:
-        if original_action == "trust_agent":
-            record = "trust_agent" if (grant or {}).get("persisted") else "trust_agent_session"
-        elif original_action in ("trust", "trust_reads"):
-            record = original_action
-        else:
-            record = resolved
-        _mark_permission_resolved(session.messages, request_id, record)
-    # Broadcast first to ensure frontend is unblocked
-    if request_id:
-        state.broadcast_ws(
-            "approval_resolved", {"id": request_id, "approved": resolved != "rejected"}
-        )
-    state.push_sessions_update()
-    # SEL audit (best-effort — must not block the UI-unblocking path above)
-    try:
-        sel().log_api_access(
-            caller=f"dashboard:{name}",
-            operation=f"tool_approval:{original_action}",
-            outcome=resolved,
-            resources=request_id,
-        )
-    except Exception:
-        logger.warning("SEL audit failed for approval %s", request_id, exc_info=True)
+    grant = state.decide_session_approval(session, request_id, action)
     # Report what the grant DID. The route answered a flat `{"ok": true}`, so a client that
     # had just rendered "Saved on this agent: … in this chat and future ones" had no way to
     # learn the grant had degraded to session scope — the promise and the outcome were

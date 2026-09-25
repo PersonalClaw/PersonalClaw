@@ -128,9 +128,9 @@ function activityOf(s: ChatSessionSummary): SessionActivity {
  *  could show. The error reaches `useQuery` and the view says it could not load.
  *
  *  The three lists are handed to `toLanes` UNMERGED, and that is a correctness requirement rather
- *  than a stylistic one: `chat_runner._mirror_approval_to_inbox()` raises an `agent_request` inbox
- *  row for any approval that outlives its prompt, carrying `refs.approval = <request_id>` — and
- *  `PendingApproval.id` IS that id. So a pending approval is already on the wire TWICE.
+ *  than a stylistic one: the pending-approval registry raises an `agent_request` inbox row for
+ *  every pending approval, carrying `refs.approval = <registry id>` — and `PendingApproval.id` IS
+ *  that id. So a pending approval is already on the wire TWICE.
  *  De-duplicating it is `toLanes`' job (it drops the mirror when the approval is in the same
  *  snapshot and KEEPS it when it is not, because losing a row is worse than a stale one).
  *  Concatenating the lists here would double-count every mirrored approval and make each lane's

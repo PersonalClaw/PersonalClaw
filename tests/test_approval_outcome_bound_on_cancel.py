@@ -1,24 +1,20 @@
 """Rail for #1536 — the approval-wait `finally` must not raise UnboundLocalError.
 
-The mirrored-approval block binds ``outcome`` on the success and grace-timeout
-paths and via the outer TimeoutError handler — but NOT when the inner
-``wait_for(fut, 7200)`` is cancelled (pytest-timeout, gateway shutdown, client
+The approval wait binds ``outcome`` on the success path and via the TimeoutError handler —
+but NOT when the wait itself is cancelled (pytest-timeout, gateway shutdown, client
 disconnect, navigation away). On that path the ``finally`` referenced an unbound
-``outcome`` and raised ``UnboundLocalError``, which:
+``outcome`` and raised ``UnboundLocalError``, which REPLACED the cancellation in the
+traceback, so a CI hang read as an unrelated error (the reported symptom).
 
-- REPLACED the cancellation in the traceback, so a CI hang read as an unrelated
-  error (the reported symptom), and
-- skipped ``_resolve_mirrored_approval``, stranding the mirrored inbox item
-  asking for a decision the turn was already tearing down (the production defect).
-
-Binding ``outcome = "rejected"`` before the try fixes both: the mirror resolves
-and the cancellation propagates unmasked.
+Binding ``outcome = "rejected"`` before the try fixes it: the cancellation propagates unmasked,
+and the ``finally`` still runs its bookkeeping — which is now expiring the approval on every
+surface that lists it (the registry row, the Inbox row, open cards), so a torn-down turn never
+leaves anything asking for a decision it can no longer receive.
 """
 
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock, patch
 
 import pytest
 from test_dashboard_approval import (  # reuse the file's harness
@@ -26,7 +22,6 @@ from test_dashboard_approval import (  # reuse the file's harness
     _context_builder,
     _make_session,
     _make_state,
-    _patch_stats,
     _permission_event,
     _set_stream,
 )
@@ -36,47 +31,34 @@ from personalclaw.dashboard.chat import run_chat
 
 
 @pytest.mark.asyncio
-async def test_cancelling_a_mirrored_approval_wait_resolves_the_mirror_and_propagates(tmp_path):
+async def test_cancelling_an_approval_wait_expires_it_everywhere_and_propagates(tmp_path):
     state, client = _make_state(tmp_path, context_builder=_context_builder())
     session = _make_session()
     _set_stream(client, [_permission_event(), _complete_event()])
 
-    resolve_calls: list[tuple[str, str]] = []
+    task = asyncio.create_task(run_chat(state, session, "hello"))
+    # Wait until the approval is parked AND published — i.e. we're blocked on the wait.
+    for _ in range(400):
+        await asyncio.sleep(0.005)
+        if "req-1" in session._approval_futures and state._pending_approvals:
+            break
+    assert state._pending_approvals, "the approval was never published"
 
-    with (
-        _patch_stats(),
-        # Grace ~0 so the wait mirrors immediately, then parks on the 7200s inner wait.
-        patch.object(cr, "_APPROVAL_MIRROR_GRACE_SECS", 0.01),
-        patch.object(cr, "_mirror_approval_to_inbox", MagicMock(return_value="inbox-1")),
-        patch.object(
-            cr,
-            "_resolve_mirrored_approval",
-            MagicMock(side_effect=lambda item, outcome: resolve_calls.append((item, outcome))),
-        ),
-    ):
-        task = asyncio.create_task(run_chat(state, session, "hello"))
+    task.cancel()
+    # run_chat may absorb the mid-turn cancellation as a normal turn-end or let it propagate —
+    # either is fine. What must NOT happen is the finally raising UnboundLocalError (which would
+    # surface here as that error). Suppress the cancellation and assert the invariant below.
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
-        # Wait until the approval future is registered AND the grace window has
-        # mirrored it (mirror mock called) — i.e. we're parked on the inner wait.
-        for _ in range(200):
-            await asyncio.sleep(0.01)
-            if cr._mirror_approval_to_inbox.called and "req-1" in session._approval_futures:
-                break
-        assert cr._mirror_approval_to_inbox.called, "the grace timeout should have mirrored"
-
-        task.cancel()
-        # run_chat may absorb the mid-turn cancellation as a normal turn-end or let
-        # it propagate — either is fine. What must NOT happen is the finally raising
-        # UnboundLocalError (which would surface here as that error, not the mirror
-        # resolving). Suppress the cancellation and assert the invariant below.
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-
-    # The mirrored inbox item was resolved (default "rejected") rather than stranded,
-    # and no UnboundLocalError replaced the real control flow.
-    assert resolve_calls == [("inbox-1", "rejected")], resolve_calls
+    # Expired rather than stranded, and said so on the one signal every surface acts on.
+    assert state._pending_approvals == {}
+    resolved = [
+        c.args[1] for c in state.broadcast_ws.call_args_list if c.args[0] == "approval_resolved"
+    ]
+    assert resolved and resolved[-1]["approved"] is False and resolved[-1]["request_id"] == "req-1"
 
 
 def test_outcome_is_bound_before_the_try(tmp_path):
@@ -87,10 +69,12 @@ def test_outcome_is_bound_before_the_try(tmp_path):
 
     src = inspect.getsource(cr)
     src = "\n".join(line for line in src.splitlines() if not line.lstrip().startswith("#"))
-    anchor = 'mirrored_item = ""'
+    anchor = "session._approval_futures[request_id] = fut"
     i = src.index(anchor)
-    window = src[i : i + 400]
-    assert 'outcome = "rejected"' in window, "outcome must be bound right after mirrored_item"
+    window = src[i : i + 600]
+    assert (
+        'outcome = "rejected"' in window
+    ), "outcome must be bound right after the future is parked"
     assert window.index('outcome = "rejected"') < window.index(
         "try:"
     ), "the outcome default must come BEFORE the try, or the cancel path is still unbound"

@@ -43,9 +43,10 @@ const INSPECT: NodeInspect = {
 
 /** The approval the nudge fires for — the one from #258, verbatim off `GET /api/approvals`. */
 const PENDING: PendingApproval = {
-  id: 'spawn:b961a327', source: 'subagent',
+  id: 'spawn:b961a327', request_id: 'spawn:b961a327', source: 'subagent',
   tool: 'subagent_run(Write ONE consolidated article)',
   session: 'workflow:11b9a34c:synthesize', ts: 0,
+  session_title: '', agent: '', risk: '', grant_agent: '',
 }
 
 vi.mock('../pages/workflows/useWorkflowStream', () => ({ useWorkflowStream: () => ({ connected: true }) }))

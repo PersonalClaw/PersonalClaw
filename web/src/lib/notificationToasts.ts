@@ -65,6 +65,12 @@ export function toastMessageForNote(note: Record<string, unknown>): string {
  */
 export function shouldToastNote(note: Record<string, unknown>): boolean {
   if (note.badge_only) return false
+  // A pending approval is announced ONCE, by the approval itself: its card in the chat you are
+  // looking at, `useApprovalToasts`' nudge (which links to where it is answered) everywhere else.
+  // Its Inbox row's note carries the row's `refs`, so `approval` marks it; toasting it too would
+  // be a second toast for the same blocked call — beside the very card that asks it. The note
+  // still lands in the bell, which is the record.
+  if (typeof note.approval === 'string' && note.approval) return false
   return !!toastMessageForNote(note)
 }
 

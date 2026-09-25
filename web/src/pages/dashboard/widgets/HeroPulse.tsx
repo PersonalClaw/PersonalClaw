@@ -8,6 +8,7 @@ import { useDashboardLive } from '../DashboardLive'
 import { physics } from '../../../design/motion'
 import type { RouteProps } from '../../../app/useQueryState'
 import { ACTIVE_LOOP_STATUSES } from '../../../lib/loopStatus'
+import { mirroredApprovalId } from '../../../lib/attentionLanes'
 
 
 /** Hero Pulse Strip — WS-live at-a-glance counts across the whole system, each a
@@ -40,8 +41,13 @@ export function HeroPulse({ navigate, variant = 'strip' }: RouteProps & { varian
   // The "inbox" pill badges MESSAGES needing the user. Proposal mirrors
   // (item_kind 'proposal') are the same skill proposals the Action Center lists
   // with Accept/Reject — counting them here badged "31 inbox" for 1 real
-  // message + 30 mirrors, ~doubling the perceived backlog.
-  const inboxMsgs = useMemo(() => inbox.filter((i) => i.item_kind !== 'proposal').length, [inbox])
+  // message + 30 mirrors, ~doubling the perceived backlog. A pending approval's Inbox
+  // row is the same shape of double: the approvals pill beside this one already counts
+  // it, so one blocked decision would otherwise read as "1 approval waiting · 1 inbox".
+  const inboxMsgs = useMemo(() => {
+    const listed = new Set(approvals.map((a) => a.id))
+    return inbox.filter((i) => i.item_kind !== 'proposal' && !listed.has(mirroredApprovalId(i))).length
+  }, [inbox, approvals])
 
   // 🔴 A COUNT IS A CLAIM, AND `0` IS THE MOST REASSURING ONE THIS STRIP CAN MAKE.
   // Every lane below arrives as `[]` when its read fails, so before this the hero — the FIRST

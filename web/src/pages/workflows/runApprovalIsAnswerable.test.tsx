@@ -33,7 +33,8 @@ const approval = (over: Partial<PendingApproval> = {}): PendingApproval => ({
   id: 'spawn:b961a327', source: 'subagent',
   tool: 'subagent_run(Write ONE consolidated article)',
   tool_purpose: 'Consolidate the recalled material into one article',
-  session: 'workflow:11b9a34c:synthesize', ts: 0, ...over,
+  session: 'workflow:11b9a34c:synthesize', ts: 0,
+  request_id: 'spawn:b961a327', session_title: '', agent: '', risk: '', grant_agent: '', ...over,
 })
 
 async function mountFor(runId: string, queue: PendingApproval[]) {

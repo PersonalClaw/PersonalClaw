@@ -62,7 +62,8 @@ import { join } from 'node:path'
 
 // ── Fixtures ────────────────────────────────────────────────────────────────────────────────
 const approval = (over: Partial<PendingApproval> = {}): PendingApproval => ({
-  id: 'appr-1', source: 'chat', tool: 'shell.run', session: 'nightly-sweep', ts: 1, ...over,
+  id: 'appr-1', request_id: 'appr-1', source: 'chat', tool: 'shell.run', session: 'nightly-sweep', ts: 1,
+  session_title: '', agent: '', risk: '', grant_agent: '', ...over,
 })
 
 /** A live session row, shaped the way `ChatSession.to_dict()` sends it — including the two fields
@@ -276,7 +277,7 @@ describe('the lane split comes from lib/attentionLanes, not from this view', () 
   })
 
   it('hands the three lists over UNMERGED — a mirrored approval is on the wire twice', async () => {
-    // `_mirror_approval_to_inbox()` raises an `agent_request` row carrying `refs.approval` equal to
+    // The pending-approval registry raises an `agent_request` row carrying `refs.approval` equal to
     // the PendingApproval id, so concatenating the lists here would double-count every mirrored
     // approval. Suppressing the duplicate is the sibling's job; this view must not pre-merge.
     const appr = approval({ id: 'appr-9' })

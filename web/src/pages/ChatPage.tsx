@@ -1389,15 +1389,20 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       case 'approval':
         endTextRun()  // land buffered text before the approval card
         patchLastAssistant((segs) => {
-          const id = String(d.id ?? '')
+          // The card addresses the call by the CHAT's own id — what the transcript rehydrates
+          // as `approval_id` and what the approve route takes. `d.id` is the registry id every
+          // other surface uses, unique across chats (a chat's id is unique only inside it).
+          const id = String(d.request_id ?? '')
           if (segs.some((sg) => sg.kind === 'approval' && sg.id === id)) return segs
           segs.push({ kind: 'approval', id, tool: String(d.tool ?? 'tool'), input: String(d.tool_input ?? ''), purpose: String(d.tool_purpose ?? ''), risk: (d.risk ? String(d.risk) : undefined) as ApprovalSegment['risk'], readOnlyCommand: readOnlyCommandOf(d.is_read_only), grantAgent: d.grant_agent ? String(d.grant_agent) : '' })
           return segs
         })
         break
       case 'approval_resolved':
+        // Matched by the chat's own id, like the card was created; the session gate above has
+        // already dropped a frame for another chat, which may be waiting on the same bare id.
         setTurns((prev) => prev.map((t) => ({ ...t, segments: t.segments.map((sg) =>
-          sg.kind === 'approval' && sg.id === String(d.id ?? '') ? { ...sg, resolved: d.approved ? 'approved' : 'rejected' } as ApprovalSegment : sg) })))
+          sg.kind === 'approval' && sg.id === String(d.request_id ?? '') ? { ...sg, resolved: d.approved ? 'approved' : 'rejected' } as ApprovalSegment : sg) })))
         break
       case 'chat_segment': endTextRun(); break
       // A regenerated answer landed (fresh reply → new variant) OR the user switched

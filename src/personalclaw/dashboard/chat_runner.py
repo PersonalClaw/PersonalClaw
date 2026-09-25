@@ -60,6 +60,7 @@ from personalclaw.dashboard.state import (
     SUBAGENT_COMPLETION_PREFIX,
     DashboardState,
     _ChatSession,
+    chat_approval_id,
     read_only_command,
     resolve_effective_risk,
     tool_input_to_str,
@@ -605,12 +606,6 @@ _WRITE_FILE_TOOLS = {"write_file", "edit_file"}
 # would bloat persisted meta; truncate with a marker.
 _MAX_FILE_SNAPSHOT = 200_000
 
-# How long an approval prompt may go unanswered before it is ALSO mirrored into the inbox
-# as a standing request (plan 42 T4.4). Short enough that a user who stepped away finds it
-# waiting, long enough that answering promptly never creates an inbox row to clean up —
-# the common case (approve within seconds) must not leave litter.
-_APPROVAL_MIRROR_GRACE_SECS = 90.0
-
 
 def _turn_complete_line(
     *,
@@ -700,54 +695,6 @@ def _record_turn_usage(
         model=model,
         estimate_if_missing=False,
     )
-
-
-def _mirror_approval_to_inbox(state: object, session_key: str, event: object, risk: str) -> str:
-    """Raise an ``agent_request`` item for an approval that outlived its prompt.
-
-    Returns the inbox item id, or "" when nothing was written. Deduped per
-    (session, request) so a re-entered prompt can't stack rows. Best-effort: a failure here
-    must never break the approval flow the user is actually waiting on.
-    """
-    try:
-        from personalclaw.inbox import ItemKind, emit_attention_item
-
-        tool = getattr(event, "title", "") or "a tool"
-        return emit_attention_item(
-            state,
-            source="system",
-            kind="agent_request",
-            item_kind=ItemKind.AGENT_REQUEST.value,
-            title=f"Approval needed: {tool}",
-            body=f"A chat is waiting for your decision before running {tool} (risk: {risk}).",
-            refs={"session": session_key, "approval": str(getattr(event, "request_id", ""))},
-            dedup_key=f"approval:{session_key}:{getattr(event, 'request_id', '')}",
-        )
-    except Exception:
-        logger.debug("approval inbox mirror failed", exc_info=True)
-        return ""
-
-
-def _resolve_mirrored_approval(item_id: str, outcome: str) -> None:
-    """Close the mirrored item once the approval is answered anywhere.
-
-    Approved → HANDLED, anything else (rejected, timed out) → DISMISSED, so the item records
-    which answer was given rather than merely that the question closed.
-    """
-    if not item_id:
-        return
-    try:
-        from personalclaw.inbox import InboxStore
-
-        store = InboxStore()
-        store.load()
-        item = store.items.get(item_id)
-        if item is None or item.status in ("handled", "dismissed"):
-            return
-        item.status = "handled" if outcome.startswith("approved") else "dismissed"
-        store.save()
-    except Exception:
-        logger.debug("approval inbox mirror resolve failed", exc_info=True)
 
 
 def _file_change_base(session: _ChatSession) -> Path:
@@ -3738,8 +3685,8 @@ async def run_chat(
                     logger.warning("AUTO-REJECTED tool=%r (batch rejection)", event.title)
                     continue
                 # §2.3 (gap 3) — UNATTENDED FAIL-FAST, the last gate before the wedge.
-                # Everything below this point waits on a human: it renders an approval
-                # card, mirrors it to the inbox after a grace period, and then blocks
+                # Everything below this point waits on a human: it publishes the approval
+                # to every surface (the card, the approvals list, the Inbox) and then blocks
                 # for up to two hours. On an unattended turn there is no human, so that
                 # is not a gate — it is a two-hour stall that ends in a rejection
                 # anyway. Deny NOW, with the reason, and let the turn continue: the CLI
@@ -3838,77 +3785,63 @@ async def run_chat(
                     event.title,
                     json.dumps(perm_meta),
                 )
-                # The live chat page consumes this turn via the HTTP stream, so
-                # session.append's SSE broadcast is suppressed (_has_reader). Emit
-                # a typed `approval` WS event so the card renders LIVE — without it
-                # the prompt only appeared after a manual reload (which rehydrated
-                # the persisted permission message).
-                state.broadcast_ws(
-                    "approval",
-                    {
-                        "session": session.key,
-                        "id": str(event.request_id),
-                        "tool": event.title,
-                        "tool_input": perm_meta.get("tool_input", ""),
-                        "tool_purpose": event.tool_purpose or "",
-                        "risk": effective_risk,
-                        # #2821: the third input Contract C2 names. Computed per approval
-                        # since #443 and dropped on the floor until now — the frontend
-                        # declared the parameter and one branch of its derivation was
-                        # unreachable in production. `null` when the call runs no shell.
-                        "is_read_only": read_only,
+                # Park the future BEFORE publishing: publication is what makes the call
+                # answerable from anywhere, and an answer that arrives the instant it is
+                # listed must find the future in place.
+                loop = asyncio.get_running_loop()
+                fut: asyncio.Future[str] = loop.create_future()
+                request_id = str(event.request_id)
+                session._approval_futures[request_id] = fut
+                # Bind `outcome` BEFORE the try so the finally (and the post-block reads
+                # below) can never hit UnboundLocalError. It is set by the wait and by the
+                # TimeoutError handler — but NOT when the wait is cancelled (pytest-timeout,
+                # gateway shutdown, client disconnect, navigation away). On that path the
+                # finally used to raise UnboundLocalError, which REPLACED the cancellation
+                # in the traceback (so a CI hang read as an unrelated error, #1536).
+                # Default "rejected": a never-answered approval must not execute the tool.
+                # The cancellation still propagates (the finally doesn't swallow it).
+                outcome = "rejected"
+                try:
+                    # ONE registration for every surface — inside the try, so a turn torn
+                    # down mid-publication still leaves nothing listed. The live chat page
+                    # consumes this turn via the HTTP stream, so session.append's SSE
+                    # broadcast is suppressed (_has_reader); the registry's `approval` frame
+                    # is what renders the card LIVE, and it is the same entry
+                    # `GET /api/approvals` lists, Home counts, To triage and the phone offer
+                    # to answer, and the Inbox row is raised from. A chat approval used to
+                    # broadcast a frame of its own and register nowhere else, so it was
+                    # invisible to every one of those.
+                    await state.hold_session_approval(
+                        session,
+                        request_id,
+                        tool=event.title,
+                        tool_input=perm_meta.get("tool_input", ""),
+                        tool_purpose=event.tool_purpose or "",
+                        agent=_agent_label(session),
+                        risk=effective_risk,
+                        # #2821: the third input Contract C2 names — `None` when the call
+                        # runs no shell, screened on the RAW input above.
+                        is_read_only=read_only,
                         # The live card needs the grant target too, not just the rehydrated
                         # one — a prompt answered without a reload is the COMMON case, and
                         # it is the one that was promising blind (#541).
-                        "grant_agent": perm_meta.get("grant_agent", ""),
-                    },
-                )
-                loop = asyncio.get_running_loop()
-                fut: asyncio.Future[str] = loop.create_future()
-                session._approval_futures[str(event.request_id)] = fut
-                # Push via global SSE AFTER registering the future, so the
-                # session dict reflects pending_approval=true and Board cards
-                # move into the Blocked lane without a browser refresh.
-                state.push_sessions_update()
-                mirrored_item = ""
-                # Bind `outcome` BEFORE the try so the finally (and the post-block reads
-                # below) can never hit UnboundLocalError. It is set on the success and
-                # grace-timeout paths and by the outer TimeoutError handler — but NOT when
-                # the inner wait is cancelled (pytest-timeout, gateway shutdown, client
-                # disconnect, navigation away). On that path the finally used to raise
-                # UnboundLocalError, which REPLACED the cancellation in the traceback (so
-                # a CI hang read as an unrelated error, #1536) and — worse in production —
-                # skipped `_resolve_mirrored_approval`, leaving the mirrored inbox item
-                # asking for a decision the turn is already tearing down. Default
-                # "rejected": a never-answered approval must not execute the tool, and the
-                # mirror is resolved rather than stranded. The cancellation still
-                # propagates (the finally doesn't swallow it).
-                outcome = "rejected"
-                try:
-                    # An approval prompt is session-MODAL for latency: if the user is
-                    # looking at the chat, the card is the right surface and the inbox
-                    # would be noise. But this waits up to two hours, and a prompt the
-                    # user walked away from is a standing request they cannot see —
-                    # the session might be backgrounded, or the tab closed. So: wait a
-                    # short grace period first, and only mirror into the inbox if the
-                    # prompt is still unanswered after it (plan 42 T4.4).
-                    try:
-                        outcome = await asyncio.wait_for(
-                            asyncio.shield(fut), timeout=_APPROVAL_MIRROR_GRACE_SECS
-                        )
-                    except asyncio.TimeoutError:
-                        mirrored_item = _mirror_approval_to_inbox(
-                            state, session.key, event, effective_risk
-                        )
-                        outcome = await asyncio.wait_for(fut, timeout=7200.0)
+                        grant_agent=perm_meta.get("grant_agent", ""),
+                    )
+                    # Push via global SSE AFTER registering the future, so the
+                    # session dict reflects pending_approval=true and Board cards
+                    # move into the Blocked lane without a browser refresh.
+                    state.push_sessions_update()
+                    # The interactive window: an unattended turn failed fast above, so a
+                    # human is who this waits for.
+                    outcome = await asyncio.wait_for(fut, timeout=state._APPROVAL_TIMEOUT)
                 except asyncio.TimeoutError:
                     outcome = "rejected"
                 finally:
-                    session._approval_futures.pop(str(event.request_id), None)
-                    # Answering in the session must resolve the mirror too, or the inbox
-                    # keeps asking for a decision the user already made.
-                    if mirrored_item:
-                        _resolve_mirrored_approval(mirrored_item, outcome)
+                    session._approval_futures.pop(request_id, None)
+                    # Unanswered on the way out — expired, or its turn was torn down — so
+                    # every surface still listing it drops it as denied. A no-op when a
+                    # decision already withdrew it.
+                    state.expire_approval(chat_approval_id(session.key, request_id))
                 if outcome == "approved_trust_reads":
                     session._trust_reads = True
                     outcome = "approved"

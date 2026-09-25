@@ -320,15 +320,17 @@ class TestTheProductionCallShapes:
         }
         assert "effective_risk" in bound_from_resolver
 
-        mirror_args = [
-            node.args
+        # The approval's one publication — the registry entry every surface (the card, the
+        # listing, the Inbox row and its notification) reads its risk from.
+        holds = [
+            node
             for node in ast.walk(tree)
             if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "_mirror_approval_to_inbox"
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "hold_session_approval"
         ]
-        assert len(mirror_args) == 1, "one notification call site"
-        risk_arg = mirror_args[0][3]
+        assert len(holds) == 1, "one publication call site"
+        risk_arg = next(kw.value for kw in holds[0].keywords if kw.arg == "risk")
         assert isinstance(risk_arg, ast.Name) and risk_arg.id == "effective_risk"
 
     def test_the_task_mode_gate_is_not_handed_the_declared_kind(self):
