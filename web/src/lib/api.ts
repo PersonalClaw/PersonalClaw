@@ -6291,9 +6291,11 @@ export const api = {
   // (drives the Add-instance dropdown). No hardcoded type list; a type not backed
   // by an installed app never appears.
   modelProviderTypes: () => get<{ types: ModelProviderType[] }>('/api/model-provider-types').then((d) => d.types),
-  createModelProvider: (body: { name: string; type: string; model?: string; options?: Record<string, string> }) =>
+  // `options` values may be `null` — an explicit "clear this stored field" (#3554),
+  // distinct from the key being absent (leave whatever is already stored alone).
+  createModelProvider: (body: { name: string; type: string; model?: string; options?: Record<string, string | null> }) =>
     post<{ ok: boolean; name: string }>('/api/model-providers', body),
-  updateModelProvider: (name: string, body: { model?: string; type?: string; options?: Record<string, string> }) =>
+  updateModelProvider: (name: string, body: { model?: string; type?: string; options?: Record<string, string | null> }) =>
     put<{ ok: boolean }>(`/api/model-providers/${encodeURIComponent(name)}`, body),
   deleteModelProvider: (name: string) => del(`/api/model-providers/${encodeURIComponent(name)}`),
   testModelProvider: (name: string) => post<ProviderTestResult>(`/api/model-providers/${encodeURIComponent(name)}/test`),
