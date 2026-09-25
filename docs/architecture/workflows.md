@@ -73,7 +73,7 @@ while not terminal:
 | `judge_pretier.py` | the free rule tier that runs BEFORE any judge model call, plus the deterministic `fallback_check` |
 | `judge_actors.py` | the actor-transition invariant (a worker may never reach `done`; a `self_judge` gate's PASS is redirected to review), judge isolation, and the blinded role-filtered evidence a judge is allowed to read |
 | `loop_middleware.py` | the breaker's next tier: call fingerprinting, failure-class routing, the Continue→Nudge→Escalate→Halt ladder, the interrupt queue |
-| `supervisor_policy.py` | the ONE `SupervisorPolicy` a loop node declares (rubric, escalation ladder, failure mutations, dwell/metric gates, marginal-value band, judge model tier, reproduce-before-ship, write scope, budget, HITL posture), its tolerant parser and its authoring-time `WF_SUPERVISOR_*` validation. Reuses the scattered types rather than re-minting them; deliberately inert with a two-directional honesty rail (PP-15 is the wiring owner) |
+| `supervisor_policy.py` | the ONE `SupervisorPolicy` a loop node declares (rubric, escalation ladder, failure mutations, dwell/metric gates, marginal-value band, judge model tier, reproduce-before-ship, write scope, budget, HITL posture), its tolerant parser and its authoring-time `WF_SUPERVISOR_*` validation. Reuses the scattered types rather than re-minting them. **Live, not inert:** `RunController._supervisor_policy` (`workflows/controller.py:3543`, called at `:3722`) parses a loop node's `supervisor:` block and `tick_config` turns it into the `TickConfig` that `loop.tick.evaluate` (`loop/tick.py:306`) reads, so the thresholds a template declares here are the thresholds the engine applies. `HAS_ZERO_PRODUCTION_CALLERS` is `False` (`supervisor_policy.py:73`) and a rail asserts that marker against reality in both directions, so it cannot quietly disagree with the code |
 | `judge_calibration.py` | the nodding-loop detector, divergence records, stuck detection, and the verdict ledger they read |
 | `review_service.py` | the run-scoped binding for `personalclaw.review_triage` (EI-9): the live `git diff` a run's findings are anchored against, the `review_finding` ledger read, the re-anchor-on-submit TOCTOU check, dispatch of the ACCEPTED subset through `service.steer_run`, and rejections written as `judge_divergence` calibration rows |
 | `loop_aliases.py` | read-time aliases for legacy loop-kind references, and cockpit stream-key equivalence |
@@ -354,7 +354,7 @@ resolved (symlinks, `..`) at comparison time.
 Opt-in, deliberately: the tree walk is real work, and a fan-out of fast
 transforms must not each pay for one.
 
-## Sandbox tiers (EI-1/EI-2/EI-4)
+## Sandbox tiers
 
 `allowed_write_paths` above is the *watched* side of confinement — snapshot-and-diff, after the
 fact. A **sandbox provider** is the *enforced* side: it runs a node's (or an app backend's, or a
@@ -387,7 +387,7 @@ Authoring conventions, the lint that enforces them, and the macro/block
 libraries are documented in
 [`docs/guides/workflow-templates.md`](../guides/workflow-templates.md).
 
-### The `self-qa` template's evidence node (SV-10)
+### The `self-qa` template's evidence node
 
 The bundled `self-qa` template's `evidence` node is an **`action`** node backed by
 `selfqa-evidence`, not an LLM `stage`: sealing a proof bundle is deterministic work a model

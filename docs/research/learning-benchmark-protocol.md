@@ -1,6 +1,6 @@
 # Learning Benchmark Protocol — does an approved skill make the next run better?
 
-**Status:** PROTOCOL v1 — FROZEN 2026-08-16 (LEARNING-VISIBILITY T4.1, atom LV-6). Owner-signed; see §8.
+**Status:** PROTOCOL v1 — FROZEN 2026-08-16. Owner-signed; see §8.
 **Question:** When a user approves a learned skill, does the next matching run measurably improve — and by how much, at what token cost?
 **Executed by:** LV-7 as an EVALUATION-SUBSTRATE study. This document is the measurement contract `LV-7` implements; it deliberately builds nothing.
 **Reviewability rule:** the protocol is frozen BEFORE any run, so a disappointing result cannot retroactively edit the method. §6 lists what invalidates a result; §7 lists what must exist before a single number may be published.

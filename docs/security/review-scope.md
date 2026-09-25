@@ -432,9 +432,8 @@ filled in by anyone else:
 
 Until all three are filled in, this document is a *proposal*: the paths, the
 format, the evidence bar, and the publication plan are written and reviewable,
-but no review is commissioned or scheduled. The corresponding roadmap atom
-(`SH-9`, in SECURITY-HARDENING) lists
-scope approval as an owner task for exactly this reason.
+but no review is commissioned or scheduled. Commissioning one is a maintainer
+decision, not a task an agent can discharge, which is why it is still open.
 
 The honest framing for a reader in the meantime: **PersonalClaw has not been
 externally reviewed.** Its threat model cites its code, its limitations are

@@ -51,7 +51,7 @@ moving it would drag every default container install onto a candidate), and not
 the moving minor `:X.Y` — not even its own. Once `v0.3.0` ships, `:0.3` means the
 stable 0.3 line, and anyone who pinned `:0.3` did not opt into candidates. The
 moving `:X.Y` and `:beta` tags are what `updates.channel` resolves to for a
-container install (`self_update.select_image_tag`, RUM-7), which is why they have
+container install (`self_update.select_image_tag`), which is why they have
 to exist and why the negative cases are tested.
 
 A tag the parser cannot classify **fails the run before the build starts** —
