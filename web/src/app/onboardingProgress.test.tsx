@@ -321,6 +321,41 @@ describe('re-entering the flow resumes at the persisted step', () => {
     expect(saveOnboardingState).not.toHaveBeenCalled()
   })
 
+  it('the recap names the BUNDLED floor rather than "a configured provider" (OU-14)', async () => {
+    // A re-entry on a home that bound nothing: chat resolves, but what resolves it is the
+    // 135M bundled weight. The floor is never a binding, so `chat_model_refs` is empty and the
+    // recap has no model to name — and the no-ref sentence #3528 gave the implicit-provider case
+    // is the one sentence about the floor that is not true. The words are the step summary's
+    // own, so a first pass and a re-entered pass say the same thing.
+    onboarding.mockResolvedValue({
+      needs_model: false, has_model_provider: true, has_chat_binding: false,
+      chat_model_refs: [], chat_is_bundled_floor: true, step: 'first_success',
+      essentials: { model: null, search: false, speech: false, channel: null },
+      first_success: { knowledge: false, trigger: false, loop: false },
+    })
+    await enterName()
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
+    expect(
+      await screen.findByText('Chat model: Ready — using the small model PersonalClaw downloaded'),
+    ).toBeTruthy()
+    expect(screen.queryByText('Chat model: Ready — using a configured provider')).toBeNull()
+  })
+
+  it('does not call an implicit real provider the floor (OU-14 control)', async () => {
+    // The same empty chain, with the floor flag OFF: resolution is #3528's implicit
+    // "first capable configured provider" rule, and the floor sentence must not leak into it.
+    onboarding.mockResolvedValue({
+      needs_model: false, has_model_provider: true, has_chat_binding: false,
+      chat_model_refs: [], chat_is_bundled_floor: false, step: 'first_success',
+      essentials: { model: null, search: false, speech: false, channel: null },
+      first_success: { knowledge: false, trigger: false, loop: false },
+    })
+    await enterName()
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
+    expect(await screen.findByText('Chat model: Ready — using a configured provider')).toBeTruthy()
+    expect(screen.queryByText(/small model PersonalClaw downloaded/)).toBeNull()
+  })
+
   it('restates what the earlier visit set up, checked against live readiness', async () => {
     onboarding.mockResolvedValue({
       needs_model: false, has_model_provider: true, has_chat_binding: true,

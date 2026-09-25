@@ -13,6 +13,7 @@ import { boundModelLabel } from '../../lib/modelRef'
 import { ConsentModal, PermissionList, CronConsentList, consentPermissions, consentHostUi, consentPythonDeps } from '../../pages/apps/installConsent'
 import { SchemaField } from '../../pages/settings/ModelBackends'
 import { SchemaFields } from '../../pages/tools/schema'
+import { BundledModelOffer } from './BundledModelOffer'
 import { api, type AppCatalogEntry, type ChatModelOption, type LocalModelEndpoint, type ModelProviderType, type OnboardingModelCheck, type OnboardingState, type OnboardingStatePatch } from '../../lib/api'
 
 /** ONBOARDING-UX S1 T1.2r (OU-2) — the essential-apps step: the flow's first act
@@ -355,6 +356,7 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
             {isModel && phase !== 'pick' ? (
               <ModelSubFlow app={modelApp} phase={phase} chatModel={chatModel}
                 configured={configured}
+                isFloor={!!readiness?.chat_is_bundled_floor}
                 onBound={() => setPhase('verify')}
                 onVerified={(model) => { setChatModel(model); setPhase('done') }}
                 onReconfigure={() => setPhase('configure')}
@@ -411,7 +413,12 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
           disabledReason={phase === 'verify'
             ? 'Still checking that a chat model really resolves'
             : "Set up a model provider first — the agent can't think without one"}
-          onClick={() => onDone(chatModel || 'Ready — using a configured provider')}>
+          onClick={() => onDone(chatModel || (readiness?.chat_is_bundled_floor
+            // OU-14: the same no-binding verdict has two causes, and "a configured provider" is
+            // the one sentence about the downloaded 135M floor that is not true. This is the
+            // summary the done-screen recap repeats, so it has to name the floor here too.
+            ? 'Ready — using the small model PersonalClaw downloaded'
+            : 'Ready — using a configured provider'))}>
           Continue
         </Button>
         {/* Guidance never gates: the required lane is required to CONSIDER, not a wall.
@@ -499,11 +506,15 @@ function AppCard({ entry, open, installed, busy, error, onToggle, onInstall }: {
 
 /** The model lane's required rail, after its app is installed: enter the provider's
  *  own schema-declared fields (the key), test the connection, bind a chat model, then
- *  VERIFY that chat resolves. Four existing endpoints plus the verification. */
-function ModelSubFlow({ app, phase, chatModel, configured, onConfigured, onBound, onVerified, onReconfigure }: {
+ *  VERIFY that chat resolves. Four existing endpoints plus the verification.
+ *
+ *  `isFloor` (OU-14) is orthogonal to all of that: nothing to configure, nothing to verify —
+ *  it only decides what the DONE copy says when the lane is satisfied without a binding. */
+function ModelSubFlow({ app, phase, chatModel, configured, isFloor, onConfigured, onBound, onVerified, onReconfigure }: {
   app: string; phase: ModelPhase
   /** The verified bound model, or `''` when resolution has no explicit binding to name. */
   chatModel: string
+  isFloor: boolean
   configured: { provider: string; unprobed: string } | null
   onConfigured: (c: { provider: string; unprobed: string }) => void
   onBound: () => void
@@ -511,6 +522,23 @@ function ModelSubFlow({ app, phase, chatModel, configured, onConfigured, onBound
   onReconfigure: () => void
 }) {
   if (phase === 'done') {
+    // OU-14: with nothing bound, the lane is satisfied by the BUNDLED floor model — so say
+    // which, and offer the upgrade. A bare "you're ready" here would be the first thing a new
+    // user reads about their model, and it would be the one place the tiny default is
+    // presented as a finished setup. `isFloor` is false the moment anything real is bound,
+    // which is also the moment the verdict's `bound` refs name it as `chatModel`, so the two
+    // branches never overlap.
+    if (isFloor && !chatModel) {
+      return (
+        <p data-type="body-s" className="inline-flex flex-wrap items-center gap-1.5 text-on-surface-var">
+          <Check size={15} aria-hidden="true" style={{ color: 'var(--color-success)' }} />
+          <span>
+            Ready — using the small model PersonalClaw downloaded. No key needed, but it&rsquo;s
+            tiny; add a provider below or later in Settings for real answers.
+          </span>
+        </p>
+      )
+    }
     return (
       <p className="inline-flex items-center gap-1.5 text-[0.8125rem]" style={{ color: 'var(--color-success)' }}>
         <Check size={15} aria-hidden="true" /> {chatModel ? `Chat model: ${chatModel}` : 'A chat model is configured — you\'re ready.'}
@@ -522,7 +550,16 @@ function ModelSubFlow({ app, phase, chatModel, configured, onConfigured, onBound
       onReconfigure={configured ? onReconfigure : undefined} />
   }
   if (phase === 'bind') return <BindModel configured={configured} onBound={onBound} />
-  return <ConfigureProvider app={app} onConfigured={onConfigured} />
+  return (
+    <>
+      {/* OU-14 — the one-click, no-key way past the model wall, above the provider catalogue
+          because it is the cheapest thing a newcomer can do and the catalogue below all needs
+          an account. Renders nothing when there is no download on offer (already downloaded,
+          or a provider is bound), so a home that does not need it sees the old lane exactly. */}
+      <BundledModelOffer />
+      <ConfigureProvider app={app} onConfigured={onConfigured} />
+    </>
+  )
 }
 
 /** The lane's proof. Builds what chat builds (`GET /api/onboarding/model-check`) and reports

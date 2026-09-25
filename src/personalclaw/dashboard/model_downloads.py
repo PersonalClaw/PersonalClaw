@@ -198,10 +198,19 @@ def _cache_root(name: str) -> Path:
 
 
 def _expected_size_bytes(name: str, model: str) -> int:
-    """Catalog size for ``model`` in bytes (0 if unknown), from the provider."""
+    """Catalog size for ``model`` in bytes (0 if unknown), from the provider.
+
+    🔴 The float is converted to bytes and only THEN rounded. It used to be
+    ``int(size_mb) * 1024 * 1024``, which truncated the mebibyte first and threw away every
+    fractional MiB: a model declaring ``138.102539`` MiB produced a 144,703,488-byte total
+    against a 144,811,072-byte file — so the bar reached 100% about 105 KiB early, and the
+    size the user agreed to before clicking disagreed with the denominator they then watched.
+    ``size_mb`` is a float precisely so a provider can state an exact size (OU-14 measured
+    this live), and losing it here silently overrode the provider that was being careful.
+    """
     for m in _list_models_for_provider(name):
         if getattr(m, "name", None) == model:
-            return int(getattr(m, "size_mb", 0) or 0) * 1024 * 1024
+            return round(float(getattr(m, "size_mb", 0) or 0) * 1024 * 1024)
     return 0
 
 

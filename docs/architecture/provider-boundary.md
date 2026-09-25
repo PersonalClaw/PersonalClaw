@@ -61,6 +61,38 @@ implements it. What matters here is where the boundary sits inside each family:
   floor is a declared `keyless` *capability*, not a vendor name in core
   (`search_providers/registry.py::_keyless_provider`: first registered keyless
   provider wins).
+- **The chat zero-config floor** is the model axis' version of that same rule
+  (OU-14). `apps/native/bundled-chat` runs a small Apache-2.0 GGUF model in-process
+  on `numpy`, so an install answers a first turn with no provider and no key. The
+  weight is **not** in any distribution artifact — not the wheel, not the container
+  image, not the desktop bundle — but is fetched once into
+  `$PERSONALCLAW_HOME/models/bundled-chat/` on an explicit click, digest-verified
+  against the record (owner decision 2026-09-24; a ~147 MiB wheel is over PyPI's
+  100 MiB per-file limit and a cost every installer would pay). So the *first* chat
+  needs network and everything after it does not — and no surface claims otherwise.
+  It is an app bundle and **adds no in-core exception**: the executor is a *format*
+  reader plus arithmetic (no endpoint, no auth, no catalog, no wire dialect), and
+  `numpy` was already a core dependency for the in-wheel `native-vector-memory`
+  app — so core gains no dependency and no vendor string. The download itself adds
+  no route either: the app implements core's existing `LocalModelProvider` contract,
+  so `POST /api/models/downloads` + the SSE progress stream + cancel + delete all
+  serve it generically, and **no route or field carries this app's name.**
+  `GET /api/onboarding`'s `chat_download_offer` is derived from the local-model
+  registry (capability + catalog), not from a hard-coded app. What core *did* gain
+  is one declared flag, `ProviderEntry.floor`, which implicit fallback sorts LAST
+  (`providers/provider_bridge.py::_resolve_from_config_registry`). That flag is
+  necessary rather than cosmetic: an app registers its floor entry while its module
+  is imported, which happens *before* `sync_entries_from_config()` replays the
+  user's own rows, so on insertion order alone a floor would beat every configured
+  provider. The entry is registered **in memory only** — never written to
+  `config.json` — so it vanishes with the bundle instead of leaving a stale pin
+  naming a provider that is gone, and it is registered only once the weight is
+  actually on disk (`refresh_registration()` re-evaluates after a download or a
+  delete, so neither needs a restart). Which model is signed off, under which
+  licence, with which digest and source pin, is recorded in
+  [bundled-model-signoff.txt](bundled-model-signoff.txt); `scripts/verify_wheel.py`
+  asserts at release that the wheel stays small and carries **no** weight-shaped
+  member, so a weight creeping back in reds the release rather than the upload.
 - **Agent apps** own binary resolution, dialect selection, and login argv; core
   `acp/` is the vendor-neutral protocol layer.
 - **OCR engines** register through `ocr/` (`OcrProvider`, re-exported by `sdk/ocr.py`).

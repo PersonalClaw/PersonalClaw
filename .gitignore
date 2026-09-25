@@ -143,3 +143,15 @@ src/personalclaw/tests_fixtures/**/*.db-shm
 # and re-points sys.path before collecting. It is scaffolding for one session, never repo
 # content, and `git add -A` would sweep it in (it did, once, during this rule's own change).
 /.lane_pytest.py
+# The bundled default chat model's weight (OU-14). 138 MiB of packed floats, deliberately NOT
+# in history: a blob that size is paid by every clone, CI checkout and bisect forever and can
+# never be removed again. What git carries instead is the DECISION and the RECIPE — the
+# sign-off record `docs/architecture/bundled-model-signoff.txt` (model id, licence, pinned
+# immutable source URL, sha256, size ceiling) and `scripts/fetch_bundled_model.py`, which
+# reads both and refuses bytes whose digest does not match. A release build runs that script
+# before `python -m build`, so the WHEEL and the container image carry the weight and a user's
+# first chat turn needs no network. A source checkout has no weight until you fetch it, and
+# that state is reported out loud (`verify_wheel.py` → `no-bundle`, the app's `availability()`
+# → the reason), never papered over. The licence text and attribution beside it ARE committed:
+# Apache-2.0 §4 requires them to travel with the redistribution.
+src/personalclaw/apps/native/*/weights/*.gguf

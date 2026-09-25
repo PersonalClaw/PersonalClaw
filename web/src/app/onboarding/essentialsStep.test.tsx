@@ -34,6 +34,15 @@ const detectLocalModel = vi.fn()
 const scanLocalModels = vi.fn()
 const bindLocalModel = vi.fn()
 const onboardingModelCheck = vi.fn()
+// OU-14: the model lane now renders `<BundledModelOffer />`, which polls `/api/onboarding` and
+// tracks download jobs. Mocked HERE rather than by stubbing the component, because the lane's
+// own floor-copy test below asserts on what that offer/floor state renders — a stub would make
+// that assertion pass against the stub. The defaults are the "nothing to download" answer, so
+// every other test in this file sees the lane exactly as it was.
+const onboarding = vi.fn()
+const modelDownloads = vi.fn()
+const startModelDownload = vi.fn()
+const cancelModelDownload = vi.fn()
 
 vi.mock('../../lib/api', () => ({
   api: {
@@ -50,6 +59,11 @@ vi.mock('../../lib/api', () => ({
     scanLocalModels: () => scanLocalModels(),
     bindLocalModel: (...a: unknown[]) => bindLocalModel(...a),
     onboardingModelCheck: () => onboardingModelCheck(),
+    onboarding: () => onboarding(),
+    modelDownloads: () => modelDownloads(),
+    startModelDownload: (...a: unknown[]) => startModelDownload(...a),
+    cancelModelDownload: (...a: unknown[]) => cancelModelDownload(...a),
+    downloadStreamUrl: (id: string) => `/api/models/downloads/${id}/stream`,
   },
 }))
 vi.mock('../../app/appSdk', () => ({ launchChat: vi.fn(), notify: vi.fn() }))
@@ -148,6 +162,16 @@ beforeEach(() => {
   // The lane's PROOF: by default the build check passes, so every test above walks the flow
   // exactly as it did before verification existed. The tests that falsify it override this.
   onboardingModelCheck.mockResolvedValue({ ok: true, source: 'binding', bound: ['openai:gpt-5'] })
+  // OU-14 default: NOTHING to download. So the bundled-model offer renders nothing and every
+  // test above is the lane exactly as it was before this atom — the offer is proved on its own
+  // surface in bundledModelOffer.test.tsx rather than by perturbing all of these.
+  onboarding.mockResolvedValue({
+    needs_model: true, has_model_provider: false, has_chat_binding: false,
+    chat_download_offer: null,
+  })
+  modelDownloads.mockResolvedValue([])
+  startModelDownload.mockResolvedValue({ id: 'j', state: 'running', model: 'm', provider: 'p' })
+  cancelModelDownload.mockResolvedValue(undefined)
 })
 
 // ── the lane classifier ──────────────────────────────────────────────────────
@@ -316,6 +340,35 @@ describe('the model lane completes entirely in-flow', () => {
     // that it read the generic "a chat model is configured" and the recap read the APP name.
     expect(await screen.findByText('Chat model: gpt-5')).toBeTruthy()
     expect(chatModels).not.toHaveBeenCalled()
+  })
+
+  it('names the BUNDLED floor rather than calling it a finished model setup (OU-14)', async () => {
+    // The first thing a new user reads about their model. Before OU-14 this lane could only
+    // be satisfied by a real provider, so "you're ready" was true; now it is also satisfied by
+    // a 135M bundled weight, and a bare "ready" there would be the one surface presenting the
+    // tiny default as finished setup — the exact conclusion-about-the-product the honesty
+    // requirement exists to prevent. The verdict must describe the home the readiness does:
+    // the floor is never a binding, so it resolves through the FALLBACK with no refs. The
+    // file's default verdict is a binding, which on a floor home would be impossible (#3528).
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'fallback', bound: [] })
+    renderStep({ readiness: {
+      needs_model: false, has_model_provider: true, has_chat_binding: false,
+      chat_model_refs: [], chat_is_bundled_floor: true,
+    } })
+    expect(await screen.findByText(/small model PersonalClaw downloaded/)).toBeTruthy()
+    expect(screen.queryByText(/A chat model is configured/)).toBeNull()
+  })
+
+  it('names the bound model, not the floor, when a REAL provider is what resolves', async () => {
+    // The control arm: the floor copy must not leak onto a properly-bound home. Since #3528
+    // the done copy names the model from the verdict's own `bound` refs — here the file's
+    // default binding verdict, `openai:gpt-5`.
+    renderStep({ readiness: {
+      needs_model: false, has_model_provider: true, has_chat_binding: true,
+      chat_model_refs: ['openai:gpt-5'], chat_is_bundled_floor: false,
+    } })
+    expect(await screen.findByText('Chat model: gpt-5')).toBeTruthy()
+    expect(screen.queryByText(/small model PersonalClaw downloaded/)).toBeNull()
   })
 
   it('applies a corrected key to the existing instance instead of dead-ending on 409', async () => {
@@ -959,6 +1012,32 @@ describe('the model lane reads ready only after a build check', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /Continue/ }).getAttribute('aria-disabled')).not.toBe('true'))
     fireEvent.click(screen.getByRole('button', { name: /Continue/ }))
     expect(onDone).toHaveBeenCalledWith('Ready — using a configured provider')
+  })
+
+  it('and names the BUNDLED FLOOR when that is what the fallback resolved to (OU-14)', async () => {
+    // 🔴 The same `source: 'fallback'` verdict, two very different causes. One is a provider the
+    // user configured but never pinned; the other is a downloaded 135M model they were never
+    // asked about. "Ready — using a configured provider" is the one sentence about the second
+    // that is not true, and this is the surface whose words the done-screen recap repeats — so
+    // getting it wrong here mislabels the model on the last screen of onboarding too.
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'fallback', bound: [] })
+    const { onDone } = renderStep({ readiness: { ...READY, chat_is_bundled_floor: true } })
+    await waitFor(() => expect(screen.getByRole('button', { name: /Continue/ }).getAttribute('aria-disabled')).not.toBe('true'))
+    fireEvent.click(screen.getByRole('button', { name: /Continue/ }))
+    expect(onDone).toHaveBeenCalledWith('Ready — using the small model PersonalClaw downloaded')
+  })
+
+  it('an explicit pick still wins over both fallback sentences', async () => {
+    // The precedence arm: the model the verdict names as bound is a stronger statement than
+    // either mechanism sentence, and the floor flag must not overwrite it — on a home where a
+    // real provider is bound, `chat_is_bundled_floor` is false anyway, so a flag that won here
+    // would be reporting a state the backend says does not exist. Since #3528 the summary
+    // names that model from the verdict's own `bound` refs, so it is the model, not a phrase.
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'binding', bound: ['openai:gpt-5'] })
+    const { onDone } = renderStep({ readiness: { ...READY, chat_is_bundled_floor: true } })
+    await waitFor(() => expect(screen.getByRole('button', { name: /Continue/ }).getAttribute('aria-disabled')).not.toBe('true'))
+    fireEvent.click(screen.getByRole('button', { name: /Continue/ }))
+    expect(onDone).toHaveBeenCalledWith('gpt-5')
   })
 })
 

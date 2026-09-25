@@ -32,7 +32,7 @@ DESKTOP_DIR     := desktop
 PYI_BUNDLE_DIR  := dist/personalclaw-backend
 
 .PHONY: help format lock lint test test-e2e test-visual build clean harness-validate gates \
-        mutation-check \
+        mutation-check bundled-model \
         serve serve-fresh serve-web \
         web-build spa-check backend-build pyinstaller \
         desktop desktop-dist desktop-dist-linux \
@@ -138,6 +138,15 @@ mutation-check:
 ## ratchet, and every baseline is shrink-only and FORBIDDEN to raise.
 gates:
 	$(PYTHON) scripts/gate_report.py
+
+## bundled-model: pre-fetch the default chat model into a home, without a browser (OU-14)
+## Normally users fetch it on first use from the chat screen or Settings > Models, where the
+## size is stated and it can be cancelled. This is for an offline image, a fleet, or a test
+## rig. Needs PERSONALCLAW_HOME (it refuses to guess one) and verifies the sha256 pinned in
+## docs/architecture/bundled-model-signoff.txt. NOT a build step: the wheel ships no weight.
+bundled-model:
+	PERSONALCLAW_HOME="$(or $(PERSONALCLAW_HOME),$(CURDIR)/.dev-home)" \
+		$(PYTHON) scripts/fetch_bundled_model.py
 
 ## build: build a distributable wheel + sdist
 build:

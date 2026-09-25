@@ -672,11 +672,11 @@ async def api_onboarding(request: web.Request) -> web.Response:
     provider configured, chat cannot work and we surface a setup prompt.
 
     Returns the readiness set ``{needs_model, has_model_provider, has_chat_binding,
-    chat_model_refs}`` — computed live, never stored — plus the persisted first-run
-    progress from ``entity_settings/onboarding.json`` (``step``, ``essentials``,
-    ``first_success``; see :mod:`personalclaw.onboarding`), which is what lets a mid-flow
-    reload resume. The progress fields are purely additive: a client that only reads the
-    readiness fields is unaffected. No secrets.
+    chat_model_refs, chat_is_bundled_floor, chat_download_offer}`` — computed live, never
+    stored — plus the persisted first-run progress from ``entity_settings/onboarding.json``
+    (``step``, ``essentials``, ``first_success``; see :mod:`personalclaw.onboarding`), which
+    is what lets a mid-flow reload resume. The progress fields are purely additive: a client
+    that only reads the readiness fields is unaffected. No secrets.
 
     ``chat_model_refs`` is the active chat chain (``["provider_name:model_id", …]``,
     position 0 = default) straight from ``active_models.json``. It is here because a
@@ -686,6 +686,12 @@ async def api_onboarding(request: web.Request) -> web.Response:
     copy of that fact — it is read live, from the one file that owns it, on the request
     the flow already makes. ``has_chat_binding`` is derived from this same list below, so
     the flag and the refs cannot disagree.
+
+    ``chat_is_bundled_floor`` is the one case those refs cannot describe: the OU-14 floor
+    answers through an in-memory entry and is never a binding, so when it is what chat
+    resolves to, ``chat_model_refs`` is empty while ``needs_model`` is false. A recap that
+    read only the refs would have nothing to name; this flag is what lets it say the small
+    bundled model is answering rather than claiming a model setup that does not exist.
     """
     has_provider = False
     has_binding = False
@@ -730,6 +736,62 @@ async def api_onboarding(request: web.Request) -> web.Response:
         logger.debug("onboarding: resolve probe failed; falling back", exc_info=True)
         needs_model = not (has_provider or has_binding)
 
+    # ``chat_is_bundled_floor`` — is chat about to be answered by a zero-config FLOOR provider
+    # rather than anything the user chose? (OU-14.) It exists because "a model resolves" and
+    # "you have a model worth trusting" are different facts, and collapsing them is how a user
+    # meets a 135M bundled model with no warning and concludes the PRODUCT is bad at chat. True
+    # only when there is no explicit binding AND every capable entry is flagged ``floor``, so
+    # binding anything at all turns it off. Derived, never stored, and no vendor name appears
+    # here: the flag is the entry's own declaration.
+    chat_is_floor = False
+    try:
+        if not has_binding:
+            from personalclaw.llm.capabilities import Capability as _Cap
+            from personalclaw.llm.registry import get_default_registry as _registry
+
+            capable = [
+                entry
+                for entry in _registry().list_entries()
+                if entry.type != "acp_agent" and _Cap.CHAT in (entry.declared_capabilities or ())
+            ]
+            chat_is_floor = bool(capable) and all(getattr(e, "floor", False) for e in capable)
+    except Exception:
+        logger.debug("onboarding: floor probe failed", exc_info=True)
+
+    # ``chat_download_offer`` — is there a chat model this machine could DOWNLOAD but has not?
+    # (OU-14.) It exists because the honest first-run answer on a fresh install is neither
+    # "you have a model" nor "go configure a provider": it is "there is a one-time download and
+    # here is how big it is". A surface cannot offer that without knowing the size up front, so
+    # the payload carries the bytes — a download offer without a number is the shape this
+    # explicitly must not be.
+    #
+    # Derived generically from the local-model registry: any registered provider whose app
+    # declares the CHAT capability and whose catalog holds an undownloaded model. No vendor and
+    # no app name appears here; the first such offer wins, and there is exactly one today.
+    chat_offer: dict[str, object] | None = None
+    try:
+        if needs_model:
+            from personalclaw.local_models.registry import capabilities_for, catalog_for, registered
+
+            for key, provider in registered():
+                if "chat" not in capabilities_for(key):
+                    continue
+                for model in await catalog_for(provider):
+                    if model.downloaded or "chat" not in (model.capabilities or []):
+                        continue
+                    chat_offer = {
+                        "provider": key,
+                        "model": model.name,
+                        "bytes": int(model.size_mb * 1024 * 1024),
+                        "licence": model.license,
+                        "description": model.description,
+                    }
+                    break
+                if chat_offer is not None:
+                    break
+    except Exception:
+        logger.debug("onboarding: download-offer probe failed", exc_info=True)
+
     from personalclaw.onboarding import load_onboarding_state
 
     return web.json_response(
@@ -738,6 +800,8 @@ async def api_onboarding(request: web.Request) -> web.Response:
             "has_model_provider": has_provider,
             "has_chat_binding": has_binding,
             "chat_model_refs": chat_refs,
+            "chat_is_bundled_floor": chat_is_floor,
+            "chat_download_offer": chat_offer,
             **load_onboarding_state(),
         }
     )

@@ -53,7 +53,7 @@ const TONE_VAR: Record<StatusPillTone, string> = {
   neutral: 'var(--color-on-surface-low)',
 }
 
-export function StatusPill({ tone, sized = true, pad = true, className, style, children, ...rest }: HTMLAttributes<HTMLSpanElement> & {
+export function StatusPill({ tone, sized = true, pad = true, groundedOn, className, style, children, ...rest }: HTMLAttributes<HTMLSpanElement> & {
   /** Semantic tone from the closed set — picks BOTH the 16% tint ground and
    *  the ink, so the pair can never disagree. */
   tone: StatusPillTone
@@ -64,13 +64,36 @@ export function StatusPill({ tone, sized = true, pad = true, className, style, c
   /** Emit the seed padding (px-1.5). Default true; set false when the pill
    *  genuinely needs other metrics and bring your own — same race rule. */
   pad?: boolean
+  /** Composite the 16% tint against THIS opaque tier instead of `transparent`,
+   *  pinning the pill's ground so it no longer depends on what is painted
+   *  beneath it.
+   *
+   *  🔴 For a pill on a tier that is not a reference ground, or on one that
+   *  MOVES. `statusChipContrast.test.ts` measures the tint over the resting
+   *  tiers and records its own exclusion of `--color-surface-high`, concluding
+   *  that a ground which lifts toward the ink "is a GROUND problem, and the fix
+   *  is for the chip's ground to stop moving under it" — this prop is that fix.
+   *  Measured (OU-14, both themes, 16%): the `ok` tint reads **4.4543** dark /
+   *  **4.4625** light over `surface-high` (axe `color-contrast`, serious, and it
+   *  fired on Settings → Providers once a downloadable chat model existed), and
+   *  **5.0903** / **5.0075** over `surface-container`. Same ink, same strength,
+   *  same appearance — only the compositing base is pinned.
+   *
+   *  Default `undefined` keeps the translucent wash, so every existing pill is
+   *  byte-identical and no scheme or contrast rail moves. Opt in only where the
+   *  ground is measured to break AA. */
+  groundedOn?: string
 }) {
   const ink = TONE_VAR[tone]
   return (
     <span
       data-type={sized ? 'caption' : undefined}
       className={cx('inline-flex shrink-0 items-center rounded-pill', pad && 'px-1.5', className)}
-      style={{ background: `color-mix(in srgb, ${ink} 16%, transparent)`, color: ink, ...style }}
+      style={{
+        background: `color-mix(in srgb, ${ink} 16%, ${groundedOn ?? 'transparent'})`,
+        color: ink,
+        ...style,
+      }}
       {...rest}>
       {children}
     </span>

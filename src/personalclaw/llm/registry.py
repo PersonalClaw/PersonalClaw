@@ -86,6 +86,16 @@ class ProviderEntry:
     options: dict[str, object] = field(default_factory=dict)
     credential: str | None = None
     declared_capabilities: frozenset[Capability] = field(default_factory=frozenset)
+    #: This entry is a zero-config FLOOR, not a configured choice: it exists so a home with
+    #: nothing bound can still resolve, and it must lose to anything the user actually bound.
+    #: Implicit fallback therefore sorts floor entries LAST (see
+    #: ``providers/provider_bridge.py::_resolve_from_config_registry``). The flag is
+    #: DECLARED by whatever registers the entry rather than inferred from a name, so core
+    #: never learns which app is the floor — the same shape as the search registry's
+    #: ``keyless`` capability (``search_providers/registry.py::_keyless_provider``).
+    #: Entries synced from ``config.json`` are never floors: a row the user's config carries
+    #: is a configured choice by definition.
+    floor: bool = False
 
 
 class ProviderRegistry:

@@ -4693,6 +4693,19 @@ export interface OnboardingState {
    *  must name; `essentials.model` below is the **app** the lane installed, and rendering
    *  that one under those words is #3528. `lib/modelRef` owns the reading. */
   chat_model_refs?: string[]
+  /** OU-14 — chat is about to be answered by the BUNDLED zero-config floor model rather
+   *  than anything the user chose. True only with no explicit chat binding AND every capable
+   *  provider entry declaring itself a floor, so binding anything turns it off. Optional
+   *  because an older backend omits it; `BundledFloorNotice` treats absent as false. */
+  chat_is_bundled_floor?: boolean
+  /** OU-14 — a chat model this machine could DOWNLOAD but has not, or `null`. Carries the
+   *  BYTES because the offer is shown before the user agrees to it, and a download offer
+   *  without a size is the one thing this surface must never be. Derived generically from the
+   *  local-model registry (any provider whose app declares `chat` with an undownloaded model),
+   *  so no vendor name reaches the client. */
+  chat_download_offer?: {
+    provider: string; model: string; bytes: number; licence: string; description: string
+  } | null
   step?: OnboardingStep
   essentials?: OnboardingEssentials
   first_success?: { knowledge: boolean; trigger: boolean; loop: boolean }

@@ -1253,7 +1253,16 @@ def _resolve_from_config_registry(
             provider_hint = provider_hint or _hint
 
     candidate = None
-    for entry in entries:
+    # A zero-config FLOOR entry sorts LAST among candidates. Registration order would
+    # otherwise decide this the wrong way round: an app that registers a floor does so while
+    # its module is imported (``register_extension_providers``), which runs BEFORE
+    # ``sync_entries_from_config()`` replays the user's own ``config.json`` rows — so the
+    # floor would be "the first entry declaring the capability" and would beat every provider
+    # the user actually configured. ``sorted`` is stable, so non-floor entries keep their
+    # registration order exactly. Same rule, same reason, as the search registry's keyless
+    # floor (``search_providers/registry.py``: "a provider that declares itself ``keyless``
+    # sorts last among candidates so a user-configured/keyed provider always wins").
+    for entry in sorted(entries, key=lambda e: getattr(e, "floor", False)):
         # Skip agent-runtime entries when only a ModelProvider will do.
         if model_axis_only and entry.type == "acp_agent":
             continue
