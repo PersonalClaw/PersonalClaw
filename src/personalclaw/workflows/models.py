@@ -1253,7 +1253,8 @@ class NodeInstance:
     #: PERSISTED, for the reason the notice exists: the ledger row is written once as the step
     #: settles, and a run opened tomorrow reads its node list from this state file. Held only in
     #: memory, the one surface a user actually looks at would forget by the next page load — which
-    #: is the silence #3545 is about, reintroduced one layer down.
+    #: is the silence #3545 is about, reintroduced one layer down. Cleared at every dispatch
+    #: (`RunController._launch`), like `cached`, so it always describes the current attempt.
     schema_shortfall: str = ""
 
     def to_dict(self) -> dict[str, Any]:

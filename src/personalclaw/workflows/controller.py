@@ -88,6 +88,7 @@ from personalclaw.workflows.effects import (
 from personalclaw.workflows.engine import (
     NodeResult,
     apply_judge_contract,
+    apply_schema_notice,
     dispatch,
     node_commits_effects,
     parse_json_loose,
@@ -1873,7 +1874,13 @@ class RunController:
             else:
                 inst.state = InstanceState.DONE
                 inst.completed_at = _now()
-                output = self._settled_stage_output(node, str(getattr(info, "result", "") or ""))
+                stage_result = self._settled_stage_output(
+                    node, str(getattr(info, "result", "") or "")
+                )
+                output = stage_result.output
+                # What the declared `schema` asked for and the subagent did not return (#3545), on
+                # the instance, the row below and the event, as `_apply` does for a dispatched node.
+                inst.schema_shortfall = stage_result.schema_shortfall
                 ref, preview = self.journal.store_output(path, output)
                 inst.output_ref = ref
                 if node_id:
@@ -1910,6 +1917,7 @@ class RunController:
                     model=str(getattr(info, "model", "") or ""),
                     cost_usd=float(getattr(info, "cost_usd", 0.0) or 0.0),
                     output_ref=ref,
+                    schema_shortfall=inst.schema_shortfall,
                 )
                 if node is not None:
                     self._record_terminal_effect(node, path, inst, inst.state, output)
@@ -1939,6 +1947,11 @@ class RunController:
                     "instance_path": path,
                     "status": inst.state.value,
                     "node_epoch": inst.epoch,
+                    # Only when there is something to name (#3545), as `_apply`'s event does. Empty
+                    # on every branch but DONE: `_launch` clears it per attempt.
+                    **(
+                        {"schema_shortfall": inst.schema_shortfall} if inst.schema_shortfall else {}
+                    ),
                 },
             )
             settled = True
@@ -1951,8 +1964,8 @@ class RunController:
             # only, which is why the counter needs its own flush here.
             self._save_run()
 
-    def _settled_stage_output(self, node: Node | None, text: str) -> Any:
-        """A spawned stage's output, in the shape its own `config` DECLARES.
+    def _settled_stage_output(self, node: Node | None, text: str) -> NodeResult:
+        """A spawned stage's settled result, its output in the shape its own `config` DECLARES.
 
         This settle path is the ONLY place a `stage` output is produced — `dispatch_stage` returns
         RUNNING at the spawn — so every seam that reads a stage's declared shape has to be applied
@@ -1976,6 +1989,11 @@ class RunController:
           `judge_contract` nodes in the bundled library are stages, so the contract validated
           nothing, ever — the engine's recomputed `overall`, its `valid` flag and its `shortfalls`
           (which three templates bind as `{{last.output.shortfalls}}`) were never produced.
+        * **The declared-schema notice (#3545).** The dispatch seam's own
+          `engine.apply_schema_notice`, observing the subagent's TEXT rather than the output built
+          from it. The `{"result": text}` envelope would be named as a `result` key the worker never
+          wrote, and the judge contract writes every key a judge schema declares whatever the model
+          said, so the settled output of a judge that answered in prose carries all of them.
 
         A stage that declares NO schema keeps `{"result": text}` — unstructured output is a real
         thing a stage may return, and that is its shape, not a fallback. A stage that declares one
@@ -1984,7 +2002,7 @@ class RunController:
         can only ADD resolvable keys.
         """
         if node is None:
-            return {"result": text}
+            return NodeResult(state=InstanceState.DONE, output={"result": text})
         cfg = node.config or {}
         parsed: Any = None
         if isinstance(cfg.get("schema"), dict) and cfg["schema"]:
@@ -1992,7 +2010,7 @@ class RunController:
         output: Any = parsed if isinstance(parsed, dict) else {"result": text}
         # Through the same helper the dispatch seam uses, so there is ONE definition of what a
         # validated verdict is — a second copy here would drift from the gate's.
-        return apply_judge_contract(
+        settled = apply_judge_contract(
             node,
             NodeResult(state=InstanceState.DONE, output=output),
             judge_hints_from_dict(
@@ -2000,7 +2018,8 @@ class RunController:
                 if isinstance(self.spec.get("runtime_hints"), dict)
                 else None
             ),
-        ).output
+        )
+        return apply_schema_notice(node, settled, text)
 
     def _reap_watchers(self) -> None:
         """Stop `until_cancelled` watchers whose accompanied work has finished.
@@ -2635,6 +2654,10 @@ class RunController:
         # rewind reset sites: every path to a terminal state runs through this dispatch, so a
         # re-run after a rewind cannot leave the previous epoch's `cached` behind.
         inst.cached = False
+        # The declared-schema notice (#3545) is per ATTEMPT for the same reason. A spawned stage
+        # settles out of band through several paths and only its DONE path sets it, so a rewound
+        # stage that then fails must not keep the previous attempt's notice on its row.
+        inst.schema_shortfall = ""
         if item.has_item and not inst.item_label:
             # Stamped once, at first launch. The items list is re-resolved from a binding on
             # every tick, so after an upstream output changes the label would be unrecoverable
