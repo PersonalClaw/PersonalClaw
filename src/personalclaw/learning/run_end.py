@@ -266,7 +266,9 @@ def _mine_tier_migration(run: Any, *, journal: Any) -> int:
             logger.debug("run-end: tier-migration ledger read failed for %s", sib_id, exc_info=True)
             continue
         signature = introspection.trajectory_signature(sib_id, events).signature
-        stats = introspection.run_stats(sib_id, events)
+        stats = introspection.run_stats(
+            sib_id, events, elapsed_secs=introspection.run_elapsed(sib, time.time())
+        )
         history.append((signature, stats.steps_failed > 0))
         # Only PRICED, positive costs feed the savings projection — a floor (some step booked no
         # cost) would understate the projected saving, and $0 says nothing.

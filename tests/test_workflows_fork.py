@@ -379,6 +379,157 @@ class TestForkIsCheap:
             CP.fork_run(c.run, c.spec, c.instances, checkpoint_id="999")
 
 
+class TestForkRetriesWhatDidNotFinish:
+    """A fork's child inherits what the parent COMPLETED and starts everything else fresh.
+
+    Measured in the day-5/6 validation: a fork of a FAILED best-of-n run copied the parent's
+    FAILED instances, so the child's frontier was complete before it began — Start answered 202
+    and the child failed at +0.0 s with ZERO provider calls, on the one retry path a failed run
+    offers.
+    """
+
+    async def test_a_fork_of_a_failed_run_reruns_what_failed_and_keeps_what_succeeded(self) -> None:
+        import copy
+
+        async def b_down(prompt, *, use_case="background", output_type=None):
+            if prompt.startswith("b "):
+                raise ConnectionError("provider down")
+            return "unused"
+
+        spec = copy.deepcopy(CHAIN)
+        run = store.create(WorkflowRun(id="", workflow_name=spec["name"]))
+        store.write_spec(run.id, spec)
+        parent = RunController(run, spec, services=EngineServices(completion=b_down))
+        assert await parent.run_to_completion(timeout=20) == RunStatus.FAILED
+
+        result = CP.fork_run(parent.run, spec, parent.instances)
+        states = {p: i.state for p, i in store.read_state(result.child.id).items()}
+        assert states == {
+            "root.children[0]": InstanceState.DONE,  # a — succeeded, carried over
+            "root.children[1]": InstanceState.PENDING,  # b — failed in the parent
+            "root.children[2]": InstanceState.PENDING,  # c — skipped: its input never existed
+            "root.children[3]": InstanceState.DONE,  # iso — succeeded, carried over
+        }
+
+        fn = _echo()
+        child = RunController(
+            store.get(result.child.id), spec, services=EngineServices(completion=fn)
+        )
+        assert await child.run_to_completion(timeout=20) == RunStatus.COMPLETE
+        # Exactly the work that did not finish — `a` and `iso` are the parent's, not re-paid.
+        assert fn.calls == ["b 1", "c out1"]
+        # The parent keeps its own outcome: a fork is a new attempt, never a rewrite.
+        assert store.get(parent.run.id).status == RunStatus.FAILED
+
+    async def test_an_unfinished_instance_restarts_clean_at_its_own_epoch(self) -> None:
+        """Nothing a failed or live attempt held may leak into the child: the parent's subagent,
+        its lease, its deadline, its spent retry budget. The epoch stays — a lower one could meet
+        a stale pre-rewind cache entry in the copied journal — and so does the `foreach` item a
+        row was, which is the only durable record of WHICH item it is."""
+        from personalclaw.workflows.models import Failure, FailureClass
+
+        c = await _completed()
+        parent = {
+            "root.children[0]": NodeInstance(
+                path="root.children[0]", state=InstanceState.DONE, epoch=2
+            ),
+            "root.children[1]": NodeInstance(
+                path="root.children[1]",
+                state=InstanceState.FAILED,
+                epoch=3,
+                attempt=2,
+                failure=Failure(failure_class=FailureClass.NETWORK, cause_plain="down"),
+                completed_at="2026-09-25T00:00:00Z",
+            ),
+            "root.children[2]": NodeInstance(
+                path="root.children[2]",
+                state=InstanceState.RUNNING,
+                epoch=1,
+                attempt=1,
+                subagent_id="sa-1",
+                claim_target="claim",
+                claim_holder="holder",
+            ),
+            "root.children[3]": NodeInstance(
+                path="root.children[3]",
+                state=InstanceState.WAITING,
+                wake_at=99.0,
+                item_label="auth.py",
+                item_total=12,
+            ),
+        }
+        result = CP.fork_run(c.run, c.spec, parent)
+        child = store.read_state(result.child.id)
+        assert child["root.children[0]"].to_dict() == parent["root.children[0]"].to_dict()
+        for path in ("root.children[1]", "root.children[2]", "root.children[3]"):
+            inst = child[path]
+            assert inst.state == InstanceState.PENDING, path
+            assert inst.attempt == 0 and inst.failure is None and inst.completed_at is None
+            assert not inst.subagent_id and not inst.claim_target and not inst.claim_holder
+            assert inst.wake_at == 0.0
+            assert inst.epoch == parent[path].epoch
+        assert (child["root.children[3]"].item_label, child["root.children[3]"].item_total) == (
+            "auth.py",
+            12,
+        )
+
+    async def test_the_childs_ledger_holds_what_it_inherited_and_not_the_parents_failure(
+        self,
+    ) -> None:
+        """Measured on the gateway: the third run in a Retry chain of best-of-n read "Steps failed
+        3" beside "1 node failed" in Introspect, because each fork copied every parent record into
+        its child — the parent's failure of the very step the child was about to re-run included.
+        Effects must survive the copy regardless: they are what the committed-effect boundary
+        reads, and a fork cannot un-fire anything."""
+        import copy
+
+        from personalclaw.workflows import introspection
+        from personalclaw.workflows.journal import (
+            EFFECT,
+            EVENTS_FILE,
+            JOURNAL_FILE,
+            STEP_COMPLETED,
+            STEP_ESCALATED,
+            STEP_FAILED,
+            STEP_SKIPPED,
+            ledger,
+        )
+
+        async def b_down(prompt, *, use_case="background", output_type=None):
+            if prompt.startswith("b "):
+                raise ConnectionError("provider down")
+            return "unused"
+
+        spec = copy.deepcopy(CHAIN)
+        run = store.create(WorkflowRun(id="", workflow_name=spec["name"]))
+        store.write_spec(run.id, spec)
+        parent = RunController(run, spec, services=EngineServices(completion=b_down))
+        assert await parent.run_to_completion(timeout=20) == RunStatus.FAILED
+        store.append_jsonl(
+            run.id,
+            EVENTS_FILE,
+            {"kind": EFFECT, "instance_path": "root.children[1]", "effect_status": "attempted"},
+        )
+        parent_kinds = {r["kind"] for r in store.read_jsonl(run.id, EVENTS_FILE)}
+        assert {STEP_FAILED, STEP_ESCALATED} <= parent_kinds  # the control
+
+        child_id = CP.fork_run(parent.run, spec, parent.instances).child.id
+        for filename in (JOURNAL_FILE, EVENTS_FILE):
+            rows = store.read_jsonl(child_id, filename)
+            outcomes = {(r["kind"], r.get("instance_path")) for r in rows}
+            assert not {k for k, p in outcomes if k in (STEP_FAILED, STEP_ESCALATED, STEP_SKIPPED)}
+            assert (STEP_COMPLETED, "root.children[0]") in outcomes, filename
+            assert (STEP_COMPLETED, "root.children[3]") in outcomes, filename
+        assert [
+            r["effect_status"]
+            for r in store.read_jsonl(child_id, EVENTS_FILE)
+            if r["kind"] == EFFECT and r.get("instance_path") == "root.children[1]"
+        ] == ["attempted"]
+
+        stats = introspection.run_stats(child_id, ledger(child_id), elapsed_secs=0.0)
+        assert (stats.steps_completed, stats.steps_failed) == (2, 0)
+
+
 class TestForkThroughTheMutationQueue:
     async def test_the_fork_op_branches_a_child_and_leaves_this_run_alone(self) -> None:
         c = await _completed()

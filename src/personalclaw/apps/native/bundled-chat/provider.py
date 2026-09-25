@@ -1298,6 +1298,11 @@ class BundledChatProvider(ModelProvider, LocalModelProvider):
         self._context_pct: float | None = None
         self._cancelled = threading.Event()
 
+    @property
+    def sampling_temperature(self) -> float | None:
+        """This provider IS the sampler, so it always samples at a temperature: this one."""
+        return self._temperature
+
     # ── identity ──
 
     @property
@@ -1591,9 +1596,18 @@ def _factory(
     session_key: str | None = None,
     **kwargs: object,
 ) -> ModelProvider:
-    """Registry contract: build a provider from its entry's options bag."""
-    del session_key, kwargs  # stateless, credential-free
-    return BundledChatProvider(dict(entry.options or {}))
+    """Registry contract: build a provider from its entry's options bag.
+
+    A per-call ``temperature`` build kwarg (best-of-N's ladder) wins over the configured one — the
+    caller asking for THIS temperature is more specific than the default. Every build kwarg used
+    to be discarded here, so best-of-N on the bundled floor sampled N greedy copies of one answer.
+    """
+    del session_key  # stateless, credential-free
+    options = dict(entry.options or {})
+    temperature = kwargs.get("temperature")
+    if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
+        options["temperature"] = float(temperature)
+    return BundledChatProvider(options)
 
 
 def create_provider(config: dict | None = None) -> BundledChatProvider:

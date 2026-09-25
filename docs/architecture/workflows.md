@@ -147,6 +147,14 @@ and unreachable paths are MADE terminal by marking them skipped.** Declines are
 recorded explicitly, never inferred from "the source routed elsewhere" —
 inferring would starve a sibling whose `needs` merely names the branch.
 
+A **dataflow** edge — a reader that binds the producer's output — is stricter.
+Only a succeeded node's output enters the binding namespace, so a producer that
+ended without one (skipped, failed, cancelled: any terminal state outside
+`SUCCESS_STATES`) makes that reader unreachable, and it is skipped too. Running
+it instead is a guaranteed binding failure whose escalation would replace the
+producer's on `run.attention`, blaming a step that did nothing wrong for the
+one that failed.
+
 The wait-entry subtlety: a `wait`/`gate` enters `WAITING` rather than
 completing, and `WAITING` is not terminal, so a join behind it keeps waiting
 instead of firing on the fast leg alone.
@@ -274,6 +282,14 @@ A rewind whose cascade would re-run completed work reports
 `needs_confirmation` and applies nothing until confirmed. The cascade is
 computed over the **binding-dependency graph**, not the container tree, so
 editing a node invalidates what actually reads it.
+
+A finished run is one attempt and cannot be re-entered, so a retry is a
+**fork**, not a rewind: the child draft inherits only the steps that SUCCEEDED
+(their state, outputs and step records), and every other step starts `PENDING`
+at the same epoch, so starting the child re-runs exactly what did not finish.
+Effect records carry over whole, because the committed-effect boundary reads
+them and a fork cannot un-fire anything. The run page's Retry, offered when the
+failed step's own failure class is retryable, is that fork followed by a start.
 
 ## Timeouts: two knobs that mean different things
 

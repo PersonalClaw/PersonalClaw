@@ -34,6 +34,7 @@ from personalclaw.llm.base import (
     CancelOutcome,
     LLMEvent,
     ModelProvider,
+    wire_temperature,
 )
 from personalclaw.llm.credentials import Credential
 from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, PromptCache
@@ -409,6 +410,16 @@ class AnthropicProvider(ModelProvider):
         # One-shot image content part for the next turn (MI-4). Empty on every
         # ordinary turn, which keeps the untouched wire payload byte-identical.
         self._pending_image: str = ""
+
+    @property
+    def sampling_temperature(self) -> float | None:
+        """The ``temperature`` a ``stream()`` request carries from ``extra_options``.
+
+        ``complete()`` with a reasoning effort turns extended thinking on, which forbids a custom
+        temperature and drops it — a per-turn fact about the native loop's path, which one-shot
+        sampling never takes.
+        """
+        return wire_temperature(self._extra_options.get("temperature"))
 
     # ── Image content parts (MI-4) ────────────────────────────────────
 

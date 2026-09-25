@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw import project_context, review_triage
+from personalclaw.guardrails.calls import CallLog, capture_model_calls
 from personalclaw.knowledge import session_brief
 from personalclaw.ledger import outcomes
 from personalclaw.loop import tick as convergence
@@ -248,6 +249,9 @@ class _InFlight:
     started: float
     last_progress: float
     cache_key: CacheKey
+    #: Every guarded model call the node's dispatch made (`guardrails.calls`) — what an action
+    #: provider's calls used, and, at a cancel, how many were cut off mid-generation.
+    calls: CallLog = field(default_factory=CallLog)
 
 
 #: How many convergence decisions per loop the run row keeps. Bounded, because an unbounded
@@ -2697,9 +2701,12 @@ class RunController:
         )
 
         now = time.time()
-        task = asyncio.create_task(self._execute(item, ctx))
+        # The task COPIES the context at creation, so a log bound around `create_task` is the
+        # dispatch's own: every guarded model call it makes, however deep, is recorded there.
+        with capture_model_calls() as calls:
+            task = asyncio.create_task(self._execute(item, ctx))
         self._inflight[item.path] = _InFlight(
-            task=task, ready=item, started=now, last_progress=now, cache_key=key
+            task=task, ready=item, started=now, last_progress=now, cache_key=key, calls=calls
         )
 
     # ── effect ledger (WF2-R1) ──
@@ -3429,7 +3436,8 @@ class RunController:
         # reusing that field would flip the row's rendering and lose the distinction.
         inst.schema_shortfall = result.schema_shortfall
         inst.failure = result.failure
-        inst.tokens = result.tokens
+        tokens, model, cost_usd = _measured_usage(result, entry.calls)
+        inst.tokens = tokens if tokens is not None else result.tokens
         self._decline(inst, result.declined_edges)
 
         # An action provider may ASK rather than finish (WF2-R7). Checked before the
@@ -3512,7 +3520,9 @@ class RunController:
             inst.output_ref = ref
             if item.node.id:
                 self._outputs[item.node.id] = preview
-            self.run.total_tokens += int(result.tokens)
+            # The run row keeps the dispatcher's estimate as a FLOOR when the provider reported no
+            # usage — a budget must still see the spend — while the ledger says "not recorded".
+            self.run.total_tokens += int(inst.tokens)
             self.journal.step_completed(
                 item.path,
                 item.node.id,
@@ -3520,11 +3530,11 @@ class RunController:
                 cache_key=entry.cache_key.to_str(),
                 state=result.state,
                 duration_secs=duration,
-                tokens=result.tokens,
+                tokens=tokens,
                 retries=max(0, inst.attempt - 1),
-                model=result.model,
+                model=model,
                 provider=result.provider,
-                cost_usd=result.cost_usd,
+                cost_usd=cost_usd,
                 degraded_reason=result.degraded_reason,
                 # The prompt the PROVIDER received, with the fact of a substitution beside it
                 # (#3166). `result.resolved_prompt` is post-scan since the dispatcher reads it back
@@ -3564,13 +3574,13 @@ class RunController:
                     "input_hash": entry.cache_key.inputs_hash,
                 },
             )
-            # Retries are spent. Produce the typed escalation artifact rather than just
-            # dying: five named options let a human act, where a bare "it failed" leaves
-            # them to invent the next move (WF2-R4).
+            # Retries are spent — or there were none to spend (no budget, or a class a retry
+            # cannot fix), and "every retry was spent" on a single attempt is a false sentence.
+            # Produce the typed escalation artifact rather than just dying (WF2-R4).
             self._escalate(
                 item.path,
                 item.node.id,
-                reason="retries_exhausted",
+                reason="retries_exhausted" if inst.attempt > 1 else "not_retried",
                 detail=(result.failure.cause_plain if result.failure else ""),
             )
 
@@ -4821,6 +4831,20 @@ class RunController:
             inst = self._instance(entry.ready.path)
             inst.state = InstanceState.CANCELLED
             inst.completed_at = _now()
+            # What the step had spent when the cancel landed. Read NOW, before the task sees its
+            # CancelledError: every call still open is a generation this cancel cut off, and what
+            # the finished ones reported is then a floor. Without the row a run cancelled
+            # mid-generation had no ledger events at all, and Introspect said nothing cost money.
+            calls = entry.calls
+            self.journal.step_cancelled(
+                entry.ready.path,
+                entry.ready.node.id,
+                epoch=inst.epoch,
+                model_calls_open=calls.cut_off,
+                tokens=calls.floor_tokens if calls.cut_off else calls.tokens,
+                model=", ".join(calls.models),
+                cost_usd=calls.floor_cost_usd if calls.cut_off else calls.cost_usd,
+            )
         self._inflight.clear()
         self._persist_state()
 
@@ -5521,6 +5545,19 @@ def _item_label(item: Any) -> str:
 def _clip(text: str) -> str:
     text = " ".join(text.split())  # a newline inside a row breaks the layout
     return text if len(text) <= _ITEM_LABEL_MAX else text[: _ITEM_LABEL_MAX - 1] + "…"
+
+
+def _measured_usage(result: NodeResult, calls: CallLog) -> tuple[int | None, str, float | None]:
+    """`(tokens, model, cost_usd)` for a settled step, measured at the guard when it saw calls.
+
+    A step whose dispatch made no guarded call keeps its dispatcher's own numbers — a transform's
+    zero is a measurement. One that did is reported from what the provider said: an action
+    provider's calls (best-of-n's samples and judge passes) used to book `tokens: 0` and no model,
+    and a call whose provider reported no usage books `None`, the ledger's "not recorded".
+    """
+    if not calls.calls:
+        return result.tokens, result.model, result.cost_usd
+    return calls.tokens, ", ".join(calls.models) or result.model, calls.cost_usd
 
 
 def _opt_metric(value: Any) -> float | None:

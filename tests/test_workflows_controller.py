@@ -1604,3 +1604,121 @@ class TestEngineInstallFaultDiscriminator:
         assert not _is_engine_install_fault(
             ModuleNotFoundError("No module named 'personalclawx'", name="personalclawx")
         )
+
+
+class TestAFailureStaysWithTheStepThatFailed:
+    """A reader of a failed producer is SKIPPED, so the failure is reported where it happened.
+
+    Measured on a best-of-n run whose sampling calls all hit a dead provider: `select`, which only
+    binds `sample`'s output, ran, failed its binding as a USER error ("check the referenced node
+    id") and its escalation REPLACED `sample`'s — the run told the user it failed at `select`.
+    """
+
+    SPEC = {
+        "name": "blame",
+        "root": {
+            "kind": "sequence",
+            "id": "s",
+            "children": [
+                {"kind": "infer", "id": "produce", "config": {"prompt": "go"}},
+                {
+                    "kind": "transform",
+                    "id": "consume",
+                    "config": {"expr": "{{nodes.produce.output}}"},
+                },
+            ],
+        },
+    }
+
+    @staticmethod
+    async def _down(prompt, *, use_case="background", output_type=None):
+        raise ConnectionError("provider refused the connection")
+
+    async def test_the_escalation_names_the_producer_with_its_real_class(self) -> None:
+        run = _make_run(self.SPEC)
+        c = RunController(run, self.SPEC, services=EngineServices(completion=self._down))
+        assert await c.run_to_completion(timeout=20) == RunStatus.FAILED
+        attention = c.run.attention
+        assert attention["node_id"] == "produce"
+        assert [a["failure_class"] for a in attention["attempts"]] == ["network"]
+        # One attempt, no retry budget: "every retry was spent" would be a false sentence.
+        assert attention["reason"] == "not_retried"
+        states = {p: i.state for p, i in c.instances.items()}
+        assert states["root.children[1]"] == InstanceState.SKIPPED
+        escalated = [r["node_id"] for r in J.ledger(run.id) if r["kind"] == J.STEP_ESCALATED]
+        assert escalated == ["produce"]
+
+    async def test_a_spent_retry_budget_is_still_retries_exhausted(self) -> None:
+        spec = {
+            **self.SPEC,
+            "root": {
+                **self.SPEC["root"],
+                "children": [
+                    {
+                        "kind": "infer",
+                        "id": "produce",
+                        "config": {"prompt": "go", "retry": {"max_attempts": 2}},
+                    },
+                    self.SPEC["root"]["children"][1],
+                ],
+            },
+        }
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=self._down))
+        assert await c.run_to_completion(timeout=25) == RunStatus.FAILED
+        assert c.run.attention["reason"] == "retries_exhausted"
+        assert [a["attempt"] for a in c.run.attention["attempts"]] == [1, 2]
+
+    async def test_a_tolerated_lens_failure_no_longer_fails_the_run_one_node_later(self) -> None:
+        """The same defect in `rich-ingest`'s shape: its lenses declare `allow_failure`, and no
+        pipe can rescue a consumer of a lens that FAILED (the reference itself does not resolve),
+        so one failed lens failed the whole run at its consumer. Skipped, the tolerance does what
+        it says: the other lens's consumer runs and the run completes."""
+        spec = {
+            "name": "lenses",
+            "root": {
+                "kind": "sequence",
+                "id": "s",
+                "children": [
+                    {
+                        "kind": "parallel",
+                        "id": "lenses",
+                        "children": [
+                            {
+                                "kind": "infer",
+                                "id": "lens-bad",
+                                "config": {"prompt": "bad", "allow_failure": True},
+                            },
+                            {
+                                "kind": "infer",
+                                "id": "lens-good",
+                                "config": {"prompt": "good", "allow_failure": True},
+                            },
+                        ],
+                    },
+                    {
+                        "kind": "transform",
+                        "id": "use-bad",
+                        "config": {"expr": "{{nodes.lens-bad.output}}"},
+                    },
+                    {
+                        "kind": "transform",
+                        "id": "use-good",
+                        "config": {"expr": "{{nodes.lens-good.output}}"},
+                    },
+                ],
+            },
+        }
+
+        async def one_lens_down(prompt, *, use_case="background", output_type=None):
+            if prompt == "bad":
+                raise ConnectionError("lens provider refused the connection")
+            return "found things"
+
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=one_lens_down))
+        assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+        by_id = {i.path: i.state for i in c.instances.values()}
+        assert by_id["root.children[1]"] == InstanceState.SKIPPED
+        assert by_id["root.children[2]"] == InstanceState.DONE
+        assert c._outputs["use-good"] == "found things"

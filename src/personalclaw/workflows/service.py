@@ -1589,7 +1589,10 @@ def introspect(run_id: str) -> dict[str, Any]:
         return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
 
     events = journal_mod.ledger(run_id)
-    stats = introspection.run_stats(run_id, events)
+    now = time.time()
+    stats = introspection.run_stats(
+        run_id, events, elapsed_secs=introspection.run_elapsed(run, now)
+    )
     gates = introspection.gate_stats(events)
 
     # Evidence for the Proof section is the run's OWN published outbox, not a directory scan:
@@ -1612,8 +1615,9 @@ def introspect(run_id: str) -> dict[str, Any]:
         sibling_ledgers = [
             (r.id, events if r.id == run_id else journal_mod.ledger(r.id)) for r in siblings
         ]
+        elapsed = {r.id: introspection.run_elapsed(r, now) for r in siblings}
         sibling_stats = [
-            stats if rid == run_id else introspection.run_stats(rid, evs)
+            stats if rid == run_id else introspection.run_stats(rid, evs, elapsed_secs=elapsed[rid])
             for rid, evs in sibling_ledgers
         ]
         # Per-branch case and per-judge verdict distributions across the template (PP-8). Sample-
@@ -1648,7 +1652,9 @@ def introspect(run_id: str) -> dict[str, Any]:
             sib_events = events if r.id == run_id else journal_mod.ledger(r.id)
             sib_sig = introspection.trajectory_signature(r.id, sib_events).signature
             sib_failed = (
-                stats if r.id == run_id else introspection.run_stats(r.id, sib_events)
+                stats
+                if r.id == run_id
+                else introspection.run_stats(r.id, sib_events, elapsed_secs=elapsed[r.id])
             ).steps_failed > 0
             trajectory_distribution[sib_sig] = trajectory_distribution.get(sib_sig, 0) + 1
             history.append((sib_sig, sib_failed))
@@ -1861,7 +1867,8 @@ def template_trajectory(name: str) -> dict[str, Any]:
             continue
         events = journal_mod.ledger(run_id)
         sig = introspection.trajectory_signature(run_id, events).signature
-        failed = introspection.run_stats(run_id, events).steps_failed > 0
+        elapsed = introspection.run_elapsed(run, time.time())
+        failed = introspection.run_stats(run_id, events, elapsed_secs=elapsed).steps_failed > 0
         distribution[sig] = distribution.get(sig, 0) + 1
         history.append((sig, failed))
         signatures.append({"run_id": run_id, "signature": sig, "failed": failed})
@@ -1974,6 +1981,7 @@ _TIMELINE_KINDS = (
     "step_failed",
     "step_skipped",
     "step_cached",
+    "step_cancelled",
     "step_attempt",
     "step_escalated",
     "gate_resolved",

@@ -39,8 +39,24 @@ export function runUsd(costUsd: number): string {
  *  So the flag is a claim about the RECORD, not an inference about the world: `RunStats.models`
  *  collects distinct non-empty model names off the completed steps (`introspection.py`), and empty
  *  means no step named one. A free local model DOES name itself (`gemma4:12b`), which is what keeps
- *  the sibling sentence correct where it is correct. */
-export function runCostText(costUsd: number, priced: boolean, modelsRecorded: boolean): string {
+ *  the sibling sentence correct where it is correct.
+ *
+ *  `callsCutOff` is the fourth fact, and the one a cancelled run hid: generations a cancel stopped
+ *  mid-flight spent tokens nobody reported. A best-of-n cancelled with four candidates generating
+ *  read "Nothing — no step on this run recorded a model", because the only step never completed.
+ *  Named before the generic unpriced sentence, because it says WHY the total is unknown. */
+export function runCostText(
+  costUsd: number,
+  priced: boolean,
+  modelsRecorded: boolean,
+  callsCutOff = 0,
+): string {
+  if (callsCutOff > 0) {
+    const one = callsCutOff === 1
+    const calls = one ? '1 model call was' : `${callsCutOff} model calls were`
+    const floor = costUsd > 0 ? `At least ~${runUsd(costUsd)} — ` : 'Not recorded — '
+    return `${floor}${calls} still generating when the run was cancelled, and what ${one ? 'it' : 'they'} spent was never reported`
+  }
   if (!priced) {
     return costUsd > 0
       ? `At least ~${runUsd(costUsd)} this run — some step recorded no cost, so the real total is higher`

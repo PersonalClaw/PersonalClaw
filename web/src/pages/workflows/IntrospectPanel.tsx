@@ -296,7 +296,12 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                       recorded is a run that called none, not a free local one. */}
                   <Answer
                     q="What is costing money"
-                    a={runCostText(data.stats.cost_usd, data.stats.priced, data.stats.models.length > 0)}
+                    a={runCostText(
+                      data.stats.cost_usd,
+                      data.stats.priced,
+                      data.stats.models.length > 0,
+                      data.stats.calls_cut_off,
+                    )}
                   />
                   <Answer
                     q="What is risky"

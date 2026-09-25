@@ -1667,3 +1667,11 @@ def test_blocked_attention_is_the_same_arithmetic(rail, tmp_path, monkeypatch, b
     step = rail._KvCache(model.n_layer, model.n_head_kv, model.head_dim)
     model.forward(ids[:-1], step)
     assert np.allclose(model.forward(ids[-1:], step), got, atol=1e-5)
+
+
+def test_a_per_call_temperature_reaches_the_sampler(rail):
+    """Best-of-N's ladder arrives as a `temperature` build kwarg. The factory used to discard
+    every kwarg, so N candidates on the bundled floor were N greedy copies of one answer."""
+    entry = ProviderEntry(name=APP_NAME, type=rail.PROVIDER_TYPE, model="m", options={})
+    assert rail._factory(entry=entry, temperature=0.9).sampling_temperature == 0.9
+    assert rail._factory(entry=entry).sampling_temperature == rail.DEFAULT_TEMPERATURE

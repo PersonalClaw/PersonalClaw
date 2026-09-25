@@ -1631,7 +1631,9 @@ export type WorkflowRunStatus =
 export interface WorkflowNodeState {
   instance_path: string; node_id: string; state: string; attempt?: number
   degraded_reason?: string
-  failure?: { class?: string; cause_plain?: string; remediation?: string; terminal_reason?: string } | null
+  // `retryable` is the engine's own verdict (`models.RETRYABLE_CLASSES`): whether a fresh attempt
+  // could succeed with nothing changed — what decides whether a failed run offers Retry.
+  failure?: { class?: string; cause_plain?: string; remediation?: string; terminal_reason?: string; retryable?: boolean } | null
   // Per-item foreach context (WF2-R5): what a "[3/12] auth.py" row needs. Present only on an
   // iterated node — a fan-out of twelve otherwise renders as twelve rows distinguishable only
   // by an index suffix, which is useless for telling which item is stuck.
@@ -1809,6 +1811,10 @@ export interface WorkflowRunStats {
   steps_completed: number
   steps_failed: number
   steps_cached: number
+  // Model calls a cancel cut off mid-generation. Each spent tokens nobody reported, so a non-zero
+  // count also clears `tokens_recorded` and `priced` — and the cost sentence says why.
+  calls_cut_off: number
+  // The run's OWN duration (the number the run header renders), not a span over its ledger.
   duration_secs: number
   // Latency to FIRST output, kept separate from total duration: one is what a watching user feels,
   // the other is what a scheduler budgets, and a single "duration" would conflate them.

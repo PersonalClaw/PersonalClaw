@@ -181,7 +181,7 @@ describe('the run cockpit exposes the Workspace trigger', () => {
       run_id: 'run-1', workflow: 'demo', status: 'complete', spec_version: 1,
       nodes: [{ instance_path: 'root', node_id: 'build', state: 'done' }],
     })
-    render(<WorkflowRunDetail runId="run-1" onBack={() => {}} />)
+    render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={() => {}} />)
 
     const trigger = await screen.findByTitle(/Workspace — changed files/i)
     // Nothing is fetched until the panel is actually opened: answering costs a `git status` plus
