@@ -89,6 +89,13 @@ describe('the onboarding shell scrolls at every viewport', () => {
   it('still has the skip link as the last control on every non-final step', () => {
     // The control the measurement used as the bottom edge. If it stops existing the numbers above
     // stop describing anything, so the rail keeps a hold on it.
-    expect(ONB).toMatch(/Skip setup and go to the dashboard/)
+    //
+    // The copy changed when the flow gained a visible Back control beside it: the label is short now
+    // ("Skip the rest of setup", or "Skip setup for now" on the first step) and the consequence moved
+    // into a caption underneath, which says both what skipping costs and where to resume. What this
+    // rail cares about is unchanged — a skip control, gated to the non-final steps, at the bottom of
+    // the panel — so it pins the gate and both labels rather than one sentence.
+    expect(ONB).toMatch(/\{step !== 'ready' && \(/)
+    expect(ONB).toMatch(/'Skip setup for now' : 'Skip the rest of setup'/)
   })
 })

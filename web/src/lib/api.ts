@@ -4647,8 +4647,12 @@ export interface OnboardingEssentials {
   speech: boolean
   channel: string | null
 }
-/** The resume points of the guided first run, in order — `STEPS` in `onboarding.py`. */
-export type OnboardingStep = 'name' | 'essentials' | 'first_success' | 'done'
+/** The resume points of the guided first run, in order — `STEPS` in `onboarding.py`.
+ *
+ *  Every step has one, and the stored value is the HIGH-WATER MARK: the furthest step the run
+ *  has stood on, written on entry and never lowered. `first_success` is the `try` step's stored
+ *  spelling; `app/onboarding/steps.ts` owns that mapping. */
+export type OnboardingStep = 'name' | 'import' | 'essentials' | 'first_success' | 'ready' | 'done'
 /** `GET /api/onboarding` — the live readiness triple PLUS the persisted first-run
  *  progress from `entity_settings/onboarding.json`. The readiness fields are computed
  *  per request and never stored; the progress fields are what let a reload resume. */

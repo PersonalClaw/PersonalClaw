@@ -10,7 +10,8 @@ import { IncidentBanner } from './IncidentBanner'
 import { ChatPage } from '../pages/ChatPage'
 import { useIdentity } from './identity'
 import { Onboarding } from './Onboarding'
-import { peekOnboardingExit, clearOnboardingExit } from './onboarding/exitTo'
+import { peekOnboardingExit, clearOnboardingExit, setOnboardingExit } from './onboarding/exitTo'
+import { onSetupRerun } from './onboarding/rerun'
 import { ProductTour } from './onboarding/ProductTour'
 import { useHashRoute } from './useHashRoute'
 import { useIsMobile } from './useIsMobile'
@@ -378,15 +379,35 @@ function AppInner() {
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('ne:run-in-terminal', onRun as EventListener); unsub() }
   }, [])
 
+  // A deliberate re-run of first-run setup, asked for from inside the shell (Settings → Account).
+  //
+  // The guard below is the single owner of where a user goes with respect to this flow, and it
+  // decides from `onboarded` — a variable that cannot express "already set up, asked to do it
+  // again". So the request is a SECOND INPUT to the same guard rather than a navigation racing it,
+  // and the flow's `onFinished` withdrawing the request is the state change that lets the guard put
+  // the user back. Before this, the only re-entry door CLEARED the operator's name to force the
+  // guard's hand (`clearName`), which is a destructive way to reach a read-only screen.
+  const [setupRerun, setSetupRerun] = useState(false)
+  // `[]` deps on purpose: the callback only ever sets state, so the subscription never needs to be
+  // torn down and rebuilt as `navigate`'s identity churns each render.
+  useEffect(() => onSetupRerun(() => setSetupRerun(true)), [])
+
   // ── ONE effect decides where the browser must be. ────────────────────────────────────────────
   //
-  // Onboarding is a real route (#/onboarding), full-screen, no NavRail: this redirects TO it when
-  // there's no name and AWAY from it once onboarded. The exit branch honours a destination the flow
-  // asked for (OU-3): a try-one card's outcome link and its failure path's Settings deep-link both
-  // need to LEAVE the flow and land somewhere specific. They cannot navigate there themselves — the
-  // `!onboarded` branch would pull them straight back, and navigating after committing the name
-  // races this effect. So the flow hands the destination over and this one navigation resolves it.
-  // Absent (the ordinary finish), the dashboard default is unchanged.
+  // Onboarding is a real route (#/onboarding/<step>), full-screen, no NavRail: this redirects TO it
+  // while setup is WANTED and AWAY from it once it is not. "Wanted" is `!onboarded || setupRerun`,
+  // not `!onboarded` — a deliberate re-run is an onboarded user who belongs in the flow, so the
+  // request is a second input to this guard rather than a navigation racing it. The exit branch
+  // honours a destination the flow asked for (OU-3): a try-one card's outcome link and its failure
+  // path's Settings deep-link both need to LEAVE the flow and land somewhere specific. They cannot
+  // navigate there themselves — the redirect branch would pull them straight back, and navigating
+  // after committing the name races this effect. So the flow hands the destination over and this one
+  // navigation resolves it. Absent (the ordinary finish), the dashboard default is unchanged.
+  //
+  // The REDIRECT branch hands a destination over in the other direction too. A fresh home pulls
+  // every route here, so a user who asked for `#/settings/providers` got a different screen with
+  // nothing to say why — indistinguishable from the app swallowing the click. Recording the route
+  // they asked for turns the redirect into a deferral the flow names and then keeps.
   //
   // `peek` never consumes, because THIS EFFECT IS RE-ENTRANT: `navigate` sets `location.hash` and
   // `route` only catches up on the browser's async `hashchange`, so the exit branch can run again
@@ -397,25 +418,47 @@ function AppInner() {
   //
   // 🔴 The unknown-hash correction (#306) is the LAST branch of this same effect, not a second
   // effect, and that is the fix for #3506. As two effects it could only be ordered by a gate, and
-  // the gate it had (`loaded && onboarded`) described the wrong window: at the instant `onboarded`
-  // flips, `route` is STILL the stale `'onboarding'`, so both effects fired on one commit — the
-  // guard pushed the handed-over destination and the corrector `replace`d it with the dashboard.
-  // Measured: one `history.replaceState('#/dashboard')` from `navigate(..., {replace:true})`, the
-  // push never reaching a listener. Precedence now holds by construction: while there is a route
-  // decision to make, correction cannot run, because it is downstream of `return`.
+  // every gate tried described the wrong window: `loaded && onboarded` fired the corrector on the
+  // handoff commit, and tightening it to `|| route === 'onboarding'` still left the pair ordered by
+  // a predicate over two states that change on different ticks. At the instant setup stops being
+  // wanted, `route` is STILL the stale `'onboarding'`, so both effects ran on one commit — the guard
+  // navigated to the handed-over destination and the corrector `replace`d it with the dashboard.
+  // Measured from both ends: a fresh home asked for `#/settings/providers`, the flow named the
+  // deferral on screen, and the landing was `#/dashboard` — one synchronous
+  // `history.replaceState('#/dashboard')` beating the guard's asynchronous `hashchange`. Precedence
+  // now holds by construction rather than by predicate: while there is a route decision to make,
+  // correction cannot run, because it is downstream of `return`.
   //
   // `replace: true` on that branch is load-bearing: a push would leave the bogus hash in history,
   // so Back would return the user to the broken URL they were just rescued from — and each Back
   // press would re-run this effect, bouncing them forward again.
   useEffect(() => {
     if (!loaded) return
-    if (!onboarded) { if (route !== 'onboarding') navigate('onboarding'); return }
+    const wantsSetup = !onboarded || setupRerun
+    if (wantsSetup) {
+      if (route !== 'onboarding') {
+        if (ROUTABLE.has(route) && route !== 'dashboard') setOnboardingExit([route, sub].filter(Boolean).join('/'))
+        // 🔴 REPLACE FOR A FIRST RUN, PUSH FOR A RE-RUN. A push here made the browser's Back button a
+        // bounce: Back left `#/onboarding`, this effect fired on the new route and pushed
+        // `#/onboarding` straight back on top. Measured on a fresh home — Back flashed `#/dashboard`,
+        // returned to `#/onboarding`, and `history.length` stayed pinned at 3, so the user could not
+        // leave and could not go back. Replacing leaves the flow's own step pushes as the only in-flow
+        // history, so Back walks the steps and Back from step 1 exits the app. A deliberate re-run is
+        // the opposite case: the user came from a real page, so pushing is what lets Back return them.
+        navigate('onboarding', { replace: !onboarded })
+      }
+      // Setup owns the route, so NOTHING below may run — least of all `clearOnboardingExit()`.
+      // `exitTo` sets the destination and THEN commits the name, so this effect can run in between
+      // with setup still wanted; clearing here would drop the destination before the branch that
+      // reads it ever ran.
+      return
+    }
     if (route === 'onboarding') { navigate(peekOnboardingExit() || 'dashboard'); return }
     // `renderable`, not `ROUTABLE.has` — `#/companion` is rendered by an early return below and is
     // the PWA's `start_url`, so correcting it away made an installed app open on the wrong surface.
     if (route && !renderable(route)) { navigate('dashboard', { replace: true }); return }
     clearOnboardingExit()
-  }, [loaded, onboarded, route, navigate])
+  }, [loaded, onboarded, setupRerun, route, sub, navigate])
 
   // ── Progressive disclosure over the rail (ONBOARDING-UX C4) ──
   // Read synchronously from localStorage on mount: no probe, so no flash of the wrong rail,
@@ -467,7 +510,24 @@ function AppInner() {
 
   // Wait for the server identity before deciding — don't flash onboarding.
   if (!loaded) return <div className="grid h-full place-items-center" style={{ background: 'var(--color-canvas)' }}><Loader2 size={22} className="animate-spin text-on-surface-low" /></div>
-  if (route === 'onboarding' || !onboarded) return <Onboarding />
+  // `sub` is the step's slug, `navigate` makes each step a history entry, and `onFinished` withdraws
+  // a re-run request so the guard above — still the only navigator — moves the user out.
+  //
+  // 🔴 THE TOAST HOST COMES WITH IT. This branch returned the flow ALONE, so `<Toaster />` was not
+  // mounted anywhere on the first screen of the product and every `notify()` inside onboarding fired
+  // into nothing — a reported failure with no surface to report on. Measured after fixing the
+  // erased-name dead end: with the gateway killed, the flow correctly kept the user on their step
+  // with their draft, and the explanation it raised was still invisible. Two existing callers were
+  // silently inert the same way (the done screen's auto-update switch, and its Store-source link's
+  // failure path). Same shape as `#/companion` below, for the same reason.
+  if (route === 'onboarding' || !onboarded) {
+    return (
+      <>
+        <Onboarding sub={sub} navigate={navigate} deferred={peekOnboardingExit()} onFinished={() => setSetupRerun(false)} />
+        <Toaster />
+      </>
+    )
+  }
 
   // `#/companion` — the phone companion (MOBILE-COMPANION S2), full-screen with NO NavRail:
   // the whole viewport belongs to the approval waiting on the owner. Same shape as

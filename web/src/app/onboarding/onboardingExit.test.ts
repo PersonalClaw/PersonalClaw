@@ -74,11 +74,14 @@ describe('the guard consumes it', () => {
     // Asserted on the guard's source because the branch only runs inside the full App tree with a
     // live identity provider; a mechanism with no reader is the other defect this pins.
     //
-    // 🔴 It reaches the branch having already RETURNED on `!onboarded`, which is why `onboarded`
-    // no longer appears in the condition. The flat `else if` chain this replaced was one of two
-    // effects, and the other one — the unknown-hash corrector — overwrote this navigation on the
+    // 🔴 It reaches the branch having already RETURNED on `wantsSetup`, which is why no onboarding
+    // predicate appears in the condition at all. The flat `else if` chain this replaced was one of
+    // two effects, and the other one — the unknown-hash corrector — overwrote this navigation on the
     // handoff commit (#3506). That is the second time this destination was measured landing on
     // `#/dashboard`; see `routeCasesCoverRoutable.test.ts` for the ordering rail.
+    //
+    // `wantsSetup`, not `onboarded`, is what the branch above returns on: a DELIBERATE re-run
+    // (Settings → Account) is an onboarded user who should stay in the flow — see `onboarding/rerun.ts`.
     expect(app()).toMatch(
       /if \(route === 'onboarding'\) \{ navigate\(peekOnboardingExit\(\) \|\| 'dashboard'\); return \}/)
   })
@@ -88,27 +91,56 @@ describe('the guard consumes it', () => {
   })
 
   it('clearing happens on a LATER branch, once the route has left onboarding', () => {
-    // Last statement of the effect, reachable only once every route decision above declined —
-    // i.e. onboarded, not on `#/onboarding`, and on a route the shell can render.
-    expect(app()).toMatch(/\n {4}clearOnboardingExit\(\)\n {2}\}, \[loaded, onboarded, route, navigate\]\)/)
-  })
-
-  it('the redirect INTO onboarding is untouched — the gate still holds', () => {
+    // Last statement of the effect, reachable only once every route decision above declined — i.e.
+    // setup is not wanted, the route is not `#/onboarding`, and the shell can render it. Pinned with
+    // the dependency list so a new guard input cannot be added without this rail being re-read.
     expect(app()).toMatch(
-      /if \(!onboarded\) \{ if \(route !== 'onboarding'\) navigate\('onboarding'\); return \}/)
+      /\n {4}clearOnboardingExit\(\)\n {2}\}, \[loaded, onboarded, setupRerun, route, sub, navigate\]\)/)
   })
 
-  it('🔴 a pending destination survives a run that happens BEFORE `onboarded` flips (#3506)', () => {
-    // `exitTo` sets the destination and THEN commits the name, so the effect can run in between
-    // with `!onboarded` and `route === 'onboarding'`. That run must do nothing at all: clearing
-    // there would drop the destination before the branch that reads it ever ran. The `!onboarded`
-    // branch returns, which is what makes `clearOnboardingExit()` unreachable in that state.
+  it('the redirect INTO onboarding still holds the gate', () => {
+    // `wantsSetup`, not `!onboarded`: a DELIBERATE re-run (Settings → Account) is an onboarded user
+    // who belongs in the flow, so the request is a second input to this guard rather than a
+    // navigation racing it — see `onboarding/rerun.ts`.
+    expect(app()).toMatch(/const wantsSetup = !onboarded \|\| setupRerun/)
+    expect(app()).toMatch(/if \(wantsSetup\) \{/)
+    expect(app()).toMatch(/if \(route !== 'onboarding'\) \{/)
+    expect(app()).toMatch(/navigate\('onboarding', \{ replace: !onboarded \}\)/)
+  })
+
+  it('🔴 the redirect REPLACES for a first run, or the browser Back button is a bounce', () => {
+    // Measured on a fresh home with a push: Back left `#/onboarding`, this effect fired on the new
+    // route and pushed `#/onboarding` straight back — `history.length` pinned at 3 and the user
+    // could neither leave nor go back. `replace: !onboarded` is a push only for a deliberate re-run,
+    // where the user came from a real page Back should return them to.
+    expect(app(), 'a bare push would recreate the bounce').not.toMatch(/navigate\('onboarding'\)\s*$/m)
+  })
+
+  it('the redirect DEFERS the route the user asked for, so it is not a silent hijack', () => {
+    // A fresh home pulls every route here. Recording the requested route turns the redirect into a
+    // promise the flow names on screen and `finish()` keeps by landing there.
+    expect(app()).toMatch(/setOnboardingExit\(\[route, sub\]\.filter\(Boolean\)\.join\('\/'\)\)/)
+  })
+
+  it('🔴 a pending destination survives a run that happens while setup is still wanted (#3506)', () => {
+    // `exitTo` sets the destination and THEN commits the name, so the effect can run in between with
+    // `wantsSetup` still true and `route === 'onboarding'`. That run must do nothing at all: clearing
+    // there would drop the destination before the branch that reads it ever ran. The `wantsSetup`
+    // branch RETURNS, and that return is what makes `clearOnboardingExit()` unreachable in that
+    // state — a structural guarantee rather than a predicate two effects have to agree on, which is
+    // the shape that failed twice (see `routeCasesCoverRoutable.test.ts`).
     const src = app()
-    const effect = src.slice(src.indexOf('if (!loaded) return'), src.indexOf('[loaded, onboarded, route, navigate])'))
-    const notOnboarded = effect.indexOf('if (!onboarded)')
-    expect(notOnboarded).toBeGreaterThan(-1)
-    expect(effect.slice(notOnboarded, effect.indexOf('\n', notOnboarded))).toContain('return }')
-    expect(effect.indexOf('clearOnboardingExit()')).toBeGreaterThan(notOnboarded)
+    const effect = src.slice(
+      src.indexOf('if (!loaded) return'),
+      src.indexOf('[loaded, onboarded, setupRerun, route, sub, navigate])'))
+    const wantsSetup = effect.indexOf('if (wantsSetup) {')
+    // 🪤 The STATEMENT, anchored at its own indentation — `indexOf('clearOnboardingExit()')` finds
+    // the prose mention in the branch's own comment first and truncates the slice before the return.
+    const clearing = effect.search(/\n {4}clearOnboardingExit\(\)/)
+    expect(wantsSetup, 'the wantsSetup branch must exist').toBeGreaterThan(-1)
+    expect(clearing, 'clearing must come after it').toBeGreaterThan(wantsSetup)
+    expect(effect.slice(wantsSetup, clearing), 'the branch must return, or clearing is reachable')
+      .toMatch(/\n {6}return\n {4}\}/)
   })
 
   it('the flow hands the destination over and then finishes, in that order', () => {

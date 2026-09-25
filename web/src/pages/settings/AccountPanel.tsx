@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Check, RotateCcw } from 'lucide-react'
 import { useIdentity, DEFAULT_USER_NAME, suggestHandle } from '../../app/identity'
+import { requestSetupRerun } from '../../app/onboarding/rerun'
 import { confirm } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
 import { api } from '../../lib/api'
@@ -19,11 +20,22 @@ import { Button } from '../../ui/Button'
    re-normalizes whatever we send. */
 
 export function AccountPanel() {
-  const { name, setName, clearName } = useIdentity()
+  const { name, setName } = useIdentity()
   const [draft, setDraft] = useState(name)
   const [saved, setSaved] = useState(false)
 
-  const save = () => { setName(draft.trim() || DEFAULT_USER_NAME); setSaved(true); setTimeout(() => setSaved(false), 1800) }
+  // `setName` rejects on a refused write now (it used to swallow, which let first-run setup lose a
+  // typed name silently — see the note in `app/identity`). So the ✅ waits for the write, and a
+  // failure reports through the same toast the handle field beside it already uses.
+  const save = async () => {
+    try {
+      await setName(draft.trim() || DEFAULT_USER_NAME)
+    } catch (e) {
+      notify(`Couldn't save your name: ${String((e as Error)?.message || e)}`, 'error')
+      return
+    }
+    setSaved(true); setTimeout(() => setSaved(false), 1800)
+  }
   const dirty = draft.trim() !== name
 
   // Attribution handle (dashboard.username) — stamped onto records this user
@@ -123,10 +135,18 @@ export function AccountPanel() {
             </button>
           </div>
         </Field>
-        <Row label="Restart onboarding" hint="Clears your name and re-runs the first-run setup flow.">
-          <button type="button" onClick={async () => { if (await confirm({ title: 'Restart onboarding?', body: 'This clears your name and shows the setup flow again.', confirmLabel: 'Restart' })) clearName() }}
+        {/* 🔴 THIS USED TO CLEAR YOUR NAME. "Restart onboarding" worked by wiping `user_name`,
+            because `onboarded` is derived from that field being non-empty and clearing it was what
+            forced the route guard to show the flow again. So the only way back into setup was to
+            destroy your identity — and the flow then re-asked for a name the install already knew.
+            A user who skipped setup and wanted to finish it had to pay for it with a rename.
+            It is now a request the guard honours (`onboarding/rerun.ts`), so nothing is cleared: the
+            flow opens with this install's name and handle already filled in, and every step it
+            already recorded stays recorded. No confirmation, because there is nothing to undo. */}
+        <Row label="Run setup again" hint="Walks through first-run setup once more. Your name, handle and everything already set up are kept.">
+          <button type="button" onClick={requestSetupRerun}
             data-type="body-s" className="inline-flex items-center gap-1.5 rounded-md px-3 h-9 text-on-surface-var hover:bg-surface-high transition-colors">
-            <RotateCcw size={14} /> Restart
+            <RotateCcw size={14} /> Run setup
           </button>
         </Row>
       </Section>

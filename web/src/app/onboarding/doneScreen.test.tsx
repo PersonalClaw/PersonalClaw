@@ -40,7 +40,7 @@ vi.mock('../identity', async (orig) => {
     ...real,
     // `username` is the STORED handle the flow seeds its handle field from (TSE-1);
     // '' is a fresh install, which is what these tests are.
-    useIdentity: () => ({ setName, username: '' }),
+    useIdentity: () => ({ name: '', setName, username: '' }),
   }
 })
 vi.mock('../../ui/DotGlow', () => ({ DotGlow: () => null }))
@@ -62,7 +62,7 @@ vi.mock('./TryOneStep', () => ({
   ),
 }))
 
-import { Onboarding } from '../Onboarding'
+import { OnboardingHarness } from '../../test/onboardingHarness'
 import { AppearanceProvider } from '../appearance'
 import { readNavDisclosure } from '../navDisclosure'
 import { peekOnboardingExit, clearOnboardingExit } from './exitTo'
@@ -72,6 +72,10 @@ const ORIGINAL_MATCH_MEDIA = window.matchMedia
 const DEFAULT_BOUNCINESS = runtime.bounciness
 
 beforeEach(() => {
+  // The flow persists the typed name in `sessionStorage` so a refresh mid-flow keeps it, which
+  // makes it shared state BETWEEN TESTS: without this, a later test that skips setup without typing
+  // a name inherits the previous test's draft and reads as a rename instead of the default.
+  sessionStorage.clear()
   vi.clearAllMocks()
   Object.defineProperty(window, 'matchMedia', {
     configurable: true, writable: true,
@@ -94,7 +98,7 @@ afterEach(() => {
 
 /** Drive the real flow to its last step: name → skip import → skip essentials → skip try-one. */
 async function reachDoneScreen() {
-  render(<AppearanceProvider><Onboarding /></AppearanceProvider>)
+  render(<AppearanceProvider><OnboardingHarness /></AppearanceProvider>)
   await waitFor(() => expect(onboarding).toHaveBeenCalled())
   fireEvent.change(screen.getByPlaceholderText('Your name'), { target: { value: 'Ada Lovelace' } })
   fireEvent.click(screen.getByRole('button', { name: 'Continue' }))

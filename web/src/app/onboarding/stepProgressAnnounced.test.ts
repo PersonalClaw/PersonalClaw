@@ -19,6 +19,11 @@ import { join } from 'node:path'
 const SRC = join(process.cwd(), 'src')
 const onboarding = () => readFileSync(join(SRC, 'app/Onboarding.tsx'), 'utf8')
 const stepRow = () => readFileSync(join(SRC, 'app/onboarding/StepStack.tsx'), 'utf8')
+// `ORDER` and `TITLES` moved to `onboarding/steps.ts` when the step machine became a module the
+// navigation tests can drive directly. The live region still reads them BY THESE NAMES in
+// `Onboarding.tsx`, which is what the template assertion below pins; the declarations are asserted
+// where they now live, so the single-source claim keeps holding rather than going vacuous.
+const steps = () => readFileSync(join(SRC, 'app/onboarding/steps.ts'), 'utf8')
 
 describe('onboarding step progress is announced', () => {
   it('the active step is marked aria-current="step"', () => {
@@ -43,15 +48,15 @@ describe('onboarding step progress is announced', () => {
     // correctly sourced — a frozen count turns "every row" into "exactly N rows" and makes
     // adding a compliant step look like a regression. Deriving it strengthens the claim: it now
     // fails if ANY declared step's row hardcodes its title, at any number of steps.
-    const src = onboarding()
-    expect(src).toMatch(/const TITLES: Record<StepId, string>/)
-    const steps = (src.match(/const ORDER: StepId\[\] = \[([^\]]*)\]/)?.[1] ?? '')
+    const machine = steps()
+    expect(machine).toMatch(/const TITLES: Record<StepId, string>/)
+    const declared = (machine.match(/const ORDER: StepId\[\] = \[([^\]]*)\]/)?.[1] ?? '')
       .split(',').map((s) => s.trim()).filter(Boolean)
-    expect(steps.length, 'ORDER must declare the steps').toBeGreaterThan(1)
+    expect(declared.length, 'ORDER must declare the steps').toBeGreaterThan(1)
     expect(
-      (src.match(/title=\{TITLES\.\w+\}/g) || []).length,
-      `all ${steps.length} rows in ORDER must read from TITLES`,
-    ).toBe(steps.length)
+      (onboarding().match(/title=\{TITLES\.\w+\}/g) || []).length,
+      `all ${declared.length} rows in ORDER must read from TITLES`,
+    ).toBe(declared.length)
   })
 
   it('the live region is visually hidden, not visible chrome', () => {
