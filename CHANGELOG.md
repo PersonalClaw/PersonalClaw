@@ -85,6 +85,26 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   public repository, and none was linked from any published page. One additionally published
   the scope set of a live access token. A `publication-hygiene-baseline.json` path rule now
   refuses the directory's return.
+- **Removed the two maintainer drafts that announced their own unapproved status:
+  `docs/maintainers/discussions-welcome-draft.md` and
+  `docs/maintainers/community-bounty-drafts.md`.** One opened `**Status:** awaiting owner
+  sign-off`, the other `**PENDING OWNER APPROVAL**`. A public repository should not carry a
+  document that tells a reader it is not yet approved — either the content is trustworthy
+  enough to publish or it is not, and "pending" answers that with a no. Rewording the banner
+  was rejected as strictly worse, because it makes an unapproved document *look* approved.
+  The welcome draft was a one-shot post body with **zero** inbound references anywhere in the
+  tree. The bounty drafts staged three ready-to-post issue bodies around a risk paragraph
+  marked unapproved, each draft ending `*(risk-policy paragraph goes here once approved)*` —
+  unapproved, consent-adjacent security copy sitting in the open where a contributor could
+  lift it verbatim. Its two referrers moved in the same change:
+  `docs/maintainers/app-bounty-wants-list.md` is **kept** — it is the machine-checked
+  wants-list, it never announced itself unapproved, and it has real contributor value — and
+  now states plainly that the three channel bounties carry a maintainer-written risk
+  statement instead of pointing at a staged draft; `tests/test_bounty_wants_list.py` drops
+  the cross-file half of its channel check and the `PENDING OWNER APPROVAL` assertion, whose
+  subject no longer exists, and keeps the half that pins the three channels the plan names
+  from outside the table. Both files remain in git history for the maintainer — they are
+  simply no longer published.
 - **⚠️ Four remaining runtime-editable config paths that governed nothing are gone: `workflows.max_active_runs`, `knowledge.conflict_model_pass`, `knowledge.lint_every_n_persists`, and `learning.min_session_score`.** [#465](https://github.com/PersonalClaw/PersonalClaw/issues/465). Each validated, persisted and read back while no reachable feature consumed the value. Removing `max_active_runs` adds no concurrency cap and changes no run-start behaviour; that admission gap remains separate work. The knowledge toggles named schedulers or switches that do not exist, and the learning score path would require building its producer before a config threshold could govern anything. Stored values are ignored on load. This completes the ruled six deletions together with `knowledge.idempotent_persist` and `workflows.max_concurrent_nodes`. Clean break under the pre-1.0 banner: run `personalclaw snapshot` before upgrading.
 - **⚠️ Two earlier runtime-editable config fields that governed nothing are gone: `knowledge.idempotent_persist` and `workflows.max_concurrent_nodes`.** [#465](https://github.com/PersonalClaw/PersonalClaw/issues/465). Both validated, persisted and read back cleanly through `PATCH /api/config/personalclaw` while no code anywhere read the value — so the round trip convinced you the setting had taken effect and nothing changed. Neither is replaced, because in both cases the honest fix was deletion rather than a reader. `idempotent_persist` is an **invariant, not a setting**: content-derived identity prevents retries and rewinds from manufacturing a second near-identical item that later reads as independent corroboration. `max_concurrent_nodes` claimed to be a total partitioned across typed lanes, while the two live per-lane fields already own that quantity. Stored values are ignored. The four-path entry above completes the ruled six deletions.
 - **Chat's Activity → **Index** tab is gone; the Session Map is the session's index (SSM-13).** The Activity panel opened on an "Index" tab — a flat outline of your own messages whose rows scrolled to that turn — and the Session Map superseded it: the map is always on screen rather than behind a panel, and it marks tool calls, approvals, errors and subagents as well as user turns, so it indexes the parts of a long session you actually go looking for. Keeping both would have been two indexes of one transcript that have to be kept saying the same thing, so the tab, its list body and the `ChatActivity.index` model behind it are **deleted** rather than hidden or deprecated — there is no flag to bring it back. **What this changes for you:** the Activity panel now opens on **Files**, and its tabs are Files / Links (+ Subagents and Side when in play); to jump to a turn, use the map's rail at the right of the transcript (or its drawer on touch) — click a mark, or Tab to the rail and use the arrow keys plus Enter. Nothing is lost in the move: the previous release already routed the Index tab's jump through the map's single handler and coordinate (SSM-12), so the rail lands the same turn the outline did, and the map additionally lists every user turn the outline listed. No config change and no data change — this was a view surface, so nothing is stored differently and nothing needs migrating.

@@ -7,7 +7,7 @@ scaffold commands and file paths, and every one of those can go stale while the 
 still *reads* fine. A contributor who picks up a rotted bounty burns an evening
 discovering core cannot install what the issue asked for.
 
-So the four things a bounty issue would carry over into the public are asserted here:
+So the things a bounty issue would carry over into the public are asserted here:
 
 1. **Every row's type is a real ``PROVIDER_TYPES`` member.** A row naming a type core
    does not have sends a contributor to build an uninstallable app.
@@ -18,12 +18,21 @@ So the four things a bounty issue would carry over into the public are asserted 
 3. **At least six rows, spanning all three families.** ``ET-7``'s ``done_when`` bar is
    "≥6 ``bounty`` issues (channels + providers + sources)"; a list that silently fell
    to five, or lost a family, would fail that atom at posting time rather than here.
-4. **The three channel rows agree with the drafted issue prose** in
-   ``community-bounty-drafts.md``. Those two files are the list and the issue text for
-   the same three bounties; if they disagree, one of them is lying.
+4. **The three channel rows are exactly the three channels the plan names.** ``T7.3``
+   names WhatsApp, Signal and Matrix; the check pins that set from outside the table
+   rather than reading it back, so a fourth channel row or a silently swapped one reds.
 
 Cited in-tree paths are checked too — the docs-lint ratchet catches a dead *link*, but
 these are the paths a contributor is told to read.
+
+Check 4 used to have a second half: a sibling ``community-bounty-drafts.md`` carried the
+three issues' public prose, and both files had to keep saying the shared risk paragraph was
+``PENDING OWNER APPROVAL``. That file is **deleted** — a public repository should not ship a
+document telling a reader it is not yet approved, and the risk paragraph it staged was
+unapproved consent-adjacent security copy sitting in the open. With the drafts gone there is
+no second file to agree with and no unapproved copy to guard, so both halves went with it.
+The wants-list still states, in prose, that those three issues carry a maintainer-written
+risk statement.
 
 # the gap that let a row rot
 
@@ -73,7 +82,6 @@ from personalclaw.cli_app_new import provider_type_rows, provider_types
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _WANTS_LIST = _REPO_ROOT / "docs" / "maintainers" / "app-bounty-wants-list.md"
-_DRAFTS = _REPO_ROOT / "docs" / "maintainers" / "community-bounty-drafts.md"
 
 #: ``ET-7``'s literal bar: "≥6 `bounty` GitHub issues live (channels + providers +
 #: sources from the wants-list)".
@@ -81,7 +89,7 @@ _MIN_ROWS = 6
 _FAMILIES = frozenset({"channel", "provider", "source"})
 
 #: The three channels CHANNEL-EXPANSION T7.3 names. Not derived from the table under
-#: test — the point is to pin the plan's list against both files independently.
+#: test — the point is to pin the plan's list against the table independently.
 _T73_CHANNELS = ("WhatsApp", "Signal", "Matrix")
 
 #: The ``Ground`` cell value that makes a row a claim about another repository's contents
@@ -385,16 +393,14 @@ def test_clears_et7_count_and_family_bar(rows: list[Row]) -> None:
     )
 
 
-def test_channel_rows_match_the_drafted_issue_prose(rows: list[Row]) -> None:
-    """The list and the drafted issue text must name the same three channels.
+def test_channel_rows_are_exactly_the_three_the_plan_names(rows: list[Row]) -> None:
+    """The channel rows are exactly ``T7.3``'s three channels — no more, no fewer.
 
-    ``community-bounty-drafts.md`` is where those three bounties' public prose (and the
-    owner-gated risk paragraph) lives; the wants-list is where they are enumerated. Two
-    files, one set of three bounties.
+    Pinned from ``_T73_CHANNELS`` rather than read back off the table under test, so the
+    assertion cannot be satisfied by whatever the table happens to say. A fourth channel row
+    is a bounty nobody decided to offer; a swapped one files an issue for a service the plan
+    never chose.
     """
-    assert _DRAFTS.is_file(), f"missing {_DRAFTS}"
-    drafts = _DRAFTS.read_text(encoding="utf-8")
-
     channel_rows = [r for r in rows if r.family == "channel"]
     assert len(channel_rows) == len(_T73_CHANNELS), (
         f"expected {len(_T73_CHANNELS)} channel rows (T7.3 names "
@@ -405,17 +411,6 @@ def test_channel_rows_match_the_drafted_issue_prose(rows: list[Row]) -> None:
 
     for name in _T73_CHANNELS:
         assert any(name in r.app for r in channel_rows), f"wants-list has no {name} channel row"
-        assert f"Community channel app: {name}" in drafts, (
-            f"{_DRAFTS.name} carries no drafted issue for {name}, but the wants-list "
-            "lists it as a channel bounty"
-        )
-
-    # The gate is stated in BOTH files or in neither — a list that dropped the
-    # owner-approval caveat would invite posting unapproved consent copy.
-    for path, text in ((_WANTS_LIST, _WANTS_LIST.read_text(encoding="utf-8")), (_DRAFTS, drafts)):
-        assert (
-            "PENDING OWNER APPROVAL" in text
-        ), f"{path.name} no longer marks the risk-policy paragraph PENDING OWNER APPROVAL"
 
 
 def test_cited_in_tree_paths_exist(rows: list[Row]) -> None:
