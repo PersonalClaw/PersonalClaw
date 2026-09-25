@@ -18,6 +18,7 @@ import { setNavMode } from './navDisclosure'
 import { APP_NAME } from './config'
 import { notify } from './appSdk'
 import { api, type OnboardingStatePatch } from '../lib/api'
+import { boundModelLabel } from '../lib/modelRef'
 import { StepRow, type StepState } from './onboarding/StepStack'
 import { EssentialsStep } from './onboarding/EssentialsStep'
 import { ImportStep } from './onboarding/ImportStep'
@@ -273,8 +274,22 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
       const seeded: Partial<Record<StepId, StepRecord>> = {}
       // The essentials claim is checked against `needs_model` — the LIVE resolution probe — so a
       // run whose provider was uninstalled since does not keep promising a model it lost.
+      //
+      // 🔴 THE SUMMARY IS THE LIVE BINDING, NOT `essentials.model`. That persisted field is the
+      // **app** the lane installed (`ollama-models`), and this summary is rendered under the
+      // words "Chat model" by both consumers below — the collapsed step-3 row and the recap — so
+      // a re-entered first run told the user their chat model was an app name (#3528). The first
+      // pass was right, because the real label was in the step's component state; a reload lost
+      // it, which is the whole asymmetry. Reading `chat_model_refs` fixes both surfaces at once
+      // and adds no second stored copy of a fact `active_models.json` already owns.
       if (!s.needs_model) {
-        seeded.essentials = { outcome: 'done', summary: s.essentials?.model || 'Ready to chat' }
+        seeded.essentials = {
+          outcome: 'done',
+          // No ref means resolution came from the implicit "first capable configured provider"
+          // rule — the same state the step's own verification calls out, in its words, because
+          // naming a model here would imply a choice nobody made.
+          summary: boundModelLabel(s.chat_model_refs) || 'Ready — using a configured provider',
+        }
       }
       const tried = Object.values(s.first_success ?? {}).filter(Boolean).length
       if (tried > 0) seeded.try = { outcome: 'done', summary: `${tried} of 3 tried` }

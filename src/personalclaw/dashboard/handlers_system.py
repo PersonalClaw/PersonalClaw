@@ -671,12 +671,21 @@ async def api_onboarding(request: web.Request) -> web.Response:
     runtime, which inferences through Settings → Models — so with no model
     provider configured, chat cannot work and we surface a setup prompt.
 
-    Returns the readiness triple ``{needs_model, has_model_provider, has_chat_binding}``
-    — computed live, never stored — plus the persisted first-run progress from
-    ``entity_settings/onboarding.json`` (``step``, ``essentials``, ``first_success``;
-    see :mod:`personalclaw.onboarding`), which is what lets a mid-flow reload resume.
-    The progress fields are purely additive: a client that only reads the readiness
-    triple is unaffected. No secrets.
+    Returns the readiness set ``{needs_model, has_model_provider, has_chat_binding,
+    chat_model_refs}`` — computed live, never stored — plus the persisted first-run
+    progress from ``entity_settings/onboarding.json`` (``step``, ``essentials``,
+    ``first_success``; see :mod:`personalclaw.onboarding`), which is what lets a mid-flow
+    reload resume. The progress fields are purely additive: a client that only reads the
+    readiness fields is unaffected. No secrets.
+
+    ``chat_model_refs`` is the active chat chain (``["provider_name:model_id", …]``,
+    position 0 = default) straight from ``active_models.json``. It is here because a
+    resumed first run had nothing else to read: the flow persists ``essentials.model``,
+    which is the **app** the user installed (``ollama-models``), and the recap rendered
+    that under the words "Chat model" (#3528). The bound model is never a second stored
+    copy of that fact — it is read live, from the one file that owns it, on the request
+    the flow already makes. ``has_chat_binding`` is derived from this same list below, so
+    the flag and the refs cannot disagree.
     """
     has_provider = False
     has_binding = False
@@ -700,10 +709,12 @@ async def api_onboarding(request: web.Request) -> web.Response:
                 break
     except Exception:
         logger.debug("onboarding: provider probe failed", exc_info=True)
+    chat_refs: list[str] = []
     try:
         from personalclaw.providers.use_cases import active_model_refs
 
-        has_binding = bool(active_model_refs("chat"))
+        chat_refs = list(active_model_refs("chat"))
+        has_binding = bool(chat_refs)
     except Exception:
         logger.debug("onboarding: active-model probe failed", exc_info=True)
 
@@ -726,6 +737,7 @@ async def api_onboarding(request: web.Request) -> web.Response:
             "needs_model": needs_model,
             "has_model_provider": has_provider,
             "has_chat_binding": has_binding,
+            "chat_model_refs": chat_refs,
             **load_onboarding_state(),
         }
     )

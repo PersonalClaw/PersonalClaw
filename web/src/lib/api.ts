@@ -4683,6 +4683,11 @@ export type OnboardingStep = 'name' | 'import' | 'essentials' | 'first_success' 
  *  per request and never stored; the progress fields are what let a reload resume. */
 export interface OnboardingState {
   needs_model: boolean; has_model_provider: boolean; has_chat_binding: boolean
+  /** The active chat chain — `["provider_name:model_id", …]`, position 0 = default —
+   *  read live from `active_models.json`. This is what a surface saying "Chat model"
+   *  must name; `essentials.model` below is the **app** the lane installed, and rendering
+   *  that one under those words is #3528. `lib/modelRef` owns the reading. */
+  chat_model_refs?: string[]
   step?: OnboardingStep
   essentials?: OnboardingEssentials
   first_success?: { knowledge: boolean; trigger: boolean; loop: boolean }

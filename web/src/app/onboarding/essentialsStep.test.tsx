@@ -309,9 +309,12 @@ describe('the model lane completes entirely in-flow', () => {
     expect(createModelProvider).not.toHaveBeenCalled()
   })
 
-  it('asks for nothing when chat already resolves', async () => {
+  it('asks for nothing when chat already resolves, and names the bound model', async () => {
     renderStep({ readiness: { needs_model: false, has_model_provider: true, has_chat_binding: true } })
-    expect(await screen.findByText(/A chat model is configured/)).toBeTruthy()
+    // #3528 — the default `bound: ['openai:gpt-5']`. On a re-entered run there is no component
+    // state holding a label, so this sentence can only come from the verdict's own refs; before
+    // that it read the generic "a chat model is configured" and the recap read the APP name.
+    expect(await screen.findByText('Chat model: gpt-5')).toBeTruthy()
     expect(chatModels).not.toHaveBeenCalled()
   })
 
@@ -668,6 +671,11 @@ describe('#3529 — a provider type whose app is already installed is not a dead
   it('drives the SAME schema-driven ConfigureProvider the catalog path uses, end to end', async () => {
     modelProviderTypes.mockResolvedValue([OLLAMA_TYPE])
     chatModels.mockResolvedValue([{ name: 'ollama/llama3.2:3b', model_id: 'llama3.2:3b', provider: 'ollama' }])
+    // The verification reads the binding back, so the verdict has to agree with the ref the
+    // bind below writes — the default fixture's `openai:gpt-5` would be a home this test never
+    // configured. This IS the fix: the reported model comes from `active_models.json`, so a
+    // mock that disagrees with it is a mock describing an impossible home (#3528).
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'binding', bound: ['ollama:llama3.2:3b'] })
     const { onDone, onProgress } = renderStep()
 
     fireEvent.click(await screen.findByRole('button', { name: /Configure Ollama/ }))
@@ -798,7 +806,7 @@ describe('the model lane reads ready only after a build check', () => {
   it('verifies a home the coarse probe already calls ready, instead of trusting it', async () => {
     renderStep({ readiness: READY })
     await waitFor(() => expect(onboardingModelCheck).toHaveBeenCalled())
-    expect(await screen.findByText(/A chat model is configured/)).toBeTruthy()
+    expect(await screen.findByText('Chat model: gpt-5')).toBeTruthy()
   })
 
   it('known-false: a claimed-ready home whose provider cannot build is NOT reported ready', async () => {
@@ -939,7 +947,7 @@ describe('the model lane reads ready only after a build check', () => {
     onboardingModelCheck.mockResolvedValue({ ok: true, source: 'binding', bound: ['my-openai:gpt-4o'] })
     renderStep({ readiness: READY })
     fireEvent.click(await screen.findByRole('button', { name: /Check again/ }))
-    expect(await screen.findByText(/A chat model is configured/)).toBeTruthy()
+    expect(await screen.findByText('Chat model: gpt-4o')).toBeTruthy()
     expect(onboardingModelCheck).toHaveBeenCalledTimes(2)
   })
 

@@ -9,6 +9,7 @@ import { listItemEnter, stagger, spring } from '../../design/motion'
 import { useQuery } from '../../lib/data'
 import { useGuardedInstall, guardedFromApp } from '../../lib/useGuardedInstall'
 import { catalogApps } from '../../lib/appCatalog'
+import { boundModelLabel } from '../../lib/modelRef'
 import { ConsentModal, PermissionList, CronConsentList, consentPermissions, consentHostUi, consentPythonDeps } from '../../pages/apps/installConsent'
 import { SchemaField } from '../../pages/settings/ModelBackends'
 import { SchemaFields } from '../../pages/tools/schema'
@@ -167,13 +168,18 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
     if (readiness?.has_model_provider) return 'bind'
     return 'pick'
   })
-  const [boundLabel, setBoundLabel] = useState('')
-  /** What the VERIFICATION proved, in the words the collapsed row and the done-screen recap
-   *  repeat. It supersedes `boundLabel` because the two answer different questions: a label
-   *  is what the user picked, this is what actually built — and on a home that resolves
-   *  through the implicit fallback (nothing explicitly bound) there is no label to show and
-   *  "Ready to chat" would imply a choice nobody made. */
-  const [verified, setVerified] = useState('')
+  /** The chat model the VERIFICATION found bound, from the verdict's own `bound` refs — or
+   *  `''` on a home that resolves through the implicit fallback, where there is no model to
+   *  name and doing so would imply a choice nobody made.
+   *
+   *  🔴 ONE STATE, READ FROM THE BINDING, NOT TWO COPIES OF A LABEL. This used to be a pair:
+   *  a `boundLabel` captured from whichever control did the binding, and a `verified` summary
+   *  that preferred it. Both were component state, so a reload lost them — and the recap then
+   *  fell back to the persisted `essentials.model`, which is the **app** name (#3528). The
+   *  verdict already carries the authoritative answer (`active_model_refs('chat')`, the
+   *  contents of `active_models.json`), so the label is read from there on every pass; there
+   *  is nothing left to lose across a reload and nothing to drift out of step with the file. */
+  const [chatModel, setChatModel] = useState('')
   /** What `ConfigureProvider` learned, for the bind step. `provider` is the entry name it
    *  created — the provider KEY (`t.type`, e.g. `ollama`), never the app name
    *  (`ollama-models`), because that is the token a test and a `provider:model` ref speak.
@@ -220,9 +226,8 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
   // chat model is bound for you), so it skips the 'configure'/'bind' phases. It still goes
   // through 'verify': the bind writes a `providers[]` entry AND a chat ref, and "the write
   // returned ok" is not "chat resolves" — the same distinction the catalog path draws.
-  const handleLocalBound = useCallback((model: string) => {
+  const handleLocalBound = useCallback(() => {
     setModelApp('ollama-models')
-    setBoundLabel(model)
     setPhase('verify')
     onProgress({ essentials: { model: 'ollama-models' } })
   }, [onProgress])
@@ -348,10 +353,10 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
             {/* The model lane's post-install sub-flow replaces its card list once an
                 app is chosen — key entry, Test, then the binding choice. */}
             {isModel && phase !== 'pick' ? (
-              <ModelSubFlow app={modelApp} phase={phase} boundLabel={boundLabel}
+              <ModelSubFlow app={modelApp} phase={phase} chatModel={chatModel}
                 configured={configured}
-                onBound={(label) => { setBoundLabel(label); setPhase('verify') }}
-                onVerified={(summary) => { setVerified(summary); setPhase('done') }}
+                onBound={() => setPhase('verify')}
+                onVerified={(model) => { setChatModel(model); setPhase('done') }}
                 onReconfigure={() => setPhase('configure')}
                 onConfigured={(c) => { setConfigured(c); setPhase('bind') }} />
             ) : items.length === 0 && unreadable.length > 0 ? (
@@ -406,7 +411,7 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
           disabledReason={phase === 'verify'
             ? 'Still checking that a chat model really resolves'
             : "Set up a model provider first — the agent can't think without one"}
-          onClick={() => onDone(verified || boundLabel || 'Ready to chat')}>
+          onClick={() => onDone(chatModel || 'Ready — using a configured provider')}>
           Continue
         </Button>
         {/* Guidance never gates: the required lane is required to CONSIDER, not a wall.
@@ -495,23 +500,25 @@ function AppCard({ entry, open, installed, busy, error, onToggle, onInstall }: {
 /** The model lane's required rail, after its app is installed: enter the provider's
  *  own schema-declared fields (the key), test the connection, bind a chat model, then
  *  VERIFY that chat resolves. Four existing endpoints plus the verification. */
-function ModelSubFlow({ app, phase, boundLabel, configured, onConfigured, onBound, onVerified, onReconfigure }: {
-  app: string; phase: ModelPhase; boundLabel: string
+function ModelSubFlow({ app, phase, chatModel, configured, onConfigured, onBound, onVerified, onReconfigure }: {
+  app: string; phase: ModelPhase
+  /** The verified bound model, or `''` when resolution has no explicit binding to name. */
+  chatModel: string
   configured: { provider: string; unprobed: string } | null
   onConfigured: (c: { provider: string; unprobed: string }) => void
-  onBound: (label: string) => void
-  onVerified: (summary: string) => void
+  onBound: () => void
+  onVerified: (model: string) => void
   onReconfigure: () => void
 }) {
   if (phase === 'done') {
     return (
       <p className="inline-flex items-center gap-1.5 text-[0.8125rem]" style={{ color: 'var(--color-success)' }}>
-        <Check size={15} aria-hidden="true" /> {boundLabel ? `Chat model: ${boundLabel}` : 'A chat model is configured — you\'re ready.'}
+        <Check size={15} aria-hidden="true" /> {chatModel ? `Chat model: ${chatModel}` : 'A chat model is configured — you\'re ready.'}
       </p>
     )
   }
   if (phase === 'verify') {
-    return <VerifyChatModel boundLabel={boundLabel} onVerified={onVerified}
+    return <VerifyChatModel onVerified={onVerified}
       onReconfigure={configured ? onReconfigure : undefined} />
   }
   if (phase === 'bind') return <BindModel configured={configured} onBound={onBound} />
@@ -535,9 +542,9 @@ function ModelSubFlow({ app, phase, boundLabel, configured, onConfigured, onBoun
  *  🪤 NOT `useQuery`. That hook paints a cached value first and revalidates behind it, so a
  *  verification would flash the PREVIOUS verdict — a stale "ready" over a broken bind is the
  *  fabrication this whole component exists to prevent. A verdict is only ever this call's. */
-function VerifyChatModel({ boundLabel, onVerified, onReconfigure }: {
-  boundLabel: string
-  onVerified: (summary: string) => void
+function VerifyChatModel({ onVerified, onReconfigure }: {
+  /** Reports the bound model the verdict names, or `''` when it names none. */
+  onVerified: (model: string) => void
   /** Back to the provider form, offered only when this flow is what configured it — there
    *  is no form to return to for a home that arrived already configured. */
   onReconfigure?: () => void
@@ -549,14 +556,12 @@ function VerifyChatModel({ boundLabel, onVerified, onReconfigure }: {
   const [unreachable, setUnreachable] = useState('')
   const [attempt, setAttempt] = useState(0)
 
-  // The two values the verdict handler needs, held in refs so the fetch effect depends on
-  // the ATTEMPT alone. `onVerified` is an inline arrow in the parent, so a new identity every
-  // render: listing it as a dependency would re-run this effect (and re-fire the request) on
-  // every repaint — the unstable-callback loop `lib/data/useQuery` documents having measured.
+  // The verdict handler, held in a ref so the fetch effect depends on the ATTEMPT alone.
+  // `onVerified` is an inline arrow in the parent, so a new identity every render: listing it
+  // as a dependency would re-run this effect (and re-fire the request) on every repaint — the
+  // unstable-callback loop `lib/data/useQuery` documents having measured.
   const verifiedRef = useRef(onVerified)
   verifiedRef.current = onVerified
-  const labelRef = useRef(boundLabel)
-  labelRef.current = boundLabel
 
   useEffect(() => {
     let alive = true
@@ -565,15 +570,15 @@ function VerifyChatModel({ boundLabel, onVerified, onReconfigure }: {
       .then((r) => {
         if (!alive) return
         setResult(r)
-        // Reported from the verdict itself, not from a second effect watching it: a bound
-        // label is what the user chose, and with no explicit binding the summary names the
-        // mechanism instead of implying a choice nobody made. (`source: 'fallback'` is also
+        // 🔴 THE MODEL IS READ OFF THE VERDICT, not off whichever control did the binding.
+        // `bound` is `active_model_refs('chat')` — the contents of `active_models.json` — so
+        // this names the same model on a first pass and on a re-entered one, where there is no
+        // component state left to have captured a label (#3528). An empty answer means nothing
+        // is explicitly bound, which is `source: 'fallback'`; the parent then names the
+        // mechanism rather than implying a choice nobody made. (`source: 'fallback'` is also
         // where a zero-config bundled default lands — OU-14 decorates that case from
         // `chat_is_bundled_floor`, off this same `ok` verdict.)
-        if (r.ok) {
-          verifiedRef.current(labelRef.current
-            || (r.source === 'binding' ? 'Ready to chat' : 'Ready — using a configured provider'))
-        }
+        if (r.ok) verifiedRef.current(boundModelLabel(r.bound))
       })
       .catch((e) => { if (alive) setUnreachable(thrownMessage(e) || 'The check could not run.') })
     return () => { alive = false }
@@ -629,7 +634,8 @@ function VerifyChatModel({ boundLabel, onVerified, onReconfigure }: {
  *  and point at `InstalledProviderTypes`, using `hasManualRoute` (the parent's OWN answer,
  *  never re-derived here) so this can never point at a route that doesn't actually exist. */
 function LocalModelOnRamp({ onBound, hasManualRoute }: {
-  onBound: (model: string) => void
+  /** A chat ref was written. Carries no label: the verification reads the model back. */
+  onBound: () => void
   /** Whether a registered-but-uncatalogued provider type is actually rendering below —
    *  computed once, by `EssentialsStep`, from the same `/api/model-provider-types` read
    *  `InstalledProviderTypes` renders from. */
@@ -661,7 +667,9 @@ function LocalModelOnRamp({ onBound, hasManualRoute }: {
     setBinding(ep.endpoint); setBindError('')
     try {
       const r = await api.bindLocalModel(ep.endpoint)
-      if (r.ok) { onBound(r.model || ep.model); return }
+      // The bind wrote the chat ref; which model that is comes back from the verification's
+      // read of `active_models.json`, never from this response — see `VerifyChatModel`.
+      if (r.ok) { onBound(); return }
       setBinding(''); setBindError('That local model could not be bound.')
     } catch (e) {
       setBinding(''); setBindError(thrownMessage(e) || 'That local model could not be bound.')
@@ -952,7 +960,8 @@ function ConfigureProvider({ app, onConfigured }: {
  *  which the discovery fallback builds as `provider/model`. */
 function BindModel({ configured, onBound }: {
   configured: { provider: string; unprobed: string } | null
-  onBound: (label: string) => void
+  /** A chat ref was written. Carries no label: the verification reads the model back. */
+  onBound: () => void
 }) {
   const { data: models, error, refresh } = useQuery('onboarding:chat-models', () => api.chatModels())
   const [binding, setBinding] = useState('')
@@ -969,7 +978,7 @@ function BindModel({ configured, onBound }: {
   const bind = async (m: ChatModelOption) => {
     setBinding(m.name); setFailed('')
     const ref = m.provider ? `${m.provider}:${m.model_id}` : m.model_id
-    try { await api.setActiveModel('chat', [ref]); onBound(m.model_id) }
+    try { await api.setActiveModel('chat', [ref]); onBound() }
     catch (e) { setBinding(''); setFailed(thrownMessage(e) || 'Could not bind that model.') }
   }
 

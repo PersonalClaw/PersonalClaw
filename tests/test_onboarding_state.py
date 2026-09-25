@@ -250,6 +250,42 @@ async def test_get_carries_progress_beside_the_readiness_triple(_isolate_home):
 
 
 @pytest.mark.asyncio
+async def test_get_carries_the_bound_chat_model_not_only_a_flag(_isolate_home, monkeypatch):
+    """#3528 — the GET must say WHICH chat model is bound, not merely that one is.
+
+    The flow persists ``essentials.model``, which is the **app** that provides the model
+    (``ollama-models``). With only a boolean to go on, a re-entered first run had nothing
+    else to render under the words "Chat model" and told the user their model was that app
+    name. The refs are what ``active_models.json`` holds, so the route reports them — and
+    ``has_chat_binding`` is derived from the same read, so the two cannot disagree.
+    """
+    monkeypatch.setattr(
+        "personalclaw.providers.use_cases.active_model_refs",
+        lambda use_case: ["Local Ollama:qwen2.5vl:7b"] if use_case == "chat" else [],
+    )
+    ob.merge_onboarding_state({"essentials": {"model": "ollama-models"}})
+    data = await _json(await hs.api_onboarding(_req({})))
+    assert data["chat_model_refs"] == ["Local Ollama:qwen2.5vl:7b"]
+    assert data["has_chat_binding"] is True
+    # The app name is still recorded — as the app it is, under the field that means that.
+    assert data["essentials"]["model"] == "ollama-models"
+
+
+@pytest.mark.asyncio
+async def test_get_reports_no_bound_chat_model_when_nothing_is_bound(_isolate_home, monkeypatch):
+    """An empty chain is the honest answer, and the flag agrees with it.
+
+    This is the case where resolution comes from the implicit "first capable configured
+    provider" rule, so there is no model the user chose — and a surface that named one
+    would be inventing a choice.
+    """
+    monkeypatch.setattr("personalclaw.providers.use_cases.active_model_refs", lambda use_case: [])
+    data = await _json(await hs.api_onboarding(_req({})))
+    assert data["chat_model_refs"] == []
+    assert data["has_chat_binding"] is False
+
+
+@pytest.mark.asyncio
 async def test_get_still_answers_over_a_corrupt_store(_isolate_home):
     p = _store_path(_isolate_home)
     p.parent.mkdir(parents=True, exist_ok=True)
