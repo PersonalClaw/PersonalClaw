@@ -131,6 +131,13 @@ class NodeResult:
     #: runtime and never reach the journal, so the ledger would show a published artifact with no
     #: record of the publish.
     published: dict[str, Any] | None = None
+    #: The no-double-execution claim THIS ATTEMPT holds, and the holder identity it holds it with
+    #: (#3533). Set only by `dispatch_stage`, and only on the one result that leaves the claim
+    #: taken — the spawn is still live when that result is returned, so the attempt outlives the
+    #: dispatcher and something else has to release it. Both halves travel because a release names
+    #: both and `containers.release` refuses any holder but the recorded one.
+    claim_target: str = ""
+    claim_holder: str = ""
 
     @property
     def ok(self) -> bool:
@@ -524,11 +531,18 @@ def claim_holder(run_id: str, node_id: str) -> str:
     return f"{ownership.owned_key(run_id, node_id or 'node')}#{uuid.uuid4().hex[:12]}"
 
 
-def _release_claim(claim_target: str, holder: str) -> None:
-    """Drop this worker's claim on a branch that did NOT start.
+def release_execution_claim(claim_target: str, holder: str) -> None:
+    """Drop ONE attempt's claim on a branch: either it never started, or it has SETTLED.
+
+    Public because the second caller is the controller. A stage's claim is taken here and outlives
+    this function — the spawn is live when `dispatch_stage` returns — so the only code that can know
+    the attempt is over is the code that settles it (`_reconcile_dispatched_stages`), and WF2-R10
+    puts that in the controller. `NodeResult.claim_target`/`claim_holder` are how the identity gets
+    there; see `dispatch_stage`.
 
     Never raises: a failed release costs one TTL of a stalled branch, while an exception here would
-    turn a recoverable no-spawn return into a crashed dispatch.
+    turn a recoverable no-spawn return into a crashed dispatch — or a settled node into an unsettled
+    one.
     """
     if not claim_target:
         return
@@ -642,49 +656,59 @@ async def dispatch_stage(
                 resolved_prompt=prompt,
             )
 
-    info = subagents.spawn(
-        task=prompt,
-        # The run OWNS this session (§5.1): `workflow:<run_id>:<node_id>`. Passed as the parent key
-        # so the spawn's own audit + session plumbing attributes it to the run rather than to
-        # whatever chat happened to start it.
-        parent_session_key=ownership.owned_key(run_id, node.id or "node"),
-        # Scope the run-level concurrency lane, breaker and budget to the RUN
-        # (`workflow:<run_id>`), so every node of one run shares one fan-out lane and
-        # a wide run cannot starve other runs (WF2WOR-8 C1.4/C1.5).
-        parent_run=(f"{ownership.OWNED_PREFIX}{run_id}" if run_id else ""),
-        agent=str(cfg.get("agent", "") or ""),
-        # Per-leaf model pin (WORK-CONTAINERS amendment (a), WF2WOR-9). Homogeneous by DEFAULT: an
-        # absent `model` sends `None`, which is what makes `spawn` resolve the `orchestration` chain
-        # and inherit the parent's binding. Only a declared pin overrides it, because the one
-        # measured heterogeneity win in the fan-out literature is by MODEL, and passing `""` here
-        # would look like a pin to nothing rather than like no pin.
-        model=str(cfg.get("model", "") or "") or None,
-        max_turns=int(cfg.get("max_turns", 0) or 0),
-        cwd=cwd,
-        silent=True,
-        approval_mode=str(cfg.get("approval_mode", "") or "") or None,
-        # ONE capability decision (§4.1): the node's `capability` drives BOTH the leaf-env
-        # read-only flag (`leaf_spawn_env` → the handler seam `leaf_tool_denial`, in-process MCP
-        # tools) AND the subagent capability class (the `_run_inner` approval loop, the worker's
-        # NATIVE tools). A research node passed as research here has its native Write/Bash denied
-        # too — the gap the MCP-only seam left open. `mutating` iff declared, as in leaf_env.
-        capability_class=(
-            "mutating"
-            if str(cfg.get("capability", "") or "research").strip().lower() == "mutating"
-            else "research"
-        ),
-        # The leaf's lineage + capability posture, secret-filtered (WF2WOR-5 C2). This is the
-        # WRITER for the flags `mcp_shared.leaf_tool_denial` reads: without it the depth counter and
-        # the read-only flag would never be set, and the handler seam would be a gate on a value
-        # nobody writes — the exact inert-control shape this clause exists to close.
-        extra_env=leaf_spawn_env(node, cfg, run_id=run_id, depth=depth),
-    )
+    try:
+        info = subagents.spawn(
+            task=prompt,
+            # The run OWNS this session (§5.1): `workflow:<run_id>:<node_id>`. Passed as the parent
+            # key so the spawn's own audit + session plumbing attributes it to the run rather than
+            # to whatever chat happened to start it.
+            parent_session_key=ownership.owned_key(run_id, node.id or "node"),
+            # Scope the run-level concurrency lane, breaker and budget to the RUN
+            # (`workflow:<run_id>`), so every node of one run shares one fan-out lane and
+            # a wide run cannot starve other runs (WF2WOR-8 C1.4/C1.5).
+            parent_run=(f"{ownership.OWNED_PREFIX}{run_id}" if run_id else ""),
+            agent=str(cfg.get("agent", "") or ""),
+            # Per-leaf model pin (WORK-CONTAINERS amendment (a), WF2WOR-9). Homogeneous by DEFAULT:
+            # an absent `model` sends `None`, which is what makes `spawn` resolve the
+            # `orchestration` chain and inherit the parent's binding. Only a declared pin overrides
+            # it, because the one measured heterogeneity win in the fan-out literature is by MODEL,
+            # and passing `""` here would look like a pin to nothing rather than like no pin.
+            model=str(cfg.get("model", "") or "") or None,
+            max_turns=int(cfg.get("max_turns", 0) or 0),
+            cwd=cwd,
+            silent=True,
+            approval_mode=str(cfg.get("approval_mode", "") or "") or None,
+            # ONE capability decision (§4.1): the node's `capability` drives BOTH the leaf-env
+            # read-only flag (`leaf_spawn_env` → the handler seam `leaf_tool_denial`, in-process MCP
+            # tools) AND the subagent capability class (the `_run_inner` approval loop, the worker's
+            # NATIVE tools). A research node passed as research here has its native Write/Bash
+            # denied too — the gap the MCP-only seam left open. `mutating` iff declared, as in
+            # leaf_env.
+            capability_class=(
+                "mutating"
+                if str(cfg.get("capability", "") or "research").strip().lower() == "mutating"
+                else "research"
+            ),
+            # The leaf's lineage + capability posture, secret-filtered (WF2WOR-5 C2). This is the
+            # WRITER for the flags `mcp_shared.leaf_tool_denial` reads: without it the depth counter
+            # and the read-only flag would never be set, and the handler seam would be a gate on a
+            # value nobody writes — the exact inert-control shape this clause exists to close.
+            extra_env=leaf_spawn_env(node, cfg, run_id=run_id, depth=depth),
+        )
+    except BaseException:
+        # A spawn that RAISED produced no `NodeResult`, so the holder below never reaches the
+        # controller and NOTHING can release this claim for its whole 900s TTL. That is the same
+        # failure as #3533 wearing an exception: the node's own retry meets its own lease. Released
+        # here and re-raised unchanged, so the classification the controller already does
+        # (`_execute` → `classify_exception`) is untouched.
+        release_execution_claim(claim_target, holder)
+        raise
     if info is None:
         # At capacity. Not a failure: the node stays ready and the next tick retries — so the claim
         # MUST be released. A claim held across a no-spawn return would make this node refuse its
         # own retry for the whole TTL: the lease would block the work it exists to protect, which is
         # the failure mode where a safety control becomes an outage.
-        _release_claim(claim_target, holder)
+        release_execution_claim(claim_target, holder)
         return NodeResult(
             state=InstanceState.READY,
             degraded_reason="subagent capacity reached; will retry",
@@ -693,7 +717,7 @@ async def dispatch_stage(
     if getattr(info, "error", ""):
         # A REJECTED spawn never executed, so the claim is released for the same reason as the
         # capacity path: nothing is running, and holding the claim would only lock out the retry.
-        _release_claim(claim_target, holder)
+        release_execution_claim(claim_target, holder)
         return NodeResult(
             state=InstanceState.FAILED,
             failure=Failure(
@@ -707,10 +731,21 @@ async def dispatch_stage(
     # until its completion arrives, which is exactly the window a second worker must not
     # execute in. It expires on its own TTL, so a killed gateway frees the branch without an
     # admin step — the property `leases` was built for.
+    #
+    # 🔴 But the TTL was the ONLY way it was ever released, which is #3533: this attempt's claim
+    # outlived the attempt, so the retry of a settled-FAILED instance met its own lease and was
+    # refused as a duplicate for fifteen minutes. The identity travels out on the result — a pair,
+    # because a release names both the target and the holder and `containers.release` refuses any
+    # other holder — so `_reconcile_dispatched_stages` can release THIS attempt's claim at the
+    # settle. Carried rather than re-derived: `claim_holder` is a fresh uuid per attempt, so it is
+    # unrecoverable from anything the controller holds, and re-deriving the target would put a
+    # second copy of `claim_key` at the release site to drift from this one.
     return NodeResult(
         state=InstanceState.RUNNING,
         output={"subagent_id": info.id},
         resolved_prompt=prompt,
+        claim_target=claim_target,
+        claim_holder=holder,
     )
 
 
