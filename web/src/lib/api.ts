@@ -1616,6 +1616,11 @@ export interface WorkflowNodeState {
   // forward across events (a re-run after a rewind emits `node_done` WITHOUT it, and carrying
   // the old value would keep claiming a cache hit the run just superseded).
   cached?: boolean
+  // What this node's declared `schema` asked for that its output did not carry (#3545). A step
+  // that ignored its schema still reports `done` — the run is not failed and must not read as
+  // failed — so this is the only thing on the row that says the `done` was reached without the
+  // declared shape. Absent (not "") when there was nothing to report, like `cached`.
+  schema_shortfall?: string
 }
 export interface WorkflowRunSummary {
   id: string; workflow_name: string; status: WorkflowRunStatus; spec_version: number

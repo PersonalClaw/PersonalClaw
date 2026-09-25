@@ -201,6 +201,7 @@ class Journal(LedgerWriter):
         resolved_prompt_redacted: bool = False,
         resolved_prompt_scan: tuple[str, ...] | list[str] = (),
         output_ref: str = "",
+        schema_shortfall: str = "",
     ) -> None:
         """The ledger's primary record. Every field here is required by the flywheel's
         refiner (§5 Run Ledger) — `cost_usd` is backend-authoritative with a rate-table
@@ -213,6 +214,19 @@ class Journal(LedgerWriter):
         is a property of the step, not a separate event. `resolved_prompt_scan` carries finding
         CLASSES only — never a matched value, since the substitution's whole purpose is that the
         value is not written down.
+
+        `schema_shortfall` names what this step's declared `schema` asked for that its output did
+        not carry (#3545). On THIS row, beside `state`, for the same reason the two
+        `resolved_prompt_*` flags are: it is a property of the step, and a reader holding the row
+        should not need a second channel to learn that the `done` beside it was reached without the
+        declared shape.
+
+        🔴 WRITTEN ONLY WHEN NON-EMPTY, unlike every other field here, and the asymmetry is the
+        point. A spawned stage settles through this writer too, and on `main` no stage output is
+        ever compared against its schema — so an always-written `"schema_shortfall": ""` would put
+        a positive all-clear on every `general-project` worker row, the exact rows #3545 is about,
+        asserting a conformance nothing measured. Absent claims nothing. It also keeps every row
+        without a shortfall byte-identical to what this writer wrote before the field existed.
         """
         self.write(
             STEP_COMPLETED,
@@ -232,6 +246,7 @@ class Journal(LedgerWriter):
             resolved_prompt_redacted=bool(resolved_prompt_redacted),
             resolved_prompt_scan=sorted({str(c) for c in (resolved_prompt_scan or ())}),
             output_ref=output_ref,
+            **({"schema_shortfall": schema_shortfall} if schema_shortfall else {}),
         )
 
     def step_failed(
