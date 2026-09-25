@@ -477,6 +477,64 @@ describe('a failed catalog fetch says so', () => {
     expect(await screen.findByText(/No web search app is available/)).toBeTruthy()
     expect(screen.getAllByText(/first-party source/)[0]).toBeTruthy()
   })
+
+  // A REQUEST that failed is covered above. This is the other half and it is the one that
+  // shipped: the request SUCCEEDS, 200, and the sources inside it are what failed. The
+  // payload says so in `unavailableSources` — the field `AppsSection.tsx` already reads for
+  // the Store badge — and the step ignored it, so four empty lanes rendered as four facts
+  // about the world. Measured on a fresh `python:3.13-slim` container from the published
+  // wheel, where the REQUIRED model lane said "No model provider app is available…".
+  const UNREADABLE = {
+    bundled: [], gitSources: ['https://github.com/PersonalClaw/PersonalClawApps.git'],
+    localApps: [], remoteApps: [], gitApps: [],
+    unavailableSources: [{ source: 'https://github.com/PersonalClaw/PersonalClawApps.git', reason: 'no-git' }],
+  }
+
+  it('does not assert that no app exists when the sources could not be read', async () => {
+    appCatalog.mockResolvedValue(UNREADABLE)
+    renderStep()
+    expect(await screen.findByTestId('onboarding-sources-unreadable')).toBeTruthy()
+    // The lie, gone from EVERY lane — not just the required one.
+    expect(screen.queryByText(/No model provider app is available/)).toBeNull()
+    expect(screen.queryByText(/No web search app is available/)).toBeNull()
+    expect(screen.queryByText(/No speech app is available/)).toBeNull()
+    expect(screen.queryByText(/No messaging channel app is available/)).toBeNull()
+  })
+
+  it('names the missing dependency and the source at fault, and offers a retry', async () => {
+    appCatalog.mockResolvedValue(UNREADABLE)
+    renderStep()
+    const notice = await screen.findByTestId('onboarding-sources-unreadable')
+    expect(notice.textContent).toMatch(/git is not installed on this machine/)
+    // The source, so a user can tell which one — the whole point of `unavailableSources`.
+    expect(notice.textContent).toContain('https://github.com/PersonalClaw/PersonalClawApps.git')
+    // A dead end became recoverable: before this there was no retry on this step at all.
+    fireEvent.click(await screen.findByRole('button', { name: /Try reading the app sources again/ }))
+    await waitFor(() => expect(appCatalog).toHaveBeenCalledTimes(2))
+  })
+
+  it('does not blame git when git is present and the source is merely unreachable', async () => {
+    appCatalog.mockResolvedValue({
+      ...UNREADABLE,
+      unavailableSources: [{ source: 'https://github.com/PersonalClaw/PersonalClawApps.git', reason: 'unreachable' }],
+    })
+    renderStep()
+    const notice = await screen.findByTestId('onboarding-sources-unreadable')
+    expect(notice.textContent).toMatch(/could not read its app sources/)
+    // Not `/git/` — the source URL itself ends in `.git`. The claim under test is that the
+    // notice does not name a missing DEPENDENCY on a machine that has one.
+    expect(notice.textContent).not.toMatch(/git is not installed/)
+    expect(notice.textContent).toMatch(/Check this machine’s network/)
+  })
+
+  it('states the cause once, not once per lane', async () => {
+    appCatalog.mockResolvedValue(UNREADABLE)
+    renderStep()
+    await screen.findByTestId('onboarding-sources-unreadable')
+    // Four lanes, one explanation. The per-lane line claims nothing about what exists.
+    expect(screen.getAllByText(/could not be read/)).toHaveLength(4)
+    expect(screen.getAllByText(/git is not installed on this machine/)).toHaveLength(1)
+  })
 })
 
 // ── OU-13: the local + LAN Ollama zero-key on-ramp ───────────────────────────

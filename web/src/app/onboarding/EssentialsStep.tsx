@@ -241,6 +241,23 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
 
   const modelReady = phase === 'done'
 
+  /** Sources the build could not read this round (`unavailableSources`, #408). A 200 that
+   *  carries these is NOT the same fact as a 200 that carries none: the lanes below are
+   *  empty because a read FAILED, not because the sources offer nothing.
+   *
+   *  🪤 Measured on a fresh `python:3.13-slim` container installed from the published wheel:
+   *  `GET /api/apps/catalog` answered 200 with every app list empty and
+   *  `unavailableSources: [{PersonalClawApps.git, no-git}, {registry.git, no-git}]`, and this
+   *  step rendered *"No model provider app is available from the first-party source …"* — an
+   *  assertion about the world, on a question that was never answered, on the one lane the
+   *  step calls **Required**. `cli_doctor.py`'s own docstring names this: *"The caller must
+   *  not turn an unanswered question into a verdict"* (#2907), and `AppsSection.tsx` already
+   *  reads the same field for the Store's badge (#2629). First run was the consumer that
+   *  didn't — so a first-time user was told no provider exists, given no retry, and left on
+   *  a required step whose Continue is disabled. */
+  const unreadable = catalog?.unavailableSources ?? []
+  const noGit = unreadable.some((u) => u.reason === 'no-git')
+
   // A dead catalog fetch is NOT "no apps available" — say so, and offer the retry.
   // `data === undefined && error` is the one condition that distinguishes them.
   if (catalog === undefined && catalogError) {
@@ -261,6 +278,29 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
 
   return (
     <div className="flex flex-col gap-l">
+      {/* Stated ONCE, above the lanes: one unreadable source empties all four, so repeating
+          the cause per lane would print one machine-level fact four times. `role="status"`
+          because it appears after the step has mounted and settled — a user who has already
+          read the lanes must be told the listing failed without having to re-read them. */}
+      {unreadable.length > 0 && (
+        <div role="status" data-testid="onboarding-sources-unreadable"
+          className="flex flex-col gap-s rounded-l bg-surface-high p-m">
+          <p data-type="body-s" className="text-on-surface">
+            {noGit
+              ? 'PersonalClaw reads its app sources with git, and git is not installed on this machine — so it cannot tell you what is available. Install git and retry, or skip this step and add a model provider later in Settings.'
+              : 'PersonalClaw could not read its app sources, so it cannot tell you what is available. Check this machine’s network and retry, or skip this step and add a model provider later in Settings.'}
+          </p>
+          <ul className="flex flex-col gap-xs">
+            {unreadable.map((u) => (
+              <li key={u.source} data-type="caption" className="text-on-surface-low break-all">
+                {u.source}
+                {u.reason === 'budget' && ' — skipped, the listing ran out of time'}
+              </li>
+            ))}
+          </ul>
+          <div><TextLink onClick={refresh}>Try reading the app sources again</TextLink></div>
+        </div>
+      )}
       {LANES.map((lane) => {
         const items = lanes[lane.id]
         const isModel = lane.id === 'model'
@@ -314,6 +354,21 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
                 onVerified={(summary) => { setVerified(summary); setPhase('done') }}
                 onReconfigure={() => setPhase('configure')}
                 onConfigured={(c) => { setConfigured(c); setPhase('bind') }} />
+            ) : items.length === 0 && unreadable.length > 0 ? (
+              /* Empty because the listing FAILED. The cause and the retry are stated once
+                 above, so this says only what is true of this lane and claims nothing
+                 about what exists.
+
+                 Sits alongside #3447's `verify` phase rather than merging with it: both are
+                 "do not state as fact what was never established", but over two different
+                 reads. #3447 guards a POSITIVE claim (a model is ready) made from a probe
+                 that built nothing; this guards a NEGATIVE claim (no such app exists) made
+                 from a listing that failed. Different payload fields, different phases, so
+                 expressing them once would couple a readiness state machine to a catalog
+                 error and lose one of the two distinctions. */
+              <p data-type="body-s" className="text-on-surface-low">
+                Nothing to list — the app sources above could not be read.
+              </p>
             ) : items.length === 0 ? (
               <p className="text-on-surface-low text-[0.8125rem]">
                 No {lane.title.toLowerCase()} app is available from the first-party source

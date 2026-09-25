@@ -1142,12 +1142,18 @@ export function SourcesPanel({ catalog, catalogError, reloadCatalog, onInstalled
                     badge and two controls beside it a long URL renders as "htt…", and naming
                     the source at fault is the entire point of the badge (issue 408). */}
                 <span title={url} className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{url}</span>
+                {/* `no-git` may NOT promise the automatic retry: a git source is read by
+                    shelling out to git, so with no git on PATH every retry fails the same
+                    way forever. Naming the missing dependency is the only thing that gets
+                    the user out of it. */}
                 {unavailable && (
                   <span data-testid="store-source-unavailable" title={unavailable === 'budget'
                     ? 'Skipped — the catalog scan ran out of time before reaching this source.'
-                    : 'Could not be reached on the last listing read. It will be retried automatically.'}
+                    : unavailable === 'no-git'
+                      ? 'Needs git, which is not installed on this machine. Install git to read this source.'
+                      : 'Could not be reached on the last listing read. It will be retried automatically.'}
                     className="shrink-0 rounded-pill bg-surface-highest px-2 py-0.5 text-warn text-[0.75rem]">
-                    {unavailable === 'budget' ? 'Skipped' : 'Unavailable'}
+                    {unavailable === 'budget' ? 'Skipped' : unavailable === 'no-git' ? 'Needs git' : 'Unavailable'}
                   </span>
                 )}
                 {isDefault && (
