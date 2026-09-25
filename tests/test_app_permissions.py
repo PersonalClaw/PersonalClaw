@@ -21,7 +21,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.apps import manager
-from personalclaw.apps.manifest import Permissions
+from personalclaw.apps.manifest import PERMISSION_KEYS, Permissions
 from personalclaw.apps.permissions import (
     APP_SCOPED_PREFIXES,
     PermissionChecker,
@@ -116,9 +116,23 @@ _API_TS = Path(__file__).resolve().parent.parent / "web" / "src" / "lib" / "api.
 def _permissions_with_every_field_set() -> Permissions:
     """A ``Permissions`` whose every field is truthy, so ``to_dict`` emits every key it
     can. Derived from the dataclass rather than a hand-written list — a field added
-    without a wire declaration is exactly the defect this rail exists to catch."""
+    without a wire declaration is exactly the defect this rail exists to catch.
+
+    Restricted to ``PERMISSION_KEYS``, which is the vocabulary ``AppManifest.validate``
+    refuses against, so the two mechanisms agree from ONE definition instead of each
+    carrying its own skip list. The excluded fields are bookkeeping, not permissions:
+    ``network_declared`` records whether the author mentioned ``network``, and
+    ``unknown_keys`` records the keys install refuses. Neither is declarable and neither
+    may reach the wire, so setting them here would test a key no manifest can ask for.
+
+    The teeth are unchanged: a genuinely new PERMISSION joins ``PERMISSION_KEYS``
+    automatically (it is derived from the fields), so it still arrives here and still
+    reds below until the wire declares it.
+    """
     kwargs: dict[str, object] = {}
     for f in fields(Permissions):
+        if f.name not in PERMISSION_KEYS:  # bookkeeping, not a declarable permission
+            continue
         if f.name == "proposals":  # INU-7: a list of typed entries, not of name strings
             from personalclaw.apps.manifest import ProposalKind
 
