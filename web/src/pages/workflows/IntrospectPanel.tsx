@@ -5,7 +5,7 @@ import { Segmented } from '../../ui/Segmented'
 import { FormSkeleton } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { api, type WorkflowIntrospection, type WorkflowTimelineRow } from '../../lib/api'
-import { fmtElapsed } from './workflowMeta'
+import { elapsedStat, fmtElapsed } from './workflowMeta'
 import { runCostStat, runCostText, templateCostStat } from '../../lib/runCost'
 import { runTokensStat } from '../../lib/unrecorded'
 
@@ -126,7 +126,7 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                     label="Tokens"
                     value={runTokensStat(data.stats.tokens, data.stats.tokens_recorded)}
                   />
-                  <Stat label="Duration" value={fmtElapsed(data.stats.duration_secs)} />
+                  <Stat label="Duration" value={elapsedStat(data.stats.duration_secs)} />
                   <Stat label="To first output" value={`${Math.round(data.stats.first_byte_ms)} ms`} />
                   <Stat label="Steps done" value={String(data.stats.steps_completed)} />
                   <Stat label="Steps failed" value={String(data.stats.steps_failed)} />
@@ -152,8 +152,8 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                       template that quietly spends as free (issue 2566). */}
                   <Stat label="Cost p50" value={templateCostStat(data.template_card.cost_p50, data.template_card.priced)} />
                   <Stat label="Cost p95" value={templateCostStat(data.template_card.cost_p95, data.template_card.priced)} />
-                  <Stat label="Duration p50" value={fmtElapsed(data.template_card.duration_p50)} />
-                  <Stat label="Duration p95" value={fmtElapsed(data.template_card.duration_p95)} />
+                  <Stat label="Duration p50" value={elapsedStat(data.template_card.duration_p50)} />
+                  <Stat label="Duration p95" value={elapsedStat(data.template_card.duration_p95)} />
                 </dl>
                 <p data-type="caption" className="text-on-surface-low">
                   {Math.round(data.template_card.failure_rate * 100)}% of these runs had a failed step
