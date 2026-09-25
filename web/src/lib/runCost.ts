@@ -25,14 +25,32 @@ export function runUsd(costUsd: number): string {
  *  disclosure (`ledger.reader.run_totals`, `RunStats.priced`, and the same word `LoopSpend` uses):
  *  `false` means some completed step booked no cost at all, so the figure is a FLOOR. With it, a
  *  genuinely-free local run and a run nobody costed stop sharing one sentence — they were
- *  indistinguishable from the number alone, which is exactly why the flag exists (#2566). */
-export function runCostText(costUsd: number, priced: boolean): string {
+ *  indistinguishable from the number alone, which is exactly why the flag exists (#2566).
+ *
+ *  🔴 `modelsRecorded` is the THIRD zero #2566 did not have a word for, and it is not a rare one:
+ *  a template that calls no model at all (`knowledge-health`, `decision-review`, and every other
+ *  deterministic bundled template) completes with `cost_usd: 0.0` on every step — so `priced` is
+ *  `true` and the measured-zero branch fired, announcing *"(a free local model)"* on an install
+ *  with no model provider configured at all. Measured on a fresh container: both `step_completed`
+ *  rows carried `"model": "", "provider": "", "cost_usd": 0.0`, and the same panel renders
+ *  `Models · none recorded` from that very field three rows above this sentence. One panel cannot
+ *  say a model was not recorded and that a free local model ran.
+ *
+ *  So the flag is a claim about the RECORD, not an inference about the world: `RunStats.models`
+ *  collects distinct non-empty model names off the completed steps (`introspection.py`), and empty
+ *  means no step named one. A free local model DOES name itself (`gemma4:12b`), which is what keeps
+ *  the sibling sentence correct where it is correct. */
+export function runCostText(costUsd: number, priced: boolean, modelsRecorded: boolean): string {
   if (!priced) {
     return costUsd > 0
       ? `At least ~${runUsd(costUsd)} this run — some step recorded no cost, so the real total is higher`
       : 'Not recorded — no step on this run booked a cost, so nothing here says what it spent'
   }
-  if (!(costUsd > 0)) return 'Nothing — every step was measured and cost nothing (a free local model)'
+  if (!(costUsd > 0)) {
+    return modelsRecorded
+      ? 'Nothing — every step was measured and cost nothing (a free local model)'
+      : 'Nothing — no step on this run recorded a model, so there was no model spend to price'
+  }
   return `~${runUsd(costUsd)} this run — estimated from model prices, not a provider-reported charge`
 }
 

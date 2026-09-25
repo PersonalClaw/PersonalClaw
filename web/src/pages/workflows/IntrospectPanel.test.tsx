@@ -396,7 +396,7 @@ describe('the live touched-items feed', () => {
 
 describe('the run cost line', () => {
   it('marks a derived cost as an estimate and never renders it as exact', () => {
-    const text = runCostText(0.1234, true)
+    const text = runCostText(0.1234, true, true)
     expect(text).toContain('~$0.1234')
     expect(text).toContain('estimated from model prices')
     expect(text).toContain('not a provider-reported charge')
@@ -405,9 +405,9 @@ describe('the run cost line', () => {
   })
 
   it('rounds to cents once there is a dollar, matching the Usage panel', () => {
-    expect(runCostText(4.2, true)).toContain('~$4.20')
+    expect(runCostText(4.2, true, true)).toContain('~$4.20')
     // …and keeps four decimals below a dollar, so a real $0.0012 is not "$0.00".
-    expect(runCostText(0.0012, true)).toContain('~$0.0012')
+    expect(runCostText(0.0012, true, true)).toContain('~$0.0012')
   })
 
   it('does not claim $0.00 when nothing was recorded', () => {
@@ -415,7 +415,7 @@ describe('the run cost line', () => {
     // ledger's own disclosure that no completed step booked a cost. NaN rides here too: a figure
     // nobody can parse is not a measurement of nothing.
     for (const zero of [0, -0, Number.NaN]) {
-      const text = runCostText(zero, false)
+      const text = runCostText(zero, false, false)
       expect(text).not.toContain('$')
       expect(text).toMatch(/[Nn]ot recorded/)
     }
@@ -425,7 +425,7 @@ describe('the run cost line', () => {
     // The other half of the same fact, and the half a one-sided test would let regress: before
     // #2566 both zeros produced one sentence, so the panel could not tell a free local model from
     // a run nobody costed.
-    const text = runCostText(0, true)
+    const text = runCostText(0, true, true)
     expect(text).not.toContain('$0.00')
     expect(text).toMatch(/measured/)
     expect(text).not.toMatch(/[Nn]ot recorded/)
@@ -434,6 +434,24 @@ describe('the run cost line', () => {
   it('reaches the DOM as the answer to "what is costing money"', async () => {
     render(<IntrospectPanel runId="r1" onClose={() => {}} />)
     expect(await screen.findByText(/~\$.* this run/)).toBeTruthy()
+  })
+
+  it('does not tell a run that called NO model that a free local model ran', async () => {
+    // Measured on a fresh container with no model provider installed: `knowledge-health` completed
+    // two steps, each `step_completed` carrying `"model": "", "cost_usd": 0.0`. `priced` is
+    // therefore `true` and the measured-zero branch fired — so the panel answered "what is costing
+    // money" with "(a free local model)" directly beneath its own `Models · none recorded` cell,
+    // which reads the same field. The evidence for the cause is in the payload; the sentence has to
+    // use it.
+    const base = payload()
+    const stats = { ...base.stats, cost_usd: 0, priced: true, models: [] as string[], tokens: 0 }
+    introspect = async () => ({ ...base, stats, answers: { ...base.answers, cost: stats } })
+    render(<IntrospectPanel runId="r1" onClose={() => {}} />)
+    expect(await screen.findByText(/no step on this run recorded a model/)).toBeTruthy()
+    expect(screen.queryByText(/free local model/)).toBeNull()
+    // The cell this sentence now agrees with, asserted in the same breath — the contradiction was
+    // between the two, so one of them alone cannot witness the fix.
+    expect(screen.getByText('none recorded')).toBeTruthy()
   })
 
   it('renders an UNPRICED run as not-recorded in the cell, never as ~$0.0000', async () => {
