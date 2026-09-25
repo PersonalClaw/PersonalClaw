@@ -342,6 +342,12 @@ def effective_round_budget(room: Room) -> int:
     return int(config_loader.AppConfig.load().rooms.round_budget)
 
 
+def max_members() -> int:
+    """The ``rooms.max_members`` ceiling :func:`add_member` enforces — and the number the wire
+    publishes, so the member picker refuses the extra agent instead of offering it."""
+    return int(config_loader.AppConfig.load().rooms.max_members)
+
+
 # ── rooms ──────────────────────────────────────────────────────────────────
 
 
@@ -491,11 +497,11 @@ def add_member(
         raise RoomError("room_archived", f"Room {room_id!r} is archived.")
     if room.member(clean_name) is not None:
         raise RoomError("room_member_exists", f"{clean_name!r} is already a member of this room.")
-    max_members = int(config_loader.AppConfig.load().rooms.max_members)
-    if len(room.members) >= max_members:
+    ceiling = max_members()
+    if len(room.members) >= ceiling:
         raise RoomError(
             "room_member_limit",
-            f"This room already holds the configured maximum of {max_members} members.",
+            f"This room already holds the configured maximum of {ceiling} members.",
         )
     room.members.append(
         RoomMember(

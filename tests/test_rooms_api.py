@@ -716,6 +716,29 @@ def test_the_wire_publishes_the_budget_ceiling_the_writer_accepts(cfg):
     assert _patch_room(room_id, {"round_budget": store.MAX_ROOM_ROUND_BUDGET + 1}).status == 400
 
 
+def test_the_wire_publishes_the_member_ceiling_the_writer_enforces(cfg):
+    """So the member picker can refuse the ninth agent instead of offering it.
+
+    At 8/8 the panel still offered an agent and "Add to the room" answered 400
+    `room_member_limit` — an offer the writer refuses, with a Retry that could never succeed.
+    The ceiling is `rooms.max_members`, which the operator can change, so the UI must read the
+    number the writer enforces rather than restate the default.
+    """
+    from personalclaw.config.loader import AgentProfile
+
+    cfg.rooms.max_members = 2
+    cfg.agents["writer"] = AgentProfile()
+    room_id = _body(_create("Ceiling room"))["room"]["id"]
+    assert _body(_get(room_id))["room"]["max_members"] == 2
+    assert _body(_list())["rooms"][0]["max_members"] == 2, "the list carries it too"
+    # The claim is that the number is the one ENFORCED, so the boundary itself is exercised.
+    assert _add_member(room_id, {"name": "analyst"}).status == 201
+    assert _add_member(room_id, {"name": "skeptic"}).status == 201
+    refused = _add_member(room_id, {"name": "writer"})
+    assert refused.status == 400
+    assert _body(refused)["error"]["code"] == "room_member_limit"
+
+
 def test_member_bindings_report_the_model_and_runtime_each_member_actually_holds(cfg):
     """`AR-8`'s member chips need the binding, and it is not derivable from the room record."""
     from personalclaw.config.loader import AgentProfile

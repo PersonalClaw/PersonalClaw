@@ -5,7 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PersonalClaw</title>
     <link rel="icon" type="image/svg+xml" href="/claw.svg" />
-    <link rel="preload" href="/fonts/dm-sans.woff2" as="font" type="font/woff2" crossorigin />
+    <!-- No preload link for the default font. The service worker precaches it
+         (`app/swPolicy.ts` APP_SHELL) and its face is `font-display: swap`, so a preload helps
+         only a first cold visit — and on every warm load the font arrives from cache without
+         consuming it, which Chrome reports as an unused preload 3 s after EVERY completed fetch:
+         with the shell's 8 s poll, a console warning every 8 s for the life of the page.
+         `swPolicy.test.ts` holds index.html to preloading nothing the worker caches. -->
     <!-- PWA installability (MOBILE-COMPANION T3.1). `crossorigin="use-credentials"`
          is load-bearing, not decoration: a manifest is fetched anonymously by
          default, and this origin requires the pc_token_<port> session cookie, so

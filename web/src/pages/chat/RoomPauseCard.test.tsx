@@ -31,6 +31,7 @@ function room(extra: Partial<RoomRecord> = {}): RoomRecord {
     members: [],
     effective_round_budget: 6,
     max_round_budget: 100,
+    max_members: 8,
     transcript_path: '/rooms/pricing-debate/transcript.jsonl',
     ...extra,
   }

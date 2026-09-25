@@ -252,10 +252,17 @@ class ProviderRegistry:
         instance.
 
         Raises :class:`ProviderResolutionError` for an unknown name
-        (Requirement R1.6).
+        (Requirement R1.6), and for an entry whose TYPE no loaded app has registered — an
+        entry is stored before its type exists on some boot paths (see :meth:`register_entry`),
+        so building one early is a resolution failure, not a ``KeyError`` from a dict lookup.
         """
         entry = self.get_entry(name)
-        factory = self._factories[entry.type]
+        factory = self._factories.get(entry.type)
+        if factory is None:
+            raise ProviderResolutionError(
+                f"provider entry {name!r} is type {entry.type!r}, which no loaded app provides; "
+                f"known types: {sorted(self._factories)}"
+            )
         return factory(entry=entry, session_key=session_key, **kwargs)
 
     def build_catalog(self, entry: ProviderEntry) -> "ModelCatalog | None":
