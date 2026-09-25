@@ -54,6 +54,7 @@ from personalclaw.knowledge.searchability import (
     NO_EXTRACTABLE_TEXT,
     REASONS,
     UNSEARCHABLE,
+    reason_detail,
 )
 from personalclaw.knowledge.store import KnowledgeStore, knowledge_db_path
 from personalclaw.resilience.doctor import DoctorContext, all_probes
@@ -175,8 +176,10 @@ def test_an_image_only_pdf_persists_a_named_failure_not_done(tmp_path):
     assert item["processing_status"] == UNSEARCHABLE, item
     assert _reason_of(store, item_id) == NO_EXTRACTABLE_TEXT, item
     assert item["processing_status"] in ("", UNSEARCHABLE) or True
-    # …and it says WHY, in the typed vocabulary, on the item itself.
-    assert NO_EXTRACTABLE_TEXT in (item.get("processing_error") or ""), item
+    # …and it says WHY on the item itself: the typed token where machines read it (above),
+    # the human sentence for that token on the status line a person reads — never the token.
+    assert reason_detail(NO_EXTRACTABLE_TEXT) in (item.get("processing_error") or ""), item
+    assert NO_EXTRACTABLE_TEXT not in (item.get("processing_error") or ""), item
     # The proof that this is the silent-failure case and not an honest read: the persisted
     # content holds NONE of the document's words — only the synthesized descriptor.
     assert TOKEN not in (item.get("content") or "").lower()
@@ -194,7 +197,8 @@ def test_a_document_with_no_embedding_provider_persists_a_named_failure_not_done
     assert status != "done", f"silent success with no embedder: {item!r}"
     assert item["processing_status"] == UNSEARCHABLE, item
     assert _reason_of(store, item_id) == NO_EMBEDDING_PROVIDER, item
-    assert NO_EMBEDDING_PROVIDER in (item.get("processing_error") or ""), item
+    assert reason_detail(NO_EMBEDDING_PROVIDER) in (item.get("processing_error") or ""), item
+    assert NO_EMBEDDING_PROVIDER not in (item.get("processing_error") or ""), item
     # The measured fact behind the verdict: nothing landed in the chunk index.
     n = store.db.execute("SELECT COUNT(*) FROM chunks WHERE item_id = ?", (item_id,)).fetchone()[0]
     assert int(n) == 0
@@ -238,7 +242,10 @@ def test_each_fixture_surfaces_exactly_one_attention_row(
     assert rows[0]["reason"] == reason
     assert result.evidence["unsearchable"] == 1
     assert result.evidence["by_reason"] == {reason: 1}
-    assert reason in result.detail or "cannot be found by search" in result.detail
+    # The detail is the ONE shared sentence (the search tool prints it too); the typed token
+    # rides in `by_reason` for machines and stays out of the prose a person reads.
+    assert result.detail == result.evidence["summaries"][0], result.detail
+    assert reason not in result.detail and "cannot be found by search" not in result.detail
     assert result.evidence.get("remedy")
 
 
@@ -434,10 +441,11 @@ class TestTheRailIsNotVacuous:
 
     def test_the_reason_vocabulary_is_closed_and_documented(self):
         """A typed reason with no human sentence is a token, not a reason — every member of
-        the closed vocabulary must carry one, or a surface can print a bare slug at a user."""
-        from personalclaw.knowledge.searchability import REASON_DETAIL, reason_detail
+        the closed vocabulary must carry one (and a remedy), or a surface can print a bare
+        slug at a user, or a diagnosis with no next step."""
+        from personalclaw.knowledge.searchability import REASON_REMEDY, reason_detail
 
-        assert set(REASON_DETAIL) == set(REASONS)
+        assert set(REASON_REMEDY) == set(REASONS)
         for reason in REASONS:
             assert len(reason_detail(reason)) > 40, reason
         # An unknown token stays legible instead of falling into a health-reporting default.

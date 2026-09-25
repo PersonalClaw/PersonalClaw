@@ -388,14 +388,21 @@ async def ingest_item(
         # for a broader one. `deleted` never reaches here.
         if status in ("done", "partial"):
             status = UNSEARCHABLE
-        detail = f"{unsearchable_reason}: {reason_detail(unsearchable_reason)}"
+        # The item's status line is read by a PERSON, so it is the human sentence alone. It
+        # used to lead with the token (`no_embedding_provider: no embedding provider is …`);
+        # the token already lives in `unsearchable_reason` above, which is where machines
+        # read it.
+        detail = reason_detail(unsearchable_reason)
         if not proc_error:
             proc_error = detail
-        elif unsearchable_reason not in proc_error:
-            # Lead with the searchability reason: an item nothing can find is the more
-            # actionable fact than a skipped optional node, and the UI suppresses the
-            # benign "Skipped (…)" prefix — so it must never be what a user reads first.
-            proc_error = f"{detail}; {proc_error}"[:500]
+        elif detail not in proc_error:
+            # Lead with the searchability reason: an item search cannot fully reach is the
+            # more actionable fact than a skipped optional node, and the UI suppresses the
+            # benign "Skipped (…)" prefix — so it must never be what a user reads first. The
+            # detail ends in a full stop, so the rest follows as its own sentence rather than
+            # after a `.;` seam. (Only the first letter moves: the degraded-mode drain matches
+            # "model unavailable" further in, case-insensitively.)
+            proc_error = f"{detail} {proc_error[:1].upper()}{proc_error[1:]}"[:500]
     else:
         # A re-ingest that NOW lands (a provider was bound, a text version uploaded) must
         # clear the stale reason, or the item stays on the attention surface forever.

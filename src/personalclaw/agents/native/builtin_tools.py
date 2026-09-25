@@ -1424,15 +1424,18 @@ class NativeBuiltinToolProvider(ToolProvider):
                 query, limit=limit
             )
             results = outcome.results
-            # RET-2: never answer with a bare empty result set while the library holds
-            # items nothing can reach. "(no matching knowledge items)" is a claim about the
-            # library's CONTENT; an unretrievable item makes that claim false, and an agent
-            # that believes it will tell the user their document isn't there. The typed
-            # reason rides along with hits too — a keyword hit on an item with no vector is
-            # still a library whose semantic half is missing.
+            # RET-2: never answer with a bare empty result set while part of search cannot
+            # see some of the library. "(no matching knowledge items)" is a claim about the
+            # library's CONTENT; an item semantic search cannot reach can make that claim
+            # false, and an agent that believes it will tell the user their document isn't
+            # there. The typed reason rides along with hits too — a keyword hit on an item
+            # with no vector is still a library whose semantic half is missing.
+            #
+            # The sentence is `Degradation.summary`, the SAME one Doctor's searchability row
+            # prints. This note used to compose its own — "N items cannot be found by
+            # search" — and then list the very item it had just called unfindable.
             notes = [
-                f"({d.reason}: {d.item_count} item{'s' if d.item_count != 1 else ''} "
-                f"cannot be found by search — {d.detail})"
+                f"({d.reason}: {d.summary}." + (f" {d.remedy})" if d.remedy else ")")
                 for d in outcome.degradations
             ]
             if not results:

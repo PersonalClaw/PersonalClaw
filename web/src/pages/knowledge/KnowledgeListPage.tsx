@@ -17,7 +17,7 @@ import { ListControls } from '../../ui/ListControls'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { api, type KnowledgeIntent, type IntentOutcome, type KnowledgeItem, type KnowledgeCollection, type KnowledgeBulkOp } from '../../lib/api'
-import { resolveType, relTime, fmtBytes, typeLabel, isArtifactItem } from './knowledgeMeta'
+import { resolveType, relTime, fmtBytes, typeLabel, isArtifactItem, failedEnrichment, regenerateQueuedSentence } from './knowledgeMeta'
 import { readingTimeLabel } from './readingTime'
 import { listKnowledge, knowledgeStats, getKnowledge } from './knowledgeStore'
 import { KnowledgeDetail, OutcomeFieldValue } from './KnowledgeDetail'
@@ -98,7 +98,7 @@ function EmbeddingChip({ stats, busy, onBackfill }: { stats: import('../../lib/a
   )
 }
 
-export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSources, onOpenReports, onOpenChat, query, setQuery }: { onCreate: () => void; onOpenItem: (id: string) => void; onOpenReader?: (id: string) => void; onOpenSources: () => void; onOpenReports: () => void; onOpenChat: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
+export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSources, onOpenReports, onOpenChat, onOpenModels, query, setQuery }: { onCreate: () => void; onOpenItem: (id: string) => void; onOpenReader?: (id: string) => void; onOpenSources: () => void; onOpenReports: () => void; onOpenChat: () => void; /** Settings → Models — where a missing model is fixed. Optional: a host with no route for it omits the action rather than rendering a dead button. */ onOpenModels?: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
   // 🪤 The default stays 'library', measured rather than preferred: `pages/listDestinationLoadError`
   // mounts this page with an empty query and asserts the ITEM LIST's failed-read and empty-library
   // branches, both of which a different default lens hides. Making Home the landing view is a
@@ -363,11 +363,25 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
 
   // Re-run the ingestion node-graph over items that never got enriched (e.g. created
   // while the model was unavailable). Refreshes the list so badges update as they drain.
+  //
+  // 🔴 THE OUTCOME IS SAID, EITHER WAY. This used to swallow the rejection on the promise that the
+  // reload would surface it, and it surfaced nothing: on a home with no model the route answered `{queued: 3}`, every job
+  // failed in the background, and the page looked exactly as before. The route now refuses up
+  // front (409 `model_unresolved`, naming Settings → Models) and that sentence reaches a toast;
+  // an accepted run says how many items it queued. No refetch after a refusal — nothing changed,
+  // and re-rendering the same state reads as "nothing happened, twice".
   const [regenning, setRegenning] = useState(false)
   const regenerate = async () => {
     setRegenning(true)
-    try { await api.regenerateKnowledgeIntelligence('missing') } catch { /* surfaced by reload */ }
-    finally { setRegenning(false); load() }
+    try {
+      const res = await api.regenerateKnowledgeIntelligence('missing')
+        .catch(reportActionFailure('regenerate intelligence'))
+      if (!res) return
+      notify(regenerateQueuedSentence(res.queued), 'info')
+      load()
+    } finally {
+      setRegenning(false)
+    }
   }
 
   // Backfill embeddings for items indexed before a model was available (semantic
@@ -561,7 +575,12 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
               from the Graph tab the one action that turns items into entities is off screen, so the
               graph's empty state carries it. */}
           <KnowledgeGraph selectedId={selectedEntity} onSelect={setSelectedEntity}
-            onRegenerate={regenerate} regenerating={regenning} />
+            onRegenerate={regenerate} regenerating={regenning}
+            // The empty state says WHY it is empty (never tried, tried and failed, running)
+            // from the enrichment tally, and re-reads the graph as extraction lands — keyed on
+            // the counts this page already polls while items enrich.
+            enrichment={stats?.enrichment} onSetupModel={onOpenModels}
+            reloadKey={stats ? `${stats.entities}:${stats.relations}` : ''} />
         </div>
       )}
 
@@ -753,6 +772,9 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                   >
                     {(it, i, listCtx) => {
                       const tm = resolveType(it)
+                      // Model-backed stages that FAILED on the last run, from the persisted phase
+                      // map — whatever the status token (`partial` OR `unsearchable`).
+                      const enrichFail = failedEnrichment(it)
                       // Right-click / long-press → scoped actions. This surface only
                       // opens an item (no delete/archive is wired here), so it's a
                       // single-item menu — still worth it for discoverability, and it
@@ -834,10 +856,21 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                               {it.processing_status === 'unreachable' && (
                                 <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5" style={{ color: 'var(--color-warning)' }} title={`${it.processing_error || "Couldn't reach the site"} — open to retry`}><WifiOff size={10} /> Unreachable</span>
                               )}
-                              {/* A genuine partial (e.g. insights model unavailable) is actionable — flag it
-                                  so it's not mistaken for a fully-processed item. Benign skips (optional
-                                  media steps with no model) are left unbadged. */}
-                              {it.processing_status === 'partial' && !(it.processing_error || '').startsWith('Skipped (optional steps unavailable):') && (
+                              {/* Enrichment that RAN AND FAILED says so, with its reason — on a `partial`
+                                  item and on an `unsearchable` one alike. The no-model home files every
+                                  ingest `unsearchable` (it has no embedding either), which no badge here
+                                  knew, so a regenerate whose every job failed left every row looking
+                                  healthy. The reason is in the label's accessible text, not only a hover
+                                  title. `failed`/`unreachable` above already carry their own badge. */}
+                              {enrichFail && it.processing_status !== 'failed' && it.processing_status !== 'unreachable' && (
+                                <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5" style={{ color: 'var(--color-warning)' }} title={`${enrichFail.reason} — open the item for details`}>
+                                  <CircleAlert size={10} aria-hidden /> Enrichment failed<span className="sr-only">: {enrichFail.reason}</span>
+                                </span>
+                              )}
+                              {/* A genuine partial with no failed model stage (e.g. a graph node errored) is
+                                  still actionable — flag it so it's not mistaken for a fully-processed item.
+                                  Benign skips (optional media steps with no model) are left unbadged. */}
+                              {!enrichFail && it.processing_status === 'partial' && !(it.processing_error || '').startsWith('Skipped (optional steps unavailable):') && (
                                 <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5" style={{ color: 'var(--color-warning)' }} title={`${it.processing_error || 'Enrichment incomplete'} — open to regenerate`}><CircleAlert size={10} /> Incomplete</span>
                               )}
                               {it.is_archived && <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low">Archived</span>}

@@ -101,7 +101,7 @@ plus the typed reasons the library could not answer.
 ### Searchability
 
 `knowledge/searchability.py` owns ONE vocabulary for "this item persisted and
-nothing can find it". Two failures used to persist as
+search cannot fully reach it". Two failures used to persist as
 `processing_status: "done"` with no error: an image-only PDF, where
 `document_read` reported success and extracted no text (leaving only the
 synthesized structural descriptor — none of the document's words), and any
@@ -109,9 +109,22 @@ document ingested with no embedding provider bound (zero rows in `chunks`, no
 item vector).
 
 - **The named status** is `unsearchable` — a distinct value, because `partial`
-  already means "an OPTIONAL step was skipped" and is routinely benign.
+  already means "an OPTIONAL step was skipped" and is routinely benign. The
+  token is not the claim: for every reason except `no_extractable_text` the
+  item's text is indexed, so **keyword search reaches it** and only semantic
+  search cannot.
 - **The typed reasons** are closed: `no_extractable_text`,
-  `no_embedding_provider`, `not_indexed`.
+  `no_embedding_provider`, `not_indexed`, plus the read-time `stale_index`
+  (vectors from a different embedding model than the one bound now).
+- **One sentence per reason, minted once.** `Degradation.summary` is the
+  count-bearing claim ("2 items and 1 artifact have no embeddings because no
+  embedding model is bound — keyword search finds them, semantic search
+  cannot"); the Doctor row and the `knowledge_search` note print it verbatim.
+  The item's status line reads `reason_detail()` — a sentence, never the token,
+  which stays in `file_metadata.unsearchable_reason` for machines.
+- **Counts are the library's.** A row carries the shelf it is shown on: an
+  artifact's search mirror and a report's finding are indexed but never listed,
+  so they are counted apart under their own nouns rather than as "items".
 - **The verdict is computed from what LANDED** — the item's rows in `chunks`,
   its `embedding` column, its stored text — never from a stage's self-report,
   since the self-reports are what were untrustworthy.

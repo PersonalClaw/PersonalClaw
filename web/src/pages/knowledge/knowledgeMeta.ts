@@ -49,6 +49,52 @@ export function isDecisionItem(it: Pick<KnowledgeItem, 'type' | 'item_type'>): b
   return it.type === 'decision' || (it.item_type || '').toLowerCase() === 'decision'
 }
 
+/** The model-backed terminal stages (`runner.MODEL_BACKED_TERMINAL_STAGES`), in pipeline order,
+ *  with the words a person reads for each. */
+const MODEL_STAGES: ReadonlyArray<readonly [string, string]> = [
+  ['insights', 'Insights'],
+  ['entities', 'Entity extraction'],
+  ['intents', 'Intent matching'],
+]
+
+/** Did this item's model-backed enrichment FAIL on its last run — and in which words to say so?
+ *
+ *  🔴 A NO-MODEL HOME SHOWED NOTHING HERE. The row badged `partial` ("Incomplete") and `failed`,
+ *  but RET-2 files a no-provider ingest `unsearchable` (it has no embedding either), which no
+ *  badge knew — so after "Regenerate intelligence" every job failed and every row looked exactly
+ *  as healthy as before, while each item's own page showed Insights and Entities ✕.
+ *
+ *  Read off the runner's persisted phase map (`file_metadata.node_phases`), the ground truth the
+ *  item page's pipeline strip draws, never parsed out of `processing_error` prose. A model-backed
+ *  stage reports `failed` only when its model call raised, so the reason is the model's — and
+ *  "unavailable" is the runner's own word for it. An item that is queued or processing is about
+ *  to replace that record, so it reports nothing here (its "Enriching" badge speaks instead). */
+export function failedEnrichment(
+  it: Pick<KnowledgeItem, 'processing_status' | 'file_metadata'>,
+): { stages: string[]; reason: string } | null {
+  if (it.processing_status === 'queued' || it.processing_status === 'processing') return null
+  const raw = it.file_metadata?.node_phases
+  const phases = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  const stages = MODEL_STAGES.filter(([key]) => phases[key] === 'failed').map(([, label]) => label)
+  if (!stages.length) return null
+  // Sentence case: only the first stage keeps its capital ("Insights and entity extraction").
+  const words = stages.map((s, i) => (i === 0 ? s : s.toLowerCase()))
+  const named = words.length === 1 ? words[0] : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`
+  return { stages, reason: `${named} failed — the model was unavailable` }
+}
+
+/** What "Regenerate intelligence" says when the gateway ACCEPTED it — never silence.
+ *
+ *  🔴 THE PAGE USED TO SAY NOTHING EITHER WAY: an empty `catch` ("surfaced by reload") swallowed
+ *  the refusal and the success path ignored `{queued}`, so a click read as "nothing happened". A
+ *  refusal now carries the server's own sentence through `reportActionFailure`; this is the other
+ *  half. "They update here as they finish" is literal: the page polls while any item is queued,
+ *  and each row, the stat chips and the graph re-read as the jobs land. */
+export function regenerateQueuedSentence(queued: number): string {
+  if (queued <= 0) return 'Nothing to regenerate — no item is missing its insights or entities.'
+  return `Regenerating intelligence for ${queued} item${queued === 1 ? '' : 's'} — they update here as they finish.`
+}
+
 /** Resolve an item's visual type. Prefer the vision `type`; else infer from the
  *  backend's free `item_type` string / mime_type / url, falling back to note. */
 export function resolveType(it: Pick<KnowledgeItem, 'type' | 'item_type' | 'mime_type' | 'url'>): TypeMeta {

@@ -392,12 +392,41 @@ async def generate_intelligence(request: web.Request) -> web.Response:
     return web.json_response(store.get_item(item_id))
 
 
+#: The entity stage's recorded phase, as SQL over ``items.file_metadata`` — the runner
+#: persists its per-stage phase map there (``node_phases``), and the item page draws the same
+#: map. Guarded by ``json_valid`` because ``json_extract`` RAISES on a malformed document, and
+#: one corrupt row must not fail a whole-library read.
+_ENTITIES_PHASE_SQL = (
+    "(CASE WHEN json_valid(file_metadata) "
+    "THEN json_extract(file_metadata, '$.node_phases.entities') END)"
+)
+
+
 async def regenerate_intelligence(request: web.Request) -> web.Response:
     """POST /api/knowledge/regenerate-intelligence -- re-run the full ingestion
     node-graph (extraction → insights → entities → intents → embed) over a batch of
     items by re-enqueueing them. Body/query: ``scope`` ('missing' (default) = items
-    with no insights yet, or 'all'). Returns the count queued.
+    whose insights or entity extraction never landed, or 'all'). Returns the count queued.
+
+    Refuses with 409 ``model_unresolved`` — queuing nothing and touching no item — when no
+    model can run the model-backed stages. That precondition is knowable before anything is
+    queued, and ignoring it is how this route answered ``{"queued": 3}`` on a home with no
+    provider bound, after which every job failed in the background and the page said
+    nothing. ``ingestion`` collapses to the ``background`` axis in ``one_shot_completion``,
+    so ``can_resolve_use_case("background")`` is the probe — the same one the loop classifier
+    uses for its identical refusal.
     """
+    from personalclaw.providers.provider_bridge import can_resolve_use_case
+
+    if not can_resolve_use_case("background"):
+        return json_error(
+            "model_unresolved",
+            message=(
+                "No model is set up, so there is nothing to extract insights or entities "
+                "with. Connect a model in Settings → Models, then regenerate."
+            ),
+            status=409,
+        )
     store = _store(request)
     body = await json_object_body(request)
     if not isinstance(body, dict):
@@ -411,8 +440,14 @@ async def regenerate_intelligence(request: web.Request) -> web.Response:
         "COALESCE(is_archived, 0) = 0",
     ], []  # type: list[str], list[object]
     if scope == "missing":
-        # Items whose intelligence never landed (empty/absent insights JSON).
-        where.append("(insights IS NULL OR insights = '' OR insights = '{}')")
+        # Items whose intelligence never landed: empty/absent insights JSON, OR an entity
+        # pass that ran and failed. The second half matters because the graph offers THIS
+        # action for failed extraction, and an item whose insights landed while its entity
+        # call timed out would otherwise never be retried by it.
+        where.append(
+            "(insights IS NULL OR insights = '' OR insights = '{}' "
+            f"OR {_ENTITIES_PHASE_SQL} = 'failed')"
+        )
     where_clause = " AND ".join(where)
     rows = store.db.execute(
         f"SELECT id FROM items WHERE {where_clause}",  # noqa: S608
@@ -1526,10 +1561,59 @@ def _stale_embedding_count(store, embedder) -> int:
     return row["c"] if row else 0
 
 
+def _entity_extraction_tally(store) -> dict[str, int]:
+    """How far entity extraction got across the library — ``ran`` / ``failed`` / ``running`` /
+    ``skipped`` / ``not_run`` — counted over exactly the rows the library lists
+    (`_listable_where`).
+
+    🔴 THE GRAPH'S EMPTY STATE COULD NOT TELL THESE APART, so it said the one thing that was
+    false for a no-model home. Every item there had been through extraction and FAILED (the
+    runner persists ``node_phases.entities = 'failed'``, and each item's page showed it), yet
+    the graph said the items "have not been through entity extraction" and offered to run it
+    — which then failed the same way, silently. The phase is read off the runner's persisted
+    map, the same ground truth the item page draws; an item that is queued or processing is
+    ``running`` whatever its previous run recorded, because that record is about to change.
+    ``skipped`` is its own bucket because it is BY DESIGN (a source set to no AI, an item
+    with no text) — offering to "run extraction on them" would promise what cannot happen.
+    """
+    where, params = _listable_where()
+    in_flight = "COALESCE(i.processing_status, '') IN ('queued', 'processing')"
+
+    def _phase_is(value: str) -> str:
+        return (
+            f"COALESCE(SUM(CASE WHEN {in_flight} THEN 0 WHEN {_ENTITIES_PHASE_SQL} = '{value}' "
+            "THEN 1 ELSE 0 END), 0)"
+        )
+
+    row = store.db.execute(
+        "SELECT "
+        f"COALESCE(SUM(CASE WHEN {in_flight} THEN 1 ELSE 0 END), 0) AS running, "
+        f"{_phase_is('failed')} AS failed, {_phase_is('done')} AS ran, "
+        f"{_phase_is('skipped')} AS skipped, "
+        f"COUNT(*) AS total FROM items i WHERE {where}",  # noqa: S608 — fixed literals only
+        params,
+    ).fetchone()
+    tally = {k: int(row[k] or 0) for k in ("ran", "failed", "running", "skipped")}
+    tally["not_run"] = max(0, int(row["total"] or 0) - sum(tally.values()))
+    return tally
+
+
 async def get_stats(request: web.Request) -> web.Response:
-    """GET /api/knowledge/stats."""
+    """GET /api/knowledge/stats.
+
+    ``enrichment`` is what the graph's empty state needs to say something TRUE: whether a
+    model can run the model-backed stages right now (the precondition the regenerate route
+    refuses on), and how entity extraction went — so "never tried" and "tried and failed"
+    stop reading as the same sentence.
+    """
+    from personalclaw.providers.provider_bridge import can_resolve_use_case
+
     store = _store(request)
     stats = store.get_stats()
+    stats["enrichment"] = {
+        "model_available": bool(can_resolve_use_case("background")),
+        "entities": _entity_extraction_tally(store),
+    }
     embedder = _get_embedder(request)
     if embedder:
         embedded_count = store.db.execute(
