@@ -4,7 +4,12 @@ import { fireEvent, render, waitFor } from '@testing-library/react'
 import type { ChatTurn } from './chatTypes'
 
 /**
- * SSM-8 — the Session Map rail's halo UNDER prefers-reduced-motion.
+ * SSM-8 — the Session Map rail's MARK LENGTH under prefers-reduced-motion.
+ *
+ * (It was a hover halo until the Codex redesign; the mark's own length replaced it, so the rail has
+ * ONE animation rather than two. The contract this file pins is unchanged: whatever the rail
+ * animates must come from `design/motion.ts`'s gated family, and collapsing it must not break the
+ * thing it animates or the control underneath it.)
  *
  * Its own file with the `matchMedia` stub installed at MODULE SCOPE before the components are
  * imported, for the reason `ui/motion/Entrance.reducedMotion.test.tsx` records: framer-motion caches
@@ -45,7 +50,15 @@ const turns: ChatTurn[] = [
   { role: 'assistant', ts: TS, visibleIndex: 1, segments: [{ kind: 'text', text: 'done' }] },
 ]
 
-describe('under prefers-reduced-motion the rail’s halo does not animate', () => {
+/** See `SessionMapRail.target.test.tsx` for why `transform: none` has to read as scale 1. */
+function scaleOf(el: Element | null): number {
+  const style = (el as HTMLElement | null)?.getAttribute('style') ?? ''
+  const m = /scaleX\(([\d.]+)\)/.exec(style)
+  if (m) return Number(m[1])
+  return /transform:\s*none/.test(style) ? 1 : NaN
+}
+
+describe('under prefers-reduced-motion the rail’s mark length does not animate', () => {
   it('the transition the rail hands framer IS the module’s one instant answer', () => {
     // The rail reaches for `physics.snappy`; under the stub above that getter must BE `instant`. If a
     // future edit inlined a spring at the call site this is the assertion that notices.
@@ -53,32 +66,35 @@ describe('under prefers-reduced-motion the rail’s halo does not animate', () =
     expect(physics.snappy).not.toHaveProperty('stiffness')
   })
 
-  it('the halo still LANDS under the collapse, and the mark still works', async () => {
+  it('the length still LANDS under the collapse, and the mark still works', async () => {
     const marks = sessionMapMarks(turns)
     const jumped: number[] = []
     const { container } = render(
       <SessionMapRail marks={marks} turnNodes={new Map()} scrollRef={{ current: null }} onJumpTo={(i) => jumped.push(i)} />,
     )
-    const tick = container.querySelector('[data-session-mark]') as HTMLElement
-    const halo = tick.querySelector('[data-session-map-halo]') as HTMLElement
+    const mark = container.querySelector('[data-session-mark]') as HTMLElement
+    const line = mark.querySelector('[data-session-map-mark-line]') as HTMLElement
+    const rest = scaleOf(line)
+    expect(rest, `no resting length at all: ${line.getAttribute('style')}`).not.toBeNaN()
 
     // `mouseOver`, not `mouseEnter`: React delegates onMouseEnter off the bubbling `mouseover`, so a
     // non-bubbling `mouseenter` reaches no handler and this would measure a rail nobody hovered.
-    fireEvent.mouseOver(tick)
+    fireEvent.mouseOver(mark)
 
     // 🪤 WHAT THIS DOES NOT CLAIM, and the over-claim is worth recording because the first draft of
     // this file made it: "collapses to instant" is NOT observable as "the value arrives in the same
     // tick". framer schedules even a zero-duration tween on the next frame, so a same-tick read shows
-    // `opacity: 0` for BOTH the collapsed and the springing rail — a red that says nothing about the
-    // gate. `reducedMotionAppWide.test.ts` states the limit plainly: jsdom has no frame clock, paints
-    // nothing, and runs no animations, so the VALUE handed to the animation layer is the falsifiable
-    // thing. That is the assertion above. What is left for this one is the pair a value check cannot
-    // give: the collapse must not have BROKEN the halo, and it must not have been bought by
-    // rendering an inert control.
-    await waitFor(() => expect(halo.style.opacity, `the halo never landed: ${halo.getAttribute('style')}`).not.toBe('0'))
-    expect(halo.getAttribute('style')).toContain('scale(3)')
+    // the resting value for BOTH the collapsed and the springing rail — a red that says nothing about
+    // the gate. `reducedMotionAppWide.test.ts` states the limit plainly: jsdom has no frame clock,
+    // paints nothing, and runs no animations, so the VALUE handed to the animation layer is the
+    // falsifiable thing. That is the assertion above. What is left for this one is the pair a value
+    // check cannot give: the collapse must not have BROKEN the length, and it must not have been
+    // bought by rendering an inert control.
+    await waitFor(() => expect(scaleOf(line), `the length never landed: ${line.getAttribute('style')}`).toBe(1))
+    expect(scaleOf(line), 'a hovered mark must reach full length even with motion off')
+      .toBeGreaterThan(rest)
 
-    fireEvent.click(tick)
+    fireEvent.click(mark)
     expect(jumped, 'the mark stopped working under reduced motion').toEqual([marks[0].visibleIndex])
   })
 })

@@ -39,7 +39,8 @@ const SRC = join(process.cwd(), 'src')
 const css = readFileSync(join(SRC, 'design/tokens.css'), 'utf8')
 const navRail = readFileSync(join(SRC, 'ui/NavRail.tsx'), 'utf8')
 const sidePanel = readFileSync(join(SRC, 'ui/SidePanel.tsx'), 'utf8')
-const sessionMapRail = readFileSync(join(SRC, 'pages/chat/SessionMapRail.tsx'), 'utf8')
+// `pages/chat/SessionMapRail.tsx` is deliberately NOT read here any more — see the ADOPTERS note.
+// The derived-list test below is what notices if it (or anything else) adopts the utility again.
 
 /** Blank every comment, length-preserving, before any TSX scan below.
  *
@@ -71,26 +72,40 @@ function code(src: string): string {
  *  the stolen-target defect this repo already has on file. Getting to 24px means indenting panel
  *  content across all 46 consumers, which is the owner's call.
  *
- *  🔑 AND THE THIRD ONE IS NOT A SPLITTER, WHICH IS WHAT TURNED THIS RAIL FROM VACUOUS TO REAL.
- *  `pages/chat/SessionMapRail.tsx`'s mark (atom SSM-8) is a 4×4 tick on a hairline, not a window
- *  edge — and it was measured that the rail SAID it adopted `.hit-24-x` while this file scanned only
- *  `src/ui`, so "hitTargetThinHandle passes for the Session Map rail" was true of a file this test
- *  never opened. Two things had to change for that sentence to mean anything: the derivation below
- *  walks the whole `src` tree, and the per-adopter precondition asserts the property the CSS
- *  actually needs (a containing block + a thin drawn box) instead of the splitter-shaped proxy that
- *  the first two adopters happened to share.
+ *  🔑 A THIRD, NON-SPLITTER ADOPTER EXISTED AND HAS NOW LEFT, and BOTH halves of that are worth
+ *  keeping on the record because the second is the more useful finding.
  *
- *    `pages/chat/SessionMapRail.tsx`  4×4 tick, one per transcript mark — reachable 4px → 24px
- *                                    HORIZONTALLY ONLY, and that is the utility working as designed
- *                                    rather than a shortfall: `top: 0; bottom: 0` pins the band to
- *                                    the tick's own 4px height, and on a rail whose ticks sit a few
- *                                    px apart a 24px VERTICAL band would swallow its neighbours —
- *                                    the stolen-target defect recorded twice above. Recorded, not
- *                                    rounded up, exactly as SidePanel's 15px is. */
+ *  It was `pages/chat/SessionMapRail.tsx`'s mark (atom SSM-8), a 4×4 tick on a hairline rather than
+ *  a window edge. Enrolling it is what turned this rail from vacuous to real: it was measured that
+ *  the rail SAID it adopted `.hit-24-x` while this file scanned only `src/ui`, so
+ *  "hitTargetThinHandle passes for the Session Map rail" was true of a file this test never opened.
+ *  Two things changed then and both STAY, because they are what stops the next such claim: the
+ *  derivation below walks the whole `src` tree, and the per-adopter precondition asserts the
+ *  property the CSS actually needs (a containing block + a thin drawn box) instead of the
+ *  splitter-shaped proxy the two splitters happened to share.
+ *
+ *  🔴 WHY IT LEFT, AND WHY THAT IS NOT A WEAKENING. The Session Map rail was redesigned (Codex
+ *  reference; see that file's header) from a 4px tick to a mark that owns its whole 32×10 row. Two
+ *  consequences, in order of importance:
+ *
+ *    1. THE BAND WAS FIXING THE WRONG AXIS ALL ALONG. It centres a fixed 24px on the element's own
+ *       width and pins `top/bottom` to the element's own height — deliberately, so it cannot
+ *       overhang a neighbour. On a VERTICAL list of marks the horizontal axis was never the
+ *       constraint: the tick was 4px TALL, and no width fixed that. The rail's own redesign moved
+ *       the failing axis 4px → 10px by giving the row to the mark, which is a thing this utility
+ *       cannot do and was never asked to. The 24px band is therefore not the guarantee that
+ *       surface owes; its real row box is, and `web/e2e/sessionMap.spec.ts` now measures it in a
+ *       browser, where layout exists.
+ *    2. A 32px-wide element cannot be enlarged by a 24px band centred inside it. Keeping the
+ *       utility there would have been inert markup that THIS FILE went on crediting — the same
+ *       shape as the original defect, one level up: a rail measuring an adoption that does nothing.
+ *
+ *  So the utility is back to its two splitters. If a future non-splitter adopter appears, the
+ *  derivation below will demand it be named here, and the per-adopter precondition (kept, and NOT
+ *  narrowed back to `role="separator"`) is what will measure it. */
 const ADOPTERS: [string, string][] = [
   ['ui/NavRail.tsx', code(navRail)],
   ['ui/SidePanel.tsx', code(sidePanel)],
-  ['pages/chat/SessionMapRail.tsx', code(sessionMapRail)],
 ]
 
 /** The two window-splitters, which additionally owe the resize contract. Kept separate from
@@ -245,16 +260,40 @@ describe('the thin-handle hit target', () => {
   })
 
   it('the comment blanking is load-bearing, not hygiene', () => {
-    // Proven on a real adopter rather than asserted: the Session Map rail documents the utility in
-    // its header, so RAW text puts the first `hit-24-x` inside prose. If a future edit dropped
-    // `code()`, the adopter scan would walk back from that sentence and this goes red — the correct
-    // direction to fail, rather than silently extracting a tag that is not one.
-    expect(sessionMapRail.indexOf('hit-24-x'), 'the rail must still document what it adopts')
-      .toBeLessThan(sessionMapRail.indexOf('className='))
-    const blanked = code(sessionMapRail)
+    // 🔴 THIS USED TO BE PROVEN ON A REAL ADOPTER AND NO LONGER CAN BE, which is worth stating rather
+    // than quietly converting. `pages/chat/SessionMapRail.tsx` documented the utility in its FILE
+    // HEADER, above any JSX, so in raw text the first `hit-24-x` in that file sat in prose and the
+    // walk-back landed there. It left the adopter list (see the ADOPTERS note). Both remaining
+    // adopters put their explanation INSIDE the adopting tag's attribute list — measured:
+    // `ui/NavRail.tsx:346-349` and `ui/SidePanel.tsx:244-258` are both between the `<div` and its
+    // `className` — so for them the walk-back reaches the right tag with or without blanking, and
+    // pinning the test to one would have made it pass while measuring nothing.
+    //
+    // So the property is asserted on the shape itself, which is what the property is ABOUT: `code()`
+    // is a function, and this is the input that distinguishes it from the identity function. The
+    // fixture is the exact form that occurred — a header docstring naming the utility above real JSX
+    // that adopts it. If a future edit drops the blanking, this reds.
+    const shaped = [
+      '/** THE RAIL. Its handle wears `hit-24-x` because a 4px strip is 20px short of the floor. */',
+      'export function Thing() {',
+      '  return <div className="relative"><span className="absolute w-1 hit-24-x" /></div>',
+      '}',
+    ].join('\n')
+    const rawAt = shaped.indexOf('hit-24-x')
+    const rawTag = shaped.slice(shaped.lastIndexOf('<', rawAt), rawAt)
+    expect(rawTag, 'the fixture no longer reproduces the defect — the walk-back must land in prose')
+      .not.toContain('w-1')
+    // …and with the blanking, the very same walk-back reaches the element that really adopts it.
+    const blanked = code(shaped)
     const at = blanked.indexOf('hit-24-x')
     expect(at, 'blanking removed the real adoption too').toBeGreaterThan(-1)
-    expect(blanked.slice(blanked.lastIndexOf('<', at), at)).toContain('button')
+    expect(blanked.slice(blanked.lastIndexOf('<', at), at), 'blanked text must reach the real tag')
+      .toContain('w-1')
+    // And the two real adopters are still each documented somewhere, which is the habit the blanking
+    // exists to permit in the first place. A silent adopter is the thing nobody can review.
+    for (const [rel, src] of [['ui/NavRail.tsx', navRail], ['ui/SidePanel.tsx', sidePanel]] as const) {
+      expect(src, `${rel} must explain why it presses the band`).toMatch(/SC 2\.5\.8/)
+    }
   })
 
   it('SidePanel keeps the reason it stops at 15px, and the rejected option', () => {
