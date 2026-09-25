@@ -90,6 +90,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # is a bad id is the wrong noun for a file browser.
     "invalid_name": "A file or directory name is not a single safe path segment "
     "(separators, '..' or over-long).",
+    # The directory picker's refusal (`browse-dirs`, `create-dir`): a credential location or an
+    # OS/system root. 403, and — unlike `invalid_path` — it deliberately NAMES the location and
+    # why, in the message and as `path` + `reason` (`system_root` | `sensitive_path`) inside the
+    # error object: the picker's own default location can be the refused one, and a refusal that
+    # names neither left the user with an empty listing and nothing to act on.
+    "path_protected": "The folder is a protected system or credential location the directory "
+    "picker will not open or create in; the message names it and says why.",
     "not_found": "The addressed resource does not exist.",
     "forbidden": "The caller is not permitted to touch this resource.",
     "confirmation_required": "The operation is destructive and needs an explicit confirm.",
