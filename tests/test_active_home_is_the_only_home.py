@@ -151,7 +151,7 @@ def test_no_module_resolves_the_personalclaw_home_by_hardcoding_it():
         "these sites resolve the PersonalClaw home by hardcoding the real one, so they "
         "ignore PERSONALCLAW_HOME and reach outside the active home:\n  "
         + "\n  ".join(offenders)
-        + "\n\nUse `config_dir()` (or `AGENTS_DIR`/`_canonical_mcp_json()` where the "
+        + "\n\nUse `config_dir()` (or `agents_dir()`/`_canonical_mcp_json()` where the "
         "codebase already has a resolver for that specific file). If the REAL home is "
         "genuinely what you mean, add the module to `_REAL_HOME_IS_CORRECT` with a reason."
     )
@@ -302,7 +302,7 @@ def test_the_installed_agent_config_path_follows_the_active_home(sealed_home):
     (`_remove_from_agent_file`) DELETES an entry from the file it resolves, so pointing it at
     the real home was a destructive write to the operator's config.
 
-    Redirected by the env var, not by patching `agent.AGENTS_DIR`. The first version of this
+    Redirected by the env var, not by patching `agent.agents_dir`. The first version of this
     test did the latter and went green while the code had ALREADY been changed away from that
     constant — a test measuring a lever the code no longer pulls.
     """

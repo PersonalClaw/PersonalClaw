@@ -98,10 +98,10 @@ async def api_action_providers(request: web.Request) -> web.Response:
 
 async def api_agent_hooks(request: web.Request) -> web.Response:
     """GET /api/agent-hooks — read-only view of agent hooks from personalclaw.json."""
-    from personalclaw.agent import _VALID_HOOK_EVENTS, AGENTS_DIR, _shipped_defaults
+    from personalclaw.agent import _VALID_HOOK_EVENTS, _shipped_defaults, agents_dir
     from personalclaw.security import redact
 
-    agent_cfg = AGENTS_DIR / "personalclaw.json"
+    agent_cfg = agents_dir() / "personalclaw.json"
     try:
         raw = json.loads(agent_cfg.read_text())
         hooks = raw.get("hooks", {}) if isinstance(raw, dict) else {}

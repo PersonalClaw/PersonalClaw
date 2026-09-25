@@ -1601,7 +1601,7 @@ class TestContextInfo:
         agent_file = tmp_path / "test-agent.json"
         agent_file.write_text(json.dumps({"name": "test-agent", "model": "opus-5"}))
 
-        with patch("personalclaw.agent.AGENTS_DIR", tmp_path):
+        with patch("personalclaw.agent.agents_dir", lambda: tmp_path):
             result = SessionManager._resolve_agent_model("test-agent")
         assert result == "opus-5"
 

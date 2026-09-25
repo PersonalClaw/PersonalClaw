@@ -918,9 +918,9 @@ class SessionManager:
         try:
             import json as _json
 
-            from personalclaw.agent import AGENTS_DIR as AGENTS_DIR
+            from personalclaw.agent import agents_dir
 
-            for af in AGENTS_DIR.glob("*.json"):
+            for af in agents_dir().glob("*.json"):
                 try:
                     ad = _json.loads(af.read_text(encoding="utf-8"))
                 except (ValueError, OSError):

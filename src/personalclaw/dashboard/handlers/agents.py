@@ -345,9 +345,9 @@ def _installed_agent_config() -> Path:
     This is the live config that ACP agent reads.  Dashboard MCP toggle
     and sync operations write here — NOT to agents/defaults.json.
     """
-    from personalclaw.agent import AGENT_FILENAME, AGENTS_DIR  # noqa: F811
+    from personalclaw.agent import AGENT_FILENAME, agents_dir  # noqa: F811
 
-    return AGENTS_DIR / AGENT_FILENAME
+    return agents_dir() / AGENT_FILENAME
 
 
 async def api_agent_config(request: web.Request) -> web.Response:
@@ -536,7 +536,7 @@ async def api_slash_commands(request: web.Request) -> web.Response:
 async def api_agent_detail(request: web.Request) -> web.Response:
     """GET/DELETE/PATCH /api/agents/detail/{name} — view, delete, or update agent config."""
     name = request.match_info["name"]
-    from personalclaw.agent import AGENTS_DIR  # noqa: F811
+    from personalclaw.agent import agents_dir  # noqa: F811
 
     # Parse body early so JSONDecodeError returns 400, not 404 from the file loop.
     patch_body = None
@@ -567,7 +567,7 @@ async def api_agent_detail(request: web.Request) -> web.Response:
         except ConfigValueError as exc:
             return _agent_write_refusal(exc)
 
-    for f in AGENTS_DIR.glob("*.json"):
+    for f in agents_dir().glob("*.json"):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
             if data.get("name") == name or f.stem == name:
@@ -581,7 +581,7 @@ async def api_agent_detail(request: web.Request) -> web.Response:
                     # already does this correctly (`is_reserved_agent`), and answering 403 rather
                     # than 400 matches it: the request is well-formed and refused, not malformed.
                     #
-                    # Latent today only because `AGENTS_DIR` holds one file, so the four unguarded
+                    # Latent today only because `agents_dir()` holds one file, so the four unguarded
                     # reserved names 404 — the ABSENCE of a file is what protects them, not the
                     # guard. Any flow that materializes a reserved agent as a per-file JSON (a
                     # marketplace activate, an app, a restored snapshot) makes it deletable here
@@ -929,7 +929,7 @@ def _get_config_lock() -> asyncio.Lock:
 #: interpolated", and a JSON file on disk is not a more trustworthy source than a POST.
 _AGENT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
-#: Filenames under ``AGENTS_DIR`` that are NOT agent profiles.
+#: Filenames under ``agents_dir()`` that are NOT agent profiles.
 #:
 #: ``personalclaw.json`` (:data:`~personalclaw.agent.AGENT_FILENAME`) is the ACP RUNTIME
 #: config ``rebuild_agent_config()`` writes — ``mcpServers``, ``hooks``, a ``prompt`` URI,
@@ -966,17 +966,17 @@ _AGENT_SYNC_KEYS = (
 
 
 def _file_store_agents() -> tuple[list[tuple[str, dict]], list[str]]:
-    """Every agent that exists as a FILE under ``AGENTS_DIR``, with its raw fields.
+    """Every agent that exists as a FILE under ``agents_dir()``, with its raw fields.
 
-    ``AGENTS_DIR`` holds TWO on-disk layouts, and both are invisible to
+    ``agents_dir()`` holds TWO on-disk layouts, and both are invisible to
     ``GET /api/agents`` (which lists ``cfg.agents`` alone):
 
-    * ``AGENTS_DIR/<name>.json`` — the flat per-file layout. ``PATCH``/``DELETE
+    * ``agents_dir()/<name>.json`` — the flat per-file layout. ``PATCH``/``DELETE
       /api/agents/detail/{name}`` (``:570``), ``chat_persistence`` (``:48``),
       ``session.py`` (``:923``) and ``skills.py`` (``:86``) all read it, and ``:584``'s
       own comment names what materializes one: *"a marketplace activate, an app, a
       restored snapshot."*
-    * ``AGENTS_DIR/<name>/agent.json`` — the local agent marketplace's layout
+    * ``agents_dir()/<name>/agent.json`` — the local agent marketplace's layout
       (``agents.marketplace.LocalAgentMarketplace._agent_path``). Read through the
       REGISTRY rather than by globbing the directory, so a marketplace that stores its
       definitions elsewhere is enumerated by its own ``list()``. This is the store the
@@ -986,7 +986,7 @@ def _file_store_agents() -> tuple[list[tuple[str, dict]], list[str]]:
     were found, first occurrence winning; ``unreadable`` names the files that could not be
     parsed, so the response can say so instead of silently reporting a smaller scan.
     """
-    from personalclaw.agent import AGENTS_DIR  # noqa: F811
+    from personalclaw.agent import agents_dir  # noqa: F811
     from personalclaw.agents.marketplace import get_default_agent_registry
 
     entries: list[tuple[str, dict]] = []
@@ -1001,7 +1001,7 @@ def _file_store_agents() -> tuple[list[tuple[str, dict]], list[str]]:
         entries.append((name, fields))
 
     try:
-        files = sorted(AGENTS_DIR.glob("*.json"))
+        files = sorted(agents_dir().glob("*.json"))
     except OSError:
         files = []
     for f in files:
@@ -1069,7 +1069,7 @@ def _sync_sentence(synced: list[str], skipped: list[str], unreadable: list[str])
 async def api_personalclaw_agents_sync(request: web.Request) -> web.Response:
     """POST /api/agents/sync — fold file-store agents into config.json and report what it did.
 
-    ``AGENTS_DIR`` is a real second agent store (see :func:`_file_store_agents`) and this is
+    ``agents_dir()`` is a real second agent store (see :func:`_file_store_agents`) and this is
     the ONLY endpoint that reconciles it with ``config.json``'s ``agents`` map, which
     ``GET /api/agents`` serves. An agent that arrives as a file — from the Store, from an app
     bundle, from a restored snapshot — is therefore invisible everywhere in the UI until this

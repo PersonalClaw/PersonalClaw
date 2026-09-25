@@ -79,11 +79,11 @@ def _loaded_by_agents(skill_keys: list[str]) -> dict[str, list[str]]:
     try:
         import json
 
-        from personalclaw.agent import AGENTS_DIR
+        from personalclaw.agent import agents_dir
         from personalclaw.security import is_sensitive_path
 
-        if AGENTS_DIR.is_dir():
-            for agent_file in sorted(AGENTS_DIR.glob("*.json")):
+        if agents_dir().is_dir():
+            for agent_file in sorted(agents_dir().glob("*.json")):
                 if is_sensitive_path(str(agent_file)):
                     continue
                 try:

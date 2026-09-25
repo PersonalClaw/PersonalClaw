@@ -139,7 +139,9 @@ class TestLoadedByAgents:
 
         monkeypatch.setattr("personalclaw.config.AppConfig.load", staticmethod(lambda: _Cfg()))
         # No AGENTS_DIR resources path for this test.
-        monkeypatch.setattr("personalclaw.agent.AGENTS_DIR", Path("/nonexistent-agents-dir"))
+        monkeypatch.setattr(
+            "personalclaw.agent.agents_dir", lambda: Path("/nonexistent-agents-dir")
+        )
         out = skills_h._loaded_by_agents(["greet", "search", "other"])
         assert out["greet"] == ["helper"]
         assert out["search"] == ["helper"]
@@ -157,7 +159,7 @@ class TestLoadedByAgents:
             agents = {}
 
         monkeypatch.setattr("personalclaw.config.AppConfig.load", staticmethod(lambda: _Cfg()))
-        monkeypatch.setattr("personalclaw.agent.AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
         out = skills_h._loaded_by_agents(["greet", "search"])
         assert out["greet"] == ["acp-agent"]
         assert out["search"] == []
