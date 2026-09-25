@@ -3,9 +3,7 @@
 The canonical list of apps the project wants a contributor to build. **This file is
 the input to the bounty board**, not the board itself: ECOSYSTEM-TOOLING's `ET-7`
 files one `bounty`-labelled GitHub issue per row below, and CHANNEL-EXPANSION's
-`CE-9` files the three channel rows (whose issue prose is already drafted in
-[community-bounty-drafts.md](community-bounty-drafts.md), pending owner approval of
-the shared risk-policy paragraph).
+`CE-9` files the three channel rows as community-tier bounties.
 
 One list, two consumers, so the two plans cannot drift into two different ideas of
 what is wanted.
@@ -114,18 +112,21 @@ reader can tell a want that was never real from one that was answered.
   measurement — an atom that fixed the thing being measured. Do not file this bounty.
   closed 2026-09-07 @ f623b66
 
-## What is still owner-gated
+## Before any of these is filed
 
-Filing these is not purely mechanical — two owner decisions sit in front of the
-board, and neither is an agent's to make:
+Filing rows 1-3 is not purely mechanical. Each bridges a third-party service under
+the contributor's own credentials, and the table above already names the specific
+exposure per row: no official bot API for personal WhatsApp accounts, and a Signal
+bridge that holds device key material and sees plaintext at its boundary. Those
+three issues carry a **community-tier risk statement written by the maintainer** —
+consent-adjacent security copy, not prose assembled at filing time, because a
+contributor deciding whether to connect a private account reads it as the warning
+it is.
 
-- **The risk-policy paragraph** (CHANNEL-EXPANSION owner task 5) gates rows 1-3.
-  The drafted paragraph in [community-bounty-drafts.md](community-bounty-drafts.md)
-  is marked **PENDING OWNER APPROVAL**. It is consent-adjacent security copy; it goes
-  public verbatim or as amended by the owner, never paraphrased.
-- **The reward model** (ECOSYSTEM-TOOLING owner task 3): recognition-only vs. small
-  monetary bounties, with recognition-only recommended at this stage. The issues
-  should not promise a reward the project has not decided to offer.
+Two further things are undecided rather than unwritten:
 
-The `bounty` and `community-tier` labels do not exist in this repository yet; create
-them as part of posting.
+- **The reward model** — recognition-only vs. small monetary bounties. The issues
+  must not promise a reward the project has not decided to offer, and
+  recognition-only is what it offers today.
+- **The labels.** Neither `bounty` nor `community-tier` exists in this repository;
+  create both as part of posting.
