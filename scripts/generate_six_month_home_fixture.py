@@ -39,7 +39,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -467,9 +467,7 @@ def _build_memory_markdown(home: Path) -> dict[str, Any]:
     for day, text in MEMORY_HISTORY_MD.items():
         (history / f"{day}.md").write_text(text, encoding="utf-8")
 
-    files = sorted(
-        str(p.relative_to(home)) for p in (home / "workspace" / "memory").rglob("*.md")
-    )
+    files = sorted(str(p.relative_to(home)) for p in (home / "workspace" / "memory").rglob("*.md"))
     return {
         "path": "workspace/memory",
         "count": len(files),

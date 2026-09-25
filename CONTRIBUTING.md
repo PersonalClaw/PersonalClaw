@@ -272,11 +272,19 @@ tight; on a clone with no `origin/main` (a fork tracking `upstream`) the hook
 falls back to the wider range, which over-gates rather than under-gates.
 
 The same pre-push hook also checks **Python lint** (black, isort, flake8 over
-`src/personalclaw`, `tests`, `harness`, the same scope as CI) whenever outgoing
-commits touch those paths. pre-commit only formats what a commit *stages*, so
-commits made before the hooks were installed, or with `--no-verify`, would
-otherwise reach CI unformatted. If it fails, run `make format` then `make lint`
-and commit the result.
+`src/personalclaw`, `tests`, `harness`, `scripts`, the same scope as CI) whenever
+outgoing commits touch those paths. pre-commit only formats what a commit
+*stages*, so commits made before the hooks were installed, or with `--no-verify`,
+would otherwise reach CI unformatted. If it fails, run `make format` then `make
+lint` and commit the result.
+
+`scripts/` is in that list because the pre-commit hook formats it and nothing
+used to check it: `make lint`, CI and pre-push all skipped the tree while
+pre-commit rewrote staged `scripts/*.py` with black and isort, so the gate a
+contributor ran and the hook that edited their files disagreed. **mypy is the one
+tool the list omits** — `scripts/` does not pass it yet, and the Makefile's
+`lint:` comment records the measured count, so the gap is a known scope rather
+than another blind spot.
 
 **Both halves check the working tree, so the push must come from the worktree
 that owns the branch.** The outgoing commits decide *which* halves run; what

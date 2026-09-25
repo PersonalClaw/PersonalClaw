@@ -35,8 +35,10 @@ async def _check(kind: str, task: str) -> bool:
         return False
     ok = bool(r.get("classified"))
     plan_n = len(r.get("plan", []))
-    print(f"  [{kind}] classified={ok}  plan_rows={plan_n}  "
-          f"rigor={r.get('intake_rigor')!r}  kind_config_keys={sorted(r.get('kind_config', {}))}")
+    print(
+        f"  [{kind}] classified={ok}  plan_rows={plan_n}  "
+        f"rigor={r.get('intake_rigor')!r}  kind_config_keys={sorted(r.get('kind_config', {}))}"
+    )
     if not ok:
         print(f"  [{kind}] WARN — classifier returned classified=False (fell back to defaults)")
     return ok
@@ -48,17 +50,24 @@ async def main() -> int:
     n = sync_entries_from_config()
     entries = [e.name for e in get_default_registry().list_entries()]
     if not entries:
-        print("No provider entries registered — set PERSONALCLAW_HOME to a configured "
-              "home (e.g. ~/.personalclaw) with at least one model provider.")
+        print(
+            "No provider entries registered — set PERSONALCLAW_HOME to a configured "
+            "home (e.g. ~/.personalclaw) with at least one model provider."
+        )
         return 2
     print(f"Providers: {entries} (synced {n})\n")
 
     results = await asyncio.gather(
         _check("code", "Fix the null pointer crash when a user submits an empty search query"),
-        _check("goal", "Research the best caching strategy for our high-traffic API and recommend one"),
+        _check(
+            "goal", "Research the best caching strategy for our high-traffic API and recommend one"
+        ),
     )
     ok = all(results)
-    print(f"\n{'PASS' if ok else 'FAIL'} — unified loop classify smoke ({sum(results)}/{len(results)} kinds)")
+    print(
+        f"\n{'PASS' if ok else 'FAIL'} — unified loop classify smoke"
+        f" ({sum(results)}/{len(results)} kinds)"
+    )
     return 0 if ok else 1
 
 

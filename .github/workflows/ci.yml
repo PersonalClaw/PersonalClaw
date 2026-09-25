@@ -161,10 +161,14 @@ jobs:
           enable-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
-      # `harness/` is repo-inner dev infra beside src/ (SELF-VERIFICATION). `make lint`
-      # lints it under the same tools as core; CI used to skip it, so a harness-only
-      # lint break went green here and red for a local contributor. Same scope as the
-      # Makefile now (black/isort/flake8 over src+tests+harness, mypy over src+harness).
+      # `harness/` and `scripts/` are repo-inner dev infra beside src/ (SELF-VERIFICATION,
+      # and the baseline generators / validators / release helpers). `make lint` lints both
+      # under the same tools as core; CI used to skip `harness/`, so a harness-only lint
+      # break went green here and red for a local contributor. `scripts/` was the same hole
+      # one step worse — NO gate saw it while the pre-commit hook silently reformatted it,
+      # so an isort violation rode an open PR. Same scope as the Makefile now:
+      # black/isort/flake8 over src+tests+harness+scripts, mypy over src+harness (scripts/
+      # does not pass mypy yet — see the Makefile's `lint:` comment for the measured count).
       #
       # Every tool runs even when an earlier one fails, and its output is captured, so
       # the failure comment below names every violation at once. Otherwise a contributor
@@ -185,9 +189,9 @@ jobs:
               { echo "**$label**"; echo '```'; printf '%s\n' "$out"; echo '```'; } >> /tmp/lint-out.txt
             fi
           }
-          run_tool "black --check" uv run black --check src/personalclaw tests harness
-          run_tool "isort --check-only" uv run isort --check-only src/personalclaw tests harness
-          run_tool "flake8" uv run flake8 src/personalclaw tests harness
+          run_tool "black --check" uv run black --check src/personalclaw tests harness scripts
+          run_tool "isort --check-only" uv run isort --check-only src/personalclaw tests harness scripts
+          run_tool "flake8" uv run flake8 src/personalclaw tests harness scripts
           run_tool "mypy" uv run mypy src/personalclaw harness
           # The bundled-app tree is excluded from the pass above and checked one bundle per
           # mypy run here — see scripts/lint_bundled_apps.py for why (two bundles ship a

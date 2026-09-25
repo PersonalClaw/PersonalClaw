@@ -11,6 +11,8 @@ TESTS   := tests
 # The self-development harness (Self-Verification): repo-inner dev infra beside src/,
 # linted to the same bar. Not shipped in the wheel (packages.find scopes to src/).
 HARNESS := harness
+# Repo-inner dev scripts: linted to the same bar, not shipped (packages.find scopes to src/).
+SCRIPTS := scripts
 
 # Docker / Podman / Finch — the runtime is auto-detected (override with COMPOSE=...)
 COMPOSE ?= $(shell \
@@ -45,18 +47,24 @@ help:
 
 ## format: auto-format source and tests with black + isort
 format:
-	$(PYTHON) -m black $(PKG) $(TESTS) $(HARNESS)
-	$(PYTHON) -m isort $(PKG) $(TESTS) $(HARNESS)
+	$(PYTHON) -m black $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS)
+	$(PYTHON) -m isort $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS)
 
 ## lock: refresh uv.lock from the declared project dependencies
 lock:
 	$(UV) lock
 
 ## lint: check formatting, run flake8 and mypy
+# $(SCRIPTS) joins black/isort/flake8 but NOT mypy, and that asymmetry is deliberate: the
+# pre-commit hook has always formatted staged scripts/*.py with black+isort, so a tree this
+# gate called clean was being rewritten underneath it — one isort violation reached an open
+# PR that way. mypy is the one tool scripts/ does not yet pass (26 errors in 6 of 29 files,
+# measured; 13 in generate_inert_surface_baseline.py alone), so adding it here would wire a
+# red gate. Annotating that tree is its own change; until then this line is the honest scope.
 lint:
-	$(PYTHON) -m black --check $(PKG) $(TESTS) $(HARNESS)
-	$(PYTHON) -m isort --check-only $(PKG) $(TESTS) $(HARNESS)
-	$(PYTHON) -m flake8 $(PKG) $(TESTS) $(HARNESS)
+	$(PYTHON) -m black --check $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS)
+	$(PYTHON) -m isort --check-only $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS)
+	$(PYTHON) -m flake8 $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS)
 	$(PYTHON) -m mypy $(PKG) $(HARNESS)
 	$(PYTHON) scripts/lint_bundled_apps.py $(PYTHON)
 
