@@ -1145,6 +1145,83 @@ def test_a_broken_registry_still_delivers_to_the_dashboard(native_state, monkeyp
     assert "native" not in sent[0]
 
 
+# ── "Escalate on name mention" keys on the USER's name ──────────────────
+#
+# The toggle's hint is "Upgrade when the text mentions you by name". `notify()` checked it against
+# `agent.bot_name` — the ASSISTANT's name — while the inbox path read `dashboard.user_name`.
+# Measured through the real rules PUT and the real `notify()`: with the assistant named Jarvis,
+# "Ada, the disk is at 91%" stayed `badge` and "Jarvis finished the disk check" escalated; on an
+# install with no assistant name, nothing escalated at all.
+
+
+@pytest.fixture()
+def mention_state(home, tmp_path, monkeypatch):
+    """`notify()` with name-mention ON for a `badge` kind, and a way to set both names.
+
+    `badge`, so an escalation shows as the mode it produces (`immediate`) instead of being a no-op
+    on a kind that interrupts anyway. The names are written to the real `config.json`, not stubbed:
+    which config field is read IS the defect, so the lookup has to run.
+    """
+    from personalclaw.config.loader import config_path
+    from tests.chat_test_helpers import _make_state
+
+    _write_rules(
+        home,
+        {"rules": {"system/warning": {"mode": "badge", "conditions": {"name_mention": True}}}},
+    )
+    monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+    state = _make_state(tmp_path)
+    monkeypatch.setattr(state, "_broadcast", lambda note: None)
+
+    def names(user: str, assistant: str) -> None:
+        doc = {"dashboard": {"user_name": user}, "agent": {"bot_name": assistant}}
+        config_path().write_text(json.dumps(doc), encoding="utf-8")
+
+    def deliver(body: str) -> dict:
+        state.notify("warning", "Disk check", body)
+        return state._notification_log[-1]
+
+    return names, deliver
+
+
+@pytest.mark.parametrize("assistant", ["", "Jarvis"], ids=["no-assistant-name", "assistant-named"])
+def test_a_mention_of_the_users_name_escalates(mention_state, assistant):
+    names, deliver = mention_state
+    names("Ada Lovelace", assistant)
+    note = deliver("Ada, the disk is at 91% and needs you")
+    assert note["mode"] == "immediate"
+    assert note["escalated_by"] == "name mention"
+
+
+def test_a_mention_of_only_the_assistants_name_does_not_escalate(mention_state):
+    names, deliver = mention_state
+    names("Ada Lovelace", "Jarvis")
+    note = deliver("Jarvis finished the disk check")
+    assert note["mode"] == "badge"
+    assert "escalated_by" not in note
+
+
+@pytest.mark.parametrize(
+    "user",
+    ["", "Operator"],
+    ids=["no-user-name", "skip-setup-placeholder"],
+)
+def test_with_no_user_name_nothing_escalates_and_nothing_raises(mention_state, user):
+    """No name given means no name to match. Through the UI that is usually `Operator`: skipping
+    setup commits it (the route guard needs a non-empty name) and Account refuses an empty one, so
+    matching it would escalate every note that says "operator" for someone who never chose it."""
+    names, deliver = mention_state
+    names(user, "Jarvis")
+    for body in (
+        "Ada, the disk is at 91%",
+        "Jarvis finished the disk check",
+        "The operator console lost its disk",
+    ):
+        note = deliver(body)
+        assert note["mode"] == "badge", body
+        assert "escalated_by" not in note, body
+
+
 # ── quiet hours over an attention kind (issue #341, bug B) ───────────────
 
 

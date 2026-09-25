@@ -255,7 +255,7 @@ def _ingest_svc(tmp_path, monkeypatch, settings=None, operator="", alert_conditi
     monkeypatch.setattr(nr, "config_dir", lambda: rules_home)
     if alert_conditions:
         nr.save_rules({"rules": {"inbox/alert": {"conditions": dict(alert_conditions)}}})
-    monkeypatch.setattr(InboxService, "_operator_name", staticmethod(lambda: operator))
+    monkeypatch.setattr(mod, "operator_name", lambda: operator)
     monkeypatch.setattr(mod, "_dashboard_state", lambda: None)
     return svc
 
