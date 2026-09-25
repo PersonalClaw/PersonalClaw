@@ -90,63 +90,29 @@ def declared_context_window(value: object) -> int | None:
     return window if window > 0 else None
 
 
-def model_context_window(
-    model_id: str | None,
-    default: int = DEFAULT_CONTEXT_WINDOW,
-    *,
-    local: bool = False,
-    override: int | None = None,
-) -> int:
-    """Context window (tokens) for ``model_id`` → its entry, else a suffix/prefix
-    match (handles provider-prefixed ids like ``Bedrock:global.anthropic.claude-
-    opus-4-8`` and dated variants), else ``default``. ``default`` lets a provider
-    keep its own absent-model fallback (OpenAI 128k vs Anthropic/Bedrock 200k).
+def _table_window(model_id: str | None) -> int | None:
+    """The table's answer for ``model_id``, or ``None`` when the table has never heard
+    of it. THE matcher — every other resolution in this module is a policy on top of it.
 
-    ``override`` is the per-binding escape hatch and wins over every other answer,
-    including ``local`` — an operator who declared the served window knows it better
-    than any default here can.
+    Match order: the exact id, then the ``family:tag`` / ``Provider:id`` split (tail
+    first, because the prefixed form is the common one, then head — an Ollama id resolves
+    on the HEAD, so ``llama3.1:8b`` reads ``llama3.1``'s 128000), then loose containment
+    on the tail-stripped id for dated provider variants (``global.anthropic.claude-opus-
+    4-8`` ⊃ ``claude-opus-4.8``, dots and dashes normalized, longest key wins).
 
-    🪤 The two keywords are NOT interchangeable and they reach different call sites.
-    ``override`` is a truth claim, so it is honoured on both the char-ESTIMATE path and
-    the provider-MEASURED gauge (``llm/openai.py`` / ``llm/anthropic.py`` pass it when
-    turning a real ``input_tokens`` into a percentage). ``local`` is only a conservative
-    floor for the estimate, and the measured gauges deliberately do NOT pass it: a real
-    26682-token prompt divided by :data:`LOCAL_SERVED_CONTEXT_WINDOW` displays 651%,
-    which fabricates a measurement in the opposite direction from the bug the floor
-    exists to prevent. Estimates may err toward compacting early; a displayed
-    measurement may not err at all.
-
-    ``local`` says the binding is served by a LOCAL runtime, and it short-circuits the
-    WHOLE resolution to :data:`LOCAL_SERVED_CONTEXT_WINDOW` rather than fronting one
-    return. That placement is the point, not an accident: for a local model this table
-    holds ARCHITECTURAL maxima, and every one of the paths below can hand one back —
-    the exact-id match, the ``family:tag`` tail and HEAD matches (an Ollama id resolves
-    on the HEAD, so ``llama3.1:8b`` reads ``llama3.1``'s 128000), the loose-containment
-    match, and the ``default`` fallthrough. The loose match is the subtlest of the five:
-    it compares ``kn in norm or norm in kn`` with longest-key-wins over an arbitrary
-    tag, so an UNLISTED local model can inherit an arbitrary large window by substring
-    accident and not merely by falling through. A guard in front of any single return
-    therefore fixes nothing; only a guard in front of all of them does.
+    🪤 The loose match is the subtlest of the four and it is why "unknown" has to be a
+    return value rather than a caller-side comparison against a default: it compares
+    ``kn in norm or norm in kn`` over an arbitrary tag, so an UNLISTED model can inherit
+    an arbitrary window by substring accident and not merely by falling through. A caller
+    that tries to detect "unheard-of" by passing a sentinel default still gets a
+    confident wrong number from this branch.
     """
-    declared = declared_context_window(override)
-    if declared is not None:
-        return declared
-    if local:
-        return LOCAL_SERVED_CONTEXT_WINDOW
     if not model_id:
-        return default
+        return None
     windows = _load()
     mid = model_id.strip()
     if mid in windows:
         return windows[mid]
-    # A separator splits one of two shapes. A "Provider:" / "Provider/" qualifier
-    # ("Bedrock:global.anthropic.claude-opus-4-8", "OpenAI/gpt-4o") — the id is the TAIL.
-    # Ollama's "family:tag" ("llama3.1:8b", "qwen2.5:0.5b-instruct-q4_0", "mistral:7b") —
-    # the family is the HEAD and the tail is a size/quant tag the table never lists, so
-    # splitting to the tail alone missed the family and fell through to ``default`` (a
-    # too-large 200k window for a local model whose real one is smaller). Try an exact
-    # match on the tail first (the prefixed form is the common one), then the head, before
-    # loose matching on the tail-stripped id (dated provider variants).
     for sep in (":", "/"):
         if sep in mid:
             head, tail = mid.split(sep, 1)
@@ -155,17 +121,84 @@ def model_context_window(
             if head in windows:
                 return windows[head]
             mid = tail
-    # Loose containment match (a dated/suffixed id contains a catalog key, e.g.
-    # "global.anthropic.claude-opus-4-8" ⊃ "claude-opus-4.8"-ish). Normalize dots
-    # vs dashes so "4-8" and "4.8" reconcile. Longest key wins (most specific).
     norm = mid.replace(".", "-").lower()
     best = 0
+    match = 0
     for k, v in windows.items():
         kn = k.replace(".", "-").lower()
         if (kn in norm or norm in kn) and len(kn) > best:
             best = len(kn)
             match = v
-    return match if best else default
+    return match if best else None
+
+
+def resolved_context_window(model_id: str | None, *, override: object = None) -> int | None:
+    """The window this binding can HONESTLY claim, or ``None`` when there is none.
+
+    ONE reader for "do we actually know this model's context window?" — the per-binding
+    declaration if there is one, else the table entry if the table has one, and otherwise
+    **nothing**. There is no default, and that absence is the whole function: a percentage
+    computed against a number nobody declared is a fabricated measurement, not a
+    conservative one, and it renders with exactly the same confidence as a real one.
+
+    This is the resolution the MEASURED gauges use (``llm/openai.py``, ``llm/anthropic.py``
+    and the bundled ``ollama-models`` app turning a real ``input_tokens`` into a
+    percentage). :func:`model_context_window` — which always answers, with a caller's
+    default — is for BUDGETS and ESTIMATES, which need a number to divide by and may err
+    toward compacting early. The two are not interchangeable in either direction: a budget
+    cannot act on ``None``, and a displayed measurement may not invent a denominator.
+
+    🪤 ``model_context_window(ref, default=0) > 0`` was the previous way to ask this, and
+    it is not equivalent — see :func:`_table_window`'s trap note on the loose-containment
+    branch, which answers confidently for an id the table has never listed.
+    """
+    declared = declared_context_window(override)
+    if declared is not None:
+        return declared
+    return _table_window(model_id)
+
+
+def model_context_window(
+    model_id: str | None,
+    default: int = DEFAULT_CONTEXT_WINDOW,
+    *,
+    local: bool = False,
+    override: int | None = None,
+) -> int:
+    """Context window (tokens) for ``model_id`` → :func:`_table_window`'s answer, else
+    ``default``. ``default`` lets a caller keep its own absent-model fallback.
+
+    ALWAYS answers, so this is the resolution for a BUDGET or an ESTIMATE — something that
+    has to divide by a number. A displayed measurement must use
+    :func:`resolved_context_window` instead, which can say ``None``.
+
+    ``override`` is the per-binding escape hatch and wins over every other answer,
+    including ``local`` — an operator who declared the served window knows it better
+    than any default here can.
+
+    🪤 The two keywords are NOT interchangeable and they reach different call sites.
+    ``override`` is a truth claim, so it is honoured on both this estimate path and the
+    provider-MEASURED gauge (via :func:`resolved_context_window`). ``local`` is only a
+    conservative floor for the estimate, and the measured gauges deliberately do NOT have
+    it: a real 26682-token prompt divided by :data:`LOCAL_SERVED_CONTEXT_WINDOW` displays
+    651%, which fabricates a measurement in the opposite direction from the bug the floor
+    exists to prevent. Estimates may err toward compacting early; a displayed measurement
+    may not err at all.
+
+    ``local`` says the binding is served by a LOCAL runtime, and it short-circuits the
+    WHOLE resolution to :data:`LOCAL_SERVED_CONTEXT_WINDOW` rather than fronting one
+    return. That placement is the point, not an accident: for a local model this table
+    holds ARCHITECTURAL maxima, and every branch of :func:`_table_window` can hand one
+    back — including the loose-containment match, which can reach one by substring
+    accident and not merely by falling through.
+    """
+    declared = declared_context_window(override)
+    if declared is not None:
+        return declared
+    if local:
+        return LOCAL_SERVED_CONTEXT_WINDOW
+    window = _table_window(model_id)
+    return window if window is not None else default
 
 
 def active_chat_model_window() -> int:

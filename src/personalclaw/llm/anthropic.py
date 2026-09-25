@@ -45,11 +45,6 @@ logger = logging.getLogger(__name__)
 # ``personalclaw.providers.openai._MAX_HISTORY``.
 _MAX_HISTORY = 50
 
-# Default fallback when the model is not found in ``model_tokens.json``.
-# Anthropic's standard context window across the Claude 3 / 3.5 / 4 family
-# is 200k tokens.
-_DEFAULT_CONTEXT_WINDOW = 200_000
-
 # Reasoning effort → Anthropic extended-thinking token budget. "" / unknown =
 # no thinking (model default). Clamped to < max_tokens at request time. These are
 # the native effort levels; ACP backends declare + map their own values.
@@ -60,10 +55,14 @@ _THINKING_BUDGETS: dict[str, int] = {
     "max": 63_999,
 }
 
-# Model → context window: the shared reader (personalclaw.model_windows) is the ONE
-# loader of model_tokens.json; this provider passes its own absent-model default.
+# The context gauge, in ONE place for every adapter — including the rule that an
+# unresolvable window reports NOTHING rather than a percentage of an adapter-local
+# fallback. This adapter used to carry `_DEFAULT_CONTEXT_WINDOW = 200_000` for that
+# purpose; a Claude model the shared table has not been taught yet now reads UNMEASURED
+# instead of being measured against a window nobody declared (#3406).
+from personalclaw.context_gauge import ContextGauge, prompt_text_chars  # noqa: E402
 from personalclaw.model_windows import declared_context_window as _declared_window  # noqa: E402
-from personalclaw.model_windows import model_context_window as _model_window  # noqa: E402
+from personalclaw.model_windows import resolved_context_window  # noqa: E402
 
 # ── OpenAI-shape → Anthropic-shape translation ────────────────────────────
 #
@@ -403,6 +402,10 @@ class AnthropicProvider(ModelProvider):
         # ``None`` until the first usage report: before then this provider has no
         # measurement, and 0.0 would be a fabricated one (see llm/base contract).
         self._last_context_pct: float | None = None
+        # The context gauge for THIS binding. Stateful because truncation detection is
+        # ordinal — it compares a report against the largest prompt this binding has
+        # already had measured — see personalclaw.context_gauge.
+        self._gauge = ContextGauge()
         # One-shot image content part for the next turn (MI-4). Empty on every
         # ordinary turn, which keeps the untouched wire payload byte-identical.
         self._pending_image: str = ""
@@ -633,10 +636,13 @@ class AnthropicProvider(ModelProvider):
             # ``override=`` and deliberately NOT ``local=``: the binding's declaration is
             # truth for a measured percentage, while the conservative local floor is only
             # a denominator for the char ESTIMATE — dividing a real token count by it
-            # would over-report (see the matching note in llm/openai.py, #2364). With no
-            # declaration this is byte-identical to the plain table lookup.
-            ctx = _model_window(self._model, _DEFAULT_CONTEXT_WINDOW, override=self.context_window)
-            self._last_context_pct = (input_tokens / ctx) * 100
+            # would over-report (see the matching note in llm/openai.py, #2364).
+            # ``sent_chars`` keeps the reading monotone — see ``context_gauge``.
+            self._last_context_pct = self._gauge.measure(
+                reported_tokens=input_tokens,
+                sent_chars=prompt_text_chars(request_kwargs["messages"]),
+                window=resolved_context_window(self._model, override=self.context_window),
+            )
 
         if assistant_text:
             self._history.append({"role": "assistant", "content": assistant_text})
@@ -816,11 +822,13 @@ class AnthropicProvider(ModelProvider):
 
         context_pct: float | None = None
         if input_tokens > 0:
-            # ``override=`` only — see the note at the streaming gauge above.
-            ctx = _model_window(
-                model or self._model, _DEFAULT_CONTEXT_WINDOW, override=self.context_window
+            # ``override=`` only, and ``sent_chars`` — see the note at the streaming
+            # gauge above for both.
+            context_pct = self._gauge.measure(
+                reported_tokens=input_tokens,
+                sent_chars=prompt_text_chars(request_kwargs["messages"]),
+                window=resolved_context_window(model or self._model, override=self.context_window),
             )
-            context_pct = (input_tokens / ctx) * 100
 
         yield LLMEvent(
             kind=EVENT_COMPLETE,

@@ -23,7 +23,19 @@ The denominator is the other half. ``/api/ps`` publishes the window Ollama loade
 model WITH, which is the number nothing else in the stack has: the shared table holds
 ARCHITECTURAL maxima and ``/api/show`` returns that same architectural figure (262144 for
 this model, against 32768 actually served and 128000 in the table). The probe is
-vendor-specific, so it lives in the app; core keeps only the conservative floor.
+vendor-specific, so it lives in the app; core keeps only the conservative floor — and the
+floor stays on the char-ESTIMATE path, because a *measured* gauge may not divide by it
+(#3406: 16387 tokens over the 4096 floor displays 400%). A probe that answers nothing now
+yields an UNMEASURED gauge rather than a fabricated denominator.
+
+The numerator is the third half. ``prompt_eval_count`` is what Ollama ACCEPTED, and past
+the served window it truncates silently and reports half the window forever, so this gauge
+peaked at 98.39% and then read a flat 50.01% for every larger prompt (#3405). The reading is
+now judged ORDINALLY against the largest prompt this binding already had measured — a
+provider handed a larger prompt cannot honestly report fewer input tokens — so it never
+falls as the context grows. See ``tests/test_context_gauge_properties.py`` for the four
+invariants (and for the live measurement that ruled out a chars-per-token rule instead), and
+``TestTheNumeratorDoesNotCollapse`` below for the measured curve through this provider.
 """
 
 from __future__ import annotations
@@ -49,6 +61,12 @@ _MEASURED_SERVED_WINDOW = 32_768
 _MEASURED_TRUTH_PCT = 81.43
 #: What the table would have said for the same model — the wrong denominator.
 _TABLE_WINDOW = 128_000
+
+#: A short outbound prompt, for the cases that are about the DENOMINATOR. The gauge also
+#: reads the prompt it sent, but only to compare it against the largest prompt the same
+#: gauge already measured — and each case below builds a fresh provider, so a two-character
+#: prompt has nothing to be judged against and cannot influence a denominator assertion.
+_MESSAGES = [{"role": "user", "content": "hi"}]
 
 
 @pytest.fixture()
@@ -79,7 +97,7 @@ class TestTheGaugeStartsUnmeasured:
     @pytest.mark.asyncio
     async def test_zero_input_tokens_stays_unmeasured(self, provider_module):
         provider = _provider(provider_module)
-        assert await provider._context_pct("gemma4:12b", 0) is None
+        assert await provider._context_pct("gemma4:12b", 0, _MESSAGES) is None
 
 
 class TestTheServedWindowResolution:
@@ -135,13 +153,25 @@ class TestTheServedWindowResolution:
         assert len(calls) == 1
 
     @pytest.mark.asyncio
-    async def test_an_empty_ps_falls_back_to_the_conservative_floor(self, provider_module):
+    async def test_an_empty_ps_resolves_no_window_at_all(self, provider_module):
         """🪤 ``/api/ps`` lists only LOADED models and returns ``{"models": []}`` until one
-        is warm. The floor, NOT the table: guessing low compacts early, guessing high
-        truncates the prompt with no exception at all."""
+        is warm — and the answer is NOTHING, not the table and not the floor.
+
+        This asserted ``LOCAL_SERVED_CONTEXT_WINDOW`` until #3406. Neither number was
+        defensible as a DISPLAYED measurement: the table's 262144 understates usage 8x
+        (silent truncation with no exception to catch), and the 4096 floor overstates it —
+        the measured 16387-token report divided by it displays 400%. ``model_windows``
+        makes that split itself: the floor is for the char estimate, where erring toward
+        early compaction is cheap, and ``runtime._estimated_context_pct`` reaches it
+        precisely BECAUSE this returns ``None``."""
         provider = _provider(provider_module)
         provider._client.get = _fake_ps([])
-        assert await provider._served_window("gemma4:12b") == LOCAL_SERVED_CONTEXT_WINDOW
+        assert await provider._served_window("gemma4:12b") is None
+        # The paired half: unresolvable window ⇒ no reading, whatever the report was.
+        assert await provider._context_pct("gemma4:12b", 26_682, _MESSAGES) is None
+        # …and the control that keeps the assertion above from being vacuous — the floor
+        # is still what it was, it simply is not this function's answer any more.
+        assert LOCAL_SERVED_CONTEXT_WINDOW == 4096
 
     @pytest.mark.asyncio
     async def test_a_failing_probe_never_breaks_the_turn(self, provider_module):
@@ -151,7 +181,9 @@ class TestTheServedWindowResolution:
             raise OSError("connection reset")
 
         provider._client.get = _boom
-        assert await provider._served_window("gemma4:12b") == LOCAL_SERVED_CONTEXT_WINDOW
+        # Never raises; an unavailable probe must not be able to cost a turn. The turn
+        # completes with an unmeasured gauge, which is a state every consumer models.
+        assert await provider._served_window("gemma4:12b") is None
 
 
 class TestTheMeasuredPercentage:
@@ -160,7 +192,7 @@ class TestTheMeasuredPercentage:
         """The regression, in the numbers it was measured at: 26682 tokens against the
         32768 window ``/api/ps`` reported is 81.43%, and the gauge read 0.0."""
         provider = _provider(provider_module, context_window=_MEASURED_SERVED_WINDOW)
-        pct = await provider._context_pct("gemma4:12b", _MEASURED_PROMPT_TOKENS)
+        pct = await provider._context_pct("gemma4:12b", _MEASURED_PROMPT_TOKENS, _MESSAGES)
         assert pct == pytest.approx(_MEASURED_TRUTH_PCT, abs=0.01)
 
     @pytest.mark.asyncio
@@ -169,8 +201,8 @@ class TestTheMeasuredPercentage:
         the table's architectural number scores under the 70% gate, so compaction would
         still never fire even after the numerator was fixed."""
         provider = _provider(provider_module, context_window=_TABLE_WINDOW)
-        pct = await provider._context_pct("gemma4:12b", _MEASURED_PROMPT_TOKENS)
-        assert pct < 70.0
+        pct = await provider._context_pct("gemma4:12b", _MEASURED_PROMPT_TOKENS, _MESSAGES)
+        assert pct is not None and pct < 70.0
 
 
 class TestTheGaugeReachesTheCompactionGate:
@@ -198,6 +230,78 @@ class TestTheGaugeReachesTheCompactionGate:
         fabricated: float | None = 0.0
         assert fabricated < _COMPACT_THRESHOLD_PCT, "it fails the threshold"
         assert fabricated is not None, "and it is not None, so the backstop never runs"
+
+
+class TestTheNumeratorDoesNotCollapse:
+    """#3405, driven through THIS provider — the one a UI-configured Ollama binding gets.
+
+    The whole measured sweep, live on Ollama 0.34.2 / ``gemma4:12b`` against its 32768-token
+    served window. Every ``(chars, prompt_eval_count)`` pair is measured, not modelled: the
+    reported count rises with the prompt to 32,241 tokens and then collapses to a flat
+    16,387 (half the served window, plus three) for every larger prompt, with HTTP 200 and
+    no exception. Dividing that by the window read 50.01% — half empty for a context that
+    was full and shedding input — so a session that stepped over the 120k–145k band between
+    two turns never saw a reading above 70% again.
+    """
+
+    _SWEEP = [
+        (998, 241),
+        (74_978, 16_681),
+        (99_998, 22_241),
+        (119_978, 26_681),
+        (144_998, 32_241),
+        (149_993, 16_387),
+        (283_598, 16_387),
+        (500_003, 16_387),
+    ]
+
+    @pytest.mark.asyncio
+    async def test_the_reading_never_falls_as_the_prompt_grows(self, provider_module):
+        provider = _provider(provider_module, context_window=_MEASURED_SERVED_WINDOW)
+        readings = [
+            await provider._context_pct(
+                "gemma4:12b", tokens, [{"role": "user", "content": "x" * chars}]
+            )
+            for chars, tokens in self._SWEEP
+        ]
+        assert all(r is not None for r in readings), readings
+        assert readings == sorted(readings), f"the gauge FELL as the prompt grew: {readings}"
+
+    @pytest.mark.asyncio
+    async def test_the_rising_limb_is_still_reported_as_measured(self, provider_module):
+        """The fix must not buy monotonicity by flattening the honest readings: the pair
+        that brackets the cliff has to stay 81.4% / 98.4%, to the measured figures."""
+        provider = _provider(provider_module, context_window=_MEASURED_SERVED_WINDOW)
+        for chars, tokens in ((119_978, 26_681), (144_998, 32_241)):
+            pct = await provider._context_pct(
+                "gemma4:12b", tokens, [{"role": "user", "content": "x" * chars}]
+            )
+            assert pct == pytest.approx(tokens / _MEASURED_SERVED_WINDOW * 100)
+
+    @pytest.mark.asyncio
+    async def test_a_truncated_turn_reads_full_and_crosses_the_gate(self, provider_module):
+        """The consequence, which is the point: the regime that most needs compaction is an
+        unbounded, still-growing history, and that is exactly where the gauge used to park
+        at a comfortable 50% and fire nothing.
+
+        Driven as a SEQUENCE because the detection is ordinal — the pre-cliff turn is what
+        the collapsed one is judged against, and it is also the control: the same provider,
+        the same window, and a reading that is a plain measurement right up to the cliff."""
+        from personalclaw.agents.native.runtime import NativeAgentRuntime
+
+        threshold = NativeAgentRuntime._COMPACT_THRESHOLD_PCT
+        provider = _provider(provider_module, context_window=_MEASURED_SERVED_WINDOW)
+        honest = await provider._context_pct(
+            "gemma4:12b", 32_241, [{"role": "user", "content": "x" * 144_998}]
+        )
+        assert honest == pytest.approx(32_241 / _MEASURED_SERVED_WINDOW * 100)
+        assert honest is not None and honest < 100.0, "the rising limb is not clamped"
+
+        collapsed = await provider._context_pct(
+            "gemma4:12b", 16_387, [{"role": "user", "content": "x" * 500_003}]
+        )
+        assert collapsed == 100.0
+        assert collapsed >= threshold
 
 
 def _fake_ps(models: list[dict], calls: list[int] | None = None):
