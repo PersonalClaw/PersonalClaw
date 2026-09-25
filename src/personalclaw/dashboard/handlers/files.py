@@ -32,6 +32,7 @@ from personalclaw.security import (
     is_system_path,
     redact_credentials,
     redact_exfiltration_urls,
+    system_subtrees,
 )
 from personalclaw.validation import (
     FILE_READ_SCHEMA,
@@ -51,19 +52,63 @@ _MAX_INLINE_READ_BYTES = 50 * 1024 * 1024
 # own code, never system internals. is_sensitive_path() only covers ~/credential
 # dirs, so this is the complementary system-root guard.
 #
-# The subtree list is sourced from personalclaw.security (the single source of truth
-# shared with the Code workspace validation) so the surfaces can't drift. NOTE: this
-# is a SUBTREE-only check (no mount/temp PARENT blocking, unlike security.is_system_path)
-# — the directory BROWSER + @-search must be able to navigate INTO /Volumes, /var, /tmp
-# to reach a real workspace beneath them. create-dir/workspace-bind use the stricter
-# full is_system_path (parents blocked) since you never create/bind AT a bare parent.
-from personalclaw.security import _SYSTEM_SUBTREES as _SYSTEM_ROOTS  # noqa: E402
+# The subtree list is read through personalclaw.security.system_subtrees() (the single source
+# of truth shared with the Code workspace validation, including its carve-out for the running
+# account's own home) so the surfaces can't drift. NOTE: this is a SUBTREE-only check (no
+# mount/temp PARENT blocking, unlike security.is_system_path) — the directory BROWSER +
+# @-search must be able to navigate INTO /Volumes, /var, /tmp to reach a real workspace beneath
+# them. create-dir/workspace-bind use the stricter full is_system_path (parents blocked) since
+# you never create/bind AT a bare parent.
 
 
 def _is_system_root(path: str) -> bool:
     """True iff *path* is the filesystem root or sits under a protected system root
     (an already realpath'd absolute path is expected)."""
-    return path == "/" or any(path == r or path.startswith(r + os.sep) for r in _SYSTEM_ROOTS)
+    return path == "/" or any(path == r or path.startswith(r + os.sep) for r in system_subtrees())
+
+
+#: What each directory-picker refusal says: the reason ``sel()`` records → the stable ``reason`` a
+#: client branches on, and what the location IS, in words. One table, so the refusal browse-dirs
+#: shows and the ones create-dir gives cannot drift apart.
+_PROTECTED_LOCATION: dict[str, tuple[str, str]] = {
+    "sensitive path": ("sensitive_path", "a location that holds credentials"),
+    "system root": ("system_root", "a protected system location"),
+}
+
+
+def _picker_refusal(path: str) -> str | None:
+    """Why the directory picker will not open *path* (an already-realpath'd dir), or None.
+
+    Exactly what ``browse-dirs`` refuses. ``create-dir`` asks the same question of the PARENT, so a
+    folder can only be created where the picker could have navigated to.
+    """
+    # Late-bound like the two handlers' own import, so a patched security module reaches it too.
+    from personalclaw.security import is_sensitive_path  # noqa: F811
+
+    if is_sensitive_path(path):
+        return "sensitive path"
+    if _is_system_root(path):
+        return "system root"
+    return None
+
+
+def _protected_location(refused: str, path: str, sel_reason: str) -> web.Response:
+    """The 403 for a protected location, naming it and saying why.
+
+    🔴 This answered a bare ``{"error": "Access denied"}`` — no path, no reason — and the workspace
+    picker rendered exactly that under an empty listing it had never read, so a user whose first
+    browse was refused had nothing to act on; the only record of what was refused was a
+    ``security_events.jsonl`` row they cannot see. ``path`` and ``reason`` carry the same two facts
+    for a client that branches on them. Echoing the path discloses nothing: it is the caller's own
+    request, resolved — the form the 404 branch of browse-dirs already returns.
+    """
+    reason, what = _PROTECTED_LOCATION[sel_reason]
+    return json_error(
+        "path_protected",
+        message=f"{refused} — it's {what}.",
+        status=403,
+        error_extra={"path": path, "reason": reason},
+    )
 
 
 def _sel():
@@ -3136,26 +3181,18 @@ async def api_browse_dirs(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "Can't access that directory (permission denied)", "path": base}, status=400
         )
-    if is_sensitive_path(base):
+    # Credential dirs and system roots — the directory browser is for picking project/workspace
+    # folders, not enumerating secrets or system internals.
+    refusal = _picker_refusal(base)
+    if refusal:
         _sel().log_api_access(
             caller=caller,
             operation="browse_dirs",
             outcome="denied",
             resources=base,
-            error="sensitive path",
+            error=refusal,
         )
-        return web.json_response({"error": "Access denied"}, status=403)
-    # Block system roots — directory browser is for picking project/workspace
-    # folders, not enumerating system internals.
-    if _is_system_root(base):
-        _sel().log_api_access(
-            caller=caller,
-            operation="browse_dirs",
-            outcome="denied",
-            resources=base,
-            error="system root",
-        )
-        return web.json_response({"error": "Access denied"}, status=403)
+        return _protected_location(f"Can't open {base}", base, refusal)
     skip = {
         ".git",
         "node_modules",
@@ -3218,7 +3255,7 @@ async def api_create_dir(request: web.Request) -> web.Response:
             resources=target,
             error="sensitive path",
         )
-        return web.json_response({"error": "Access denied"}, status=403)
+        return _protected_location(f"Can't create {target}", target, "sensitive path")
     # Don't create a workspace/project folder under a system root. Use the FULL
     # is_system_path (the same bind-semantics the Code workspace validation uses):
     # it also blocks the bare mount/temp PARENTS (/, /Volumes, /var, /tmp) — you'd
@@ -3233,12 +3270,31 @@ async def api_create_dir(request: web.Request) -> web.Response:
             resources=target,
             error="system root",
         )
-        return web.json_response({"error": "Access denied"}, status=403)
+        return _protected_location(f"Can't create {target}", target, "system root")
+    # 🔴 Only where the picker could have navigated to. The folder is created inside `parent`, so
+    # `parent` must be a folder browse-dirs would open. This used to be an ASSUMPTION ("the picker
+    # always creates inside a dir it just navigated to") and it failed: with its first browse
+    # refused, the picker built `'' + '/' + name`, and this route answered 200 for `/q4-launch` — a
+    # new root-owned folder at the top of the disk, then bound as the project's workspace. Asking
+    # the parent the browse question makes the server hold the assumption instead. Today that adds
+    # exactly one refusal the two checks above cannot make — a child of `/` — which is never what a
+    # user means: browse-dirs refuses `/` itself, so no picker was ever looking at it.
+    parent = os.path.dirname(target)
+    parent_refusal = _picker_refusal(parent)
+    if parent_refusal:
+        _sel().log_api_access(
+            caller=caller,
+            operation="create_dir",
+            outcome="denied",
+            resources=target,
+            error=f"unbrowsable parent ({parent_refusal})",
+        )
+        return _protected_location(f"Can't create a folder in {parent}", parent, parent_refusal)
     # An over-long leaf name reaches `mkdir` as `ENAMETOOLONG` and surfaced as a 500 (#652).
     # Checked here rather than picked up from `_validate_dashboard_path`, because this endpoint
     # deliberately does NOT use it: it binds an arbitrary project/workspace folder outside the
-    # dashboard allowlist, guarded by `is_sensitive_path` + `is_system_path` instead. AFTER
-    # those two, so a denial never depends on how long the name happens to be.
+    # dashboard allowlist, guarded by `is_sensitive_path` + `is_system_path` + the parent rule
+    # instead. AFTER those three, so a denial never depends on how long the name happens to be.
     name_refusal = _reject_name(os.path.basename(target))
     if name_refusal:
         return json_error("invalid_name", message=name_refusal, status=400)
@@ -3247,9 +3303,8 @@ async def api_create_dir(request: web.Request) -> web.Response:
     # Create exactly ONE new leaf folder inside an EXISTING parent — not a chain.
     # makedirs() would silently materialize every missing ancestor, so a name like
     # "foo/bar/baz" (or a mistyped parent) built a surprise nested tree and buried the
-    # workspace at the deepest level. The picker always creates inside a dir it just
-    # navigated to, so the parent legitimately exists; require it.
-    parent = os.path.dirname(target)
+    # workspace at the deepest level. The parent is one the picker can open (checked
+    # above); it must also exist.
     if not os.path.isdir(parent):
         return web.json_response(
             {

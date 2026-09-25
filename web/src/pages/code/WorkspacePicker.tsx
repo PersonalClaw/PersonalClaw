@@ -7,6 +7,9 @@ import { Button } from '../../ui/Button'
 import { unavailableWhen, BUSY_REASON } from '../../ui/unavailable'
 import { api } from '../../lib/api'
 
+/** Why "New folder here" is off until a folder has actually been opened. */
+const NO_FOLDER_OPEN = 'Open a folder first — the new folder is created inside the one you’re viewing'
+
 /** Filesystem navigator for choosing a Code project's workspace directory.
  *
  *  Brownfield: pick an EXISTING directory (the codebase to work in). Greenfield:
@@ -27,7 +30,9 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
   onClose: () => void
 }) {
   const canCreate = mode === 'greenfield' || !!allowCreate
-  const [path, setPath] = useState('')          // current dir being browsed
+  // The dir being browsed — set ONLY by a browse that succeeded, so '' means no listing has been
+  // read yet. Everything that acts on "here" is gated on it (see `createFolder`).
+  const [path, setPath] = useState('')
   const [parent, setParent] = useState('')
   const [dirs, setDirs] = useState<{ name: string; path: string; is_repo?: boolean }[]>([])
   // Whether the CURRENT dir is inside a git repo — surfaced near "Use this folder" so a
@@ -35,7 +40,14 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
   // means no diff/history; see the cockpit Changes tab).
   const [inRepo, setInRepo] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  // Two errors, because they answer two different actions and clear on different ones. A refused
+  // BROWSE is about where the picker is — it stands until the next navigation, and typing a folder
+  // name is no answer to it. A failed CREATE is about the name — editing the name clears it.
+  // 🔴 They used to share one slot that the name field cleared on every keystroke, so a refused
+  // first browse ("Access denied") vanished the moment the user started typing, and nothing on
+  // screen warned them when "Create + use" then built its target from an empty current path.
+  const [browseError, setBrowseError] = useState<string | null>(null)
+  const [createError, setCreateError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   // In-flight guard for the folder-create POST: createDir is async, so without it a
@@ -65,7 +77,7 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
   // The bar belongs to the user once they touch it — see `keepTypedDraft` below.
   const draftTouched = useRef(false)
   const browse = useCallback(async (to?: string, from?: string, keepTypedDraft = false): Promise<string | null> => {
-    setLoading(true); setError(null)
+    setLoading(true); setBrowseError(null); setCreateError(null)
     try {
       const r = await api.browseDirs(to)
       setPath(r.path); setParent(r.parent); setDirs(r.dirs); setFilter(''); setInRepo(!!r.in_repo)
@@ -77,7 +89,9 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
       if (!(keepTypedDraft && draftTouched.current)) { setPathDraft(r.path); draftTouched.current = false }
       return r.path
     } catch (e) {
-      setError((e as Error).message || 'Could not open that directory')
+      // Verbatim: a refusal names the folder and the reason (browse-dirs' `path_protected`), which
+      // matters most when the refused folder is the default one the user never typed.
+      setBrowseError((e as Error).message || 'Could not open that directory')
       // Snap the path bar back to where we still are, so it doesn't keep showing the
       // rejected path while the list below shows the prior (valid) directory.
       if (from !== undefined) setPathDraft(from)
@@ -121,6 +135,11 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
 
   async function createFolder() {
     if (submitting) return
+    // 🔴 Never build a target from an empty base. With no folder open, `${''}/${name}` is `/name` —
+    // measured: `POST /api/create-dir {"path": "/q4-launch"}` → 200, a root-owned folder at the top
+    // of the disk that the project was then bound to. The controls are off in this state; this is
+    // the function refusing on its own account rather than trusting that they are.
+    if (!path) { setCreateError(NO_FOLDER_OPEN); return }
     const name = newName.trim()
     if (!name) return
     // "New folder here" must create exactly ONE folder in the current dir. A name
@@ -128,7 +147,7 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
     // workspace at the deepest level; '.'/'..' escape the current dir. Reject those
     // with an inline reason instead of a surprising directory chain.
     if (/[/\\]/.test(name) || name === '.' || name === '..') {
-      setError('Folder name can’t contain slashes — it’s created here. Navigate into a folder first if you want it nested.')
+      setCreateError('Folder name can’t contain slashes — it’s created here. Navigate into a folder first if you want it nested.')
       return
     }
     const target = `${path.replace(/\/$/, '')}/${name}`
@@ -140,10 +159,10 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
       // form as workspace_dir reintroduces the exact /tmp-vs-/private/tmp mismatch the
       // cockpit then has to paper over (canonPath/rel/wsBase). Resolve at the source.
       const r = await api.createDir(target)
-      setCreating(false); setNewName(''); setError(null)
+      setCreating(false); setNewName(''); setCreateError(null)
       onPick(r?.path || target)  // greenfield: the freshly-created dir IS the workspace
     } catch (e) {
-      setError((e as Error).message || 'Could not create the folder')
+      setCreateError((e as Error).message || 'Could not create the folder')
     } finally {
       setSubmitting(false)
     }
@@ -210,6 +229,11 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
         <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-outline-variant/40">
           {loading ? (
             <div className="flex h-40 items-center justify-center"><Loader2 size={20} className="animate-spin text-on-surface-low" /></div>
+          ) : !path ? (
+            // No browse has succeeded, so there is no listing to describe. "No sub-folders here."
+            // used to render here — an empty state for a folder that was never read, under a
+            // refusal of that same folder.
+            <div data-type="body-s" className="flex h-40 items-center justify-center px-4 text-center text-on-surface-low">No folder is open. Type a folder’s path above and press Enter.</div>
           ) : dirs.length === 0 ? (
             <div data-type="body-s" className="flex h-40 items-center justify-center px-4 text-center text-on-surface-low">No sub-folders here.</div>
           ) : shownDirs.length === 0 ? (
@@ -248,26 +272,26 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
           )}
         </div>
 
-        {error && (
-          <div role="alert" data-type="body-s" className="rounded-lg px-3 py-2"
-            style={{ background: 'color-mix(in srgb, var(--color-danger) 8%, transparent)', color: 'var(--color-danger)' }}>{error}</div>
-        )}
+        {browseError && <PickerError message={browseError} />}
+        {createError && <PickerError message={createError} />}
 
-        {/* create a new folder here (greenfield always; brownfield when allowCreate) */}
+        {/* create a new folder here (greenfield always; brownfield when allowCreate) — and only once
+            a folder is open, because "here" is the folder the listing shows */}
         {canCreate && (
           creating ? (
             <div className="flex items-center gap-2">
-              <input autoFocus value={newName} onChange={(e) => { setNewName(e.target.value); if (error) setError(null) }}
-                onKeyDown={(e) => { if (e.key === 'Enter') createFolder(); else if (e.key === 'Escape' && !submitting) { setCreating(false); setError(null) } }}
+              <input autoFocus value={newName} onChange={(e) => { setNewName(e.target.value); if (createError) setCreateError(null) }}
+                onKeyDown={(e) => { if (e.key === 'Enter') createFolder(); else if (e.key === 'Escape' && !submitting) { setCreating(false); setCreateError(null) } }}
                 disabled={submitting} placeholder="new-project-folder"
                 data-type="body-s" className="h-9 min-w-0 flex-1 rounded-md bg-surface-high px-2.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-60" />
-              <Button size="sm" onClick={createFolder} loading={submitting} disabled={!newName.trim() || submitting}
-                disabledReason={!newName.trim() ? 'Enter a folder name first' : undefined}><Check size={14} /> Create + use
+              <Button size="sm" onClick={createFolder} loading={submitting} disabled={!path || !newName.trim() || submitting}
+                disabledReason={!path ? NO_FOLDER_OPEN : !newName.trim() ? 'Enter a folder name first' : undefined}><Check size={14} /> Create + use
               </Button>
             </div>
           ) : (
             <button type="button" onClick={() => setCreating(true)}
-              data-type="body-s" className="inline-flex items-center gap-1.5 self-start rounded-md px-2 py-1.5 text-on-surface-low hover:text-on-surface">
+              {...unavailableWhen(!path, NO_FOLDER_OPEN)}
+              data-type="body-s" className="inline-flex items-center gap-1.5 self-start rounded-md px-2 py-1.5 text-on-surface-low hover:text-on-surface aria-disabled:opacity-40 aria-disabled:hover:text-on-surface-low aria-disabled:cursor-default">
               <FolderPlus size={15} /> New folder here
             </button>
           )
@@ -300,5 +324,13 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
         </div>
       </div>
     </Modal>
+  )
+}
+
+/** One refusal line. The picker can hold two at once — a refused navigation and a failed create. */
+function PickerError({ message }: { message: string }) {
+  return (
+    <div role="alert" data-type="body-s" className="rounded-lg px-3 py-2"
+      style={{ background: 'color-mix(in srgb, var(--color-danger) 8%, transparent)', color: 'var(--color-danger)' }}>{message}</div>
   )
 }

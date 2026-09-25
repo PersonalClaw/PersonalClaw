@@ -27,6 +27,34 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A reload on first-run setup's "All set" recap no longer says `Chat model — set up later in Settings` for a model that is bound.** The recap painted before `GET /api/onboarding` answered and read the missing answer as "nothing set up", then swapped in the real model a moment later. `Nothing tried yet` flashed the same way. Until the read lands, both lines show their subject with a spinner and make no claim.
 - **One test that boots a gateway no longer makes a later test report a bundled app's name, a red whose whole cost was that it looked like an app name leaking into a core payload.** `local_models.registry` keeps two module-level dicts keyed by app name, and its writer is a **gateway boot path**: `ModelTypeHandler._register_local` enrols every `type: model` app once for the gateway's lifetime and deliberately never unregisters, so a single test that boots a dashboard leaves every native model app enrolled for the rest of that worker's life. It was the fifth process-global provider registry in the suite and the only one with no snapshot-and-restore guard, beside four that carry one and each document a measured cross-test failure. Deterministic serially, no xdist needed once the order is forced — `pytest tests/test_gateway_boot_provider_sync.py tests/test_onboarding_state.py`: `test_boot_replays_config_providers_before_any_startup_hook` enrols the native `bundled-chat` app, and OU-14's download-offer test then registers a fake local provider under a name belonging to no app in the tree, asserts `GET /api/onboarding` names **it**, and gets `bundled-chat` — because the route walks the registry in registration order and the leaked app was already there. Same signature on CI shard 4: one failure beside 8906 passes, on a diff that cannot own it. **The diagnosis was the expensive part, not the red:** a core payload naming an app is exactly the shape of a provider-boundary violation, and the tempting repair — expect the app's name — would have deleted the only assertion protecting that boundary. The route names no app; the registry did. `conftest._restore_local_model_registry` now snapshots and restores both dicts around every test, and OU-14's test additionally **owns** the registry contents it measures, since they are its input rather than the suite's, and requires the offer to name each of **two** unrelated provider names in turn — so neither a route that hard-coded an app nor one that could only ever answer with the first provider registered can pass it.
 - **An assistant name with an accent, an apostrophe or a non-Latin script is saved as typed, and "Saved" no longer sits beside a name the server did not store.** Settings → Account → Assistant name: `Zoë` saved as `Zo`, `Chloé's Aide` as `Chlos Aide`, and a name written wholly in Devanagari, Han or Arabic was erased to nothing and read back as the default, PersonalClaw — while the panel showed "Saved" beside what you typed, because it set the field from its own draft and discarded the server's answer (which already carried the mangled name). The name is interpolated into every system prompt, so the guard that did this exists for a reason; it now keeps what can break the prompt or the template engine out — braces, markdown and HTML punctuation, other symbols and emoji, control characters, and invisible format characters such as bidi overrides and zero-width spaces — by an allowlist of Unicode letters, marks, digits and spaces from any script plus `'` `’` `-` `.` `_`, instead of an ASCII one. **What changes for you:** a save carrying one of those characters is now **refused** with a message naming it (`PATCH /api/config/personalclaw` answers 400 for `agent.bot_name`, and `personalclaw config set agent.bot_name` exits 1) instead of being stripped and reported as saved; the field then shows exactly what the server stored. A name saved before this change reads back unchanged — the new allowlist contains the old one — and `load()` still strips the same characters from a hand-edited `config.json`.
+- **The workspace picker could create your project folder at the root of the disk.** When the
+  picker's first look at a folder was refused, it showed "No sub-folders here." for a folder it had
+  never read, an "Access denied" that named no folder and no reason — and that disappeared as soon
+  as you typed — and it left "New folder here" working with no folder open. Naming a folder and
+  pressing **Create + use** then created it directly under `/` (reproduced three times: `/q4-launch`
+  and `/press-kit`) and bound the project to it. Now a refusal names the folder and says why
+  ("Can't open / — it's a protected system location."), and stays on screen while you type; the
+  list says no folder is open instead of claiming it is empty; and "New folder here" is unavailable,
+  with the reason, until a folder is actually open. The server enforces the same rule on its own: a
+  new folder can only be created inside a folder the picker is allowed to open, so a request to
+  create one directly under `/` is refused however it arrives. The refusal is a structured error
+  (`path_protected`, with `path` and `reason`) where it used to be a bare "Access denied".
+
+### Security
+
+- **A gateway running as root can now use its own home directory as a workspace — and its
+  credentials under it stay refused.** Behaviour change to a security control: the superuser's
+  home (`/root`, or `/var/root` on macOS) was on the list of system folders PersonalClaw never
+  browses, creates in, or binds as a workspace, for every account. That is still true for every
+  account except root itself. When the gateway runs **as** root with that folder as its home — a
+  VPS, an LXC container, a `pip install` into a plain Python image — the folder is now treated
+  exactly like any user's home: the workspace picker opens it, a project or loop can be bound to a
+  folder inside it, and a terminal, file search or pack scan can start there. What protects a home
+  still protects it: `.ssh`, `.aws`, `.gnupg` and the other credential locations inside it are
+  refused as before, and the home itself still cannot be a project's write target. Before this, a
+  root gateway refused its own home everywhere — including as the picker's default location, which
+  is how the workspace-picker bug under Fixed was reached. The published container image runs as a
+  non-root user and is not affected either way.
 
 ## [0.2.0] — 2026-09-23
 

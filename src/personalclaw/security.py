@@ -392,14 +392,15 @@ def is_sensitive_path(path_str: str) -> bool:
 
 # OS-managed roots that must never be created into / used as a workspace. Two tiers:
 #   _SYSTEM_SUBTREES — the whole tree is off-limits (/etc, /usr, /System, …), children
-#                      included.
+#                      included — except the running account's own home (_SUPERUSER_HOMES).
 #   _SYSTEM_PARENTS  — only the bare dir is off-limits; children are legitimate
 #                      (/Volumes/<disk>/repo, a macOS /private/var/folders/<tmp>, /var/<x>).
 # macOS realpaths /etc → /private/etc, /var → /private/var; callers resolve the path
 # BEFORE this check, so the /private/* canonical forms are included. /private/var is a
 # PARENT (not a subtree) because macOS user temp dirs (incl. pytest tmp_path) live under
-# /private/var/folders. Single source of truth — both the Code workspace validation and
-# the create-dir / browse-dirs handlers call this so the surfaces can never drift.
+# /private/var/folders. Single source of truth — the Code workspace validation and the
+# create-dir / browse-dirs handlers all read the subtrees through system_subtrees(), so the
+# surfaces can never drift.
 _SYSTEM_SUBTREES: tuple[str, ...] = (
     "/etc",
     "/usr",
@@ -421,6 +422,26 @@ _SYSTEM_SUBTREES: tuple[str, ...] = (
     "/private/usr",
     "/private/var/root",
 )
+#: The superuser's home on each platform — ``/root`` on Linux, ``/var/root`` (realpath
+#: ``/private/var/root``) on macOS. Both sit in :data:`_SYSTEM_SUBTREES`, and for an ordinary
+#: gateway that is exactly right: it is SOMEONE ELSE's home, and nothing else guards it, because
+#: :func:`is_sensitive_path` resolves its credential entries against the RUNNING account's home —
+#: for a gateway running as ``alice``, ``/root/.ssh`` is not a credential path at all.
+#:
+#: 🔴 For a gateway running AS root (a VPS, an LXC container, ``pip install`` into a plain Python
+#: image) the same entry refused the account ITS OWN home. Measured in a real browser on a fresh
+#: container: the workspace picker's default location, ``~``, answered 403, and the picker went on
+#: to create the user's project folder at the filesystem root. There the entry protected nothing
+#: the home-keyed guards did not already cover: ``/root/.ssh`` is ``Path.home()/.ssh``, refused by
+#: :func:`is_sensitive_path` (and every file route that funnels through it), and the OS sandbox
+#: lays its credential masks over that same home. Its only effect was the asymmetry —
+#: ``/home/alice`` is browsable for alice, ``/root`` was never browsable for root.
+#:
+#: So :func:`system_subtrees` drops the entry that IS the running account's home. It keys on the
+#: same ``Path.home()`` those guards resolve against, which is the invariant that makes this safe:
+#: the tree let in is, by construction, the tree whose credentials they cover. Only these entries
+#: can be let in — a ``$HOME`` that points into ``/usr`` or ``/etc`` unlocks nothing.
+_SUPERUSER_HOMES: frozenset[str] = frozenset({"/root", "/private/var/root"})
 _SYSTEM_PARENTS: tuple[str, ...] = (
     "/",
     "/Volumes",
@@ -433,6 +454,24 @@ _SYSTEM_PARENTS: tuple[str, ...] = (
     "/private/tmp",
     "/tmp",
 )
+
+
+def system_subtrees() -> tuple[str, ...]:
+    """The whole-tree system roots off-limits to THIS process: :data:`_SYSTEM_SUBTREES`, minus the
+    superuser's home when it is the running account's own (see :data:`_SUPERUSER_HOMES`).
+
+    Resolved per call, like :func:`is_sensitive_path`'s home, so both always agree on which home
+    is "yours". Fails CLOSED: a home that cannot be determined exempts nothing.
+    """
+    try:
+        own_home = str(Path.home().resolve()).casefold()
+    except (OSError, ValueError, RuntimeError):
+        return _SYSTEM_SUBTREES
+    return tuple(
+        root
+        for root in _SYSTEM_SUBTREES
+        if not (root in _SUPERUSER_HOMES and root.casefold() == own_home)
+    )
 
 
 def is_system_path(path_str: str) -> bool:
@@ -459,7 +498,7 @@ def is_system_path(path_str: str) -> bool:
     resolved_cmp = resolved.casefold()
     if resolved_cmp in {p.casefold() for p in _SYSTEM_PARENTS}:
         return True
-    for root in _SYSTEM_SUBTREES:
+    for root in system_subtrees():
         root_cmp = root.casefold()
         if resolved_cmp == root_cmp or resolved_cmp.startswith(root_cmp + os.sep):
             return True
