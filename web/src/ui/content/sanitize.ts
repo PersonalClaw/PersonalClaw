@@ -57,20 +57,62 @@ const SVG_ATTRS = new Set([
   'xmlns', 'version', 'filter', 'flood-color', 'flood-opacity', 'in', 'in2', 'result',
   'stdDeviation', 'dur', 'values', 'type', 'd', 'patternUnits', 'spreadMethod', 'href',
 ])
-// URL-bearing attrs that must pass the safe-URL check.
-const URL_ATTRS = new Set(['href', 'src', 'xlink:href'])
+// URL-bearing attrs that must pass the safe-URL check. `cite` (<blockquote>, <q>,
+// <del>, <ins>) is a URL attribute too — it is allowed by GLOBAL_ATTRS, so without
+// it here its value would be the one URL in the output that is never checked.
+const URL_ATTRS = new Set(['href', 'src', 'xlink:href', 'cite'])
 
+// Schemes permitted in an allowlisted URL attribute. Everything else —
+// javascript:, vbscript:, blob:, filesystem:, about:, and anything merely
+// unrecognised — is dropped.
+const SAFE_SCHEMES = new Set(['http', 'https', 'mailto', 'tel'])
+// data: is for inline images only. data:text/html is a script-bearing document.
+const SAFE_DATA_URL = /^data:image\/(png|jpe?g|gif|webp|svg\+xml);/
+
+/** Normalise a URL value the way the URL parser does *before* it reads the scheme,
+ *  so this check and the browser agree on where the scheme ends.
+ *
+ *  This is load-bearing, not tidying. The URL spec removes EVERY ASCII tab, LF and
+ *  CR from a URL and strips leading/trailing C0-control-or-space before parsing the
+ *  scheme. So `java<TAB>script:alert(1)` — which `java&#9;script:` in the markup
+ *  delivers as a literal tab, because the HTML parser decodes entities before we
+ *  ever see the value — is the `javascript:` scheme to the DOM, while a scheme regex
+ *  run on the raw text sees no scheme at all. Normalising first is what closes that
+ *  gap; testing first is what opened it.
+ *
+ *  Note `trim()` alone cannot do this: it removes neither interior whitespace nor
+ *  the non-whitespace C0 controls (`\x01`, `\x1b`) that the parser strips at the
+ *  edges.
+ *
+ *  One deliberate deviation from the spec: DEL (\x7f) is stripped at the edges too.
+ *  The parser percent-encodes it instead, but no real URL begins or ends with DEL,
+ *  and this is a fail-closed control.
+ */
+function normalizeUrl(v: string): string {
+  return v
+    .replace(/[\x09\x0a\x0d]/g, '')     // tab/LF/CR: removed ANYWHERE by the parser
+    .replace(/^[\x00-\x20\x7f]+/, '')   // leading C0-control-or-space (and DEL)
+    .replace(/[\x00-\x20\x7f]+$/, '')   // trailing C0-control-or-space (and DEL)
+    .toLowerCase()
+}
+
+/** True only for a URL this sanitizer can positively classify as safe.
+ *
+ *  Fail-closed by construction: there is no "anything else is probably relative"
+ *  branch. A value is safe because it has an allowlisted scheme, or because it has
+ *  no scheme at all — and nothing else reaches a `return true`.
+ *
+ *  A scheme-less value resolves against the app's own base URL. `//host` and `/\host`
+ *  resolve off-origin, which is not an escalation: an absolute http(s) URL is
+ *  allowlisted anyway. What matters is that neither can name a script scheme. */
 function isSafeUrl(v: string): boolean {
-  const s = v.trim().toLowerCase()
+  const s = normalizeUrl(v)
   if (!s) return false
-  // allow relative, anchors, mailto/tel, http(s); allow data:image/* (inline imgs);
-  // block javascript:, vbscript:, data:text/html, and any other scheme.
-  if (s.startsWith('#') || s.startsWith('/') || s.startsWith('./') || s.startsWith('../')) return true
-  if (s.startsWith('mailto:') || s.startsWith('tel:')) return true
-  if (s.startsWith('http://') || s.startsWith('https://')) return true
-  if (/^data:image\/(png|jpe?g|gif|webp|svg\+xml);/i.test(s)) return true
-  if (/^[a-z][a-z0-9+.-]*:/i.test(s)) return false  // any explicit scheme not allowed above
-  return true  // scheme-less relative-ish
+  const scheme = /^([a-z][a-z0-9+.-]*):/.exec(s)
+  if (!scheme) return true          // relative reference: path, #fragment or ?query
+  if (SAFE_SCHEMES.has(scheme[1])) return true
+  if (scheme[1] === 'data') return SAFE_DATA_URL.test(s)
+  return false
 }
 
 function allowedTag(profile: Profile, tag: string): boolean {

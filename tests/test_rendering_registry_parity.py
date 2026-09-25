@@ -112,11 +112,95 @@ def _web_sources() -> list[Path]:
     return [p for p in _WEB.rglob("*.ts*") if p.suffix in {".ts", ".tsx"}]
 
 
+def _code_only(text: str) -> str:
+    """`text` with TS/TSX comment bodies blanked out, string literals preserved.
+
+    🪤 The scans below look for a literal token. A bare ``in`` test counts the token where an
+    author merely NAMES it — and the file that most needs to name ``dangerouslySetInnerHTML`` is
+    the sanitizer's own test suite, which explains in prose that it "injects the output exactly
+    as `dangerouslySetInnerHTML` does". Measured: that docstring plus one inline comment made
+    ``ui/content/sanitize.test.ts`` the sole offender, so the rail reported a sanitizer-bypass
+    risk in the very file proving the sanitizer works.
+
+    A state machine rather than a regex, because both regex shortcuts are wrong here: stripping
+    ``//`` to end-of-line also truncates any line holding a ``https://`` URL, which silently
+    HIDES a real token later on that line (a false negative in a security rail), and stripping
+    ``/* */`` first corrupts a ``"/*"`` inside a string. Tracking the three states — in-string,
+    in-line-comment, in-block-comment — is the only version with neither hole.
+
+    Comment characters are replaced with spaces rather than deleted so reported line numbers and
+    offsets stay faithful to the file as the author wrote it.
+    """
+    out = []
+    i, n = 0, len(text)
+    quote = None  # the open string/template delimiter, or None
+    while i < n:
+        c = text[i]
+        if quote:
+            out.append(c)
+            if c == "\\" and i + 1 < n:  # an escape consumes the next char, quote or not
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            i += 1
+            continue
+        if c in "\"'`":
+            quote = c
+            out.append(c)
+            i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] != "\n":
+                out.append(" ")
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            while i < n and not (text[i] == "*" and i + 1 < n and text[i + 1] == "/"):
+                out.append("\n" if text[i] == "\n" else " ")
+                i += 1
+            out.append("  ")
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def test_the_comment_stripper_hides_prose_without_hiding_code():
+    """Pin `_code_only`, because the rails above are only as honest as it is.
+
+    The two cases that fail with either regex shortcut are pinned by name: a token later on a
+    line that also holds a `https://` URL (a `//`-to-end-of-line strip hides it — a FALSE
+    NEGATIVE in a security rail), and a `"/*"` inside a string literal (a block-comment strip
+    swallows the rest of the file). A stripper that hid real code would make every scan here
+    vacuous, so the negative half matters more than the positive one.
+    """
+    T = "dangerouslySetInnerHTML"
+    hidden = [
+        "// uses dangerouslySetInnerHTML here\nconst a = 1\n",
+        "/* as dangerouslySetInnerHTML does */\nconst a = 1\n",
+    ]
+    for src in hidden:
+        assert T not in _code_only(src), f"prose was not stripped: {src!r}"
+
+    kept = [
+        "<div dangerouslySetInnerHTML={{__html: x}} />\n",
+        "const u = 'https://x.y' // note\nel.dangerouslySetInnerHTML = 1\n",
+        "const u = 'https://x.y'; el.dangerouslySetInnerHTML = 1\n",
+        "const s = 'dangerouslySetInnerHTML'\n",
+        "const s = '/*'; el.dangerouslySetInnerHTML = 1\n",
+    ]
+    for src in kept:
+        assert T in _code_only(src), f"real code was hidden — the rail would go vacuous: {src!r}"
+
+
 def test_no_resurrected_capability_sets():
     """The IFRAME_KINDS / EDITABLE_KINDS dispatch Sets stay deleted (registry owns this)."""
     offenders = []
     for p in _web_sources():
-        if _FORBIDDEN_DECL.search(p.read_text(encoding="utf-8")):
+        if _FORBIDDEN_DECL.search(_code_only(p.read_text(encoding="utf-8"))):
             offenders.append(str(p.relative_to(_WEB)))
     assert not offenders, (
         "content-type capability Sets were re-introduced (the registry's edit/sandbox "
@@ -136,7 +220,7 @@ def test_no_raw_html_injection_outside_registry():
         rel = str(p.relative_to(_WEB))
         if rel in allowed:
             continue
-        if "dangerouslySetInnerHTML" in p.read_text(encoding="utf-8"):
+        if "dangerouslySetInnerHTML" in _code_only(p.read_text(encoding="utf-8")):
             offenders.append(rel)
     assert not offenders, (
         "raw dangerouslySetInnerHTML outside the content registry (sanitizer bypass risk): "
