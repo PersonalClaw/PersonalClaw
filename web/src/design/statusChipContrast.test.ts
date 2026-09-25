@@ -289,27 +289,26 @@ const SCHEME_SUPPLIED = new Set(Object.keys(SCHEMES[0].colors))
  *  of `no_hairline_ink` fails on `DAY_TONE` today. */
 const HAIRLINE_TOKENS = new Set(['--color-outline', '--color-outline-variant'])
 
-/** The one tone this rail does NOT sweep — a MEASURED exclusion with a filed issue, not an omission.
+/** Tones this rail does NOT sweep. ✅ **EMPTY SINCE #3503 — the whole vocabulary is measured.**
  *
- *  `primary` is genuinely under AA and no token substitution fixes it: swept as a chip ink it is
- *  under 4.5 in **42 of 96** cells (12 schemes × 2 modes × 4 resting tiers at 16%), worst 3.4870
- *  (`rose`/light/canvas, `#d22b6f`), and **every one of the 42 is LIGHT mode** — dark passes 48/48.
- *  `--color-primary-emphasis`, the sibling this file's header points at, only reaches 20/96 (worst
- *  3.8997, the same cell). So the fix is a retune of `--color-primary`'s LIGHT value across all 12
- *  schemes, which lands on every button fill, focus ring (`tokens.css` `:focus-visible`), loader and
- *  glow in the product at once — and `schemes.ts` records that those light values were deliberately
- *  chosen to be "≥4.5:1 as white-text button fill AND as text on white", i.e. against the BARE
- *  ground, which is the same mistake the `--color-info` retune corrected. That is an accent-identity
- *  change, not an ink pick, so it is filed as **#3503** rather than smuggled in here.
+ *  It held exactly one entry, `primary`, and the entry was honest: swept as a chip ink it was under
+ *  4.5 in **42 of 96** cells (12 schemes × 2 modes × 4 resting tiers at 16%), worst 3.4870
+ *  (`rose`/light/canvas, `#d22b6f`), and **every one of the 42 was LIGHT mode** — dark passed 48/48.
+ *  `--color-primary-emphasis`, the substitute this file's header used to point at, only reached
+ *  20/96, so no token swap fixed it. The fix was a retune of `--color-primary`'s LIGHT value across
+ *  all 12 schemes — because `schemes.ts` had chosen those values to be "≥4.5:1 as white-text button
+ *  fill AND as text on white", i.e. against the BARE ground, which is the same mistake the
+ *  `--color-info` retune corrected one token over. It landed, with the per-scheme table and the
+ *  measured collateral in `schemes.ts`'s header, and the entry is gone rather than kept: an exclusion
+ *  that no longer excludes anything is a rail guarding nothing.
  *
- *  🔴 IT IS NOT A LOWERED BAR. The floor stays 4.5 for every tone that is swept; this names the one
- *  tone that is not, so "unswept" is legible instead of invisible. The cardinality pin below means a
- *  SECOND entry has to be argued for in review. Widening the sweep to six tones against a threshold
- *  that accommodated 3.4870 would have been strictly worse than four against the real one: it reads as
- *  broader coverage while asserting less. */
-const UNSWEPT_TONES = new Map<string, string>([
-  ['primary', '#3503 — 42/96 cells under AA, worst 3.4870 rose/light/canvas, needs a 12-scheme accent retune'],
-])
+ *  🔴 THE FLOOR WAS NEVER TOUCHED, IN EITHER CYCLE. It is 4.5 for all six tones now. The exclusion
+ *  existed so that "unswept" was legible instead of invisible, never to accommodate 3.4870 — widening
+ *  the sweep to six tones against a lowered threshold would have read as broader coverage while
+ *  asserting less. The mechanism stays in place for the next tone that needs it: `tone_coverage`
+ *  requires swept ∪ unswept to be the whole vocabulary and pins the exclusion count, so an entry can
+ *  only arrive with its measurement and a review conversation. It is now pinned at ZERO. */
+const UNSWEPT_TONES = new Map<string, string>()
 
 function inks(mode: Mode): Array<[string, string]> {
   const out: Array<[string, string]> = []
@@ -340,14 +339,15 @@ describe('the tone vocabulary is closed: every StatusPill tone is swept or named
     }
   })
 
-  it('tone_coverage: swept ∪ unswept is the whole vocabulary, and unswept is exactly one', () => {
+  it('tone_coverage: swept ∪ unswept is the whole vocabulary, and unswept is now EMPTY', () => {
     const swept = Object.keys(PILL_TONES).filter((t) => !UNSWEPT_TONES.has(t))
     expect(swept.sort(), 'tones this file measures against 4.5').toEqual(
-      ['danger', 'info', 'neutral', 'ok', 'warn'],
+      ['danger', 'info', 'neutral', 'ok', 'primary', 'warn'],
     )
-    // Cardinality pinned separately from identity: a second exclusion is a review conversation, and
-    // absorbing it into the set comparison above would let one arrive with the first.
-    expect([...UNSWEPT_TONES.keys()], 'tones deliberately not swept — see UNSWEPT_TONES').toEqual(['primary'])
+    // Cardinality pinned separately from identity: an exclusion is a review conversation, and
+    // absorbing it into the set comparison above would let one arrive silently. #3503 emptied this,
+    // so the pin is ZERO — a tone cannot be quietly dropped out of the sweep again.
+    expect([...UNSWEPT_TONES.keys()], 'no tone may be excluded from the 4.5 sweep — see UNSWEPT_TONES').toEqual([])
     for (const t of UNSWEPT_TONES.keys()) {
       expect(PILL_TONES[t], `\`${t}\` is excluded but is no longer a StatusPill tone — drop the entry`).toBeTruthy()
       expect(UNSWEPT_TONES.get(t)!.length, `\`${t}\`'s exclusion must carry its measurement`).toBeGreaterThan(40)
@@ -406,12 +406,24 @@ describe('the tone vocabulary is closed: every StatusPill tone is swept or named
 
 // ═══ Tier 1 — every strength up to 16%, on every resting tier, in every scheme, in both modes ════
 //
-// 640 cells (was 600 before `neutral` joined the sweep — 4 global tones + 12 `info:*` inks × 4 tiers
-// × 5 strengths × 2 modes). Worst: 4.5200 (`danger` dark, surface-container, 16%); `neutral`'s worst
-// is 4.5472 on the same cell. With the previous `info` values, 171 of the then-600 were under 4.5 and
-// EVERY ONE was an `info:*` cell — which is the evidence that that diagnosis (only the scheme-retinted
-// tone drifted) and its fix were the same size as the defect. `neutral` is the same shape of finding
-// one tone over: 8 of its 8 sixteen-percent cells were under AA and all 8 are now clear.
+// 1120 cells — 4 global tones + 12 `info:*` + 12 `primary:*` inks, × 4 tiers × 5 strengths × 2 modes.
+// It was 600 before `neutral` joined (#3493) and 640 before `primary` did (#3503). Worst: 4.5007
+// (`primary:coral` light, canvas, 16%); `neutral`'s worst is 4.5472 and `danger` dark's is 4.5200.
+//
+// Three findings of the SAME SHAPE, one token each, and the cell counts are the evidence that each
+// diagnosis was the same size as its defect:
+//
+//   · `info`     171 of the then-600 under 4.5, EVERY ONE an `info:*` cell — only the scheme-retinted
+//                tone had drifted.
+//   · `neutral`  8 of its 8 sixteen-percent cells under AA, both modes — a hairline used as ink, so no
+//                ground and no compositing base could fix it (#3493).
+//   · `primary`  42 of its 96 resting cells under AA, **every one LIGHT** — dark passed 48/48. Worst
+//                3.4870 (`rose`/light/canvas). No token substitution fixed it, so the 12 light values
+//                were retuned in OKLCH with hue and chroma held (#3503); all 96 now clear, worst
+//                4.5007. `schemes.ts`'s header carries the per-scheme table and the collateral.
+//
+// All three were tones this file did not measure at the time. That is the actual lesson, and it is why
+// `UNSWEPT_TONES` is now pinned at zero rather than merely emptied.
 describe('status-chip tone over its own ≤16% tint clears AA on every resting tier, every scheme', () => {
   it('has the full curated scheme set (a sweep over an empty list passes forever)', () => {
     expect(SCHEMES.length, 'curated schemes').toBeGreaterThanOrEqual(12)
@@ -420,14 +432,15 @@ describe('status-chip tone over its own ≤16% tint clears AA on every resting t
   })
 
   it('sweeps every ink the derived vocabulary yields (the cell count, not the tone count)', () => {
-    // The tone list is now parsed rather than written (see `pillToneInks`), so the population floor
-    // moves here: four global tones + one `info:*` ink per scheme. A parse that silently read five
-    // tones instead of six would leave `tone_vocabulary` red AND this count short, and the pair names
-    // which half broke.
+    // The tone list is parsed rather than written (see `pillToneInks`), so the population floor lives
+    // here: four global tones (`ok`/`warn`/`danger`/`neutral`) + TWO scheme-supplied inks per scheme,
+    // `info:*` and — since #3503 — `primary:*`. A parse that silently read five tones instead of six
+    // would leave `tone_vocabulary` red AND this count short, and the pair names which half broke.
     for (const mode of ['dark', 'light'] as Mode[]) {
       const list = inks(mode)
-      expect(list.length, `${mode} inks swept`).toBe(4 + SCHEMES.length)
+      expect(list.length, `${mode} inks swept`).toBe(4 + 2 * SCHEMES.length)
       expect(list.map(([n]) => n), `${mode} must include the tone #3493 added`).toContain('neutral')
+      expect(list.map(([n]) => n), `${mode} must include the tone #3503 added`).toContain('primary:coral')
       expect(list.every(([, ink]) => /^#[0-9a-f]{6}$/i.test(ink)), `${mode} inks are all hex`).toBe(true)
     }
   })

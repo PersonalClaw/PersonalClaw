@@ -459,6 +459,101 @@ describe('tonal tint: the ink clears AA over the scheme\'s OWN composited tint, 
   }
 })
 
+// ── THE ACCENT PAIR: DECLARED FOUR TIMES, AND ORDERED (#3503) ─────────────────────────────────────
+//
+// Two invariants that were true, load-bearing, relied on in prose across five files — and asserted
+// NOWHERE. #3503 had to move `--color-primary`'s light value across all 12 schemes, and both of these
+// are what makes that a fix rather than a value swap that rots.
+//
+// 🔴 (1) THE SYNC. `--color-primary` and `--color-primary-emphasis` exist in FOUR places, and the one
+// a default install actually paints is the least obvious of them: `app/appearance.tsx` writes every
+// registered colour token INLINE on `<html>` at mount, falling back to `tokenRegistry`'s pair whenever
+// the user has no stored override — and `applyScheme` only populates overrides once the user picks a
+// scheme. So on a fresh light-mode install, `schemes.ts`'s coral entry is never read and the inline
+// style beats `.light`'s class rule, leaving `tokens.css` a pre-hydration fallback. The block above
+// already pinned `tokens.css` to coral; `tokenRegistry` was unpinned, which means a contrast fix
+// applied to two of the three would have shipped a chip whose ratio depends on where the user's value
+// came from. That is the exact failure `statusChipContrast.test.ts` closed for `--color-info`
+// ("declared once, in three places that must agree"); this is the same assertion for the accent pair.
+// The fourth site, `appearance.tsx`'s custom-theme swatch fallback, is NOT pinned here — it is
+// cosmetic and only reachable for a saved theme missing the token — but it had drifted two retunes
+// stale (`#e85a3f`) and is now current.
+//
+// 🔴 (2) THE ORDERING. Emphasis is the hover fill (`Button.tsx`'s `bg-primary hover:bg-primary-emphasis`,
+// plus `HeaderActions`, `IconButton`, `AppFrame`, `ChatPage`, `AudioRecorder`) AND the accent-text ink
+// for the three grounds plain primary cannot carry. Both uses rest on one property, stated in
+// `accentOnCanvas.test.ts` as "further from the ground either way" and in `tokenRegistry.ts` as
+// "Emphasis (hover) steps darker in kind": emphasis must be MORE contrasting against the mode's ground
+// than primary is. Nothing checked it, and #3503's minimal retune of primary alone would have crossed
+// it outright in 6 of 12 schemes (honey, jade, ember, forest, rose, amber) — hover would have made a
+// filled accent button *lighter* — while collapsing coral's step to a ΔL of 0.0122, a hover nobody can
+// see. Every rail stayed green through both, which is why this is asserted by name now. The MARGIN is
+// the half that matters: ordering alone is satisfied by an imperceptible step.
+describe('the accent pair agrees across every declaration, and emphasis outranks primary (#3503)', () => {
+  const REGISTRY = readFileSync(join(process.cwd(), 'src/design/tokenRegistry.ts'), 'utf8')
+  const PAIR = ['--color-primary', '--color-primary-emphasis'] as const
+
+  /** The `dark, light` hex pair `tokenRegistry` declares for a token.
+   *
+   *  🪤 THE CHARACTER CLASS MUST NOT BE `[^)]*`, AND THIS COST A RED TO LEARN. The obvious spelling,
+   *  `c\('--color-primary',[^)]*'(#…)',\s*'(#…)'\)` — copied from the `--color-info` rail in
+   *  `statusChipContrast.test.ts` — CANNOT MATCH, because the label is `'Primary (coral)'` and
+   *  `[^)]*` stops dead at the paren inside it. The `--color-info` version only works because `'Info'`
+   *  happens to have no parens, so that rail is one label edit away from the same failure. This is the
+   *  same class as the negated regex that could not cross `task.trim()`'s `)`. Scoped to one LINE
+   *  instead, which is what the declaration actually is — and the `toBeTruthy` below is the control
+   *  that turned this into a loud red rather than a silently unmatched assertion. */
+  const registryPair = (varName: string): RegExpMatchArray | null =>
+    REGISTRY.match(new RegExp(`c\\('${varName}',[^\\n]*?'(#[0-9a-fA-F]{6})',\\s*'(#[0-9a-fA-F]{6})'\\)`))
+
+  it('tokenRegistry — the pair a default install paints — matches the coral scheme', () => {
+    const coral = SCHEMES.find((s) => s.id === 'coral')!
+    for (const varName of PAIR) {
+      const m = registryPair(varName)
+      expect(m, `tokenRegistry declares ${varName} with two hex values`).toBeTruthy()
+      expect(m![1].toLowerCase(), `dark ${varName}: tokenRegistry vs coral`).toBe(coral.colors[varName].dark.toLowerCase())
+      expect(m![2].toLowerCase(), `light ${varName}: tokenRegistry vs coral`).toBe(coral.colors[varName].light.toLowerCase())
+    }
+  })
+
+  it("appearance.tsx's swatch fallback is not a stale fifth value", () => {
+    // It shipped `#e85a3f` — the shade BEFORE the retune before #3503 — for long enough that nothing
+    // noticed. Pinned to the registry default rather than to a literal, so the next retune moves it.
+    const src = readFileSync(join(process.cwd(), 'src/app/appearance.tsx'), 'utf8')
+    const m = src.match(/colors\['--color-primary'\]\s*\?\?\s*\{\s*dark:\s*'(#[0-9a-fA-F]{6})',\s*light:\s*'(#[0-9a-fA-F]{6})'\s*\}/)
+    expect(m, "appearance.tsx's --color-primary swatch fallback").toBeTruthy()
+    const reg = registryPair('--color-primary')
+    expect(reg, 'the registry default to compare against').toBeTruthy()
+    expect([m![1].toLowerCase(), m![2].toLowerCase()], 'the fallback must be the registry default')
+      .toEqual([reg![1].toLowerCase(), reg![2].toLowerCase()])
+  })
+
+  it('emphasis is further from the ground than primary, in every scheme and BOTH modes', () => {
+    // Measured against the mode's own reference ground rather than against luminance directly, because
+    // "further from the ground" is the property the two uses actually need — a hover fill that reads as
+    // more, and an accent ink with headroom plain primary lacks. Light darkens away from a pale ground;
+    // dark brightens away from a deep one. One predicate covers both.
+    const GROUND = { dark: darkSurfaceContainer(), light: lightCanvas() }
+    // The step must be VISIBLE, not merely signed: retuning primary alone left coral ordered correctly
+    // at a ratio delta of 0.06, which is no hover at all. 0.35 is below every current scheme's step
+    // (the smallest today is honey at 0.59) and far above the degenerate case.
+    const MIN_STEP = 0.35
+    const rows = SCHEMES.flatMap((s) => (['dark', 'light'] as const).map((mode) => ({
+      scheme: s.id,
+      mode,
+      primary: contrast(s.colors['--color-primary'][mode], GROUND[mode]),
+      emphasis: contrast(s.colors['--color-primary-emphasis'][mode], GROUND[mode]),
+    })))
+    expect(rows.length, '12 schemes × 2 modes — the whole grid was walked').toBe(24)
+    const bad = rows.filter((r) => r.emphasis - r.primary < MIN_STEP).map((r) =>
+      `${r.scheme}/${r.mode}: primary ${r.primary.toFixed(2)} vs emphasis ${r.emphasis.toFixed(2)} ` +
+      `(step ${(r.emphasis - r.primary).toFixed(2)}, need ≥${MIN_STEP})`)
+    expect(bad, 'emphasis must out-contrast primary on its own ground — it is the HOVER fill and the ' +
+      'accent-text ink for grounds primary cannot carry, so a step at or below zero inverts the hover ' +
+      'and deletes the reason the token exists:\n  ' + bad.join('\n  ')).toEqual([])
+  })
+})
+
 // ── THE SESSION MAP RAIL'S MARK TONES, in every scheme (atom SSM-15) ──────────────────────────
 //
 // 🔴 THE POPULATION GAP THIS CLOSES. Every block above measures INK — a label, a chip, an accent

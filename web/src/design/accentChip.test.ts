@@ -82,14 +82,35 @@ describe('no primary tint under primary ink survives', () => {
 //     10% → 4.20   12% → 4.09   14% → 3.97   15% → 3.92   20% → 3.64   25% → 3.39
 //     the same alphas in dark:  5.84 / 5.67 / 5.52 / 5.43 / 4.94 / 4.50 — all pass
 //
-// So EVERY class-spelled coral chip at ≥10% fails AA in light, and only 5% (4.52) squeaks through.
+// So EVERY class-spelled coral chip at ≥10% failed AA in light, and only 5% (4.52) squeaked through.
 // Seven static chips were converged onto the container pair; ONE interactive control is held back
 // below because it carries `hover:bg-primary/25` on the coral branch and a container fill has no
 // hover shade in the token set — picking one is a visual-language decision, not a contrast fix.
+//
+// ── ✅ THE LIGHT NUMBERS ABOVE ARE HISTORY AS OF #3503, AND THE CONCLUSION STILL HOLDS ───────────
+//
+// #3503 retuned `--color-primary`'s light value across all 12 schemes (`#c8452e` → `#b12e18` for
+// coral) because the same compositing mistake had been made in the semantic-token sweep. Re-measured
+// on the identical grounds, the class-spelled family is no longer the flat failure it was:
+//
+//     on --color-surface (#ffffff)      10% → 5.47   12% → 5.30   14% → 5.13   15% → 5.04
+//                                       16% → 4.97   20% → 4.62   25% → 4.25
+//     on --color-canvas  (#f0f4f8)      10% → 4.97   12% → 4.80   14% → 4.65   15% → 4.58
+//                                       16% → 4.50   20% → 4.21   25% → 3.86
+//
+// 🔑 SO THE RATIOS MOVED AND THE RULING DID NOT, which is worth being exact about rather than reading
+// as permission. Three reasons this sweep stays as strict as it was: 25% still fails on BOTH grounds
+// (4.25 / 3.86) and 20% fails on the canvas, so the pattern is still unsafe at the strengths real
+// controls use; the margin at the strengths that now pass is 0.00–0.47 on the canvas, which is the
+// kind of margin this file exists because the tree kept spending; and the container pair is the
+// shipped convergence, so re-permitting the tint spelling would re-fork a vocabulary for a couple of
+// hundredths. The offender message below carries the new range.
 
 const CLASS_TINT_ALLOWED = new Set([
   // Interactive, with a hover ON the coral branch: `bg-primary/15 → hover:bg-primary/25`, i.e.
-  // 3.92 → 3.39. Needs a hover treatment for a container fill before it can move; recorded, not swept.
+  // 3.92 → 3.39 when this was written, 5.04 → 4.25 after #3503's retune — so the HOVER end is still
+  // under AA and the reason for the holdout survives the retune.
+  // Needs a hover treatment for a container fill before it can move; recorded, not swept.
   //
   // 🔑 This list held TWO entries until DSC-12, and the comment above them had already done the
   // hard part: it named `Button`'s `tonal` variant and the Code cockpit's autopilot toggle as the same
@@ -117,7 +138,9 @@ describe('no primary tint under primary ink survives — utility spelling', () =
   it('has none left outside the two recorded interactive holdouts', () => {
     expect(
       offenders,
-      `coral ink on a coral tint is 3.64–4.20:1 in light — use bg-primary-container + text-on-primary-container:\n  ${offenders.join('\n  ')}`,
+      `coral ink on a coral tint is 3.86–4.97:1 on the light canvas after #3503's retune (it was ` +
+      `3.09–4.20 before), so ≥20% still misses AA there and the strengths that pass do so by ` +
+      `hundredths — use bg-primary-container + text-on-primary-container:\n  ${offenders.join('\n  ')}`,
     ).toEqual([])
   })
 
