@@ -762,6 +762,14 @@ function ConfigureProvider({ app, onConfigured }: {
   const { data: types, error: typesError, refresh } = useQuery(
     'onboarding:provider-types', () => api.modelProviderTypes())
   const [values, setValues] = useState<Record<string, string>>({})
+  // Which fields the user has actually typed into, distinct from a field merely sitting
+  // at its (usually empty) schema default. `submit()` needs the distinction: a SENSITIVE
+  // field the user deliberately blanked must clear a stored credential (#3554), but a
+  // sensitive field nobody touched must stay out of the PATCH entirely — otherwise a
+  // re-entry that only corrects, say, the default model would silently wipe a working key
+  // the form never re-displays (this component has no GET of the instance's current
+  // options; every field always starts back at its schema default).
+  const [touched, setTouched] = useState<Record<string, true>>({})
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [seeded, setSeeded] = useState('')
@@ -774,7 +782,7 @@ function ConfigureProvider({ app, onConfigured }: {
   if (t && seeded !== t.type) {
     const seed: Record<string, string> = {}
     for (const [k, f] of Object.entries(t.settingsSchema?.properties || {})) seed[k] = String(f.default ?? '')
-    setValues(seed); setSeeded(t.type)
+    setValues(seed); setTouched({}); setSeeded(t.type)
   }
 
   if (types === undefined && typesError) {
@@ -805,10 +813,19 @@ function ConfigureProvider({ app, onConfigured }: {
       }
     }
     setBusy(true); setError('')
-    const options: Record<string, string> = {}
+    const options: Record<string, string | null> = {}
     for (const [k, f] of Object.entries(props)) {
       const v = (values[k] ?? String(f.default ?? '')).trim()
-      if (v) options[k] = v
+      if (v) { options[k] = v; continue }
+      // An emptied SENSITIVE field the user actually touched is a deliberate "clear the
+      // stored credential" (#3554: the field's own help text promises "leave empty to
+      // fall back to the environment variable" — true on the first save and false on
+      // every later one, because omitting the key here left the old value untouched by
+      // the PATCH-merge). `null` says "clear this" explicitly, distinct from omitting the
+      // key (which still means "leave whatever is stored alone"). An untouched field —
+      // including one whose default happens to be non-empty — is omitted exactly as
+      // before: nobody asked to change it.
+      if (touched[k] && (f['x-meta'] || {}).sensitive) options[k] = null
     }
     // The key travels to the provider endpoints only — it is never put in component
     // state that renders, never logged, and never echoed into an error string.
@@ -861,7 +878,7 @@ function ConfigureProvider({ app, onConfigured }: {
           advancedFieldClassName="flex flex-col gap-s"
           renderField={(k, field) => (
             <SchemaField name={k} field={field} value={values[k] ?? ''}
-              onChange={(v) => setValues((m) => ({ ...m, [k]: v }))} />
+              onChange={(v) => { setValues((m) => ({ ...m, [k]: v })); setTouched((m) => ({ ...m, [k]: true })) }} />
           )}
         />
       </div>

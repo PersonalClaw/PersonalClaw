@@ -143,12 +143,25 @@ describe('the collapsed Segmented pill', () => {
 // scrollable, `#/tasks` and `#/loops` still carrying their own (separately recorded) overflow
 // defects, nothing newly clipped and no new page overflow.
 
-describe('Segmented tabs do not shrink', () => {
+describe('Segmented options do not shrink', () => {
+  // 🪤 COMMENTS BLANKED BEFORE THE SLICE, and this is the third rail #3472 taught the same lesson.
+  // `Segmented`'s docstring now EXPLAINS the roles it adopted, so a raw `indexOf('role="radio"')`
+  // landed in the prose 1200 characters above the button and the assertion read
+  // `expected 'role="radio"`.\n *\n *  A `tablist` i…' to match /inline-flex shrink-0/`. A window
+  // anchored on a string that also appears in documentation measures whichever comes first.
   const src = readFileSync(join(process.cwd(), 'src', 'ui', 'Segmented.tsx'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/^[ \t]*\/\/.*$/gm, '')
 
-  it('the tab button declares shrink-0', () => {
-    const tab = src.slice(src.indexOf('role="tab"'), src.indexOf('role="tab"') + 1200)
-    expect(tab, 'a tab crushed to 15px is neither legible nor tappable').toMatch(/inline-flex shrink-0 items-center/)
+  it('the option button declares shrink-0', () => {
+    // 🪤 `indexOf` RETURNS -1 WHEN THE ANCHOR MOVES, and `slice(-1, 1199)` is not an error — it is a
+    // different, arbitrary window that may still satisfy the regex by accident. #3472 renamed the
+    // anchor (`role="tab"` → `role="radio"`), which is exactly the event this guard is for, so the
+    // anchor is asserted before it is used rather than trusted.
+    const at = src.indexOf('role="radio"')
+    expect(at, 'the option anchor moved; this slice is measuring the wrong 1200 characters').toBeGreaterThan(0)
+    const option = src.slice(at, at + 1200)
+    expect(option, 'an option crushed to 15px is neither legible nor tappable').toMatch(/inline-flex shrink-0 items-center/)
   })
 
   it('renders it on every option, both densities', () => {
@@ -157,9 +170,9 @@ describe('Segmented tabs do not shrink', () => {
         <Segmented ariaLabel="t" size={size} value="a" onChange={() => {}}
           options={[{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }]} />,
       )
-      const tabs = [...container.querySelectorAll('[role="tab"]')]
-      expect(tabs.length).toBe(2)
-      for (const t of tabs) expect(t.className, `size=${size}`).toMatch(/\bshrink-0\b/)
+      const opts = [...container.querySelectorAll('[role="radio"]')]
+      expect(opts.length).toBe(2)
+      for (const t of opts) expect(t.className, `size=${size}`).toMatch(/\bshrink-0\b/)
       unmount()
     }
   })

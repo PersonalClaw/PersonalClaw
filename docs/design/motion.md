@@ -224,8 +224,8 @@ arithmetic at all**. Three rules make that a system rather than a shared file:
    button press. The bonus expressiveness adds on top is **one number for the whole family**
    (`stiffnessBonus`, keeping `floor` of itself at expressiveness 0).
 2. **Bold always means tauter** — which, under this app's fixed-damping `bouncy()` springs,
-   means both quicker *and* more overshoot. Before FM-4 `Morph` was `190 + expr(70, 0.4)` and
-   `Bud` was `260 - expr(70, 0.4)`: identical magnitude, identical floor, opposite sign, so
+   means both quicker *and* more overshoot. `Morph` used to be `190 + expr(70, 0.4)` and
+   `Bud` `260 - expr(70, 0.4)`: identical magnitude, identical floor, opposite sign, so
    dialling the user's knob up made one primitive tauter and the other slacker.
 3. **One spring, one tween, one fade.** The spring is `physics.fluid` via `familySpring(base)`,
    so the family inherits `bouncy()`'s bounciness scaling and its reduced-motion collapse for

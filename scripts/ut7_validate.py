@@ -4,6 +4,7 @@ Hits the LIVE gateway and asserts the invariants the unification must hold. Run
 repeatedly (each run = one cycle); exits non-zero on any violation, printing the
 specific failure. Idempotent + side-effect-free (it toggles then restores).
 """
+
 from __future__ import annotations
 
 import json
@@ -32,7 +33,9 @@ def _get(path):
 
 def _post(path, body):
     req = urllib.request.Request(
-        BASE + path, data=json.dumps(body).encode(), method="POST",
+        BASE + path,
+        data=json.dumps(body).encode(),
+        method="POST",
         headers={"Content-Type": "application/json"},
     )
     try:
@@ -60,19 +63,28 @@ def main() -> int:
     check(not dupes, f"duplicate tools in /api/tools: {dupes}", fails)
 
     # 2. no monolithic 'builtin' provider remains
-    check(not any(t["provider"] == "builtin" for t in tools),
-          "a tool is still under the monolithic 'builtin' provider", fails)
+    check(
+        not any(t["provider"] == "builtin" for t in tools),
+        "a tool is still under the monolithic 'builtin' provider",
+        fails,
+    )
 
     # 3. the split entity providers each own their slice
     by_prov: dict[str, set] = {}
     for t in tools:
         by_prov.setdefault(t["provider"], set()).add(t["name"])
-    check("read_file" in by_prov.get("personalclaw-filesystem", set()) and
-          "bash" in by_prov.get("personalclaw-filesystem", set()),
-          "filesystem/shell not under personalclaw-filesystem", fails)
-    check(by_prov.get("personalclaw-knowledge-tools") and
-          all(n.startswith("knowledge_") for n in by_prov["personalclaw-knowledge-tools"]),
-          "knowledge provider slice wrong", fails)
+    check(
+        "read_file" in by_prov.get("personalclaw-filesystem", set())
+        and "bash" in by_prov.get("personalclaw-filesystem", set()),
+        "filesystem/shell not under personalclaw-filesystem",
+        fails,
+    )
+    check(
+        by_prov.get("personalclaw-knowledge-tools")
+        and all(n.startswith("knowledge_") for n in by_prov["personalclaw-knowledge-tools"]),
+        "knowledge provider slice wrong",
+        fails,
+    )
 
     # 4. the removed shell-wrapper tools are gone
     for gone in ("git", "run_tests", "diagnostics"):
@@ -87,30 +99,48 @@ def main() -> int:
     # 6. the platform provider is present + flagged on BOTH surfaces, non-removable
     fs_prov = next((p for p in providers if p["name"] == "personalclaw-filesystem"), None)
     fs_app = next((a for a in apps if a["name"] == "personalclaw-filesystem"), None)
-    check(fs_prov and fs_prov.get("platform"), "platform provider missing/unflagged on /api/providers", fails)
-    check(fs_app and fs_app.get("platform"), "platform provider missing/unflagged on /api/apps", fails)
+    check(
+        fs_prov and fs_prov.get("platform"),
+        "platform provider missing/unflagged on /api/providers",
+        fails,
+    )
+    check(
+        fs_app and fs_app.get("platform"), "platform provider missing/unflagged on /api/apps", fails
+    )
 
     # 7. locked tools never report disabled; platform provider can't be disabled
     for t in tools:
         if t.get("locked"):
             check(not t.get("disabled"), f"locked tool {t['name']} reports disabled", fails)
-    status, body = _post("/api/tools/provider-toggle",
-                         {"provider": "personalclaw-filesystem", "enabled": False})
-    check(status == 409 and not body.get("ok"),
-          f"platform provider disable not refused (status={status})", fails)
+    status, body = _post(
+        "/api/tools/provider-toggle", {"provider": "personalclaw-filesystem", "enabled": False}
+    )
+    check(
+        status == 409 and not body.get("ok"),
+        f"platform provider disable not refused (status={status})",
+        fails,
+    )
 
     # 8. per-tool + per-provider disable round-trips through /api/tools (one source)
-    status, _ = _post("/api/tools/provider-toggle",
-                      {"provider": "personalclaw-knowledge-tools", "enabled": False})
+    status, _ = _post(
+        "/api/tools/provider-toggle", {"provider": "personalclaw-knowledge-tools", "enabled": False}
+    )
     after = _get("/api/tools")["tools"]
     kn = [t for t in after if t["provider"] == "personalclaw-knowledge-tools"]
-    check(kn and all(t.get("disabled") and t.get("providerDisabled") for t in kn),
-          "provider-disable not reflected in /api/tools", fails)
+    check(
+        kn and all(t.get("disabled") and t.get("providerDisabled") for t in kn),
+        "provider-disable not reflected in /api/tools",
+        fails,
+    )
     # restore
-    _post("/api/tools/provider-toggle", {"provider": "personalclaw-knowledge-tools", "enabled": True})
+    _post(
+        "/api/tools/provider-toggle", {"provider": "personalclaw-knowledge-tools", "enabled": True}
+    )
     after2 = _get("/api/tools")["tools"]
     kn2 = [t for t in after2 if t["provider"] == "personalclaw-knowledge-tools"]
-    check(kn2 and not any(t.get("disabled") for t in kn2), "provider re-enable didn't restore", fails)
+    check(
+        kn2 and not any(t.get("disabled") for t in kn2), "provider re-enable didn't restore", fails
+    )
 
     if fails:
         print("FAIL:")

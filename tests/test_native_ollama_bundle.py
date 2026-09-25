@@ -36,6 +36,7 @@ import pytest
 from personalclaw.apps.manifest import AppManifest
 from personalclaw.apps.native_contract import (
     NATIVE_DIR,
+    load_bundle_module,
     namespaced_module_name,
     native_bundle_dirs,
 )
@@ -148,27 +149,52 @@ def test_the_bundles_runtime_imports_are_core_dependencies():
 # ── R1: the registration lives in the APP, and core has no copy ───────────────
 
 
-@pytest.fixture()
-def registered_bundle():
-    """The bundle as the gateway builds it: manifest → ProviderRegistry → ModelTypeHandler.
+def _reset_registration_state() -> None:
+    """Clear the THREE process globals one enable-the-bundle cycle writes.
 
-    No shortcut construction and no monkeypatched loader — the point is that the REAL
-    dispatch path reaches the bundle's own file. Both process-global registries are reset
-    around the test so it neither inherits nor leaks a registration.
+    The two registries are obvious. The third — the app module's entry in ``sys.modules``
+    — is the one that used to be missing from the setup half, and it is not optional:
+
+    🪤 ``load_bundle_module`` caches the app's module under its namespaced name, on purpose
+    (a second resolution must not re-execute app code — see ``test_bundle_module_is_loaded_
+    once`` next door, and the ``isinstance`` identity argument in its docstring). But the
+    provider TYPE is registered as an *import-time side effect* of that module. So clearing
+    the LLM registry while leaving the module cached leaves nothing able to re-register the
+    type: the loader answers from cache, ``register_type`` never re-fires, and
+    ``capability_of("ollama")`` raises ``unknown provider type 'ollama'; known types: []``.
+    The three are one state and must be reset together, which is why this is a helper the
+    fixture calls on BOTH sides rather than two hand-written halves that drifted.
+
+    The app's own registration is already written to survive the re-exec this causes —
+    ``provider.py`` wraps ``register_type`` in ``except ProviderResolutionError`` for exactly
+    this reason — so eviction is safe whether or not the type is currently registered.
     """
     from personalclaw.llm.registry import reset_default_registry
     from personalclaw.providers import registry as prov_reg
 
     prov_reg._registry = None
     reset_default_registry()
+    sys.modules.pop(namespaced_module_name(APP_NAME, "provider"), None)
+
+
+@pytest.fixture()
+def registered_bundle():
+    """The bundle as the gateway builds it: manifest → ProviderRegistry → ModelTypeHandler.
+
+    No shortcut construction and no monkeypatched loader — the point is that the REAL
+    dispatch path reaches the bundle's own file. Every process-global one enable writes is
+    reset around the test (see :func:`_reset_registration_state`) so it neither inherits nor
+    leaks a registration.
+    """
+    from personalclaw.providers import registry as prov_reg
+
+    _reset_registration_state()
     try:
         reg = prov_reg.get_provider_registry()
         reg.register(_manifest(), enabled=True)
         yield reg
     finally:
-        prov_reg._registry = None
-        reset_default_registry()
-        sys.modules.pop(namespaced_module_name(APP_NAME, "provider"), None)
+        _reset_registration_state()
 
 
 def test_enabling_the_bundle_registers_the_ollama_type(registered_bundle):
@@ -184,6 +210,52 @@ def test_enabling_the_bundle_registers_the_ollama_type(registered_bundle):
     capability = get_default_registry().capability_of(PROVIDER_TYPE)
     assert Capability.CHAT in capability.capabilities
     assert Capability.EMBEDDING in capability.capabilities
+
+
+def test_a_gateway_already_loaded_the_module_and_the_type_still_registers():
+    """The order-dependent form of the test above, made deterministic in ONE file.
+
+    The test above only registers the type if nothing has already loaded the bundle, and in
+    a multi-file run something has: booting a gateway enrols every ``type: model`` app, so
+    ``tests/test_gateway_boot_provider_sync.py``'s first test leaves this bundle's module
+    cached for the rest of the worker. Measured on pristine ``origin/main``::
+
+        pytest tests/test_gateway_boot_provider_sync.py tests/test_native_ollama_bundle.py
+        → FAILED test_enabling_the_bundle_registers_the_ollama_type
+          ProviderResolutionError: unknown provider type 'ollama'; known types: []
+
+    This is that precondition stated rather than inherited: the module is pre-cached exactly
+    as a booted gateway leaves it, and the same manifest → ProviderRegistry →
+    ModelTypeHandler path must still put the type in the registry. It is also the vacuity
+    floor for :func:`_reset_registration_state` — delete its ``sys.modules.pop`` and this
+    reds on its own, in isolation, instead of waiting for a file ordering to expose it.
+    """
+    from personalclaw.llm.capabilities import Capability
+    from personalclaw.llm.registry import get_default_registry
+    from personalclaw.providers import registry as prov_reg
+
+    module_name = namespaced_module_name(APP_NAME, "provider")
+    _reset_registration_state()
+    try:
+        # What a booted gateway leaves behind: this module executed, its import-time
+        # register_type already spent, and the module CACHED. Loaded inside the reset
+        # boundary so the type lands on a throwaway registry rather than the process-wide
+        # singleton other files share.
+        load_bundle_module(_BUNDLE, APP_NAME, "provider")
+        assert module_name in sys.modules, (
+            "the precondition did not take — with no cached module this test would pass "
+            "for the same reason the one above already does, and prove nothing"
+        )
+
+        # Now the fixture's own setup, run from that precondition.
+        _reset_registration_state()
+        prov_reg.get_provider_registry().register(_manifest(), enabled=True)
+
+        capability = get_default_registry().capability_of(PROVIDER_TYPE)
+        assert Capability.CHAT in capability.capabilities
+        assert Capability.EMBEDDING in capability.capabilities
+    finally:
+        _reset_registration_state()
 
 
 def test_the_registration_came_from_the_bundles_own_file(registered_bundle):

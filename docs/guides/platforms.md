@@ -29,6 +29,17 @@ one, and the token points at something you can go read or re-run:
 The arm64 rows became CI-backed in PLATFORM-REACH A1.3 (arm jobs in `full.yml`) and
 A2.1 (per-arch release smoke); before that they were aspirational.
 
+The two `CI:release/images smoke` citations above were, for a while, a proof that had
+never run. A2.1 shipped the step on 2026-08-10 and the last release before that was
+v0.1.3 on 2026-07-31, so it had executed zero times — and it invoked the container
+command through a **login** shell, which sources `/etc/profile`, which *overwrites*
+`PATH` instead of extending it, so the gateway image's own `ENV PATH` was discarded and
+`personalclaw` was not found (exit 127, measured against the published 0.1.3 image).
+That is fixed, and the smoke now also requires the version the image reports to be the
+version being released ([#3562](https://github.com/PersonalClaw/PersonalClaw/issues/3562)).
+Worth stating plainly, because it generalises past this page: **a gate that has never
+executed is not evidence, however precisely it is cited.**
+
 The matrix above is the **backend**. The desktop *shell* is narrower: unsigned Linux
 x86-64 AppImage/deb on every release (`CI:release/desktop-linux smoke`), macOS from a
 checkout only until signing credentials exist, and no Windows build — see

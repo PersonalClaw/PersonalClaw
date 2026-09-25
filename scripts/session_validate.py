@@ -14,6 +14,7 @@ Run repeatedly (each run = one cycle); exits non-zero on any violation. Idempote
 + side-effect-safe (toggles are restored). Retries transient slow-startup GETs so
 it tests invariants, not latency.
 """
+
 from __future__ import annotations
 
 import json
@@ -39,7 +40,9 @@ def _get(path):
 def _req(method, path, body=None):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(
-        BASE + path, data=data, method=method,
+        BASE + path,
+        data=data,
+        method=method,
         headers={"Content-Type": "application/json"},
     )
     try:
@@ -68,10 +71,20 @@ def main() -> int:
 
     # 1. projects category redefinition
     proj = by_prov.get("personalclaw-project-tools", set())
-    check(proj == {"project_run_create", "project_run_start", "project_run_status", "project_run_list"},
-          f"project-tools provider slice wrong: {sorted(proj)}", fails)
-    for stale in ("code_project_create", "goal_loop_create", "sdlc_status", "loop_create",
-                  "project_create", "project_list"):
+    check(
+        proj
+        == {"project_run_create", "project_run_start", "project_run_status", "project_run_list"},
+        f"project-tools provider slice wrong: {sorted(proj)}",
+        fails,
+    )
+    for stale in (
+        "code_project_create",
+        "goal_loop_create",
+        "sdlc_status",
+        "loop_create",
+        "project_create",
+        "project_list",
+    ):
         check(stale not in proj, f"stale loop tool {stale!r} back in project provider", fails)
 
     # 2. no monolithic builtin; removed shell tools gone
@@ -93,24 +106,34 @@ def main() -> int:
     apps = _get("/api/apps")["apps"]
     dt = time.time() - t0
     check(dt < 2.0, f"/api/apps too slow ({dt:.2f}s) — apps-dir pollution may be back", fails)
-    real = [a for a in apps if not a.get("platform") and a.get("origin") != "bundled"]
     check(len(apps) < 200, f"/api/apps returned {len(apps)} entries — garbage dirs?", fails)
 
     # 5. tool-disable round-trips through the one registry
-    st, _ = _req("POST", "/api/tools/provider-toggle",
-                 {"provider": "personalclaw-knowledge-tools", "enabled": False})
+    st, _ = _req(
+        "POST",
+        "/api/tools/provider-toggle",
+        {"provider": "personalclaw-knowledge-tools", "enabled": False},
+    )
     after = _get("/api/tools")["tools"]
     kn = [t for t in after if t["provider"] == "personalclaw-knowledge-tools"]
     check(kn and all(t.get("disabled") for t in kn), "provider-disable not reflected", fails)
-    _req("POST", "/api/tools/provider-toggle",
-         {"provider": "personalclaw-knowledge-tools", "enabled": True})
+    _req(
+        "POST",
+        "/api/tools/provider-toggle",
+        {"provider": "personalclaw-knowledge-tools", "enabled": True},
+    )
     after2 = _get("/api/tools")["tools"]
     kn2 = [t for t in after2 if t["provider"] == "personalclaw-knowledge-tools"]
-    check(kn2 and not any(t.get("disabled") for t in kn2), "provider re-enable didn't restore", fails)
+    check(
+        kn2 and not any(t.get("disabled") for t in kn2), "provider re-enable didn't restore", fails
+    )
 
     # 6. platform provider can't be disabled
-    st, _ = _req("POST", "/api/tools/provider-toggle",
-                 {"provider": "personalclaw-filesystem", "enabled": False})
+    st, _ = _req(
+        "POST",
+        "/api/tools/provider-toggle",
+        {"provider": "personalclaw-filesystem", "enabled": False},
+    )
     check(st == 409, f"platform provider disable not refused (status={st})", fails)
 
     if fails:
@@ -118,8 +141,10 @@ def main() -> int:
         for f in fails:
             print("  -", f)
         return 1
-    print(f"CLEAN — {len(tools)} tools / {len(by_prov)} providers / "
-          f"{len(srv_names)} MCP servers / {len(apps)} apps ({dt*1000:.0f}ms)")
+    print(
+        f"CLEAN — {len(tools)} tools / {len(by_prov)} providers / "
+        f"{len(srv_names)} MCP servers / {len(apps)} apps ({dt*1000:.0f}ms)"
+    )
     return 0
 
 

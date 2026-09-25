@@ -38,7 +38,7 @@ a monitor keeps `MONITOR_LOG.md`; code has no document — the code itself is
 the deliverable), and readiness prerequisites (a brownfield code loop with no
 bound workspace cannot start).
 
-**The supervisor is NOT part of that plugin seam**. How a loop
+**The supervisor is NOT part of that plugin seam.** How a loop
 converges is *declared*, not coded: `workflows/supervisor_policy.py` holds the
 `ConvergenceSpec` type, the closed `DONE_SIGNALS` vocabulary
 (`orchestrated` | `never` | `verify_command` | `judge_assessment`) and the
@@ -52,7 +52,7 @@ A kind may not supply a convergence mechanism in Python — adding a fifth
 mechanism means extending the closed vocabulary and the one evaluator, in one
 place, for every kind at once.
 
-| Kind (variant) | marked done-signal |
+| Kind (variant) | Declared done-signal |
 |---|---|
 | `code`, `design` | `orchestrated` — the per-cycle `on_new_cycle` hook owns done-ness |
 | `general` | `verify_command` (optional: no command ⇒ defers to budget by design) |

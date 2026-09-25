@@ -10,15 +10,18 @@ from memory — if you find a discrepancy, the code wins and this page is the bu
 ## What a release actually is
 
 One tag push produces every artifact. `release.yml` triggers on `tags: ["v*"]`
-and runs seven jobs:
+and runs ten jobs:
 
 | Job | What it produces | Gate |
 |---|---|---|
 | `build` | sdist + wheel (SPA bundled inside), SBOM | verifies the wheel serves the SPA with **no Node** present |
 | `pypi` | core package on PyPI | environment `release` — **needs your approval** |
 | `pypi-client` | `personalclaw-client` on PyPI | environment `release-client` — **needs your approval** |
-| `images` | `ghcr.io/personalclaw/personalclaw-{gateway,web}`, multi-arch — tags per [the scheme below](#what-a-tag-publishes) | — |
-| `notes` | the GitHub Release, notes lifted from `CHANGELOG.md` | needs `build`, `pypi`, `images` |
+| `gateway-dashboard` | nothing; it is purely a gate | boots the gateway image built from this commit and requires a **served bundle**, not a status — `images` needs it, so a dashboard-less image is never pushed |
+| `images` | `ghcr.io/personalclaw/personalclaw-{gateway,web}`, multi-arch — tags per [the scheme below](#what-a-tag-publishes) | needs `build` and `gateway-dashboard`; then pulls each arch and runs the image's own liveness command inside it |
+| `desktop-mac` | unsigned `.dmg` (Apple silicon only) | boots the bundled backend from inside the mounted dmg |
+| `desktop-linux` | unsigned `.AppImage` + `.deb` (x86-64) | boots the bundled backend out of the extracted AppImage |
+| `notes` | the GitHub Release, notes lifted from `CHANGELOG.md` | needs `build`, `pypi`, `images`, `desktop-linux`, `desktop-mac` |
 | `website-follow` | nudges personalclaw.dev to re-check its pins | best-effort, `continue-on-error` |
 | `attest` | build-provenance attestation on the wheel (OIDC, no keys) | — |
 
@@ -136,7 +139,10 @@ git push origin v0.1.3
 1. Open the run in Actions. Wait for `build` to go green.
 2. **Approve the `release` environment** → `pypi` publishes core.
 3. **Approve the `release-client` environment** → `pypi-client` publishes the client.
-4. `images`, `notes` and `attest` finish on their own.
+4. `gateway-dashboard`, `images`, the two `desktop-*` jobs, `notes` and `attest`
+   finish on their own. If `gateway-dashboard` reds, **no image was pushed** and
+   the fault is in the image, not the tag: read its log for which of healthz, `/`
+   or the first bundle failed, fix the image, and re-run the tag.
 
 ## After it finishes
 

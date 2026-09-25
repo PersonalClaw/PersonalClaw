@@ -4,15 +4,20 @@ import userEvent from '@testing-library/user-event'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-// ── "All clear" must not mask a lane that failed to load ──────────────────────────────────────────
+// ── The empty verdict must not mask a lane that failed to load ────────────────────────────────────
 //
 // ActionCenter is the dashboard's unified triage queue: it merges pending tool approvals, inbox
-// items, and skill proposals into ONE list, and shows "All clear — nothing waiting on you" when that
-// merged list is empty. Its three feeds used to end in `.catch(() => {})` inside DashboardLive, so a
-// transient read failure left the lane's array empty — indistinguishable from a genuinely empty
-// lane — and a failed approvals read folded straight into "All clear". A PENDING TOOL APPROVAL is
-// safety-relevant: a run is blocked on the user's yes/no, and a queue that claims "nothing waiting"
-// while hiding one is the exact failure this guards.
+// items, and skill proposals into ONE list, and delivers an empty verdict when that merged list is
+// empty. Its three feeds used to end in `.catch(() => {})` inside DashboardLive, so a transient read
+// failure left the lane's array empty — indistinguishable from a genuinely empty lane — and a failed
+// approvals read folded straight into the verdict. A PENDING TOOL APPROVAL is safety-relevant: a run
+// is blocked on the user's yes/no, and a queue that claims to be empty while hiding one is the exact
+// failure this guards.
+//
+// The verdict's WORDS changed under #3471 ("All clear — nothing waiting on you" → "Nothing to
+// triage — no approvals, messages or skill proposals are waiting"), because the old sentence made a
+// claim about every set that could be waiting rather than the three lanes read here. Nothing in this
+// file's contract changed with it; the selector below is named for the verdict, not for its copy.
 //
 // The fix mirrors the already-correct `discoverErr`/`doctorErr` split in the same file: each lane's
 // read failure is tracked, published on the context, and rendered as the app's standard InlineError
@@ -57,19 +62,23 @@ async function mount() {
   )
 }
 
-const ALL_CLEAR = /All clear/i
+// The empty VERDICT, as one selector. #3471 narrowed the sentence from "All clear — nothing
+// waiting on you" (a claim about every set) to "Nothing to triage" (a claim about the three
+// lanes this card reads). Every assertion below is unchanged in intent: a failed lane must not
+// render the verdict, and an empty one must.
+const EMPTY_VERDICT = /Nothing to triage/i
 
 beforeEach(() => { vi.resetModules(); sessionStorage.clear() })
 
 describe('ActionCenter tells a failed lane apart from an empty queue', () => {
-  it('a failed approvals read surfaces an alert + Retry, never "All clear"', async () => {
+  it('a failed approvals read surfaces an alert + Retry, never the empty verdict', async () => {
     mockApi({ approvals: boom })
     await mount()
     const alert = await waitFor(() => screen.getByRole('alert'))
     expect(alert.textContent, 'names the lane that failed').toMatch(/pending approvals/i)
     expect(screen.getByRole('button', { name: /Retry/i }), 'and offers recovery').toBeInTheDocument()
-    // The crux: a swallowed safety-relevant approval must not read as "nothing waiting on you".
-    expect(screen.queryByText(ALL_CLEAR), 'a failed lane is not an empty queue').toBeNull()
+    // The crux: a swallowed safety-relevant approval must not read as an empty triage queue.
+    expect(screen.queryByText(EMPTY_VERDICT), 'a failed lane is not an empty queue').toBeNull()
   })
 
   it('Retry re-runs just that lane and clears the failure', async () => {
@@ -94,14 +103,14 @@ describe('ActionCenter tells a failed lane apart from an empty queue', () => {
     expect(alert.textContent).toMatch(/pending approvals/i)
     // … AND the healthy inbox lane still renders its item (a partial failure is not a blank queue).
     expect(screen.getByRole('button', { name: /^Reply:/ }), 'the loaded inbox row survives').toBeInTheDocument()
-    expect(screen.queryByText(ALL_CLEAR)).toBeNull()
+    expect(screen.queryByText(EMPTY_VERDICT)).toBeNull()
   })
 
-  it('a genuinely empty queue still says "All clear", with no alert', async () => {
+  it('a genuinely empty queue still delivers the verdict, with no alert', async () => {
     // THE OTHER DIRECTION: the fix must not turn every empty lane into an error.
     mockApi({})
     await mount()
-    await waitFor(() => expect(screen.getByText(ALL_CLEAR)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(EMPTY_VERDICT)).toBeInTheDocument())
     expect(screen.queryByRole('alert'), 'an empty queue is not a failure').toBeNull()
     expect(screen.queryByRole('button', { name: /Retry/i })).toBeNull()
   })

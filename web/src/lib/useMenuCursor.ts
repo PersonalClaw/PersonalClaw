@@ -125,8 +125,8 @@ export function useMenuCursor({
  *
  *  Returns true when it consumed the key, letting the caller keep its own Escape branch (each
  *  popup closes differently — `ui/Popover` owns Escape for the ones it wraps). Vertical only: every
- *  popup in this kit is a vertical list; the `role="tablist"` strips have their own horizontal
- *  handler and do not use this. */
+ *  popup in this kit is a vertical list; the horizontal strips (tab strips and `Segmented`
+ *  radiogroups) have their own horizontal handler and do not use this. */
 export function menuCursorKeydown(
   e: KeyboardEvent,
   { move, dismiss }: { move: (d: number) => void; dismiss: () => void },

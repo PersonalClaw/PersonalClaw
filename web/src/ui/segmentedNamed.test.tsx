@@ -7,7 +7,7 @@ import { Field } from './forms'
 
 // ── Every tablist names the dimension it chooses ──────────────────────────────────
 //
-// A DOM census of 14 routes, counting `[role="tablist"]` nodes and resolving their accessible name from
+// A DOM census of 14 routes, counting `[role="radiogroup"]` nodes and resolving their accessible name from
 // EITHER `aria-label` or `aria-labelledby`:
 //
 //   before   named  9 · UNNAMED 7      after   named 16 · UNNAMED 0
@@ -48,7 +48,7 @@ describe('Segmented claims its Field label', () => {
         <Segmented value="a" onChange={() => {}} options={[{ key: 'a', label: 'High' }, { key: 'b', label: 'Low' }]} />
       </Field>,
     )
-    const list = container.querySelector('[role="tablist"]')!
+    const list = container.querySelector('[role="radiogroup"]')!
     const id = list.getAttribute('aria-labelledby')
     expect(id, 'the group must claim the published label id').toBeTruthy()
     // `getElementById`, not a `#id` selector: React's `useId()` emits ids containing colons (`:r0:`),
@@ -63,7 +63,7 @@ describe('Segmented claims its Field label', () => {
         <Segmented ariaLabel="Sort artifacts" value="a" onChange={() => {}} options={[{ key: 'a', label: 'High' }]} />
       </Field>,
     )
-    const list = container.querySelector('[role="tablist"]')!
+    const list = container.querySelector('[role="radiogroup"]')!
     expect(list.getAttribute('aria-label')).toBe('Sort artifacts')
     expect(list.getAttribute('aria-labelledby')).toBeNull()
   })
@@ -72,7 +72,7 @@ describe('Segmented claims its Field label', () => {
     const { container } = render(
       <Segmented value="a" onChange={() => {}} options={[{ key: 'a', label: 'High' }]} />,
     )
-    const list = container.querySelector('[role="tablist"]')!
+    const list = container.querySelector('[role="radiogroup"]')!
     expect(list.getAttribute('aria-labelledby')).toBeNull()
     expect(list.getAttribute('aria-label')).toBeNull()
   })

@@ -57,7 +57,7 @@ describe('reclassify owns the verdict (issue 623)', () => {
 
   it('reclassifying patches the new classification WITH confidence:user in one call', async () => {
     render(<InboxDetail item={makeItem()} onChanged={() => {}} navigate={() => {}} />)
-    fireEvent.click(screen.getByRole('tab', { name: 'Noise' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Noise' }))
     await waitFor(() => expect(updateInboxItem).toHaveBeenCalledWith('chan_1.000', {
       classification: 'noise',
       confidence: 'user',

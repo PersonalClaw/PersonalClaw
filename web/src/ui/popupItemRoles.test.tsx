@@ -41,6 +41,8 @@ import { MenuRow } from './Popover'
 // `invisible`, `-z-10` MEASUREMENT PROBE. The carried claim that `#/tasks` clipped its tabs at
 // phone width was that artefact: `#root` is 390 and the document does not scroll horizontally.
 // **Filter `closest('[aria-hidden="true"]')` before measuring anything about Segmented.**
+// (The selector is `[role="radio"]` now — #3472 made Segmented a radiogroup — but the probe and
+// therefore the trap are unchanged: the off-flow copy carries the same roles as the live strip.)
 
 describe('MenuRow carries the item role its container promises', () => {
   it('is a plain button by default — right for the 28 role-less popovers', () => {

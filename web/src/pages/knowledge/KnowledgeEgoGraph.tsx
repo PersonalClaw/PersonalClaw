@@ -200,7 +200,7 @@ export function KnowledgeEgoGraph({
           </div>
         </div>
         {/* The depth control. The Studio hand-rolled three bare toggles here; this is the
-            canonical exclusive-choice primitive instead, which carries the tablist semantics and
+            canonical exclusive-choice primitive instead, which carries the radiogroup semantics and
             the selected state the hand-rolled version conveyed with colour alone. */}
         <div data-type="caption" className="absolute right-3 top-3 flex items-center gap-2 rounded-pill bg-surface-high/90 px-2 py-1 backdrop-blur">
           <span className="text-on-surface-low">Focus · hops</span>

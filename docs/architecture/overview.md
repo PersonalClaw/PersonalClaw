@@ -185,8 +185,8 @@ in `docs/reference/CONFIG-REFERENCE.md`.
 ## Self-update
 
 `dashboard/handlers/updates.py` (`api_update_apply`) runs the public update
-pipeline. The git kind rides **release tags** by the `updates` channel/pin
-(RUM-4): `git fetch --tags` → `git checkout <resolved tag>` → `pip install -e .`
+pipeline. The git kind rides **release tags** by the `updates` channel/pin:
+`git fetch --tags` → `git checkout <resolved tag>` → `pip install -e .`
 (into the running venv) → frontend build → graceful re-exec. The git-only
 `nightly` channel is the one branch-tracking path and advances by fast-forward;
 neither path runs `git pull` or `reset --hard origin/main`. Steps

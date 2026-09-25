@@ -207,6 +207,51 @@ Running one install *on behalf of* several people is the same wrong shape as §3
 are no accounts to separate them, so everyone sharing an install shares one memory, one
 knowledge base, one credential store, and one chat history.
 
+## 11. You need a spend cap you can trust out of the box
+
+**Walk away if:** you cannot accept an autonomous agent that will spend your provider
+credit without a ceiling until you set one, or you needed a *hard* limit rather than an
+estimate.
+
+This one is easy to miss, because the feature exists. Three ceilings are real, wired, and
+have controls under **Settings → Guardrails**: `guardrails.budgets.max_tokens_per_run`,
+`max_tokens_per_day` and `max_dollars_per_day` (`src/personalclaw/config/safety.py`,
+`BudgetConfig`). A ceiling that bites pauses the run into needs-input rather than
+overspending quietly, and the day counter is persisted to `~/.personalclaw/spend.json` so
+it survives a restart. That is a genuine control. Three things about it are worth knowing
+*before* you point a goal loop at something and go to bed:
+
+- **All three default to zero, and zero means unlimited.** The dataclass says so in as
+  many words — *"Zero means UNLIMITED for that dimension — the conservative default so an
+  existing user's unattended work is never suddenly capped on upgrade."* So a **fresh
+  install has no cap at all**. Nothing will prompt you for one; you have to go and set it.
+- **They bind unattended work only — not the chat window.** Enforcement lives in
+  `ModelCallGuard`, and that module states its own scope: the wrap is *"gated on the
+  non-interactive chat-text use case"*, which *"excludes, by construction, both the
+  interactive `NativeAgentRuntime` … and its inner model — the interactive chat stream a
+  human is watching is explicitly out of scope"*
+  (`src/personalclaw/guardrails/model_call.py`). That is a defensible line for a stream you
+  are sitting in front of, but it means `max_dollars_per_day` is **not** a whole-install
+  cap. Goal loops, cron fires and subagents are metered; typing into chat is not.
+- **The dollar ceiling is an estimate, not a bill.** It *"use[s] provider-reported usage
+  where available, else a conservative heuristic"*, and the meter compares against the
+  higher of the two. PersonalClaw never sees your provider invoice, so an estimated ceiling
+  cannot be an authoritative one.
+
+What you *do* get for free is visibility rather than control: every model turn is recorded
+to a per-turn cost/token ledger (`src/personalclaw/usage_ledger.py`) and rolled up under
+**Settings → Usage**. It is deliberately *"observation only, never enforcement"*, and it is
+honest about what it cannot price — a model with no pricing row records `priced = False` and
+renders as **unpriced**, never as `$0.00`, and any rollup containing one reports itself
+incomplete. So you can always answer "what did that cost me", and a local model costs
+nothing either way.
+
+**What to do instead, if you stay:** set the ceilings before you leave anything running,
+and set a hard spend limit **at your provider** as the real backstop — that is the only cap
+that can actually stop a charge. The zero defaults and the interactive gap are today's
+state; the estimate being an estimate is permanent, because the authoritative number lives
+in an account PersonalClaw has no access to.
+
 ---
 
 ## What this page is not

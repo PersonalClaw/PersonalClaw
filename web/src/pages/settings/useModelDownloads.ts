@@ -1,14 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, type DownloadJob } from '../../lib/api'
+import { api, isLiveDownload, type DownloadJob } from '../../lib/api'
 
 /** Track async local-model download jobs for one provider.
  *
  *  On mount it lists live jobs (so a page reload re-attaches to an in-flight
- *  download) and opens a per-job SSE stream for each running job. `start` kicks
+ *  download) and opens a per-job SSE stream for each LIVE job. `start` kicks
  *  off a download and begins streaming its progress; `cancel` detaches it.
  *  Jobs are keyed by model name so the manager can render progress per row.
  *  Terminal jobs (done/error/cancelled) trigger `onSettled` so the caller can
- *  refresh the model list. */
+ *  refresh the model list.
+ *
+ *  🔴 "Live" is `isLiveDownload`, never `state === 'running'` (#3520). The three checks below
+ *  each used to spell it `!== 'running'`, and `POST /api/models/downloads` answers `queued` —
+ *  always, because the handler returns before the worker coroutine has run. So the ONE path that
+ *  starts a download opened no stream and reported the job settled, and its row sat at
+ *  `0 MiB of <total>` through completion. The mount path was never affected, which is exactly
+ *  why a reload "fixed" it and made the bug look cosmetic. */
 export function useModelDownloads(provider: string, onSettled: () => void) {
   const [jobs, setJobs] = useState<Record<string, DownloadJob>>({})
   const streams = useRef<Map<string, EventSource>>(new Map())
@@ -22,7 +29,7 @@ export function useModelDownloads(provider: string, onSettled: () => void) {
 
   const attach = useCallback((job: DownloadJob) => {
     setJobs((prev) => ({ ...prev, [job.model]: job }))
-    if (job.state !== 'running' || streams.current.has(job.id)) return
+    if (!isLiveDownload(job) || streams.current.has(job.id)) return
     let es: EventSource
     try { es = new EventSource(api.downloadStreamUrl(job.id)) } catch { return }
     streams.current.set(job.id, es)
@@ -31,7 +38,7 @@ export function useModelDownloads(provider: string, onSettled: () => void) {
       try { data = JSON.parse((e as MessageEvent).data) as DownloadJob } catch { return }
       if (!data) return
       setJobs((prev) => ({ ...prev, [data!.model]: data! }))
-      if (data.state !== 'running') { closeStream(data.id); settled.current() }
+      if (!isLiveDownload(data)) { closeStream(data.id); settled.current() }
     }
     for (const ev of ['snapshot', 'progress', 'done', 'error', 'cancelled']) es.addEventListener(ev, onFrame)
     es.onerror = () => { /* transient — EventSource retries */ }
@@ -51,7 +58,10 @@ export function useModelDownloads(provider: string, onSettled: () => void) {
   const start = useCallback(async (model: string) => {
     const job = await api.startModelDownload(provider, model)
     attach(job)
-    if (job.state !== 'running') settled.current()  // already-downloaded short-circuit
+    // The already-downloaded short-circuit — `start` answers an immediately-`done` job when the
+    // weights are already on disk intact. It must fire ONLY for a job that is genuinely finished:
+    // firing it for `queued` is what reported a download settled the instant it began.
+    if (!isLiveDownload(job)) settled.current()
   }, [provider, attach])
 
   // 🔑 `cancel` PROPAGATES its failure and clears the row only on success — the shape `start` already

@@ -1221,6 +1221,18 @@ class NodeInstance:
     #: liveness stays owned by `SubagentManager.get` -- and it is per-INSTANCE because a
     #: `foreach` fan-out of stages has one subagent per leaf.
     subagent_id: str = ""
+    #: The no-double-execution claim the CURRENT attempt of this instance holds, and the holder
+    #: identity it holds it with (#3533). Travels from `engine.dispatch_stage` on `NodeResult` and
+    #: is handed back by `_reconcile_dispatched_stages` when the attempt settles FAILED — which is
+    #: what makes a retry of a failed instance possible at all. Until it existed the claim had one
+    #: way out, its 900s TTL, so a FAILED stage refused its own retry for fifteen minutes with
+    #: `another worker holds the claim on this node` and the run then reported COMPLETE.
+    #:
+    #: PERSISTED for the same reason as `subagent_id`: the lease FILE survives the process, so a
+    #: restarted gateway that re-adopts this run must still be able to give the claim back. Cleared
+    #: the moment it is released, so a non-empty value always names a claim that is still held.
+    claim_target: str = ""
+    claim_holder: str = ""
     #: True when THIS instance's terminal output was served from the resume/rewind cache
     #: (WF2-A1) rather than freshly produced. The `step_cached` ledger event is the durable
     #: record; this is the projection a status read can answer from without scanning it, which
@@ -1252,6 +1264,8 @@ class NodeInstance:
             "item_label": self.item_label,
             "item_total": self.item_total,
             "subagent_id": self.subagent_id,
+            "claim_target": self.claim_target,
+            "claim_holder": self.claim_holder,
             "cached": self.cached,
         }
 
@@ -1279,5 +1293,7 @@ class NodeInstance:
             item_label=str(d.get("item_label", "") or ""),
             item_total=int(d.get("item_total", 0) or 0),
             subagent_id=str(d.get("subagent_id", "") or ""),
+            claim_target=str(d.get("claim_target", "") or ""),
+            claim_holder=str(d.get("claim_holder", "") or ""),
             cached=bool(d.get("cached", False)),
         )

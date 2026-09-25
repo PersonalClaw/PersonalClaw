@@ -85,7 +85,12 @@ from personalclaw.workflows.effects import (
     redo_blocked,
     run_teardown,
 )
-from personalclaw.workflows.engine import NodeResult, dispatch, node_commits_effects
+from personalclaw.workflows.engine import (
+    NodeResult,
+    dispatch,
+    node_commits_effects,
+    release_execution_claim,
+)
 from personalclaw.workflows.engine_support import DEFAULT_MODEL_TIERS, resolve_axis_model
 from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
@@ -1820,6 +1825,25 @@ class RunController:
                     attempt=inst.attempt,
                     retries_exhausted=True,
                 )
+                # 🔴 The FAILED ATTEMPT IS OVER, so its no-double-execution claim goes back (#3533).
+                # This is the only place a spawned stage settles, and the claim's 900s TTL used to
+                # be its only way out — so a failed stage went on fencing its own instance, and the
+                # retry met its own lease: `another worker holds the claim on this node (held by …
+                # for another 899s)`, rendered DEGRADED. DEGRADED is a SUCCESS state, so the run
+                # then reported COMPLETE having re-run nothing. Measured that way on a rewind of a
+                # reaped stage before this existed.
+                #
+                # The SUCCESS branch below deliberately keeps its claim: the symptom a retained
+                # DONE claim causes is a stage-bodied loop refusing its own next round, and that is
+                # fixed by keying the claim per node INSTANCE (#3531) rather than by shortening the
+                # window here. Releasing on both outcomes ALSO clears it — measured, the research
+                # round loop goes from 1 dispatch to 8 — but it would be a second mechanism for one
+                # symptom, and a re-run of the same SUCCEEDED instance is intercepted before the
+                # claim is consulted anyway (the committed-effects redo gate, then the WF2-A1 resume
+                # cache).
+                release_execution_claim(inst.claim_target, inst.claim_holder)
+                inst.claim_target = ""
+                inst.claim_holder = ""
             else:
                 inst.state = InstanceState.DONE
                 inst.completed_at = _now()
@@ -3143,9 +3167,16 @@ class RunController:
             # twice — that dict is keyed by NODE id, so a `foreach` fan-out of stages collided
             # under `setdefault` and kept only the first leaf's id, and it put an engine
             # internal into the namespace a downstream `{{nodes.X}}` binding reads.
+            #
+            # The execution CLAIM rides along for the same reason and is released by the same
+            # settle (#3533): `dispatch_stage` takes it before the spawn and cannot give it back,
+            # because the spawn is still live when it returns. Recorded here rather than
+            # re-derived, because the holder is a fresh uuid per attempt.
             inst.state = InstanceState.RUNNING
             if isinstance(result.output, dict):
                 inst.subagent_id = str(result.output.get("subagent_id", "") or "")
+            inst.claim_target = result.claim_target
+            inst.claim_holder = result.claim_holder
             return
 
         if result.state == InstanceState.WAITING:

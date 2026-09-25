@@ -14,9 +14,9 @@ const BUFFER = '{"title":"Build the thing","steps":[{"id":"a","title":"Alpha"},{
 describe('PlanStreamReview — three synchronized views (WF2UNI-10 render)', () => {
   it('renders the three view toggles and the proposal cards (with per-step labels) by default', () => {
     render(<PlanStreamReview buffer={BUFFER} complete={true} />)
-    expect(screen.getByRole('tab', { name: 'Proposal' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Graph' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'JSON' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Proposal' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Graph' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'JSON' })).toBeInTheDocument()
     expect(screen.getByText('Alpha')).toBeInTheDocument()
     expect(screen.getByText('Beta')).toBeInTheDocument()
     expect(screen.getByText('2 steps')).toBeInTheDocument()
@@ -24,13 +24,13 @@ describe('PlanStreamReview — three synchronized views (WF2UNI-10 render)', () 
 
   it('the JSON view shows the raw buffer verbatim (authoritative, not the reparse)', () => {
     render(<PlanStreamReview buffer={BUFFER} complete={true} />)
-    fireEvent.click(screen.getByRole('tab', { name: 'JSON' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'JSON' }))
     expect(screen.getByText((t) => t.includes('"title":"Build the thing"'))).toBeInTheDocument()
   })
 
   it('the graph view renders a dependency graph when selected', () => {
     const { container } = render(<PlanStreamReview buffer={BUFFER} complete={true} />)
-    fireEvent.click(screen.getByRole('tab', { name: 'Graph' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Graph' }))
     expect(container.querySelector('svg')).not.toBeNull()
   })
 

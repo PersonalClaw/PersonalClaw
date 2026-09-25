@@ -317,7 +317,7 @@ reworded; SSO adds its own (`auth_sso_not_enabled`, `auth_sso_state_invalid`,
 
 ---
 
-## 5. Follow-on change set
+## 5. The work this would take, in order
 
 **Nothing below is scheduled.** This section exists so that a reader can see the size and the
 shape of the change rather than guess at it, and so that a contributor who wants to argue for

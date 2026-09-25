@@ -13,7 +13,8 @@ import { join } from 'node:path'
 //   "No models are loaded. One loads on its first use."
 //   "No suggestions yet — they build from your activity."
 //
-// — or are a finished verdict ("All clear — nothing waiting on you."), or carry an on-ramp
+// — or are a finished verdict ("Nothing to triage — …", narrowed from "All clear" by #3471 so the
+// negative is scoped to the lanes the card reads), or carry an on-ramp
 // ("No tasks ready to work." + "+ New task"). ONE was a bare fact with neither: Schedule's
 // "No recent scheduled runs." This is the app's first screen, so the slot that teaches nothing
 // is the most expensive one to leave alone.

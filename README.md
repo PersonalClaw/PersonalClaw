@@ -157,7 +157,7 @@ bound, the row says so rather than letting you find out after installing.
 
 ## When PersonalClaw is *not* the right tool (yet)
 
-The table above is what ships. This is the other half — ten situations where you should
+The table above is what ships. This is the other half — eleven situations where you should
 close this tab today rather than find the limit after an evening of setup. **"Never"
 means a design boundary we expect to still hold at 1.0**, not a backlog item:
 
@@ -172,6 +172,7 @@ means a design boundary we expect to still hold at 1.0**, not a backlog item:
 | want it to live in Telegram / Discord / email | **no** | core registers exactly one channel: the web dashboard |
 | expect web search to work out of the box | **no** | no search provider ships bundled — it is a seam you fill |
 | plan to install apps you do not trust | **no** | the platform *vets* what you install; it does not confine it after |
+| want a spend cap that works out of the box | **no** | the three ceilings are real but default to *unlimited*, and today meter unattended runs only — not the chat window |
 | want a hosted service | **never** | you run the process — there is no SaaS and none is planned |
 
 **[Read the full version, with the code citations »](docs/guides/when-not-to-use-personalclaw.md)**
@@ -291,6 +292,9 @@ personalclaw config set updates.pin 0.2.0    # …or stay on exactly 0.2.0
 personalclaw update --to 0.1.3               # roll back: pins that release and installs it
 ```
 
+A pin must name a release that actually exists: one that names no published release is
+refused rather than quietly upgrading you (`select_target`, `src/personalclaw/self_update.py`).
+
 Everything is in **Settings → Updates** too: the **channel** (`stable` · `beta` ·
 `nightly` for contributors), a **version pin**, **automatic applies**
 (`updates.auto=staged`, opt-in, held while work is in flight), the **check cadence**, and
@@ -354,7 +358,7 @@ push to `main`.
 ## Documentation
 
 - [Getting started](docs/guides/getting-started.md) — install → first chat.
-- [When PersonalClaw is not the right tool (yet)](docs/guides/when-not-to-use-personalclaw.md) — ten situations where you should walk away today, each with the file or recorded decision that makes it true, and which limits are permanent design boundaries rather than unfinished work.
+- [When PersonalClaw is not the right tool (yet)](docs/guides/when-not-to-use-personalclaw.md) — eleven situations where you should walk away today, each with the file or recorded decision that makes it true, and which limits are permanent design boundaries rather than unfinished work.
 - [Working inside a chat](docs/guides/chat-surface.md) — the nine things the chat surface does beyond a send button: rewind to any earlier message, branch a conversation two ways, have a plan approved before anything runs, let a queued message cut in, find and quote, follow-up suggestions, the streaming reveal, and putting part of your screen into the conversation.
 - [Automations you can leave alone](docs/guides/automations.md) — the three guarantees about unattended runs (a failure reaches your inbox even when delivery is off; a gated run is labelled inert, not green; a run whose host died is terminalized), each with the surface it is checked on, plus a recipe that falsifies all three in one automation.
 - [Remote access](docs/guides/remote-access.md) — reaching your dashboard from outside your home network (tunnel + password + 2FA), and what it does *not* protect you from.
@@ -366,7 +370,11 @@ push to `main`.
 - [Architecture overview](docs/architecture/overview.md) — the system map (with diagrams).
 - [Configuration reference](docs/reference/configuration.md) · [CLI](docs/reference/cli.md) · [API](docs/reference/api-overview.md) · [HTTP routes](docs/reference/api-routes.md)
 - Roadmap — maintainer-owned and deliberately not in this repo; the written way in is the
-  [contribution intake path](CONTRIBUTING.md#the-model).
+  [contribution intake path](CONTRIBUTING.md#the-model). **The short uppercase codes these
+  pages sometimes cite** — `PP-16`, `AAP-5`, `CHANNEL-EXPANSION` — are identifiers from that
+  unpublished plan set, kept only where they record *why* a behaviour exists. Nothing asks
+  you to resolve them and nothing depends on your doing so: each page cites the code that
+  actually decides, and the code is the authority.
 - [Visual showcase](SHOWCASE.md) — every screen, light and dark.
 
 ## Contributing

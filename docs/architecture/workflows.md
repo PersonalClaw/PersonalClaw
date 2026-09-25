@@ -66,13 +66,14 @@ while not terminal:
 | `projection.py` | the schema-validated run snapshot |
 | `resilience.py` | retries, circuit breaker, budgets |
 | `failure_taxonomy.py` | `classify_exception()` — the ONE exception → typed `Failure` map, and therefore the one place that decides whether budget gets spent on a retry (only `TRANSIENT`/`NETWORK` are retryable). Lifted out of `engine.py` because three modules consult it — the engine, the controller's terminal-failure path and the gateway's channel injection — and two of them reached it through a function-local import of a private name |
+| `error_codes.py` | `WF_ERROR_CODES` — the registry for the `WF_UPPER_SNAKE` service-result vocabulary (#3499), and the place to look a code up. One derived one-line meaning per code, grouped by the module that raises it so the derivation can be re-checked. Every meaning is read off the raise site — the guard that fires plus the message it emits — never off the name: a plausible-sounding guess reads as authoritative, and an author would act on a contract the engine never implemented. A row is the *stable contract* a caller may branch on, while the per-instance message stays the concrete detail (which node, which key, which run) — which is why, unlike `http_errors.HTTP_ERROR_CODES`, this registry is not also a default message. Carries no severity, because `validator.py`'s `_add` takes one per call and the emitters decide it. Its rail runs BOTH directions — every raised code has a row, and every row is still raised, the half that stops a registry rotting into codes that no longer exist — and EXCLUDES this module from the scan, since its own keys are string literals in core and counting them would make the second direction true by construction |
 | `preflight.py` | run-start checks — credentials, binaries, models, providers |
 | `audit.py` | the `workflow_audit` maintenance op (diagnose / heal) |
 | `judge_contract.py` | the ONE closed verdict enum (`verify.Verdict` was merged into it and deleted), the judge's wire shape (`judge_instruction` renders it, `parse_judge_json` reads it), the rubric ratchet with tolerant score lookup, the engine-computed overall, and the forbidden-mode denylist. Enforced on the live path: the judge gate validates every answer here, and `engine.apply_judge_contract` validates a judge STAGE's output at the dispatch seam |
 | `judge_pretier.py` | the free rule tier that runs BEFORE any judge model call, plus the deterministic `fallback_check` |
 | `judge_actors.py` | the actor-transition invariant (a worker may never reach `done`; a `self_judge` gate's PASS is redirected to review), judge isolation, and the blinded role-filtered evidence a judge is allowed to read |
 | `loop_middleware.py` | the breaker's next tier: call fingerprinting, failure-class routing, the Continue→Nudge→Escalate→Halt ladder, the interrupt queue |
-| `supervisor_policy.py` | the ONE `SupervisorPolicy` a loop node declares (rubric, escalation ladder, failure mutations, dwell/metric gates, marginal-value band, judge model tier, reproduce-before-ship, write scope, budget, HITL posture), its tolerant parser and its authoring-time `WF_SUPERVISOR_*` validation. Reuses the scattered types rather than re-minting them; deliberately inert with a two-directional honesty rail (PP-15 is the wiring owner) |
+| `supervisor_policy.py` | the ONE `SupervisorPolicy` a loop node declares (rubric, escalation ladder, failure mutations, dwell/metric gates, marginal-value band, judge model tier, reproduce-before-ship, write scope, budget, HITL posture), its tolerant parser and its authoring-time `WF_SUPERVISOR_*` validation. Reuses the scattered types rather than re-minting them. **Live, not inert:** `RunController._supervisor_policy` (`workflows/controller.py:3543`, called at `:3722`) parses a loop node's `supervisor:` block and `tick_config` turns it into the `TickConfig` that `loop.tick.evaluate` (`loop/tick.py:306`) reads, so the thresholds a template declares here are the thresholds the engine applies. `HAS_ZERO_PRODUCTION_CALLERS` is `False` (`supervisor_policy.py:73`) and a rail asserts that marker against reality in both directions, so it cannot quietly disagree with the code |
 | `judge_calibration.py` | the nodding-loop detector, divergence records, stuck detection, and the verdict ledger they read |
 | `review_service.py` | the run-scoped binding for `personalclaw.review_triage`: the live `git diff` a run's findings are anchored against, the `review_finding` ledger read, the re-anchor-on-submit TOCTOU check, dispatch of the ACCEPTED subset through `service.steer_run`, and rejections written as `judge_divergence` calibration rows |
 | `loop_aliases.py` | read-time aliases for legacy loop-kind references, and cockpit stream-key equivalence |
@@ -196,6 +197,20 @@ refresh costs zero tokens. Either field satisfies the validator; neither is
 reaches the provider as an empty config — it then reports its own required field
 missing for a value visibly present in the spec, and every downstream binding
 fails. Validation refuses the shape at authoring time.
+
+**Every `WF_*` code has a registry row: `workflows/error_codes.py`
+(`WF_ERROR_CODES`).** That is where to look one up. `WF_*` is the third of this repo's
+three code vocabularies — `lowercase_snake` is the HTTP wire envelope
+(`http_errors.HTTP_ERROR_CODES`), `ERR_UPPER_SNAKE` is the carrier into an LLM session
+(`errors.ERROR_CODES`), and `WF_UPPER_SNAKE` is the transport-independent workflows
+service result, which `workflows/handlers.py`'s `_STATUS_MAP` translates into the first.
+Until #3499 it was the only one of the three with no registry and no rail: 159 codes were
+raised across ten core modules and exactly one — `WF_MISSING_EXPR`, above — was documented
+anywhere. Each row's meaning is the *stable contract*; the per-instance message stays the
+concrete detail (which node, which key, which run). The rail
+(`tests/test_wf_error_codes_registry.py`) runs **both** directions — every raised code has
+a row, and every row is still raised — because the second is what stops the registry
+rotting into a list of codes that no longer exist.
 
 ## Bindings
 

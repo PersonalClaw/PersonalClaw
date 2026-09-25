@@ -51,10 +51,10 @@ function report(overrides: Partial<IdentityReportView> = {}): IdentityReportView
 // the two — measured, on the first run of this file.
 const PANEL = join(dirname(fileURLToPath(import.meta.url)), 'IdentityReportPanel.tsx')
 
-/** The strip, resolved by its accessible name. `Segmented` renders `role="tablist"` with the
+/** The strip, resolved by its accessible name. `Segmented` renders `role="radiogroup"` with the
  *  options as tabs, so this is also what asserts the group is NAMED — a bare tablist would make
  *  `getByRole` here fail rather than silently pass on an unnamed group. */
-const strip = () => screen.getByRole('tablist', { name: 'Write one automatically' })
+const strip = () => screen.getByRole('radiogroup', { name: 'Write one automatically' })
 
 describe('the identity report cadence control', () => {
   beforeEach(() => { vi.restoreAllMocks() })
@@ -62,19 +62,19 @@ describe('the identity report cadence control', () => {
   it('offers every cadence the backend accepts, including off', () => {
     render(<IdentityReportPanel report={report()} error={undefined} onRetry={() => {}} onDelivered={() => {}} />)
 
-    const labels = Array.from(strip().querySelectorAll('[role="tab"]')).map((t) => t.textContent?.trim())
+    const labels = Array.from(strip().querySelectorAll('[role="radio"]')).map((t) => t.textContent?.trim())
     expect(labels).toEqual(['Monthly', 'Weekly', 'Off'])
     // The active one is the SERVER's value, not the first option — a strip that always
     // highlighted its head would read as "Monthly" for a weekly install.
-    expect(screen.getByRole('tab', { name: 'Monthly' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByRole('radio', { name: 'Monthly' }).getAttribute('aria-checked')).toBe('true')
   })
 
   it('shows the server value as active, not the default', () => {
     // The floor for the assertion above: with a different saved value, a different tab is active.
     render(<IdentityReportPanel report={report({ cadence: 'weekly' })} error={undefined} onRetry={() => {}} onDelivered={() => {}} />)
 
-    expect(screen.getByRole('tab', { name: 'Weekly' }).getAttribute('aria-selected')).toBe('true')
-    expect(screen.getByRole('tab', { name: 'Monthly' }).getAttribute('aria-selected')).toBe('false')
+    expect(screen.getByRole('radio', { name: 'Weekly' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('radio', { name: 'Monthly' }).getAttribute('aria-checked')).toBe('false')
   })
 
   it('writes learning.identity_report_cadence and re-reads the report', async () => {
@@ -85,11 +85,11 @@ describe('the identity report cadence control', () => {
     const onRetry = vi.fn()
 
     render(<IdentityReportPanel report={report()} error={undefined} onRetry={onRetry} onDelivered={() => {}} />)
-    fireEvent.click(screen.getByRole('tab', { name: 'Weekly' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Weekly' }))
 
     await waitFor(() => expect(spy).toHaveBeenCalledWith('learning.identity_report_cadence', 'weekly'))
     await waitFor(() => expect(onRetry).toHaveBeenCalled())
-    expect(screen.getByRole('tab', { name: 'Weekly' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByRole('radio', { name: 'Weekly' }).getAttribute('aria-checked')).toBe('true')
   })
 
   it('says what off means instead of leaving the panel looking broken', () => {
@@ -104,7 +104,7 @@ describe('the identity report cadence control', () => {
     const spy = vi.spyOn(api, 'patchConfig').mockRejectedValue(new Error('gateway said no'))
 
     render(<IdentityReportPanel report={report()} error={undefined} onRetry={() => {}} onDelivered={() => {}} />)
-    fireEvent.click(screen.getByRole('tab', { name: 'Off' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Off' }))
 
     await waitFor(() => expect(spy).toHaveBeenCalled())
     const alert = await screen.findByRole('alert')
@@ -112,14 +112,14 @@ describe('the identity report cadence control', () => {
     expect(alert.textContent).toContain('Write one automatically')
     expect(alert.textContent).toContain('gateway said no')
     // Reverted. Leaving "Off" selected would claim a state the gateway rejected.
-    expect(screen.getByRole('tab', { name: 'Monthly' }).getAttribute('aria-selected')).toBe('true')
-    expect(screen.getByRole('tab', { name: 'Off' }).getAttribute('aria-selected')).toBe('false')
+    expect(screen.getByRole('radio', { name: 'Monthly' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('radio', { name: 'Off' }).getAttribute('aria-checked')).toBe('false')
   })
 
   it('renders NO control when the server could not read the config', () => {
     render(<IdentityReportPanel report={report({ cadence: '' })} error={undefined} onRetry={() => {}} onDelivered={() => {}} />)
 
-    expect(screen.queryByRole('tablist', { name: 'Write one automatically' })).toBeNull()
+    expect(screen.queryByRole('radiogroup', { name: 'Write one automatically' })).toBeNull()
     expect(screen.getByText(/Your settings could not be read/)).toBeTruthy()
     // The rest of the panel still renders — an unreadable SETTING is not an unreadable report.
     expect(screen.getByText("How I've adapted to you")).toBeTruthy()

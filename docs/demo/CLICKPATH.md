@@ -124,7 +124,7 @@ The audit log is the receipt. For the recorded run the `artifact_save` chain is
 
 ## What is real, and what is still not shown
 
-`DL-5` specifies the arc **chat → approval → loop → knowledge → artifact**. All five are
+The demo arc is **chat → approval → loop → knowledge → artifact**. All five are
 now shown, in that order, and none is substituted or staged.
 
 | Specified beat | Status | Evidence |

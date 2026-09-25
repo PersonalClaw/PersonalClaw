@@ -10,6 +10,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 - **A first-time contributor's three dead ends are closed: a compose service that runs a command the CLI does not have, a Discussions category that does not exist, and a dev setup that fails on the `python3` most machines have.**
+- **The `WF_*` workflow error codes now have a registry and a both-directions rail: `workflows/error_codes.py` (`WF_ERROR_CODES`), 162 codes with a meaning each.**
+- **"When PersonalClaw is not the right tool (yet)" gains an eleventh scenario: there is no spend cap on a fresh install, and the ceilings that exist never cover the chat window.**
 - **Browse can now click a `<canvas>`: an opt-in vision-grounding fallback, using a vision model you pull yourself.**
 - **"When PersonalClaw is not the right tool (yet)" — ten situations where a new reader should walk away today, and the two README claims that contradicted the code.**
 - **Agent Rooms are now something you can see and use: a Rooms tab, an attributed transcript, the pause card and per-member status.**
@@ -52,6 +54,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Changed
 - **The app SDK now exports every type its own published surface names — 25 of them were unimportable, so apps had to derive or re-declare them.**
 - **The SDK surface is now closed under its published *functions* too, not only fields and methods — 22 more types an app could not name, and one collision resolved.**
+- **The published docs stop sending readers after internal plan identifiers they cannot resolve.**
 - **The five Settings switches that relax a security or safety default now confirm before they take effect.**
 - **`workflow_start` now validates inputs against the same tree-derived parameter contract shown by `workflow_plan`.**
 - **Loop end-state labels now come from the structured `stop_reason`, not free-text `error_message` prose.**
@@ -81,12 +84,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Fixed
 - **App installs that declare Python dependencies were refused on every clean install: `packaging` was never a declared dependency of core.**
 - **The install-consent dialog no longer freezes on "Install anyway" when a confirmed install fails for a reason the scanner never anticipated.**
+- **A failed workflow stage can be retried immediately, instead of being refused by its own no-double-execution claim for fifteen minutes.**
+- **A loop body's `{{last.output.summary | default("…")}}` can finally use its own default, and its failure no longer reads "user error".**
+- **Every field in an app's Configure form now has an accessible name: 16 of 16 were unnamed.**
+- **The published tree no longer cites an internal authority a reader cannot resolve, and six user-facing claims that the code contradicts are now true.**
+- **Emptying a stored provider credential field now actually clears it, instead of silently surviving under the new-looking blank form.**
 - **An empty code fence no longer paints the literal word `undefined` into a chat answer.**
 - **A `<widget>` shown inside a code fence is now shown, not run — and the fence keeps the line it was about.**
+- **A `javascript:` URL with a tab in its scheme no longer survives the HTML sanitizer, and a URL it cannot classify is now rejected instead of kept.**
 - **A room's member picker no longer says "Loading…" forever when the agent list cannot be read, and no longer tells a user with no agents that they are all already in the room.**
 - **The default accent was under AA as chip text on every light surface — 3.52:1 on a page every user visits — so `--color-primary`'s light value is retuned across all 12 schemes.**
 - **The `neutral` status pill is readable: its text was drawn in a border token at 1.63:1, and the contrast rail that should have caught it measured four of the six tones.**
 - **The shell no longer corrects away the two routes it renders itself: `#/companion` — the PWA's own `start_url` — is reachable again, and every deep-link out of first-run setup lands where its button says.**
+- **A local-model download now shows real progress from the moment you start it, instead of freezing at `0 MiB` through completion.**
 - **A handled tool failure now reaches the wire AND the audit log as a failure, so a refused destructive operation is no longer recorded as one that ran.**
 - **Doctor is clean on a fresh install: the last two "in NO snapshot" paths are now recorded as deliberately not state, with the reasoning beside them.**
 - **A misspelled permission in `app.json` is now refused at install by name, instead of vanishing silently from both the manifest and the consent screen.**
@@ -97,12 +107,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A workflow run that called no model at all is no longer told a free local model ran.**
 - **Launching a loop with no model bound now tells you where to fix it, instead of asking you whether you fixed it.**
 - **Four labelled cells on a workflow run page rendered a label with nothing after it, on any run that finished in under a second.**
+- **"Needs you" now names one set, so the dashboard can no longer say "All clear" while a project shows work waiting on you.**
+- **A screen reader no longer says "tab 2 of 6" for the task form's Status field — every single-choice field is now announced as the radio group it is.**
 - **The Inbox no longer tells a fresh install its inbox “is not connected yet” while its own banner says the native source is active.**
 - **Prompt-cache counts now survive the native runtime, which is why every ledger row read a structural zero.**
 - **The home screen’s “Needs you” card now opens the inbox item it names, instead of dropping you on the inbox list.**
 - **Two security controls that resolved an unreadable config to their most permissive value now refuse instead.**
 - **A first chat no longer shows the assistant's finalized reply twice until reload.**
 - **A `config.json` that cannot be parsed no longer re-widens a deliberately narrowed security posture — it now fails CLOSED.**
+- **The composer no longer reports itself idle while the previous run is still live, so a message sent in that window is not silently absorbed.**
 - **A browse run that got stuck or was refused by the egress policy now explains itself in a sentence instead of printing a reason code.**
 - **First-run setup no longer tells you a chat model is ready when chat cannot use it, and when it cannot, it names the actual reason.**
 - **A credential typed into a project name no longer reaches the download filename, and download filenames now carry non-ASCII names instead of dropping them.**
@@ -315,6 +328,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Three views that show less than they were given now say so, and the numbers they state are the numbers they honour.**
 - **The API reference no longer claims to be complete when it is not.**
 - **Advancing an onboarding step no longer drops focus on the floor, the step you are on is a real heading, and the step body stops spending a fifth of a phone screen on alignment.**
+- **A release can no longer publish a gateway image whose dashboard does not work.**
 
 ### Added
 

@@ -573,18 +573,57 @@ _ROOT_HOLDS = {
 }
 
 
-def _unresolved_remediation(seg: str, *, is_root: bool) -> str:
+#: The two roots that carry a prior cycle's produced value. Spelled once: `_first_cycle_miss`,
+#: `_prior_cycle_field_miss` and the remediation above all key on the same pair, and three
+#: literal tuples would drift the day a third prior-cycle root appears.
+_PRIOR_CYCLE_ROOTS = ("last", "previous")
+
+
+def _is_prior_cycle_output_path(head: str) -> bool:
+    """Does this head read a field INSIDE a prior cycle's output? Shape only, no context."""
+    segs = [s for s in head.split(".") if s]
+    return len(segs) >= 3 and segs[0] in _PRIOR_CYCLE_ROOTS and segs[1] == "output"
+
+
+def reads_prior_cycle_output(expr: str) -> bool:
+    """Does this whole expression body (pipes included) read a prior cycle's output field?
+
+    Public because a FAILURE CLASS depends on the answer: `engine_support.resolve_config` files
+    a binding failure here as INTERNAL rather than USER. The shape test lives with the rule it
+    shares (`_prior_cycle_field_miss`) so the two cannot drift into disagreeing about which
+    reads are prior-cycle reads.
+    """
+    return _is_prior_cycle_output_path((expr or "").split("|")[0].strip())
+
+
+def _unresolved_remediation(seg: str, *, is_root: bool, head: str = "") -> str:
     """The actionable half of an `unresolved reference` failure.
 
-    Never "add a `| default(...)` pipe". `_walk_path` raises on the FIRST missing segment,
-    before any pipe runs — `validator._validate_output_contract` states the same ("a
-    `| default(…)` pipe does NOT rescue it") — so a default cannot save a missing path. It
-    saves a path that RESOLVES TO NULL, which is a different thing, and saying so is the
-    difference between a next step and a dead end.
+    Never "add a `| default(...)` pipe" — with ONE exception, carried here rather than left to
+    the reader to infer. `_walk_path` raises on the FIRST missing segment, before any pipe runs
+    — `validator._validate_output_contract` states the same for a `{{nodes.…}}` read ("a
+    `| default(…)` pipe does NOT rescue it") — so in general a default cannot save a missing
+    path. It saves a path that RESOLVES TO NULL, which is a different thing, and saying so is
+    the difference between a next step and a dead end.
+
+    The exception is a field inside a PRIOR CYCLE's output (`last.output.x`,
+    `previous.output.x`), where `_prior_cycle_field_miss` does honour a `default` — because the
+    key set of a model-produced output is a runtime fact, not something the author got wrong.
+    Reaching this text with such a head therefore means the expression has NO default, and
+    "add one" is the correct and only next step. Telling that author to check the spelling
+    instead sends them looking for a typo that is not there.
 
     A missing ROOT and a missing leaf are different fixes, so they get different text: the
     root case means the reference is being read somewhere the value does not exist at all.
     """
+    if not is_root and _is_prior_cycle_output_path(head):
+        root = head.split(".")[0].strip()
+        return (
+            f"the previous {'cycle' if root == 'previous' else 'iteration'} produced no "
+            f"{seg!r}. A model that ignored its step's declared schema is the usual reason, so "
+            f"add a `| default(...)` pipe to say what to use when the field is absent — for a "
+            f"prior-cycle field, and only there, a default DOES rescue the missing path."
+        )
     if is_root:
         holds = _ROOT_HOLDS.get(seg)
         if holds:
@@ -619,7 +658,7 @@ def _walk_path(root: Any, path: str, expr: str) -> Any:
             raise BindingError(
                 f"unresolved reference at {seg!r}",
                 expr,
-                _unresolved_remediation(seg, is_root=index == 0),
+                _unresolved_remediation(seg, is_root=index == 0, head=path),
             )
         cur = nxt
     return cur
@@ -648,7 +687,15 @@ def resolve_expr(expr: str, ctx: BindingContext) -> Any:
         if value is None:
             raise BindingError(f"secret {key!r} is not set", expr)
     else:
-        value = _walk_path(ctx.as_root(), head, expr)
+        try:
+            value = _walk_path(ctx.as_root(), head, expr)
+        except BindingError:
+            # A FIELD the prior cycle's output does not carry, in an expression that already
+            # says what to use instead. See `_prior_cycle_field_miss` for why this cannot
+            # swallow `nodes.typo.output`.
+            if not _prior_cycle_field_miss(head, ctx, pipe_names):
+                raise
+            return _run_pipes(None, parts[1:], expr, ctx)
 
     # `siblings.<id>.output` always FLATTENS iteration envelopes to items — that is what the
     # reference means, and without it `| full` / `| window(N)` / `| unseen` each operated on a
@@ -718,6 +765,9 @@ def _first_cycle_miss(head: str, ctx: BindingContext) -> bool:
     engine does not yet hand a loop BODY its previous iteration at all (`_context_for` sets no
     `has_last`; pinned by `test_a_loop_body_still_gets_no_real_previous_iteration`), and a rescue
     keyed on absence would convert that open gap into a silent lie on every later iteration.
+
+    This rule is about the ROOT being absent. The prior cycle being PRESENT but not carrying a
+    field is a different fact with a different predicate — see `_prior_cycle_field_miss`.
     """
     segs = [s for s in head.split(".") if s]
     if not segs:
@@ -726,6 +776,55 @@ def _first_cycle_miss(head: str, ctx: BindingContext) -> bool:
         return not ctx.has_previous
     if segs[0] == "last":
         return not ctx.has_last and ctx.iter_index == 0 and not ctx.has_item
+    return False
+
+
+def _prior_cycle_field_miss(head: str, ctx: BindingContext, pipe_names: set[str]) -> bool:
+    """Is this a FIELD the prior cycle's output legitimately does not carry?
+
+    `_first_cycle_miss` rescues an absent prior-cycle ROOT. This rescues a path INTO a
+    prior-cycle root that IS present — `{{last.output.summary | default("(first pass)")}}`
+    resolving `last`, resolving `last.output`, and finding no `summary` on it. Measured on a
+    real loop: a body stage declaring `schema {summary, meaningful_progress, evidence}` whose
+    model returned prose instead of that JSON keeps an unstructured `{"result": "<text>"}`
+    output, so every `last.output.<field>` read in the NEXT iteration is unresolvable and the
+    iteration fails on a binding error naming a field nobody typed wrong. With a small local
+    model that is the common case, not an edge case, and the template author had already
+    written the fallback for exactly this — a `default` that `_pipe_default`'s own contract
+    ("an unresolvable *reference* still raises") could never fire.
+
+    **Why this cannot swallow an authoring error.** All five conditions must hold:
+
+    1. the root is `last` or `previous` — a prior CYCLE, so `nodes.typo.output`,
+       `inputs.typo`, `siblings.x.y` and a typo'd `lastt` are all outside this rule and raise
+       exactly as before. That distinction is the same one `_first_cycle_miss` draws, and it is
+       load-bearing for the same reason: a node id is statically knowable, so a typo in one is
+       an authoring error that `validator._validate_binding_targets` already rejects before
+       any run, while the key set of a model-produced output is knowable only at runtime;
+    2. that root is actually PRESENT (`has_last` / `has_previous`) — the engine really did hand
+       over a prior cycle. An unwired seam still raises, which is what keeps this from
+       degenerating into the absence-keyed rescue `_first_cycle_miss` refuses;
+    3. the second segment is literally `output` and a third segment exists — the miss is
+       strictly INSIDE the value the prior cycle produced. `last.typo.summary` raises;
+    4. the expression carries a `default(...)` pipe — the author has stated the fallback. With
+       no default nobody has said what to use instead, and inventing one is the silent-empty-
+       string failure this module exists to prevent, so it still raises. That is why the four
+       bundled loop `condition`s reading `{{last.output.<field>}}` carry `| default(false)`
+       rather than relying on this;
+    5. not a `foreach` (`has_item`) — `last` means nothing over an item index.
+
+    The residue, named rather than implied: a typo in the FIELD name (`last.output.sumary |
+    default(…)`) is rescued too, because at this layer it is indistinguishable from a model
+    that omitted the key. That is undecidable HERE, and the layer that can decide it is the
+    producing step — it knows both the declared schema and what came back.
+    """
+    segs = [s for s in head.split(".") if s]
+    if len(segs) < 3 or segs[1] != "output" or "default" not in pipe_names:
+        return False
+    if segs[0] == "previous":
+        return ctx.has_previous
+    if segs[0] == "last":
+        return ctx.has_last and not ctx.has_item
     return False
 
 

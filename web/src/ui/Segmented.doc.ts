@@ -13,19 +13,20 @@ const doc: UiDoc = {
     { name: 'value', description: 'The selected option key (controlled).' },
     { name: 'onChange', description: 'Fires with the newly selected key — on click and on WAI-ARIA arrow/Home/End keyboard nav.' },
     { name: 'iconOnly', description: 'Render square icon buttons (a compact view-switch) instead of icon + label. Requires each option to carry an icon.' },
-    { name: 'ariaLabel', description: 'Accessible name for the role="tablist" group.' },
+    { name: 'ariaLabel', description: 'Accessible name for the role="radiogroup". Omit it inside a Field — the group claims the Field\'s visible label automatically; an explicit ariaLabel wins.' },
     { name: 'disabled', description: 'Dim + block interaction on the whole group.' },
     { name: 'size', description: "'md' (default) or 'sm' — a compact, low-key strip (shorter, smaller text, muted surface) for inconspicuous secondary controls." },
     { name: 'collapse', description: "Responsive overflow behavior: unset (default) always the inline strip, no measuring; 'scroll' keeps the strip and scrolls it horizontally; 'menu' collapses below the fit threshold to one pill that opens the options in a Popover." },
   ],
   bestPractices: [
     { guidance: true, description: 'Reach for Segmented for every mutually-exclusive "pick one of N" choice rather than hand-rolling toggle buttons — the sliding liquid indicator and roving-tabindex keyboard nav come built in and keep every such control identical.' },
+    { guidance: false, description: 'Do not use it for a strip that reveals a PANEL. It announces itself as a radiogroup, which is the truth for a field whose value is one of N and nothing is revealed. A real tabbed interface needs role="tab" with an aria-controls\'d role="tabpanel" — hand-roll that, as ChatActivityPanel does.' },
     { guidance: true, description: 'Drive it controlled: pass value and set it in onChange.' },
     { guidance: true, description: "Set collapse='menu' when the strip may outgrow a tight header row — it swaps to a single Popover pill below the fit threshold and re-expands when space returns (no one-way latch)." },
     { guidance: true, description: "Give options a `tone` only for semantic coloring (e.g. status); otherwise the default solid primary fill is the high-contrast choice." },
     { guidance: false, description: 'Do not hardcode colors or px — tones use color-mix over tokens and sizes route through the scale (the token-lint ratchet fails the build otherwise).' },
   ],
-  anatomy: ['role="tablist" strip (rounded-pill track)', 'per-option motion.button (role="tab", press-scale)', 'liquid active fill (shared layoutId, slides + squishes)', 'off-flow probe + CollapsedSegmented pill → Popover of MenuRows (collapse="menu")'],
+  anatomy: ['role="radiogroup" strip (rounded-pill track)', 'per-option motion.button (role="radio" + aria-checked, press-scale)', 'liquid active fill (shared layoutId, slides + squishes)', 'off-flow probe + CollapsedSegmented pill → Popover of MenuRows (collapse="menu")'],
 }
 
 export default doc

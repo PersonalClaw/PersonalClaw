@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import { Download, Trash2, Check, HardDrive, AlertTriangle, X, Lock } from 'lucide-react'
-import { api, type AvailableModel } from '../../lib/api'
+import { api, isLiveDownload, type AvailableModel } from '../../lib/api'
 import { SearchField } from '../../ui/SearchField'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { confirmDelete } from '../../ui/dialog'
@@ -142,7 +142,10 @@ export function LocalModelManager({
 
   const renderRow = (m: AvailableModel) => {
     const job = jobs[m.name]
-    const downloading = job?.state === 'running'
+    // `isLiveDownload`, not `state === 'running'` (#3520): the job this row gets back from the
+    // POST is `queued`, so testing `running` rendered a just-started download as not downloading
+    // at all — the Download button stayed offered and no progress row appeared.
+    const downloading = !!job && isLiveDownload(job)
     const err = errors[m.name] || (job?.state === 'error' ? job.error : '')
     // Determinate when the total is known (progress 0..1); else indeterminate.
     const frac = job && job.total_bytes > 0 ? job.progress : undefined

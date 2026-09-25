@@ -42,7 +42,7 @@ export function ScheduleWidget({ navigate }: RouteProps) {
     // (`#/dashboard`, 1440×1000, empty home past onboarding): seven slot-empty states render, and
     // six either name the mechanism that fills them — "Loops you launch appear here as they run",
     // "Pin one from its page to keep it here", "One loads on its first use", "they build from your
-    // activity" — or are a finished verdict ("All clear — nothing waiting on you."). This one was a
+    // activity" — or are a finished verdict ("Nothing to triage — …"). This one was a
     // bare fact with no mechanism and no step, on the surface a newcomer sees first.
     //
     // Both halves are borrowed rather than invented: the sentence takes ActiveWork's shape and the

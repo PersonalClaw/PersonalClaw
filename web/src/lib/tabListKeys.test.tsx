@@ -31,10 +31,17 @@ import { tabListKeys } from './tabListKeys'
 // handler moved here and that panel now reads from this copy, so the count of implementations went
 // 1-correct-plus-3-missing → **one, shared by four**.
 //
-// 🪤 `ui/Segmented` IS DELIBERATELY UNTOUCHED. Its tab-vs-option semantics is an OPEN OWNER RULING
-// (46 call sites, 0 tabpanels), and giving it tab-style arrow navigation would quietly decide that
-// question. Worth noting for whoever rules: it needs arrow keys EITHER way — a radiogroup uses them
-// too — so only the roles and the activation semantics are actually in question.
+// 🔑 `ui/Segmented`'s OPEN OWNER RULING LANDED IN #3472, AND IT WENT THE OTHER WAY: it is a
+// RADIOGROUP. The note here used to record the question (46 call sites — 50 by the time it was
+// ruled — and 0 tabpanels) and warn that giving it tab-style arrow navigation would quietly decide
+// it. The ruling made the count the argument: there is no `role="tabpanel"` anywhere in the app
+// except `ChatActivityPanel`'s two, so every one of those call sites announced a tabbed interface
+// that does not exist, and a screen reader said "tab 2 of 6" for the task form's Status field.
+//
+// The prediction in the old note held exactly: it needed arrow keys either way, so the handler
+// did not change at all — only the roles did. `Segmented` still does not use `tabListKeys`, but
+// now because it is not a tab strip rather than because a question was open. §"Segmented is a
+// radiogroup" below is the same expectation, inverted.
 //
 // 🪤 AND ONE axe FINDING IS LEFT STANDING ON PURPOSE. A closable tab is `nested-interactive` unless
 // its close control stops being a control. Both alternatives were built and measured on `#/terminal`:
@@ -150,8 +157,19 @@ describe('every tab strip in the tree is a real tablist', () => {
       return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
     })
 
+  /** Comments blanked, newlines kept — a census measures the PROGRAM, not the explanation of it.
+   *
+   *  🪤 MEASURED WHILE LANDING #3472. `Segmented.tsx` stopped declaring `role="tab"` and started
+   *  EXPLAINING, in its docstring, that it no longer does — and because the filter below read raw
+   *  source, the file re-entered the census on its own prose and then failed the tablist check with
+   *  `no role="tablist", no aria-selected`. A census that counts the sentence documenting a fix as
+   *  an instance of the defect will always red the commit that fixes it. */
+  const codeOf = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+      .replace(/^[ \t]*\/\/.*$/gm, '')
+
   const sites = () => walk(SRC)
-    .map((abs) => ({ file: abs.slice(SRC.length + 1), src: readFileSync(abs, 'utf8') }))
+    .map((abs) => ({ file: abs.slice(SRC.length + 1), src: codeOf(readFileSync(abs, 'utf8')) }))
     .filter((f) => /role="tab"/.test(f.src))
 
   it('finds the population (not vacuously green)', () => {
@@ -160,8 +178,7 @@ describe('every tab strip in the tree is a real tablist', () => {
 
   it('each one declares a tablist, roving tabIndex and aria-selected', () => {
     const bad: string[] = []
-    for (const { file, src } of sites()) {
-      const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    for (const { file, src: code } of sites()) {
       const problems = [
         /role="tablist"/.test(code) ? '' : 'no role="tablist"',
         /aria-selected/.test(code) ? '' : 'no aria-selected',
@@ -180,16 +197,35 @@ describe('every tab strip in the tree is a real tablist', () => {
     // And nobody re-grew a local copy: the threshold chain lives in lib/tabListKeys only.
     for (const { file, src } of sites()) {
       if (file === 'lib/tabListKeys.ts') continue
-      const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-      expect(code, `${file} re-implements arrow navigation`).not.toMatch(/'ArrowLeft'.*'ArrowRight'|ArrowLeft' \?/)
+      expect(src, `${file} re-implements arrow navigation`).not.toMatch(/'ArrowLeft'.*'ArrowRight'|ArrowLeft' \?/)
     }
   })
 
-  it('ui/Segmented is the one deliberate exception, and it is named', () => {
-    // Its tab-vs-option semantics is an open owner ruling; adding tab-style arrow navigation would
-    // decide it. If the ruling lands, this expectation is what should change first.
-    const seg = readFileSync(join(SRC, 'ui/Segmented.tsx'), 'utf8')
-    expect(seg).toMatch(/role="tablist"/)
-    expect(seg, 'Segmented must NOT adopt tab arrow-nav before the owner rules').not.toMatch(/tabListKeys/)
+  it('ui/Segmented is a RADIOGROUP, so it is not in this census at all (#3472)', () => {
+    // The inverse of what this expectation used to assert, and the reason the census above needed a
+    // comment stripper: `Segmented` documents the roles it gave up, in prose, in this file's reach.
+    const seg = codeOf(readFileSync(join(SRC, 'ui/Segmented.tsx'), 'utf8'))
+    expect(seg, 'the ruling landed: single-choice fields are radio groups').toMatch(/role="radiogroup"/)
+    expect(seg).toMatch(/role="radio"/)
+    expect(seg).toMatch(/aria-checked=/)
+    expect(seg, 'a radiogroup must not announce tabs').not.toMatch(/role="tab(list)?"/)
+    expect(seg, 'nor a tab selection state').not.toMatch(/aria-selected/)
+    // Still not an adopter, but now because it is not a tab strip — its own arrow handler is the
+    // radiogroup model (move AND select), which is what tabListKeys deliberately is not.
+    expect(seg, 'Segmented is not a tab strip and must not borrow tab keys').not.toMatch(/tabListKeys/)
+    expect(sites().map((f) => f.file), 'Segmented left the tab census').not.toContain('ui/Segmented.tsx')
+  })
+
+  it('and the only tab strips left are the six that reveal something', () => {
+    // The vacuity floor for the clause above: it is also satisfied by a tree with no tab strips at
+    // all. These six are hand-rolled view switchers, untouched by #3472, and each one swaps a pane.
+    expect(sites().map((f) => f.file).sort()).toEqual([
+      'pages/chat/ChatActivityPanel.tsx',
+      'pages/files/FilesSection.tsx',
+      'pages/loops/LoopCockpitPage.tsx',
+      'pages/settings/MemoryPanel.tsx',
+      'pages/terminal/TerminalDrawer.tsx',
+      'pages/terminal/TerminalPage.tsx',
+    ])
   })
 })

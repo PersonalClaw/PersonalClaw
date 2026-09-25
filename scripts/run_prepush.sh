@@ -41,7 +41,7 @@ repository_root=$(git rev-parse --show-toplevel)
 cd "$repository_root"
 
 FRONTEND_PATHS="web package.json package-lock.json scripts/render_smoke.mjs scripts/run_prepush.sh"
-PYTHON_PATHS="src/personalclaw tests harness pyproject.toml"
+PYTHON_PATHS="src/personalclaw tests harness scripts pyproject.toml"
 ZERO=0000000000000000000000000000000000000000
 
 needs_gate=0
@@ -244,9 +244,9 @@ if [ "$needs_lint" -eq 1 ]; then
   else
     echo "pre-push: python changes outgoing — checking lint (black, isort, flake8)."
     lint_failures_before=$failed_count
-    run_check "black" "${PY_BIN}black" --check --quiet src/personalclaw tests harness
-    run_check "isort" "${PY_BIN}isort" --check-only --quiet src/personalclaw tests harness
-    run_check "flake8" "${PY_BIN}flake8" src/personalclaw tests harness
+    run_check "black" "${PY_BIN}black" --check --quiet src/personalclaw tests harness scripts
+    run_check "isort" "${PY_BIN}isort" --check-only --quiet src/personalclaw tests harness scripts
+    run_check "flake8" "${PY_BIN}flake8" src/personalclaw tests harness scripts
     if [ "$failed_count" -ne "$lint_failures_before" ]; then
       echo "" >&2
       echo "pre-push: lint is red — run 'make format' then 'make lint', and commit the" >&2

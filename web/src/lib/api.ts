@@ -4565,6 +4565,20 @@ export interface DownloadJob {
   total_bytes: number; downloaded_bytes: number
   error: string; reason: string
 }
+/** Is the server still working on this job? `queued` and `running` both mean YES.
+ *
+ *  🔴 The ONE place that answers this (#3520). `POST /api/models/downloads` returns the job
+ *  before its worker coroutine has run — `registry.start()` schedules with
+ *  `asyncio.ensure_future` and the handler has no `await` before its `202`, so the wire value
+ *  is DETERMINISTICALLY `queued`, never `running`. Four call sites used to answer this question
+ *  three different ways, and the one that got it wrong was the one that opens the progress
+ *  stream: it tested `state !== 'running'`, so a freshly-started download was never subscribed
+ *  to and its row sat at `0 MiB of <total>` forever — through completion, with a Cancel button
+ *  beside it, until the user happened to reload. Terminal means `done`/`error`/`cancelled`, and
+ *  nothing else. */
+export function isLiveDownload(job: Pick<DownloadJob, 'state'>): boolean {
+  return job.state === 'queued' || job.state === 'running'
+}
 export interface ReindexJob {
   id: string; model: string; status: 'running' | 'done' | 'error'
   phase: string; done: number; total: number; knowledge: number; memory: number; error: string
@@ -6277,9 +6291,11 @@ export const api = {
   // (drives the Add-instance dropdown). No hardcoded type list; a type not backed
   // by an installed app never appears.
   modelProviderTypes: () => get<{ types: ModelProviderType[] }>('/api/model-provider-types').then((d) => d.types),
-  createModelProvider: (body: { name: string; type: string; model?: string; options?: Record<string, string> }) =>
+  // `options` values may be `null` — an explicit "clear this stored field" (#3554),
+  // distinct from the key being absent (leave whatever is already stored alone).
+  createModelProvider: (body: { name: string; type: string; model?: string; options?: Record<string, string | null> }) =>
     post<{ ok: boolean; name: string }>('/api/model-providers', body),
-  updateModelProvider: (name: string, body: { model?: string; type?: string; options?: Record<string, string> }) =>
+  updateModelProvider: (name: string, body: { model?: string; type?: string; options?: Record<string, string | null> }) =>
     put<{ ok: boolean }>(`/api/model-providers/${encodeURIComponent(name)}`, body),
   deleteModelProvider: (name: string) => del(`/api/model-providers/${encodeURIComponent(name)}`),
   testModelProvider: (name: string) => post<ProviderTestResult>(`/api/model-providers/${encodeURIComponent(name)}/test`),

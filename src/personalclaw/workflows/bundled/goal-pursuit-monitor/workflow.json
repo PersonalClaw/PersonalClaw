@@ -103,7 +103,7 @@
     "id": "watch",
     "config": {
      "mode": "until",
-     "condition": "{{last.output.goal_met}}",
+     "condition": "{{last.output.goal_met | default(false)}}",
      "max_iterations": 90
     },
     "body": {

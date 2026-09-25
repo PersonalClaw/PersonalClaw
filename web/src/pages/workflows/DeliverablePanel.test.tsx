@@ -144,9 +144,9 @@ describe('a written document reads as a document', () => {
     // The deliverable is absent, so the panel points at the log rather than leaving the user to
     // discover it — the absent slot is the one a user lands on.
     await waitFor(() => expect(screen.getByText(/The working log has content/)).toBeTruthy())
-    // `Segmented` renders its options as `role="tab"` inside a `role="tablist"` — the tab-strip
+    // `Segmented` renders its options as `role="radio"` inside a `role="radiogroup"` (#3472) — the
     // contract this control has honoured since the tablist a11y fix, so the slot switch is a tab.
-    fireEvent.click(screen.getByRole('tab', { name: /Log · FINDINGS\.md/ }))
+    fireEvent.click(screen.getByRole('radio', { name: /Log · FINDINGS\.md/ }))
     await waitFor(() => expect(screen.getByText(/looked around/)).toBeTruthy())
   })
 
@@ -186,7 +186,7 @@ describe('the filename is shown with its provenance', () => {
     payload = () => Promise.resolve(body({ log: absent(null, 'no_root') }))
     render(<DeliverablePanel runId="r1" />)
     await waitFor(() =>
-      expect(screen.getByRole('tab', { name: /Log · —/ })).toBeTruthy(),
+      expect(screen.getByRole('radio', { name: /Log · —/ })).toBeTruthy(),
     )
   })
 })

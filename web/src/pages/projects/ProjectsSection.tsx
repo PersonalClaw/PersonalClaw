@@ -27,6 +27,7 @@ import { useQuery, invalidateKeys } from '../../lib/data'
 import { getActiveProject, setActiveProject } from '../../lib/activeProject'
 import { notify } from '../../app/appSdk'
 import { PageTitle } from '../../ui/PageTitle'
+import { loopStatusLabel } from '../../lib/loopStatus'
 
 /** Projects navigation — the first-class work unit tying Goal Loops, Code projects,
  *  and Tasks together under one context-continuous container.
@@ -895,9 +896,19 @@ function WorkGroupLabel({ text, count, tone }: { text: string; count: number; to
 }
 
 /** The board's state groups, in server (BOARD_ORDER) order, as human labels. Needs-input
- *  is pinned first by the server; these are only display names. */
-const WORK_STATE_LABEL: Record<WorkState, string> = {
-  needs_input: 'Needs input',
+ *  is pinned first by the server; these are only display names.
+ *
+ *  🪤 `needs_input` IS NOT HAND-TYPED HERE, AND THAT IS THE WHOLE POINT (#3471). It read
+ *  `'Needs input'` while `lib/loopStatus` — the ONE registry for this vocabulary — ships
+ *  `'Needs you'` for the same wire value. That registry's own header names `"Needs you" vs
+ *  "Needs input"` as drift it retired; this map was a fifth copy its rail could not see, so
+ *  the drift it declared fixed was live on the project page. Sourced from the registry now,
+ *  which is also what makes the divergence unrepeatable rather than merely corrected.
+ *
+ *  Exported so the coherence rail can compare it to the registry directly, in the same
+ *  spirit as `WorkBoardColumn` below. */
+export const WORK_STATE_LABEL: Record<WorkState, string> = {
+  needs_input: loopStatusLabel('needs_input'),
   working: 'Working',
   queued: 'Queued',
   suspended: 'Suspended',

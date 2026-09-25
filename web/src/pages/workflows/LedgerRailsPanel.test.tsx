@@ -78,7 +78,7 @@ describe('the run-side ledger rails panel', () => {
     expect(screen.getByText(/outputs\/draft\.json/)).toBeTruthy()
     expect(screen.getByText(/claude-sonnet/)).toBeTruthy()
     // And the verdict rail is one toggle away, carrying the judge's own word.
-    fireEvent.click(screen.getByRole('tab', { name: /Verdict \/ ROI/ }))
+    fireEvent.click(screen.getByRole('radio', { name: /Verdict \/ ROI/ }))
     await waitFor(() => expect(screen.getByText('PASS')).toBeTruthy())
   })
 
@@ -189,8 +189,8 @@ describe('the run-side ledger rails panel', () => {
   it('names the ROI axis it cannot plot rather than plotting zeros', async () => {
     rails = async () => payload()
     render(<LedgerRailsPanel runId="r1" />)
-    await waitFor(() => expect(screen.getByRole('tab', { name: /Verdict \/ ROI/ })).toBeTruthy())
-    fireEvent.click(screen.getByRole('tab', { name: /Verdict \/ ROI/ }))
+    await waitFor(() => expect(screen.getByRole('radio', { name: /Verdict \/ ROI/ })).toBeTruthy())
+    fireEvent.click(screen.getByRole('radio', { name: /Verdict \/ ROI/ }))
     await waitFor(() => expect(screen.getByText(/carries no marginal_value or quality_score/)).toBeTruthy())
   })
 
@@ -205,8 +205,8 @@ describe('the run-side ledger rails panel', () => {
       } as WorkflowLedgerRails['totals'],
     })
     render(<LedgerRailsPanel runId="r1" />)
-    await waitFor(() => expect(screen.getByRole('tab', { name: /Verdict \/ ROI/ })).toBeTruthy())
-    fireEvent.click(screen.getByRole('tab', { name: /Verdict \/ ROI/ }))
+    await waitFor(() => expect(screen.getByRole('radio', { name: /Verdict \/ ROI/ })).toBeTruthy())
+    fireEvent.click(screen.getByRole('radio', { name: /Verdict \/ ROI/ }))
     // A null series with no verdicts is "no judge ran" — NOT a flat-zero chart.
     await waitFor(() => expect(screen.getByText(/No judge has run on this run yet/)).toBeTruthy())
     expect(screen.queryByRole('img', { name: /Judge scores/ })).toBeNull()
