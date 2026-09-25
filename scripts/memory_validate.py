@@ -11,6 +11,7 @@ Validates:
   - the new memory tools are present + invoke through the service
   - the M5 service mechanics (heat/TTL/scope/procedural) via an in-process probe
 """
+
 from __future__ import annotations
 
 import json
@@ -38,8 +39,9 @@ def _get(path):
 
 def _req(method, path, body=None):
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(BASE + path, data=data, method=method,
-                                 headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        BASE + path, data=data, method=method, headers={"Content-Type": "application/json"}
+    )
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             return r.status, json.load(r)
@@ -69,8 +71,11 @@ def main() -> int:
     check("flags" in lint, "lint endpoint shape", fails)
 
     # 2. write → read → DB → WAL round-trip (the M2/M3 service path)
-    st, _ = _req("PUT", "/api/memory/semantic",
-                 {"key": probe_key, "value": "memory validation probe", "confidence": 1.0})
+    st, _ = _req(
+        "PUT",
+        "/api/memory/semantic",
+        {"key": probe_key, "value": "memory validation probe", "confidence": 1.0},
+    )
     check(st == 200, f"semantic write status={st}", fails)
     after = _get("/api/memory/semantic")["entries"]
     check(any(e["key"] == probe_key for e in after), "written entry visible via API", fails)
@@ -79,26 +84,40 @@ def main() -> int:
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
     try:
-        row = conn.execute("SELECT key, scope, tier, source FROM semantic_memory WHERE key=?",
-                            (probe_key,)).fetchone()
+        row = conn.execute(
+            "SELECT key, scope, tier, source FROM semantic_memory WHERE key=?", (probe_key,)
+        ).fetchone()
         check(row is not None, "entry written to DB", fails)
         if row is not None:
             check(row["scope"] == "global", f"DB scope={row['scope']} (want global)", fails)
-            check(row["tier"] == "semantic", f"DB tier={row['tier']} (want semantic — not NULL)", fails)
+            check(
+                row["tier"] == "semantic",
+                f"DB tier={row['tier']} (want semantic — not NULL)",
+                fails,
+            )
         # v6 axis columns present
         cols = {r[1] for r in conn.execute("PRAGMA table_info(semantic_memory)").fetchall()}
-        check({"tier", "scope", "scope_ref", "category", "visit_count"} <= cols,
-              "v6 axis columns present on semantic_memory", fails)
+        check(
+            {"tier", "scope", "scope_ref", "category", "visit_count"} <= cols,
+            "v6 axis columns present on semantic_memory",
+            fails,
+        )
         ecols = {r[1] for r in conn.execute("PRAGMA table_info(episodic_memories)").fetchall()}
-        check({"tier", "scope", "scope_ref", "category", "visit_count"} <= ecols,
-              "v6 axis columns present on episodic_memories", fails)
+        check(
+            {"tier", "scope", "scope_ref", "category", "visit_count"} <= ecols,
+            "v6 axis columns present on episodic_memories",
+            fails,
+        )
     finally:
         conn.close()
 
     # WAL: a create event was logged for the write
     events = _get("/api/memory/events?limit=20")["events"]
-    check(any(e.get("memory_key") == probe_key and e.get("event_type") == "create" for e in events),
-          "WAL create event recorded", fails)
+    check(
+        any(e.get("memory_key") == probe_key and e.get("event_type") == "create" for e in events),
+        "WAL create event recorded",
+        fails,
+    )
 
     # 3. delete → gone from API + DB (and a delete event)
     st, _ = _req("DELETE", f"/api/memory/semantic/{probe_key}")
@@ -116,8 +135,10 @@ def main() -> int:
         for f in fails:
             print("  -", f)
         return 1
-    print(f"CLEAN — {len(after)} semantic / {stats.get('episodic_active', 0)} episodic / "
-          f"{len(events)} recent events; write→DB→WAL→delete round-trip + axes + tools all hold")
+    print(
+        f"CLEAN — {len(after)} semantic / {stats.get('episodic_active', 0)} episodic / "
+        f"{len(events)} recent events; write→DB→WAL→delete round-trip + axes + tools all hold"
+    )
     return 0
 
 
