@@ -4565,6 +4565,20 @@ export interface DownloadJob {
   total_bytes: number; downloaded_bytes: number
   error: string; reason: string
 }
+/** Is the server still working on this job? `queued` and `running` both mean YES.
+ *
+ *  🔴 The ONE place that answers this (#3520). `POST /api/models/downloads` returns the job
+ *  before its worker coroutine has run — `registry.start()` schedules with
+ *  `asyncio.ensure_future` and the handler has no `await` before its `202`, so the wire value
+ *  is DETERMINISTICALLY `queued`, never `running`. Four call sites used to answer this question
+ *  three different ways, and the one that got it wrong was the one that opens the progress
+ *  stream: it tested `state !== 'running'`, so a freshly-started download was never subscribed
+ *  to and its row sat at `0 MiB of <total>` forever — through completion, with a Cancel button
+ *  beside it, until the user happened to reload. Terminal means `done`/`error`/`cancelled`, and
+ *  nothing else. */
+export function isLiveDownload(job: Pick<DownloadJob, 'state'>): boolean {
+  return job.state === 'queued' || job.state === 'running'
+}
 export interface ReindexJob {
   id: string; model: string; status: 'running' | 'done' | 'error'
   phase: string; done: number; total: number; knowledge: number; memory: number; error: string
