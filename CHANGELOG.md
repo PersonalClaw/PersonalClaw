@@ -99,6 +99,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   answer 404 `evals_disabled` while evals are off. The capture strip also said "out of scope" under
   every day on a fresh install. Nothing had been scoped out. Capture had simply never run, so the
   days now read "not started".
+- **A failed chat turn says what failed and lands where you can see it, and editing an earlier message no longer deletes the turns after it without a trace.** On a fresh instance, a model provider whose connection was reset raised an exception with no message (`httpx.ReadError`), and the chat showed a red error bar with nothing in it, over the WebSocket and in the saved transcript alike. The gateway now describes a message-less failure from its class, and from its endpoint when it has one: *"The connection to the model provider at 127.0.0.1:11435 was lost before its reply was complete. Check that it is still running and reachable, then try again."* Timeouts and refused connections get their own sentence, and any other message-less exception is named instead of left blank. The chat treats an empty error as a missing one, so a transcript saved before this fix reads *"This turn failed, and no reason was recorded"* rather than an empty bar. The warning the native runtime logs before its one retry names the exception class too.
+  **Edit & resend on an earlier message** deleted every later turn with no warning and nothing left behind. The editor never asked for a rewind, the server answered `{"rewound": 0}`, and the later turns were gone from disk. The editor now says before you resend that everything below the message will be replaced and where it goes, and its button reads **Resend & replace**. The replaced turns are kept under a *Rewound from here* note, where you can read them or restore them as a branch. The gateway enforces this for every client: an edit with a later user turn after it always takes the rewind path. The Rewind confirmation said the later messages would be "replayed". They are not, so it now says they are replaced.
+  **After a very long message, the turn's error rendered about 21,000px below the view**, reachable only through *Jump to latest*, because the decision to follow new content was made after the message's own bubble had pushed the bottom away. Sending now follows that turn to its outcome, a new chat's first message included, unless you scroll away or unfold your message. A message over 16 lines or 1,500 characters opens folded behind *Show full message*, with the whole text still in the page.
+  **A link to a chat that doesn't exist** looked like an ordinary empty chat, and a message sent there failed with "No such chat session." and was not saved. It now says *This chat doesn't exist* and offers a new chat, carrying over an unsent message. A read that fails for any other reason says the chat couldn't load and offers Retry.
+  **The Connect page dropped the link you opened.** After pasting a token you landed on the dashboard; now you land on the chat or page you opened. Only a dashboard route on the same origin is carried over, and a pasted URL contributes only its token. The password sign-in page lands on the opened route too.
 
 ### Security
 
@@ -115,6 +120,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   root gateway refused its own home everywhere — including as the picker's default location, which
   is how the workspace-picker bug under Fixed was reached. The published container image runs as a
   non-root user and is not affected either way.
+- **The owner token no longer stays in the address bar after it is used.** Opening a
+  `personalclaw token` link left `?token=…` in the address bar and the history entry for the
+  whole visit, one copied link or screenshot away from being shared, while the link stays usable
+  from the same address for up to 24 hours. The page a token link opens now starts with a small
+  inline script that removes the token with `history.replaceState` (the session cookie is already
+  set by then) and keeps the route you opened. The Connect page does the same for a refused token.
+  The browser's own history list still records the visit, since no page can erase that, so treat
+  a token link as sensitive, as before.
 
 ## [0.2.0] — 2026-09-23
 

@@ -143,7 +143,16 @@ async def index(request: web.Request) -> web.Response:
     # decision, which would make `--safe-surfaces` advisory rather than a recovery mode.
     from personalclaw.surface_layers import inject_safe_meta
 
-    return web.Response(text=inject_safe_meta(html), content_type="text/html")
+    html = inject_safe_meta(html)
+    # A `?token=` link: the token middleware sets the session cookie on THIS response, so by
+    # the time the document runs the URL copy of the credential is only something to leak.
+    # The scrub is inlined first in <head> — ahead of every resource declaration, and
+    # independent of whether the app bundle then loads at all.
+    if request.query.get("token"):
+        from personalclaw.dashboard.owner_token_url import inject_scrub
+
+        html = inject_scrub(html)
+    return web.Response(text=html, content_type="text/html")
 
 
 async def favicon(request: web.Request) -> web.StreamResponse:

@@ -311,6 +311,11 @@ personalclaw = [
     # names, which is the whole defect the map removes. test_scan_rule_gloss.py proves the
     # file out of a BUILT wheel, not out of the source tree.
     "scan_rule_gloss.json",
+    # The owner-token link's browser half (dashboard/owner_token_url.py inlines it into the SPA
+    # document a `?token=` link opens, the Connect gate and the sign-in page). Read at IMPORT:
+    # a wheel without this line fails to start instead of serving a Connect gate whose button
+    # does nothing.
+    "dashboard/owner_token_url.js",
     # The in-tree signing trust store (SH-3). A wheel without this line ships a verifier
     # with no trusted keys, so every signed bundle would be refused as "unknown key" —
     # the safe direction, but it would silently retire first-party signing.

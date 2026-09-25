@@ -721,13 +721,14 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // load the full result: …)" })` puts the failure in the copy the user reads. The veto matches SETTER
   // names (`setSearchErr`), and this records into a FIELD — so widen the veto and it starts exempting
   // any `setX({ error })` that never renders; leave it, and one honest site sits here with a reason.
-  // 7th (SCALAR widening): the history hydration's `setLoadingHistory(false)`. It ends the skeleton
-  // without recording why, which is the eternal-spinner shape's benign cousin — the transcript pane
-  // has its own connection-state surface and a resumed session re-hydrates on the next socket frame,
-  // so the cost is one unexplained empty pane rather than a fabricated claim. The autonudge site that
-  // WAS in this count is fixed: it read `setEnabled(false)` and the panel then named an environment
-  // variable ("Disabled on this server (PERSONALCLAW_AUTONUDGE=0)") as the cause of a failed read.
-  'pages/ChatPage.tsx': 7,
+  // Two sites that WERE in this count are fixed. The autonudge read `setEnabled(false)` and the panel
+  // then named an environment variable ("Disabled on this server (PERSONALCLAW_AUTONUDGE=0)") as the
+  // cause of a failed read. The history hydration's `setLoadingHistory(false)` ended the skeleton
+  // without recording why — and it was worse than the "benign cousin" this comment once called it:
+  // measured, a link to a chat that does not exist rendered as a normal empty chat whose composer
+  // took a message the server refused and did not save. It now records a 404 as "This chat doesn't
+  // exist" and anything else as a load failure with a retry.
+  'pages/ChatPage.tsx': 6,
   'pages/agents/AgentDetail.tsx': 3,
   'pages/artifacts/ArtifactCard.tsx': 1,
   'pages/chat/OrganizeChip.tsx': 1,

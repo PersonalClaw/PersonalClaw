@@ -255,6 +255,15 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
             return web.json_response({"error": "no user message to edit"}, status=400)
         index = target
 
+        # 🔴 AN EDIT OF AN EARLIER TURN ALWAYS REWINDS — the flag cannot opt out of it. Without
+        # the retention below, `del messages[index:]` removes every later exchange with no trail,
+        # and without the provider reset the agent goes on answering from a history that still
+        # holds them. Measured: the inline editor sent no `rewind`, this answered
+        # `{"rewound": 0}`, and the later turn was gone from disk. So `rewind` from the body can
+        # only ADD a rewind (a last-turn edit may ask to keep its old answer); whether a later
+        # user turn exists is decided here, where the transcript is.
+        rewind = rewind or any(m.get("role") == "user" for m in msgs[index + 1 :])
+
         # True rewind (fork-and-swap under the same slot): snapshot the discarded
         # tail — the edited turn's old content + every message AFTER it — as a
         # `rewound` chain (the variants pattern at message level, capped like
@@ -263,8 +272,8 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
         # (which may already exist on the edited turn from a prior rewind) has to be
         # carried across the delete. Resetting the provider below makes the next turn
         # rebuild context from the truncated transcript, so the agent never
-        # references the undone answers. Without the flag this is byte-identical to
-        # today's last-turn edit-resend.
+        # references the undone answers. A plain edit of the LAST user turn takes
+        # neither step: its old answer is replaced and the provider absorbs the resend.
         retained = 0
         carried_rewound: list[dict] = []
         if rewind:
