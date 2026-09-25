@@ -7,6 +7,7 @@ import { NumberField } from '../../ui/forms'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { notify } from '../../app/appSdk'
+import { reportActionFailure } from '../../app/reportingWrite'
 import { TextLink } from '../../ui/TextLink'
 
 /** Inbox settings → /api/inbox/settings: auto-cleanup retention for the unified inbox.
@@ -104,8 +105,16 @@ export function InboxSettingsPanel() {
   const setTriage = (v: boolean) => {
     setTriageOn(v)
     api.patchConfig('proactive.triage_enabled', v)
-      .then(() => api.proactiveInstall().catch(() => undefined))
-      .then(flash)
+      // 🔑 THE RECONCILE'S FAILURE IS REPORTED, AND IT IS NOT THE PATCH'S FAILURE. This read
+      // `.then(() => api.proactiveInstall().catch(() => undefined))`, so a refused reconcile fell
+      // through to `flash` — a SUCCESS confirmation over exactly the state the paragraph above
+      // calls wrong: a cron still firing for a disabled digest. Two failures, two truths, so they
+      // do not share a handler. The patch landing is what the switch shows, so a failed reconcile
+      // must NOT revert it (the setting really did change); and `flash` must not fire either,
+      // because the pair did not complete. The outer catch below still owns the patch itself.
+      .then(() => api.proactiveInstall()
+        .then(flash)
+        .catch(reportActionFailure(`${v ? 're-arm' : 'retire'} the digest's schedule`)))
       .catch((e) => { setTriageOn(!v); notify(`Couldn't change that: ${String((e as Error)?.message || e)}`, 'error') })
   }
 

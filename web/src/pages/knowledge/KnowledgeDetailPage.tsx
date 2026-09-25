@@ -14,6 +14,7 @@ import { DuplicateList } from './DuplicateList'
 import { KnowledgeEgoGraph, type KnowledgeGraphPayload } from './KnowledgeEgoGraph'
 import { Button } from '../../ui/Button'
 import { resolveType, typeLabel } from './knowledgeMeta'
+import { reportingWrite } from '../../app/reportingWrite'
 import { api, type KnowledgeAnnotation, type KnowledgeDuplicate, type KnowledgeItem, type ExtractedContent, ApiError } from '../../lib/api'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 
@@ -117,7 +118,13 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
   }, [id, annotationKey])
 
   const removeAnnotation = useCallback(async (annotationId: string) => {
-    await api.deleteKnowledgeAnnotation(annotationId).catch(() => {})
+    // A DELETE the reader clicked, and its rejection used to go into `.catch(() => {})`. The
+    // reload below then put the highlight back, so a refused delete and a delete that never
+    // reached the server both rendered as "the highlight is still there" — the user's only
+    // reasonable guess being to click again. The reload is kept and is NOT gated: it is the
+    // REPAIR here (the list snaps back to what the server actually holds), the same call
+    // `userActionReported`'s doctrine makes for an optimistic move that already lied.
+    await reportingWrite('remove that highlight', () => api.deleteKnowledgeAnnotation(annotationId))
     reloadAnnotations()
   }, [reloadAnnotations])
 
