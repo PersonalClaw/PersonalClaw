@@ -100,7 +100,29 @@ export interface AppConfigSchema {
 /** Render the schema-driven fields for an app's config into `cur`, calling
  *  `set(key, value)` on edit. Shared by the Apps-page Configure modal and the
  *  Settings > Apps panel so both render identical controls from one source.
- *  Each field carries a stable id/name (a11y). */
+ *
+ *  🪤 Each field carries a stable `id`/`name`, and NEITHER IS AN ACCESSIBLE NAME. This
+ *  docstring used to say "(a11y)" after the id/name clause, which is what the defect
+ *  looked like from the inside. Measured by driving Apps → kebab → Configure against a
+ *  real gateway: **16 of 16 fields across six installed apps had no resolvable
+ *  accessible name**, so `getByRole('spinbutton', {name: 'Request Timeout'})` found
+ *  zero and a screen reader announced "spin button, 20".
+ *
+ *  A control gets its name by claiming the wrapping `Field`'s published label through
+ *  `FieldLabelCtx`, and only the `ui/forms` primitives read that context. Two of the
+ *  four branches below already knew it — the boolean toggle sets `aria-label={label}`
+ *  and `JsonField` passes `ariaLabel={label}` — so this was the file half-applying its
+ *  own rule. The raw `<input>` cannot subscribe at all (`design/rawFormControls.test.tsx`
+ *  proves that with a reproduction), and `Select`/`TextInput` deliberately stand DOWN
+ *  from the Field label whenever a `name` is passed (`claimsFieldLabel = !!labelId &&
+ *  !name && !ariaLabel`) — which this call site always does. So passing a primitive
+ *  would not have fixed it either; the name has to be explicit.
+ *
+ *  Why the raw `<input>` stays rather than becoming `TextInput`: `TextInput` takes no
+ *  `step`, and `step={1}` on an integer field is #616's declared-bounds contract
+ *  reaching the browser. `design/rawFormControls.test.tsx` blesses exactly this escape
+ *  hatch ("a raw element with its own aria-label IS named"). The rail is
+ *  `appConfigFieldNames.test.tsx`, which asserts the NAME rather than the attribute. */
 export function AppConfigFields({ appName, props, cur, set, secretSet = [], required = [] }: {
   appName: string
   props: Record<string, SchemaProp>
@@ -141,7 +163,7 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [], requ
         if (Array.isArray(p.enum) && p.enum.length) {
           return (
             <Field key={key} label={label} hint={helpHint(meta.help)}>
-              <Select name={fieldId} value={String(v ?? '')} onChange={(nv) => set(key, nv)}
+              <Select name={fieldId} ariaLabel={label} value={String(v ?? '')} onChange={(nv) => set(key, nv)}
                 required={isRequired}
                 options={p.enum.map((o) => ({ value: String(o), label: String(o) }))} />
             </Field>
@@ -169,6 +191,9 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [], requ
           <Field key={key} label={label} hint={helpHint(meta.help)}>
             <input
               id={fieldId} name={fieldId}
+              // The name, carrying the ` *` required marker exactly as the visible label
+              // does, so the two never diverge.
+              aria-label={label}
               aria-required={isRequired || undefined}
               type={meta.sensitive ? 'password' : isNum ? 'number' : 'text'}
               placeholder={secretAlreadySet ? 'saved — leave blank to keep' : undefined}
