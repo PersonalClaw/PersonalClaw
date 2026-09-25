@@ -291,6 +291,22 @@ export interface Trigger {
   event?: WireTrigger        // event only: the raw wire row
 }
 
+/** The row `?open=<id>` names on the Triggers page, or null.
+ *
+ *  The page's own links use the namespaced id (`schedule:clock:x`, `store:file:notes`) and match
+ *  first. But the trigger SUBSTRATE speaks the store's own id — `delivery.status_url`, the
+ *  autopause attention card and the triage digest all mint `#/triggers?open=clock:x` — and an
+ *  exact match on the namespaced id sent every one of those links to the list with no panel open.
+ *  So a store id resolves too, and ONLY against the two kinds the trigger store backs (`schedule`
+ *  and `store`): a lifecycle hook or a data-event trigger lives in a store of its own whose ids
+ *  are minted independently, and a bare id is not allowed to wander across that boundary. */
+export function resolveOpenTrigger(triggers: readonly Trigger[] | null | undefined, openId: string | null): Trigger | null {
+  if (!triggers || !openId) return null
+  return triggers.find((t) => t.id === openId)
+    ?? triggers.find((t) => (t.kind === 'schedule' || t.kind === 'store') && t.rawId === openId)
+    ?? null
+}
+
 export function scheduleToTrigger(j: ScheduleJob): Trigger {
   const km = schedKindMeta(deriveKind(j))
   const mm = schedModeMeta(deriveMode(j))

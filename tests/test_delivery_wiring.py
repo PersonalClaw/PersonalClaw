@@ -29,20 +29,29 @@ from personalclaw.triggers.delivery import build_delivery, deliver, is_duplicate
 from personalclaw.triggers.models import Trigger
 from personalclaw.triggers.store import TriggerStore
 
+#: The action the fixtures below fire. NOT `notify`: a notify action's success already IS the
+#: user's notification, so the substrate deliberately sends no second "finished" report for it (the
+#: one-notification-per-fire tests at the bottom pin that). An ordinary action is what exercises the
+#: completion report these tests are about. `create-task` because it is autonomous on the rung
+#: ladder, so the fire is dispatched rather than held for approval.
+_ACTION = "create-task"
+
 
 class _State:
     """A dashboard state that records what `notify` was called with.
 
-    The kwargs are `kind`/`title`/`body`/`meta` — matching `Delivery.to_notify_kwargs()`. My first
-    probe used a positional `(source, payload)` signature and recorded zero notifications, which
-    looked exactly like the feature still being dead. Worth the note: a fake with the wrong shape
-    reproduces the very bug you are trying to confirm you fixed.
+    `DashboardState.notify`'s own signature — `(kind, title, body, *, meta=None)` — so both callers
+    are recorded: `delivery.deliver` passes keywords (`Delivery.to_notify_kwargs()`) and the notify
+    action passes the first three positionally. My first probe used a positional `(source, payload)`
+    signature and recorded zero notifications, which looked exactly like the feature still being
+    dead. Worth the note: a fake with the wrong shape reproduces the very bug you are trying to
+    confirm you fixed.
     """
 
     def __init__(self) -> None:
         self.sent: list[dict] = []
 
-    def notify(self, *, kind, title, body, meta=None):
+    def notify(self, kind, title, body, *, meta=None):
         self.sent.append({"kind": kind, "title": title, "body": body, "meta": meta or {}})
         return True
 
@@ -68,8 +77,8 @@ def _fire(tmp_path, monkeypatch, provider, tid="clock:n") -> _State:
             enabled=True,
             spec={"kind": "interval", "interval_secs": 60},
             delivery="inbox",
-            capabilities={"providers": ["notify"]},
-            workflow={"inline": {"provider": "notify", "config": {}}},
+            capabilities={"providers": [_ACTION]},
+            workflow={"inline": {"provider": _ACTION, "config": {}}},
         )
     )
     state = _State()
@@ -176,8 +185,8 @@ def test_NO_dashboard_state_is_survived(tmp_path, monkeypatch):
             kind="clock",
             enabled=True,
             spec={"kind": "interval", "interval_secs": 60},
-            capabilities={"providers": ["notify"]},
-            workflow={"inline": {"provider": "notify", "config": {}}},
+            capabilities={"providers": [_ACTION]},
+            workflow={"inline": {"provider": _ACTION, "config": {}}},
         )
     )
     real = AP.get_action_provider
@@ -207,8 +216,8 @@ def test_a_NOTIFY_FAILURE_does_not_fail_the_fire(tmp_path, monkeypatch):
             kind="clock",
             enabled=True,
             spec={"kind": "interval", "interval_secs": 60},
-            capabilities={"providers": ["notify"]},
-            workflow={"inline": {"provider": "notify", "config": {}}},
+            capabilities={"providers": [_ACTION]},
+            workflow={"inline": {"provider": _ACTION, "config": {}}},
         )
     )
     real = AP.get_action_provider
@@ -257,8 +266,8 @@ def _trigger(tmp_path, *, policy=None, tid="clock:daily"):
         kind="clock",
         enabled=True,
         spec={"kind": "interval", "interval_secs": 60},
-        capabilities={"providers": ["notify"]},
-        workflow={"inline": {"provider": "notify", "config": {}}},
+        capabilities={"providers": [_ACTION]},
+        workflow={"inline": {"provider": _ACTION, "config": {}}},
     )
     t.delivery = "inbox"
     t.failure_delivery = "inbox"
@@ -434,3 +443,85 @@ def test_a_NON_clock_triggers_outcome_is_NOT_a_scheduled_job(tmp_path, monkeypat
     gw._deliver_fire_outcome(trigger, ok=False, error="boom")
 
     assert [n["kind"] for n in gw.dashboard_state.sent] == [nk.INFO, nk.ERROR]
+
+
+# ── ONE notification per fire: a notify action's note IS the report (B8, 2026-09-25) ──
+
+
+def _notify_trigger(tmp_path, *, config, tid="clock:standup-nudge"):
+    store = TriggerStore(base_dir=tmp_path)
+    store.upsert(
+        Trigger(
+            id=tid,
+            name="Standup nudge",
+            kind="clock",
+            enabled=True,
+            spec={"kind": "interval", "interval_secs": 60},
+            delivery="inbox",
+            workflow={"inline": {"provider": "notify", "config": config}},
+        )
+    )
+    return store.get(tid).trigger
+
+
+def _fire_notify(tmp_path, monkeypatch, *, config) -> _State:
+    """Fire a notify trigger through the REAL notify provider — nothing about the action faked.
+
+    The provider reaches `state.notify` through the action-services accessor and the completion
+    report reaches it through `dashboard_state`; both are the one recorder, so `sent` is every
+    notification the fire produced, from either path."""
+    import personalclaw.action_providers.notify_provider as notify_mod
+
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    state = _State()
+    monkeypatch.setattr(
+        notify_mod, "get_action_services", lambda: types.SimpleNamespace(state=state)
+    )
+    trigger = _notify_trigger(tmp_path, config=config)
+    orch = object.__new__(GatewayOrchestrator)
+    orch.dashboard_state = state
+    asyncio.run(orch._fire_store_trigger(trigger, {"trigger_id": trigger.id}))
+    return state
+
+
+def test_a_NOTIFY_fire_produces_exactly_ONE_notification(tmp_path, monkeypatch):
+    """🔴 THE DEFECT. Measured live: 5 fires of a per-minute notify trigger made 10 notifications —
+    each fire's own note ("Standup nudge: review Q4 tasks") followed by the substrate's empty
+    "Standup nudge finished". Same event, twice, the second saying nothing new."""
+    sent = _fire_notify(
+        tmp_path,
+        monkeypatch,
+        config={"title_template": "Standup nudge: review Q4 tasks", "body_template": "Fired."},
+    ).sent
+    assert [n["title"] for n in sent] == ["Standup nudge: review Q4 tasks"], sent
+
+
+def test_the_ONE_notification_links_back_to_its_trigger(tmp_path, monkeypatch):
+    """The deep link the suppressed report used to carry has to survive on the note that remains,
+    or fixing the double ping would cost the only route from a notification back to its trigger."""
+    (note,) = _fire_notify(
+        tmp_path, monkeypatch, config={"title_template": "Standup nudge: review Q4 tasks"}
+    ).sent
+    assert note["meta"]["statusUrl"] == "#/triggers?open=clock:standup-nudge"
+
+
+def test_a_FAILED_notify_action_still_reports(tmp_path, monkeypatch):
+    """The vacuity leg. A notify action with no title fails without notifying anything, so the
+    failure report is the ONLY word the user gets — it must not be swallowed with the success
+    report. Asserted on the event, not a count: a count of 1 would also pass on a success leak."""
+    sent = _fire_notify(tmp_path, monkeypatch, config={}).sent
+    assert [n["meta"].get("event") for n in sent] == ["automation.run.failed"], sent
+    assert sent[0]["meta"]["statusUrl"] == "#/triggers?open=clock:standup-nudge"
+
+
+def test_only_a_SELF_NOTIFYING_action_skips_the_success_report(tmp_path, monkeypatch):
+    """The predicate itself, both shapes of stored action, plus the ordinary action every other test
+    in this file fires — which must keep its report, or "one per fire" would have become zero."""
+    from personalclaw.triggers.delivery import notifies_on_its_own
+
+    inline = Trigger(id="a", name="a", kind="clock", workflow={"inline": {"provider": "notify"}})
+    flat = Trigger(id="b", name="b", kind="clock", workflow={"provider": "notify", "config": {}})
+    other = Trigger(id="c", name="c", kind="clock", workflow={"inline": {"provider": _ACTION}})
+    assert notifies_on_its_own(inline) and notifies_on_its_own(flat)
+    assert not notifies_on_its_own(other)
+    assert len(_fire(tmp_path, monkeypatch, _Ok()).sent) == 1

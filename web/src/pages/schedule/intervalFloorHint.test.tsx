@@ -24,10 +24,32 @@ vi.mock('../../lib/agents', () => ({
   useModelCatalog: () => ({ options: [] }),
 }))
 
-function mount(over: Partial<ScheduleDraft> = {}) {
+function mount(over: Partial<ScheduleDraft> = {}, invokesModel?: boolean) {
   const draft: ScheduleDraft = { ...emptyDraft(), kind: 'every', ...over }
-  return render(<ScheduleForm draft={draft} onChange={() => {}} />)
+  return render(<ScheduleForm draft={draft} onChange={() => {}} invokesModel={invokesModel} />)
 }
+
+// 🔴 B10 (2026-09-25): the floor is about MODEL calls. Measured on the create form — "Every 60s is
+// below the 900s floor for an LLM-invoking trigger" under a Dashboard Notification, an action that
+// makes no model call at all. The caller says what the action is (the catalog's `invokes_model`);
+// a caller that cannot say (undefined) keeps the floor, the backend's own direction.
+describe('the floor speaks only for an action that can call a model', () => {
+  it('is silent at 60s for a zero-token action', () => {
+    mount({ intervalValue: 1, intervalUnit: 'm' }, false)
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByLabelText('Run every — interval count')).not.toHaveAttribute('aria-describedby')
+  })
+
+  it('still warns at 60s for a model-invoking action', () => {
+    mount({ intervalValue: 1, intervalUnit: 'm' }, true)
+    expect(screen.getByRole('status')).toHaveTextContent('Every 60s')
+  })
+
+  it('keeps the floor when the caller cannot say (the default)', () => {
+    mount({ intervalValue: 1, intervalUnit: 'm' })
+    expect(screen.getByRole('status')).toHaveTextContent('Every 60s')
+  })
+})
 
 describe('the interval control says the cadence floor out loud', () => {
   it('warns when the chosen cadence is below the floor', () => {

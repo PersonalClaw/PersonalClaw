@@ -22,7 +22,7 @@ import { api, type ActionProvider } from '../../lib/api'
 import { ScheduleDetail } from '../schedule/ScheduleDetail'
 import { LifecycleDetail } from './LifecycleDetail'
 import { StoreTriggerDetail } from './StoreTriggerDetail'
-import { scheduleToTrigger, hookToTrigger, storeToTrigger, eventToTrigger, eventPatternMeta, relPast, useTriggerVariables, eventIsDormant, eventIsAgentScoped, type Trigger } from './triggerMeta'
+import { scheduleToTrigger, hookToTrigger, storeToTrigger, eventToTrigger, eventPatternMeta, relPast, useTriggerVariables, eventIsDormant, eventIsAgentScoped, resolveOpenTrigger, type Trigger } from './triggerMeta'
 import { RungChip } from '../../ui/RungChip'
 import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
 import { triggerStatusMeta, explainsCause, relFuture } from '../schedule/scheduleMeta'
@@ -127,7 +127,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
       .filter((t) => !n || `${t.name} ${t.whenLabel} ${t.actionLabel}`.toLowerCase().includes(n))
   }, [schedules, hooks, stores, events, filter, q])
 
-  const open = useMemo(() => triggers?.find((t) => t.id === openId) ?? null, [triggers, openId])
+  const open = useMemo(() => resolveOpenTrigger(triggers, openId), [triggers, openId])
 
   const counts = useMemo(() => {
     const s = schedules?.length ?? 0, h = hooks?.length ?? 0, st = stores?.length ?? 0, e = events?.length ?? 0
@@ -191,9 +191,9 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
         open && (
           <SidePanel key={open.id} fillHeight storeKey="trigger-panel-w" icon={<open.whenIcon size={18} style={{ color: open.whenTone }} />} title={open.name} onClose={() => setQuery({ open: null, edit: null })}>
             {open.kind === 'schedule' && open.schedule
-              ? <ScheduleDetail job={open.schedule} editing={editing} onEditingChange={setEditing} onSaved={loadSchedules} onChanged={loadSchedules} onDeleted={() => { setOpenId(""); loadSchedules() }} />
+              ? <ScheduleDetail job={open.schedule} providers={providers} editing={editing} onEditingChange={setEditing} onSaved={loadSchedules} onChanged={loadSchedules} onDeleted={() => { setOpenId(""); loadSchedules() }} />
               : open.kind === 'store' && open.store
-              ? <StoreTriggerDetail trigger={open.store} onChanged={loadStores} onDeleted={() => { setOpenId(""); loadStores() }} />
+              ? <StoreTriggerDetail trigger={open.store} providers={providers} onChanged={loadStores} onDeleted={() => { setOpenId(""); loadStores() }} />
               : open.kind === 'event' && open.event
               // A data-event trigger has no editor yet (recreate to change its pattern), but
               // Delete works: the backend DELETE branch has existed since EIAT and the panel is
@@ -266,6 +266,11 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                   // never clears `last_error_summary` on recovery, so a healthy row still carries the
                   // old reason and printing it would report a fixed fault.
                   const reason = explainsCause(sd) ? t.lastError : ''
+                  // The advisory's REASON, in words on the row. It was the badge's hover `title`
+                  // only, so the one line that says WHY a schedule needs checking was invisible to
+                  // anyone not hovering it — and unreachable on touch. Yields to an error exactly as
+                  // the badge does: a row already "needs attention" does not also get a milder note.
+                  const advisory = (!t.broken || t.broken.length === 0) ? (t.warnings ?? []) : []
                   // Right-click / long-press → the scoped actions this list performs on
                   // a row (open the inspector, or open it straight into edit mode). Both
                   // route through the same `setQuery` the row's click uses — destructive
@@ -319,11 +324,10 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                               before issue 531 — the store computed them on every load and the wire
                               projection dropped them. Rendered ONLY when there is no error: a row
                               already flagged "needs attention" in red does not need a second,
-                              milder verdict beside it. `title` carries the messages — the badge is
-                              the signal, the text is the diagnosis. Warn-toned, not danger, because
-                              the trigger RUNS as authored; this is an advisory, not a fault. */}
-                          {(!t.broken || t.broken.length === 0) && t.warnings && t.warnings.length > 0
-                            && <span data-type="caption" className="shrink-0 text-warn" title={t.warnings.join('\n')}>· check schedule</span>}
+                              milder verdict beside it. The badge is the signal; the diagnosis is
+                              printed on the meta line below, not left to a hover. Warn-toned, not
+                              danger, because the trigger RUNS as authored; this is an advisory. */}
+                          {advisory.length > 0 && <span data-type="caption" className="shrink-0 text-warn">· check schedule</span>}
                           {t.kind === 'store' && t.storeKind && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· {t.storeKind}</span>}
                           {/* The AUTHOR chip §2.2 asks for. Shown only for a foreign row — a chip
                               on every row would be noise on the single-user install that is the
@@ -358,6 +362,9 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                           {reason && (
                             <span data-type="caption" className="min-w-0 max-w-full truncate text-on-surface-low" title={reason}>{reason}</span>
                           )}
+                          {advisory.map((w) => (
+                            <span key={w} data-type="caption" className="min-w-0 max-w-full text-warn">{w}</span>
+                          ))}
                         </div>
                       </div>
                       <div className="hidden sm:flex shrink-0 items-center gap-1.5 text-on-surface-low text-[0.75rem]">

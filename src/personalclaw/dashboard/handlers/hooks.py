@@ -51,13 +51,21 @@ def _get_hook_store(state: DashboardState):
 async def api_action_providers(request: web.Request) -> web.Response:
     """GET /api/action-providers — the registered action providers + their
     config schemas, so the Hooks UI is schema-driven (no hardcoded provider
-    list). Each entry: {name, display_name, supports_blocking, settingsSchema}.
-    The schema comes from each provider's bundled extension manifest."""
+    list). Each entry: {name, display_name, supports_blocking, settingsSchema,
+    internal, invokes_model}. The schema comes from each provider's bundled
+    extension manifest.
+
+    `internal` marks plumbing a system-owned automation dispatches (the Self-QA steps): it stays
+    in this catalog because a row that already names one must still render its label, and the
+    create form's picker is what leaves it out. `invokes_model` is the trigger substrate's own
+    classification (`triggers.models.ZERO_TOKEN_PROVIDERS`), so the form's cadence-floor hint
+    and the list's "check schedule" warning answer the same question the same way."""
     from personalclaw.action_providers.registry import (
         _ensure_default_providers_registered,
         get_action_provider,
         list_action_providers,
     )
+    from personalclaw.triggers.models import provider_is_zero_token
 
     _ensure_default_providers_registered()
 
@@ -91,6 +99,8 @@ async def api_action_providers(request: web.Request) -> web.Response:
                 "display_name": getattr(prov, "display_name", name),
                 "supports_blocking": bool(getattr(prov, "supports_blocking", False)),
                 "settingsSchema": _schema_for(name),
+                "internal": bool(getattr(prov, "internal", False)),
+                "invokes_model": not provider_is_zero_token(name),
             }
         )
     return web.json_response({"providers": result})

@@ -39,6 +39,12 @@ class SelfQaCommitWatchActionProvider(ActionProvider):
     def display_name(self) -> str:
         return "Self-QA commit watch"
 
+    @property
+    def internal(self) -> bool:
+        # The Self-QA companion's own trigger action, installed by `selfqa.install` — not an
+        # action to pick by hand.
+        return True
+
     async def execute(
         self,
         action_config: dict[str, Any],

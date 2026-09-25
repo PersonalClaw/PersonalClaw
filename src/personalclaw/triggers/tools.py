@@ -479,7 +479,9 @@ def create(
     from personalclaw.triggers.arm import semantic_spec_issues
 
     spec_warnings = [
-        i for i in semantic_spec_issues(resolved_kind, resolved_spec) if i.severity != "error"
+        i
+        for i in semantic_spec_issues(resolved_kind, resolved_spec, workflow)
+        if i.severity != "error"
     ]
 
     trigger = Trigger(

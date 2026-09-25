@@ -198,3 +198,74 @@ def test_the_three_default_enabled_reconcilers_seed_from_the_adopted_flag():
         src = inspect.getsource(fn)
         assert "enabled=True if adopted_enabled is None else adopted_enabled" in src, fn.__name__
         assert "enabled=True," not in src, f"{fn.__name__} still hardcodes enabled=True"
+
+
+# ── the rows a fresh home shows are named in words, not ids (c1b-061, 2026-09-25) ──────────
+
+#: Three reconcilers created their row with `name=<id>`, so a fresh home's Triggers page opened on
+#: `system:notification-digest`, `system:usage-recap` and `system:source-digest` — machine ids where
+#: every other row (Identity report, Self-remediation) has words.
+NAMED = [
+    ("digest_provider", "reconcile_digest_cron", DIGEST, "Notification digest", PROVIDER),
+    (
+        "usage_recap_provider",
+        "reconcile_usage_recap_cron",
+        "system:usage-recap",
+        "Monthly usage recap",
+        "usage-recap",
+    ),
+    (
+        "source_digest_provider",
+        "reconcile_source_digest_cron",
+        "system:source-digest",
+        "Morning source digest",
+        "source-digest",
+    ),
+]
+
+
+def _reconcile(module: str, fn: str, store: TriggerStore) -> None:
+    import importlib
+
+    getattr(importlib.import_module(f"personalclaw.action_providers.{module}"), fn)(store)
+
+
+@pytest.mark.parametrize("module,fn,tid,name,provider", NAMED)
+def test_a_fresh_home_names_the_system_row_in_words(
+    tmp_path, monkeypatch, module, fn, tid, name, provider
+):
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    store = TriggerStore(base_dir=tmp_path)
+    _reconcile(module, fn, store)
+    trigger = store.get(tid).trigger
+    assert trigger.name == name
+    # The id is still the identifier every reconcile and the singleton convergence key on.
+    assert trigger.id == tid and inline_provider(trigger) == provider
+
+
+@pytest.mark.parametrize("module,fn,tid,name,provider", NAMED)
+def test_an_existing_row_still_named_by_its_id_is_renamed(
+    tmp_path, monkeypatch, module, fn, tid, name, provider
+):
+    """An upgraded home already holds the row under its machine name; creation-only convergence
+    would leave it there forever. The backfill is keyed on the data: a name equal to the id."""
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    store = TriggerStore(base_dir=tmp_path)
+    store.upsert(_row(tid, provider=provider))
+    _reconcile(module, fn, store)
+    assert store.get(tid).trigger.name == name
+
+
+@pytest.mark.parametrize("module,fn,tid,name,provider", NAMED)
+def test_a_row_the_user_renamed_keeps_their_name(
+    tmp_path, monkeypatch, module, fn, tid, name, provider
+):
+    """The vacuity leg: a reconcile that renamed unconditionally would pass both tests above and
+    overwrite a name the user chose on every boot."""
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    store = TriggerStore(base_dir=tmp_path)
+    mine = _row(tid, provider=provider)
+    mine.name = "My morning roundup"
+    store.upsert(mine)
+    _reconcile(module, fn, store)
+    assert store.get(tid).trigger.name == "My morning roundup"
