@@ -1449,3 +1449,199 @@ def test_the_two_contracts_share_one_identity_rather_than_shadowing_it(rail) -> 
     body = source.split("class BundledChatProvider", 1)[1]
     assert body.count("    def name(self)") == 1
     assert body.count("    def display_name(self)") == 1
+
+
+# ── the prompt never exceeds the served window (the out-of-the-box OOM) ──────────────────
+#
+# Measured with the shipped weight in memory-capped containers before this section existed:
+# nothing bounded the prompt, the newest user message was always kept whole, and prefill
+# memory is quadratic in the prompt — 4,096 tokens peaked at 3.39 GB, 8,192 at 10.73 GB, and a
+# 40,000-character paste OOM-killed a 6 GB-capped gateway 7.1 s after send. These tests pin the
+# three halves of the fix on the tiny fixture weight: nothing past the served window is ever
+# prefilled, a message that cannot fit is refused BEFORE the model runs, and the attention a
+# prefill does run never materialises the whole (heads × span × span) score matrix.
+
+
+def _spy_prefills(rail, monkeypatch) -> list[int]:
+    """Record the length of every forward pass the executor runs, prefill first."""
+    seen: list[int] = []
+    real = rail.LlamaCpuModel.forward
+
+    def spy(self, ids, cache):  # noqa: ANN001, ANN202
+        seen.append(len(ids))
+        return real(self, ids, cache)
+
+    monkeypatch.setattr(rail.LlamaCpuModel, "forward", spy)
+    return seen
+
+
+def _run(provider, messages) -> list:
+    async def drive() -> list:
+        return [event async for event in provider.complete(messages)]
+
+    return asyncio.run(drive())
+
+
+def test_a_message_longer_than_the_window_is_refused_before_anything_is_prefilled(
+    rail, tmp_path, monkeypatch
+) -> None:
+    """The out-of-the-box OOM, at its cause: the newest message was kept WHOLE, whatever its size.
+
+    The refusal has to happen before the forward pass, because the forward pass is the
+    allocation — a 27,862-token prompt asks numpy for a (9, 27862, 27862) float32 array, and on
+    a memory-capped host the kernel kills the process before Python ever sees a MemoryError. The
+    sentence is the whole user experience of this failure, so what it must say is asserted: the
+    model, its limit in tokens AND approximate characters, and the two things that fix it.
+    """
+    weight, _ = tiny_gguf(tmp_path / "cap")
+    provider = rail.BundledChatProvider(
+        {"weight_path": str(weight), "context_tokens": 48, "max_output_tokens": 8}
+    )
+    prefills = _spy_prefills(rail, monkeypatch)
+    with pytest.raises(Exception) as caught:
+        _run(provider, [{"role": "user", "content": "abc " * 200}])
+    assert prefills == [], f"the over-long message reached the model: prefills {prefills}"
+    refusal = caught.value
+    assert type(refusal).__name__ == "PromptExceedsWindow"
+    text = str(refusal)
+    assert rail.model_name() in text, text
+    assert "tokens" in text and "characters" in text, text
+    assert "Shorten it" in text and "Settings → Models" in text, text
+    # The numbers are this turn's own, not a template's: the message really is ~400 tokens and
+    # 800 characters, and the room it is compared against is the served window minus the reply
+    # reserve minus the chat template's own framing.
+    assert f"{len('abc ' * 200):,} characters" in text, text
+
+
+def test_history_is_trimmed_first_and_the_reply_reserve_is_never_prefilled(
+    rail, tmp_path, monkeypatch
+) -> None:
+    """A long CONVERSATION is not refused: its oldest turns go, and prompt + reply fit the window.
+
+    The bound is ``window − reply reserve``, not the window: a prompt that fills the window
+    exactly leaves the reply nowhere to go, which fails identically to one that is too long.
+    """
+    weight, _ = tiny_gguf(tmp_path / "trim")
+    provider = rail.BundledChatProvider(
+        {"weight_path": str(weight), "context_tokens": 48, "max_output_tokens": 8}
+    )
+    prefills = _spy_prefills(rail, monkeypatch)
+    # Seven-token turns, so the kept history lands BETWEEN the two bounds: under the old
+    # "fill the whole window" rule it grows to 45 tokens, under "window minus the reserve" it
+    # stops at 38 — a fixture whose turns jumped straight past 40 could not tell them apart.
+    history = [{"role": "user", "content": "abc"} for _ in range(30)]
+    events = _run(provider, [*history, {"role": "user", "content": "abc"}])
+    assert events[-1].kind == "complete"
+    assert prefills, "no prefill ran at all"
+    assert prefills[0] <= 48 - 8, f"prefilled {prefills[0]} tokens against 40 of room"
+    assert prefills[0] + len(prefills) - 1 <= 48, "prompt + reply ran past the served window"
+
+
+def test_a_reply_that_stops_at_the_output_cap_says_so(rail, tmp_path, monkeypatch) -> None:
+    """A reply cut at ``max_output_tokens`` ended mid-sentence with no indication at all.
+
+    ``stop_reason`` is how every other provider says it (Anthropic ``max_tokens``, OpenAI
+    ``length``), and the control arm — a reply that ended on the model's own stop token — must
+    NOT claim a cut.
+    """
+    weight, _ = tiny_gguf(tmp_path / "stop")
+    provider = rail.BundledChatProvider({"weight_path": str(weight), "max_output_tokens": 3})
+    real_pick = rail._pick_token
+    monkeypatch.setattr(rail, "_pick_token", lambda *a, **k: 5)  # never the stop token
+    cut = _run(provider, [{"role": "user", "content": "abc"}])[-1]
+    assert cut.kind == "complete"
+    assert cut.stop_reason == "max_tokens"
+    assert cut.output_tokens == 3
+
+    monkeypatch.setattr(rail, "_pick_token", real_pick)
+    engine = rail.load_bundled_model(weight)
+    monkeypatch.setattr(rail, "_pick_token", lambda *a, **k: engine.eos_id)
+    whole = _run(provider, [{"role": "user", "content": "abc"}])[-1]
+    assert whole.stop_reason == "end_turn"
+
+
+def test_the_gauge_divides_by_the_served_window_not_the_weights_maximum(
+    rail, tmp_path, monkeypatch
+) -> None:
+    """The third disagreeing answer: the gauge divided by the WEIGHT's 8,192 while the prompt
+    was built against the configured 4,096 — so a full prompt displayed as half-full."""
+    weight, _ = tiny_gguf(tmp_path / "gauge")  # the fixture weight declares a 64-token window
+    provider = rail.BundledChatProvider(
+        {"weight_path": str(weight), "context_tokens": 32, "max_output_tokens": 2}
+    )
+    prefills = _spy_prefills(rail, monkeypatch)
+    last = _run(provider, [{"role": "user", "content": "abc abc"}])[-1]
+    assert provider.context_usage_pct() == pytest.approx(prefills[0] / 32 * 100.0)
+    assert last.input_tokens == prefills[0]
+
+
+def test_the_served_window_is_the_configured_one_and_never_past_the_weight(rail, tmp_path) -> None:
+    """``served_context_window()`` is what core's one window resolver asks, so it must be the
+    number this provider actually builds its prompt against."""
+    weight, _ = tiny_gguf(tmp_path / "served")
+    small = rail.BundledChatProvider({"weight_path": str(weight), "context_tokens": 48})
+    assert asyncio.run(small.served_context_window()) == 48
+    rail.load_bundled_model(weight)  # the fixture weight's own limit is 64 tokens
+    wide = rail.BundledChatProvider({"weight_path": str(weight), "context_tokens": 4096})
+    assert asyncio.run(wide.served_context_window()) == 64
+
+
+def test_the_model_card_reports_the_window_the_provider_serves(rail, home, monkeypatch) -> None:
+    """The card is where the budget check reads the reply reserve, so a card that always said
+    the DEFAULT 4,096/320 disagreed with any user who had changed the settings."""
+    sign_off(rail, monkeypatch, home)
+    provider = rail.BundledChatProvider({"context_tokens": 2048, "max_output_tokens": 200})
+    card = asyncio.run(provider.list_models())[0]
+    assert card.context_tokens == 2048
+    assert card.output_tokens == 200
+
+
+def test_the_provider_says_it_reads_only_the_request(rail) -> None:
+    """``user_request`` throws away everything before core's marker, so core must be TOLD —
+    otherwise it assembles, measures and records context this model never receives."""
+    assert rail.BundledChatProvider().request_only is True
+
+
+def test_prefill_never_materialises_the_full_attention_matrix(rail, tmp_path, monkeypatch) -> None:
+    """The memory half: attention at a 4,096-token cap still peaked 2.6 GB above the weights.
+
+    Measured before this change on the shipped weight: a 4,096-token prefill peaked at 3,687 MB
+    RSS against 904 MB loaded — the (9, 4096, 4096) float32 score array and the three copies the
+    softmax made of it. Computed in query blocks, the peak is bounded by the block budget however
+    long the prompt is. ``tracemalloc`` sees numpy's allocations, so the bound is asserted
+    directly: the whole prefill peaks below a QUARTER of one full score matrix.
+    """
+    import tracemalloc
+
+    path, _ = tiny_gguf(tmp_path / "mem")
+    model = rail.LlamaCpuModel(rail.GgufModel(path))
+    monkeypatch.setattr(rail, "_ATTENTION_BLOCK_BYTES", 1 << 20, raising=False)
+    span = 2048
+    ids = [3 + (i % 10) for i in range(span)]
+    one_matrix = model.n_head * span * span * 4
+    cache = rail._KvCache(model.n_layer, model.n_head_kv, model.head_dim)
+    tracemalloc.start()
+    try:
+        model.forward(ids, cache)
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert (
+        peak < one_matrix / 4
+    ), f"prefill peaked at {peak:,} bytes; one score matrix is {one_matrix:,}"
+
+
+@pytest.mark.parametrize("block_bytes", [1, 200, 10**9])
+def test_blocked_attention_is_the_same_arithmetic(rail, tmp_path, monkeypatch, block_bytes) -> None:
+    """Blocking must not change a single logit: one query row per block, a few rows, and one
+    block for everything all agree with the independent reference and with each other."""
+    path, weights = tiny_gguf(tmp_path / f"blk{block_bytes}")
+    model = rail.LlamaCpuModel(rail.GgufModel(path))
+    monkeypatch.setattr(rail, "_ATTENTION_BLOCK_BYTES", block_bytes, raising=False)
+    ids = [3, 4, 5, 6, 7, 8, 9]
+    cache = rail._KvCache(model.n_layer, model.n_head_kv, model.head_dim)
+    got = model.forward(ids, cache)
+    assert np.allclose(got, reference_logits(weights, ids, 10000.0), atol=2e-4)
+    step = rail._KvCache(model.n_layer, model.n_head_kv, model.head_dim)
+    model.forward(ids[:-1], step)
+    assert np.allclose(model.forward(ids[-1:], step), got, atol=1e-5)

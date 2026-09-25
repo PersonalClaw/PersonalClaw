@@ -373,7 +373,12 @@ class EvalRunner:
         # Build memory context once for the first turn of non-first sessions
         memory_context = ""
         if ctx_builder is not None:
-            memory_context = ctx_builder.build_session_context(session_key=session_key)
+            from personalclaw.context_headroom import resolve_window
+
+            window = await resolve_window(serving=provider)
+            memory_context = ctx_builder.build_session_context(
+                session_key=session_key, window=window.budget_tokens
+            )
 
         session_result = SessionResult(name=session_def.name)
         try:

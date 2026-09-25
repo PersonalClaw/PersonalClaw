@@ -35,7 +35,8 @@ from personalclaw.context_headroom import (
     Component,
     Headroom,
     HeadroomState,
-    check_for_model,
+    Window,
+    check,
 )
 
 if TYPE_CHECKING:
@@ -150,6 +151,12 @@ class DefaultContextEngine:
             **kwargs,
         )
         injected = max(0, len(full_message) - len(text)) if is_new_session else 0
+        # A request-only model is handed the user's request alone (see `build_message`), so
+        # neither memory block below would reach it: prepending one would measure, log and
+        # credit recall the model never read.
+        window = kwargs.get("window")
+        if window is not None and getattr(window, "request_only", False) is True:
+            active_recall = False
         # Active recall (the assemble hook): on an eligible interactive turn,
         # surface query-relevant memory just before the reply. Skipped on
         # temporary/incognito turns (blocks_reads) and when a headless caller
@@ -576,8 +583,13 @@ def headroom_components(assembled: AssembledContext) -> list[Component]:
     ]
 
 
-async def check_headroom(assembled: AssembledContext, *, model_ref: str = "") -> Headroom:
+def check_headroom(assembled: AssembledContext, *, window: Window) -> Headroom:
     """The headroom contract for one assembly — computed BEFORE the model call (CE2-8).
+
+    ``window`` is the turn's ONE resolved window (``context_headroom.resolve_window``), the
+    same object the assembly was budgeted by — the check never resolves a second one, which
+    is how it and the assembler used to disagree about the same model by 97.7x and then, for
+    the unbound fallback, not see the model at all.
 
     Returns a declared state (``fits`` / ``fits_after_compression`` / ``cannot_fit``); it
     never raises to signal the answer. On ``fits_after_compression`` the caller must send
@@ -589,16 +601,15 @@ async def check_headroom(assembled: AssembledContext, *, model_ref: str = "") ->
     to an unmeasured ``fits`` and the turn proceeds exactly as it did before this landed.
     """
     try:
-        return await check_for_model(headroom_components(assembled), model_ref=model_ref)
+        return check(headroom_components(assembled), window=window)
     except Exception:  # noqa: BLE001 — a headroom check never costs a turn
         logger.debug("context headroom check failed; proceeding unmeasured", exc_info=True)
-        from personalclaw.context_headroom import Headroom as _H
-        from personalclaw.context_headroom import Window as _W
-
         raw = len(assembled.message) // 4
-        return _H(
+        return Headroom(
             state=HeadroomState.FITS,
-            window=_W(tokens=None, output_reserve_tokens=0, input_tokens=None, source="unknown"),
+            window=Window(
+                tokens=None, output_reserve_tokens=0, input_tokens=None, source="unknown"
+            ),
             assembled_tokens=raw,
             raw_tokens=raw,
             text=assembled.message,

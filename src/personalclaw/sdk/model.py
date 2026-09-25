@@ -24,6 +24,15 @@ from personalclaw.context_gauge import (  # noqa: F401
     ContextGauge,
     prompt_text_chars,
 )
+
+# ``PromptExceedsWindow`` is the refusal a provider raises when the user's own message cannot fit
+# the window it serves, BEFORE any work is done. Promoted rather than re-declared per app because
+# its two properties are core's, not the app's: the native loop never blind-retries it (its
+# failure mode is non-retryable), and the chat surface shows its sentence verbatim — the same
+# sentence core's own budget check composes for the same situation. ``FailureMode`` comes with it
+# because the refusal's ``mode`` field is one: an app that catches the refusal and reads why is
+# naming that enum.
+from personalclaw.guardrails.failure import FailureMode, PromptExceedsWindow  # noqa: F401
 from personalclaw.llm.anthropic import AnthropicProvider  # noqa: F401
 from personalclaw.llm.base import (  # noqa: F401
     EVENT_COMPLETE,
@@ -155,6 +164,8 @@ __all__ = [
     "declared_context_window",
     "ContextGauge",
     "prompt_text_chars",
+    "PromptExceedsWindow",
+    "FailureMode",
     "OpenAIProvider",
     "AnthropicProvider",
     # Catalog / management / connectivity axis (Settings → Models discovery).

@@ -1275,8 +1275,9 @@ export interface ChatHistoryMsg {
   // an assistant message that used episodic recall carries memory_citations (§5.4); one
   // whose turn loaded skills carries skills_used (LEARNING-VISIBILITY T2.1) — absent, never
   // `[]`, when the turn loaded none, and never listing a REFUSED skill (named to the agent
-  // but never loaded).
-  meta?: { tool_call_id?: string; input?: string; purpose?: string; output?: string; done?: boolean; tool?: string; memory_citations?: { n: number; id: string | null; preview?: string }[]; skills_used?: { name: string; state: string; loaded_tokens: number }[] }
+  // but never loaded). `finish_reason: 'length'` marks a reply cut at the model's output cap —
+  // absent when the reply finished on its own.
+  meta?: { tool_call_id?: string; input?: string; purpose?: string; output?: string; done?: boolean; tool?: string; memory_citations?: { n: number; id: string | null; preview?: string }[]; skills_used?: { name: string; state: string; loaded_tokens: number }[]; finish_reason?: string }
 }
 
 // ── workspace / build entity types ──

@@ -73,7 +73,9 @@ from personalclaw.llm.events import (
     EVENT_THINKING_CHUNK,
     EVENT_TOOL_CALL,
     EVENT_TOOL_RESULT,
+    STOP_MAX_TOKENS,
     AgentEvent,
+    is_length_stop,
 )
 from personalclaw.llm.prompt_cache import (
     PromptCache,
@@ -122,6 +124,12 @@ def _inference_failure_mode(exc: BaseException) -> FailureMode:
         return exc.mode
     if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
         return FailureMode.TIMEOUT
+    if isinstance(exc, MemoryError):
+        # An allocation that just failed is not a transient: the identical prompt asks for the
+        # identical memory. Measured on the bundled model, the blind retry re-ran a
+        # (9, 27862, 27862) float32 allocation — and on a memory-capped host the second attempt
+        # is the one the kernel kills the whole gateway for.
+        return FailureMode.PROMPT_TOO_LARGE
     return FailureMode.PROVIDER_ERROR
 
 
@@ -723,6 +731,21 @@ class NativeAgentRuntime(AgentProvider):
             return STOP_REASON_STOPPED_BY_USER
         return STOP_REASON_CANCELLED
 
+    def _final_stop_reason(self, usage: AgentEvent | None) -> str:
+        """How the turn's last inference ended, as the chat surface needs to know it.
+
+        A cancel wins, then the provider's own LENGTH stop: a reply cut at the model's output
+        cap ends mid-sentence, and before this every provider stop reason was replaced with
+        ``end_turn`` here, so the chat runner could not tell a cut reply from a finished one.
+        Only the length stop is carried — it is the one the user must be told about, and every
+        other provider spelling of "finished" keeps meaning ``end_turn`` to every consumer.
+        """
+        if self._cancelled:
+            return self._stop_reason_for_cancel()
+        if usage is not None and is_length_stop(usage.stop_reason):
+            return STOP_MAX_TOKENS
+        return "end_turn"
+
     def _audit_inference_attempt(
         self,
         mode: FailureMode,
@@ -1092,9 +1115,7 @@ class NativeAgentRuntime(AgentProvider):
                             self._messages.append(self._tool_result_msg(call, CANCELLED_BEFORE_RUN))
                     yield AgentEvent(
                         kind=EVENT_COMPLETE,
-                        stop_reason=(
-                            self._stop_reason_for_cancel() if self._cancelled else "end_turn"
-                        ),
+                        stop_reason=self._final_stop_reason(usage),
                         input_tokens=agg_in,
                         output_tokens=agg_out,
                         cache_read_tokens=agg_cache_read,
@@ -1268,10 +1289,7 @@ class NativeAgentRuntime(AgentProvider):
         arg_error = ""
         if raw_args is ARGUMENTS_UNREADABLE:
             args = {}
-            truncated = str(getattr(call, "stop_reason", "") or "").lower() in {
-                "length",
-                "max_tokens",
-            }
+            truncated = is_length_stop(getattr(call, "stop_reason", ""))
             arg_error = (
                 correction_note(FailureMode.TOKEN_OVERFLOW)
                 if truncated
@@ -2238,6 +2256,32 @@ class NativeAgentRuntime(AgentProvider):
     @property
     def agent_model(self) -> str:
         return self._definition.model or getattr(self._model, "_model", "") or ""
+
+    @property
+    def model_provider(self) -> "ModelProvider":
+        """The inference provider this loop calls — what serves every turn it runs.
+
+        Public because the window a turn is served with is the provider's own answer
+        (``ModelProvider.served_context_window``), and the chat runner resolves that window
+        before assembling the turn.
+        """
+        return self._model
+
+    @property
+    def served_model_ref(self) -> str:
+        """The ``"<entry>:<model>"`` ref of the model this loop actually sends each turn to.
+
+        The ENTRY comes from the provider's build stamp (``ModelProvider.served_ref``); the
+        MODEL is the one this loop passes to ``complete(model=…)``, which overrides the entry's
+        own default whenever the definition names one. ``""`` when the provider was not built
+        through the resolution seam and the definition names nothing.
+        """
+        stamped = str(getattr(self._model, "served_ref", "") or "")
+        entry, _, built_model = stamped.partition(":")
+        model = self._definition.model or built_model
+        if entry and model:
+            return f"{entry}:{model}"
+        return stamped
 
     @property
     def agent_name(self) -> str:

@@ -54,6 +54,33 @@ class ModelProvider(ABC):
     # sets AUTOMATIC (stable-prefix, no marker) or EXPLICIT (per-request marker).
     prompt_cache: PromptCache = PromptCache.NONE
 
+    # Whether this provider hands its model ONLY the user's request, never the assembled
+    # context (identity, memory, skills, instructions). True for a model too small to follow a
+    # long instruction block — it continues the instructions instead of answering — so the
+    # provider reads the request back out at ``USER_REQUEST_MARKER`` and discards the rest.
+    # Declared, because core must assemble, measure and record exactly what such a model
+    # receives: a skill "used" by a model that was never shown it is a false record.
+    request_only: bool = False
+
+    # The ``"<entry>:<model>"`` ref this instance was BUILT for. Stamped by the resolution seam
+    # (``providers.provider_bridge._resolve_from_config_registry``) — the one point that knows
+    # both halves — so the window resolver can name the model that actually serves a turn,
+    # including the zero-config fallback, which is a registry entry and not a binding.
+    served_ref: str = ""
+
+    async def served_context_window(self) -> int | None:
+        """The context window, in tokens, this provider will serve its next completion with.
+
+        ``None`` means "this provider cannot say" — the window is then resolved from what was
+        declared about the model (its catalog card, then the shared window table). A provider
+        that KNOWS better overrides it: an operator-declared ``context_window``, a runtime that
+        publishes the window it loaded the model with, or a model this provider runs itself.
+        This is the "served" step of ``context_headroom.resolve_window``, and a provider's own
+        context gauge must divide by the same number, or the gauge and the prompt budget
+        describe two different windows.
+        """
+        return None
+
     @abstractmethod
     async def start(self) -> None:
         """Initialize the provider (spawn process, create client, etc.)."""

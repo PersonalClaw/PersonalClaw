@@ -37,16 +37,17 @@
           "default": 320,
           "x-meta": {
             "label": "Maximum reply length",
-            "help": "Tokens. This model runs on the CPU at roughly 5–50 tokens per second, so a long cap means a long wait."
+            "help": "Tokens. This model runs on the CPU at roughly 5–50 tokens per second, so a long cap means a long wait. A reply that reaches it stops mid-sentence and is marked as cut off. It is never more than half the prompt budget, because the reply has to fit in that window too."
           }
         },
         "context_tokens": {
           "type": "integer",
           "minimum": 1,
+          "maximum": 8192,
           "default": 4096,
           "x-meta": {
             "label": "Prompt budget",
-            "help": "Tokens of conversation sent to the model. The weight can take 8192, but every token costs a full pass over the weights; the oldest turns are dropped first. Lowering this below 4096 speeds up replies and can start refusing longer questions.",
+            "help": "Tokens the model reads at once: the conversation plus room for its reply. The weight can take up to 8192, but time and memory both grow with it. The oldest turns are dropped first, and a single message too long to fit is refused with the limit and how to fix it. Lowering this speeds up replies and refuses shorter messages.",
             "tags": [
               "advanced"
             ]

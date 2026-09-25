@@ -711,6 +711,12 @@ class OpenAIProvider(ModelProvider):
     def context_usage_pct(self) -> float | None:
         return self._last_context_pct
 
+    async def served_context_window(self) -> int | None:
+        """The window this binding's gauge divides by: a declared ``context_window``, else the
+        table's entry for the model, else ``None`` — so the prompt budget and the gauge that
+        measures it can never describe two different windows."""
+        return resolved_context_window(self._model, override=self.context_window)
+
     async def cancel(self, *, wait_ack_timeout: float = 0.0) -> CancelOutcome:
         """Cancel is a no-op for now; later phases can wire abort plumbing."""
         return "no_turn"

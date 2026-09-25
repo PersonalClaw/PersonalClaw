@@ -16,7 +16,7 @@ const DEFAULT_EXIT_PHRASES = ['cancel', 'never mind', 'forget it']
 import { fvs, withWeight } from '../design/fontWeight'
 import { playCue } from '../design/soundCues'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, Coins, ListTree } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, Coins, ListTree, Scissors } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -1483,8 +1483,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           // turn's allocation onto another's.
           const skillsByTs = new Map<string, SkillUsed[]>()
           let lastSkills: SkillUsed[] | null = null
+          // A reply cut at the output cap (`finish_reason: 'length'`) is stamped on the same meta
+          // and is just as invisible to the WS stream. It describes ONE turn, so only the
+          // snapshot's LAST assistant message may speak for the trailing just-streamed turn.
+          const cutByTs = new Set<string>()
+          let lastIsCut = false
           for (const m of d.messages || []) {
             if (m.role !== 'assistant') continue
+            lastIsCut = m.meta?.finish_reason === 'length'
+            if (lastIsCut && m.ts) cutByTs.add(m.ts)
             const c = m.meta?.memory_citations
             if (Array.isArray(c) && c.length) {
               lastCites = c
@@ -1496,7 +1503,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               if (m.ts) skillsByTs.set(m.ts, sk2)
             }
           }
-          if (byTs.size || lastCites || skillsByTs.size || lastSkills) setTurns((prev) => {
+          if (byTs.size || lastCites || skillsByTs.size || lastSkills || cutByTs.size || lastIsCut) setTurns((prev) => {
             const lastIdx = prev.map((t) => t.role).lastIndexOf('assistant')
             return prev.map((t, i) => {
               if (t.role !== 'assistant') return t
@@ -1509,6 +1516,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               if (!t.skillsUsed) {
                 if (t.ts && skillsByTs.has(t.ts)) patch.skillsUsed = skillsByTs.get(t.ts)
                 else if (i === lastIdx && !t.ts && lastSkills) patch.skillsUsed = lastSkills
+              }
+              if (!t.cutOff && ((t.ts && cutByTs.has(t.ts)) || (i === lastIdx && !t.ts && lastIsCut))) {
+                patch.cutOff = true
               }
               return Object.keys(patch).length ? { ...t, ...patch } : t
             })
@@ -3554,7 +3564,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                               onSwitchVariant={isLast ? switchVariant : undefined}
                               speaking={speakingTurn === i} onSpeak={() => speak(turnText(turn), i)} />
                           )}>
-                            <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} onSetupModel={() => navigate(MODELS_PATH)} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} />
+                            <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} onSetupModel={() => navigate(MODELS_PATH)} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} cutOff={turn.cutOff} />
                           </MessageAssistant>
                         )}
                         {/* Follow-up chips (CHAT-CRAFT S3) under the last assistant turn only,
@@ -4312,7 +4322,7 @@ function SelectionQuote({ scrollRef, onQuote, attributionFor }: {
  *  historical messages get stripped from the prose (they are never rendered as
  *  buttons — follow-up chips are the single suggestion surface) and referenced
  *  file paths surface as clickable chips below the prose. */
-function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, onSetupModel, chatSessionKey, citations, skillsUsed }: {
+function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, onSetupModel, chatSessionKey, citations, skillsUsed, cutOff }: {
   segments: Segment[]; isLast: boolean
   messageTs?: string
   streaming?: boolean
@@ -4324,6 +4334,8 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
   chatSessionKey?: string
   citations?: MemoryCitation[]
   skillsUsed?: SkillUsed[]
+  /** The reply stopped at the model's output cap (`meta.finish_reason === 'length'`). */
+  cutOff?: boolean
 }) {
   const fullText = segments.filter((s) => s.kind === 'text').map((s) => (s as { text: string }).text).join('\n')
   // A restricted-mode turn may OFFER a one-click escalation to Agent (TM8).
@@ -4436,6 +4448,7 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
           folded into the collapsed work disclosure. */}
       {sdlcNodes.length > 0 && <div className="flex flex-col gap-1">{sdlcNodes}</div>}
       {finalNodes}
+      {cutOff && !streaming && <ReplyCutNote />}
 
       {/* What CAPABILITY fed the turn (T2.1) — a peer of the ledger's "what context fed it",
           kept as its own always-visible chip rather than a collapsed ledger row: the count is
@@ -4510,6 +4523,20 @@ function ActivityLine({ seg }: { seg: ActivitySegment }) {
   )
 }
 
+
+/** A reply that stopped at the model's OUTPUT cap, said at the point it stops.
+ *
+ *  Measured on the bundled model: a 320-token cap ended replies mid-sentence and nothing said
+ *  so, which reads as the model trailing off — or as the product being broken — rather than as
+ *  a limit. The line sits directly under the reply, where the unfinished sentence is. */
+function ReplyCutNote() {
+  return (
+    <div className="mt-1.5 mb-1 flex items-center gap-1.5 text-on-surface-low/80 text-[0.75rem]">
+      <Scissors size={11} className="shrink-0 opacity-70" aria-hidden />
+      <span>Cut off: this reply reached the model's maximum length.</span>
+    </div>
+  )
+}
 
 /** "used N skills" — the per-turn skill-allocation chip (LEARNING-VISIBILITY T2.1).
  *

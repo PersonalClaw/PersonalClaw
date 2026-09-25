@@ -204,6 +204,18 @@ class ModelCallGuard(ModelProvider):
         silently degrade to text (`G4`)."""
         return bool(getattr(self._inner, "supports_native_commands", False))
 
+    @property
+    def request_only(self) -> bool:  # type: ignore[override]
+        """Explicit pass-through for the same reason as ``supports_native_commands``: the ABC
+        declares a False default, so a wrapped request-only model would otherwise be assembled a
+        full context it is never handed."""
+        return getattr(self._inner, "request_only", False) is True
+
+    async def served_context_window(self) -> int | None:
+        """Explicit pass-through: the ABC's ``None`` would hide the inner provider's served
+        window from the window resolver whenever a non-interactive axis wraps it."""
+        return await self._inner.served_context_window()
+
     async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
         command = self._prescan(command)
         self._classify(command)

@@ -308,12 +308,15 @@ async def _run_hook_inner(
     client, is_new, resumed = await state.sessions.get_or_create(session_key, agent=agent)
     full_message = message
     if is_new and state.context_builder:
+        from personalclaw.context_headroom import resolve_window
+
         full_message, _ = state.context_builder.build_message(
             message,
             is_new,
             session_key,
             agent=agent,
             resumed=resumed,
+            window=await resolve_window(serving=client),
         )
     result_text = ""
     async for event in client.stream(full_message):

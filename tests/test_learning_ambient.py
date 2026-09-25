@@ -653,15 +653,14 @@ def test_the_context_builder_routes_the_blocks_through_the_budget():
     src = inspect.getsource(context._render_ambient)
     assert "ambient.render" in src
     assert "context_budget_tokens" in src
-    # The window is no longer resolved HERE: it is resolved once per assembly by
-    # `build_session_context` and threaded in, so the memory sections and the ambient
-    # blocks cannot be scaled by two different reads of the same binding. Assert the
-    # scaling is still WIRED (this function passes a window through to the allocator)
-    # and that the one resolution exists at the seam that owns it.
+    # The window is not resolved HERE, nor in the assembler: it is resolved ONCE per turn by
+    # `context_headroom.resolve_window` and threaded in, so the memory sections, the ambient
+    # blocks and the budget check are all scaled by the same number. Assert the scaling is
+    # still WIRED (this function passes a window through to the allocator) and that the
+    # assembler takes the turn's resolved window rather than reading a binding of its own.
     assert "window=window" in src
-    assert "active_chat_model_window" in inspect.getsource(
-        context.ContextBuilder.build_session_context
-    )
+    assert "_window = window" in inspect.getsource(context.ContextBuilder.build_session_context)
+    assert "window.budget_tokens" in inspect.getsource(context.ContextBuilder.build_message)
 
 
 def test_the_old_per_block_lesson_cap_is_gone():

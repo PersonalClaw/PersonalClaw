@@ -32,18 +32,26 @@ class FailureMode(str, Enum):
     TIMEOUT = "timeout"
     CIRCUIT_OPEN = "circuit_open"
     PROVIDER_ERROR = "provider_error"
+    #: The prompt could not be run at all: the user's own message is larger than the serving
+    #: model's context window, or the machine could not allocate the memory to read it. Both are
+    #: DETERMINISTIC — the identical prompt asks for the identical room — so neither is a
+    #: transient, and a retry is the same failure a second time (on a memory-capped host, the
+    #: second allocation is the one the kernel kills the process for).
+    PROMPT_TOO_LARGE = "prompt_too_large"
 
 
 # Failure modes that must NEVER be auto-retried. Retrying an injection/secret-leak
 # lets a payload brute-force the scan; retrying an open breaker defeats the point
 # of the breaker (fail in microseconds during an outage instead of stacking
-# timeouts); retrying a budget-exceeded call would spend past the ceiling.
+# timeouts); retrying a budget-exceeded call would spend past the ceiling;
+# retrying a prompt too large to run asks for the same impossible room again.
 NON_RETRYABLE: frozenset[FailureMode] = frozenset(
     {
         FailureMode.INJECTION_BLOCKED,
         FailureMode.SECRET_LEAK,
         FailureMode.BUDGET_EXCEEDED,
         FailureMode.CIRCUIT_OPEN,
+        FailureMode.PROMPT_TOO_LARGE,
     }
 )
 
@@ -183,3 +191,64 @@ class PromptInjectionBlocked(GuardError):
         self.group = group
         detail = f" (pattern: {group})" if group else ""
         super().__init__(f"outbound prompt blocked: prompt-injection pattern matched{detail}")
+
+
+def _about(chars: float) -> int:
+    """A character count rounded to what "roughly" can honestly claim: hundreds, then thousands."""
+    step = 100 if chars < 10_000 else 1_000
+    return max(step, int(round(chars / step)) * step)
+
+
+def request_exceeds_window_sentence(
+    *, model: str, room_tokens: int, request_tokens: int, request_chars: int
+) -> str:
+    """THE sentence for "your message alone does not fit this model", wherever it is decided.
+
+    Two places decide it — core's budget check before the turn, and a provider that counts its
+    own tokens as the last line of defence — and a user must read the same words from either,
+    so they are composed once, here.
+
+    It names the model, the limit in tokens AND in approximate characters, and the two fixes.
+    Characters, because a user sees characters: "3,776 tokens" is a number nobody can act on
+    while pasting. The conversion uses THIS message's own ratio (``request_chars /
+    request_tokens``), so the figure is true of the text the user actually sent, not of an
+    average that code or a log file would be far from.
+    """
+    room = max(0, int(room_tokens))
+    ratio = (request_chars / request_tokens) if request_tokens > 0 else 0.0
+    return (
+        f"Your message is too long for {model}: it can read about {room:,} tokens "
+        f"(roughly {_about(room * ratio):,} characters of text like this) at a time, and this "
+        f"message is {request_tokens:,} tokens ({request_chars:,} characters). Shorten it, or "
+        f"bind a model with a larger context window in Settings → Models."
+    )
+
+
+class PromptExceedsWindow(GuardError):
+    """The user's own message does not fit the serving model's window — refused before any work.
+
+    Raised by a provider (through ``personalclaw.sdk.model``) at the last point before its model
+    would run, when trimming history has already been done and the newest message ALONE is still
+    too large. Typed rather than a bare exception for two reasons that both come from the measured
+    failure: the native loop must not blind-retry it (``PROMPT_TOO_LARGE`` is non-retryable), and
+    the chat surface must show :func:`request_exceeds_window_sentence` verbatim rather than run it
+    through a string matcher that could mistake a figure like "1,429 tokens" for an HTTP status.
+    """
+
+    mode = FailureMode.PROMPT_TOO_LARGE
+
+    def __init__(
+        self, *, model: str, room_tokens: int, request_tokens: int, request_chars: int
+    ) -> None:
+        self.model = model
+        self.room_tokens = room_tokens
+        self.request_tokens = request_tokens
+        self.request_chars = request_chars
+        super().__init__(
+            request_exceeds_window_sentence(
+                model=model,
+                room_tokens=room_tokens,
+                request_tokens=request_tokens,
+                request_chars=request_chars,
+            )
+        )
