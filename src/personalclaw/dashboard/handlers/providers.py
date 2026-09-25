@@ -75,6 +75,14 @@ async def api_providers_list(request: web.Request) -> web.Response:
         # Models said "no model found". Exclude them from the model-provider list.
         if entry.type == "acp_agent":
             continue
+        # A FLOOR entry is not a connection anyone configured — the app that ships it registers
+        # it in memory once its model is on disk, and the Providers panel already shows it, with
+        # its download card, under Native (bundled). Listed here it rendered a second time as a
+        # "Remote (multi-instance)" instance whose Edit and Delete could only answer 404: there
+        # is no config.json row behind it. `floor` is the registering app's declaration, so this
+        # names no app.
+        if getattr(entry, "floor", False):
+            continue
         # Resolve credential status without exposing the secret
         if not entry.credential:
             cred_status = "ok"

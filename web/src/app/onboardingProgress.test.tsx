@@ -23,12 +23,19 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 
 const saveOnboardingState = vi.fn()
 const onboarding = vi.fn()
+const onboardingModelCheck = vi.fn()
+const testModelProvider = vi.fn()
 const setName = vi.fn()
 
 vi.mock('../lib/api', () => ({
   api: {
     saveOnboardingState: (...a: unknown[]) => saveOnboardingState(...a),
     onboarding: () => onboarding(),
+    // A re-entered run's chat-model line is the flow's own PROOF (`checkChatModel`): the build
+    // check, then the answering provider's connection test. `needs_model: false` alone no
+    // longer seeds it.
+    onboardingModelCheck: () => onboardingModelCheck(),
+    testModelProvider: (...a: unknown[]) => testModelProvider(...a),
     // The done screen renders the real Settings → Design Bounciness dial, so the flow now
     // needs the appearance store around it; the provider loads saved themes on mount. Kept
     // PENDING deliberately — "themes have not loaded" is a real state and a promise settling
@@ -108,6 +115,8 @@ beforeEach(() => {
   })
   saveOnboardingState.mockResolvedValue({ ok: true, state: {} })
   onboarding.mockResolvedValue({ needs_model: true, has_model_provider: false, has_chat_binding: false })
+  onboardingModelCheck.mockResolvedValue({ ok: true, source: 'fallback', bound: [], floor: false, provider: '' })
+  testModelProvider.mockResolvedValue({ ok: true, status: 'connected', message: 'Connected' })
 })
 
 afterEach(() => {
@@ -333,12 +342,15 @@ describe('re-entering the flow resumes at the persisted step', () => {
       essentials: { model: null, search: false, speech: false, channel: null },
       first_success: { knowledge: false, trigger: false, loop: false },
     })
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'fallback', bound: [], floor: true, provider: 'bundled-chat' })
     await enterName()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
     expect(
       await screen.findByText('Chat model: Ready — using the small model PersonalClaw downloaded'),
     ).toBeTruthy()
     expect(screen.queryByText('Chat model: Ready — using a configured provider')).toBeNull()
+    // It runs in-process: there is no address to test, so nothing is asked of one.
+    expect(testModelProvider).not.toHaveBeenCalled()
   })
 
   it('does not call an implicit real provider the floor (OU-14 control)', async () => {
@@ -350,10 +362,12 @@ describe('re-entering the flow resumes at the persisted step', () => {
       essentials: { model: null, search: false, speech: false, channel: null },
       first_success: { knowledge: false, trigger: false, loop: false },
     })
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'fallback', bound: [], floor: false, provider: 'my-ollama' })
     await enterName()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
     expect(await screen.findByText('Chat model: Ready — using a configured provider')).toBeTruthy()
     expect(screen.queryByText(/small model PersonalClaw downloaded/)).toBeNull()
+    expect(testModelProvider).toHaveBeenCalledWith('my-ollama')
   })
 
   it('restates what the earlier visit set up, checked against live readiness', async () => {
@@ -362,6 +376,9 @@ describe('re-entering the flow resumes at the persisted step', () => {
       chat_model_refs: ['my-anthropic:claude-sonnet-4-5'],
       step: 'first_success', essentials: { model: 'anthropic-models', search: false, speech: false, channel: null },
       first_success: { knowledge: true, trigger: false, loop: false },
+    })
+    onboardingModelCheck.mockResolvedValue({
+      ok: true, source: 'binding', bound: ['my-anthropic:claude-sonnet-4-5'], floor: false, provider: 'my-anthropic',
     })
     await enterName()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
@@ -405,7 +422,12 @@ describe('re-entering the flow resumes at the persisted step', () => {
       chat_model_refs: ['Local Ollama:qwen2.5vl:7b'],
       first_success: { knowledge: false, trigger: false, loop: false },
     })
+    // The verdict reads the same file (`bound` is `active_model_refs('chat')`).
+    onboardingModelCheck.mockResolvedValue({
+      ok: true, source: 'binding', bound: ['Local Ollama:qwen2.5vl:7b'], floor: false, provider: 'Local Ollama',
+    })
     await enterName()
+    await waitFor(() => expect(testModelProvider).toHaveBeenCalledWith('Local Ollama'))
     // SURFACE 1 — the collapsed step-3 row, read before walking on.
     const essentialsRow = screen.getByText('Essential apps').closest('li') as HTMLElement
     expect(essentialsRow.textContent).toContain('qwen2.5vl:7b')
@@ -427,10 +449,52 @@ describe('re-entering the flow resumes at the persisted step', () => {
       chat_model_refs: [],
       step: 'first_success', essentials: { model: 'ollama-models', search: false, speech: false, channel: null },
     })
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'fallback', bound: [], floor: false, provider: 'ollama' })
     await enterName()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
     expect(await screen.findByText('Chat model: Ready — using a configured provider')).toBeTruthy()
     expect(screen.queryByText(/ollama-models/)).toBeNull()
+  })
+
+  // ── a claim is not proof: the coarse readiness read never seeds "ready" on its own ──────
+  //
+  // Measured on a real image: in step 3, save Ollama at the default `http://localhost:11434`
+  // with nothing listening (the form shows the red connection error), then reload. `needs_model`
+  // is false — the no-instantiate probe sees a configured provider and cannot see that it does
+  // not answer — and the re-entered run said "Ready — using a configured provider" in the
+  // collapsed step-3 row and the recap, while every background run then failed.
+  it('a re-entered run whose provider does not answer is not recapped as ready', async () => {
+    onboarding.mockResolvedValue({
+      needs_model: false, has_model_provider: true, has_chat_binding: false,
+      chat_model_refs: [], step: 'first_success',
+      essentials: { model: 'ollama-models', search: false, speech: false, channel: null },
+    })
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'fallback', bound: [], floor: false, provider: 'ollama' })
+    testModelProvider.mockResolvedValue({
+      ok: false, status: 'error', message: 'Cannot connect to host localhost:11434 ssl:default [Connect call failed]',
+    })
+    await enterName()
+    await waitFor(() => expect(testModelProvider).toHaveBeenCalledWith('ollama'))
+    // The collapsed step-3 row claims nothing it did not prove…
+    const essentialsRow = screen.getByText('Essential apps').closest('li') as HTMLElement
+    expect(essentialsRow.textContent).not.toContain('Ready')
+    // …and neither does the recap.
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
+    expect(await screen.findByText(/Chat model — set up later in Settings/)).toBeTruthy()
+    expect(screen.queryByText(/Chat model: Ready/)).toBeNull()
+  })
+
+  it('a re-entered run whose check could not run says so, rather than guessing', async () => {
+    onboarding.mockResolvedValue({
+      needs_model: false, has_model_provider: true, has_chat_binding: false,
+      chat_model_refs: [], step: 'first_success',
+    })
+    onboardingModelCheck.mockRejectedValue(new Error('the gateway did not answer'))
+    await enterName()
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
+    expect(await screen.findByText("Chat model — couldn't read whether one is set up")).toBeTruthy()
+    expect(screen.queryByText(/Chat model: Ready/)).toBeNull()
+    expect(screen.queryByText(/set up later in Settings/)).toBeNull()
   })
 
   it('does not promise a model the home no longer resolves', async () => {

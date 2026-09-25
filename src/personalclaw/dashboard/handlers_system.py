@@ -687,11 +687,24 @@ async def api_onboarding(request: web.Request) -> web.Response:
     the flow already makes. ``has_chat_binding`` is derived from this same list below, so
     the flag and the refs cannot disagree.
 
-    ``chat_is_bundled_floor`` is the one case those refs cannot describe: the OU-14 floor
-    answers through an in-memory entry and is never a binding, so when it is what chat
-    resolves to, ``chat_model_refs`` is empty while ``needs_model`` is false. A recap that
-    read only the refs would have nothing to name; this flag is what lets it say the small
-    bundled model is answering rather than claiming a model setup that does not exist.
+    ``chat_is_bundled_floor`` says WHAT is answering when that is the OU-14 floor: the entry
+    chat resolves to declares itself a floor, whether it is bound (onboarding binds the small
+    model when the user downloads it there) or answering because nothing is. Read off the
+    bridge's ``serving_entry`` — the same readiness authority as ``needs_model`` — so the two
+    cannot disagree, and a recap names the small bundled model rather than calling it "a
+    configured provider".
+
+    ``chat_download_offer`` is a chat model this machine could download and has not. It is
+    present whenever such a model is not on disk, whatever else is set up — it is an option,
+    not a readiness claim, and onboarding's model step offers it in every state. The chat
+    screen shows it only while ``needs_model`` is true. Read from fixed local catalogs only,
+    so it costs no network call.
+
+    Every readiness field reads ONE authority,
+    :meth:`~personalclaw.llm.registry.ProviderRegistry.not_ready`, through the bridge. A
+    provider that is configured but cannot serve (its model is not downloaded yet) is not "a
+    model provider" here and does not make ``needs_model`` false — that pairing is what used to
+    tell a user with no model on disk "a chat model is configured — you're ready".
     """
     has_provider = False
     has_binding = False
@@ -710,7 +723,7 @@ async def api_onboarding(request: web.Request) -> web.Response:
             # An agent-runtime entry (acp_agent) is not a model provider.
             if entry.type == "acp_agent":
                 continue
-            if Capability.CHAT in caps:
+            if Capability.CHAT in caps and registry.not_ready(entry, implicit=False) is None:
                 has_provider = True
                 break
     except Exception:
@@ -736,25 +749,20 @@ async def api_onboarding(request: web.Request) -> web.Response:
         logger.debug("onboarding: resolve probe failed; falling back", exc_info=True)
         needs_model = not (has_provider or has_binding)
 
-    # ``chat_is_bundled_floor`` — is chat about to be answered by a zero-config FLOOR provider
-    # rather than anything the user chose? (OU-14.) It exists because "a model resolves" and
-    # "you have a model worth trusting" are different facts, and collapsing them is how a user
-    # meets a 135M bundled model with no warning and concludes the PRODUCT is bad at chat. True
-    # only when there is no explicit binding AND every capable entry is flagged ``floor``, so
-    # binding anything at all turns it off. Derived, never stored, and no vendor name appears
-    # here: the flag is the entry's own declaration.
+    # ``chat_is_bundled_floor`` — is chat about to be answered by a zero-config FLOOR model?
+    # (OU-14.) It exists because "a model resolves" and "you have a model worth trusting" are
+    # different facts, and collapsing them is how a user meets a 135M bundled model with no
+    # warning and concludes the PRODUCT is bad at chat. True when the entry chat resolves to is
+    # flagged ``floor`` — bound or not, because binding the small model (which onboarding does
+    # when you download it there) does not make it any bigger. Binding anything else turns it
+    # off. Derived, never stored, and no vendor name appears here: the flag is the entry's own
+    # declaration.
     chat_is_floor = False
     try:
-        if not has_binding:
-            from personalclaw.llm.capabilities import Capability as _Cap
-            from personalclaw.llm.registry import get_default_registry as _registry
+        from personalclaw.providers.provider_bridge import serving_entry
 
-            capable = [
-                entry
-                for entry in _registry().list_entries()
-                if entry.type != "acp_agent" and _Cap.CHAT in (entry.declared_capabilities or ())
-            ]
-            chat_is_floor = bool(capable) and all(getattr(e, "floor", False) for e in capable)
+        serving = serving_entry("chat")
+        chat_is_floor = bool(serving is not None and getattr(serving, "floor", False))
     except Exception:
         logger.debug("onboarding: floor probe failed", exc_info=True)
 
@@ -768,27 +776,43 @@ async def api_onboarding(request: web.Request) -> web.Response:
     # Derived generically from the local-model registry: any registered provider whose app
     # declares the CHAT capability and whose catalog holds an undownloaded model. No vendor and
     # no app name appears here; the first such offer wins, and there is exactly one today.
+    #
+    # 🔴 NOT GATED ON ``needs_model``. It used to be computed only when nothing resolved chat, and
+    # ``needs_model`` is the no-network readiness probe: a provider saved at an address nothing
+    # listens on reads as set up to it. So on exactly the home that most needed the no-account
+    # way out — its provider down — onboarding's "Pick a different provider" had no download to
+    # offer. Downloading the small model is always a valid choice while it is not on disk; the
+    # chat screen, which should not advertise it beside a model that answers, gates on
+    # ``needs_model`` itself.
+    #
+    # 🔴 FIXED CATALOGS ONLY — this read makes no network call. A ``searchable`` provider's
+    # ``list_models`` asks its server for what is already pulled (the manager-backed Ollama
+    # adapter does exactly that), and by the ``LocalModelProvider`` contract it returns only
+    # locally present models, so it can never hold an offer. Reading it here would put a network
+    # round trip on every ``GET /api/onboarding`` for nothing.
     chat_offer: dict[str, object] | None = None
     try:
-        if needs_model:
-            from personalclaw.local_models.registry import capabilities_for, catalog_for, registered
+        from personalclaw.local_models.registry import capabilities_for, catalog_for, registered
 
-            for key, provider in registered():
-                if "chat" not in capabilities_for(key):
+        for key, provider in registered():
+            if getattr(provider, "searchable", False) or "chat" not in capabilities_for(key):
+                continue
+            for model in await catalog_for(provider):
+                if model.downloaded or "chat" not in (model.capabilities or []):
                     continue
-                for model in await catalog_for(provider):
-                    if model.downloaded or "chat" not in (model.capabilities or []):
-                        continue
-                    chat_offer = {
-                        "provider": key,
-                        "model": model.name,
-                        "bytes": int(model.size_mb * 1024 * 1024),
-                        "licence": model.license,
-                        "description": model.description,
-                    }
-                    break
-                if chat_offer is not None:
-                    break
+                chat_offer = {
+                    "provider": key,
+                    "model": model.name,
+                    # The name a person is shown (``SmolLM2-135M-Instruct``); ``model`` is
+                    # the file/binding id it is downloaded and bound under.
+                    "label": model.display_name or model.name,
+                    "bytes": int(model.size_mb * 1024 * 1024),
+                    "licence": model.license,
+                    "description": model.description,
+                }
+                break
+            if chat_offer is not None:
+                break
     except Exception:
         logger.debug("onboarding: download-offer probe failed", exc_info=True)
 

@@ -131,11 +131,13 @@ sweeps only your own private (RFC-1918) subnet for an Ollama, is time-bounded, a
 never runs until you press it. Nothing scans your network on first boot, and no
 credential is stored either way. Otherwise, configure a provider below.
 
-**No account and no Ollama?** In step 3, **Essential apps**, the model lane lists
-**Bundled offline model** under *Already installed*. Choose **Configure** on it and the
-lane offers *No account? Download a small model instead*, with a **Download 138 MiB**
-button. If you skip setup, the chat screen offers the same download. It happens once,
-it can be cancelled, and declining costs nothing.
+**No account and no Ollama?** In step 3, **Essential apps**, the model lane opens with
+*No account? Start with a small offline model* and a **Download SmolLM2-135M-Instruct
+(138 MiB)** button. It shows bytes, a percentage and an ETA while it runs, and a reload
+picks the progress back up. When it finishes, onboarding says so, makes it your chat model
+(unless you had already chosen one), checks that chat can use it, and unlocks
+**Continue**. If you skip setup, the chat screen offers the same download. It happens
+once, it can be cancelled, and declining costs nothing.
 
 ### The small default model
 
@@ -147,9 +149,12 @@ build, so the first chat with it needs network. It lands in
 `$PERSONALCLAW_HOME/models/bundled-chat/`, stays there across upgrades, and from then on
 runs on your CPU inside the gateway with no key and no network.
 
-It answers only when nothing else is set up, and the chat screen says when it is the one
-answering. Bind any model in [§3](#3-configure-a-model-provider) and it stops being used,
-with nothing to undo. To remove it, delete it under **Settings → Providers**.
+It answers when it is your chat model (onboarding makes it one when you download it there)
+or when nothing else is set up, and the chat screen says when it is the one answering. Bind
+any other model in [§3](#3-configure-a-model-provider) and it stops being used, with
+nothing to undo. To remove it, delete it under **Settings → Providers**; to stop it
+answering when nothing is bound, turn off **Answer when nothing else is bound** in its
+settings there (it takes effect when you save).
 
 Treat it as a way to start. It has 135 million parameters and no tools, it doesn't see
 your memory, skills or knowledge, and past a greeting or a simple factual question its

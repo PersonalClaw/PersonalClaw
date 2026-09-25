@@ -12,26 +12,32 @@
  *  that is reachable, and a per-failure sentence — because a first run that silently stalls on a
  *  138 MiB transfer is worse than the model-bind wall this atom removed.
  */
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BundledFloorNotice } from './BundledFloorNotice'
 import { api } from '../../lib/api'
 import type { DownloadJob } from '../../lib/api'
 
-vi.mock('../../lib/api', () => ({
-  api: {
-    onboarding: vi.fn(),
-    modelDownloads: vi.fn(),
-    startModelDownload: vi.fn(),
-    cancelModelDownload: vi.fn(),
-    downloadStreamUrl: vi.fn(() => 'http://localhost/stream'),
-  },
-}))
+vi.mock('../../lib/api', async (orig) => {
+  const real = await orig<typeof import('../../lib/api')>()
+  return {
+    ...real,
+    api: {
+      onboarding: vi.fn(),
+      modelDownloads: vi.fn(),
+      startModelDownload: vi.fn(),
+      cancelModelDownload: vi.fn(),
+      setActiveModel: vi.fn(),
+      downloadStreamUrl: vi.fn(() => 'http://localhost/stream'),
+    },
+  }
+})
 const onboarding = vi.mocked(api.onboarding)
 const modelDownloads = vi.mocked(api.modelDownloads)
 const startModelDownload = vi.mocked(api.startModelDownload)
 const cancelModelDownload = vi.mocked(api.cancelModelDownload)
+const setActiveModel = vi.mocked(api.setActiveModel)
 
 const BOUND = { needs_model: false, has_model_provider: true, has_chat_binding: true }
 const FLOOR = { needs_model: false, has_model_provider: true, has_chat_binding: false }
@@ -39,6 +45,7 @@ const UNSET = { needs_model: true, has_model_provider: false, has_chat_binding: 
 const OFFER = {
   provider: 'bundled-chat',
   model: 'SmolLM2-135M-Instruct-Q8_0',
+  label: 'SmolLM2-135M-Instruct',
   bytes: 144811072,
   licence: 'Apache-2.0',
   description: 'a small chat model',
@@ -56,6 +63,7 @@ beforeEach(() => {
   modelDownloads.mockReset().mockResolvedValue([])
   startModelDownload.mockReset()
   cancelModelDownload.mockReset().mockResolvedValue(undefined as never)
+  setActiveModel.mockReset().mockResolvedValue({ ok: true } as never)
   // EventSource does not exist in jsdom; the hook guards construction, and these tests drive
   // job state through `modelDownloads`/`startModelDownload` rather than through a live stream.
   vi.stubGlobal('EventSource', undefined)
@@ -69,6 +77,7 @@ describe('BundledFloorNotice — the download offer', () => {
     // 138 MiB, spelled out. The number is the honesty: a user agreeing to minutes of transfer
     // on a slow connection is entitled to know that before agreeing, not by watching a bar.
     expect(card).toHaveTextContent(/one-time 138 MiB download/i)
+    expect(card).toHaveTextContent(/SmolLM2-135M-Instruct \(Apache-2\.0\)/)
     expect(screen.getByRole('button', { name: /download 138 MiB/i })).toBeInTheDocument()
     // Neither required nor the only option — both escapes are on screen.
     expect(screen.getByRole('button', { name: /not now/i })).toBeInTheDocument()
@@ -147,6 +156,63 @@ describe('BundledFloorNotice — the download offer', () => {
     const { container } = render(<BundledFloorNotice />)
     await waitFor(() => expect(onboarding).toHaveBeenCalled())
     expect(container.firstChild).toBeNull()
+  })
+
+  it('does not advertise the download beside a model that answers', async () => {
+    // The server offers it whenever the model is not on disk, because onboarding's model step
+    // always lets a user pick it. The chat screen is the one place it must not follow that.
+    onboarding.mockResolvedValue({ ...BOUND, chat_download_offer: OFFER, chat_is_bundled_floor: false })
+    const { container } = render(<BundledFloorNotice />)
+    // The offer WAS read: the download tracker only asks for jobs once it knows the provider.
+    await waitFor(() => expect(modelDownloads).toHaveBeenCalled())
+    await act(async () => {})
+    expect(container.firstChild).toBeNull()
+  })
+
+  it('still shows a download that is under way beside a model that answers', async () => {
+    // Its progress is news wherever it was started (onboarding's model step, say).
+    onboarding.mockResolvedValue({ ...BOUND, chat_download_offer: OFFER, chat_is_bundled_floor: false })
+    modelDownloads.mockResolvedValue([job('running', { downloaded_bytes: 1 << 20, progress: 0.01 })])
+    render(<BundledFloorNotice />)
+    expect(await screen.findByTestId('bundled-model-offer')).toBeTruthy()
+    expect(await screen.findByRole('progressbar')).toBeTruthy()
+  })
+})
+
+// ── A download finished HERE means what one finished in onboarding means ──────────────────────
+//
+// Onboarding made the downloaded model the chat model when nothing else was; the same download
+// started from this screen did not, so chat answered from the implicit fallback — bound to
+// nothing, on no model list, unnamed. The rule now lives in the one download machine both read.
+describe('BundledFloorNotice — a finished download becomes the chat model', () => {
+  /** Start the download on a model already on disk: the runner answers an immediately-`done` job. */
+  async function downloadHere() {
+    startModelDownload.mockResolvedValue(job('done', { downloaded_bytes: OFFER.bytes, progress: 1 }))
+    render(<BundledFloorNotice />)
+    await userEvent.click(await screen.findByRole('button', { name: /download 138 MiB/i }))
+  }
+
+  it('binds it as the chat model when nothing else is bound', async () => {
+    onboarding.mockResolvedValue({ ...UNSET, chat_download_offer: OFFER, chat_model_refs: [] })
+    await downloadHere()
+    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', [`${OFFER.provider}:${OFFER.model}`]))
+    expect(setActiveModel).toHaveBeenCalledTimes(1)
+  })
+
+  it('never overwrites a chat model the user already bound', async () => {
+    onboarding.mockResolvedValue({ ...UNSET, chat_download_offer: OFFER, chat_model_refs: ['openai:gpt-5'] })
+    await downloadHere()
+    // The binding step ran (it re-read readiness)…
+    await waitFor(() => expect(onboarding.mock.calls.length).toBeGreaterThanOrEqual(3))
+    // …and left the user's binding alone.
+    expect(setActiveModel).not.toHaveBeenCalled()
+  })
+
+  it('says so when the binding is refused, rather than swallowing it', async () => {
+    onboarding.mockResolvedValue({ ...UNSET, chat_download_offer: OFFER, chat_model_refs: [] })
+    setActiveModel.mockRejectedValue(new Error(JSON.stringify({ error: 'active_models.json is read-only' })))
+    await downloadHere()
+    expect(await screen.findByText(/could not be set as your chat model \(active_models\.json is read-only\)/)).toBeTruthy()
   })
 })
 

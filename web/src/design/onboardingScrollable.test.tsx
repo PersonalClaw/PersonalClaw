@@ -64,10 +64,26 @@ describe('the onboarding shell scrolls at every viewport', () => {
   })
 
   it('centres on an inner box that can only GROW, never overflow the start edge', () => {
-    // `min-h-full` is what keeps the centred look while there is room: the box fills the
-    // scroller's content area, `justify-center` centres within it, and once the content is taller
-    // the box grows and the centring has nothing left to distribute.
-    expect(ONB).toMatch(/className="flex min-h-full flex-col items-center justify-center"/)
+    // `min-h-full` is what keeps the centred look while there is room: the column fills the
+    // scroller's content area, the steps are centred in a `flex-1` box within it (above the
+    // navigation bar), and once the content is taller the column grows and the centring has
+    // nothing left to distribute.
+    expect(ONB).toMatch(/className="mx-auto flex min-h-full w-full flex-col"/)
+    expect(ONB).toMatch(/className="mx-auto flex w-full flex-1 flex-col justify-center pb-2xl"/)
+  })
+
+  it('pins the navigation bar inside the column that spans the scroll height', () => {
+    // A sticky box moves only within its parent. The bar is the design system's sticky footer,
+    // and it has to be a direct child of the full-height column — inside a wrapper of its own
+    // height it would have nowhere to stick, and would scroll away with a long step.
+    const column = ONB.indexOf('className="mx-auto flex min-h-full w-full flex-col"')
+    const bar = ONB.indexOf('<FormFooter>', column)
+    expect(column).toBeGreaterThan(-1)
+    expect(bar, 'the bar is ui/FormFooter, inside the column').toBeGreaterThan(column)
+    // …and the scroller leaves no bottom padding under it, so it sits at the foot of the screen.
+    const [box] = scrollBoxes(ONB)
+    expect(box).not.toMatch(/\bpy-/)
+    expect(box).not.toMatch(/\bpb-/)
   })
 
   it('keeps the hero IN FLOW, so the product title is inside the scrollable range', () => {
@@ -86,16 +102,18 @@ describe('the onboarding shell scrolls at every viewport', () => {
     expect(heroAt).toBeLessThan(stepperAt)
   })
 
-  it('still has the skip link as the last control on every non-final step', () => {
+  it('still has the skip control in the bar at the foot of every non-final step', () => {
     // The control the measurement used as the bottom edge. If it stops existing the numbers above
     // stop describing anything, so the rail keeps a hold on it.
     //
-    // The copy changed when the flow gained a visible Back control beside it: the label is short now
-    // ("Skip the rest of setup", or "Skip setup for now" on the first step) and the consequence moved
-    // into a caption underneath, which says both what skipping costs and where to resume. What this
-    // rail cares about is unchanged — a skip control, gated to the non-final steps, at the bottom of
-    // the panel — so it pins the gate and both labels rather than one sentence.
-    expect(ONB).toMatch(/\{step !== 'ready' && \(/)
-    expect(ONB).toMatch(/'Skip setup for now' : 'Skip the rest of setup'/)
+    // It moved, at the owner's request, from a centred link under the step into the navigation
+    // bar — still the last region in the panel, and now on screen without scrolling. The labels
+    // are short ("Skip the rest of setup", or "Skip setup for now" on the first step) and the
+    // consequence is a caption with the content. What this rail cares about is unchanged — a skip
+    // control, gated to the non-final steps, at the bottom of the panel — so it pins the gate, both
+    // labels, and that they sit in the bar.
+    const bar = ONB.slice(ONB.indexOf('<FormFooter>'), ONB.indexOf('</FormFooter>'))
+    expect(bar).toMatch(/\{step !== 'ready' && \(/)
+    expect(bar).toMatch(/'Skip setup for now' : 'Skip the rest of setup'/)
   })
 })

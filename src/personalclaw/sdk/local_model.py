@@ -24,6 +24,12 @@ and the drift would be invisible because each half looks internally consistent. 
 is published only halfway — the app would have to recover the type off the value, which
 type-checks against nothing.
 
+``admit_transfer`` is the size ceiling for a transfer still in flight — the announced
+``Content-Length`` and then the running count — so a fetch stops at the ceiling instead of
+discovering it after the whole file has landed. It is core's, and it returns the same
+``DownloadResult`` shape ``verify_download`` does, so an app enforcing the ceiling early does not
+grow a second copy of where the line is.
+
 🔴 WHAT IS NOT HERE, AND WHY — read before adding it back. Three questions, three functions:
 ``licence_decision`` for the licence, and ``verify_download`` for the other two, because the
 digest and the size ceiling are ONE verdict about one file. ``sha256_file`` and
@@ -47,6 +53,7 @@ from personalclaw.bundled_model import (  # noqa: F401
     BundleDeclarationError,
     DownloadResult,
     LicenceDecision,
+    admit_transfer,
     licence_decision,
     parse_declaration,
     verify_download,
@@ -69,6 +76,7 @@ __all__ = [
     "DOWNLOAD_BAD_STATUS",
     "DOWNLOAD_TRUNCATED",
     "DOWNLOAD_DIGEST_MISMATCH",
+    "admit_transfer",
     "licence_decision",
     "parse_declaration",
     "verify_download",

@@ -44,6 +44,10 @@ import numpy as np
 import pytest
 
 from personalclaw.apps.native_contract import NATIVE_DIR, load_bundle_module
+
+# `over-budget` reaches an app only through `DownloadResult` (the SDK does not publish it), so
+# the in-flight ceiling tests read the code from core, where the verdict is made.
+from personalclaw.bundled_model import DOWNLOAD_OVER_BUDGET
 from personalclaw.llm.capabilities import Capability
 from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
 
@@ -759,21 +763,34 @@ def test_availability_never_greys_out_the_app_whose_card_is_the_way_to_fix_it(
     assert rail.availability() == (True, "")
 
 
-def test_the_off_switch_withholds_the_floor_entry(rail, home, tmp_path, monkeypatch) -> None:
+def test_the_off_switch_withholds_the_floor_from_implicit_use_live(
+    rail, home, tmp_path, monkeypatch
+) -> None:
     """``offer_as_fallback: false`` is the ONE off switch, and it is the app's own setting.
 
     A native app is locked ON (``app_manager._is_native`` refuses disable/uninstall), so the
     removability requirement cannot be met by disabling the app. It is met here instead —
     which is also why there is no ``config.json`` field for it: a second toggle beside this one
     is two places that can disagree about whether the floor is offered.
+
+    🔴 It is read LIVE, through the type's readiness probe, and it governs the IMPLICIT path
+    only. It used to decide whether the entry was registered at all, which was evaluated at
+    import and on download — so flipping it waited for a restart, and a user who had chosen the
+    model as their chat model lost it the moment they switched the fallback off. The entry now
+    exists whenever the weight does; the switch decides only whether nothing-bound chat may
+    fall back to it, and nothing re-registers between the two reads below.
     """
     sign_off(rail, monkeypatch, home, tiny_gguf(tmp_path / "off")[0])
-    monkeypatch.setattr(rail.ProviderSettings, "load", staticmethod(lambda _name: {}))
-    assert rail.floor_entry() is not None
-    monkeypatch.setattr(
-        rail.ProviderSettings, "load", staticmethod(lambda _name: {"offer_as_fallback": False})
-    )
-    assert rail.floor_entry() is None
+    settings: dict = {}
+    monkeypatch.setattr(rail.ProviderSettings, "load", staticmethod(lambda _name: dict(settings)))
+    entry = rail.floor_entry()
+    assert entry is not None
+    assert rail._readiness(entry, implicit=True) is None
+    settings["offer_as_fallback"] = False
+    assert rail.floor_entry() is not None, "the switch must not make a downloaded model unbindable"
+    why, fix = rail._readiness(entry, implicit=True)
+    assert "switched off" in why and "Settings → Models" in fix
+    assert rail._readiness(entry, implicit=False) is None, "a binding to it still answers"
 
 
 def test_register_declares_the_type_even_with_no_weight(rail, home, tmp_path, monkeypatch) -> None:
@@ -903,6 +920,221 @@ def test_a_configured_provider_beats_the_floor_whatever_the_registration_order(
     assert built == ["the-floor"]
 
 
+# ── ONE readiness authority: "you're ready" only when a model exists ───────────────────────
+#
+# Measured on a fresh image (owner report): onboarding's "Save and test" on this app wrote a
+# `config.json` row of type `bundled-chat` with no weight on disk. A reload then said "A chat
+# model is configured — you're ready", unlocked Continue and recapped "Ready — using a
+# configured provider"; the first chat failed with `BundleUnavailable`, and the degraded chip
+# said "Running without a model" in the same second. The readiness probe and the model check
+# only asked whether the provider BUILT, and this one builds with no model at all.
+#
+# Everything below drives the real app module, the real resolver and the real routes against an
+# isolated registry, because the defect lived in the agreement BETWEEN them — a test of any one
+# in isolation was green the whole time.
+
+
+@pytest.fixture()
+def live(rail, home, monkeypatch):
+    """The app wired the way a gateway wires it: type + readiness + floor into ONE registry
+    that the resolver and every route read, plus its local-model (download) enrolment."""
+    from personalclaw.local_models import registry as lm_registry
+
+    registry = ProviderRegistry()
+    monkeypatch.setattr("personalclaw.llm.registry.get_default_registry", lambda: registry)
+    monkeypatch.setattr(rail, "get_default_registry", lambda: registry)
+    # The local-model registry is process-global and walked in registration order by the
+    # offer probe, so this test owns its contents rather than inheriting a sibling's.
+    monkeypatch.setattr(lm_registry, "_providers", {})
+    monkeypatch.setattr(lm_registry, "_capabilities", {})
+    lm_registry.register_provider(
+        rail.BundledChatProvider(), capabilities=["chat"], name=rail.APP_NAME
+    )
+    return registry
+
+
+def _core_home() -> Path:
+    from personalclaw.config.loader import config_dir
+
+    return config_dir()
+
+
+def _write_config_row(options: dict | None = None) -> None:
+    """The row the settings form's "Save and test" wrote (every option a STRING, as it sent
+    them), replayed into the registry the way gateway boot does."""
+    import json as _json
+
+    from personalclaw.llm.registry import sync_entries_from_config
+
+    row = {"name": APP_NAME, "type": APP_NAME, "model": ""}
+    if options:
+        row["options"] = options
+    (_core_home() / "config.json").write_text(_json.dumps({"providers": [row]}), encoding="utf-8")
+    sync_entries_from_config()
+
+
+def _bind_chat(*refs: str) -> None:
+    import json as _json
+
+    (_core_home() / "active_models.json").write_text(
+        _json.dumps({"chat": list(refs)}), encoding="utf-8"
+    )
+
+
+async def _route(handler, body: dict | None = None):
+    import json as _json
+    from unittest.mock import AsyncMock, MagicMock
+
+    request = MagicMock()
+    request.json = AsyncMock(return_value=body or {})
+    request.match_info = {"use_case": "chat"}
+    request.get = lambda *_a, **_k: "dashboard"
+    response = await handler(request)
+    return _json.loads(response.body.decode())
+
+
+def _degraded_chat_available() -> bool:
+    from personalclaw.resilience import degraded
+
+    (row,) = [r for r in degraded.evaluate() if r["surface"] == "chat"]
+    return bool(row["available"])
+
+
+def test_a_row_whose_model_is_not_downloaded_is_not_a_ready_model(rail, home, live, monkeypatch):
+    """The owner's repro, end to end: nothing may call this home ready, and all agree."""
+    from personalclaw.dashboard import handlers_system as hs
+    from personalclaw.dashboard.handlers.model_check import api_onboarding_model_check
+    from personalclaw.providers.provider_bridge import can_resolve_use_case
+
+    sign_off(rail, monkeypatch, home)  # a record, and no weight on disk
+    rail.register()
+    _write_config_row({"offer_as_fallback": "true", "context_tokens": "4096"})
+    assert [e.name for e in live.list_entries()] == [APP_NAME], "the row is registered"
+
+    assert can_resolve_use_case("chat") is False
+    state = asyncio.run(_route(hs.api_onboarding))
+    assert state["needs_model"] is True
+    assert state["has_model_provider"] is False, "a provider that cannot serve is not one"
+    assert state["chat_download_offer"] is not None, "…and the way out is on offer"
+    assert _degraded_chat_available() is False, "the chip and onboarding read ONE authority"
+
+    verdict = asyncio.run(_route(api_onboarding_model_check))
+    assert verdict["ok"] is False, "the model check built a provider for a model not on disk"
+    assert "not downloaded yet" in verdict["why"]
+    assert "Settings → Providers" in verdict["fix"]
+
+
+def test_a_binding_to_the_model_before_its_download_says_why_it_cannot_answer(
+    rail, home, live, monkeypatch
+) -> None:
+    from personalclaw.dashboard.handlers.model_check import api_onboarding_model_check
+    from personalclaw.providers.provider_bridge import can_resolve_use_case
+
+    sign_off(rail, monkeypatch, home)
+    rail.register()
+    _write_config_row()
+    _bind_chat(f"{APP_NAME}:{rail.model_name()}")
+
+    assert can_resolve_use_case("chat") is False
+    verdict = asyncio.run(_route(api_onboarding_model_check))
+    assert verdict["ok"] is False
+    # The type's own sentence reached the user, not the generic "building it failed".
+    assert "not downloaded yet" in verdict["why"]
+    assert "building it failed" not in verdict["why"]
+
+
+def test_the_download_makes_it_ready_listed_and_bindable_without_a_restart(
+    rail, home, live, monkeypatch, tmp_path
+) -> None:
+    """Item 3 of the report: after the download the model list stayed empty and nothing was
+    bound. It must appear in the ONE chat model list, bind, and stay named as the floor."""
+    from personalclaw.dashboard import handlers_system as hs
+    from personalclaw.dashboard.handlers import model_registry as mr
+    from personalclaw.dashboard.handlers.model_check import api_onboarding_model_check
+    from personalclaw.providers.provider_bridge import can_resolve_use_case
+
+    weight = tmp_path / "w.gguf"
+    weight.write_bytes(b"GGUF" + bytes(2044))
+    sign_off(rail, monkeypatch, home, weight, place=False)
+    rail.register()
+    _write_config_row()  # the stale row the old form wrote, holding the app's name
+    assert can_resolve_use_case("chat") is False
+
+    target = sign_off(rail, monkeypatch, home, weight)  # …the download lands
+    assert target.is_file()
+    assert rail.refresh_registration() is True
+    entry = live.get_entry(APP_NAME)
+    assert entry.floor is True, "the app's entry replaced the stale row that held its name"
+
+    assert can_resolve_use_case("chat") is True
+    listed = asyncio.run(_route(mr.api_models_chat))
+    assert [(m["provider"], m["model_id"]) for m in listed] == [(APP_NAME, rail.model_name())]
+
+    ref = f"{APP_NAME}:{rail.model_name()}"
+    bound = asyncio.run(_route(mr.api_models_active_set, {"models": [ref]}))
+    assert bound["ok"] is True and bound["models"] == [ref]
+    assert can_resolve_use_case("chat") is True
+
+    state = asyncio.run(_route(hs.api_onboarding))
+    assert state["chat_model_refs"] == [ref]
+    assert state["chat_is_bundled_floor"] is True, "bound, it is still the small floor model"
+    verdict = asyncio.run(_route(api_onboarding_model_check))
+    assert verdict["ok"] is True and verdict["floor"] is True and verdict["bound"] == [ref]
+
+
+def test_the_off_switch_takes_effect_when_saved_and_spares_a_binding(
+    rail, home, live, monkeypatch, tmp_path
+) -> None:
+    """ "Answer when nothing else is bound" used to be read once, when the entry registered, so
+    saving it did nothing until a restart. Saved through the settings store the PATCH route
+    writes, it must flip resolution on the very next read — and a binding to the model is the
+    user choosing it, so it still answers."""
+    from personalclaw.dashboard import handlers_system as hs
+    from personalclaw.providers.provider_bridge import can_resolve_use_case
+    from personalclaw.providers.settings import ProviderSettings
+
+    sign_off(rail, monkeypatch, home, tiny_gguf(tmp_path / "w")[0])
+    assert rail.register() is True
+    assert can_resolve_use_case("chat") is True
+
+    ProviderSettings.update(APP_NAME, {"offer_as_fallback": False})
+    assert can_resolve_use_case("chat") is False, "the saved switch waited for a restart"
+    state = asyncio.run(_route(hs.api_onboarding))
+    assert state["needs_model"] is True
+    assert _degraded_chat_available() is False
+
+    _bind_chat(f"{APP_NAME}:{rail.model_name()}")
+    assert can_resolve_use_case("chat") is True, "switching the fallback off unbound the model"
+
+
+def test_a_saved_setting_reaches_the_next_build(rail, home, live, monkeypatch, tmp_path) -> None:
+    """The same restart-only shape for every other knob: the floor entry captured the settings
+    when it registered, so a saved reply length reached no turn until the gateway restarted."""
+    from personalclaw.providers.settings import ProviderSettings
+
+    sign_off(rail, monkeypatch, home, tiny_gguf(tmp_path / "w")[0])
+    assert rail.register() is True
+    assert live.build(APP_NAME)._max_output_tokens == rail.DEFAULT_MAX_OUTPUT_TOKENS
+    ProviderSettings.update(APP_NAME, {"max_output_tokens": 7, "context_tokens": 1024})
+    built = live.build(APP_NAME)
+    assert built._max_output_tokens == 7
+    assert built._context_tokens == 1024
+
+
+def test_the_offer_names_the_model_a_person_knows(rail, live, monkeypatch) -> None:
+    """The download is offered by NAME: the record's model, not the file it lands as."""
+    from personalclaw.dashboard import handlers_system as hs
+
+    # The shipped record, read for real — the name must follow the record, not a copy of it.
+    assert rail.display_model_name() == "SmolLM2-135M-Instruct"
+    assert rail.model_name() == "SmolLM2-135M-Instruct-Q8_0"
+    state = asyncio.run(_route(hs.api_onboarding))
+    offer = state["chat_download_offer"]
+    assert offer["label"] == "SmolLM2-135M-Instruct"
+    assert offer["model"] == "SmolLM2-135M-Instruct-Q8_0"
+    assert offer["licence"] == "Apache-2.0"
+
+
 # ── the provider ──────────────────────────────────────────────────────────────────────────
 
 
@@ -982,7 +1214,11 @@ def test_the_not_downloaded_sentence_names_the_page_that_offers_the_download(
     with pytest.raises(rail.BundleUnavailable) as raised:
         rail.load_bundled_model()
     message = str(raised.value)
-    assert "start it from the chat screen or Settings → Providers" in message, message
+    # Every place that offers it: onboarding's model step leads with the offer too (OU-14).
+    assert (
+        "start it from the chat screen, onboarding's model step, or Settings → Providers → "
+        "Bundled offline model"
+    ) in message, message
     assert "Settings → Models" not in message, message
     panel = Path(__file__).resolve().parents[1] / "web/src/pages/settings/ProvidersPanel.tsx"
     assert "<LocalModelManager" in panel.read_text(encoding="utf-8")
@@ -1206,6 +1442,64 @@ def test_a_digest_mismatch_is_refused_loudly_even_at_the_right_size(
         asyncio.run(rail.download_weight())
     assert caught.value.outcome == DOWNLOAD_DIGEST_MISMATCH
     assert _leftovers(target) == [], "unverified bytes must never reach the real path"
+
+
+def test_an_announced_size_over_the_ceiling_is_refused_before_a_byte_lands(
+    rail, home, tmp_path, monkeypatch
+) -> None:
+    """The 150 MiB ceiling used to be checked by `verify_download` — after the WHOLE file had
+    been written. A source announcing gigabytes would have had them all on disk first. The
+    announced `Content-Length` is now judged before the first write."""
+    weight, _ = tiny_gguf(tmp_path / "src")
+    target = sign_off(rail, monkeypatch, home, weight, place=False)
+    ceiling = rail._declaration().size_budget_bytes
+    body = weight.read_bytes()
+    _serve(rail, monkeypatch, (body, ceiling + 1))
+    seen: list[int] = []
+    with pytest.raises(rail.DownloadFailed) as caught:
+        asyncio.run(rail.download_weight(progress=lambda d, _t: seen.append(d)))
+    assert caught.value.outcome == DOWNLOAD_OVER_BUDGET
+    assert "nothing was downloaded" in str(caught.value)
+    assert seen == [], "a byte was written before the announced size was judged"
+    assert _leftovers(target) == []
+
+
+def test_a_transfer_is_stopped_the_moment_it_passes_the_ceiling(
+    rail, home, tmp_path, monkeypatch
+) -> None:
+    """…and a source that announces nothing (or lies) is caught by the running count. The
+    stream here is endless: only the in-flight check can end it, so a ceiling applied after
+    the transfer would never be reached — the test would hang on the old code, not pass."""
+    weight, _ = tiny_gguf(tmp_path / "src")
+    target = sign_off(rail, monkeypatch, home, weight, place=False)
+    ceiling = rail._declaration().size_budget_bytes
+
+    class _Endless:
+        headers: dict = {}  # no Content-Length at all
+        reads = 0
+
+        def read(self, size: int = -1) -> bytes:
+            _Endless.reads += 1
+            if _Endless.reads > 10_000:  # a safety stop so a regression fails, not hangs
+                return b""
+            return b"\0" * 256
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+    monkeypatch.setattr(rail.urllib.request, "urlopen", lambda *_a, **_k: _Endless())
+    seen: list[int] = []
+    with pytest.raises(rail.DownloadFailed) as caught:
+        asyncio.run(rail.download_weight(progress=lambda d, _t: seen.append(d)))
+    assert caught.value.outcome == DOWNLOAD_OVER_BUDGET, caught.value
+    assert "the transfer was stopped and the partial file removed" in str(caught.value)
+    # Never more than the ceiling on disk: the chunk that crossed it was not written.
+    assert seen and max(seen) <= ceiling
+    assert _Endless.reads < 10_000, "the stream ran to the safety stop — nothing stopped it"
+    assert _leftovers(target) == [], "the partial outlived the refusal"
 
 
 def test_a_verified_fetch_installs_the_weight_and_reports_byte_progress(

@@ -33,9 +33,9 @@ that fetch are all in `provider.py::download_weight` rather than in any caller:
 
 | | |
 |---|---|
-| **Asked for** | never automatic. A button labelled with the size (chat screen, onboarding's model lane, or Settings → Models). Declining costs nothing |
-| **Visible** | bytes, a percentage and an ETA — core's generic download job (`POST /api/models/downloads` → SSE) measures the download directory as it grows |
-| **Bounded** | https only, a 30 s per-read socket timeout **and** a 45-minute total deadline. Both, because a socket timeout does not catch a connection that delivers a byte at a time forever |
+| **Asked for** | never automatic. A button labelled with the model, its licence and its size — onboarding's model step, the chat screen, or Settings → Providers → Bundled offline model. Declining costs nothing |
+| **Visible** | bytes, a percentage and an ETA — core's generic download job (`POST /api/models/downloads` → SSE) measures the download directory as it grows. A reload re-attaches to a running job on every one of those surfaces |
+| **Bounded** | https only, a 30 s per-read socket timeout **and** a 45-minute total deadline. Both, because a socket timeout does not catch a connection that delivers a byte at a time forever. The 150 MiB ceiling is enforced **while** the bytes arrive (`admit_transfer`): a source announcing more is refused before the first write, and a transfer that passes it is stopped and its partial removed |
 | **Cancellable** | for real. The transfer is a loop of `await asyncio.to_thread(read, 4 MiB)`, so a cancel lands between chunks and the partial file is removed |
 | **Verified** | against the sha256 in the sign-off record, before an atomic replace. A fetched weight is untrusted input in a way a wheel-bundled one was not |
 | **Once** | a cross-process, cross-thread `single_flight` lock on the home. Two gateways on one home produce one transfer; the loser waits for the winner's file |
@@ -60,6 +60,13 @@ actually on disk it *also* registers an in-memory `ProviderEntry` flagged `floor
   wins;
 - with no weight downloaded, no entry is registered at all — `chat` stays unresolved and the
   dashboard shows the calm "set up a model" state (OU-12) rather than failing a turn;
+- the type also registers a **readiness probe** (`_readiness`), which core asks before it
+  chooses or builds any entry of this type. It is the one answer onboarding's `needs_model`,
+  its model check, the degraded chip and the chat model list all read, so a `config.json` row
+  of this type with no weight behind it reads "not downloaded yet" everywhere instead of
+  "you're ready";
+- the entry is bindable as `bundled-chat:<model>`, and appears in `GET /api/models/chat`.
+  Onboarding binds it as the chat model when you download it there with nothing else bound;
 - `refresh_registration()` re-evaluates that after a download or a delete, so neither needs a
   restart. A download that finished an hour after startup binds immediately.
 
@@ -81,11 +88,14 @@ grouped-query attention, SwiGLU and a tied output projection.
 
 ## Settings
 
-Editable in the Apps UI (a native app is locked on, but its settings are editable):
+Editable in Settings → Providers → Bundled offline model (a native app is locked on, but its
+settings are editable). Every one takes effect when saved — the readiness probe and the
+provider factory read the saved settings on each use, not once at startup:
 
 - **Answer when nothing else is bound** (`offer_as_fallback`, default on) — the off switch.
-  Turning it off stops the floor entry being registered, so chat goes back to the calm setup
-  state.
+  Off, the implicit fallback passes this model by, so with nothing bound chat goes back to the
+  calm setup state. A chat binding to it still answers: choosing the model is the user saying
+  it should.
 - **Maximum reply length**, **Prompt budget**, **Temperature**, **Top-p**, **Repetition
   penalty**.
 

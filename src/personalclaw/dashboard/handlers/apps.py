@@ -298,6 +298,17 @@ async def api_apps_list(request: web.Request) -> web.Response:
                 "providerType": (
                     (manifest.get("provider") or {}).get("type", "") if is_provider else ""
                 ),
+                # The provider's DECLARED capabilities — the field the Store catalog already
+                # carries for an app that is not installed yet. `providerType` alone cannot tell
+                # a chat model from a speech one (faster-whisper and piper-tts are both `model`),
+                # so a surface that sorts installed apps by what they do needs this to sort them
+                # the way it sorts installable ones: onboarding's lanes, which used to lose an
+                # installed speech app entirely and offer "Install" for it again.
+                "providerCapabilities": (
+                    [str(c) for c in (manifest.get("provider") or {}).get("capabilities") or []]
+                    if is_provider
+                    else []
+                ),
                 "hasConfig": has_config,
                 "permissions": manifest.get("permissions", {}),
                 "tags": [str(t) for t in manifest.get("tags", []) if t],

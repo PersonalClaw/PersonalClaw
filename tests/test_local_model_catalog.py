@@ -423,6 +423,7 @@ def test_every_local_model_field_has_a_writer(tmp_path):
         "io_mime": {"input": ["audio/wav"]},
         "status": "deprecated",
         "config_only": True,
+        "display_name": "Wired",
     }
     from_card = LocalModelProvider._model_from_card(maximal, host_platform_token())
     default = LocalModel(name="")  # empty, so a written `name` reads as written

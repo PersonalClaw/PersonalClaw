@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { unavailableWhen } from '../ui/unavailable'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { withWeight } from '../design/fontWeight'
 import { motion } from 'framer-motion'
-import { ArrowLeft, ArrowRight, User, Boxes, Rocket, Sparkles, Loader2, Check, Compass, Inbox, Waves, PanelLeft, FolderInput, RefreshCw } from 'lucide-react'
+import { ArrowLeft, User, Boxes, Rocket, Sparkles, Loader2, Check, Compass, Inbox, Waves, PanelLeft, FolderInput, RefreshCw } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { ClawMark } from '../ui/ClawMark'
 import { DotGlow } from '../ui/DotGlow'
-import { LoadingStatus } from '../ui/ListScaffold'
+import { FormFooter } from '../ui/FormFooter'
+import { LoadError, LoadingStatus } from '../ui/ListScaffold'
 import { Button } from '../ui/Button'
 import { TextLink } from '../ui/TextLink'
 import { Toggle } from '../ui/Toggle'
@@ -14,12 +14,14 @@ import { ScalarControl } from '../ui/TokenControls'
 import { TOKENS, type ScalarToken } from '../design/tokenRegistry'
 import { spring, stagger, listItemEnter, prefersReducedMotion } from '../design/motion'
 import { useIdentity, firstNameOf, suggestHandle, DEFAULT_USER_NAME } from './identity'
-import { setNavMode } from './navDisclosure'
+import { readNavDisclosure, setNavMode } from './navDisclosure'
 import { APP_NAME } from './config'
 import { notify } from './appSdk'
 import { api, type OnboardingStatePatch } from '../lib/api'
-import { boundModelLabel } from '../lib/modelRef'
+import { chatModelSummary } from './onboarding/chatModelSummary'
+import { checkChatModel } from './onboarding/checkChatModel'
 import { StepRow, type StepState } from './onboarding/StepStack'
+import { StepActions, StepActionsSlot } from './onboarding/StepActions'
 import { EssentialsStep } from './onboarding/EssentialsStep'
 import { ImportStep } from './onboarding/ImportStep'
 import { TryOneStep } from './onboarding/TryOneStep'
@@ -141,6 +143,17 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
    *  Reading the context values as INITIAL state is safe because `App` renders a spinner until
    *  `loaded`, so the identity fetch has resolved before this component first mounts. */
   const [draft, setDraft] = useState<Draft>(() => loadDraft(storedName, storedHandle))
+  /** A deliberate re-run ("Run setup again"): this install already HAS a name, so it is past
+   *  first run. Decided once, at mount — `App` renders the flow only after identity has loaded,
+   *  and the only thing that changes the stored name mid-flow is `finish()` itself.
+   *
+   *  🔴 It decides what skipping may write. Settings → Account promises "your name, handle and
+   *  everything already set up are kept", and the flow pre-fills both — but "Skip setup for now"
+   *  committed `DEFAULT_USER_NAME` with an empty handle regardless, because the committed identity
+   *  is derived from THIS run's name step, which a skip never passes. Measured: a re-run skipped
+   *  from step 1 PUT `{"user_name":"Operator","username":""}` and Home greeted "Good morning,
+   *  Operator". */
+  const [rerun] = useState(() => storedName.trim().length > 0)
   /** The furthest step this run has stood on. Raised by every forward move and by the persisted
    *  high-water mark; never lowered, so going back cannot cost the user the steps they reached.
    *
@@ -160,11 +173,23 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
     return fromUrl && loadDraft(storedName, storedHandle).passed ? fromUrl : 'name'
   })
   const [readiness, setReadiness] = useState<import('../lib/api').OnboardingState | null>(null)
+  /** `GET /api/onboarding` FAILED — the reason, or `''`. Distinct from `readiness === null`
+   *  (still loading): a failed read is reported as one, never turned into a guess. */
+  const [readError, setReadError] = useState('')
+  const [readAttempt, setReadAttempt] = useState(0)
+  /** Where the proof behind a re-entered run's chat-model line stands: `pending` while
+   *  `checkChatModel` is out (the line claims nothing yet), `unknown` when the check could not
+   *  run, `done` once there is an answer — a seeded record when it said ok, none otherwise. */
+  const [modelSeed, setModelSeed] = useState<'pending' | 'done' | 'unknown'>('pending')
   /** What each step produced, for its collapsed row and the recap. A step absent from this map has
    *  NO recorded outcome and must render as not-yet-done — never as complete. */
   const [records, setRecords] = useState<Partial<Record<StepId, StepRecord>>>({})
   /** The done screen's rail choice, written once by `finish()` — see there. */
-  const [showEverything, setShowEverything] = useState(false)
+  // A re-run starts the switch at the rail this install already has, so finishing or skipping
+  // without touching it keeps that rail. A first run starts it off: no record there resolves to
+  // `expert` (the marker for an install onboarded before disclosure shipped), which is not a
+  // choice this user made.
+  const [showEverything, setShowEverything] = useState(() => rerun && readNavDisclosure().mode === 'expert')
 
   const namePassed = draft.passed && draft.name.trim().length > 0
   /** Which step is on screen: what the URL asks for, reconciled with what this run has reached.
@@ -191,6 +216,26 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
     try: useRef<HTMLLIElement>(null), ready: useRef<HTMLLIElement>(null),
   }
   const activeRef = rowRefs[step]
+
+  /** The navigation bar's slot for the active step's own actions (`StepActions` portals into it).
+   *  State rather than a ref, so the steps re-render into it once it exists. */
+  const [actionSlot, setActionSlot] = useState<HTMLElement | null>(null)
+  /** The one scroller. The bar is sticky at its foot, so it covers whatever scrolls beneath it —
+   *  and `scroll-padding-bottom` is what the browser leaves clear when it scrolls a control into
+   *  view (Tab, `focus()`, `scrollIntoView`). Kept equal to the bar's height, which grows when its
+   *  buttons wrap at phone width, so a control a keyboard user moves to never lands behind the bar
+   *  (WCAG 2.4.11). */
+  const scrollRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const scroller = scrollRef.current
+    const bar = scroller?.querySelector<HTMLElement>('[data-form-footer]')
+    if (!scroller || !bar || typeof ResizeObserver === 'undefined') return
+    const fit = () => { scroller.style.scrollPaddingBottom = `${bar.offsetHeight}px` }
+    fit()
+    const watch = new ResizeObserver(fit)
+    watch.observe(bar)
+    return () => watch.disconnect()
+  }, [])
 
   const stateOf = (id: StepId): StepState => {
     if (id === step) return 'active'
@@ -259,55 +304,58 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
     }
   }, [step])  // eslint-disable-line react-hooks/exhaustive-deps -- rowRefs is a stable ref bag
 
-  // ONE fetch, on mount. The same payload carries live model readiness (what the essentials
-  // step needs) AND the persisted high-water mark (what a reloaded flow needs) — asking for it
-  // when the essentials step opens would already be too late to know where to resume TO.
+  // ONE fetch, on mount — and again only on an explicit retry after it FAILED. The same payload
+  // carries live model readiness (what the essentials step needs) AND the persisted high-water
+  // mark (what a reloaded flow needs) — asking for it when the essentials step opens would
+  // already be too late to know where to resume TO.
   useEffect(() => {
     let alive = true
+    setReadError(''); setModelSeed('pending')
     api.onboarding().then((s) => {
       if (!alive) return
       setReadiness(s)
       setReached((r) => furthestOf(r, stepFromStored(s.step) ?? 'name'))
       // Seed ONLY outcomes the stored state PROVES. A step this home reached but recorded nothing
       // about stays absent, so it renders as not-yet-done and stays reachable — rather than
-      // wearing a green check for a screen the user may never have seen.
-      const seeded: Partial<Record<StepId, StepRecord>> = {}
-      // The essentials claim is checked against `needs_model` — the LIVE resolution probe — so a
-      // run whose provider was uninstalled since does not keep promising a model it lost.
+      // wearing a green check for a screen the user may never have seen. Anything this session
+      // already recorded wins: the user may have just done the step.
+      const tried = Object.values(s.first_success ?? {}).filter(Boolean).length
+      if (tried > 0) setRecords((r) => ({ try: { outcome: 'done', summary: `${tried} of 3 tried` }, ...r }))
+      if (s.needs_model) { setModelSeed('done'); return }
+      // 🔴 `needs_model: false` IS A CLAIM, NOT PROOF. It is the no-instantiate readiness probe,
+      // which can see a model that is not downloaded but can never see a provider that does not
+      // ANSWER — an Ollama entry saved at an address nothing listens on reads "ready" to it. It
+      // used to seed this record directly, so a reload said "Ready — using a configured
+      // provider" in the collapsed step-3 row and the recap, and a later "Set up later" kept it
+      // (a skip never erases a done step). The record is now the step's own proof,
+      // `checkChatModel`: it builds what chat builds, then asks the provider that answers
+      // whether it does.
       //
       // 🔴 THE SUMMARY IS THE LIVE BINDING, NOT `essentials.model`. That persisted field is the
       // **app** the lane installed (`ollama-models`), and this summary is rendered under the
       // words "Chat model" by both consumers below — the collapsed step-3 row and the recap — so
-      // a re-entered first run told the user their chat model was an app name (#3528). The first
-      // pass was right, because the real label was in the step's component state; a reload lost
-      // it, which is the whole asymmetry. Reading `chat_model_refs` fixes both surfaces at once
-      // and adds no second stored copy of a fact `active_models.json` already owns.
-      if (!s.needs_model) {
-        seeded.essentials = {
-          outcome: 'done',
-          // No ref means resolution came from the implicit "first capable configured provider"
-          // rule — the same state the step's own verification calls out, in its words, because
-          // naming a model here would imply a choice nobody made. OU-14 is the one no-ref case
-          // that rule does not cover: the bundled floor answers through an in-memory entry and
-          // is never a binding, so it has no ref to name and must say what IS answering rather
-          // than read as a model setup that was never done. Word for word the sentence the
-          // step's own summary uses, so a first pass and a re-entered pass agree (#3528).
-          summary:
-            boundModelLabel(s.chat_model_refs) ||
-            (s.chat_is_bundled_floor
-              ? 'Ready — using the small model PersonalClaw downloaded'
-              : 'Ready — using a configured provider'),
+      // a re-entered first run told the user their chat model was an app name (#3528). The
+      // verdict names the model from `active_models.json`, or '' for the implicit fallback, and
+      // says whether it is the small bundled model; `chatModelSummary` is the SAME function the
+      // step's own summary uses, so a first pass and a re-entered pass agree.
+      void checkChatModel().then((v) => {
+        if (!alive) return
+        if (v.kind === 'ok') {
+          setRecords((r) => ({ essentials: { outcome: 'done', summary: chatModelSummary(v.model, v.floor) }, ...r }))
         }
-      }
-      const tried = Object.values(s.first_success ?? {}).filter(Boolean).length
-      if (tried > 0) seeded.try = { outcome: 'done', summary: `${tried} of 3 tried` }
-      // Anything this session already recorded wins: the user may have just done the step.
-      setRecords((r) => ({ ...seeded, ...r }))
-    }).catch(() => {
-      if (alive) setReadiness({ needs_model: true, has_model_provider: false, has_chat_binding: false })
+        setModelSeed(v.kind === 'unknown' ? 'unknown' : 'done')
+      })
+    }).catch((e: unknown) => {
+      // 🔴 A FAILED READ IS NOT "NEEDS A MODEL". This used to fabricate
+      // `{needs_model: true, …}` here, so an unreachable gateway put the user on the model
+      // step as if nothing were set up, and the recap said "Chat model — set up later in
+      // Settings" — both claims about a home that had not been read at all. The failure is
+      // kept as what it is, the step says it could not read the state and offers the retry,
+      // and the recap says the same.
+      if (alive) setReadError(e instanceof Error && e.message ? e.message : String(e ?? 'the request failed'))
     })
     return () => { alive = false }
-  }, [])
+  }, [readAttempt])
 
   /** Move to *id*, pushing a history entry so Back returns to the step before it.
    *
@@ -369,29 +417,35 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
    *  draft, and is told — through the app toast, the mechanism `DoneScreen.toggleAutoUpdate` below
    *  already uses for exactly this. */
   async function finish() {
-    try {
-      // The handle rides along in the SAME write — one act commits identity, so the name and the
-      // handle can never disagree about whether first run happened. It is passed explicitly
-      // (rather than derived server-side from `user_name`) because only a surface that ASKED may
-      // send one: see `setName` in app/identity.
-      //
-      // `savedHandle` is deliberately NOT defaulted the way the name is. Skipping setup from the
-      // first step falls back to DEFAULT_USER_NAME for the name because the route guard needs a
-      // non-empty one, but there is no equivalent need for a handle and `slugify_username` never
-      // invents a fallback — so a skipped run commits '' and the records it writes stay
-      // unattributed, which is the shipped promise.
-      await setName(savedName || DEFAULT_USER_NAME, savedHandle)
-    } catch (e: unknown) {
-      let msg = e instanceof Error ? e.message : 'the request failed'
-      try { msg = JSON.parse(msg).error || msg } catch { /* raw text */ }
-      // 🪤 A `fetch` that never completes rejects with a TypeError whose message is the browser's
-      // own "Failed to fetch" — measured verbatim on a killed gateway. `lib/errText` cannot help:
-      // it turns a failed RESPONSE into a sentence, and here there is no response. A first-run user
-      // reading "Failed to fetch" learns nothing they can act on; the local gateway being down is
-      // both the likeliest cause and the one they can actually fix.
-      if (e instanceof TypeError) msg = `${APP_NAME} didn't respond — check it is still running`
-      notify(`Couldn't save your name: ${msg}. Setup is still open — nothing was lost.`, 'error')
-      return
+    // A re-run whose name step was never passed has nothing new to commit: the saved name and
+    // handle ARE the user's answer, and overwriting them with the first-run fallback is the wipe
+    // described on `rerun`. It also needs no commit to leave — `onFinished()` withdrawing the
+    // re-run request is what releases the guard for an onboarded user.
+    if (namePassed || !rerun) {
+      try {
+        // The handle rides along in the SAME write — one act commits identity, so the name and the
+        // handle can never disagree about whether first run happened. It is passed explicitly
+        // (rather than derived server-side from `user_name`) because only a surface that ASKED may
+        // send one: see `setName` in app/identity.
+        //
+        // `savedHandle` is deliberately NOT defaulted the way the name is. Skipping setup from the
+        // first step falls back to DEFAULT_USER_NAME for the name because the route guard needs a
+        // non-empty one, but there is no equivalent need for a handle and `slugify_username` never
+        // invents a fallback — so a skipped run commits '' and the records it writes stay
+        // unattributed, which is the shipped promise.
+        await setName(savedName || DEFAULT_USER_NAME, savedHandle)
+      } catch (e: unknown) {
+        let msg = e instanceof Error ? e.message : 'the request failed'
+        try { msg = JSON.parse(msg).error || msg } catch { /* raw text */ }
+        // 🪤 A `fetch` that never completes rejects with a TypeError whose message is the browser's
+        // own "Failed to fetch" — measured verbatim on a killed gateway. `lib/errText` cannot help:
+        // it turns a failed RESPONSE into a sentence, and here there is no response. A first-run user
+        // reading "Failed to fetch" learns nothing they can act on; the local gateway being down is
+        // both the likeliest cause and the one they can actually fix.
+        if (e instanceof TypeError) msg = `${APP_NAME} didn't respond — check it is still running`
+        notify(`Couldn't save your name: ${msg}. Setup is still open — nothing was lost.`, 'error')
+        return
+      }
     }
     progress({ step: 'done' })
     // The fresh-install marker for the rail (ONBOARDING-UX C4). This is the ONE act that can
@@ -420,10 +474,10 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
    *
    *  It runs the same `finish()` as completing the flow, which is what makes the landing a
    *  WORKING dashboard: the terminal step is recorded, the rail marker is written, and
-   *  committing identity is what releases the route guard. Skipping from the first step has no
-   *  name to commit, so identity falls back to `DEFAULT_USER_NAME` — the same word the
+   *  committing identity is what releases the route guard. Skipping a FIRST run from its first
+   *  step has no name to commit, so identity falls back to `DEFAULT_USER_NAME` — the same word the
    *  Settings → Account field uses — and the link says so, because a visible default beats a
-   *  silent rename. */
+   *  silent rename. Skipping a RE-RUN commits nothing: the saved name and handle stay (`rerun`). */
   function skipSetup() {
     finish()
   }
@@ -448,8 +502,8 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
     <div className="fixed inset-0 z-[var(--z-modal)] overflow-hidden" style={{ background: 'var(--color-canvas)' }}>
       <DotGlow intensity={1.15} composerRef={activeRef} />
 
-      {/* 🔴 THE SCROLL BOX IS A PLAIN BLOCK, AND THE CENTRING LIVES ON THE BOX INSIDE IT.
-          Both halves are load-bearing; the previous shape had them on the same element
+      {/* 🔴 THE SCROLL BOX IS A PLAIN BLOCK, AND THE CENTRING LIVES ON A BOX INSIDE IT.
+          Both halves are load-bearing; an earlier shape had them on the same element
           (`flex h-full items-center justify-center overflow-y-auto`) and lost content at both
           edges of a short viewport.
 
@@ -460,17 +514,28 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
             ("Bring your setup over", the longest step): at `scrollTop: 0` — already the top of the
             range — the panel's top sat at **-96.5px** and the `<h1>` at **-201.5px**, so "Welcome
             to PersonalClaw" was simply gone. Scrolling to the bottom took the h1 to -326.
-          · `min-h-full` + `justify-center` on the INNER box gives the same centred look while
-            there is room, and degrades to top-aligned + fully scrollable when there is not:
-            `justify-content` has no spare space to distribute once the content grows, so nothing
-            is pushed past the start edge.
+          · `min-h-full` on the COLUMN inside it, with the steps centred in a `flex-1` box above the
+            navigation bar, gives the same centred look while there is room and degrades to
+            top-aligned + fully scrollable when there is not: `justify-content` has no spare space
+            to distribute once the content grows, so nothing is pushed past the start edge.
+
+          The column is also what the bar is sticky WITHIN — a sticky box moves only inside its
+          parent, and this one spans the whole scroll height, so the bar sits at the foot of the
+          screen on a short step and stays there while a long one scrolls beneath it.
 
           `design/onboardingScrollable.test.tsx` is the rail; it also explains why jsdom cannot
           measure this and what it asserts instead. */}
-      <div className="relative h-full overflow-y-auto px-l py-3xl">
-        <div className="flex min-h-full flex-col items-center justify-center">
+      {/* Two widths, both centred on one axis: the steps read at 540px, and the navigation bar at
+          the foot of the column may run to 760px. Back, the door out, a step's own alternative and
+          its main action are four labelled buttons — "Back to bring your setup over", "Skip the rest
+          of setup", "Set up later", "Continue" measure 727px together — so inside 540px the bar
+          wrapped on every desktop step but the first, stranding the main action on a row of its
+          own. On a phone both are the full width, and the bar wraps by design. */}
+      <div ref={scrollRef} className="relative h-full overflow-y-auto px-l pt-3xl">
+        <div className="mx-auto flex min-h-full w-full flex-col" style={{ maxWidth: 760 }}>
+          <div className="mx-auto flex w-full flex-1 flex-col justify-center pb-2xl" style={{ maxWidth: 540 }}>
           <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={spring.spatialSlow}
-            className="relative w-full" style={{ maxWidth: 540 }}>
+            className="relative w-full">
             {/* hero — ABOVE the stepper, IN FLOW.
                 🪤 It used to be positioned out of flow (`absolute` against the panel's top edge),
                 "so it doesn't affect the stepper's vertical centering; the STEPPER is what sits
@@ -481,8 +546,12 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
                 (the stepper sits a little lower when there is room) and both scroll. */}
             <div className="mb-2xl flex flex-col items-center">
               <ClawMark size={52} animated blob />
-              <h1 data-type="headline-m" className="mt-l text-on-surface text-center">Welcome to {APP_NAME}</h1>
-              <p className="mt-2 text-center text-on-surface-low text-[0.9375rem]" style={{ maxWidth: 360 }}>Your self-hosted personal agent. A few moments to get set up.</p>
+              <h1 data-type="headline-m" className="mt-l text-on-surface text-center">{rerun ? 'Setup, again' : `Welcome to ${APP_NAME}`}</h1>
+              <p className="mt-2 text-center text-on-surface-low text-[0.9375rem]" style={{ maxWidth: 360 }}>
+                {rerun
+                  ? 'Everything already set up is kept. Change what you like, and skip the rest.'
+                  : 'Your self-hosted personal agent. A few moments to get set up.'}
+              </p>
               {/* The deferred destination, said out loud. Without it the guard's redirect is
                   indistinguishable from the app losing the click — the user asked for a page and got
                   a different screen with no explanation. Naming the deferral makes it a promise, and
@@ -515,7 +584,9 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
                 row had no set to be current WITHIN, and a screen-reader user got no "list, 5 items" to
                 orient by. The live region is deliberately OUTSIDE it: only `<li>` may be an `<ol>`
                 child, and a `<p>` in there is invalid content an AT tree may drop — which would have
-                silently removed the announcement this screen already relies on. */}
+                silently removed the announcement this screen already relies on.
+                Every step's own actions render in the navigation bar below, through this slot. */}
+            <StepActionsSlot.Provider value={actionSlot}>
             <ol className="flex w-full list-none flex-col gap-2 p-0">
               <StepRow ref={rowRefs.name} index={ORDER.indexOf('name')} total={ORDER.length} icon={User} title={TITLES.name}
                 /* NOT "Saved on the server, so it follows you across devices" — that is
@@ -558,10 +629,22 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
                   ? <EssentialsStep readiness={readiness} onProgress={progress}
                       onDone={(s) => leave('essentials', 'done', s)}
                       onSkip={() => leave('essentials', 'skipped', 'Set up later')} />
-                  : <div role="status" aria-busy="true" className="flex items-center py-2">
-                      <LoadingStatus what="what's already set up" />
-                      <Loader2 size={18} className="animate-spin text-on-surface-low" aria-hidden="true" />
-                    </div>}
+                  : readError
+                    // The step's lanes all start from this read (is a model already set up?), so
+                    // with it failed there is nothing true to show them from — say that, offer
+                    // the retry, and keep the way out. Never a guessed "set up a model".
+                    ? <div className="flex flex-col gap-s" data-testid="onboarding-readiness-error">
+                        <LoadError what="setup state" error={new Error(readError)}
+                          onRetry={() => setReadAttempt((n) => n + 1)} />
+                        <StepActions secondary={{ label: 'Set up later', onClick: () => leave('essentials', 'skipped', "Set up later — couldn't read what was set up") }} />
+                      </div>
+                    : <>
+                        <div role="status" aria-busy="true" className="flex items-center py-2">
+                          <LoadingStatus what="what's already set up" />
+                          <Loader2 size={18} className="animate-spin text-on-surface-low" aria-hidden="true" />
+                        </div>
+                        <StepActions secondary={{ label: 'Set up later', onClick: () => leave('essentials', 'skipped', 'Set up later') }} />
+                      </>}
               </StepRow>
 
               <StepRow ref={rowRefs.try} index={ORDER.indexOf('try')} total={ORDER.length} icon={Rocket} title={TITLES.try}
@@ -580,50 +663,70 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
               <StepRow ref={rowRefs.ready} index={ORDER.indexOf('ready')} total={ORDER.length} icon={Sparkles} title={TITLES.ready}
                 subtitle={`You're ready, ${firstNameOf(savedName)}.`}
                 state={stateOf('ready')} onActivate={activate('ready')}>
-                <DoneScreen name={savedName} model={records.essentials} tried={records.try} settled={readiness !== null}
+                <DoneScreen name={savedName} model={records.essentials} tried={records.try} settled={readiness !== null} readFailed={!!readError} modelCheck={modelSeed}
                   showEverything={showEverything} onShowEverything={setShowEverything}
                   onFinish={finish} onTakeTour={takeTour} onExitTo={exitTo} />
               </StepRow>
             </ol>
+            </StepActionsSlot.Provider>
 
-            {/* The two doors, on every step but the last — where "Start using" and the tour are the
-                doors. Guidance never gates, and BOTH directions have to be visible: the flow's only
-                way back used to be clicking a completed row's header, an affordance with no words on
-                it, and the only way out was a link that said nothing about what it cost.
-
-                Back is non-destructive by construction — it navigates, and nothing in `goTo` clears a
-                draft, a record or the high-water mark.
-
-                `ink="emphasis"` because these sit OUTSIDE the step card, on `--color-canvas`
-                (measured off the node: rgb(240,244,248)). There, the base accent is **4.37:1** against a
-                4.5 floor at 13px/400 — axe and ux-audit agreeing, the same number the canvas ground has
-                carried since the accent-on-canvas family was named. The emphasis shade measures 6.0 in
-                coral and passes in all 12 schemes. Its three siblings inside the card keep the base ink
-                and pass at 4.83, because they are painted on `--color-surface`: the ground decides. */}
+            {/* What skipping costs, and how to come back — on every step but the last, where
+                nothing is left to skip. It used to sit under the two doors it explains; the doors
+                moved into the bar, and this stays with the content, where it is read rather than
+                clicked. */}
             {step !== 'ready' && (
-              <div className="mt-l flex flex-col items-center gap-s">
-                <div className="flex flex-wrap items-center justify-center gap-l">
-                  {previousOf(step) && (
-                    <TextLink size="sm" ink="emphasis" onClick={() => goTo(previousOf(step) as StepId)}>
-                      <ArrowLeft size={14} aria-hidden="true" /> Back to {TITLES[previousOf(step) as StepId].toLowerCase()}
-                    </TextLink>
-                  )}
-                  <TextLink size="sm" ink="emphasis" onClick={skipSetup}>
-                    {step === 'name' ? 'Skip setup for now' : 'Skip the rest of setup'}
-                  </TextLink>
-                </div>
-                {/* What skipping costs, and how to come back — said here because this is the moment a
-                    user decides, and because the alternative was finding out later that the only
-                    re-entry door wiped their name. */}
-                <p data-type="caption" className="text-center text-on-surface-low" style={{ maxWidth: 380 }}>
-                  {step === 'name'
-                    ? `Nothing is set up, and you'll be called "${DEFAULT_USER_NAME}" until you pick a name.`
-                    : 'Whatever you have finished so far is kept.'}
-                  {' '}Pick setup back up any time: Settings &rarr; Account &rarr; Run setup again.
-                </p>
-              </div>
+              <p data-type="caption" className="mx-auto mt-l text-center text-on-surface-low" style={{ maxWidth: 380 }}>
+                {step === 'name'
+                  ? rerun
+                    ? 'Skipping keeps your name, your handle and everything already set up exactly as they are.'
+                    : `Nothing is set up, and you'll be called "${DEFAULT_USER_NAME}" until you pick a name.`
+                  : 'Whatever you have finished so far is kept.'}
+                {' '}Pick setup back up any time: Settings &rarr; Account &rarr; Run setup again.
+              </p>
             )}
           </motion.div>
+          </div>
+
+          {/* 🔑 THE FLOW'S NAVIGATION, IN ONE PLACE ON EVERY STEP. Back on the left, named for the
+              step it returns to; on the right the door out of setup, then the step's own actions
+              (`StepActions` renders them into the slot at the end), Continue last. The owner, on
+              the build before: "I am expecting to see the buttons for Back to essential apps /
+              Skip the rest of setup to be in an intuitive shell like place. Not tucked away at the
+              bottom in an oddly aligned manner." They were two centred links under the whole step,
+              and each step drew its own Continue at the end of its own content — on the model step
+              a screen and a half down.
+
+              It is `ui/FormFooter`, the design system's sticky action bar, not a new one: sticky
+              at the foot of the scroller, bleeding to the column's edges so its buttons line up
+              with the steps above, and in DOM order after the steps, so Tab reaches it last.
+
+              Back is non-destructive by construction — it navigates, and nothing in `goTo` clears a
+              draft, a record or the high-water mark. Skipping everything is quieter than a step's
+              own skip ("Set up later"), which is the smaller and likelier choice.
+
+              The bar is painted on `--color-surface`. The skip door used to be a link on the bare
+              `--color-canvas` (rgb(240,244,248)), where the base accent measured **4.37:1** against
+              a 4.5 floor at 13px/400 and had to take the emphasis ink; as buttons on the bar's
+              surface they carry the on-surface ink, and no accent text is left on the canvas. */}
+          <FormFooter>
+            {/* On a phone the step's name is spoken but not drawn ("Back to bring your setup over"
+                is 250px of a 358px bar), which keeps the bar to two rows there: the way back and the
+                way out on top, the step's own actions beneath. */}
+            {previousOf(step) && (
+              <Button variant="ghost" size="md" className="mr-auto" onClick={() => goTo(previousOf(step) as StepId)}>
+                <ArrowLeft size={16} aria-hidden="true" />
+                {/* The space sits OUTSIDE the hidden span: inside it, the accessible-name computation
+                    trims it away and the button is announced "Backto your name". */}
+                <span>Back <span className="sr-only sm:not-sr-only">to {TITLES[previousOf(step) as StepId].toLowerCase()}</span></span>
+              </Button>
+            )}
+            {step !== 'ready' && (
+              <Button variant="ghost" size="md" onClick={skipSetup}>
+                {step === 'name' ? 'Skip setup for now' : 'Skip the rest of setup'}
+              </Button>
+            )}
+            <div ref={setActionSlot} className="contents" data-testid="onboarding-step-actions" />
+          </FormFooter>
         </div>
       </div>
     </div>
@@ -649,16 +752,11 @@ function NameStep({ value, onChange, onSubmit, handle, onHandleChange }: {
 }) {
   return (
     <div className="flex flex-col gap-s">
+      {/* Enter in either field submits; the step's Continue is the bar's, like every other step's.
+          It used to be an arrow inside this pill — a second Continue, in a different place from
+          the one on every step after it. */}
       <PillField value={value} onChange={onChange} onEnter={onSubmit} autoFocus
-        ariaLabel="Your name" placeholder="Your name"
-        trailing={
-          <motion.button whileTap={{ scale: 0.96 }} transition={spring.spatialFast} onClick={onSubmit} type="button"
-            {...unavailableWhen(!value.trim(), 'Enter your name first')}
-            className="inline-flex size-9 shrink-0 items-center justify-center rounded-pill disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"
-            style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }} aria-label="Continue">
-            <ArrowRight size={17} />
-          </motion.button>
-        } />
+        ariaLabel="Your name" placeholder="Your name" />
       {/* The hint is wired with `aria-describedby` rather than left as adjacent prose: the
           rule it states (normalized, optional, not a login) is the whole reason an operator
           would leave this empty on purpose, and a screen-reader user who only hears the
@@ -670,6 +768,7 @@ function NameStep({ value, onChange, onSubmit, handle, onHandleChange }: {
         attributable later — a label, not a login. Leave it empty to keep records
         unattributed.
       </p>
+      <StepActions primary={{ label: 'Continue', onClick: onSubmit, disabled: !value.trim(), disabledReason: 'Enter your name first' }} />
     </div>
   )
 }
@@ -682,12 +781,12 @@ function NameStep({ value, onChange, onSubmit, handle, onHandleChange }: {
  *  was touched. It also keeps `primitiveAdoption`'s raw-input ratchet flat — one `<input>`, two
  *  uses — which is what that rail asks for (`ui/FilterChip`'s note records the same move).
  *
- *  NOT `ui/forms`' `TextInput`: this is a 17px pill on a glowing backdrop with a submit button
- *  living INSIDE the field, and the shared family is a settings-row control (fixed sizes, `rounded-md`,
- *  its own surface tokens). Adopting it here would mean overriding all of it — the case
- *  `primitiveAdoption.baseline.json` already records twice. Local to this file for the same reason:
- *  the flow is its only caller, and `ui/` is for chrome more than one surface actually shares. */
-function PillField({ value, onChange, onEnter, ariaLabel, placeholder, describedBy, autoFocus, trailing }: {
+ *  NOT `ui/forms`' `TextInput`: this is a 17px pill on a glowing backdrop, and the shared family is
+ *  a settings-row control (fixed sizes, `rounded-md`, its own surface tokens). Adopting it here would
+ *  mean overriding all of it — the case `primitiveAdoption.baseline.json` already records twice.
+ *  Local to this file for the same reason: the flow is its only caller, and `ui/` is for chrome more
+ *  than one surface actually shares. */
+function PillField({ value, onChange, onEnter, ariaLabel, placeholder, describedBy, autoFocus }: {
   value: string
   onChange: (v: string) => void
   onEnter: () => void
@@ -695,8 +794,6 @@ function PillField({ value, onChange, onEnter, ariaLabel, placeholder, described
   placeholder: string
   describedBy?: string
   autoFocus?: boolean
-  /** Rendered inside the pill, after the input — the name field's submit arrow. */
-  trailing?: ReactNode
 }) {
   return (
     <div className="flex items-center gap-s rounded-pill bg-surface-high px-s py-1.5 ring-1 ring-outline/40 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
@@ -706,7 +803,6 @@ function PillField({ value, onChange, onEnter, ariaLabel, placeholder, described
         aria-describedby={describedBy}
         placeholder={placeholder}
         className="min-w-0 flex-1 bg-transparent px-m text-on-surface text-[1.0625rem] placeholder:text-on-surface-low outline-none" />
-      {trailing}
     </div>
   )
 }
@@ -735,7 +831,7 @@ function PillField({ value, onChange, onEnter, ariaLabel, placeholder, described
  *  rather than replacing it: the recap above already hands over three controls, and a
  *  first-run screen whose only exit is a guided walk is a gate wearing an offer. Both
  *  buttons finish the flow; one of them then walks the app. */
-function DoneScreen({ name, model, tried: triedRec, settled, showEverything, onShowEverything, onFinish, onTakeTour, onExitTo }: {
+function DoneScreen({ name, model, tried: triedRec, settled, readFailed, modelCheck, showEverything, onShowEverything, onFinish, onTakeTour, onExitTo }: {
   name: string
   /** What the essentials / try steps RECORDED, or `undefined` when they recorded nothing.
    *
@@ -752,6 +848,13 @@ function DoneScreen({ name, model, tried: triedRec, settled, showEverything, onS
    *  `Chat model — set up later in Settings` for a home whose model was bound, then swapped in the
    *  real name a moment later. A line with no evidence yet names its subject and claims nothing. */
   settled: boolean
+  /** That read FAILED. A line this session recorded nothing true for then says it could not
+   *  read the state — never "set up later", which is a claim about a home nobody read. */
+  readFailed: boolean
+  /** The proof behind a re-entered run's chat-model line (`checkChatModel`): `pending` while it
+   *  is out, so the line claims nothing yet, and `unknown` when it could not run, so the line
+   *  says it could not tell rather than "set up later". */
+  modelCheck: 'pending' | 'done' | 'unknown'
   showEverything: boolean
   onShowEverything: (v: boolean) => void
   onFinish: () => void
@@ -761,7 +864,12 @@ function DoneScreen({ name, model, tried: triedRec, settled, showEverything, onS
   const chatReady = model?.outcome === 'done'
   const tried = triedRec?.outcome === 'done'
   /** A line is unknown only while the read is out AND this session recorded nothing for it. */
-  const unread = (rec?: StepRecord) => !settled && rec === undefined
+  const unread = (rec?: StepRecord) => !settled && !readFailed && rec === undefined
+  /** The read failed and this session did not finish the step itself, so nothing is known. */
+  const unknown = (rec?: StepRecord) => readFailed && rec?.outcome !== 'done'
+  /** The chat-model line also waits for, and can be left unknown by, its own proof. */
+  const modelUnread = unread(model) || (!readFailed && model === undefined && modelCheck === 'pending')
+  const modelUnknown = unknown(model) || (modelCheck === 'unknown' && model?.outcome !== 'done')
 
   /** The autonomy pointer's facts, read when the ready step opens (this component mounts
    *  only then — StepRow renders children on the active step). `null` = still loading
@@ -800,12 +908,16 @@ function DoneScreen({ name, model, tried: triedRec, settled, showEverything, onS
       <motion.div className="flex flex-col gap-1.5"
         initial="initial" animate="animate" variants={{ animate: { transition: stagger(0.06) } }}>
         <motion.div variants={listItemEnter}><Recap ok label={`Hello, ${firstNameOf(name)}`} /></motion.div>
-        <motion.div variants={listItemEnter}>{unread(model)
+        <motion.div variants={listItemEnter}>{modelUnread
           ? <Recap ok={null} label="Chat model" />
-          : <Recap ok={chatReady} label={chatReady ? `Chat model: ${model?.summary}` : 'Chat model — set up later in Settings'} />}</motion.div>
+          : modelUnknown
+            ? <Recap ok={null} label="Chat model — couldn't read whether one is set up" />
+            : <Recap ok={chatReady} label={chatReady ? `Chat model: ${model?.summary}` : 'Chat model — set up later in Settings'} />}</motion.div>
         <motion.div variants={listItemEnter}>{unread(triedRec)
           ? <Recap ok={null} label="First success" />
-          : <Recap ok={tried} label={tried ? `First success: ${triedRec?.summary}` : 'Nothing tried yet — the cards are in Discover'} />}</motion.div>
+          : unknown(triedRec)
+            ? <Recap ok={null} label="First success — couldn't read what was tried" />
+            : <Recap ok={tried} label={tried ? `First success: ${triedRec?.summary}` : 'Nothing tried yet — the cards are in Discover'} />}</motion.div>
       </motion.div>
 
       <div className="flex flex-col gap-s">
@@ -855,18 +967,11 @@ function DoneScreen({ name, model, tried: triedRec, settled, showEverything, onS
         </Pointer>
       </div>
 
-      <div className="flex flex-wrap items-center gap-s">
-        <motion.button whileTap={{ scale: 0.98 }} transition={spring.spatialFast} onClick={onFinish} type="button"
-          className="inline-flex items-center justify-center gap-1.5 rounded-pill px-5 h-11 text-[0.9375rem]"
-          style={withWeight({ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }, 500)}>
-          Start using {APP_NAME} <ArrowRight size={17} />
-        </motion.button>
-        {/* The tour, offered rather than imposed — it finishes setup either way, and every
-            stop is skippable once it starts (Escape exits from any of them). */}
-        <Button variant="secondary" size="lg" onClick={onTakeTour}>
-          <Compass size={17} /> Take the quick tour
-        </Button>
-      </div>
+      {/* The flow's two last doors, in the bar with every step's: the tour is offered rather than
+          imposed — it finishes setup either way, and every stop is skippable once it starts
+          (Escape exits from any of them). */}
+      <StepActions primary={{ label: `Start using ${APP_NAME}`, onClick: onFinish }}
+        secondary={{ label: 'Take the quick tour', icon: Compass, onClick: onTakeTour }} />
     </div>
   )
 }

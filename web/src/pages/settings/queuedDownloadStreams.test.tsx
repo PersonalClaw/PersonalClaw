@@ -124,7 +124,7 @@ describe('a download that comes back queued', () => {
     // the MiB-vs-MB rounding convention, which is `LocalModelManager`'s own concern, not this one's.
     expect(screen.getByText('downloading'), 'no bytes yet, so no count').toBeTruthy()
     emit({ type: 'progress', job: { ...QUEUED, state: 'running', progress: 0.25, downloaded_bytes: 1_150_000_000 } })
-    await waitFor(() => expect(screen.getByText(/^downloading · \d+ \/ 4600 MB$/)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/^downloading · \d+ \/ 4600 MiB$/)).toBeTruthy())
   })
 
   it('a terminal frame still settles it — the fix must not break the end of the job', async () => {

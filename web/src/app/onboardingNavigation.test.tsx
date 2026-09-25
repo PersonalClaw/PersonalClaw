@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, fireEvent, cleanup, act } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, cleanup, act, within } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -27,6 +27,8 @@ import { join } from 'node:path'
 
 const saveOnboardingState = vi.fn()
 const onboarding = vi.fn()
+const onboardingModelCheck = vi.fn()
+const testModelProvider = vi.fn()
 const setName = vi.fn()
 const notify = vi.fn()
 
@@ -34,6 +36,10 @@ vi.mock('../lib/api', () => ({
   api: {
     saveOnboardingState: (...a: unknown[]) => saveOnboardingState(...a),
     onboarding: () => onboarding(),
+    // A re-entered run's chat-model record is the flow's own proof (`checkChatModel`), so the
+    // build check and the answering provider's connection test are part of every resume.
+    onboardingModelCheck: () => onboardingModelCheck(),
+    testModelProvider: (...a: unknown[]) => testModelProvider(...a),
     // Kept PENDING deliberately: a promise settling after render lands a setState outside act(),
     // and "not loaded yet" is a real state for all three.
     themes: () => new Promise(() => {}),
@@ -100,6 +106,8 @@ beforeEach(() => {
   })
   saveOnboardingState.mockResolvedValue({ ok: true, state: {} })
   onboarding.mockResolvedValue(FRESH)
+  onboardingModelCheck.mockResolvedValue({ ok: true, source: 'fallback', bound: [], floor: false, provider: '' })
+  testModelProvider.mockResolvedValue({ ok: true, status: 'connected', message: 'Connected' })
 })
 
 afterEach(() => {
@@ -244,6 +252,9 @@ describe('🔴 a step whose outcome is unknown reads unknown, never complete', (
       step: 'first_success', essentials: { model: 'anthropic-models', search: false, speech: false, channel: null },
       first_success: { knowledge: false, trigger: false, loop: false },
     })
+    onboardingModelCheck.mockResolvedValue({
+      ok: true, source: 'binding', bound: ['my-anthropic:claude-sonnet-4-5'], floor: false, provider: 'my-anthropic',
+    })
     await startAndPassName()
     // The run resumes at the try step…
     await waitFor(() => expect(announced()).toBe('Step 4 of 5: Try one'))
@@ -251,9 +262,10 @@ describe('🔴 a step whose outcome is unknown reads unknown, never complete', (
     const importRow = screen.getByText('Bring your setup over').closest('li') as HTMLElement
     expect(importRow.querySelector('svg.lucide-check'), 'no check on a step never seen').toBeNull()
     expect(rowButton(2, 'Bring your setup over'), 'and it is reachable so it can be done').toBeTruthy()
-    // The essentials step DOES carry evidence — a live-resolvable chat model — so it is claimed.
+    // The essentials step DOES carry evidence — a chat model that builds and whose provider
+    // answers, the flow's own check — so it is claimed once that check has answered.
     const essentialsRow = screen.getByText('Essential apps').closest('li') as HTMLElement
-    expect(essentialsRow.querySelector('svg.lucide-check')).toBeTruthy()
+    await waitFor(() => expect(essentialsRow.querySelector('svg.lucide-check')).toBeTruthy())
     // …and its summary is the MODEL that resolves, not `essentials.model`'s app name (#3528).
     expect(screen.getByText('claude-sonnet-4-5')).toBeTruthy()
   })
@@ -302,7 +314,11 @@ describe('🔴 a step whose outcome is unknown reads unknown, never complete', (
     expect(screen.getByText('Chat model').parentElement?.textContent).toBe('Chat modelLoading…')
     expect(screen.getByText('First success').parentElement?.textContent).toBe('First successLoading…')
 
-    // The read answers: the bound model, and one card the earlier visit completed.
+    // The read answers: the bound model, and one card the earlier visit completed. The model
+    // line's proof (the build check, then the provider's connection test) reads the same binding.
+    onboardingModelCheck.mockResolvedValue({
+      ok: true, source: 'binding', bound: ['Local Ollama:qwen2.5vl:7b'], floor: false, provider: 'Local Ollama',
+    })
     await act(async () => answer({
       ...FRESH, needs_model: false, has_model_provider: true, has_chat_binding: true,
       chat_model_refs: ['Local Ollama:qwen2.5vl:7b'], step: 'ready',
@@ -387,6 +403,55 @@ describe('🔴 refresh mid-flow keeps the step AND what was entered', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Start using/ }))
     await waitFor(() => expect(setName).toHaveBeenCalled())
     expect(sessionStorage.getItem('onboarding-draft')).toBeNull()
+  })
+})
+
+// ── The flow's navigation lives in ONE bar, the same on every step ──────────────────────────────
+//
+// The owner, on a live build: "I am expecting to see the buttons for Back to essential apps / Skip
+// the rest of setup to be in an intuitive shell like place. Not tucked away at the bottom in an
+// oddly aligned manner." Back and the skip were two centred links under the whole step, and each
+// step drew its own Continue at the end of its own content — the name step's inside the field.
+
+/** The navigation bar (`ui/FormFooter`), and the names of the buttons in it, in DOM (= Tab) order. */
+const navBar = () => document.querySelector('[data-form-footer]') as HTMLElement
+const barButtons = () =>
+  Array.from(navBar().querySelectorAll('button')).map((b) => (b.textContent ?? '').trim())
+
+describe('🔴 the navigation is one bar, the same on every step', () => {
+  it('step 1: the door out, then Continue — and no second Continue in the field', async () => {
+    renderFlow()
+    await mounted()
+    expect(navBar(), 'the bar exists').toBeTruthy()
+    expect(barButtons()).toEqual(['Skip setup for now', 'Continue'])
+    expect(screen.getAllByRole('button', { name: 'Continue' }), 'one Continue, in the bar').toHaveLength(1)
+    // It is gated on the name, and says why rather than going dead.
+    expect(within(navBar()).getByRole('button', { name: 'Continue' }).getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it('a later step: Back first, named for where it goes; the step that was left takes its Continue with it', async () => {
+    await startAndPassName()
+    await waitFor(() => expect(announced()).toBe('Step 2 of 5: Bring your setup over'))
+    // The import step here is a stub that declares no actions of its own, so the bar holds exactly
+    // the shell's two doors — the name step's Continue did not linger while its body animated shut.
+    expect(barButtons()).toEqual(['Back to your name', 'Skip the rest of setup'])
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull()
+  })
+
+  it('the recap: Back, the tour and "Start using" — and nothing left to skip', async () => {
+    await startAndPassName()
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-import' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-skip' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
+    await screen.findByRole('button', { name: /Start using/ })
+    expect(barButtons()).toEqual(['Back to try one', 'Take the quick tour', 'Start using PersonalClaw'])
+  })
+
+  it('the bar is the last thing in the panel, after every step, so Tab reaches it last', async () => {
+    renderFlow()
+    await mounted()
+    const steps = document.querySelector('ol') as HTMLElement
+    expect(steps.compareDocumentPosition(navBar()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })
 
