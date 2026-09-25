@@ -642,7 +642,11 @@ export interface ModelItem { name: string; model_name: string; description: stri
 // pages/apps and docs/security/limitations.md §2.
 export interface AppPermissionsWire {
   api?: string[]; events?: string[]; mcpTools?: string[]
-  storage?: boolean; network?: boolean; memory?: string; cron?: boolean; agent?: boolean
+  // #3501: `memory` is a boolean grant, not a tier. It was `"" | "app-scoped" | "shared"`
+  // and `app-scoped` granted nothing on any path (the gateway checked for `"shared"`), so
+  // the consent bullet interpolated a tier name the user was told they had approved and
+  // that the gateway never honoured. One grant, absent when not held.
+  storage?: boolean; network?: boolean; memory?: boolean; cron?: boolean; agent?: boolean
   // APE-9/APE-12: apps this app may send a brokered message to (exact name, or a
   // trailing-`*` prefix pattern). Enforced — `POST /api/apps/message` is the only
   // app-to-app path and refuses an undeclared target 403 + SEL. Absent = may message

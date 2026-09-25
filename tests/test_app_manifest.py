@@ -71,6 +71,23 @@ def _valid_manifest(**overrides) -> dict:
     return base
 
 
+def _valid_value_for(key: str):
+    """A declaration value whose TYPE matches the field behind ``key``.
+
+    A single literal cannot stand in for every permission. The vocabulary mixes list-valued
+    grants (``api``, ``events``, …) with boolean ones (``storage``, ``memory``, …), so the
+    old generic ``[]`` asserted that every permission accepts a list — which is not the
+    contract, and became a false red the moment ``memory`` was made boolean-only (#3501):
+    ``from_dict`` stringifies the raw value, so ``[]`` arrived as the truthy ``"[]"`` and the
+    non-boolean refusal fired on a test that was only ever trying to say "this key exists".
+
+    Derived from the dataclass for the same reason ``PERMISSION_KEYS`` is: a hand-written map
+    drifts the moment a permission is added, and this test's whole point is catching drift.
+    """
+    field = next(f for f in fields(Permissions) if f.name == key)
+    return True if field.type is bool else []
+
+
 # ---------------------------------------------------------------------------
 # Validation tests
 # ---------------------------------------------------------------------------
@@ -221,7 +238,7 @@ class TestPermissionVocabulary:
     def test_every_key_in_the_vocabulary_is_accepted(self, key):
         """The other direction, and the one that would break real apps if the vocabulary
         drifted: a declared permission this project DOES support must never be refused."""
-        m = AppManifest.from_dict(_valid_manifest(permissions={key: []}))
+        m = AppManifest.from_dict(_valid_manifest(permissions={key: _valid_value_for(key)}))
         assert m.permissions.unknown_keys == ()
         assert m.validate() == []
 
@@ -233,10 +250,34 @@ class TestPermissionVocabulary:
         and letting either through would make ``network_declared`` a declarable permission.
         """
         declared = {f.name for f in fields(Permissions)}
-        assert PERMISSION_KEYS == declared - {"network_declared", "unknown_keys"}
+        assert PERMISSION_KEYS == declared - {
+            "network_declared",
+            "memory_declared_raw",
+            "unknown_keys",
+        }
         assert "network_declared" not in PERMISSION_KEYS
+        assert "memory_declared_raw" not in PERMISSION_KEYS
         assert "unknown_keys" not in PERMISSION_KEYS
         assert len(PERMISSION_KEYS) >= 15, "the vocabulary shrank — did a permission move?"
+
+    def test_a_bookkeeping_field_is_not_a_declarable_permission(self):
+        """A field that records a FACT about the raw dict must never be a wire key.
+
+        ``memory_declared_raw`` (#3501) exists so a non-boolean ``memory`` can be quoted back
+        to the author. It grants nothing. Left in the vocabulary it became declarable: an app
+        writing ``"memory_declared_raw": true`` was accepted and would have been rendered on
+        the install-consent surface as a permission — which is precisely the declared-versus-held
+        gap the unknown-key refusal exists to close. Pinned by name because the exclusion set is
+        hand-written and the next bookkeeping field will be added the same way.
+        """
+        m = AppManifest.from_dict(_valid_manifest(permissions={"memory_declared_raw": True}))
+        assert m.permissions.unknown_keys == ("memory_declared_raw",)
+        (error,) = m.validate()
+        assert "'memory_declared_raw'" in error
+        # The real key must still work — a refusal that also broke `memory` would be no better.
+        ok = AppManifest.from_dict(_valid_manifest(permissions={"memory": True}))
+        assert ok.permissions.unknown_keys == ()
+        assert ok.validate() == []
 
     def test_every_key_to_dict_can_emit_is_in_the_vocabulary(self):
         """The consent surface reads ``to_dict``, so a key it can emit but the vocabulary
@@ -319,7 +360,10 @@ class TestRoundTrip:
                 "mcpTools": ["ToolA"],
                 "storage": True,
                 "network": True,
-                "memory": "shared",
+                # #3501: a boolean grant. A tier string here would now be a validation
+                # error, and this round-trip would pass VACUOUSLY (to_dict omits the
+                # coerced-false field, so both sides would agree by dropping it).
+                "memory": True,
                 "cron": True,
             },
             "setup": {
