@@ -64,6 +64,7 @@ export type AttentionRead = EscalationRead | AskRead | null
  *  escalation artifact, measured from the two `_escalate` call sites in `controller.py`:
  *
  *  • `retries_exhausted` — the node path (`controller.py`, the retry budget);
+ *  • `iterations_failed` — also `controller.py`, from `_surface_loop`;
  *  • the four `check_breaker` verdicts in `resilience.py`; and
  *  • the three `loop/tick.py` convergence reasons that reach `_surface_loop`.
  *
@@ -73,7 +74,13 @@ export type AttentionRead = EscalationRead | AskRead | null
  */
 export const ESCALATION_REASON: Record<string, string> = {
   retries_exhausted: 'every retry was spent and the step still failed',
+  /** `max_iterations` is the loop spending its budget ON WORK. A loop that spent it FAILING gets
+   *  `iterations_failed` instead — `_surface_loop` re-derives the token, because the two are one
+   *  token apart and miles apart to a reader: the first says "your task was too big", the second
+   *  says "nothing ran". Measured on a `general-project` run where five of six iterations never
+   *  called a model and the banner reported the ceiling (#3524). */
   max_iterations: 'the loop reached its iteration ceiling',
+  iterations_failed: 'the loop spent its iterations failing rather than working',
   repeated_error: 'the same error came back on every attempt',
   identical_output: 'the work stopped changing between attempts',
   token_cap: 'the run reached its token budget',

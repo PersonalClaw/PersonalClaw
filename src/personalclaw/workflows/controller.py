@@ -87,8 +87,10 @@ from personalclaw.workflows.effects import (
 )
 from personalclaw.workflows.engine import (
     NodeResult,
+    apply_judge_contract,
     dispatch,
     node_commits_effects,
+    parse_json_loose,
     release_execution_claim,
 )
 from personalclaw.workflows.engine_support import DEFAULT_MODEL_TIERS, resolve_axis_model
@@ -1871,7 +1873,7 @@ class RunController:
             else:
                 inst.state = InstanceState.DONE
                 inst.completed_at = _now()
-                output = {"result": str(getattr(info, "result", "") or "")}
+                output = self._settled_stage_output(node, str(getattr(info, "result", "") or ""))
                 ref, preview = self.journal.store_output(path, output)
                 inst.output_ref = ref
                 if node_id:
@@ -1948,6 +1950,57 @@ class RunController:
             # watching would report zero for its whole life. `_persist_state` writes instances
             # only, which is why the counter needs its own flush here.
             self._save_run()
+
+    def _settled_stage_output(self, node: Node | None, text: str) -> Any:
+        """A spawned stage's output, in the shape its own `config` DECLARES.
+
+        This settle path is the ONLY place a `stage` output is produced — `dispatch_stage` returns
+        RUNNING at the spawn — so every seam that reads a stage's declared shape has to be applied
+        here or it is inert. Two were:
+
+        * **The declared `schema`.** The output used to be `{"result": "<the subagent's raw
+          text>"}` unconditionally, so a stage's declared keys reached no binding, no
+          `progress_field` and no judge contract. Measured consequences on the shipped library:
+          `general-project` declares `progress_field: meaningful_progress`, `_progress_value` never
+          found it, `_iteration_is_dry` fell back to the whole-output rule, a non-empty
+          `{"result": …}` is never dry — so `until_dry` degenerated into `max_iterations` and the
+          run escalated with "the loop reached its iteration ceiling" (#3524's wrong headline).
+          `{{last.output.summary}}` and `{{nodes.work.output.summary}}` could not resolve either,
+          which is why closing #3524's `last` gap alone only moves the error from
+          `unresolved reference at 'last'` to `unresolved reference at 'summary'`. An `infer` node
+          in the same run has always been parsed (`engine.parse_json_loose` at its DONE branch) —
+          that asymmetry between two node kinds reading the same templates was the whole defect.
+        * **`judge_contract`.** `engine.apply_judge_contract` runs at the dispatch seam so "a node
+          kind cannot skip it", and a `stage` skipped it anyway: at that seam a stage's result is
+          still `RUNNING` with `{"subagent_id": …}`, which the contract declines. ALL SEVEN
+          `judge_contract` nodes in the bundled library are stages, so the contract validated
+          nothing, ever — the engine's recomputed `overall`, its `valid` flag and its `shortfalls`
+          (which three templates bind as `{{last.output.shortfalls}}`) were never produced.
+
+        A stage that declares NO schema keeps `{"result": text}` — unstructured output is a real
+        thing a stage may return, and that is its shape, not a fallback. A stage that declares one
+        and returns unparseable text also keeps it: the binding then fails naming the key it wanted,
+        which is what happens today, so this cannot turn a run that passes into one that fails. It
+        can only ADD resolvable keys.
+        """
+        if node is None:
+            return {"result": text}
+        cfg = node.config or {}
+        parsed: Any = None
+        if isinstance(cfg.get("schema"), dict) and cfg["schema"]:
+            parsed = parse_json_loose(text)
+        output: Any = parsed if isinstance(parsed, dict) else {"result": text}
+        # Through the same helper the dispatch seam uses, so there is ONE definition of what a
+        # validated verdict is — a second copy here would drift from the gate's.
+        return apply_judge_contract(
+            node,
+            NodeResult(state=InstanceState.DONE, output=output),
+            judge_hints_from_dict(
+                (self.spec.get("runtime_hints") or {}).get("judge")
+                if isinstance(self.spec.get("runtime_hints"), dict)
+                else None
+            ),
+        ).output
 
     def _reap_watchers(self) -> None:
         """Stop `until_cancelled` watchers whose accompanied work has finished.
@@ -3873,11 +3926,68 @@ class RunController:
     def _surface_loop(self, parent_path: str, node: Node, *, reason: str, detail: str) -> None:
         """Hand a loop to a human. ESCALATED, deliberately NOT FAILED: "I gave up and a human
         must decide" is a different fact from "this broke", and collapsing them loses what the
-        user needs to act on."""
+        user needs to act on.
+
+        **The reason is re-derived when the iterations were not work (#3524).** A budget trip says
+        the loop ran out of room; it does not say whether it spent that room WORKING. Measured on a
+        `general-project` run: the banner read "the loop reached its iteration ceiling at project /
+        reached 6 iterations", which a user reads as "my task was too big" — while five of the six
+        iterations had failed instantly on a binding and never called a model at all. The engine
+        knew both facts and surfaced neither: the wrong one of two possible sentences is worse than
+        a vague one, because it sends the reader to shrink a task that was never the problem.
+
+        So a loop whose iterations FAILED escalates as `iterations_failed`, and the detail carries
+        the count and the first failure's own message. The original budget token is kept in the
+        detail rather than dropped — it is still true, and it is what a reader greps for.
+        """
+        failed, attempted, first_error = self._iteration_failures(parent_path)
+        if failed:
+            detail = (
+                f"{failed} of {attempted} iterations failed instead of finishing their work"
+                + (f", the first with: {first_error}" if first_error else "")
+                + f". The loop then stopped on `{reason}`"
+                + (f" ({detail})" if detail else "")
+                + "."
+            )
+            reason = "iterations_failed"
         loop_inst = self._instance(parent_path)
         loop_inst.state = InstanceState.ESCALATED
         loop_inst.completed_at = _now()
         self._escalate(parent_path, node.id, reason=reason, detail=detail)
+
+    def _iteration_failures(self, loop_path: str) -> tuple[int, int, str]:
+        """`(iterations with a failed body node, iterations attempted, the first failure's cause)`.
+
+        The measurement behind `iterations_failed`. Derived from the instances rather than from a
+        counter, because no counter distinguishes the two endings — `self._iterations` only says how
+        far the loop got, which is identical for a loop that worked six times and one that failed
+        six times.
+
+        An iteration counts as attempted once any instance exists under its `body@<n>` prefix, so an
+        iteration the scheduler never opened is not counted against the loop.
+        """
+        failed = attempted = 0
+        first_error = ""
+        for index in range(int(self._iterations.get(loop_path, 0)) + 1):
+            prefix = f"{loop_path}.body@{index}"
+            members = [
+                inst
+                for path, inst in self.instances.items()
+                if path == prefix or path.startswith(f"{prefix}.")
+            ]
+            if not members:
+                continue
+            attempted += 1
+            broken = [i for i in members if i.state is InstanceState.FAILED]
+            if not broken:
+                continue
+            failed += 1
+            if not first_error:
+                first_error = next(
+                    (i.failure.cause_plain for i in broken if i.failure and i.failure.cause_plain),
+                    "",
+                )
+        return failed, attempted, first_error
 
     def _advance_loop(self, path: str, node_id: str) -> None:
         """Advance a loop's iteration counter when its body finished an iteration.
@@ -3958,12 +4068,19 @@ class RunController:
         # so the STEERING event is journaled regardless; only the injection needs a next iteration.
         self._consume_steering(parent_path, node, iteration)
 
+        # ONE definition of `{{last.output}}`, shared with the body (`_last_output`). The loop's
+        # own `condition` used to read the LAST SETTLED LEAF's output instead, which is a
+        # different value the moment the body is a container: `goal-pursuit-verifiable` ends its
+        # body on `judge` and tests `{{last.output.command_passed}}`, a key only its `fix` stage
+        # emits, so that condition could never resolve and the loop exited `condition_unresolvable`
+        # every time. A leaf body layers exactly one mapping, so nothing changes there.
+        layered, _ = self._iteration_output(parent_path, iteration)
         ctx = BindingContext(
             inputs=self.run.inputs,
             node_outputs=self._outputs,
             node_artifacts=self._node_artifacts(),
             iter_index=iteration,
-            last_output=output,
+            last_output=layered,
             has_last=True,
         )
         keep_going, reason = loop_should_continue(
@@ -4348,6 +4465,7 @@ class RunController:
     def _context_for(self, item: ReadyNode) -> BindingContext:
         watcher_path = self._enclosing_watcher(item.path)
         seen = self._seen.get(watcher_path) if watcher_path else None
+        last_output, has_last = self._last_output(item.path)
         return BindingContext(
             inputs=dict(self.run.inputs),
             node_outputs=dict(self._outputs),
@@ -4355,6 +4473,8 @@ class RunController:
             item=item.item,
             has_item=item.has_item,
             iter_index=item.iter_index,
+            last_output=last_output,
+            has_last=has_last,
             sibling_outputs=self._sibling_outputs(item.path),
             previous_output=self._previous_output(item.path),
             has_previous=self._previous_output(item.path) is not None,
@@ -4438,6 +4558,53 @@ class RunController:
             if value is not None:
                 acc.append(value)
         return acc
+
+    def _last_output(self, path: str) -> tuple[Any, bool]:
+        """`{{last.output}}` — the previous ITERATION of the loop this node is in.
+
+        Returns `(value, present?)`. `present` is separate from the value because `None` is a
+        legitimate previous output and absence is not, the same reason `_progress_value` returns
+        a pair: collapsing them would make a body that legitimately returned nothing
+        indistinguishable from a body this engine never handed anything to.
+
+        **What one ITERATION's output IS, when the body is a container.** The iteration's
+        produced outputs, LAYERED in document order — each mapping's keys merge in, a later node
+        wins a collision. That is the contract the bundled templates were written against and the
+        only one that can serve them: `general-project`'s body prompt reads `summary` (its
+        worker's key) and `verdict` (its judge's key) in one breath, so no single child's output
+        is the answer. A one-node body layers exactly one mapping and is therefore identical to
+        handing that node's output straight through, which is what keeps `design-project`
+        unchanged.
+
+        A NON-mapping output has nothing to merge into, so the latest word wins outright — the
+        rule `_advance_loop` has always applied to the loop's own `condition`.
+
+        Read through `_accumulated_outputs` (the journal's stored outputs) rather than
+        `self._outputs`, which is keyed by NODE ID: a loop body overwrites its own entry every
+        iteration, so reading that map would hand iteration 3 its own output as if it were
+        iteration 2's.
+        """
+        loop_path, iteration = _loop_parent(path)
+        if loop_path is None or iteration <= 0:
+            # No enclosing loop, or the first iteration — there is no previous one either way.
+            # `bindings._first_cycle_miss` turns the second case into the documented
+            # `| default(...)`; the first still raises, because `last` outside a loop names
+            # nothing.
+            return None, False
+        return self._iteration_output(loop_path, iteration - 1)
+
+    def _iteration_output(self, loop_path: str, iteration: int) -> tuple[Any, bool]:
+        """One iteration's layered output. See `_last_output` for the contract it implements."""
+        produced = self._accumulated_outputs(f"{loop_path}.body@{iteration}")
+        if not produced:
+            return None, False
+        layered: Any = {}
+        for value in produced:
+            if isinstance(value, dict) and isinstance(layered, dict):
+                layered.update(value)
+            else:
+                layered = value
+        return layered, True
 
     def _previous_output(self, path: str) -> Any:
         """The prior successful cycle of the enclosing loop, for diff-aware synthesis.

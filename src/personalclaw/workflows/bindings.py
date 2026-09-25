@@ -76,7 +76,10 @@ class BindingContext:
     item: Any = None  # foreach current item
     has_item: bool = False
     iter_index: int | None = None  # loop iteration
-    last_output: Any = None  # loop body's previous iteration
+    #: The previous ITERATION of the loop this node is in, LAYERED across the whole body — see
+    #: `RunController._last_output`, which is the one definition of that value for a body node
+    #: and for the loop's own `condition` alike.
+    last_output: Any = None
     has_last: bool = False
     #: sibling node id → the outputs it has accumulated across iterations. A LIST, because a
     #: watcher reads a sibling that is still producing: a single "current output" would show
@@ -748,23 +751,29 @@ def _first_cycle_miss(head: str, ctx: BindingContext) -> bool:
     idiom (`{{last.output.summary | default("(this is the first pass)")}}`) that six bundled
     templates already ship. So the miss resolves to None and the pipe chain runs.
 
-    **Keyed on a POSITIVE first-cycle signal, never on absence alone**, because
-    `absent-is-not-zero`: if "the root is missing" were sufficient, a `last` the engine failed
-    to supply on cycle 50 would render "(this is the first pass)" forever — a prompt quietly
-    missing its input while the run reports success, which is the exact failure this module's
-    docstring exists to prevent.
+    **Keyed on a POSITIVE in-a-loop signal, never on absence alone**, because
+    `absent-is-not-zero`: a rescue that fired wherever the root happened to be missing would
+    render "(this is the first pass)" for a `last` read somewhere no iteration exists at all — a
+    prompt quietly missing its input while the run reports success, which is the exact failure
+    this module's docstring exists to prevent.
 
     * `previous` — `has_previous` is the context's own per-node declaration.
-    * `last` — `has_last` says the value is present; `iter_index == 0` is what says the
-      *reason* it is absent is the first iteration. `has_item` excludes a `foreach`, which
-      rebinds `iter_index` to an ITEM index: item 0 of a fan-out is not iteration 0 of a loop,
-      and `last` means nothing there.
+    * `last` — `iter_index is not None and not has_item` is the positive signal: this node is
+      executing inside a loop BODY, so `last` names something real here. `has_item` excludes a
+      `foreach`, which rebinds `iter_index` to an ITEM index — item 0 of a fan-out is not
+      iteration 0 of a loop, and `last` means nothing there.
 
-    Everything else — `iter_index` 1+ with no `last`, a `last` read outside any loop, a typo'd
-    `lastt` — is a real gap or an authoring error and still raises. Deliberately so: the
-    engine does not yet hand a loop BODY its previous iteration at all (`_context_for` sets no
-    `has_last`; pinned by `test_a_loop_body_still_gets_no_real_previous_iteration`), and a rescue
-    keyed on absence would convert that open gap into a silent lie on every later iteration.
+    Given that signal, `not has_last` is a MEASUREMENT rather than an unwired seam, which is what
+    changed in #3524 and why the rule is no longer pinned to `iter_index == 0`. Both `previous`
+    and `last` are now computed for every node the controller dispatches
+    (`RunController._last_output` / `_previous_output`), so "the engine did not supply it" and
+    "the engine looked and there was nothing to supply" are the same statement: either this is
+    the first iteration, or the previous one produced no output at all. Both are honest
+    `| default(...)` cases, and before #3524 the second rendered
+    `unresolved reference at 'last'` on iterations 2..N of six bundled templates.
+
+    A `last` read OUTSIDE any loop body (`iter_index is None`) and a typo'd `lastt` still raise —
+    those are authoring errors, and nothing in the engine will ever supply them.
 
     This rule is about the ROOT being absent. The prior cycle being PRESENT but not carrying a
     field is a different fact with a different predicate — see `_prior_cycle_field_miss`.
@@ -775,7 +784,7 @@ def _first_cycle_miss(head: str, ctx: BindingContext) -> bool:
     if segs[0] == "previous":
         return not ctx.has_previous
     if segs[0] == "last":
-        return not ctx.has_last and ctx.iter_index == 0 and not ctx.has_item
+        return not ctx.has_last and ctx.iter_index is not None and not ctx.has_item
     return False
 
 

@@ -24,17 +24,19 @@ and escalates.
    control being the same spec built from `infer` nodes, which always worked.
 2. The double-execution claim is keyed on the NODE ID (`engine.claim_key`) and held for its 900s
    TTL on a successful spawn, so a loop re-running its own body is refused as a duplicate.
-   :func:`test_a_stage_bodied_loop_cannot_re_execute_its_body` — NOT fixed here: the key's
-   granularity is a `WORK-CONTAINERS` §1.5 security control, and narrowing it is an owner call, not
-   a thing to improvise inside a template port.
+   :func:`test_a_stage_bodied_loop_re_executes_its_body` — **FIXED in #3524**: the key is per node
+   INSTANCE, because a node id names a spec position rather than a unit of work.
 3. A reconciled stage's output reaches the binding namespace as `{"result": "<raw text>"}` rather
    than in its declared schema, so a loop's `progress_field` is unreadable and a judge contract
-   validates nothing. :func:`test_a_reconciled_stages_output_never_reaches_its_declared_shape` —
-   NOT fixed here, same reason: it changes what every stage in the library returns.
+   validates nothing. :func:`test_a_reconciled_stages_output_reaches_its_declared_shape` —
+   **FIXED in #3524**, at the one settle path that produces a stage output.
 
-Each of those three tests asserts the CURRENT behaviour and says in its own body what must change
-when it is fixed, so the session that fixes one is forced to update the claim rather than leave a
-stale docstring behind. That is the same discipline session 1 used for its `{{last.*}}` blocker.
+Each of those three tests asserted the CURRENT behaviour and said in its own body what must change
+when it was fixed, so the session that fixed one was forced to update the claim rather than leave a
+stale docstring behind. All three have now been rewritten as the fixed behaviour. The discipline
+worked, with one caveat worth keeping: defect 3's pin was **vacuous** (its run never dispatched the
+stage it measured), so it would have stayed green either way — see its docstring. A defect pin needs
+the same positive control a finding does.
 """
 
 from __future__ import annotations
@@ -42,7 +44,6 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
-import time
 from pathlib import Path
 from typing import Any
 
@@ -271,19 +272,16 @@ def test_the_research_loops_own_nodes_execute_as_a_workflow_run() -> None:
     this replaces — read-time aliasing with no launch — produces no run and therefore no ledger at
     all, so every assertion here reds against it.
 
-    The terminal status is asserted as ESCALATED, NOT complete, and the reason is
-    :func:`test_a_stage_bodied_loop_cannot_re_execute_its_body`: round 1 runs end to end, rounds 2+
-    are refused as duplicate executions, and the breaker correctly hands a loop that cannot make
-    progress to a human. Asserting COMPLETE here would require either weakening that blocker or
-    editing the template to dodge it, and both would report a working port that is not one.
+    The terminal status was asserted as ESCALATED for as long as rounds 2+ were refused as duplicate
+    executions (see :func:`test_a_stage_bodied_loop_re_executes_its_body`) — round 1 ran end to end
+    and the breaker correctly handed a loop that could not progress to a human. #3524 fixed the
+    refusal, so COMPLETE is now the honest claim and asserting the old one would let this suite go
+    green against a regression of exactly that.
     """
     status, run_id, fake = _drive()
 
     # 1. Terminal, not hung — the timeout would have surfaced as a non-terminal status.
-    assert status is RunStatus.ESCALATED, (
-        f"run ended {status}. COMPLETE here means the stage-loop defects below are fixed: update "
-        "them and this assertion together"
-    )
+    assert status is RunStatus.COMPLETE, f"run ended {status}"
 
     # 2. The template's OWN nodes were reached, by id, across all three tiers of the graph: the
     #    classifier, the tier shaper the branch selected, both stages of the round loop, and the
@@ -304,8 +302,8 @@ def test_the_research_loops_own_nodes_execute_as_a_workflow_run() -> None:
     assert any("You are verifying research you did not do" in p for p in fake.prompts)
     assert any("Finish the report" in p for p in fake.prompts)
 
-    # 4. Round 1 failed nothing. Stated separately from the status because an escalated run could
-    #    also have escalated out of a genuine failure.
+    # 4. No round failed anything. Stated separately from the status because a terminal run could
+    #    also have reached that state out of a genuine failure.
     failures = [
         (e.get("node_id"), e.get("error")) for e in J.journal_records(run_id, kinds={"step_failed"})
     ]
@@ -399,109 +397,126 @@ def test_a_stage_bodied_loop_advances_its_iteration_counter() -> None:
     )
 
 
-# ── DEFECT 2: the double-execution claim, NOT fixed here ──
+# ── DEFECT 2: the double-execution claim, FIXED in #3524 ──
 
 
-def test_a_stage_bodied_loop_cannot_re_execute_its_body() -> None:
-    """🔴 DEFECT 2, NOT FIXED — and it is why `research` is not in `PORTED_LOOP_KINDS`.
+def test_a_stage_bodied_loop_re_executes_its_body() -> None:
+    """🔴 DEFECT 2, FIXED in #3524: the double-execution claim is keyed per INSTANCE, not per node.
 
-    `engine.dispatch_stage` takes `leases.acquire_claim(claim_key(run_id, node.id), holder)` before
-    it spawns, and releases it on only two paths: at capacity, and on a rejected spawn. A SUCCESSFUL
-    spawn holds it for the full `containers.DEFAULT_LEASE_SECS` (900s). The key is
-    ``run_id:node_id`` — per NODE, not per node INSTANCE — and a loop re-runs the same node id every
-    round. So round 2 of any stage-bodied loop is refused as a duplicate execution, lands
-    `DEGRADED` with *"another worker holds the claim on this node"*, spawns nothing, and the breaker
-    correctly trips on the unchanged output.
+    This replaces `test_a_stage_bodied_loop_cannot_re_execute_its_body`, which pinned the bound as
+    it stood: `engine.claim_key` was ``run_id:node_id``, `dispatch_stage` released the claim on only
+    two paths (at capacity, and on a rejected spawn), and a successful spawn therefore held it for
+    the full `containers.DEFAULT_LEASE_SECS`. A loop re-runs the SAME node id every round, so round
+    2 of any stage-bodied loop was refused as a duplicate, landed `DEGRADED` with *"another worker
+    holds the claim on this node"*, spawned nothing, and the breaker tripped on the unchanged
+    output. The bound it stated was real and total: **no stage-bodied loop could execute its body
+    more than once inside 900 seconds**, and all five templates the loop kinds resolve to are
+    stage-bodied.
 
-    Measured, and stated as the bound it is: **no `stage`-bodied loop in this engine can execute its
-    body more than once inside 900 seconds.** All five templates the loop kinds resolve to are
-    stage-bodied, so this is not a research finding — it bounds the whole per-kind port program.
+    That test declined the fix because "changing the granularity of a security control is an owner
+    decision". The decision landed with #3524, and the reasoning it anticipated is the one used: a
+    node id names a SPEC POSITION, not a unit of work, so it was never the right key — the threat
+    `claim_holder`'s docstring names (two co-tenant sessions in one gateway) collides on the same
+    INSTANCE path either way, so nothing was given up. A `foreach` was the louder case: twelve items
+    share one node id, so eleven of them never ran.
 
-    **Why this session did not fix it.** The claim is the `WORK-CONTAINERS` §1.5 double-execution
-    control. Narrowing its key from the node to the node INSTANCE is very probably correct — the
-    threat `claim_holder`'s docstring names (two co-tenant sessions in one gateway) collides on the
-    same instance path either way — but changing the granularity of a security control is an owner
-    decision, not a thing to improvise inside a template port.
-
-    The control is the same drive with the claim granted every time: the sweep then dispatches once
-    per round. Without it, "one sweep for eight iterations" could be a loop that never iterated —
-    which is exactly what defect 1 looked like.
+    **The old test's positive control is kept and inverted.** It granted every claim to prove the
+    claim was what stopped the loop; this grants nothing and proves the SHIPPED path now dispatches
+    per round, then asserts the claim targets are all DISTINCT — without that second half, "two
+    sweeps" would also pass against a claim that had simply been deleted.
     """
-    _, _, as_shipped = _drive()
-    assert len(as_shipped.sweeps()) == 1, (
-        f"the round loop dispatched {len(as_shipped.sweeps())} sweeps. More than one means the "
-        "claim is no longer blocking re-execution — fix the docstring above, re-check whether "
-        "`research` can join PORTED_LOOP_KINDS, and rewrite this assertion as the fixed behaviour"
-    )
-
-    granted = []
-
-    def _always_grant(target: str, holder: str, **kw: Any) -> tuple[Claim, str]:
-        granted.append(target)
-        now = time.time()
-        return Claim(holder=holder, expires_at=now + 900, taken_at=now), ""
-
+    granted: list[str] = []
     original = leases.acquire_claim
-    leases.acquire_claim = _always_grant  # type: ignore[assignment]
+
+    def _recording_grant(target: str, holder: str, **kw: Any) -> tuple[Claim | None, str]:
+        granted.append(target)
+        return original(target, holder, **kw)
+
+    leases.acquire_claim = _recording_grant  # type: ignore[assignment]
     try:
-        _, _, unblocked = _drive()
+        _, run_id, as_shipped = _drive()
     finally:
         leases.acquire_claim = original  # type: ignore[assignment]
 
-    assert len(unblocked.sweeps()) > 1, (
-        "the CONTROL dispatched no more sweeps than the shipped path, so the claim is not what is "
-        f"stopping the loop and the diagnosis above is wrong: {len(unblocked.sweeps())} sweep(s)"
+    rounds = len(_iterations(run_id))
+    assert rounds > 1, (
+        "the loop recorded at most one iteration, so this test cannot tell a re-executing body "
+        f"from one that never got a second round: {_iterations(run_id)}"
     )
-    # And the claim really is taken on the bare node id, which is the fixable part.
-    assert any(t.endswith(f":{SWEEP_ID}") for t in granted), granted
+    assert len(as_shipped.sweeps()) == rounds, (
+        f"the loop ran {rounds} rounds but dispatched {len(as_shipped.sweeps())} sweeps — a round "
+        "that spawned nothing is the claim refusing the body again"
+    )
+    # The claim is still TAKEN — this is not "the control was removed" — and every take is a
+    # different target, which is the whole fix.
+    assert granted, "no claim was acquired at all; the double-execution control is gone"
+    assert len(set(granted)) == len(
+        granted
+    ), f"two executions asked for the SAME claim target, so one of them is refused: {granted}"
 
 
-# ── DEFECT 3: a reconciled stage's output shape, NOT fixed here ──
+# ── DEFECT 3: a reconciled stage's output shape, FIXED in #3524 ──
 
 
-def test_a_reconciled_stages_output_never_reaches_its_declared_shape() -> None:
-    """🔴 DEFECT 3, NOT FIXED: a spawned stage's output is not parsed into its declared schema.
+def test_a_reconciled_stages_output_reaches_its_declared_shape() -> None:
+    """🔴 DEFECT 3, FIXED in #3524: a spawned stage's output IS parsed into its declared schema.
 
-    `_reconcile_dispatched_stages` stores ``{"result": str(info.result)}`` and puts that in the
-    binding namespace. The declared `schema` is never applied, so two shipped mechanisms read
-    nothing off a stage in a loop body:
+    This replaces `test_a_reconciled_stages_output_never_reaches_its_declared_shape`, which pinned
+    the defect: `_reconcile_dispatched_stages` stored ``{"result": str(info.result)}`` and put that
+    in the binding namespace, so the declared `schema` was never applied and two shipped mechanisms
+    read nothing off a stage in a loop body — a loop's `progress_field` (so `until_dry` degenerated
+    into `max_iterations`) and a `judge_contract` stage (so the contract validated nothing, on ALL
+    SEVEN judge nodes in the library, every one of which is a stage). It declined the fix as "a
+    contract change for 19 templates rather than a port detail"; measured, zero bundled templates
+    read `output.result` and every stage declares the schema its prompt asks the model for, so the
+    change only ADDS resolvable keys. `RunController._settled_stage_output` carries the argument.
 
-    * a loop's `progress_field` — `_progress_value` looks for the field in the body's outputs, does
-      not find it, and `_iteration_is_dry` falls back to the whole-output rule. The output is a
-      non-empty dict every round, so the loop is permanently "not dry" and `until_dry` degenerates
-      into `max_iterations`. `general-project`'s `meaningful_progress` is the same field in the same
-      position, so this is not a research-specific gap.
-    * a `judge_contract` stage — the contract cannot find the verdict in the raw text and produces
-      an INVALID verdict from a judge that returned a clean PASS.
-
-    Not fixed here because it changes what EVERY stage in the library returns to its downstream
-    bindings, which is a contract change for 19 templates rather than a port detail.
-
-    The control is the `infer` node in the same run, which IS parsed — so this measures the settle
-    path rather than the schema mechanism.
+    🔴 **And the old test was VACUOUS, which is why it stayed green through the fix.** It built its
+    own run with `inputs={"question": "q"}` rather than going through `_drive`, which supplies every
+    declared input — that run FAILED before the loop, dispatching **zero** sweeps, so
+    `_outputs["sweep"]` was `None` and `"new_findings_count" not in {}` was true for a reason that
+    had nothing to do with the schema. Its declared control (the `infer` node is parsed) could not
+    catch that, because `triage` runs before the failure. So this version drives through `_drive`
+    and asserts the sweep ACTUALLY RAN before reading its shape — the missing control, not a
+    stronger assertion.
     """
-    spec = _template_spec()
-    run = store.create(WorkflowRun(id="", workflow_name=TEMPLATE, inputs={"question": "q"}))
-    store.write_spec(run.id, spec)
-    fake = _FakeSubagents()
-    controller = RunController(
-        run, spec, services=EngineServices(subagents=fake, completion=_FakeTriage())
-    )
-    asyncio.run(controller.run_to_completion(timeout=RUN_TIMEOUT))
+    _, run_id, fake = _drive()
 
-    # The CONTROL first: an awaited `infer` node's output IS in its declared shape.
-    assert (controller._outputs.get("triage") or {}).get("tier") == "investigation", (
-        "the control is broken: even an `infer` node's declared shape is missing, so the assertion "
-        f"below measures nothing: {controller._outputs.get('triage')!r}"
-    )
+    # The control the old test needed and did not have: the stage under test really dispatched.
+    assert fake.sweeps(), "no sweep was dispatched, so this test cannot observe a stage's shape"
 
-    # The defect: the sweep's declared `new_findings_count` is nowhere in the namespace, which is
-    # why the loop's declared progress field cannot decide dryness.
-    sweep_out = controller._outputs.get(SWEEP_ID)
-    assert "new_findings_count" not in (sweep_out if isinstance(sweep_out, dict) else {}), (
-        "a reconciled stage's declared schema now reaches the binding namespace. That fixes the "
-        "`progress_field` half of this atom — update this test, and re-check whether the round "
-        f"loop now ends on `dry_streak`: {sweep_out!r}"
+    events = J.ledger(run_id, kinds={"step_completed"})
+    sweep_refs = [
+        str(e.get("output_ref") or "")
+        for e in events
+        if str(e.get("node_id") or "") == SWEEP_ID and e.get("output_ref")
+    ]
+    assert sweep_refs, f"the sweep completed no instance with an output: {events}"
+
+    paths = sorted(
+        str(e.get("instance_path") or "") for e in events if str(e.get("node_id") or "") == SWEEP_ID
+    )
+    stored = store.read_output(run_id, paths[0])
+    assert isinstance(stored, dict) and "new_findings_count" in stored, (
+        "the sweep's declared `new_findings_count` is not in its stored output, so a loop's "
+        f"`progress_field` still cannot read it: {stored!r}"
+    )
+    assert (
+        "result" not in stored
+    ), f"the raw-text envelope is still there alongside the parsed shape: {sorted(stored)}"
+
+    # The judge half, at the same settle: the contract's ENGINE-computed fields are present, which
+    # the model's own JSON does not carry. `overall` is recomputed from the scores and `shortfalls`
+    # is derived from the rubric, so neither can come from the fake's payload.
+    judge_paths = sorted(
+        str(e.get("instance_path") or "") for e in events if str(e.get("node_id") or "") == "judge"
+    )
+    assert judge_paths, "the judge stage never completed, so the contract cannot be observed"
+    judged = store.read_output(run_id, judge_paths[0])
+    assert isinstance(judged, dict), f"the judge's output is not a record: {judged!r}"
+    assert "overall" in judged and "contract_valid" in judged, (
+        "`apply_judge_contract` still does not reach a judge STAGE — it runs at the dispatch seam, "
+        f"where a stage is still RUNNING: {sorted(judged)}"
     )
 
 
