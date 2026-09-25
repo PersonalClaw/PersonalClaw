@@ -105,10 +105,15 @@ export function DashboardPage(route: RouteProps) {
                 same reason. */}
             <SurfaceOverlay surface="dashboard" />
 
-            {/* Prime signal: what needs you + what's running, side by side on wide
-                screens, stacked on narrow. Bare sections, hairline-labelled. */}
+            {/* Prime signal: what you can clear from here + what's running, side by side
+                on wide screens, stacked on narrow. Bare sections, hairline-labelled.
+                #3471: this section is NOT called "Needs you". That phrase belongs to the
+                `needs_input` work state (`lib/loopStatus`), which is a strictly WIDER set —
+                it also holds blocked tasks and stalled runs, neither of which this card can
+                see. Naming the narrower set with the broader phrase is what let the card
+                say "nothing waiting on you" while a project showed NEEDS YOU · 1. */}
             <EntranceRegion className="grid grid-cols-1 gap-2xl lg:grid-cols-2">
-              <Section label="Needs you" icon={ListTodo} tour="approvals">
+              <Section label="To triage" icon={ListTodo} tour="approvals">
                 <ActionCenter {...route} />
               </Section>
               <Section label="Active work" icon={Sparkles}>

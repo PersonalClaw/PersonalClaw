@@ -14,7 +14,7 @@ import { join } from 'node:path'
 // fact, for the whole round trip, on the screen the app opens with:
 //
 //     0 loops running · 0 approvals waiting · 0 tasks ready · 0 inbox · 0 unread
-//     "All clear — nothing waiting on you."        ← over an UNREAD approvals lane
+//     "Nothing to triage — no approvals, messages or skill proposals are waiting."
 //     "No tasks ready to work."      + [New task]  ← to someone whose tasks were in flight
 //     "No recent scheduled runs."    + [New trigger]
 //     "No active work. Loops you launch appear here as they run."
@@ -32,6 +32,10 @@ import { join } from 'node:path'
 /** A read that never settles — the first frame, held open. */
 const pending = () => new Promise<never>(() => {})
 const boom = () => Promise.reject(new Error('gateway down'))
+/** ActionCenter's empty VERDICT. #3471 narrowed it from "All clear — nothing waiting on you"
+ *  (a claim about every set that could be waiting) to a claim about the three lanes the card
+ *  reads; this file's contract — the verdict is withheld until every lane is read — is unchanged. */
+const EMPTY_VERDICT = /Nothing to triage/
 
 function mockApi(over: Record<string, unknown>) {
   vi.doMock('../../lib/api', async (orig) => ({
@@ -113,17 +117,17 @@ describe('the hero states no count before the first read', () => {
 })
 
 describe('a widget does not deliver its verdict before the read', () => {
-  it('ActionCenter withholds "All clear" while any lane is unread', async () => {
+  it('ActionCenter withholds its empty verdict while any lane is unread', async () => {
     mockApi(ALL_PENDING)
     await mount('action')
-    expect(screen.queryByText(/All clear/), 'the one sentence that must not appear over an unread approvals lane').toBeNull()
+    expect(screen.queryByText(EMPTY_VERDICT), 'the one sentence that must not appear over an unread approvals lane').toBeNull()
     expect(screen.getByRole('status')).toBeInTheDocument()
   })
 
   it('…and gives it once every lane really is read and empty', async () => {
     mockApi({})
     await mount('action')
-    await waitFor(() => expect(screen.getByText(/All clear/)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(EMPTY_VERDICT)).toBeInTheDocument())
   })
 
   it('🔑 a FAILED lane shows its retry, NOT an endless skeleton', async () => {
@@ -134,7 +138,7 @@ describe('a widget does not deliver its verdict before the read', () => {
     mockApi({ approvals: boom, inboxOpen: boom, skillProposals: boom })
     await mount('action')
     await waitFor(() => expect(screen.getAllByText(/Retry/i).length).toBeGreaterThan(0))
-    expect(screen.queryByText(/All clear/)).toBeNull()
+    expect(screen.queryByText(EMPTY_VERDICT)).toBeNull()
   })
 
   it('TasksWidget does not pitch "New task" to someone whose tasks are in flight', async () => {
