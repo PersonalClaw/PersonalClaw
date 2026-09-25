@@ -49,15 +49,25 @@ const CHAT = readFileSync(
 const strip = (s: string) =>
   s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-/** The `isStreaming` steer branch only. */
+/** The `isStreaming` steer branch only — the WHOLE branch, by brace matching.
+ *
+ *  🪤 This used to end at "the first `return` after the branch opens", which is only the
+ *  branch's own closing `return` while no earlier one exists. The moment the outcome
+ *  handler gained an early `return` (the fourth outcome — a steer the server ran as a
+ *  fresh turn), that heuristic silently truncated the slice mid-expression and the
+ *  `.catch(reportActionFailure(…))` assertion below started reading a fragment that could
+ *  not contain it. A rail that measures less than it says it does is worse than no rail,
+ *  so this counts braces instead. */
 function steerBranch(): string {
   const body = strip(CHAT)
   const at = body.indexOf('if (isStreaming) {')
   expect(at, 'the steer branch must be found before it can be measured').toBeGreaterThan(-1)
-  // Ends at the `return` that closes the branch.
-  const end = body.indexOf('return', at)
-  expect(end).toBeGreaterThan(at)
-  return body.slice(at, end)
+  let depth = 0
+  for (let i = body.indexOf('{', at); i < body.length; i++) {
+    if (body[i] === '{') depth++
+    else if (body[i] === '}' && --depth === 0) return body.slice(at, i + 1)
+  }
+  throw new Error('the steer branch is unbalanced — the slice would be meaningless')
 }
 
 describe('a failed mid-stream steer keeps the text the user typed', () => {
@@ -87,9 +97,19 @@ describe('a failed mid-stream steer keeps the text the user typed', () => {
   })
 
   it('the steered chip still only appears when the server said it steered', () => {
-    // The other half: the fix must not start claiming a steer landed when the server said `queued`.
+    // The other half: the fix must not start claiming a steer landed when the server said
+    // `queued` — or when it said neither and ran the message as a fresh turn.
     const fn = steerBranch()
-    expect(fn).toMatch(/if \(r\?\.steered\) setSteered\(/)
+    expect(fn).toMatch(/if \(r\?\.steered\)\s*\{?\s*setSteered\(/)
+  })
+
+  it('the branch slice really does span the whole handler (not vacuously green)', () => {
+    // A positive control on the extraction above: the assertions are only worth anything if
+    // the slice reaches the `.catch` at the END of the branch AND the `.then` at its start.
+    const fn = steerBranch()
+    expect(fn, 'the slice must reach the send').toContain('api.sendChat')
+    expect(fn, 'and the terminal catch').toContain('.catch(')
+    expect(fn.trimEnd().endsWith('}'), 'and close the branch').toBe(true)
   })
 
   it('the reporter is imported, so the catch is a real call and not a stray identifier', () => {
@@ -108,5 +128,13 @@ describe("the file no longer claims a safety it does not have", () => {
       .not.toMatch(/Either way nothing is dropped/)
     expect(CHAT, 'and the rejection outcome must be named where the claim used to sit')
       .toMatch(/THIRD OUTCOME/)
+    // 🔑 And the FOURTH, found the same way — by driving it. The server gates on its own
+    // `session.running`, not on our `queue_mode`, so a steer sent into a turn that has
+    // already ended is dispatched as a fresh turn (`{ok, session}`, neither `steered` nor
+    // `queued`). That path suppresses the server's user echo on the standing "the FE adds
+    // it optimistically" contract, so an unrendered outcome is a LOST message, not a
+    // cosmetic gap. Behaviour is pinned in `fastFailDoesNotWedgeComposer.test.tsx`.
+    expect(CHAT, 'the fresh-turn outcome must be named too')
+      .toMatch(/FOURTH OUTCOME/)
   })
 })
