@@ -146,12 +146,25 @@ jobs:
           # images differ: gateway ships the `personalclaw` CLI; web is nginx and
           # has no such binary, so it proves its own server binary instead. A
           # single hardcoded `personalclaw --version` would fail on web.
+          #
+          # `expect` is a substring the smoke's own output must carry, because an
+          # exit status alone is a weak claim about a version command: exit 0 with
+          # no output at all is a real shape (a shell builtin shadowing the binary,
+          # a wrapper that swallows, a later `|| true`), and for the gateway the
+          # release-relevant property is not "some version printed" but "THE version
+          # being released printed". A cached `builder` layer that produced a stale
+          # venv would ship an image whose `--version` reports the PREVIOUS release
+          # under a `:latest` claiming this one — a published tag that lies, which is
+          # the defect class this whole step exists to stop. `needs` is available in
+          # `strategy` (actionlint enumerates the allowed set as github/inputs/needs/vars).
           - name: gateway
             dockerfile: deploy/docker/Dockerfile.backend
             smoke: personalclaw --version
+            expect: personalclaw ${{ needs.build.outputs.version }}
           - name: web
             dockerfile: deploy/docker/Dockerfile.web
             smoke: nginx -v
+            expect: 'nginx version:'
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
@@ -230,19 +243,79 @@ jobs:
       # already set up above. This step failing fails the `images` job, and
       # `notes` (the GitHub Release) `needs: images` — so a broken arm64 blocks
       # the release rather than shipping silently.
+      #
+      # 🔴 NOT A LOGIN SHELL, and this is the whole of #3562. This ran `sh -lc`
+      # from 2026-08-10 (#1004) until it was fixed, and the last Release before
+      # that was v0.1.3 on 2026-07-31 — so the step had NEVER executed, and its
+      # first execution would have been the v0.2.0 tag. `-l` makes the shell read
+      # `/etc/profile`, and `/etc/profile` does not EXTEND `PATH`, it OVERWRITES
+      # it — so the gateway image's own `ENV PATH="/opt/venv/bin:$PATH"`
+      # (Dockerfile.backend) is discarded and `personalclaw` is not found.
+      # Measured in containers against the published 0.1.3 gateway image:
+      #
+      #   sh -lc 'personalclaw --version'  ->  127, "sh: 1: personalclaw: not found"
+      #   sh -c  'personalclaw --version'  ->  0,   "personalclaw 0.1.3"
+      #
+      # PATH under `sh -c` is `/opt/venv/bin:/usr/local/bin:...`; under `sh -lc`
+      # it is `/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games`.
+      # The web leg survived on a COINCIDENCE, not by design: Debian's
+      # `/etc/profile` branches on `id -u` and the gateway drops to uid 10001
+      # `personalclaw`, while web's Alpine `/etc/profile` overwrites `PATH` in one
+      # unconditional line that happens to contain `/usr/sbin`, where `nginx`
+      # lives. Both bases clobber `PATH`; only one of them clobbers it into
+      # something that still works. So the rule is about the login shell, not
+      # about the user — `tests/test_cre5_supply_chain.py` holds it for every
+      # workflow in the tree.
+      #
+      # AND NOT AN ABSOLUTE PATH EITHER. `/opt/venv/bin/personalclaw` would also
+      # go green, and that is the problem: the property a container user depends
+      # on is that `personalclaw` resolves on `PATH`, because the image's own
+      # `CMD ["personalclaw", "gateway"]` is resolved that way. Hardcoding the
+      # venv prefix here would keep this step green through exactly the Dockerfile
+      # regression it exists to catch, and would pin an install prefix in a second
+      # place.
+      #
+      # WHY THE OUTPUT IS ASSERTED AND NOT JUST THE STATUS: see `expect` in the
+      # matrix above. A version command that prints nothing, or that prints the
+      # PREVIOUS release out of a stale build layer, exits 0 either way.
       - name: Smoke both arches (release-blocking)
         env:
           IMAGE: ghcr.io/personalclaw/personalclaw-${{ matrix.name }}:${{ needs.build.outputs.version }}
           SMOKE: ${{ matrix.smoke }}
+          EXPECT: ${{ matrix.expect }}
         run: |
           set -euo pipefail
+          # An EMPTY expectation is the vacuity hole in the check below: the `case`
+          # pattern `*""*` matches every possible output, so a matrix leg added
+          # without an `expect` would report green having asserted nothing. Refuse
+          # instead. `tests/test_cre5_supply_chain.py` holds the same floor statically.
+          if [ -z "$EXPECT" ]; then
+            echo "::error::no expected output for $IMAGE — add an 'expect' to the matrix"
+            exit 1
+          fi
           for arch in amd64 arm64; do
             echo "::group::smoke linux/$arch — $IMAGE — $SMOKE"
             docker pull --quiet --platform "linux/$arch" "$IMAGE"
             # --entrypoint '' bypasses the image ENTRYPOINT (tini/nginx-entrypoint)
             # so the smoke command runs directly instead of starting the service.
-            docker run --rm --platform "linux/$arch" --entrypoint '' "$IMAGE" \
-              sh -lc "$SMOKE"
+            # 2>&1 because a version banner is not reliably on stdout: `nginx -v`
+            # writes to stderr, so capturing stdout alone reads EMPTY and would red
+            # the web leg on a working image.
+            status=0
+            output=$(docker run --rm --platform "linux/$arch" --entrypoint '' "$IMAGE" \
+              sh -c "$SMOKE" 2>&1) || status=$?
+            printf '%s\n' "$output"
+            if [ "$status" -ne 0 ]; then
+              echo "::error::linux/$arch: '$SMOKE' exited $status inside $IMAGE"
+              exit 1
+            fi
+            case "$output" in
+              *"$EXPECT"*) ;;
+              *)
+                echo "::error::linux/$arch: '$SMOKE' ran but did not report '$EXPECT'"
+                exit 1
+                ;;
+            esac
             echo "::endgroup::"
           done
 
