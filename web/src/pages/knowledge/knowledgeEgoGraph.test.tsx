@@ -92,28 +92,28 @@ describe('raising the hop depth brings a 2-hop document into range, lowering it 
     // BEFORE — the state a fixed depth could never leave.
     expect(shown(), 'depth 1: two hops out').not.toContain('Charles Babbage')
 
-    fireEvent.click(screen.getByRole('tab', { name: '2' }))
+    fireEvent.click(screen.getByRole('radio', { name: '2' }))
     expect(shown(), 'depth 2: now in range').toContain('Charles Babbage')
     // Positive controls, same test: the 1-hop node stayed, the unreachable node never arrived.
     expect(shown(), 'the 1-hop neighbour is still drawn').toContain('Analytical Engine')
     expect(shown(), 'unconnected at any depth').not.toContain('Zebra Field Notes')
 
-    fireEvent.click(screen.getByRole('tab', { name: '1' }))
+    fireEvent.click(screen.getByRole('radio', { name: '1' }))
     expect(shown(), 'back to depth 1: out of range again').not.toContain('Charles Babbage')
     expect(shown(), 'and the 1-hop neighbour survived the round trip').toContain('Analytical Engine')
   })
 
   it('offers 1..3 as an exclusive choice, named with the Studio canvas own words', () => {
     mount()
-    expect(screen.getByRole('tablist', { name: 'Focus · hops' })).toBeTruthy()
+    expect(screen.getByRole('radiogroup', { name: 'Focus · hops' })).toBeTruthy()
     expect(shown(), 'the visible label matches the accessible name').toContain('Focus · hops')
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['1', '2', '3'])
+    expect(screen.getAllByRole('radio').map((t) => t.textContent)).toEqual(['1', '2', '3'])
     // The selected depth is programmatic, not colour-only.
-    expect(screen.getByRole('tab', { name: '1' }).getAttribute('aria-selected')).toBe('true')
-    expect(screen.getByRole('tab', { name: '2' }).getAttribute('aria-selected')).toBe('false')
-    fireEvent.click(screen.getByRole('tab', { name: '3' }))
-    expect(screen.getByRole('tab', { name: '3' }).getAttribute('aria-selected')).toBe('true')
-    expect(screen.getByRole('tab', { name: '1' }).getAttribute('aria-selected')).toBe('false')
+    expect(screen.getByRole('radio', { name: '1' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('radio', { name: '2' }).getAttribute('aria-checked')).toBe('false')
+    fireEvent.click(screen.getByRole('radio', { name: '3' }))
+    expect(screen.getByRole('radio', { name: '3' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('radio', { name: '1' }).getAttribute('aria-checked')).toBe('false')
   })
 
   it('honours a starting depth so a rail can open pre-expanded', () => {
@@ -176,7 +176,7 @@ describe('the filter and the drawer speak the Memory Studio vocabulary, not a se
     expect(chips('mentions').length, 'the in-range relation is chipped').toBeGreaterThan(0)
     // Positive control for the chip: the OTHER relation appears only once its edge is in range.
     expect(chips('similar to').length, 'its edge is two hops out').toBe(0)
-    fireEvent.click(screen.getByRole('tab', { name: '2' }))
+    fireEvent.click(screen.getByRole('radio', { name: '2' }))
     expect(chips('similar to').length).toBeGreaterThan(0)
   })
 

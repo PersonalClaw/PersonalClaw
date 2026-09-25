@@ -81,7 +81,9 @@ describe('the skills mode toggle folds instead of being crushed', () => {
   it("the primitive's prescription survives — it is the reason this prop is here", () => {
     // If that comment is deleted, the next reader sees an unexplained `collapse` prop and may drop it.
     const seg = read('ui/Segmented.tsx')
-    expect(seg, 'the crush diagnosis must stay in Segmented').toMatch(/set a tab's size but NOT its floor/)
+    // The noun moved from "tab" to "option" when #3472 made Segmented a radiogroup; the diagnosis
+    // this pins — that the size utilities set a size and not a FLOOR — is the same sentence.
+    expect(seg, 'the crush diagnosis must stay in Segmented').toMatch(/set an option's size but NOT its floor/)
     expect(seg, 'and its prescription').toMatch(/should scroll or fold/)
   })
 

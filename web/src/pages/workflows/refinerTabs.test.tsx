@@ -53,7 +53,7 @@ describe('WF2LEA-6 template-detail surfaces', () => {
 
   it('lists the version history with a roll-back on the non-pinned version', async () => {
     const r = await mount(makeApi())
-    const tab = [...r.container.querySelectorAll('[role="tab"]')].find((b) => (b.textContent ?? '').includes('Versions'))
+    const tab = [...r.container.querySelectorAll('[role="radio"]')].find((b) => (b.textContent ?? '').includes('Versions'))
     await act(async () => { fireEvent.click(tab!); await new Promise((res) => setTimeout(res, 0)) })
     const text = r.container.textContent ?? ''
     expect(text).toContain('v1')
@@ -66,7 +66,7 @@ describe('WF2LEA-6 template-detail surfaces', () => {
   it('rolls back by calling repin with the chosen version', async () => {
     const api = makeApi()
     const r = await mount(api)
-    const tab = [...r.container.querySelectorAll('[role="tab"]')].find((b) => (b.textContent ?? '').includes('Versions'))
+    const tab = [...r.container.querySelectorAll('[role="radio"]')].find((b) => (b.textContent ?? '').includes('Versions'))
     await act(async () => { fireEvent.click(tab!); await new Promise((res) => setTimeout(res, 0)) })
     const rollback = [...r.container.querySelectorAll('button')].find((b) => (b.textContent ?? '').includes('Roll back'))
     await act(async () => { fireEvent.click(rollback!); await new Promise((res) => setTimeout(res, 0)) })
@@ -75,7 +75,7 @@ describe('WF2LEA-6 template-detail surfaces', () => {
 
   it('loads the Run Ledger tab lazily', async () => {
     const r = await mount(makeApi())
-    const tab = [...r.container.querySelectorAll('[role="tab"]')].find((b) => (b.textContent ?? '').includes('Run Ledger'))
+    const tab = [...r.container.querySelectorAll('[role="radio"]')].find((b) => (b.textContent ?? '').includes('Run Ledger'))
     await act(async () => { fireEvent.click(tab!); await new Promise((res) => setTimeout(res, 0)) })
     const text = r.container.textContent ?? ''
     expect(text).toContain('run-abc')

@@ -132,10 +132,10 @@ describe('OutboxPanel', () => {
     const row = await screen.findByRole('button', { name: /Weekly report/ })
     fireEvent.click(row)
 
-    const tabs = await waitFor(() => screen.getByRole('tablist', { name: 'Artifact view' }))
-    expect(within(tabs).getByRole('tab', { name: 'Rendered' })).toBeTruthy()
-    expect(within(tabs).getByRole('tab', { name: 'Source' })).toBeTruthy()
-    expect(within(tabs).getByRole('tab', { name: 'Compare' })).toBeTruthy()
+    const tabs = await waitFor(() => screen.getByRole('radiogroup', { name: 'Artifact view' }))
+    expect(within(tabs).getByRole('radio', { name: 'Rendered' })).toBeTruthy()
+    expect(within(tabs).getByRole('radio', { name: 'Source' })).toBeTruthy()
+    expect(within(tabs).getByRole('radio', { name: 'Compare' })).toBeTruthy()
     // The change note rides with the SELECTED artifact — "what changed" is asked of the thing you
     // opened, not of every row in the list.
     expect(screen.getByText('18% of the content changed')).toBeTruthy()
@@ -153,9 +153,9 @@ describe('OutboxPanel', () => {
     const row = await screen.findByRole('button', { name: /Weekly report/ })
     fireEvent.click(row)
 
-    const tabs = await waitFor(() => screen.getByRole('tablist', { name: 'Artifact view' }))
-    expect(within(tabs).getByRole('tab', { name: 'Rendered' })).toBeTruthy()
-    expect(within(tabs).queryByRole('tab', { name: 'Compare' })).toBeNull()
+    const tabs = await waitFor(() => screen.getByRole('radiogroup', { name: 'Artifact view' }))
+    expect(within(tabs).getByRole('radio', { name: 'Rendered' })).toBeTruthy()
+    expect(within(tabs).queryByRole('radio', { name: 'Compare' })).toBeNull()
   })
 
   it('explains WHY the file drop is unavailable rather than just hiding it', async () => {

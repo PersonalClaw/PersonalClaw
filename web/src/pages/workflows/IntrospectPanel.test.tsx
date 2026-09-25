@@ -330,7 +330,7 @@ describe('the edge-decision distribution (PP-8)', () => {
 describe('the Proof section states its own caveats', () => {
   it('renders the caveat as prominently as the numbers', async () => {
     render(<IntrospectPanel runId="r1" onClose={() => {}} />)
-    fireEvent.click(await screen.findByRole('tab', { name: /proof/i }))
+    fireEvent.click(await screen.findByRole('radio', { name: /proof/i }))
     expect(await screen.findByText(/a claim about the run rather than proof of it/i)).toBeTruthy()
     expect(screen.getByText('1 of 4')).toBeTruthy()
   })
@@ -342,7 +342,7 @@ describe('the Proof section states its own caveats', () => {
     const dishonest = { summary: 'done', verified_steps: 0, total_steps: 0, coverage: 0, evidence_files: [], warnings: [], honest: false }
     introspect = async () => payload({ proof: dishonest, answers: { ...payload().answers, proof: dishonest } })
     render(<IntrospectPanel runId="r1" onClose={() => {}} />)
-    fireEvent.click(await screen.findByRole('tab', { name: /proof/i }))
+    fireEvent.click(await screen.findByRole('radio', { name: /proof/i }))
     expect(await screen.findByText(/proves nothing/i)).toBeTruthy()
   })
 })
@@ -350,7 +350,7 @@ describe('the Proof section states its own caveats', () => {
 describe('the timeline is the journal AND the attempt ledger', () => {
   it('renders events oldest-first and marks a retry', async () => {
     render(<IntrospectPanel runId="r1" onClose={() => {}} />)
-    fireEvent.click(await screen.findByRole('tab', { name: /timeline/i }))
+    fireEvent.click(await screen.findByRole('radio', { name: /timeline/i }))
     const rows = await screen.findAllByRole('listitem')
     // Oldest-first: newest-first would make a reader reconstruct causality backwards.
     expect(rows[0].textContent).toContain('run_started')
@@ -398,7 +398,7 @@ describe('the live touched-items feed', () => {
       ],
     })
     render(<IntrospectPanel runId="r1" onClose={() => {}} />)
-    fireEvent.click(await screen.findByRole('tab', { name: /timeline/i }))
+    fireEvent.click(await screen.findByRole('radio', { name: /timeline/i }))
     expect(await screen.findByText('Weekly report')).toBeTruthy()
     expect(screen.getByText('input.csv')).toBeTruthy()
     // The publish VERB survives to the DOM: a converged republish is not a new version.
@@ -407,7 +407,7 @@ describe('the live touched-items feed', () => {
 
   it('renders no Touched section when the run touched nothing', async () => {
     render(<IntrospectPanel runId="r1" onClose={() => {}} />)
-    fireEvent.click(await screen.findByRole('tab', { name: /timeline/i }))
+    fireEvent.click(await screen.findByRole('radio', { name: /timeline/i }))
     expect(screen.queryByText('Touched')).toBeNull()
   })
 })

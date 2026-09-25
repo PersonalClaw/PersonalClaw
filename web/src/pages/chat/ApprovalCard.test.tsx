@@ -16,7 +16,7 @@ const seg = (over: Partial<ApprovalSegment> = {}): ApprovalSegment => ({
 })
 
 /** The scope picker, addressed the way a user does. */
-const scopeTab = (label: string) => screen.getByRole('tab', { name: label })
+const scopeTab = (label: string) => screen.getByRole('radio', { name: label })
 const touchList = () => screen.queryByRole('list', { name: /what this can touch/i })
 
 describe('ApprovalCard — the four zones', () => {
@@ -39,7 +39,7 @@ describe('ApprovalCard — the four zones', () => {
     expect(chips).toContain('Runs a command')
     expect(chips).not.toContain('Reads only')
     // 4 REACH — the scope picker plus the promise it makes, in visible text.
-    expect(screen.getByRole('tablist', { name: 'Remember this choice' })).toBeTruthy()
+    expect(screen.getByRole('radiogroup', { name: 'Remember this choice' })).toBeTruthy()
     expect(container.textContent).toContain('Nothing is remembered. The next tool call asks again.')
   })
 
@@ -126,7 +126,7 @@ describe('ApprovalCard — remember-scope is a closed set that maps to real back
   it('starts on the narrowest scope, so an unmodified Allow remembers nothing', () => {
     const onAct = vi.fn()
     render(<ApprovalCard seg={seg()} onAct={onAct} />)
-    expect(scopeTab('Just this once').getAttribute('aria-selected')).toBe('true')
+    expect(scopeTab('Just this once').getAttribute('aria-checked')).toBe('true')
     fireEvent.click(screen.getByRole('button', { name: /^Allow bash/ }))
     expect(onAct).toHaveBeenCalledWith('a1', 'approved')
   })
