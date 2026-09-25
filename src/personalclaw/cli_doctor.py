@@ -277,6 +277,36 @@ def _doctor_credentials() -> list[str]:
     return ["credential backend: keychain requested but unavailable"]
 
 
+def _doctor_config_readable() -> list[str]:
+    """Report a ``config.json`` that was DISCARDED on the load just above, or nothing (#3424).
+
+    The surface half of the fail-closed fix. A corrupt config used to substitute the dataclass
+    defaults with no signal at all, and two of those defaults were *less safe* than the values
+    the operator had stored — so the instance ran wide open and every surface, this one included,
+    displayed the substitute as if it were the stored setting. The `approval:` line above is the
+    live case: it printed `auto` while the file said `interactive`.
+
+    The substituted fields are rendered from ``CONFIG_ON_DISCARDED_READ`` rather than retyped, so
+    a change to the fail-closed table cannot leave this advice describing the old one. Reads the
+    marker left by the caller's own ``AppConfig.load()``; it never re-reads the file, so the two
+    cannot disagree.
+    """
+    from personalclaw.config.loader import CONFIG_ON_DISCARDED_READ, config_discard
+
+    state = config_discard()
+    if state is None:
+        return []
+    print(f"  config file: ❌ UNREADABLE — {state.path}")
+    print(f"               {state.reason}")
+    print("               Your stored settings are NOT in effect. These are held at their")
+    print("               most restrictive value until the file is repaired or removed:")
+    for key, value in CONFIG_ON_DISCARDED_READ.items():
+        print(f"                 {key} = {value!r}")
+    print("               Fix: repair the JSON, or move it aside to start from defaults.")
+    print("               The original bytes have not been overwritten.")
+    return ["config.json unreadable — running on a fail-closed posture"]
+
+
 def _doctor_timezone() -> list[str]:
     """Print the zone timed triggers resolve to; return an issue on a UTC fallback (#2520).
 
@@ -544,6 +574,7 @@ def _doctor() -> None:
     except Exception:
         print("  chat model:  (unresolved)")
     print(f"  approval:    {cfg.agent.approval_mode}")
+    issues.extend(_doctor_config_readable())
 
     issues.extend(_doctor_timezone())
     issues.extend(_doctor_credentials())

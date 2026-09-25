@@ -244,7 +244,14 @@ re-invents a shape another touches:
   key: a discarded read must never resolve to a value more destructive than what was
   stored. Inbox auto-cleanup is the live case — `entity_settings` reads therefore
   distinguish *absent* (`{}`, first run, defaults are the intent) from *unreadable*
-  (`None`, nothing is known), and the loader picks no fallback for the second.
+  (`None`, nothing is known), and the loader picks no fallback for the second. **The
+  same rule covers a default that is merely more PERMISSIVE**, and `config.json` is that
+  case: `AppConfig.load_with_migration_state` makes the same three-way distinction
+  (absent — zero bytes included — vs parsed vs discarded) and resolves a discard through
+  `CONFIG_ON_DISCARDED_READ`. Unlike `entity_settings` it *does* pick the fallback,
+  because those fields are host-wide gates with one meaning and ~300 call sites; the
+  table's membership rule is "a security control whose restrictive value is
+  expressible", which is why an unlimited-by-default ceiling is deliberately not in it.
 - **SDK export boundary** — apps import core only via `personalclaw.sdk.*`
   (`test_apps_import_boundary.py`); a new app-facing primitive is added to the
   relevant `sdk/<area>.py` re-export, never reached into directly. An SDK export

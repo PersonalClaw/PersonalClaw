@@ -30,6 +30,37 @@ Not everything is in `config.json` by design. Stored elsewhere:
 - **Per-app config**: each app's `data/config.json` (edited via the app's Configure form).
 - **Provider credentials**: the `.env` credential store (written by `personalclaw setup`).
 
+### If `config.json` cannot be read
+
+An **absent** file means a first run, and the defaults in the tables below are used. So does an
+empty one — a bare `touch`, or a create that never got its bytes.
+
+A file that exists and **cannot be parsed** (truncated by an interrupted or disk-full write, not
+valid UTF-8, or holding something that is not a JSON object) is a different case: nothing is known
+about what you stored, so the defaults are not your intent. PersonalClaw keeps running, and these
+fields are held at their most restrictive value until the file is repaired or removed:
+
+| Key | Held at | Instead of its default |
+|---|---|---|
+| `agent.approval_mode` | `interactive` | `auto` |
+| `agent.subagent_cwd_allowed_roots` | `[]` | `["~/workspace", "~/workplace"]` |
+| `agent.unattended_requires_verified_adapter` | `true` | `false` |
+
+Every other field falls back to its default. Two consequences worth knowing:
+
+- **Your file is not overwritten.** The substitution is in memory only, and a config write refuses
+  outright rather than clobbering a document whose contents it cannot preserve — so the original
+  bytes stay on disk and stay recoverable. Fix the JSON, or move the file aside to start from
+  defaults.
+- **Ceilings are not substituted.** `guardrails.budgets.max_tokens_per_run` /
+  `max_tokens_per_day` / `max_dollars_per_day` and `sandbox.max_pids` / `max_rss_mb` all treat `0`
+  as *unlimited*, so an unreadable file does drop a ceiling you set. There is no restrictive number
+  to stand in for one you chose, and inventing one would show you a bound you never set as if it
+  were stored. Repair the file to get them back.
+
+`personalclaw doctor` reports an unreadable `config.json` as an issue and names the fields it
+substituted.
+
 ---
 
 ## Agent runtime (`agent.*`)
