@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { ChevronRight, ChevronDown, GitBranch, Pencil, Trash2, Upload, FilePlus2, FolderPlus, MoreHorizontal } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import type { FsEntry } from '../../../lib/api'
 import { menuCursorKeydown, useMenuCursor } from '../../../lib/useMenuCursor'
-import { fileIcon, gitBadge, gitStatusTitle } from '../fileMeta'
+import { Button } from '../../../ui/Button'
+import { baseName, fileIcon, gitBadge, gitStatusTitle } from '../fileMeta'
 import type { useDirCache } from '../filesData'
 
 interface TreeProps {
@@ -39,10 +40,14 @@ interface TreeProps {
   /** Message shown when the (visible) tree is empty. Defaults to "Empty". A host
    *  can pass guiding copy (e.g. "Files appear here once the project starts"). */
   emptyLabel?: string
+  /** An empty ROOT shows `emptyLabel` with a visible upload control and a drop hint, instead of the
+   *  label alone. Only for a host whose tree body really takes a drop into this root: the Files
+   *  explorer's does, the Code cockpit's does not, so there the hint would be false. */
+  emptyUpload?: boolean
 }
 
 /** Lazy file tree rooted at `rootPath`. Children load on first expand. */
-export function FileTree({ dirs, rootPath, activePath, gitStatuses, onOpenFile, artifactPaths, onRename, onDelete, onUpload, onCreate, hideNames, hidePrefixes, hideNamesDeep, emptyLabel = 'Empty' }: TreeProps) {
+export function FileTree({ dirs, rootPath, activePath, gitStatuses, onOpenFile, artifactPaths, onRename, onDelete, onUpload, onCreate, hideNames, hidePrefixes, hideNamesDeep, emptyLabel = 'Empty', emptyUpload = false }: TreeProps) {
   // Seed synchronously from the (session-persisted) dir cache so a refresh repaints the
   // last-known listing INSTANTLY instead of flashing empty/"Loading…" for a few seconds
   // while the first fetch resolves (observed live). Falls back to null (→ skeleton) only
@@ -80,7 +85,11 @@ export function FileTree({ dirs, rootPath, activePath, gitStatuses, onOpenFile, 
   // URL, so a bare "Empty" reads as "you are here and there is nothing in it".
   const loadError = dirs.errors[rootPath]
   if (shown.length === 0 && loadError) return <div role="alert" data-type="body-s" className="px-m py-s text-danger">{loadError}</div>
-  if (shown.length === 0) return <div className="px-m py-s text-on-surface-low text-[0.8125rem]">{emptyLabel}</div>
+  if (shown.length === 0) {
+    return emptyUpload
+      ? <EmptyFolder label={emptyLabel} folder={{ name: baseName(rootPath), path: rootPath, is_dir: true }} onUpload={onUpload} />
+      : <div className="px-m py-s text-on-surface-low text-[0.8125rem]">{emptyLabel}</div>
+  }
   return (
     <div>
       {shown.map((e) => (
@@ -295,11 +304,7 @@ function TreeNode({ entry, depth, dirs, activePath, gitStatuses, onOpenFile, art
           </button>
         )}
       </div>
-      {entry.is_dir && (
-        <input ref={uploadInput} type="file" multiple className="hidden"
-          name={`upload-${entry.path}`} aria-label={`Upload files to ${entry.name}`} tabIndex={-1}
-          onChange={(e) => { const fs = Array.from(e.target.files ?? []); if (fs.length) onUpload(entry, fs); e.target.value = '' }} />
-      )}
+      {entry.is_dir && <FolderUploadInput folder={entry} onUpload={onUpload} inputRef={uploadInput} />}
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}
           items={[
@@ -340,6 +345,37 @@ function TreeNode({ entry, depth, dirs, activePath, gitStatuses, onOpenFile, art
         </div>
         )
       })()}
+    </div>
+  )
+}
+
+/** The hidden picker behind "upload into this folder": a row's "Upload here" and an empty folder's
+ *  button both open one, so they cannot drift in what reaches `onUpload` — the picked files, never
+ *  an empty pick — or in clearing the input, without which picking the same file again is silent. */
+function FolderUploadInput({ folder, onUpload, inputRef }: {
+  folder: FsEntry; onUpload: TreeProps['onUpload']; inputRef: RefObject<HTMLInputElement | null>
+}) {
+  return (
+    <input ref={inputRef} type="file" multiple className="hidden"
+      name={`upload-${folder.path}`} aria-label={`Upload files to ${folder.name}`} tabIndex={-1}
+      onChange={(e) => { const fs = Array.from(e.target.files ?? []); if (fs.length) onUpload(folder, fs); e.target.value = '' }} />
+  )
+}
+
+/** An empty folder with both ways to fill it in plain sight. It used to say "Empty" and nothing
+ *  else: the only way in was a drag nobody was told about, and "Upload here" lived only in a
+ *  SUB-folder's row menu, so the folder you were standing in could not be uploaded to by clicking.
+ *  The button is that same "Upload here" — same picker, same `onUpload` — for the current folder. */
+function EmptyFolder({ label, folder, onUpload }: { label: string; folder: FsEntry; onUpload: TreeProps['onUpload'] }) {
+  const input = useRef<HTMLInputElement>(null)
+  return (
+    <div className="flex flex-col items-center gap-s px-m py-l text-center">
+      <p data-type="body-s" className="text-on-surface-low">{label}</p>
+      <Button variant="tonal" size="sm" onClick={() => input.current?.click()}>
+        <Upload size={14} /> Upload files
+      </Button>
+      <p data-type="caption" className="text-on-surface-low">or drop files here</p>
+      <FolderUploadInput folder={folder} onUpload={onUpload} inputRef={input} />
     </div>
   )
 }

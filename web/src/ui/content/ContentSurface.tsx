@@ -4,6 +4,7 @@ import { Save, RotateCcw, Eye, Code2, Columns2, WrapText, Copy, Check, Loader2, 
 import { spring } from '../../design/motion'
 import { SquareIconButton } from '../SquareIconButton'
 import { Centered } from '../Centered'
+import { LoadingStatus } from '../ListScaffold'
 import { useMode } from '../../app/theme'
 import { CommentLayer } from '../../pages/files/comments/CommentLayer'
 import type { CommentTarget } from './commentTarget'
@@ -213,7 +214,18 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
   const PreviewEl = type.preview?.render
   function renderPreview() {
     if (!PreviewEl) return null
-    return createElement(PreviewEl, { content: draft, mode, title, path, streaming: false, iterate })
+    // 🔴 EVERY registry preview renderer is `lazy()` (registerBuiltins), and each one suspends the
+    // first time it renders in a session. With no boundary here that suspension climbed to the
+    // ROUTE's boundary in App.tsx, which hid the whole page — header, explorer, editor — behind
+    // one preview's spinner, and through the route fade (see App.tsx) left it blank: the Files
+    // page on the first file of each type, or on a reload that restores a file tab. The boundary
+    // belongs to the thing that is loading, so only the preview waits. Both the preview and the
+    // split views render through here.
+    return (
+      <Suspense fallback={<SurfaceLoading />}>
+        {createElement(PreviewEl, { content: draft, mode, title, path, streaming: false, iterate })}
+      </Suspense>
+    )
   }
 
   function renderEditor(split = false) {
@@ -225,7 +237,7 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
       })
     }
     return (
-      <Suspense fallback={<Centered><Loader2 size={18} className="animate-spin text-on-surface-low" /></Centered>}>
+      <Suspense fallback={<SurfaceLoading />}>
         <MonacoEditor height="100%" path={path} language={language || type.edit?.language || 'plaintext'} value={draft}
           onChange={(v) => setDraft(v ?? '')} theme={mode === 'light' ? 'light' : 'vs-dark'}
           onMount={split ? (ed: any) => { editorRef.current = ed; ed?.onDidScrollChange?.(syncFromEditor) } : undefined}
@@ -395,6 +407,21 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
     </div>
   )
 })
+
+/** The loading state of BOTH code-split branches above — Monaco and the registry's lazy preview
+ *  renderers — so the two look and announce alike. A live region with `LoadingStatus` text, the
+ *  shape of the shell's `PageFallback`: before the preview had its own boundary, a first preview
+ *  surfaced as THAT fallback, which announces, so narrowing the boundary must not silence it. */
+function SurfaceLoading() {
+  return (
+    <Centered>
+      <span role="status" aria-busy="true" className="inline-flex">
+        <LoadingStatus />
+        <Loader2 size={18} className="animate-spin text-on-surface-low" />
+      </span>
+    </Centered>
+  )
+}
 
 function ToggleBtn({ icon: Icon, label, on, onClick, compact, indicatorId }: { icon: typeof Eye; label: string; on: boolean; onClick: () => void; compact?: boolean; indicatorId: string }) {
   return (
