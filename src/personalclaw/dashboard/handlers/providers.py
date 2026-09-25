@@ -868,6 +868,10 @@ async def api_provider_create(request: web.Request) -> web.Response:
         if any(p.get("name") == name for p in providers):
             return web.json_response({"error": f"Provider '{name}' already exists"}, status=409)
 
+        # `None` is the client's explicit "leave this unset" (see api_provider_update's
+        # clear semantics) — on a first create there is nothing yet to clear, so a `None`
+        # here means only "store nothing for it", never a literal JSON `null` on disk.
+        options = {k: v for k, v in options.items() if v is not None} if options else {}
         entry: dict = {"name": name, "type": ptype, "model": model}
         if options:
             entry["options"] = options
@@ -969,7 +973,20 @@ async def api_provider_update(request: web.Request) -> web.Response:
         if "model" in body:
             target["model"] = body["model"]
         if "options" in body:
-            target.setdefault("options", {}).update(body["options"])
+            # A plain `dict.update()` can only ADD or OVERWRITE a key that is PRESENT in
+            # the incoming options — it has no way to express "remove this key", so an
+            # emptied credential field the client simply omits (as a caller reasonably
+            # would for "nothing to say about it") could never clear a previously stored
+            # value; the old key survived every PATCH that didn't re-send it (#3554). A
+            # `None` value is the client's explicit "clear this field", distinct from the
+            # key being absent from the payload at all (leave whatever is stored alone) —
+            # so absence still means "unchanged" and only an explicit `null` deletes.
+            stored_options = target.setdefault("options", {})
+            for key, value in body["options"].items():
+                if value is None:
+                    stored_options.pop(key, None)
+                else:
+                    stored_options[key] = value
         if "type" in body:
             target["type"] = body["type"]
 

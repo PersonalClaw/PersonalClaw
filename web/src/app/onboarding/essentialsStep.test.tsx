@@ -323,6 +323,72 @@ describe('the model lane completes entirely in-flow', () => {
   })
 })
 
+// ── #3554 — an emptied credential field must clear the stored value ─────────────────
+//
+// Emptying the API Key field used to drop it from the PATCH entirely (`if (v) options[k]
+// = v`), and the backend's `dict.update()` merge can only add/overwrite a key that is
+// PRESENT — never delete one that is absent — so the old key survived forever. The
+// field's own help text ("leave empty to fall back to the environment variable") was
+// true on the first save and false on every one after. The fix distinguishes a field
+// nobody touched (still omitted — omission must keep meaning "leave it alone", or the
+// cure is worse than the disease) from one the user typed into and then blanked (sent as
+// an explicit `null`, which only a SENSITIVE field ever produces).
+describe('an emptied credential field clears the stored value, not just the form (#3554)', () => {
+  // No real provider app.json marks `api_key` required (every key-bearing schema promises
+  // the environment-variable fallback), so this overrides the shared beforeEach fixture's
+  // `required: ['api_key']` — a schema no bundled app declares — which would otherwise
+  // block the empty submit these tests are about via the required-field guard.
+  function mockClearableKeySchema() {
+    modelProviderTypes.mockResolvedValue([{
+      type: 'openai', label: 'OpenAI', app: 'openai-models', capabilities: ['chat'], multiInstance: true,
+      settingsSchema: {
+        properties: {
+          api_key: { type: 'string', default: '', 'x-meta': { label: 'OpenAI API Key', sensitive: true } },
+          default_model: { type: 'string', default: '', 'x-meta': { label: 'Default Model' } },
+        },
+        required: [],
+      },
+    }])
+    createModelProvider.mockRejectedValue(new Error(JSON.stringify({ error: "Provider 'openai' already exists" })))
+  }
+
+  async function reenterConfigureProvider() {
+    renderStep()
+    await openCard('openai')
+    fireEvent.click(await screen.findByRole('button', { name: /Install OpenAI/ }))
+  }
+
+  it('sends an explicit clear for a sensitive field the user typed into then blanked', async () => {
+    mockClearableKeySchema()
+    await reenterConfigureProvider()
+    const key = await screen.findByLabelText('OpenAI API Key')
+    fireEvent.change(key, { target: { value: 'sk-typo' } })
+    fireEvent.change(key, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
+    await waitFor(() => expect(updateModelProvider).toHaveBeenCalledWith('openai', { options: { api_key: null } }))
+  })
+
+  it('omits an untouched sensitive field instead of sending it as a clear', async () => {
+    mockClearableKeySchema()
+    await reenterConfigureProvider()
+    // Only the sibling field is touched — the API Key input is never focused.
+    fireEvent.change(await screen.findByLabelText('Default Model'), { target: { value: 'gpt-5' } })
+    fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
+    await waitFor(() => expect(updateModelProvider).toHaveBeenCalled())
+    const [, body] = updateModelProvider.mock.calls[0] as [string, { options: Record<string, unknown> }]
+    expect(body.options).toEqual({ default_model: 'gpt-5' })
+    expect(body.options).not.toHaveProperty('api_key')
+  })
+
+  it('still sends a real typed value normally, not a clear', async () => {
+    mockClearableKeySchema()
+    await reenterConfigureProvider()
+    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'sk-rotated' } })
+    fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
+    await waitFor(() => expect(updateModelProvider).toHaveBeenCalledWith('openai', { options: { api_key: 'sk-rotated' } }))
+  })
+})
+
 // ── progress writes ──────────────────────────────────────────────────────────
 
 describe('each lane records only its own progress field', () => {
