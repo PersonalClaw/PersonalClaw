@@ -131,9 +131,79 @@ jobs:
           packages-dir: dist-client/
           skip-existing: true
 
+  gateway-dashboard:
+    # RELEASE-BLOCKING: the gateway image built from THIS commit must SERVE ITS DASHBOARD.
+    #
+    # 🔴 THE GAP THIS CLOSES. `images`' own smoke runs `personalclaw --version` with
+    # `--entrypoint ''`, so the gateway NEVER STARTS: it proves the binary exists on both
+    # arches — a real assertion, left exactly as it is — not that the product works. Nothing
+    # at release time asserted the dashboard. Measured 2026-09-23 in containers against the
+    # published 0.1.3 image: `GET /` → **503**, title "PersonalClaw — Build the dashboard",
+    # **zero** asset references, no `static/dist` in site-packages — while the same version
+    # installed with `uv tool install personalclaw` served the real shell with a 6.9 MB
+    # bundle. The wheel could not ship broken (`scripts/verify_wheel.py` is a release gate);
+    # the image could. That asymmetry is the whole reason this job exists.
+    #
+    # WHY BEFORE THE PUSH. `images` pushes `:X.Y.Z`, `:X.Y` and `:latest` and only THEN
+    # smokes what it pushed, so an assertion bolted on after it would leave a dashboard-less
+    # `:latest` in GHCR — the tag README.md's one-liner and docs/guides/containers.md both
+    # point at — with no GitHub Release to explain it. `images` NEEDS this job instead.
+    #
+    # WHY A JOB AND NOT A STEP. A step cannot name which property broke, only a job can —
+    # the argument `ci.yml` acted on when it split `walkthrough` out of `e2e-a11y`. A red
+    # step inside `images (gateway)` reads as "the image build failed"; a red
+    # `gateway-dashboard` names the contract.
+    #
+    # WHY IT BUILDS RATHER THAN PULLS. A pull answers the published-artifact question, which
+    # `ghcr-anonymous-pull.yml` already owns, and could not run before the push it exists to
+    # gate. `--target runtime` is the stage `images`' own default target resolves to, since
+    # `runtime` is the last stage in the file.
+    #
+    # ONE RECIPE, NOT TWO DIALECTS. This build and this invocation are
+    # `.github/workflows/docker-single-container.yml`'s, differing only in the local tag, and
+    # `tools/docker_single_container_smoke.py` owns the assertion — healthz 200, `/` 200 HTML
+    # carrying the SPA mount point, and the shell's FIRST script fetched and required to come
+    # back as JavaScript — plus its own negative control, because a fabricated `/assets/*.js`
+    # answered by the SPA's index.html fallback is 200 too, and a status-only check calls that
+    # green. Exit 1 = no dashboard; exit 2 = the run could not measure, which is never a pass.
+    #
+    # amd64 ONLY, stated rather than implied: this boots a real gateway, and arm64 under QEMU
+    # is a far slower, different measurement. `images`' per-arch `--entrypoint ''` smoke
+    # remains the arm64 evidence and is untouched.
+    runs-on: ubuntu-latest
+    # The gateway image build is the long pole — a CPU-only torch install, four bundled ACP
+    # adapter CLIs, and a Node stage for the SPA. Same bound as the PR-side job, because it is
+    # the same build, and set well above its measured cost rather than tightly (#3326 was the
+    # cost of bounding a job BELOW its own runtime).
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build the gateway image (amd64, runtime target)
+        # `--target runtime` skips the in-image `test` stage: the question here is whether the
+        # shipped image serves a dashboard, and ci.yml already runs the suite.
+        run: |
+          docker build \
+            --file deploy/docker/Dockerfile.backend \
+            --target runtime \
+            --tag personalclaw-gateway:release-dashboard \
+            .
+      - name: Assert the built image serves the dashboard (release-blocking)
+        # The tool makes its own scratch cwd (so a checkout cannot satisfy the command by
+        # accident) and rewrites only the image ref, the container name and the volume name —
+        # the `docker run` itself is READ out of README.md, so a README that drifts into being
+        # wrong cannot leave this green.
+        run: |
+          python3 tools/docker_single_container_smoke.py \
+            --image personalclaw-gateway:release-dashboard
+
   images:
     # Multi-arch GHCR images (amd64 + arm64). Auth = GITHUB_TOKEN (no extra secret).
-    needs: build
+    # `gateway-dashboard` is in `needs` so NOTHING is pushed until the image built from this
+    # commit is proven to serve a dashboard — `personalclaw-web` included, because
+    # `deploy/compose/compose.yaml` pulls both and half a published pair is worse than none.
+    needs: [build, gateway-dashboard]
     runs-on: ubuntu-latest
     permissions:
       contents: read

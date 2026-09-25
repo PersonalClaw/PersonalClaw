@@ -28,13 +28,21 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
+from personalclaw.dashboard.handlers.core import _UNBUNDLED_PAGE
 from tools import docker_single_container_smoke as smoke
 
 _REPO = Path(__file__).resolve().parents[1]
 _README = _REPO / "README.md"
 _DOCKERFILE = _REPO / "deploy" / "docker" / "Dockerfile.backend"
 _WORKFLOW = _REPO / ".github" / "workflows" / "docker-single-container.yml"
+_RELEASE_WORKFLOW = _REPO / ".github" / "workflows" / "release.yml"
+
+#: The release job that must prove the image serves a dashboard before anything is pushed.
+_RELEASE_GATE_JOB = "gateway-dashboard"
+#: The tag that job builds and hands to the smoke tool.
+_RELEASE_GATE_IMAGE = "personalclaw-gateway:release-dashboard"
 
 #: A stand-in for the session token the gateway banner prints. Three dot-separated segments
 #: so it exercises the same shape a JWT has, but a fixed literal that is not and never was a
@@ -405,3 +413,199 @@ def test_workflow_runs_the_smoke_tool_against_the_image_it_built() -> None:
     assert "--file deploy/docker/Dockerfile.backend" in text
     assert "tools/docker_single_container_smoke.py --image personalclaw-gateway:dist15-ci" in text
     assert "--tag personalclaw-gateway:dist15-ci" in text
+
+
+# ---------------------------------------------------------------------------
+# The RELEASE workflow — the PR rail's assertion had no release-time equivalent
+# ---------------------------------------------------------------------------
+#
+# 🔴 THE MEASURED GAP. `release.yml`'s gateway smoke runs `personalclaw --version` with
+# `--entrypoint ''`, so the gateway never starts: it proves the binary exists, not that the
+# product works. Measured 2026-09-23 in containers against the PUBLISHED 0.1.3 image:
+# `/api/healthz` → 200 `{"status": "ok"}` while `GET /` → **503** with the
+# "Build the dashboard" placeholder and ZERO asset references — and the same version installed
+# via `uv tool install personalclaw` served the real shell with a 6.9 MB bundle. So the wheel
+# could not ship broken (`scripts/verify_wheel.py` is a release gate) and the image could.
+#
+# These rails hold the closing of that asymmetry in place. They assert the WIRING (a gate that
+# does not block is not a gate) and, below, the two discriminators that make its green mean
+# something — both drivable with no Docker daemon.
+
+
+def _release_jobs() -> dict[str, object]:
+    workflow = yaml.safe_load(_RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+    assert isinstance(workflow, dict)
+    jobs = workflow.get("jobs")
+    assert isinstance(jobs, dict)
+    return jobs
+
+
+def _needs(job: object) -> list[str]:
+    """A job's `needs`, normalised — the key takes a scalar OR a list."""
+    assert isinstance(job, dict)
+    needs = job.get("needs")
+    if isinstance(needs, str):
+        return [needs]
+    assert isinstance(needs, list), f"job has no usable `needs`: {needs!r}"
+    return [str(item) for item in needs]
+
+
+def _run_scripts(job: object) -> str:
+    assert isinstance(job, dict)
+    steps = job.get("steps")
+    assert isinstance(steps, list)
+    return "\n".join(str(step["run"]) for step in steps if isinstance(step, dict) and "run" in step)
+
+
+def test_release_asserts_the_image_dashboard_against_the_image_it_built() -> None:
+    """The gate exists, builds the runtime stage itself, and drives the shared smoke tool.
+
+    Building rather than pulling is load-bearing twice over: a published tag is a PAST
+    commit (so a pull answers "did the last release bundle the SPA"), and
+    `ghcr-anonymous-pull.yml` already owns the published-artifact question.
+    """
+    job = _release_jobs().get(_RELEASE_GATE_JOB)
+    assert job is not None, (
+        f"release.yml has no {_RELEASE_GATE_JOB!r} job, so nothing at release time starts the "
+        "gateway — the `--entrypoint ''` smoke proves the binary exists, not the dashboard"
+    )
+    script = _run_scripts(job)
+    assert "docker build" in script
+    assert "--file deploy/docker/Dockerfile.backend" in script
+    assert "--target runtime" in script
+    assert f"--tag {_RELEASE_GATE_IMAGE}" in script
+    assert "tools/docker_single_container_smoke.py" in script
+    assert f"--image {_RELEASE_GATE_IMAGE}" in script, (
+        "the gate must be pointed at the tag it just built; without --image the tool runs the "
+        "README's own :latest and reports on a past release"
+    )
+
+
+def test_a_dashboardless_image_is_never_published_or_released() -> None:
+    """The wiring IS the gate. A warning, or an assertion after the push, is not one.
+
+    `images` pushes `:X.Y.Z`, `:X.Y` and `:latest` and only THEN smokes what it pushed, so a
+    dashboard assertion added *after* that push would leave a broken `:latest` in GHCR —
+    the tag README.md's one-liner points at — with no GitHub Release to explain it. Hence
+    `images: needs:` the gate, and `notes` (the GitHub Release) still needs `images`, so the
+    whole chain refuses.
+    """
+    jobs = _release_jobs()
+    assert _RELEASE_GATE_JOB in _needs(jobs.get("images")), (
+        f"the `images` job does not need {_RELEASE_GATE_JOB!r}, so the multi-arch push runs "
+        "regardless of the dashboard assertion and a broken `:latest` ships"
+    )
+    assert "images" in _needs(jobs.get("notes")), (
+        "the GitHub Release must stay downstream of `images`; without that edge the dashboard "
+        "gate cannot block the release"
+    )
+
+
+def test_the_version_only_arch_smoke_is_left_intact() -> None:
+    """The additive half, pinned: the new gate must not be bought by weakening the old step.
+
+    `--entrypoint ''` + `personalclaw --version` is a REAL assertion — it is the per-arch
+    liveness proof, and arm64's only execution evidence, since the dashboard gate runs the
+    runner's native amd64 only. It answers a different question and stays exactly as it is.
+    """
+    script = _run_scripts(_release_jobs().get("images"))
+    assert "--entrypoint ''" in script
+    assert 'docker pull --quiet --platform "linux/$arch"' in script
+    assert "for arch in amd64 arm64; do" in script
+
+
+# ---------------------------------------------------------------------------
+# The two discriminators, driven with no daemon
+# ---------------------------------------------------------------------------
+#
+# A status is not the assertion. The SPA-less image answers `/` with a real HTTP response and
+# `/api/healthz` with 200 `ok`, and the SPA's index.html fallback answers ANY unknown path 200.
+# So both discriminators are pinned here against the page the product actually serves —
+# imported, not re-typed, so a reworded placeholder cannot leave these green.
+
+
+def _fake_http(monkeypatch: pytest.MonkeyPatch, routes: dict[str, tuple[int, str, str]]) -> None:
+    """Route `_get` by URL suffix match, so no container and no daemon are needed."""
+
+    def _fake(url: str) -> tuple[int, str, str]:
+        for suffix, response in routes.items():
+            if suffix in url:
+                return response
+        return 404, "application/octet-stream", "not found"
+
+    monkeypatch.setattr(smoke, "_get", _fake)
+
+
+def test_the_shell_assertion_rejects_the_page_an_spa_less_image_serves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The measured 503 placeholder, at its real status AND at 200.
+
+    Both, because the status is not what makes it wrong: a 503 is a valid HTTP response and a
+    placeholder served 200 is the same non-dashboard. The assertion has to reject the BODY.
+    """
+    for status in (503, 200):
+        _fake_http(monkeypatch, {"/?token=": (status, "text/html", _UNBUNDLED_PAGE)})
+        with pytest.raises(SystemExit) as excinfo:
+            smoke._assert_shell("http://127.0.0.1:1", _SYNTHETIC_TOKEN)
+        assert excinfo.value.code == 1, f"status {status} must FAIL, not be unmeasurable"
+
+
+def test_the_placeholder_page_carries_neither_discriminator() -> None:
+    """Why the rail above can distinguish them at all — and it is not a given.
+
+    `_UNBUNDLED_PAGE` tells a reader to run `cd web && npm install`, which is impossible inside
+    the image; if it ever grew a root div or a script tag, `_assert_shell` would wave it
+    through at 200. This is the vacuity floor for the test above, in the same file.
+    """
+    assert smoke._SHELL_MARKER not in _UNBUNDLED_PAGE
+    assert not smoke._SCRIPT_RE.findall(_UNBUNDLED_PAGE)
+
+
+def test_the_shell_assertion_accepts_a_real_shell_and_returns_its_first_script(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Positive control: a negated assertion that cannot pass is indistinguishable from a bug."""
+    shell = (
+        f"<!doctype html><html><body>{smoke._SHELL_MARKER}></div>"
+        '<script type="module" src="/assets/index-abc123.js"></script></body></html>'
+    )
+    _fake_http(monkeypatch, {"/?token=": (200, "text/html", shell)})
+    assert smoke._assert_shell("http://127.0.0.1:1", _SYNTHETIC_TOKEN) == "/assets/index-abc123.js"
+
+
+def test_the_asset_assertion_rejects_the_shell_served_in_place_of_a_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """200 is not enough, and this is exactly why: the fallback answers with HTML."""
+    _fake_http(monkeypatch, {"/assets/": (200, "text/html; charset=utf-8", "<!doctype html>")})
+    with pytest.raises(SystemExit) as excinfo:
+        smoke._assert_asset("http://127.0.0.1:1", "/assets/index-abc123.js")
+    assert excinfo.value.code == 1
+
+
+def test_the_asset_assertion_is_unmeasurable_when_a_fabricated_asset_is_also_javascript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A catch-all that serves everything as JS makes the check above pass for any input.
+
+    That is not a green and not a product failure — it is an unmeasurable run (exit 2), and
+    the distinction is the difference between "the image is fine" and "this rail is vacuous".
+    """
+    _fake_http(monkeypatch, {"/assets/": (200, "text/javascript", "console.log(1)")})
+    with pytest.raises(smoke.Unmeasurable):
+        smoke._assert_asset("http://127.0.0.1:1", "/assets/index-abc123.js")
+
+
+def test_the_asset_assertion_accepts_a_real_bundle_with_the_control_firing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The passing shape, end to end: a JS bundle plus a fabricated path that 404s."""
+    _fake_http(
+        monkeypatch,
+        {
+            "/assets/index-abc123.js": (200, "text/javascript", "export const a=1"),
+            "/assets/dist15-control-": (404, "application/octet-stream", "not found"),
+        },
+    )
+    smoke._assert_asset("http://127.0.0.1:1", "/assets/index-abc123.js")
