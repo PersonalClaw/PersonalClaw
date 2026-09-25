@@ -24,6 +24,8 @@ import pathlib
 
 import pytest
 
+from scripts.sdk_surface_closure import surface_closure
+
 SDK = pathlib.Path(__file__).resolve().parent.parent / "src/personalclaw/sdk"
 
 
@@ -119,6 +121,81 @@ def test_channel_declares_every_name_it_reexports():
     actual = set(_reexported(SDK / "channel.py"))
     assert not (actual - declared), f"re-exported but undeclared: {sorted(actual - declared)}"
     assert not (declared - actual), f"declared but not re-exported: {sorted(declared - actual)}"
+
+
+def test_the_sdk_surface_is_closed_under_its_own_signatures():
+    """A published type whose own fields/signatures name UNIMPORTABLE types is not published.
+
+    This is the defect `StructuredOutput` was one instance of: it was absent from
+    `sdk.model`, so the Ollama provider recovered it as
+
+        type(ProviderCapability.__dataclass_fields__["structured_output"].default)
+
+    which works at runtime and defeats type checking completely. Re-exporting that ONE name
+    fixed that ONE app; the measurement that mattered was how many siblings it had, and the
+    answer was 25 across seven core modules — including `ToolResult.agent_error` /
+    `ActionResult.agent_error` (so no app could emit a structured failure at all),
+    `Task.transition(to=TaskState)` (a method no app could call type-safely) and sixteen of
+    the twenty-one `apps.manifest` types on a facade whose docstring offers itself as "the
+    typed contract for tooling that validates or generates a manifest".
+
+    Stated as a rail rather than a one-time cleanup because the gap reopens silently: adding
+    a field to an already-exported dataclass is a normal core change that quietly makes the
+    app surface unusable, and nothing else in this file would notice.
+
+    The walk lives in `scripts/sdk_surface_closure.py` because the inert-surface census needs
+    the OTHER direction of the same relation — which of the exports a published signature
+    NAMES, its only mechanically-checkable reader for a facade whose real consumers are in
+    another repository. One walk, so the two halves cannot drift into two definitions of
+    "published signature"; that module's docstring carries the rulings.
+    """
+    gaps = surface_closure().gaps
+    assert not gaps, (
+        "these core types are reachable from the published app surface but are not exported "
+        "from any personalclaw.sdk module, so an app must derive or re-declare them:\n"
+        + "\n".join(f"  {t}\n      required by {sorted(w)[0]}" for t, w in sorted(gaps.items()))
+        + "\nRe-export each from the sdk submodule that already faces its owning core module."
+    )
+
+
+def test_the_closure_scan_is_not_vacuous():
+    """Both counters, because either one at zero passes the assertion above trivially.
+
+    `get_type_hints` raises on an unresolvable forward reference and the walk swallows that,
+    so a resolution regression would empty the requirement graph rather than fail loudly —
+    the `edges` floor is what makes that visible.
+    """
+    closure = surface_closure()
+    assert closure.roots >= 100, f"the closure scan found only {closure.roots} exported classes"
+    assert closure.edges >= 200, f"the closure scan resolved only {closure.edges} type references"
+
+
+@pytest.mark.parametrize(
+    "dropped,expected_reason",
+    [
+        ("personalclaw.task.TaskState", "Task."),
+        ("personalclaw.errors.AgentError", "Result."),
+        ("personalclaw.apps.manifest.UIConfig", "AppManifest."),
+    ],
+)
+def test_the_closure_scan_can_actually_fail(dropped, expected_reason):
+    """The falsification, run against REAL code rather than a synthetic tree.
+
+    Un-export one name and the walk must name it again, with the field or signature that
+    requires it. Three cases because the three shapes reach the walk by different paths: an
+    enum used as a method parameter, a dataclass field on two different result types, and a
+    nested schema type two hops from the root (`AppManifest.ui` → `UIConfig`).
+
+    A synthetic-class control could not do this job: `core_types_in` filters on
+    ``__module__.startswith("personalclaw")``, so a stand-in defined in this test file is
+    invisible to it — which is precisely how a control that cannot fire gets written.
+    """
+    gaps = surface_closure(pretend_missing=frozenset({dropped})).gaps
+    assert dropped in gaps, f"un-exporting {dropped} did not make the closure scan fail"
+    assert any(expected_reason in why for why in gaps[dropped]), (
+        f"{dropped} was reported, but not attributed to a {expected_reason}* "
+        f"field or signature: {sorted(gaps[dropped])}"
+    )
 
 
 @pytest.mark.parametrize("name", ["save_session_to_history"])

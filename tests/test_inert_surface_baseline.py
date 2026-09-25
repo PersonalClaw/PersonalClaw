@@ -49,6 +49,18 @@ asserts every per-file inert counter **may only shrink** versus the committed ba
     104 after. Of those 104, 97 are imported by a bundled channel app in the apps repo — the
     census cannot see across the repo boundary by construction, which the generator's own
     docstring says of every ``sdk_export``.)
+
+    A SECOND such case, added 2026-09-24 and the mirror image of the first: a counter may
+    also FALL because the census learned a reader shape it was previously blind to. The
+    ``sdk_export`` detector knew only one reader — an in-repo ``ImportFrom`` — and an SDK
+    export's real consumer is an app in a separate repository, so it could not tell a public
+    API type apart from an unkept promise. It now also clears an export that ANOTHER export's
+    field or method signature names (``scripts/sdk_surface_closure.py``), which dropped
+    ``sdk_export`` 229 → 170 and every touched file's counter with it. That is a plain
+    legitimate shrink under the rule above — regenerate in the same commit — but it is NOT a
+    cleanup: nothing was wired, the census simply stopped scoring the API as inert. Recorded
+    here because "a counter fell" normally means "a writer/reader landed", and reading this
+    one that way would send someone looking for a commit that does not exist.
 """
 
 from __future__ import annotations
@@ -677,6 +689,191 @@ def test_the_value_lookup_ruling_is_recorded_in_the_generator():
     assert "construction is the known remaining false-red shape" not in doc, (
         "PHF-12's superseded premise is asserted again in the detector docstring; "
         "judge_contract.py:342 has no production caller, so it does not make REPLAN reachable"
+    )
+
+
+# ── sdk_export census: a published signature IS the reader (#3496) ───────────────────────
+#
+# Every other kind this census measures has an in-repo consumer BY CONSTRUCTION — a config key
+# is read by ``load()``, a trigger kind is dispatched under ``triggers/``. ``sdk_export`` is the
+# exception: installable apps live in a SEPARATE repository, so "nothing in this repo imports
+# it" cannot tell a public API type apart from an unkept promise. Closing the SDK surface under
+# its own signatures exported 25 types that ALREADY-PUBLISHED fields and methods named
+# (``ToolResult.agent_error``, ``Task.transition(to=)``, sixteen ``apps.manifest`` types), and
+# this census scored all 26 surfaces as new declared-but-inert ones — which made "stop exporting
+# the type apps need" the cheapest way to go green, i.e. the census pushing for the defect. A
+# published signature is a reader, and unlike an out-of-repo app it is mechanically checkable,
+# so it clears. These four tests pin both directions and the two narrowings the rule rests on.
+
+#: The 26 surfaces the API-closure clear removed, each with the published field or signature
+#: that requires it. Pinned by name rather than counted: the value of the finding is WHICH
+#: types an app could not name, and a count would survive the list being silently rewritten.
+_API_CLOSURE_CLEARED = frozenset(
+    {
+        "action.AgentError",  # ActionResult.agent_error / ToolResult.agent_error
+        "tool.AgentError",
+        "channel.AutoSkillProvenance",  # SkillsLoader.create_auto_skill(provenance)
+        "channel.CapturedSession",  # CapturingState.get_linked_session() return
+        "channel.ResourceRead",  # SkillsLoader.read_resource() return
+        "channel.SkillResource",  # SkillsLoader.resources_for() return
+        "channel.SubagentInfo",  # SubagentManager.get() return
+        "channel.TaskState",  # Task.state / Task.transition(to=)
+        "local_model.CapabilityMatrix",  # LocalModel.matrix
+        "sandbox.ResourceCeilings",  # SandboxSpec.ceilings
+        "manifest.AppSkill",  # AppManifest.skills
+        "manifest.AutonomyConfig",  # ProviderConfig.autonomy
+        "manifest.CliConfig",  # AppManifest.cli
+        "manifest.ClientInstallConfig",  # PlatformConfig.clientInstall
+        "manifest.CoreCompatibility",  # AppManifest.core_compatibility() return
+        "manifest.CronEntry",  # AppManifest.crons
+        "manifest.Dependencies",  # AppManifest.dependencies
+        "manifest.MarketplaceDependencies",  # Dependencies.marketplace
+        "manifest.PackSourceEntry",  # AppManifest.sources / pack_source() return
+        "manifest.PlatformConfig",  # AppManifest.platform
+        "manifest.ProposalKind",  # Permissions.proposals / proposal_kind() return
+        "manifest.QualityDeclaration",  # AppManifest.quality
+        "manifest.RouteEntry",  # BackendConfig.routes
+        "manifest.UIConfig",  # AppManifest.ui
+        "manifest.UIPage",  # UIConfig.pages
+        "manifest.UISidebar",  # UIConfig.sidebar
+    }
+)
+
+
+def _reported_sdk_exports() -> set[str]:
+    """``{"<sdk submodule>.<name>"}`` the census currently reports as inert."""
+    from scripts.generate_inert_surface_baseline import _inert_sdk_export_surfaces
+
+    return {
+        f"{rel.rsplit('/', 1)[1].removesuffix('.py')}.{surface.split(':', 1)[1]}"
+        for rel, surface in _inert_sdk_export_surfaces()
+    }
+
+
+@pytest.mark.timeout(300)
+def test_an_export_named_by_another_exports_signature_is_not_inert():
+    """Direction one: the API closure clears, and it clears exactly the 26 measured surfaces.
+
+    Both halves are needed. ``consumed_exports()`` proves the closure SEES each one (a rule
+    that resolved nothing would satisfy the census half trivially), and the census render
+    proves the clear actually reaches the counter.
+    """
+    from scripts.sdk_surface_closure import consumed_exports
+
+    consumed = consumed_exports()
+    missing = sorted(_API_CLOSURE_CLEARED - consumed)
+    assert not missing, (
+        f"{missing} is exported so an app can fill a PUBLISHED field or call a PUBLISHED "
+        "method, but the API-closure walk no longer finds the signature that requires it — "
+        "either the signature moved or the walk regressed; read the code before regenerating"
+    )
+    still_reported = sorted(_API_CLOSURE_CLEARED & _reported_sdk_exports())
+    assert not still_reported, (
+        f"{still_reported} is required by another export's signature yet the census still "
+        "reports it inert — the clear is not reaching _inert_sdk_export_surfaces()"
+    )
+
+
+@pytest.mark.timeout(300)
+def test_an_export_reachable_from_no_published_signature_is_still_inert():
+    """Direction two — the teeth. A type exported for no reason is genuinely inert.
+
+    This is the case worth keeping, and the rule must not have eaten it: the provider protocols
+    an app subclasses, the service objects it is handed and the error classes it catches are
+    named by NO published signature, so they stay reported. Measured when the rule landed: 170
+    of 229 surfaces survive, 54 of them exported types. The floor sits below that with headroom
+    — a legitimate future wiring may clear a few — but far above zero, because a rule that
+    cleared every type would pass the test above and guard nothing.
+
+    A named export that leaves this set has been wired, not excused: re-pin it here with the
+    signature that now names it.
+    """
+    import importlib
+
+    reported = _reported_sdk_exports()
+    types_only = set()
+    for label in reported:
+        mod_name, _, name = label.rpartition(".")
+        obj = getattr(importlib.import_module(f"personalclaw.sdk.{mod_name}"), name, None)
+        if isinstance(obj, type):
+            types_only.add(label)
+    assert len(types_only) >= 40, (
+        f"only {len(types_only)} exported TYPES are still reported inert (54 when the "
+        "API-closure clear landed) — the clear has over-reached; narrow it rather than "
+        "trusting a suspiciously clean census"
+    )
+    for orphan in (
+        "action.ActionProvider",
+        "channel.SessionManager",
+        "manifest.AppManifest",
+        "model.ModelCatalog",
+    ):
+        assert orphan in types_only, f"{orphan} left the census — say what now names it"
+
+
+@pytest.mark.timeout(300)
+def test_a_type_that_names_only_itself_does_not_clear_itself():
+    """Narrowing one: a self-edge is not a reader.
+
+    ``AppManifest.from_dict()`` returns ``AppManifest``; a self-referential constructor or
+    ``with_overrides``-style method sits on most dataclasses in this tree, so counting it would
+    clear nearly everything and leave the counter meaning nothing. The self-edge is asserted
+    PRESENT first — without that control this test would pass just as well on a type with no
+    methods at all, which is the shape of a rail that cannot fire.
+    """
+    from personalclaw.apps.manifest import AppManifest
+    from personalclaw.net import EgressPolicy
+    from scripts.sdk_surface_closure import consumed_exports, types_an_app_must_name
+
+    consumed = consumed_exports()
+    reported = _reported_sdk_exports()
+    for label, cls in (("manifest.AppManifest", AppManifest), ("net.EgressPolicy", EgressPolicy)):
+        self_edges = [where for where, t in types_an_app_must_name(cls) if t is cls]
+        assert self_edges, (
+            f"{cls.__qualname__} no longer names itself in any field or signature, so this "
+            "test's control is gone — pick another self-referential export"
+        )
+        assert label not in consumed, f"{label} cleared itself through {self_edges}"
+        assert label in reported, f"{label} left the census with only a self-edge to clear it"
+
+
+@pytest.mark.timeout(300)
+def test_an_exported_functions_signature_does_not_clear_an_export():
+    """Narrowing two: only exported CLASSES are owners — a ruling, measured before it was made.
+
+    Nine residual types would clear if an exported function's parameters and return counted
+    (``net.evaluate() -> GuardDecision``, ``channel.guard_inbound() -> TrustVerdict``, …), and
+    on its own that reads like a free generalisation. It is not: the census's clear and the
+    ``test_sdk_surface_is_public`` gap rail are ONE walk on purpose, and admitting function
+    roots to that walk opens **22 new gaps** — ``AuthConfig``, ``ScheduleJob``,
+    ``FetchResponse``, ``McpClientRegistry`` and eighteen more become types the facade owes an
+    app, one of them (``triggers.tools.ToolResult``) colliding by name with an already-exported
+    type. That is a second tranche of the same defect class and a separate change; widening only
+    the census half would give the two directions different definitions of "published
+    signature", which is exactly what sharing one walk prevents.
+
+    Pinned with its own control: the function really does name the type, and the type really is
+    still reported.
+    """
+    import typing
+
+    from personalclaw.net import GuardDecision
+    from personalclaw.sdk import net as sdk_net
+    from scripts.sdk_surface_closure import core_types_in
+
+    named = [
+        arg
+        for arg, ann in typing.get_type_hints(sdk_net.evaluate).items()
+        if GuardDecision in core_types_in(ann)
+    ]
+    assert named, (
+        "sdk.net.evaluate no longer names GuardDecision, so this test's control is gone — "
+        "pick another exported function whose signature names an exported type"
+    )
+    assert "net.GuardDecision" in _reported_sdk_exports(), (
+        "net.GuardDecision cleared, so an exported FUNCTION's signature is now a reader. If "
+        "that was intended, widen the gap rail in the same change and export the 22 types it "
+        "then requires — do not widen one direction of the walk alone"
     )
 
 
