@@ -610,4 +610,90 @@ class TestHumanizeProviderError:
         assert len(out) <= 501 and out.endswith("…")
 
     def test_none_safe(self):
-        assert humanize_provider_error(None) == ""
+        out = humanize_provider_error(None)
+        assert out and "failed" in out
+
+
+class TestHumanizeProviderErrorWithNoMessage:
+    """An exception whose ``str()`` is empty still gets a sentence (day-56b evidence).
+
+    Measured on a fresh instance: the provider proxy rejected the connection, the native
+    runtime raised ``httpx.ReadError('')``, and the chat showed an error bar with NOTHING in
+    it — ``"content": ""`` over the WebSocket and on disk — because this function returned
+    ``str(exc)``. Every case below returned ``""`` before the fix.
+    """
+
+    def _req(self):
+        import httpx
+
+        return httpx.Request("POST", "http://127.0.0.1:11435/api/chat?key=NOT-SHOWN")
+
+    def test_read_error_names_the_lost_connection_and_the_endpoint(self):
+        import httpx
+
+        out = humanize_provider_error(httpx.ReadError("", request=self._req()))
+        assert "connection to the model provider at 127.0.0.1:11435 was lost" in out
+        assert "try again" in out
+        # Host and port only: a key carried in the URL never reaches the sentence.
+        assert "NOT-SHOWN" not in out and "/api/chat" not in out
+
+    def test_read_error_without_a_request_still_says_what_failed(self):
+        import httpx
+
+        out = humanize_provider_error(httpx.ReadError(""))
+        assert out.startswith("The connection to the model provider was lost")
+
+    def test_timeouts_say_the_request_timed_out(self):
+        import asyncio
+
+        import httpx
+
+        for exc in (
+            httpx.ReadTimeout("", request=self._req()),
+            asyncio.TimeoutError(),
+            TimeoutError(),
+        ):
+            out = humanize_provider_error(exc)
+            assert "timed out" in out, exc
+
+    def test_connect_timeout_and_refusal_say_it_could_not_be_reached(self):
+        import httpx
+
+        assert "Timed out connecting" in humanize_provider_error(
+            httpx.ConnectTimeout("", request=self._req())
+        )
+        assert "Couldn't connect to the model provider" in humanize_provider_error(
+            ConnectionRefusedError()
+        )
+
+    def test_reset_and_broken_pipe_are_a_lost_connection(self):
+        for exc in (ConnectionResetError(), BrokenPipeError()):
+            assert "was lost" in humanize_provider_error(exc), exc
+
+    def test_a_messageless_wrapper_is_described_by_its_transport_cause(self):
+        import httpx
+
+        try:
+            try:
+                raise httpx.ReadError("", request=self._req())
+            except httpx.ReadError as inner:
+                raise RuntimeError() from inner
+        except RuntimeError as wrapped:
+            out = humanize_provider_error(wrapped)
+        assert "127.0.0.1:11435 was lost" in out
+
+    def test_an_unknown_messageless_class_is_named_rather_than_blank(self):
+        class WeirdProviderFault(Exception):
+            pass
+
+        out = humanize_provider_error(WeirdProviderFault())
+        assert "WeirdProviderFault" in out and "no message" in out
+
+    def test_whitespace_only_counts_as_no_message(self):
+        assert humanize_provider_error(Exception("   \n")).startswith("The turn failed with")
+
+    def test_an_ipv6_endpoint_is_bracketed(self):
+        import httpx
+
+        req = httpx.Request("POST", "http://[::1]:11434/api/chat")
+        assert "[::1]:11434" in humanize_provider_error(httpx.ReadError("", request=req))

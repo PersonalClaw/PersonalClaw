@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { ResultAnnouncement } from '../ui/ListControls'
 import { reportActionFailure, reportingWrite } from '../app/reportingWrite'
 import { unavailableWhen, BUSY_REASON } from '../ui/unavailable'
@@ -86,11 +86,13 @@ import { SnipOverlay } from '../ui/SnipOverlay'
 import { chooseCaptureProvider, cropToPngFile, displayCaptureSupported, grabOneFrame, type SnipRect } from '../ui/composer/displayCapture'
 import { notify } from '../app/appSdk'
 import { spring, stagger, listItemEnter, expr } from '../design/motion'
-import { api, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type RewindFileWire } from '../lib/api'
+import { api, ApiError, hasApiCode, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type RewindFileWire } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useStreamCoalescer } from './chat/useStreamCoalescer'
 import { FindBar } from '../ui/FindBar'
 import { findSegments } from './chat/findSegments'
+import { turnErrorText } from './chat/turnError'
+import { editReplacesLaterTurns, replacedTurnsAreKept } from './chat/editReplaces'
 import { FollowupChips, followupAnnouncement } from './chat/FollowupChips'
 import { CheckWorkChip } from './chat/CheckWorkChip'
 import { SessionMapReturnLatest, scrollToLatest } from './chat/SessionMapReturnLatest'
@@ -739,12 +741,29 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // Only show the skeleton on a genuine cold open (session with nothing cached).
   // A cache hit paints instantly and revalidates silently in the background.
   const [loadingHistory, setLoadingHistory] = useState(!!sessionId && !seededDetail)
+  // 🔴 THE CHAT THIS ROUTE NAMES DOES NOT EXIST. The detail read answered 404 — or it stopped
+  // existing under us and a send answered `session_not_found`. Before this, the load's catch
+  // only cleared the skeleton, so a dead link rendered exactly like a fresh empty chat and its
+  // composer took a message the server then refused and did not save (day-56b `s33`). Terminal
+  // for this mount: the page says the chat is gone and offers a new one instead.
+  const [missing, setMissing] = useState(false)
+  // A read that failed for any OTHER reason is not evidence that the chat is gone, so it is
+  // shown as a load failure with a retry — never as an empty chat, and never as "not found".
+  const [loadFailure, setLoadFailure] = useState<unknown>(null)
+  const [loadAttempt, setLoadAttempt] = useState(0)
   const composerRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
   // true when the transcript is scrolled away from the bottom — drives the
   // "jump to latest" pill (so streamed content arriving above the fold isn't lost).
   const [scrolledUp, setScrolledUp] = useState(false)
+  // Armed by a send: follow THIS turn to its outcome — see the auto-scroll effect. Seeded
+  // from `streaming`'s INITIAL value, which is true only when this mount is the replacement
+  // for the instance whose first send created the session (`streamingAtMount`): that send
+  // re-keys and remounts ChatSession, and the turn it asked for must still be followed here
+  // (the measured 60k-paste case was exactly a new chat's first message).
+  const followTurnRef = useRef(streaming)
+  const followNewTurn = () => { followTurnRef.current = true }
   // WS link state — false while the socket is down (drives the reconnecting cue).
   const [wsConnected, setWsConnected] = useState(true)
   // glow-travel target (Stage 3): while a turn is in flight, this ref points at
@@ -1095,6 +1114,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     setSubagents([])  // subagent cards are per-session too
     setBranchedFrom(null)  // lineage is per-session; the load below re-reads it
     if (!sessionId) { setTurns([]); setLoadingHistory(false); return }
+    setLoadFailure(null)
     let alive = true
     // The terminal-event watermark as this read is ISSUED; compared again when it
     // resolves, so a snapshot taken before the turn ended cannot re-arm streaming
@@ -1222,9 +1242,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         if (!refreshedFinalAnswer) dropTextRun()
       }
       setLoadingHistory(false)
-    }).catch(() => { if (alive) setLoadingHistory(false) })
+    }).catch((e) => {
+      if (!alive) return
+      setLoadingHistory(false)
+      if (e instanceof ApiError && e.status === 404) setMissing(true)
+      else setLoadFailure(e)
+    })
     return () => { alive = false }
-  }, [sessionId])
+  }, [sessionId, loadAttempt])
 
   // Restore the composer selection from the resumed session's binding, once both
   // the binding (from detail) and the discovered-agent catalog have loaded. ACP
@@ -1296,7 +1321,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         if (d.role === 'error') {
           endTextRun()  // land buffered text before the error segment
           markStreaming(false); setStatusText(''); setLatestActivity(null)
-          patchLastAssistant((segs) => [...segs, { kind: 'error', text: String(d.content ?? 'The model returned an error.') }])
+          patchLastAssistant((segs) => [...segs, { kind: 'error', text: turnErrorText(d.content) }])
         }
         break
       }
@@ -1767,21 +1792,37 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   }, [])
 
   // Auto-scroll the transcript to the bottom as content streams in — but only if
-  // the user is already near the bottom (don't yank them while reading up).
+  // the user is already near the bottom (don't yank them while reading up)…
+  //
+  // 🔴 …OR THE USER JUST SENT THE TURN THAT IS ARRIVING. "Near the bottom" is measured AFTER
+  // the render, so the user's own new message could unfollow the view by itself: measured, a
+  // 60k-character paste put the bottom ~21,000px below the viewport the moment its bubble
+  // rendered, and the turn's outcome — its error — landed out of sight, reachable only through
+  // "Jump to latest". A send arms `followTurnRef` (`followNewTurn`), so the view follows that
+  // turn to its outcome: the frame that ends it still scrolls, and then the arm is spent. A
+  // scroll away from the bottom disarms it (the listener below), so a reader who scrolls up
+  // mid-answer is left where they went.
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200
-    if (nearBottom) endRef.current?.scrollIntoView({ block: 'end' })
+    if (followTurnRef.current || nearBottom) endRef.current?.scrollIntoView({ block: 'end' })
+    if (!streaming) followTurnRef.current = false
   }, [turns, streaming, showThinking])
 
   // Track distance from the bottom so a "jump to latest" pill can show when the
   // user has scrolled up (e.g. reading history while a reply streams in below).
+  // Content growth fires no scroll event, so a large gap HERE is the user's own movement —
+  // the one thing that may cancel following a turn they sent.
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
-    const onScroll = () => setScrolledUp(el.scrollHeight - el.scrollTop - el.clientHeight > 240)
-    onScroll()
+    const onScroll = () => {
+      const up = el.scrollHeight - el.scrollTop - el.clientHeight > 240
+      setScrolledUp(up)
+      if (up) followTurnRef.current = false
+    }
+    setScrolledUp(el.scrollHeight - el.scrollTop - el.clientHeight > 240)
     el.addEventListener('scroll', onScroll, { passive: true })
     return () => el.removeEventListener('scroll', onScroll)
   }, [started])
@@ -2046,6 +2087,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           if (r?.queued) return  // the paired queue_push frame renders the strip card
           // Dispatched as a fresh turn. Render exactly what the normal send path would:
           // the user's bubble, then arm streaming so its reply has somewhere to land.
+          followNewTurn()
           setTurns((prev) => [...prev, userTurn(t, steerTs)])
           markStreaming(true)
           dropTextRun()
@@ -2074,6 +2116,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // Deliberately NOT passed as `optimized`: that disclosure would put the JSON back
     // on screen under a chip that says "Optimized", which is both ugly and untrue.
     const uiLabel = opts?.uiLabel?.trim() || undefined
+    // Sending is asking for the outcome: follow the new turn wherever the view was.
+    followNewTurn()
     setTurns((prev) => [...prev, userTurn(uiLabel ?? original ?? t, clientTs, turnPastes.length ? turnPastes : undefined, files, original ? t : undefined)])
     // A widget action is not something the user TYPED, so it never joins ↑-history —
     // replaying a machine payload as a prompt is not an affordance anyone wants.
@@ -2126,7 +2170,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // at all. `setRoutingSuggestion` belongs to ChatPage, which survives the remount.
       if (sent?.routing_suggestion?.agent) setRoutingSuggestion(sent.routing_suggestion)
     }
-    catch (e) { markStreaming(false); patchLastAssistant((segs) => [...segs, { kind: 'text', text: `⚠️ ${(e as Error).message}` }]) }
+    catch (e) {
+      markStreaming(false)
+      // The chat is gone (a dead link whose read lost the race, or deleted in another tab).
+      // The server did NOT save this message, so it goes back into the draft — which the
+      // not-found state carries into a new chat — rather than sitting in the transcript as
+      // a sent bubble above a one-line refusal.
+      if (hasApiCode(e, 'session_not_found')) { setInput(llmText); setMissing(true); return }
+      patchLastAssistant((segs) => [...segs, { kind: 'text', text: `⚠️ ${(e as Error).message}` }])
+    }
   }
 
   // Pin the frame currently being shared (§5.4). The bytes come from the client
@@ -2341,6 +2393,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     const s = sessionRef.current
     if (!s || streaming) return
     // drop the last assistant turn locally; the fresh reply streams in via WS.
+    followNewTurn()
     setTurns((prev) => {
       const i = prev.map((t) => t.role).lastIndexOf('assistant')
       return i >= 0 ? prev.slice(0, i) : prev
@@ -2409,6 +2462,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // re-appends the edited message, which would otherwise get a new server ts the
     // FE doesn't know). Falls back to the index when the original turn has no ts.
     const newTs = new Date().toISOString()
+    followNewTurn()
     setTurns((prev) => [...prev.slice(0, turnIndex), userTurn(t, newTs)])
     // dropTextRun: the re-sent turn's fresh reply must open a NEW coalesced run. We truncate
     // the turns above, but the coalescer core still holds the PRIOR answer's buffer; without
@@ -2416,25 +2470,28 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // the old one (K44/K45). DISCARD rather than seal — the turn that text belonged to has
     // just been truncated away.
     markStreaming(true); dropTextRun()
-    // rewind=true (edit of a NON-last turn): the backend retains the discarded tail
-    // on the edited message and resets the provider so context rebuilds from the
-    // truncated transcript. The chat_rewound WS re-hydrates so the divider chip +
-    // read-only tail disclosure appear. Without it, this is the last-turn path.
-    try { await api.editResend(s, t, turn?.ts, turnIndex, newTs, rewind) }
+    // A rewind retains the discarded tail on the edited message and resets the provider so
+    // context rebuilds from the truncated transcript; the chat_rewound WS re-hydrates so the
+    // divider chip + read-only tail disclosure appear. An EARLIER turn is always a rewind —
+    // decided here for both callers (the inline editor and Rewind to here), and enforced by
+    // the server too, because a plain resend of a middle turn used to delete every later
+    // exchange with no trail. Only the latest turn's plain edit replaces just its own reply.
+    const asRewind = rewind || editReplacesLaterTurns(turns, turnIndex)
+    try { await api.editResend(s, t, turn?.ts, turnIndex, newTs, asRewind) }
     catch (e) { markStreaming(false); patchLastAssistant((segs) => [...segs, { kind: 'text', text: `⚠️ ${(e as Error).message}` }]) }
   }
 
   // Rewind to an earlier user turn: confirm (it discards the later answers into
   // history), then edit-resend with the same text and rewind=true. The inline
   // editor stays available for changing the text first (Edit & resend); Rewind is
-  // the one-click "replay from here unchanged, keep the tail" affordance.
+  // the one-click "answer this again, keep the tail" affordance. The later messages
+  // are NOT re-sent — only this one is — so the confirmation says replaced, not replayed.
   async function rewindTo(turnIndex: number) {
     const turn = turns[turnIndex]
     if (!turn || turn.role !== 'user') return
-    const later = turns.length - 1 - turnIndex
     if (!(await confirm({
       title: 'Rewind to this message?',
-      body: `The ${later} later message${later === 1 ? '' : 's'} will be replayed from here — the current answers are kept in this chat's history and can be forked back.`,
+      body: `Everything below this message is replaced by a fresh reply to it. ${replacedTurnsAreKept(memoryMode === 'persistent')}`,
       confirmLabel: 'Rewind',
     }))) return
     await editResend(turnIndex, turnText(turn), true)
@@ -3219,6 +3276,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     </div>
   )
 
+  if (missing) return <MissingChat draft={input} navigate={navigate} />
+  // A failed read with nothing painted: say it failed, and let the user retry. (A transcript
+  // painted from the fresh cache stays on screen — a failed REVALIDATION of it is not news.)
+  if (loadFailure && !started) return (
+    <div className="flex h-full flex-col items-center justify-center overflow-hidden px-l">
+      <LoadError what="chat" error={loadFailure} onRetry={() => setLoadAttempt((n) => n + 1)} />
+    </div>
+  )
+
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
       <DotGlow intensity={composerFocused ? 1.6 : 1} composerRef={composerRef} focusRef={glowTargetRef} />
@@ -3458,10 +3524,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                         )}
                         {turn.role === 'user' ? (
                           editingTurn === i ? (
-                            <UserEditor initial={turnTextOf(turn)} onCancel={() => setEditingTurn(null)} onSubmit={(v) => editResend(i, v)} />
+                            <UserEditor initial={turnTextOf(turn)} onCancel={() => setEditingTurn(null)}
+                              replacesLater={editReplacesLaterTurns(turns, i)} canFork={memoryMode === 'persistent'}
+                              onSubmit={(v) => editResend(i, v)} />
                           ) : (
                             <div className="group/msg">
-                              <MessageUser fromComposer={isLast} onFileClick={setOpenFile} pastes={turn.pastes} optimized={turn.optimized}>{turnTextOf(turn)}</MessageUser>
+                              <MessageUser fromComposer={isLast} onFileClick={setOpenFile} pastes={turn.pastes} optimized={turn.optimized}
+                                onExpand={() => { followTurnRef.current = false }}>{turnTextOf(turn)}</MessageUser>
                               {turn.files && turn.files.length > 0 && <TurnAttachments paths={turn.files} onOpenFile={setOpenFile} />}
                               {turn.rewound && turn.rewound.length > 0 && (
                                 <RewindDivider snapshots={turn.rewound} canFork={memoryMode === 'persistent'} onFork={(si) => forkRewound(i, si)} />
@@ -4044,6 +4113,28 @@ function PasteCards({ blocks, onRemove }: { blocks: PasteBlock[]; onRemove: (seq
   )
 }
 
+/** The route names a chat that does not exist — a dead deep link, or a chat deleted while it
+ *  was open. Said plainly, with the two ways forward, instead of an empty chat whose composer
+ *  takes a message the server refuses and does not save. A draft that was typed (or sent and
+ *  refused) is not dropped: "Start a new chat" carries it into the new chat's composer through
+ *  the same `?seed=` pre-fill every other "start a chat with this" launch uses. */
+function MissingChat({ draft, navigate }: { draft: string; navigate: (p: string, opts?: { replace?: boolean }) => void }) {
+  const keep = draft.trim()
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-s overflow-y-auto px-l">
+      <EmptyState icon={MessageSquare} title="This chat doesn’t exist"
+        hint={keep
+          ? 'It may have been deleted, or the link is out of date. Your message was not sent — it will be waiting in the new chat.'
+          : 'It may have been deleted, or the link is out of date.'}
+        action={{
+          label: 'Start a new chat', icon: Edit3,
+          onClick: () => navigate(keep ? `chat/new?seed=${encodeURIComponent(keep)}` : 'chat/new', { replace: true }),
+        }} />
+      <Button variant="ghost" size="sm" onClick={() => navigate('chat/history')}>See all chats</Button>
+    </div>
+  )
+}
+
 /** Rewind divider (CHAT-CRAFT S1) — shown under a user turn that was
  *  edited-and-replayed. States "N messages kept in history" and discloses the
  *  retained tail read-only. Restoring a tail = forking it into a new session
@@ -4097,22 +4188,39 @@ function RewindDivider({ snapshots, canFork, onFork }: {
 }
 
 /** Inline editor for a user turn (Edit & resend). Replaces the bubble with a
- *  right-aligned textarea + Cancel/Resend; ⌘↵ submits, Esc cancels. */
-function UserEditor({ initial, onSubmit, onCancel }: { initial: string; onSubmit: (v: string) => void; onCancel: () => void }) {
+ *  right-aligned textarea + Cancel/Resend; ⌘↵ submits, Esc cancels.
+ *
+ *  `replacesLater`: this is an EARLIER turn, so resending replaces every exchange below it.
+ *  That is said while the editor is open — beside the button that does it, and on the button
+ *  itself — together with where the replaced turns go, because the old editor resent a middle
+ *  turn with no warning and the later turns were simply gone. */
+function UserEditor({ initial, onSubmit, onCancel, replacesLater = false, canFork = false }: {
+  initial: string; onSubmit: (v: string) => void; onCancel: () => void
+  replacesLater?: boolean; canFork?: boolean
+}) {
   const [v, setV] = useState(initial)
+  const noticeId = useId()
   return (
     <div className="flex flex-col items-end gap-2">
       <textarea autoFocus value={v} onChange={(e) => setV(e.target.value)} rows={Math.min(10, v.split('\n').length + 1)}
+        aria-label="Edit your message"
+        aria-describedby={replacesLater ? noticeId : undefined}
         onKeyDown={(e) => {
           if (e.key === 'Escape') { e.preventDefault(); onCancel() }
           else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSubmit(v) }
         }}
         className="w-full resize-none rounded-2xl bg-surface-container px-5 py-4 text-on-surface text-[1.0625rem] leading-relaxed outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
         style={{ maxWidth: 452 }} />
+      {replacesLater && (
+        <p id={noticeId} data-type="caption" className="flex w-full items-start gap-1.5 text-on-surface-var" style={{ maxWidth: 452 }}>
+          <Rewind size={12} className="mt-0.5 shrink-0" />
+          <span>Resending replaces everything below this message. {replacedTurnsAreKept(canFork)}</span>
+        </p>
+      )}
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="sm" onClick={onCancel} className="px-3 text-on-surface-low">Cancel</Button>
         <Button size="sm" onClick={() => onSubmit(v)} disabled={!v.trim()} className="px-4"
-          disabledReason={!v.trim() ? 'The message cannot be empty' : undefined}>Resend</Button>
+          disabledReason={!v.trim() ? 'The message cannot be empty' : undefined}>{replacesLater ? 'Resend & replace' : 'Resend'}</Button>
       </div>
     </div>
   )

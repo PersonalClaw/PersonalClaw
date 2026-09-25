@@ -717,6 +717,78 @@ async def one_shot_completion(
     return await _run(provider)
 
 
+def _failed_endpoint(exc: BaseException) -> str:
+    """``" at <host:port>"`` for a transport error that knows its request, else ``""``.
+
+    Only the host and port — never the path or query, which is where a provider that takes
+    its key in the URL would carry it. httpx attaches the request to the errors it raises
+    while sending; its ``request`` property raises instead of returning ``None`` when it was
+    never attached, so the absence is caught rather than tested.
+    """
+    try:
+        url = exc.request.url  # type: ignore[attr-defined]
+    except (AttributeError, RuntimeError):
+        return ""
+    host = str(getattr(url, "host", "") or "")
+    if not host:
+        return ""
+    if ":" in host:
+        host = f"[{host}]"
+    port = getattr(url, "port", None)
+    return f" at {host}:{port}" if port else f" at {host}"
+
+
+def _describe_unexplained_failure(exc: object) -> str:
+    """The sentence for a failure whose ``str()`` is empty — never an empty string.
+
+    ``httpx.ReadError``, every httpx timeout, ``asyncio.TimeoutError`` and a bare
+    ``ConnectionResetError`` all stringify to ``""``, and a turn error is SHOWN as its text:
+    an empty string rendered as an error bar with nothing in it, over the WebSocket and on
+    disk alike. So the class — and, for httpx, the endpoint — has to say what the message
+    did not. A wrapper raised ``from`` a transport error is described by that cause, since the
+    cause is what actually failed.
+    """
+    if exc is None:
+        return (
+            "The turn failed without reporting an error. Try again; if it keeps failing, "
+            "check the gateway log."
+        )
+    import httpx
+
+    seen: BaseException | None = exc if isinstance(exc, BaseException) else None
+    for _ in range(5):
+        if seen is None:
+            break
+        where = _failed_endpoint(seen)
+        if isinstance(seen, httpx.ConnectTimeout):
+            return (
+                f"Timed out connecting to the model provider{where}. Check that it is "
+                "running and reachable, then try again."
+            )
+        if isinstance(seen, (httpx.TimeoutException, TimeoutError)):
+            return (
+                f"The model provider{where} did not answer in time, so the request timed "
+                "out. Wait a moment and try again, or pick a different model."
+            )
+        if isinstance(seen, (httpx.ConnectError, ConnectionRefusedError)):
+            return (
+                f"Couldn't connect to the model provider{where}. Check that it is running "
+                "and reachable, then try again."
+            )
+        if isinstance(
+            seen, (httpx.NetworkError, httpx.RemoteProtocolError, ConnectionError, EOFError)
+        ):
+            return (
+                f"The connection to the model provider{where} was lost before its reply was "
+                "complete. Check that it is still running and reachable, then try again."
+            )
+        seen = seen.__cause__
+    return (
+        f"The turn failed with {type(exc).__name__}, and the error carried no message. "
+        "Try again; if it keeps failing, check the gateway log."
+    )
+
+
 def humanize_provider_error(exc: object) -> str:
     """Turn a raw LLM-provider exception into a short, actionable user-facing line.
 
@@ -728,8 +800,13 @@ def humanize_provider_error(exc: object) -> str:
     concise hint; pass anything unrecognized through (trimmed) so we never HIDE a
     real error, just clean up the ones we know. Pure string heuristics (provider SDKs
     don't share a typed error taxonomy), matched on the lowercased message.
+
+    Never returns an empty string: an exception with no message is described from its
+    class instead (:func:`_describe_unexplained_failure`).
     """
     raw = str(exc or "").strip()
+    if not raw:
+        return _describe_unexplained_failure(exc)
     low = raw.lower()
     # (needle, friendly) — order matters; first match wins.
     _MAP = [

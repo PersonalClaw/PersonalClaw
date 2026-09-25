@@ -34,6 +34,7 @@ from aiohttp import web
 
 from personalclaw.config.loader import _DEFAULT_PORT
 from personalclaw.dashboard.origin import is_loopback, is_private_network
+from personalclaw.dashboard.owner_token_url import script_tag as owner_token_script
 from personalclaw.sel import AUDIT_OUTCOME_SUCCESS
 from personalclaw.sel import sel as _sel_fn
 
@@ -482,11 +483,16 @@ _403_HTML = (
     "<button onclick='go()'>Connect</button>"
     "<div class='err' id='e'>Invalid URL</div>"
     "</div>"
+    # The owner-token helpers (owner_token_url.js), inlined — this gate renders before any
+    # authenticated asset can load. They scrub a refused token out of the URL, and build the
+    # Connect target: this origin, the pasted token, and the dashboard route this gate was
+    # opened at. It used to be `origin + '?token='`, which dropped the route, so every deep
+    # link landed on the dashboard once the token was accepted.
+    "{owner_token_script}"
     "<script>"
     "function go(){{var v=document.getElementById('u').value.trim();if(!v)return;"
-    "var t;try{{var u=new URL(v);t=u.searchParams.get('token')}}"
-    "catch(_){{t=v}}if(t){{window.location.href="
-    "window.location.protocol+'//'+window.location.host+'?token='+encodeURIComponent(t)}}"
+    "var t=PersonalClawOwnerToken.connectUrl(v);"
+    "if(t){{window.location.assign(t)}}"
     "else{{document.getElementById('e').style.display='block'}}}}"
     "document.getElementById('u').addEventListener('keydown',"
     "function(e){{if(e.key==='Enter')go()}});"
@@ -1392,7 +1398,7 @@ def _deny(request: web.Request, reason: str) -> web.Response:
             headers={**headers, "Location": "/login", "Cache-Control": "no-store"},
         )
     return web.Response(
-        text=_403_HTML.format(reason=reason),
+        text=_403_HTML.format(reason=reason, owner_token_script=owner_token_script(scrub=True)),
         status=403,
         content_type="text/html",
         headers=headers,

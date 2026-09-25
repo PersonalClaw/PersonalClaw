@@ -32,6 +32,7 @@ from aiohttp import web
 from personalclaw.auth import credentials as creds
 from personalclaw.dashboard.handlers.page_shell import page_document
 from personalclaw.dashboard.origin import check_origin
+from personalclaw.dashboard.owner_token_url import script_source as owner_token_script_source
 from personalclaw.dashboard.token_auth import (
     DEFAULT_BROWSER_SESSION_TTL_SECS,
     generate_token,
@@ -536,7 +537,7 @@ document.getElementById('cf').addEventListener('submit', function (ev) {
       return { ok: r.ok, status: r.status, data: d };
     });
   }).then(function (res) {
-    if (res.ok) { window.location.href = '/'; return; }
+    if (res.ok) { window.location.assign(PersonalClawOwnerToken.home()); return; }
     var code = (res.data && res.data.error && res.data.error.code) || '';
     err.textContent = MESSAGES[code] || ('Pairing failed (HTTP ' + res.status + ').');
     btn.disabled = false;
@@ -564,7 +565,7 @@ document.getElementById('f').addEventListener('submit', function (ev) {
       return { ok: r.ok, status: r.status, data: d };
     });
   }).then(function (res) {
-    if (res.ok) { window.location.href = '/'; return; }
+    if (res.ok) { window.location.assign(PersonalClawOwnerToken.home()); return; }
     // `json_error` emits {"error": {"code", "message"}} (PL-8's one wire envelope). Reading
     // `res.data.error` as a bare string made every MESSAGES lookup miss, so this page only ever
     // said "Sign-in failed." and the auth_totp_required branch below could never fire.
@@ -585,4 +586,12 @@ document.getElementById('f').addEventListener('submit', function (ev) {
 });
 """
 
-_LOGIN_HTML = page_document(title="Sign in — PersonalClaw", body=_LOGIN_BODY, script=_LOGIN_SCRIPT)
+# The owner-token helpers ride in front of the page's own script: `home()` is where a successful
+# sign-in lands — "/" plus the dashboard route the user had opened. The 302 into /login keeps
+# that route (a redirect without a fragment inherits the request's), and landing on a bare "/"
+# threw it away, so a deep link always ended on the dashboard.
+_LOGIN_HTML = page_document(
+    title="Sign in — PersonalClaw",
+    body=_LOGIN_BODY,
+    script=owner_token_script_source() + "\n" + _LOGIN_SCRIPT,
+)

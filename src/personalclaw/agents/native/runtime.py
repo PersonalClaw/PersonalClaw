@@ -1025,8 +1025,10 @@ class NativeAgentRuntime(AgentProvider):
                         if not can_retry:
                             raise
                         inference_retried = True
+                        # `%r`, not `%s`: httpx.ReadError and every timeout stringify to "",
+                        # which logged "retrying once: " with nothing after it.
                         logger.warning(
-                            "native: inference attempt failed (%s) — retrying once: %s",
+                            "native: inference attempt failed (%s) — retrying once: %r",
                             fmode.value,
                             exc,
                         )

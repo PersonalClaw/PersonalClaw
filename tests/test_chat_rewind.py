@@ -162,6 +162,52 @@ class TestRewind:
         state.sessions.reset.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_editing_an_earlier_turn_without_the_flag_still_keeps_the_later_turns(
+        self, tmp_path, monkeypatch
+    ):
+        """The day-56b defect (`s24E`): the inline editor sent NO `rewind` for a middle
+        turn, the server answered `{"rewound": 0}`, and the later turn was gone from disk
+        with no trail. An edit that has later user turns after it must retain them and
+        reset the provider whatever the client sent."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        state.sessions.reset = AsyncMock()
+        session = _seed(state, "s1", 3)
+        broadcasts: list[tuple[str, object]] = []
+        monkeypatch.setattr(
+            state, "broadcast_ws", lambda t, d: broadcasts.append((t, d)), raising=True
+        )
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            r = await client.post(
+                "/api/chat/sessions/s1/edit-resend",
+                # turn 1 of 3, exactly as the inline editor sends it: no rewind flag
+                json={"ts": "2026-06-30T05:01:00+00:00", "content": "q1-edited"},
+            )
+            assert r.status == 200
+            # a1, q2, a2 were replaced — and the response says so
+            assert (await r.json())["rewound"] == 3
+
+        assert [m["content"] for m in session.messages] == ["q0", "a0", "q1-edited"]
+        retained = session.messages[-1]["rewound"][0]["messages"]
+        assert [m["content"] for m in retained] == ["q1", "a1", "q2", "a2"]
+        state.sessions.reset.assert_awaited_once()
+        assert any(t == "chat_rewound" for t, _ in broadcasts)
+
+        # …and it is on DISK, not just in memory — the measured loss was on disk.
+        from personalclaw.dashboard.chat_persistence import _rehydrate_session_from_history
+
+        state._sessions.pop("s1", None)
+        reloaded = _rehydrate_session_from_history(state, "s1")
+        assert reloaded is not None
+        assert [m["content"] for m in reloaded.messages[-1]["rewound"][0]["messages"]] == [
+            "q1",
+            "a1",
+            "q2",
+            "a2",
+        ]
+
+    @pytest.mark.asyncio
     async def test_rewind_refused_while_running(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)

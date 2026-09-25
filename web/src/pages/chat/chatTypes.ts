@@ -6,6 +6,7 @@
 // `approvalMeta` imports ApprovalSegment from here as `import type`, which is erased at
 // compile time, so this value import creates no runtime cycle.
 import { readOnlyCommandOf } from './approvalMeta'
+import { turnErrorText } from './turnError'
 
 export interface TextSegment { kind: 'text'; text: string }
 
@@ -531,7 +532,7 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       lastAssistant().segments.push({ kind: 'approval', id: m.meta?.approval_id || m.meta?.tool_call_id || `perm-${turns.length}`, tool: toolName(m.meta, m.content), input: m.meta?.input || m.meta?.tool_input, purpose: m.meta?.purpose, risk: m.meta?.risk as ApprovalSegment['risk'], readOnlyCommand: readOnlyCommandOf(m.meta?.is_read_only), grantAgent: m.meta?.grant_agent, resolved })
     } else if (m.role === 'error') {
       // a failed turn (provider/model error) — surface it instead of a blank turn.
-      lastAssistant().segments.push({ kind: 'error', text: m.content })
+      lastAssistant().segments.push({ kind: 'error', text: turnErrorText(m.content) })
     }
     // other roles (chunk/system): skip.
   }
