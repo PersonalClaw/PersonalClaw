@@ -1793,6 +1793,30 @@ class RunController:
             node_id = node.id if node else ""
             error = str(getattr(info, "error", "") or "")
             reaped = bool(getattr(info, "reaped", False))
+            # 🔴 The child's USAGE, which this method used to leave on the floor. `_apply` books it
+            # for an awaited dispatch (`self.run.total_tokens += result.tokens`, :3331) and a
+            # spawned `stage` returns at the RUNNING branch before that line — so for a template
+            # whose only leaves are stages (`general-project`: `loop[sequence[stage, stage]]`) the
+            # run row counted NOTHING, no matter how many nodes completed or which provider they
+            # billed. Measured on the owner's instance: run 61899886, eight `done` nodes against a
+            # remote provider, `total_tokens: 0`.
+            #
+            # Read off `SubagentInfo`, where it is ALREADY measured: `input_tokens`/`output_tokens`/
+            # `cost_usd`/`model` are populated from the child's `EVENT_COMPLETE`
+            # (``subagent.py:2239-2252``) before `done` is set, and the same three feed the spend
+            # meter (``subagent.py:1491``) and the usage ledger (`_record_subagent_usage`). So this
+            # is a ROLL-UP of an existing observation, not a second measurement — the fan-out's own
+            # ceiling has been seeing this spend all along; only the run row could not.
+            #
+            # `getattr` with a default, like `error`/`reaped` above: the manager is injected, so a
+            # stand-in that does not model usage must read as zero rather than crash the tick.
+            tokens = int(getattr(info, "input_tokens", 0) or 0) + int(
+                getattr(info, "output_tokens", 0) or 0
+            )
+            # On the instance for BOTH outcomes, exactly as `_apply` does it (:3248, outside its
+            # success gate): a reaped stage burned its whole deadline, and a node record claiming it
+            # spent nothing is the most misleading row in the ledger.
+            inst.tokens = tokens
             if error:
                 failure = Failure(
                     # The manager reaps on its OWN deadline, so a reaped child is a timeout.
@@ -1855,6 +1879,12 @@ class RunController:
                     # existed a downstream `{{nodes.X}}` on a stage could only ever have read
                     # the placeholder the RUNNING branch left behind.
                     self._outputs[node_id] = preview
+                # The RUN total, and only on success — the same gate `_apply` applies (:3331 sits
+                # under `if result.state in SUCCESS_STATES`), and the same gate the ledger reader
+                # applies (`ledger/reader.py:106` sums `tokens` from STEP_COMPLETED rows alone). A
+                # stage that charged the run here while an `infer` node did not would give one run
+                # row two accounting rules.
+                self.run.total_tokens += tokens
                 self.journal.step_completed(
                     path,
                     node_id,
@@ -1866,6 +1896,17 @@ class RunController:
                     cache_key="",
                     state=InstanceState.DONE,
                     retries=max(0, inst.attempt - 1),
+                    # The ledger fields the roll-up above is derived from, so a reader reconciling
+                    # the run row against the rows under it arrives at the same number. `tokens`
+                    # also decides `run_totals()["tokens_recorded"]` (`ledger/reader.py:108`), which
+                    # is what `_prepare` pre-charges a capped resume from — without it a capped
+                    # stage-bodied run could not resume at all (:642 pauses on an unrecorded spend).
+                    # `provider` is deliberately left unset: no dispatcher populates
+                    # `NodeResult.provider` either, so naming one only here would make the stage the
+                    # single kind in the ledger that carries it.
+                    tokens=tokens,
+                    model=str(getattr(info, "model", "") or ""),
+                    cost_usd=float(getattr(info, "cost_usd", 0.0) or 0.0),
                     output_ref=ref,
                 )
                 if node is not None:
@@ -1901,6 +1942,12 @@ class RunController:
             settled = True
         if settled:
             self._persist_state()
+            # The RUN ROW too, not just instance state. `service.status()` is a pure store read
+            # (`store.get(run_id)`), so a `total_tokens` that lives only in this object is a number
+            # no surface can see until `_finish` happens to flush it — and a run the user is
+            # watching would report zero for its whole life. `_persist_state` writes instances
+            # only, which is why the counter needs its own flush here.
+            self._save_run()
 
     def _reap_watchers(self) -> None:
         """Stop `until_cancelled` watchers whose accompanied work has finished.
@@ -3058,6 +3105,12 @@ class RunController:
                     result = NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
                 self._apply(entry, result)
             self._persist_state()
+            # `_apply` writes the RUN ROW as well as instance state — `total_tokens` (:3331) and
+            # `agent_count` (the RUNNING branch) both live there — and `_persist_state` cannot see
+            # either, so without this flush a live run's usage counters stayed in memory until some
+            # unrelated caller happened to save. `service.status()` reads the store, so that is the
+            # difference between a running run showing its spend and showing zero.
+            self._save_run()
 
     def _node_stall_window(self, path: str) -> int:
         """This node's stall window: its own `timeout_stall_secs`, else the run-level default.
@@ -3174,7 +3227,26 @@ class RunController:
             # re-derived, because the holder is a fresh uuid per attempt.
             inst.state = InstanceState.RUNNING
             if isinstance(result.output, dict):
-                inst.subagent_id = str(result.output.get("subagent_id", "") or "")
+                spawned = str(result.output.get("subagent_id", "") or "")
+                # 🔴 `run.agent_count`'s ONLY writer. Before this the field had exactly one
+                # assignment in the tree — `WorkflowRun.from_dict` reading its own persisted zero
+                # (`models.py:1146`) — so it was a declared column, a `to_dict` key and a SQLite
+                # DEFAULT 0 that nothing ever incremented. Every run ever recorded reports
+                # `agent_count: 0`, which is why the owner's eight-node run did.
+                #
+                # Counted at the SPAWN, not at the settle, and that is the whole reason it lives in
+                # this branch rather than in `_reconcile_dispatched_stages` beside the token
+                # roll-up: a run holding three live subagents must not report zero agents while
+                # they work. `dispatch_stage` is the only dispatcher that can reach here — the
+                # `ast` rail in `test_workflows_stage_completion` pins RUNNING to it — so this is
+                # once per subagent the run actually started.
+                #
+                # Gated on the id CHANGING, so it is exactly-once per distinct child: a re-applied
+                # RUNNING result (or a retry that re-dispatches the same node) must not inflate the
+                # count, and a re-adopted run whose instance already carries the id adds nothing.
+                if spawned and spawned != inst.subagent_id:
+                    self.run.agent_count += 1
+                inst.subagent_id = spawned
             inst.claim_target = result.claim_target
             inst.claim_holder = result.claim_holder
             return
