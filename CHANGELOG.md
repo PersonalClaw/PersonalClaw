@@ -9,6 +9,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ## [Unreleased]
 
 ### Added
+- **A first-time contributor's three dead ends are closed: a compose service that runs a command the CLI does not have, a Discussions category that does not exist, and a dev setup that fails on the `python3` most machines have.**
 - **Browse can now click a `<canvas>`: an opt-in vision-grounding fallback, using a vision model you pull yourself.**
 - **"When PersonalClaw is not the right tool (yet)" — ten situations where a new reader should walk away today, and the two README claims that contradicted the code.**
 - **Agent Rooms are now something you can see and use: a Rooms tab, an attributed transcript, the pause card and per-member status.**
@@ -49,6 +50,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Homebrew and Nix are now real install paths, and a fresh-install validator proves it on a machine that does not already have them.**
 
 ### Changed
+- **The app SDK now exports every type its own published surface names — 25 of them were unimportable, so apps had to derive or re-declare them.**
+- **The SDK surface is now closed under its published *functions* too, not only fields and methods — 22 more types an app could not name, and one collision resolved.**
 - **The five Settings switches that relax a security or safety default now confirm before they take effect.**
 - **`workflow_start` now validates inputs against the same tree-derived parameter contract shown by `workflow_plan`.**
 - **Loop end-state labels now come from the structured `stop_reason`, not free-text `error_message` prose.**
@@ -77,6 +80,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 - **App installs that declare Python dependencies were refused on every clean install: `packaging` was never a declared dependency of core.**
+- **The install-consent dialog no longer freezes on "Install anyway" when a confirmed install fails for a reason the scanner never anticipated.**
 - **An empty code fence no longer paints the literal word `undefined` into a chat answer.**
 - **A `<widget>` shown inside a code fence is now shown, not run — and the fence keeps the line it was about.**
 - **A room's member picker no longer says "Loading…" forever when the agent list cannot be read, and no longer tells a user with no agents that they are all already in the room.**
@@ -90,6 +94,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **First run no longer tells you your name is saved before it has been saved.**
 - **The audit-outcome rail now sees the outcome words a subsystem names as CONSTANTS, and its raisable ceiling is replaced by a named ledger — so the better practice is no longer the one that evades the rail.**
 - **The Doctor no longer tells every pip-installed instance that its dashboard “serves a stale SPA”.**
+- **A workflow run that called no model at all is no longer told a free local model ran.**
+- **Launching a loop with no model bound now tells you where to fix it, instead of asking you whether you fixed it.**
+- **Four labelled cells on a workflow run page rendered a label with nothing after it, on any run that finished in under a second.**
 - **The Inbox no longer tells a fresh install its inbox “is not connected yet” while its own banner says the native source is active.**
 - **Prompt-cache counts now survive the native runtime, which is why every ledger row read a structural zero.**
 - **The home screen’s “Needs you” card now opens the inbox item it names, instead of dropping you on the inbox list.**

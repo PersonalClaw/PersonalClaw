@@ -453,11 +453,17 @@ def test_the_paired_reply_is_deliberately_not_on_the_sdk_surface():
     """``CANNED_PAIRED_REPLY`` is core-only until an app actually reads it.
 
     Re-exporting it through ``personalclaw.sdk.channel`` was the first thing I tried, and the
-    inert-surface gate rejected it: ``sdk_export:CANNED_PAIRED_REPLY`` rose 106 -> 107 with no
-    reader anywhere. No app needs it, because a transport renders ``verdict.canned_reply``
-    generically and never names the constant. So the export is left out, and this pins that
-    on purpose rather than leaving the next person to rediscover the gate. Add it in the same
-    change as its first reader.
+    inert-surface gate rejected it: ``sdk_export:CANNED_PAIRED_REPLY`` raised
+    ``sdk/channel.py``'s counter by one with no reader anywhere. No app needs it, because a
+    transport renders ``verdict.canned_reply`` generically and never names the constant. So the
+    export is left out, and this pins that on purpose rather than leaving the next person to
+    rediscover the gate. Add it in the same change as its first reader.
+
+    The gate's OTHER clear does not rescue this one, and the reason is the point: an export is
+    also cleared when another export's field or method signature names it, but a bare ``str``
+    constant has no signature for that walk to reach it through. Only a real reader will do.
+    (The absolute counter this once quoted has moved since — that clear dropped
+    ``sdk/channel.py`` from 100 to 97 — so the mechanism is stated instead.)
     """
     from personalclaw.sdk import channel as sdk_channel
 

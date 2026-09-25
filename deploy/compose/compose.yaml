@@ -81,26 +81,6 @@ services:
       personalclaw-gateway:
         condition: service_healthy
 
-  personalclaw-slack:
-    image: ghcr.io/personalclaw/personalclaw-gateway:${PERSONALCLAW_IMAGE_TAG:-latest}
-    restart: unless-stopped
-    command: ["personalclaw", "slack"]
-    profiles:
-      - with-slack
-    volumes:
-      - personalclaw_home:/data:z
-    # Same optional-both-locations shape as the gateway above; see the comment there.
-    env_file:
-      - path: ./.env
-        required: false
-      - path: ../../.env
-        required: false
-    environment:
-      PERSONALCLAW_HOME: /data
-      PERSONALCLAW_WORKSPACE: /data/workspace
-    depends_on:
-      - personalclaw-gateway
-
 volumes:
   personalclaw_home:
     driver: local

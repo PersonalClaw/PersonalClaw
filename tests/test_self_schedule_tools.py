@@ -216,7 +216,7 @@ class TestTheToolsAreWiredWhereAgentsLook:
 
         def _spy(st, **kw):
             calls.append(kw)
-            return T.ToolResult(True, "ok", {})
+            return T.AutomationToolResult(True, "ok", {})
 
         monkeypatch.setattr(T, "create", _spy)
         _call("set_onetime_task", {"name": "a", "when": "in 1 hour", "message": "m"}, store)

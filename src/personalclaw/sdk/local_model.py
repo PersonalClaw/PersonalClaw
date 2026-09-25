@@ -6,8 +6,15 @@ lists, downloads, deletes, and surfaces its models uniformly — the app declare
 models it introduces; core hardcodes none. The app ALSO subclasses its use-case ABC
 (``SttProvider`` / ``TtsProvider`` / ``DiarizationProvider`` / ``EmbeddingProvider``) for
 inference. Import these from the SDK so core internals can evolve underneath the app.
+
+``CapabilityMatrix`` is here because ``LocalModel.matrix`` is typed with it — an app
+declaring what its models can do has to be able to name the declaration's type.
 """
 
-from personalclaw.local_models.provider import LocalModel, LocalModelProvider  # noqa: F401
+from personalclaw.local_models.provider import (  # noqa: F401
+    CapabilityMatrix,
+    LocalModel,
+    LocalModelProvider,
+)
 
-__all__ = ["LocalModel", "LocalModelProvider"]
+__all__ = ["LocalModel", "LocalModelProvider", "CapabilityMatrix"]

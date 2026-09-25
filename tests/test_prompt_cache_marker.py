@@ -594,6 +594,8 @@ def test_the_marker_key_is_on_the_app_facing_sdk_facade():
     # only as an attribute read, because the inert-surface ratchet counts a `sdk_export` as
     # consumed by scanning for exactly that ImportFrom shape. An attribute read through the
     # module object leaves the export looking dead to the ratchet while an app depends on it.
+    # The ratchet's other clear — another export's field or method signature naming the type —
+    # cannot cover this one either: `CACHE_HINT_KEY` is a bare `str`, so no signature reaches it.
     from personalclaw.sdk.model import CACHE_HINT_KEY as sdk_cache_hint_key
 
     assert sdk_cache_hint_key is neutral.CACHE_HINT_KEY

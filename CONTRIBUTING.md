@@ -17,7 +17,7 @@ engineering bar is not lowered.
   the full validation bar below. It is the source of product truth.
 - **The roadmap is maintainer-owned, with a written intake path** — not a closed
   door. To propose or reshape roadmap work: open an **issue** describing the
-  problem → discuss in **[Discussions → Roadmap Input](https://github.com/PersonalClaw/PersonalClaw/discussions)**
+  problem → discuss in **[Discussions → Ideas](https://github.com/PersonalClaw/PersonalClaw/discussions/categories/ideas)**
   → the maintainer files or updates a plan under the internal plans. Please
   don't edit the owner's internal roadmap (not in this repo) directly in a PR; the plan set is curated so the
   execution order stays coherent.
@@ -181,9 +181,23 @@ local venv and a Vite build). End users install a release instead — see
 [docs/guides/getting-started.md](docs/guides/getting-started.md) (uv tool, pipx,
 pip, or Docker), which never requires Node or a manual SPA build.
 
+**Check your Python first — a bare `python3` is the most common way this goes wrong.**
+`pyproject.toml` requires `>=3.12,<3.14`, and the `python3` on `PATH` is older than that on
+stock macOS and on several LTS distros. It fails at the *install* step, after the venv has
+already been created, with a message that does not mention the venv:
+
+```
+ERROR: Package 'personalclaw' requires a different Python: 3.9.6 not in '<3.14,>=3.12'
+```
+
+If `python3 --version` is below 3.12, create the venv with an explicit interpreter
+(`python3.12 -m venv .venv`) or let `uv` supply one (`uv venv --python 3.12`), which is what
+CI and the end-user install path both do.
+
 ```bash
 # from the repo root
-python3 -m venv .venv
+python3 --version            # must be 3.12.x or 3.13.x
+python3 -m venv .venv        # …or: uv venv --python 3.12
 source .venv/bin/activate
 
 pip install -e ".[dev]"

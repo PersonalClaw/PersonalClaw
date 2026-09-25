@@ -72,11 +72,16 @@ Per-surface-kind heuristic (each documented at its detector below):
                           outside declaration/load/serialization plumbing. A field read
                           inside a config accessor counts only when production code outside
                           ``config/`` calls that accessor.
-  * ``sdk_export``      — a ``personalclaw.sdk.*`` ``__all__`` symbol imported nowhere
-                          outside the sdk package (no in-repo consumer). The SDK is a
-                          facade for installable app bundles that live in a SEPARATE repo,
-                          so most exports look inert from here — which is precisely why
-                          this counter is large and why it ratchets rather than zeroes.
+  * ``sdk_export``      — a ``personalclaw.sdk.*`` ``__all__`` symbol that neither has an
+                          in-repo importer NOR is named by another export's field or method
+                          signature. The SDK is a facade for installable app bundles that
+                          live in a SEPARATE repo, so most exports look inert from here —
+                          which is precisely why this counter is large and why it ratchets
+                          rather than zeroes. The second clause is the API-closure reader
+                          (``scripts/sdk_surface_closure.py``): a type exported so an app
+                          can fill a PUBLISHED field is required by that field, and scoring
+                          it inert would have made un-exporting it the cheapest way to go
+                          green. An export reachable from nothing is still reported.
 
 Regenerate in place (ONLY on a legitimate shrink) with::
 
@@ -1325,10 +1330,36 @@ def _sdk_imported_names() -> set[str]:
 
 
 def _inert_sdk_export_surfaces() -> list[tuple[str, str]]:
-    """A ``personalclaw.sdk.*`` ``__all__`` symbol imported nowhere outside the sdk package
-    has no in-repo consumer. Attributed to the submodule that exports it."""
+    """A ``personalclaw.sdk.*`` ``__all__`` symbol with neither of the two readers it can have.
+
+    TWO CLEARS, either one is enough:
+
+    1. an ``ImportFrom`` somewhere outside the sdk package names it (``_sdk_imported_names``); or
+    2. ANOTHER export's dataclass field or public method signature names it — the API closure
+       (``scripts/sdk_surface_closure.consumed_exports``).
+
+    The second clear exists because this is the one census kind whose consumer is out of tree
+    BY CONSTRUCTION: installable apps live in a separate repository, so "nothing in this repo
+    imports it" cannot distinguish a public API type from an unkept promise. ``AgentError``
+    types the published fields ``ToolResult.agent_error`` / ``ActionResult.agent_error`` and
+    ``TaskState`` types the published method ``Task.transition(to=)``; counting those as inert
+    made "stop exporting the type apps need" the cheapest way to satisfy the ratchet, which
+    inverts what the ratchet is for. A published signature is a real reader, and unlike an
+    out-of-repo app it is mechanically checkable.
+
+    The teeth are unchanged for the case worth keeping: an export reachable from NOTHING is
+    still reported, which on the tree that added this clear is 170 of 229 surfaces — 54 of
+    them exported types (provider protocols, service objects, error classes) and 116 functions
+    and constants, which carry no signature for the closure to reach them through. Self-
+    reference does not clear (see ``sdk_surface_closure``'s two narrowing rulings).
+
+    Attributed to the submodule that exports it.
+    """
+    from scripts.sdk_surface_closure import consumed_exports
+
     sdk_dir = _src_root() / "sdk"
     imported = _sdk_imported_names()
+    consumed = consumed_exports()
     out: list[tuple[str, str]] = []
     for f in sorted(sdk_dir.glob("*.py")):
         tree = _parse(f)
@@ -1336,8 +1367,9 @@ def _inert_sdk_export_surfaces() -> list[tuple[str, str]]:
             continue
         rel = _rel(f)
         for name in _module_all(tree):
-            if name not in imported:
-                out.append((rel, f"{KIND_SDK_EXPORT}:{name}"))
+            if name in imported or f"{f.stem}.{name}" in consumed:
+                continue
+            out.append((rel, f"{KIND_SDK_EXPORT}:{name}"))
     return out
 
 

@@ -146,6 +146,38 @@ describe('the run-side ledger rails panel', () => {
     expect(screen.queryByText('~$0.1000')).toBeNull()
   })
 
+  it('renders a zero DURATION as 0s, so the label is never left with nothing after it', async () => {
+    // The same measured-vs-absent rule, one column over — and the column that was still wrong.
+    // Measured on a fresh container: `knowledge-health`'s two steps recorded `duration_secs` of
+    // `0.007` and `0.0`; the first rounded to `0s` and rendered, the second went through
+    // `fmtElapsed`'s empty-string return and rendered a bare `Took` with nothing after it. One
+    // panel, one label, two renderings, seven milliseconds apart — and the blank is also
+    // indistinguishable from this rail's deliberate em dash, which claims the opposite.
+    rails = async () => payload({
+      findings: [runFinding({ node_id: 'fast', duration_secs: 0.007 }), runFinding({ node_id: 'instant', duration_secs: 0 })],
+      totals: {
+        // Both steps recorded their keys, so neither aggregate is a partial FLOOR — the `*_recorded`
+        // flags are `true` (#3400's disclosure is a different fact from this test's zero duration).
+        steps_completed: 2, verdicts: 0, cost_usd: 0, cost_recorded: true,
+        tokens: 0, tokens_recorded: true, duration_secs: 0,
+        verdicts_by_word: {}, overall_series: null,
+        absent_scores: ['marginal_value', 'quality_score'],
+      } as WorkflowLedgerRails['totals'],
+    })
+    const { container } = render(<LedgerRailsPanel runId="r1" />)
+    await waitFor(() => expect(screen.getByText('Findings rail')).toBeTruthy())
+    // Read each `Took` cell's own value: a `0s` elsewhere on the panel would satisfy a text query
+    // while this cell stayed blank, which is exactly how the defect survived.
+    const took = [...container.querySelectorAll('dt')].filter((dt) => dt.textContent?.trim() === 'Took')
+    expect(took.length).toBe(2)
+    for (const dt of took) {
+      expect(dt.parentElement?.querySelector('dd')?.textContent?.trim()).toBe('0s')
+    }
+    // …and the totals cell above them, from the same formatter.
+    const stepTime = screen.getByText('Step time').parentElement?.querySelector('dd')
+    expect(stepTime?.textContent?.trim()).toBe('0s')
+  })
+
   it('names a kind with no run-side producer instead of showing it as zero events', async () => {
     rails = async () => payload()
     render(<LedgerRailsPanel runId="r1" />)

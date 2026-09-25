@@ -29,15 +29,15 @@ describe('runUsd — one rounding rule, mirroring routing/usage.py::_usd', () =>
 
 describe('runCostText — unchanged by the move out of IntrospectPanel', () => {
   it('states the figure and that it is an estimate', () => {
-    const text = runCostText(0.1234, true)
+    const text = runCostText(0.1234, true, true)
     expect(text).toContain('~$0.1234')
     expect(text).toContain('this run')
     expect(text).toMatch(/estimated from model prices/)
   })
 
   it('does not render zero as $0.00', () => {
-    expect(runCostText(0, true)).not.toContain('$0.00')
-    expect(runCostText(0, true)).toMatch(/local model|no price row/)
+    expect(runCostText(0, true, true)).not.toContain('$0.00')
+    expect(runCostText(0, true, true)).toMatch(/local model|no price row/)
   })
 })
 
@@ -47,26 +47,55 @@ describe('runCostText — unchanged by the move out of IntrospectPanel', () => {
 // genuinely-free local run as unmeasured.
 describe('the two zeros are different sentences', () => {
   it('a measured zero says it was measured', () => {
-    const text = runCostText(0, true)
+    const text = runCostText(0, true, true)
     expect(text).toMatch(/measured/)
     expect(text).not.toMatch(/[Nn]ot recorded/)
     expect(text).not.toMatch(/at least/i)
   })
 
   it('an unrecorded zero says nobody recorded it, and never shows a figure', () => {
-    const text = runCostText(0, false)
+    const text = runCostText(0, false, false)
     expect(text).toMatch(/[Nn]ot recorded/)
     expect(text).not.toContain('$')
     expect(text).not.toMatch(/measured/)
   })
 
   it('an unpriced NON-zero is a floor, in loopSpendTitle’s own vocabulary', () => {
-    const text = runCostText(0.5, false)
+    const text = runCostText(0.5, false, true)
     expect(text).toContain('~$0.5000')
     expect(text).toMatch(/At least/)
     expect(text).toMatch(/higher/)
     // And never the estimate disclosure: two different claims about one dollar in one sentence.
     expect(text).not.toMatch(/estimated from model prices/)
+  })
+})
+
+// The THIRD zero: a run that called no model at all. Measured on a fresh container with no model
+// provider configured — `knowledge-health` completed two steps, each `step_completed` carrying
+// `"model": "", "cost_usd": 0.0`, so `priced` was `true` and the panel announced "(a free local
+// model)" beside its own `Models · none recorded` cell.
+describe('a measured zero with no model recorded is not a free local model', () => {
+  it('names the absent model call instead of inventing a provider', () => {
+    const text = runCostText(0, true, false)
+    expect(text).toMatch(/no step on this run recorded a model/)
+    // The claim it must never make: there is no model here, free or otherwise.
+    expect(text).not.toMatch(/local model/)
+    // …and it is still the MEASURED branch, not the unrecorded one: the cost genuinely was zero.
+    expect(text).not.toMatch(/[Nn]ot recorded —/)
+    expect(text).not.toContain('$')
+  })
+
+  it('keeps the free-local sentence for a zero that DID name its model', () => {
+    // The other side, and the half a one-sided test would let regress: an Ollama run records
+    // `model: "gemma4:12b"` with `cost_usd: 0.0`, and that one really is a free local model.
+    expect(runCostText(0, true, true)).toMatch(/free local model/)
+  })
+
+  it('does not reach the no-model sentence when the figure is non-zero', () => {
+    // A recorded cost with no model name is a pricing gap, not a model-free run — the estimate
+    // disclosure still owns that sentence.
+    expect(runCostText(0.02, true, false)).toMatch(/estimated from model prices/)
+    expect(runCostText(0.02, true, false)).not.toMatch(/recorded a model/)
   })
 })
 

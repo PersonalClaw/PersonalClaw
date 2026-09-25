@@ -557,7 +557,7 @@ def test_the_patch_allowlist_excludes_every_health_field():
 
 
 def test_a_tool_result_serializes():
-    result = T.ToolResult(True, "hi", {"a": 1})
+    result = T.AutomationToolResult(True, "hi", {"a": 1})
     assert result.to_dict() == {"ok": True, "text": "hi", "data": {"a": 1}}
 
 

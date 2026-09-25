@@ -120,10 +120,44 @@ export function nodeDepth(instancePath: string): number {
   return Math.max(0, (instancePath.match(/\.(children\[\d+\]|body|cases\[[^\]]*\]|default)/g) ?? []).length - 1)
 }
 
+/** An elapsed time for an INLINE chip, where nothing is a legitimate rendering.
+ *
+ *  The empty string is the contract, not an oversight: every caller here guards on it to decide
+ *  whether the chip appears at all (`{elapsed && <span…>}` in `WorkflowsListPage`,
+ *  `run.elapsed_secs ? … : null` in `WorkflowRunDetail`, and the two equivalents in
+ *  `WorkflowProgressCard`/`IntrospectPanel`'s timeline). A run that has not started has no elapsed
+ *  time to show, and putting "0s" beside its name would read as a finished instant run.
+ *
+ *  🪤 It is therefore the WRONG formatter for a `<Stat>` cell or a rail cell, which render their
+ *  label unconditionally — use `elapsedStat`. */
 export function fmtElapsed(secs: number | undefined): string {
   if (!secs || secs <= 0) return ''
   if (secs < 60) return `${Math.round(secs)}s`
   const m = Math.floor(secs / 60)
   if (m < 60) return `${m}m ${Math.round(secs % 60)}s`
   return `${Math.floor(m / 60)}h ${m % 60}m`
+}
+
+/** The same measurement for a LABELLED cell — a `<Stat>` or a rail `<dd>`, where the label is
+ *  rendered whether or not the value is.
+ *
+ *  🔴 A measured zero must not render as nothing. Measured on a fresh container: the deterministic
+ *  bundled template `knowledge-health` completed in under 10ms, and its run page rendered FOUR
+ *  labels with no value at all — `Duration`, `Duration p50`, `Duration p95` (all from
+ *  `stats.duration_secs: 0.0`) and the findings rail's `Took` for the step whose
+ *  `duration_secs` was exactly `0.0`. The sibling step's `0.007` rounded to `0s` and rendered
+ *  fine, so ONE panel showed the same label as `0s` and as blank space for two measurements seven
+ *  milliseconds apart. A label with nothing after it reads as a broken panel, and it is also
+ *  indistinguishable from `LedgerRailsPanel`'s deliberate em dash, which means "the ledger did not
+ *  carry this key" — the opposite claim.
+ *
+ *  This is the shape `runCostStat` and `runTokensStat` already exist for: a cell needs its own
+ *  formatter because the inline chip's "render nothing" is not available to it. The rounding is
+ *  `fmtElapsed`'s, unchanged, so the two never disagree about a non-zero figure. */
+export function elapsedStat(secs: number): string {
+  // A non-finite figure is not a measurement of zero — say nothing was measured rather than
+  // asserting an instant. `LedgerRailsPanel.cell` already screens `null`/`undefined`; this covers
+  // the `NaN` a division could hand a `<Stat>` directly.
+  if (!Number.isFinite(secs)) return 'not recorded'
+  return secs > 0 ? fmtElapsed(secs) : '0s'
 }
