@@ -5,6 +5,7 @@ import hmac
 import json
 import logging
 import os
+import unicodedata
 from pathlib import Path
 
 from aiohttp import web
@@ -13,7 +14,12 @@ from aiohttp.client_exceptions import ClientConnectionResetError
 import personalclaw.validation as _validation_mod
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
-from personalclaw.config.loader import MEMORY_VAULT_MODES, PUSH_BACKENDS, AppConfig
+from personalclaw.config.loader import (
+    MEMORY_VAULT_MODES,
+    PUSH_BACKENDS,
+    AppConfig,
+    _bot_name_disallowed,
+)
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.dashboard.token_auth import MAX_SESSION_TTL_SECS, generate_token, parse_duration
 from personalclaw.http_errors import json_error
@@ -601,11 +607,37 @@ def _context_engine_values() -> set[str]:
     return set(available_engines())
 
 
-def _bot_name_sanitizer(value: str) -> str:
-    """The loader's bot_name sanitizer (single source of truth)."""
-    from personalclaw.config.loader import _sanitize_bot_name
+def _bot_name_validator(value: str) -> str:
+    """Refuse an assistant name holding a character a name may not contain; trim the rest.
 
-    return _sanitize_bot_name(value)
+    REFUSED, not stripped. This used to hand the value to the loader's sanitizer, which dropped
+    what it disliked while the PATCH answered 200: `Chloé's Aide` was stored as `Chlos Aide`, and
+    Settings showed "Saved" beside the name as typed. A stripped name is one nobody typed, and the
+    caller has been told it succeeded — so the refusal names each character, and the user decides
+    what the name becomes. Trimming surrounding whitespace changes no name, so that one is applied.
+
+    Which characters are allowed is the loader's call (`_bot_name_disallowed`): one policy for this
+    write side and for `load()`, which strips the same characters from a hand-edited file.
+    """
+    name = value.strip()
+    refused = _bot_name_disallowed(name)
+    if refused:
+        # A glyph is shown quoted; an invisible character (control, format, space, mark) is shown
+        # as its code point and name, since quoting it would print an empty pair of quotes.
+        shown = ", ".join(
+            (
+                f"“{ch}”"
+                if ch.isprintable() and not unicodedata.category(ch).startswith(("M", "Z"))
+                else f"U+{ord(ch):04X} {unicodedata.name(ch, '')}".rstrip()
+            )
+            for ch in refused
+        )
+        raise ConfigValueError(
+            f"{shown} can't be part of a name — use letters (any language), digits, spaces, "
+            "apostrophes, hyphens, periods or underscores",
+            f"agent.bot_name={value}",
+        )
+    return name
 
 
 def _push_to_talk_chord_sanitizer(value: str) -> str:
@@ -932,10 +964,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # ordering repairs, which are unconditional.
     "agent.prompt_cache_enabled": {"type": "bool"},
     # The assistant's display name — consumed by the prompt engine ({{bot_name}}
-    # template var + ContextBuilder). Sanitized at the write boundary (strip
-    # markdown/braces, ≤50 chars) so the FILE matches what load() produces —
-    # load() applies the same function, defense in depth for hand-edits.
-    "agent.bot_name": {"type": "str", "max_len": 50, "sanitize": _bot_name_sanitizer},
+    # template var + ContextBuilder). Validated at the write boundary (≤50 chars; a
+    # character a name may not contain is refused by name, never dropped) so the FILE
+    # holds exactly what the user typed — load() strips the same characters from a
+    # hand-edited file, defense in depth.
+    "agent.bot_name": {"type": "str", "max_len": 50, "sanitize": _bot_name_validator},
     "agent.log_level": {"type": "enum", "values": ["DEBUG", "INFO", "WARNING", "ERROR"]},
     # Self-QA companion (SELF-VERIFICATION §5 wiring point (d)). All four fields are editable,
     # not just the two toggles: a companion you can enable but cannot point at a repo is

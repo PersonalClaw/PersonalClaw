@@ -594,20 +594,56 @@ class TestEngagementRankingFlag:
         assert loaded.to_dict()["inbox"]["engagement_ranking_enabled"] is True
 
 
-# ── agent.bot_name: sanitize at the WRITE boundary (S05 C6) — the file must
-#    match what load() produces, or config.json carries markdown/braces while
-#    runtime sees the stripped name (split-brain). ──
+# ── agent.bot_name at the WRITE boundary. The file must match what load() produces (S05 C6), and
+#    the answer must match the file: this route used to answer 200 for `Chloé's Aide` with
+#    `Chlos Aide` already in the body, and Settings showed "Saved" beside the typed value. ──
 
 
 class TestBotNamePatch:
     @pytest.mark.asyncio
-    async def test_sanitized_before_write(self, tmp_config) -> None:
+    @pytest.mark.parametrize(
+        "name",
+        ["Zoë", "Chloé's Aide", "Chloé\u2019s Aide", "Björn", "小助手", "प्रिया", "مساعد"],
+    )
+    async def test_a_name_in_any_script_is_stored_as_typed(self, tmp_config, name) -> None:
         async with TestClient(TestServer(_make_app())) as c:
-            resp = await _patch(c, "agent.bot_name", "**{Astra}** <script>")
+            resp = await _patch(c, "agent.bot_name", name)
             assert resp.status == 200
-            saved = json.loads(tmp_config.read_text())
-            # markdown/braces/angle brackets stripped by the loader's sanitizer
-            assert saved["agent"]["bot_name"] == "Astra script"
+            assert (await resp.json())["agent"]["bot_name"] == name, "the answer is the stored name"
+        assert json.loads(tmp_config.read_text())["agent"]["bot_name"] == name
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("value", "named"),
+        [
+            ("**{Astra}** <script>", ["“*”", "“{”", "“}”", "“<”", "“>”"]),
+            ("{{x}}", ["“{”", "“}”"]),
+            ("`tick`", ["“`”"]),
+            ("Bob\x07", ["U+0007"]),
+            ("Bob\u202eevil", ["U+202E RIGHT-TO-LEFT OVERRIDE"]),
+        ],
+    )
+    async def test_a_character_a_name_cannot_carry_is_refused_by_name(
+        self, tmp_config, value, named
+    ) -> None:
+        """Refused, not stripped: dropping characters stores a name nobody typed, and the caller
+        has been told it succeeded — the one outcome `config/edit_spec.py` exists to prevent."""
+        before = tmp_config.read_text()
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await _patch(c, "agent.bot_name", value)
+            assert resp.status == 400
+            error = (await resp.json())["error"]
+        for glyph in named:
+            assert glyph in error, f"the refusal must name {glyph}: {error!r}"
+        assert tmp_config.read_text() == before, "a refused name must not reach the file"
+
+    @pytest.mark.asyncio
+    async def test_surrounding_whitespace_is_trimmed(self, tmp_config) -> None:
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await _patch(c, "agent.bot_name", "  Astra  ")
+            assert resp.status == 200
+            assert (await resp.json())["agent"]["bot_name"] == "Astra"
+        assert json.loads(tmp_config.read_text())["agent"]["bot_name"] == "Astra"
 
     @pytest.mark.asyncio
     async def test_plain_name_passes_through(self, tmp_config) -> None:
