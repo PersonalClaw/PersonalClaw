@@ -54,7 +54,7 @@ vi.mock('../../lib/api', () => ({
 }))
 vi.mock('../../app/appSdk', () => ({ launchChat: vi.fn(), notify: vi.fn() }))
 
-import { EssentialsStep, laneOf, candidatesByLane } from './EssentialsStep'
+import { EssentialsStep, laneOf, candidatesByLane, typesMissingFromCatalog } from './EssentialsStep'
 import { invalidateKeys } from '../../lib/data'
 
 function entry(over: Partial<AppCatalogEntry> & { name: string }): AppCatalogEntry {
@@ -89,6 +89,22 @@ const DISCORD = entry({ name: 'discord-channel', displayName: 'Discord', provide
 const EMBEDDER = entry({ name: 'sentence-transformers', providerType: 'model', providerCapabilities: ['embedding'] })
 
 const CATALOG = { bundled: [], gitSources: [], localApps: [OPENAI, WHISPER, PIPER, BRAVE, DISCORD, EMBEDDER], remoteApps: [], gitApps: [] }
+
+// #3529 — `ollama-models` ships `native: true` (pre-installed), so it is NEVER in the
+// catalog above (`resolve_catalog_entries`'s "Library exclusion") while its type IS
+// registered (`GET /api/model-provider-types` walks the loaded provider registry, not the
+// catalog). Mirrors the real manifest's settingsSchema (`app.json`), trimmed to the fields
+// these tests exercise.
+const OLLAMA_TYPE = {
+  type: 'ollama', label: 'Ollama', app: 'ollama-models', capabilities: ['chat', 'embedding'], multiInstance: true,
+  settingsSchema: {
+    properties: {
+      endpoint: { type: 'string', default: 'http://localhost:11434', 'x-meta': { label: 'Ollama Endpoint', help: 'Base URL of the Ollama API server.' } },
+      default_model: { type: 'string', default: '', 'x-meta': { label: 'Default Model' } },
+    },
+    required: ['endpoint'],
+  },
+}
 
 const FRESH = { needs_model: true, has_model_provider: false, has_chat_binding: false }
 
@@ -490,6 +506,141 @@ describe('OU-13 — local + LAN Ollama zero-key on-ramp', () => {
     // A failed bind does NOT mark the lane resolved.
     const cont = screen.getByRole('button', { name: /Continue/ })
     expect(cont.hasAttribute('disabled') || cont.getAttribute('aria-disabled') === 'true').toBe(true)
+  })
+})
+
+// ── #3529: an installed-but-uncatalogued provider type is not a dead end ─────
+//
+// `ollama-models` ships pre-installed, so its type is registered while its app is
+// EXCLUDED from the catalog (see `OLLAMA_TYPE` above). Before this fix the ONLY route
+// into `ConfigureProvider`'s schema-driven form was a catalog card's Install click, so a
+// registered-but-uncatalogued type had NO route there — only the on-ramp's discovery
+// (loopback + opt-in LAN scan), which misses anything outside those two checks (a
+// different subnet, a hostname, a container/VM bridge). `InstalledProviderTypes` closes
+// that gap from the type registry itself, not a hand-picked field, so it also covers
+// whatever else ships pre-installed next.
+
+describe('#3529 — a provider type whose app is already installed is not a dead end', () => {
+  it('known-false discovery (nothing on loopback, an empty LAN scan) still gets a working route in', async () => {
+    // The exact scenario the issue reports: nothing discoverable AND no catalog card
+    // (native apps never get one). `detectLocalModel`/`scanLocalModels` already default to
+    // "nothing found" in beforeEach.
+    modelProviderTypes.mockResolvedValue([OLLAMA_TYPE])
+    renderStep()
+
+    // The on-ramp itself dead-ends exactly as the issue describes…
+    fireEvent.click(await screen.findByRole('button', { name: /Scan my local network/ }))
+    expect(await screen.findByText(/No local model found on your network/)).toBeTruthy()
+    // …Ollama never had a catalog card (it's already installed, so the Store's own
+    // "Library exclusion" keeps it out of "available to install")…
+    expect(screen.queryByRole('button', { name: /Install Ollama/ })).toBeNull()
+
+    // …and the fallback this fix adds is what turns that dead end into a route.
+    const configure = await screen.findByRole('button', { name: /Configure Ollama/ })
+    fireEvent.click(configure)
+    expect(await screen.findByLabelText('Ollama Endpoint')).toBeTruthy()
+  })
+
+  it('drives the SAME schema-driven ConfigureProvider the catalog path uses, end to end', async () => {
+    modelProviderTypes.mockResolvedValue([OLLAMA_TYPE])
+    chatModels.mockResolvedValue([{ name: 'ollama/llama3.2:3b', model_id: 'llama3.2:3b', provider: 'ollama' }])
+    const { onDone, onProgress } = renderStep()
+
+    fireEvent.click(await screen.findByRole('button', { name: /Configure Ollama/ }))
+    fireEvent.change(await screen.findByLabelText('Ollama Endpoint'), { target: { value: 'http://192.168.5.2:11434' } })
+    fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
+
+    // Created under its TYPE ('ollama'), with only the field actually filled — never a
+    // hand-picked "endpoint-only" shape, whatever the schema declares today.
+    await waitFor(() => expect(createModelProvider).toHaveBeenCalledWith(
+      { name: 'ollama', type: 'ollama', model: '', options: { endpoint: 'http://192.168.5.2:11434' } }))
+    expect(onProgress).toHaveBeenCalledWith({ essentials: { model: 'ollama-models' } })
+    await waitFor(() => expect(testModelProvider).toHaveBeenCalledWith('ollama'))
+
+    fireEvent.click(await screen.findByRole('button', { name: /llama3\.2:3b/ }))
+    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', ['ollama:llama3.2:3b']))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Continue/ })).not.toHaveAttribute('aria-disabled'))
+    fireEvent.click(screen.getByRole('button', { name: /Continue/ }))
+    expect(onDone).toHaveBeenCalledWith('llama3.2:3b')
+  })
+
+  it('does not duplicate a catalog card: a type whose app IS catalogued gets no extra button', async () => {
+    // The default fixture's own 'openai' type (app 'openai-models') IS in the catalog —
+    // the filter this fix relies on must not offer a second, redundant "configure it
+    // manually" card beside the catalog's own "Install OpenAI" card for the same app.
+    renderStep()
+    await screen.findByText('OpenAI')
+    expect(screen.queryByRole('button', { name: /Configure OpenAI/ })).toBeNull()
+  })
+
+  it('says so, with a retry, when the registry itself cannot be read — never a silent gap', async () => {
+    modelProviderTypes.mockRejectedValue(new Error(JSON.stringify({ error: 'gateway unreachable' })))
+    renderStep()
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toMatch(/installed model providers/i)
+    expect(screen.getByRole('button', { name: /Retry|Try again/i })).toBeTruthy()
+  })
+})
+
+// ── #3529 (owner follow-up): discovery's own silence, not just its dead end ──
+//
+// Per the owner, verified on a real fresh install: "there's an ollama on my host local
+// network which should be accessible by finch vm. At least allow me to configure it
+// manually." A CONTAINERISED gateway's loopback and LAN are never the host's, so for every
+// containerised install, discovery finding nothing is the default outcome — which makes
+// "did the check even run, and what do I do next" the common case, not a rare one. Before
+// this, the automatic loopback probe said NOTHING when it missed (silent until "Scan my
+// local network" was clicked), and an empty LAN scan named no next step. Both now say so
+// and point at the manual entry below — but ONLY when `EssentialsStep` says that route
+// truthfully exists, never a second guess made here.
+
+describe('#3529 — discovery says so, and points at the manual entry, whenever it truly exists', () => {
+  it('the automatic loopback probe: silent no longer — states the fact and the way forward', async () => {
+    modelProviderTypes.mockResolvedValue([OLLAMA_TYPE])
+    renderStep()
+    // Nobody clicked "Scan" — this is the check that already ran on mount.
+    expect(await screen.findByText('Nothing found on this machine yet. Enter its address directly below.')).toBeTruthy()
+  })
+
+  it('an empty LAN scan: the existing message gains the pointer, verbatim otherwise', async () => {
+    modelProviderTypes.mockResolvedValue([OLLAMA_TYPE])
+    renderStep()
+    fireEvent.click(await screen.findByRole('button', { name: /Scan my local network/ }))
+    expect(await screen.findByText('No local model found on your network. Enter its address directly below.')).toBeTruthy()
+  })
+
+  it('a scan that could not even run still points at the manual entry', async () => {
+    modelProviderTypes.mockResolvedValue([OLLAMA_TYPE])
+    scanLocalModels.mockRejectedValue(new Error(JSON.stringify({ error: 'network unreachable' })))
+    renderStep()
+    fireEvent.click(await screen.findByRole('button', { name: /Scan my local network/ }))
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toMatch(/network unreachable/)
+    expect(alert.textContent).toMatch(/Enter its address directly below/)
+  })
+
+  it('never dangles a pointer at a route that does not actually exist', async () => {
+    // The default fixture: 'openai' is the only registered type and its app IS in the
+    // catalog, so NO manual fallback renders below. Discovery's own copy must know that.
+    renderStep()
+    expect(await screen.findByText('Nothing found on this machine yet.')).toBeTruthy()
+    expect(screen.queryByText(/Enter its address directly below/)).toBeNull()
+  })
+})
+
+describe('typesMissingFromCatalog (#3529)', () => {
+  it('keeps a type whose app has no catalog card', () => {
+    expect(typesMissingFromCatalog([OLLAMA_TYPE], [OPENAI])).toEqual([OLLAMA_TYPE])
+  })
+
+  it('drops a type whose app DOES have a catalog card', () => {
+    const openaiType = { type: 'openai', label: 'OpenAI', app: 'openai-models', capabilities: ['chat'], multiInstance: true, settingsSchema: {} }
+    expect(typesMissingFromCatalog([openaiType, OLLAMA_TYPE], [OPENAI])).toEqual([OLLAMA_TYPE])
+  })
+
+  it('is empty when types have not loaded yet', () => {
+    expect(typesMissingFromCatalog(undefined, [OPENAI])).toEqual([])
   })
 })
 

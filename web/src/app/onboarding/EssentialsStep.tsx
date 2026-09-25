@@ -138,8 +138,21 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
   // cache would hide the load-failure branch below on every reload after the first.
   const { data: catalog, error: catalogError, refresh } = useQuery(
     'onboarding:essentials-catalog', () => api.appCatalog())
+  // #3529 — fetched HERE, once, rather than only inside `ConfigureProvider` (reached later,
+  // post-install): the on-ramp's own empty-state copy needs to know whether a manual route
+  // truthfully exists "below" before it can point at it, and `InstalledProviderTypes` needs
+  // the same registry read to decide whether to render at all. One fetch, one derived fact,
+  // handed to both — never two independent guesses that could disagree.
+  const { data: providerTypes, error: providerTypesError, refresh: refreshProviderTypes } = useQuery(
+    'onboarding:provider-types', () => api.modelProviderTypes())
 
   const lanes = useMemo(() => candidatesByLane(catalog), [catalog])
+  // Which registered types have no catalog card to reach them from (see
+  // `typesMissingFromCatalog`'s own doc) — computed against the MODEL lane's own catalog
+  // list specifically, since that's the one list a "configure it manually" card could
+  // duplicate.
+  const missingProviderTypes = useMemo(
+    () => typesMissingFromCatalog(providerTypes, lanes.model), [providerTypes, lanes.model])
   const [installed, setInstalled] = useState<Record<string, true>>({})
   const [open, setOpen] = useState<string>('')       // app name whose disclosure is open
   const [expanded, setExpanded] = useState<Record<string, true>>({})  // lanes showing all cards
@@ -214,6 +227,18 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
     onProgress({ essentials: { model: 'ollama-models' } })
   }, [onProgress])
 
+  // #3529 — the second way into the model lane's sub-flow, alongside `recordInstall`'s
+  // catalog-card path: a provider type whose app is ALREADY installed never gets a catalog
+  // card to click (`resolve_catalog_entries`'s "Library exclusion" drops an installed app
+  // from `/api/apps/catalog`), so `InstalledProviderTypes` below routes here directly, by
+  // app name. Same phase transition and the same progress field `recordInstall`'s model
+  // branch writes; only the trigger differs.
+  const configureInstalled = useCallback((app: string) => {
+    setModelApp(app)
+    setPhase('configure')
+    onProgress({ essentials: { model: app } })
+  }, [onProgress])
+
   const modelReady = phase === 'done'
 
   // A dead catalog fetch is NOT "no apps available" — say so, and offer the retry.
@@ -258,8 +283,27 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
             {/* OU-13 — the zero-key on-ramp sits ABOVE the catalog while the model lane
                 is still picking. Localhost auto-detects (a loopback probe, not a scan);
                 the LAN sweep is opt-in. When nothing is reachable it offers no bind
-                card, so the catalog below is unchanged. */}
-            {isModel && phase === 'pick' && <LocalModelOnRamp onBound={handleLocalBound} />}
+                card, so the catalog below is unchanged. #3529 (containerised installs
+                especially — a container's loopback and LAN are never the host's, so this
+                is close to guaranteed to miss): its OWN empty states say so and point at
+                `InstalledProviderTypes` below, using the parent's own answer for whether
+                that route truly exists rather than assuming it. */}
+            {isModel && phase === 'pick' && (
+              <LocalModelOnRamp onBound={handleLocalBound}
+                hasManualRoute={missingProviderTypes.some((t) => t.app === 'ollama-models')} />
+            )}
+
+            {/* #3529 — a provider type can be registered with NO route into it: its app is
+                already installed, so the catalog never gives it a card, and (for Ollama
+                specifically) discovery can miss it too — a different subnet, a hostname, a
+                VLAN, or simply a containerised gateway whose loopback and LAN are its own,
+                never the host's. This is the fallback that is ALWAYS present in 'pick',
+                independent of whether the on-ramp above found anything. */}
+            {isModel && phase === 'pick' && (
+              <InstalledProviderTypes missing={missingProviderTypes}
+                error={providerTypes === undefined ? providerTypesError : null}
+                onRetry={refreshProviderTypes} onConfigure={configureInstalled} />
+            )}
 
             {/* The model lane's post-install sub-flow replaces its card list once an
                 app is chosen — key entry, Test, then the binding choice. */}
@@ -517,8 +561,23 @@ function VerifyChatModel({ boundLabel, onVerified, onReconfigure }: {
  *  presses "Scan my local network". A discovered endpoint is shown only after the
  *  backend's live `/api/tags` probe, and binding it writes NO API key (it rides the
  *  same credential-free path as `--seed-local-model`). When nothing is reachable the
- *  block offers no bind card, so the catalog below stays exactly as it was. */
-function LocalModelOnRamp({ onBound }: { onBound: (model: string) => void }) {
+ *  block offers no bind card, so the catalog below stays exactly as it was.
+ *
+ *  #3529 (owner, on a real fresh install): "there's an ollama on my host local network
+ *  which should be accessible by finch vm. At least allow me to configure it manually" —
+ *  and it is CLOSE TO GUARANTEED to miss for exactly that reason. A containerised gateway's
+ *  loopback is the container's own, never the host's, and its LAN sweep scans the
+ *  container's subnet, not the host's — so for every containerised install, discovery
+ *  finding nothing is the default outcome, not an edge case. Both empty states below say so
+ *  and point at `InstalledProviderTypes`, using `hasManualRoute` (the parent's OWN answer,
+ *  never re-derived here) so this can never point at a route that doesn't actually exist. */
+function LocalModelOnRamp({ onBound, hasManualRoute }: {
+  onBound: (model: string) => void
+  /** Whether a registered-but-uncatalogued provider type is actually rendering below —
+   *  computed once, by `EssentialsStep`, from the same `/api/model-provider-types` read
+   *  `InstalledProviderTypes` renders from. */
+  hasManualRoute: boolean
+}) {
   const { data: detection } = useQuery('onboarding:local-model', () => api.detectLocalModel())
   const [scanState, setScanState] = useState<'idle' | 'scanning' | 'done'>('idle')
   const [discovered, setDiscovered] = useState<LocalModelEndpoint[]>([])
@@ -555,6 +614,21 @@ function LocalModelOnRamp({ onBound }: { onBound: (model: string) => void }) {
   // The localhost endpoint can also turn up in a scan; show it once, at the top.
   const lan = discovered.filter((e) => e.endpoint !== localhost?.endpoint)
 
+  // #3529 — discovery's outcome must never be silent, whichever of its two checks ran.
+  // Before this, a missed LOOPBACK probe said nothing at all (the block looked simply
+  // unfinished until "Scan my local network" was clicked, with no hint the automatic
+  // check had already run and missed), and a missed LAN SCAN said only that nothing was
+  // found, naming no next step — a spinner that ends in an unchanged card is the same dead
+  // end #3529 already named, wearing a different hat. `pointer` is appended only when
+  // `hasManualRoute` says the fallback below is real.
+  const pointer = hasManualRoute ? ' Enter its address directly below.' : ''
+  let notFound: string | null = null
+  if (scanState === 'done' && !scanError && lan.length === 0 && !localhost) {
+    notFound = `No local model found on your network.${pointer}`
+  } else if (scanState === 'idle' && detection !== undefined && !localhost) {
+    notFound = `Nothing found on this machine yet.${pointer}`
+  }
+
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-outline-variant bg-surface p-3">
       <div className="flex items-baseline gap-2">
@@ -565,6 +639,7 @@ function LocalModelOnRamp({ onBound }: { onBound: (model: string) => void }) {
         If you run Ollama on this machine or your network, PersonalClaw can use it with no
         key and nothing leaving your machine.
       </p>
+      {notFound && <p className="text-on-surface-low" data-type="caption">{notFound}</p>}
       {bindError && <div className="text-danger" data-type="body-s" role="alert">{bindError}</div>}
       {localhost && (
         <LocalModelCard ep={localhost} where="on this machine"
@@ -578,11 +653,10 @@ function LocalModelOnRamp({ onBound }: { onBound: (model: string) => void }) {
         <Button variant="secondary" size="sm" loading={scanState === 'scanning'} onClick={scan}>
           <Search size={14} aria-hidden="true" /> Scan my local network
         </Button>
-        {scanState === 'done' && !scanError && lan.length === 0 && !localhost && (
-          <span className="text-on-surface-low" data-type="caption">No local model found on your network.</span>
-        )}
       </div>
-      {scanError && <div className="text-danger" data-type="body-s" role="alert">{scanError}</div>}
+      {scanError && (
+        <div className="text-danger" data-type="body-s" role="alert">{scanError}{pointer}</div>
+      )}
     </div>
   )
 }
@@ -602,6 +676,74 @@ function LocalModelCard({ ep, where, busy, onUse }: {
       <Button variant="primary" size="sm" loading={busy} onClick={onUse}>
         <Check size={14} aria-hidden="true" /> Use this model
       </Button>
+    </div>
+  )
+}
+
+/** #3529 — which registered provider TYPES have no catalog card to reach them from.
+ *  `/api/model-provider-types` lists a type only once its app is installed
+ *  (`api_provider_types` walks the loaded provider registry, not the catalog), and
+ *  `/api/apps/catalog` drops an installed app from its own listing
+ *  (`resolve_catalog_entries`'s "Library exclusion") — so by construction neither
+ *  list can name the same app today. This still checks rather than assumes that:
+ *  a fixture (or a future registry change) is free to let the two overlap, and the
+ *  point of this filter is exactly to never offer a second, redundant "configure it
+ *  manually" card beside a catalog "Install" card for the one app. */
+export function typesMissingFromCatalog(
+  types: ModelProviderType[] | undefined,
+  catalogModelApps: AppCatalogEntry[],
+): ModelProviderType[] {
+  if (!types) return []
+  const catalogued = new Set(catalogModelApps.map((e) => e.name))
+  return types.filter((t) => !catalogued.has(t.app))
+}
+
+/** #3529 — the fallback the on-ramp and the catalog cannot cover between them: a
+ *  provider type whose app is already installed has no "Install" card (the catalog
+ *  excludes what's already installed), so without this the ONLY way into its
+ *  settings form was already-working discovery (Ollama) or never needing one
+ *  (nothing else ships pre-installed today). Each row goes straight to the SAME
+ *  `ConfigureProvider` the catalog path uses, driven by the type's own
+ *  `settingsSchema` — never a hand-picked field, so a future pre-installed
+ *  provider with a different required field needs no change here.
+ *
+ *  Purely presentational: `EssentialsStep` owns the one `/api/model-provider-types`
+ *  fetch and the one `typesMissingFromCatalog` call, because the on-ramp above needs
+ *  that same answer to decide whether IT can truthfully point down here — two
+ *  independent fetches could disagree about whether this route exists at all. */
+function InstalledProviderTypes({ missing, error, onRetry, onConfigure }: {
+  missing: ModelProviderType[]
+  error: unknown
+  onRetry: () => void
+  onConfigure: (app: string) => void
+}) {
+  if (error) {
+    return <LoadError what="installed model providers" error={error} onRetry={onRetry} />
+  }
+  if (missing.length === 0) return null
+
+  return (
+    <div className="flex flex-col gap-s rounded-lg border border-outline-variant bg-surface p-m">
+      <div className="flex items-baseline gap-s">
+        <Cpu size={14} className="shrink-0 translate-y-0.5 text-primary" aria-hidden="true" />
+        <span className="text-on-surface" data-type="body-s">Already installed</span>
+      </div>
+      <p className="text-on-surface-low" data-type="caption">
+        Already installed, so it won&rsquo;t show up below as something to install — configure
+        its connection directly.
+      </p>
+      {missing.map((t) => (
+        <div key={t.type} className="flex items-center gap-s rounded-lg bg-surface-high p-m">
+          <Cpu size={15} aria-hidden="true" className="shrink-0 text-primary" />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-on-surface" data-type="body-s">{t.label}</div>
+            <div className="truncate text-on-surface-low" data-type="caption">Installed as {t.app}</div>
+          </div>
+          <Button variant="secondary" size="sm" onClick={() => onConfigure(t.app)}>
+            Configure {t.label}
+          </Button>
+        </div>
+      ))}
     </div>
   )
 }
