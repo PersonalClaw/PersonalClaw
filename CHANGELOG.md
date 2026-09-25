@@ -8,6 +8,123 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.2.0] — 2026-09-23
+
+The first release since 0.1.3 (2026-07-30). The theme is **surfaces that tell you the
+truth**: controls that now do what their label says, numbers that admit when they were
+never measured rather than showing a confident `0`, and unattended work bounded by
+something you can read and audit.
+
+**Run `personalclaw snapshot` before upgrading.** This is a pre-1.0 clean break — state
+shapes changed with no automatic migration, several defaults flipped, and some routes now
+refuse input they used to accept. The breaking list below is not optional reading.
+
+### Highlights
+
+- **Updates track releases, not `main` — and the update you get is the one you chose.**
+  Pick a channel (`stable`/`beta`/`nightly`), pin an exact version, or roll *backwards* to
+  the release you came from. Unattended auto-update is now opt-in and staged; by default
+  PersonalClaw only tells you an update exists. `personalclaw update` also works on
+  pip/pipx/uv installs for the first time.
+- **Unattended work is read-only by default, and bounded by a ceiling you control.** A
+  governance ceiling at `$PERSONALCLAW_HOME/governance/ceiling.json` can only tighten what
+  a background run may do. Read-only background tasks really are read-only now — 59 of 70
+  shipped tools had been misclassified as harmless, including memory writes, scheduling and
+  webhook registration.
+- **An approval is a brief, not a name and four buttons.** Approval cards say what will
+  run, what it touches, and why it needs you. An action type can earn autonomy one rung at
+  a time — draft only → one tap → run with undo → autonomous — and lose it on a single
+  rejection. Settings → Guardrails shows every governed action and where its rung came from.
+- **Cost and context stop lying to you.** Per-turn, per-conversation and per-account spend
+  in Settings → Usage, a cost chip in the chat header, and cache savings. Anything never
+  measured now reads `not recorded` or `unpriced` instead of `$0.00`, and the context gauge
+  shows nothing rather than a measured-looking `0%`.
+- **Your library is searchable by what is inside documents.** Semantic search matches
+  individual passages and cites the section and line range, scanned PDFs are OCR'd instead
+  of ingesting empty, and an item that landed unsearchable says so with a typed reason. An
+  in-database vector index cut vector work from ~40 ms to ~2 ms.
+- **Scheduled automations fire when you meant.** Timed triggers with no explicit zone now
+  use your local wall-clock time, clock triggers actually execute their action, and "Run
+  now" runs. Workflow templates are checked for ordering and output contracts before you
+  can save a broken one.
+- **Chat craft: Stop stops, and you can branch, plan and rewind.** Stop cancels the
+  in-flight provider request, drops queued tool calls and kills whole process trees.
+  Branch from any message, plan before anything runs, and see whether a turn will fit
+  *before* it runs.
+- **A fresh install boots with a working chat provider.** `ollama-models` ships bundled and
+  first run binds and tests a model in place — previously a fresh install registered zero
+  chat providers and needed network access plus a second repo clone to reach a working agent.
+- **Backups you can step through.** A continuous local git history of the state you and the
+  assistant edit, restorable per file, with "what changed while I slept" and a
+  roll-back-vs-undo-just-this choice. `personalclaw snapshot` now also carries your themes,
+  credentials and the memory vault.
+- **Secrets stay secret.** Credentials can live in your OS keychain; `personalclaw config
+  get` masks them by default; a password inside a URL is redacted everywhere PersonalClaw
+  redacts; and hooks, cron scripts and app backends no longer inherit your environment
+  (measured at ~121 and ~130 variables, including your SSH agent socket and AWS settings).
+- **Apps are honest about what they can reach.** The Store discloses which other apps an
+  app may message, marks network declarations as advisory rather than confinement, and
+  uninstalling or disabling an app now ends its access immediately instead of leaving a
+  token working for up to an hour.
+- **The dashboard stops showing an old number and quietly changing it.** A cached first
+  paint is either fresh or says "Updating…", "couldn't load" no longer renders as "you have
+  nothing", and long lists stay fast (5,000 sessions: 137 ms → 13 ms per keystroke).
+- **Phone, devices and the desktop shell on Linux and macOS.** Pair a phone from
+  Settings → Devices, get woken when a run needs your approval, and install the desktop
+  shell on Linux as an AppImage or `.deb` — or on Apple silicon from a `.dmg`. The dmg is
+  not notarized by choice, so **drag PersonalClaw to Applications rather than clicking the
+  dmg's Install button** (which refuses with *"Could not install. Nothing was changed. You
+  can still drag the app to Applications."*) and approve it once under System Settings →
+  Privacy & Security.
+
+### ⚠️ Breaking changes — read before upgrading
+
+This is the short list. Each item is stated in full in the subsections below.
+
+- **Updates.** `auto_update` and `dashboard.update_dev_mode` are retired, along with
+  `POST /api/update/auto` and `POST /api/update/dev-mode`. One legacy mapping applies once
+  on load: `auto_update: true` → `updates.channel=stable` + `updates.auto=staged`;
+  `auto_update: false` → `updates.auto=off`; `update_dev_mode: true` →
+  `updates.channel=nightly`. The four fields to know are `updates.channel`, `updates.pin`,
+  `updates.auto` and `updates.check_enabled`. `git reset --hard` is gone from every apply
+  path.
+- **Timed triggers change the hour they fire.** A trigger with no explicit timezone now
+  uses local wall-clock time, not UTC (measured as a 7-hour shift on an
+  `America/Los_Angeles` host). If you deliberately pinned a schedule to UTC by leaving the
+  field blank, declare `UTC` explicitly to keep it.
+- **Existing automations now honour the action denylist** — scheduled, file-watch, webhook
+  and chained automations never did. Adjust the command rather than the guardrail.
+- **Hooks, cron scripts and app backends no longer inherit PersonalClaw's environment.**
+  Use `sandbox.env_passthrough`; credential-shaped names stay refused even if declared.
+- **Python 3.14 is refused at install time** — `requires-python` is now `>=3.12,<3.14`.
+- **Config fields removed** (stored values ignored on load): `workflows.max_active_runs`,
+  `knowledge.conflict_model_pass`, `knowledge.lint_every_n_persists`,
+  `learning.min_session_score`, `knowledge.idempotent_persist`,
+  `workflows.max_concurrent_nodes`, and `agent.sandbox`.
+- **`inbound` is renamed `external_access`**, the new master switch
+  `external_access.enabled` must also be on, and surface tokens move to the credential
+  store — an existing MCP token needs re-minting with
+  `personalclaw inbound token create mcp`.
+- **API breaks.** `GET /api/inbox/pending` → `GET /api/inbox/open`, and
+  `/api/inbox/status` carries `open_count` instead of `pending_count`. Consent is the JSON
+  literal `true` only, across 24 gates — the string `"true"`, `1` and `yes` are refused.
+  Three destructive routes now require `confirm: true`. A destructive `POST
+  /api/tools/invoke` needs `"confirm_risk": "destructive"`. Six orphaned `/api/memory/*`
+  embedding endpoints are gone. Workflow `rewind`/`run-from` require
+  `confirm_cascade=true`.
+- **State shapes changed with no migration.** `sessions.json` rows in the old shape are
+  discarded on read (costs one `personalclaw token` re-mint); loop rows written before
+  `stop_reason` read as completed; the `runs` table no longer declares `task_list_id`; a
+  knowledge library written earlier reports a re-index is due.
+- **SDK breaks for app authors.** `run_chat` is no longer exported from
+  `personalclaw.sdk.channel` and `register_acp_cli_entry` no longer accepts
+  `agent_config_dir` — both fail at import. The `kiro` runner id is now `kiro-cli`, not
+  aliased. Update installed apps alongside this core upgrade.
+- **Chat's Activity → Index tab is gone** — the Session Map is the session's index. There
+  is no flag to bring it back.
+
 ### Added
 - **A first-time contributor's three dead ends are closed: a compose service that runs a command the CLI does not have, a Discussions category that does not exist, and a dev setup that fails on the `python3` most machines have.** All three found by following the docs literally rather than reading them. (1) `deploy/compose/compose.yaml` shipped a `personalclaw-slack` service whose `command` was `["personalclaw", "slack"]`. There is **no `slack` subcommand** — `argparse` answers `invalid choice: 'slack'` and exits 2, measured inside the published image — so the documented `docker compose --profile with-slack up -d` could only ever crash-loop a container. It was not merely broken but architecturally stale: Slack has not been a separate process since its lifecycle moved to the extension system, and the listener now runs *inside* the gateway, which reads `SLACK_APP_TOKEN`/`SLACK_BOT_TOKEN`/`PERSONALCLAW_OWNER_ID` at startup (`gateway.py`) while `register_default_transports()` registers only the Web UI (`channel_transports/__init__.py`). Clean break: the service is deleted from `compose.yaml` and its build override from `compose.build.yaml`, and `docs/guides/containers.md` now documents what actually works — put the three values in `.env`, recreate the gateway, enable the Slack channel app — instead of a profile that cannot start. `.env.example`'s "Required only when running the with-slack profile or `personalclaw slack`" is corrected the same way. (2) `CONTRIBUTING.md` sent roadmap proposals to **Discussions → Roadmap Input**; the repository's real categories are Announcements, App Dev, General, Ideas, Polls, Q&A and Show and tell — there is no Roadmap Input, so the one documented intake path named a room that does not exist. It now points at **Ideas**, with the category URL, matching what the README already said. (3) The dev setup opened with a bare `python3 -m venv .venv` and never named a version, while `pyproject.toml` requires `>=3.12,<3.14`. On stock macOS `python3` is 3.9.6, so the documented sequence creates the venv, activates it, and then fails at `pip install -e` with `ERROR: Package 'personalclaw' requires a different Python: 3.9.6 not in '<3.14,>=3.12'` — measured, not inferred. That exact message is now in CONTRIBUTING so it is searchable, together with the two fixes (`python3.12 -m venv` or `uv venv --python 3.12`) and a `python3 --version` check before the venv line. Finally, `.github/ISSUE_TEMPLATE/config.yml` did not exist, so GitHub offered **"Open a blank issue"** beside both templates — making the cheapest path the one that collects no version, no repro and no redaction reminder. Blank issues are now off, with four contact links (Q&A, Ideas, Show and tell, and the private security advisory form), every category slug checked against the live repository rather than guessed.
 - **The `WF_*` workflow error codes now have a registry and a both-directions rail: `workflows/error_codes.py` (`WF_ERROR_CODES`), 162 codes with a meaning each.** [#3499](https://github.com/PersonalClaw/PersonalClaw/issues/3499). `WF_*` was the only one of this repo's three code vocabularies with no registry at all — `errors.ERROR_CODES` and `http_errors.HTTP_ERROR_CODES` both have one, the latter with an append-only rail — and exactly **one** `WF_*` code was documented anywhere in the repository (`WF_MISSING_EXPR`, in `docs/architecture/workflows.md`). So someone authoring a workflow template, which is precisely the audience these codes exist for, would hit `WF_SUPERVISOR_UNKNOWN_CONVERGENCE_FIELD` or `WF_UNORDERED_DEP` with nothing to look it up in, no statement of meaning beyond whichever message happened to accompany it that day, and no guarantee the name would survive. A code is a *contract identifier* — something a caller is invited to branch on — and an unregistered one is a contract nobody can depend on. Every meaning is **derived from the code that raises it** (the guard that fires plus the message it emits), never from the name: a registry of plausible-sounding guesses would be worse than none, because it reads as authoritative. The rail (`tests/test_wf_error_codes_registry.py`) runs **both** directions — every code raised in core has a row, *and* every row is still raised — because the second is the half that gets skipped and it is what stops a registry rotting into a list of codes that no longer exist. It also keeps the three vocabularies asserted disjoint, excludes the registry module from its own scan (all 162 keys are string literals in core, so counting them would make the second direction true by construction), and reads `ast` nodes rather than raw text so the prose that documents a code is never counted as a raise of it. No behaviour changes: every code, message and status mapping is exactly as before.
@@ -49,6 +166,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - `personalclaw gateway --seed …` gains **`--seed-local-model`**, which binds a local Ollama provider into the seeded `$PERSONALCLAW_HOME` so a demo home can actually run a turn. A seeded home previously bound no model, which made the three surfaces that exist only as the *product* of a turn permanently empty — sessions `0`, `/api/approvals` `[]` (an approval is written by the tool-permission gate on a real turn), `/api/artifacts` `[]` (artifacts are agent-produced) — so the demo could not show chat, an approval or an artifact. The step probes Ollama's `/api/tags` and, only when a server answers with a usable model, confirms or installs the `ollama-models` provider app, writes the `providers[]` entry, and binds the `chat` use case (plus `embedding` when the endpoint has an embedding model). No credential is involved; a local Ollama needs none, which is why it is the provider on this path. **It degrades rather than half-populates**: nothing listening, no chat model pulled, or no provider app available means *nothing is written* — the home is exactly what the fixture copied, the gateway starts normally, and one line names the unmet precondition. Endpoint and model are configurable by flag or env with stock local defaults, so no machine-specific value is committed. The fixture itself stays model-free by design (it is a byte-identical copy on every machine, and a bare `copytree` has no hook where a probe could run); `python -m personalclaw.seed_local_model` binds a home that already exists, without re-seeding or booting a gateway.
 - The dashboard gains a **Desktop live view** widget (DCU-7): the computer-use action feed straight off the audit log (every attempt, allowed or refused), an optional picture-in-picture mirror of the screenshots the model already read, and an optional cursor-motion overlay that draws where a click will land. All three are observation-only — a census test pins that the computer-use tool surface is byte-identical with the views on, so watching grants the agent nothing. Renders only what already exists; when desktop computer use is off (the default), the widget says so and explains the out-of-band arming step.
 - The desktop app now ships for **Linux x86-64** (DC-6): every release attaches an AppImage and a `.deb`, built and smoke-tested by CI from the release tag. Both are **unsigned by design** — Linux has no OS-level signing gate, so the release page is the integrity story; the [desktop guide](docs/guides/desktop.md) says exactly what to expect on install. Windows remains unavailable, deliberately: the shell follows platform support, never leads it, and the native-Windows backend port is a documented no-go (WSL2 and Docker Desktop are the supported Windows paths).
+- The desktop app now ships for **macOS (Apple silicon)**: every release attaches `PersonalClaw-<version>-arm64.dmg`, built and smoke-tested by CI on a macOS runner from the release tag (the smoke executes the dmg's bundled backend, so a bundle that packages but cannot start fails the release). **Install it by dragging PersonalClaw to Applications — do not use the dmg's one-click Install button.** macOS reserves one-click install for apps signed with a **Developer ID** *and* notarized by Apple; this one is deliberately neither, so clicking **Install** fails with *"Could not install. Nothing was changed. You can still drag the app to Applications."* That dialog is expected and accurate — the download is not corrupt and retrying changes nothing. After dragging, approve the app once under **System Settings → Privacy & Security** (Gatekeeper, unlike anything on Linux, does consume a signature); the [desktop guide](docs/guides/desktop.md) walks both steps. The app *is* ad-hoc signed, which is a real integrity check over its contents but says nothing about who built it, so *where you downloaded it* is the integrity story — take the dmg from the GitHub Release page only. A Developer ID and notarization would need a paid Apple Developer account the project has deliberately not taken on. Apple silicon only: the bundled backend is a frozen Python binary and cannot be cross-compiled, so there is no Intel build until a job proves one.
+- **The macOS build is now deterministically ad-hoc signed, and that fact is verified rather than assumed** — `scripts/verify_macos_app_signature.sh`, wired into both the `desktop-dist` Makefile target and the `desktop-mac` release job (where it re-checks the copy inside the mounted dmg, the artifact a user actually drags to Applications). Two defects made this necessary, and the second was caused by the fix for the first. **(1)** electron-builder auto-discovers a signing identity from the build machine's login keychain, so "we added no signing step" was never the same claim as "the output is unsigned": a local build produced an app signed by an unrelated third party's Developer identity, on what would have been a public release artifact, while the Makefile comment asserted it was unsigned. `CSC_IDENTITY_AUTO_DISCOVERY=false` and `"identity": null` both now prevent that, and both are kept — the environment variable is lost when the build is invoked another way, the manifest key is lost if someone regenerates it from a template. **(2)** Disabling signing does not leave the bundle unsigned; it leaves **Electron's stock linker seal**, which declares that sealed resources must be present while sealing none of `Frameworks`, the four helper apps, `app.asar` or the PyInstaller backend (`Identifier=Electron`, `flags=0x20002(adhoc,linker-signed)`, `Sealed Resources=none`, `Info.plist=not bound`). macOS refuses a *damaged* signature more firmly than an absent one, so that build failed to install harder than the foreign-signed one and presented with no name, because macOS will not trust an `Info.plist` behind a broken seal. `desktop/afterPack.js` now ad-hoc re-signs the packed bundle — after electron-builder packs and **before the dmg is assembled**, since a post-dmg step would sign an app the dmg already contains — and verifies its own work, so a bad seal cannot become a dmg. Ad-hoc signing needs no identity, keychain or Apple account, so none was obtained and nothing is notarized; stripping the signature instead is not an option, because an arm64 bundle with no signature installs and then refuses to launch.
+- The desktop signature gate asserts **seal validity**, not signer absence, because every cheaper check is vacuous and one of them shipped defect (2) above. `codesign --verify --deep --strict` (read by **exit status**) is the primitive; alongside it the gate requires an ad-hoc signature that is *not* linker-signed, sealed resources with a non-zero file count, a bound `Info.plist`, a signing identifier that is `io.personalclaw.app` *and* agrees with the bundle's own `CFBundleIdentifier`, and no `Authority=` line anywhere in the bundle tree including the helper apps and frameworks. Four traps are documented in the script because each one silently inverts the test: an unsigned app makes `codesign` **exit non-zero**, so `codesign -dv … | grep -v Authority` passes on the good and bad artifact alike; `-dv` is too quiet to print `Authority=` at all, so a gate written with it reports clean on an app that *is* signed; an authority-absence check passes the damaged bundle, which has no authority line; and `codesign` spells the seal keys two different ways (`Sealed Resources version=2 rules=13 files=4853` versus `Sealed Resources=none`, `Info.plist entries=32` versus `Info.plist=not bound`), so matching one spelling finds nothing on a *healthy* app. Gatekeeper is deliberately not asserted — `spctl` rejects any un-notarized build, including a known-good one, so gating on it would gate on notarization the project has ruled out buying.
 - Durable tmux-backed run workers gain their **spawn** half (EI-6 §5.1). With `agent.durable_sessions` on (off by default) and tmux installed, an isolated run's workspace setup steps now execute inside a detached tmux session on PersonalClaw's own socket, named deterministically `pclaw-<project>-<run>-<workflow>` — the exact name the boot recovery sweep already recomputes. Killing the gateway mid-`npm install` now leaves the install running under the tmux daemon; on restart the sweep reattaches (the run suspends with a Resume affordance instead of tombstoning, the journal flags the resume), and a step still running from a previous gateway life is waited for rather than run twice concurrently. Every failure to arrange durability — tmux absent, a refused session, a session that dies without reporting — falls back to today's bare subprocess, so the flag can never break a run. The tool resource ceiling still applies inside the session, and a run's teardown kills its durable worker before the workspace is deleted. With the flag off, behavior is byte-identical; no new persisted state.
 - **An MCP server can now ask *you* a question mid-tool-call, through the approval card PersonalClaw already had** (MBR-1, the MCP spec's `elicitation/create`). The right is **denied by default and granted per server** — `security.mcp_elicitation_servers` is an allowlist that ships empty, toggled per server on Settings → Tools, so a server added for one read tool never silently acquires the right to interrupt you. A granted question arrives as an ordinary approval card attributed to the server that asked (`mcp_elicitation:<name>`); your yes or no is returned to the server as the protocol result. The server controls only the prose in its question: the attribution line is computed from the server's configured name and cannot be forged by the text, and that text is carried as data through the same redaction the approval store already applies, so an exfiltration URL in a prompt is redacted before you see it and injection prose is shown to you verbatim rather than obeyed. A question nobody answers is **cancelled, not left hanging** — it is bounded by the window its answer could still be delivered in (derived from the MCP tool-call ceiling, deliberately not a knob), the card is withdrawn from the UI at that point, and the server is told `cancel` rather than a refusal you never made. A form a yes/no cannot truthfully fill — anything asking for a string — is refused with a typed protocol error instead of being answered with a fabricated default, and URL-mode elicitation is refused outright because sending you to a third party's page to type a credential is not a confirmation. Servers that were never granted the right advertise no `elicitation` capability at all, and one that asks anyway gets a typed error back immediately instead of a stall. PersonalClaw's own inbound MCP server surface still does not issue elicitations; this is the client half only.
 - The Learning page gains a **Lab vs field** panel (ES-9): one row per subject (bundled template or registered action type) showing its pinned lab score beside its live field record — 👍/👎 rate, edit-before-approve rate, and approval/rejection/undo rates derived from the feedback and earned-autonomy ledgers, computed by query and stored nowhere new. A subject whose lab score rose while its field trend fell is flagged `lab_field_divergence` — the honest "lab says better, is it?" check — and that flag now mechanically files an autonomy demotion for the divergent subject (an action type loses its own standing grant; a template's standing grants are voided wholesale, the same consequence a failed pre-registered study already carries). The demotion is gated by `evals.enabled`: turning evals off suspends the demotion but never hides the flag, and it fires at most once per standing grant. The panel reads `GET /api/evals/field-metrics` (read-only — a GET never demotes).

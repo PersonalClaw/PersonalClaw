@@ -52,7 +52,7 @@ PC_PACKAGE="personalclaw"
 # WHY IT CANNOT ROT. A hand-typed version in a shell script is the defect in #2554 (two
 # copies drifted three weeks). tests/test_website_installer.py pins this constant to
 # CHANGELOG.md's second-newest release heading, so it reds the release after it goes stale.
-PC_MIN_VERSION="0.1.2"
+PC_MIN_VERSION="0.1.3"
 UV_INSTALLER_URL="https://astral.sh/uv/install.sh"
 
 # ── tiny output helpers ──────────────────────────────────────────────────────
