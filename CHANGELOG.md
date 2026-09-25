@@ -42,6 +42,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   (`path_protected`, with `path` and `reason`) where it used to be a bare "Access denied".
 - **The Files page no longer goes blank the first time you open a file of a new type.** Opening the first Markdown, CSV, JSON, image or PDF file of a session, or reloading with a file tab restored, could leave everything but the sidebar invisible. The header, editor and explorer were all still there and still worked, at `opacity: 0`, until you navigated away and back. Two things combined. Each file type's preview loads on first use, and the preview had no loading boundary of its own, so its first load hid the whole page to show one spinner. And the page-level loading boundary wrapped the page's fade-in, so when the page came back the fade was reset to its first frame and nothing replayed it. The preview now loads inside its own pane, with a spinner there that screen readers announce, and the page-level boundary sits inside the fade, so no page can be left invisible this way. Artifacts had the same flaw. Opening one hid the whole page for a moment and replayed its entrance, and it only escaped staying blank because opening an artifact changes the URL.
 - **An empty folder in Files now shows how to fill it.** It said "Empty" and nothing more. The only way in was dragging files onto it, with no hint that this works, and "Upload here" existed only in a sub-folder's menu. It now reads "This folder is empty", with an **Upload files** button and "or drop files here". The button runs the same upload as "Upload here", with the same size check, progress and cancel, into the folder you are in.
+- **The README and the guides describe the small default model, and say plainly what it can't
+  do.** Once the default model shipped (see Added), four pages contradicted the code: the README
+  said no model ships, that an offline install needs your own Ollama, and that `ollama-models` is
+  the only model provider in the wheel; Getting started made an API key a prerequisite and never
+  mentioned the download; the when-not-to-use page repeated the README at length. They now cover
+  the one-time 138 MiB download, where to find it, and that no package carries the weight.
+  Security limitations has a new §5, measured on the shipped weight through the chat route: no
+  tools, a prompt cut back to your message (so no memory, skills or date), a 4,096-token budget
+  and 320-token replies, and a fallback that also serves background jobs, loops and workflows when
+  nothing else is bound. It got the capital of France right, then said the year was 2019 and
+  invented a web-search summary without ever saying it couldn't know. §5 also records that a
+  weight you copy into place is checked for size, not sha256. Smaller fixes in the same pass: the
+  platforms guide said `personalclaw setup` asks for a provider credential and that `.env` needs
+  a provider key, and the app-platform tier table still counted 31 native apps.
 
 ### Security
 

@@ -11,7 +11,7 @@ system, crons, and the MCP bridge. Paths are relative to
 
 | Tier | Location | Notes |
 |---|---|---|
-| Native (31) | `apps/native/` in-package | seeded on first run, locked on (e.g. `native-agents`, `personalclaw-memory`, `ollama-models`, the action bundles); may own its provider code — see [the native capability contract](#the-native-capability-contract-appsnative_contractpy) |
+| Native (32) | `apps/native/` in-package | seeded on first run, locked on (e.g. `native-agents`, `personalclaw-memory`, `ollama-models`, `bundled-chat`, the action bundles); may own its provider code — see [the native capability contract](#the-native-capability-contract-appsnative_contractpy) |
 | First-party (68) | workspace `apps/` | Slack channel, hosted model providers, speech, Minutes/Growth dashboards |
 | Third-party | user sources → `~/.personalclaw/apps/` | fixtures at `third-party-apps/` (`hello-search`, `demo-dashboard`) |
 
