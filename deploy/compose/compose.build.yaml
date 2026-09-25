@@ -25,10 +25,3 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.web
     image: personalclaw-web:local
-
-  personalclaw-slack:
-    build:
-      context: ../..
-      dockerfile: deploy/docker/Dockerfile.backend
-      target: runtime
-    image: personalclaw-gateway:local

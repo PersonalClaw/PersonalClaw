@@ -237,12 +237,32 @@ Two orthogonal switches, both in `config.json` inside the volume (or Settings â†
 
 ## Slack channel (optional)
 
-The compose file includes an opt-in `personalclaw-slack` service behind the
-`with-slack` profile (it runs `personalclaw slack` against the same volume):
+**There is no second container for this, and no extra service to start.** The Slack
+listener runs *inside the gateway process*: the gateway reads `SLACK_APP_TOKEN`,
+`SLACK_BOT_TOKEN` and `PERSONALCLAW_OWNER_ID` from the credential store at startup and
+enables itself when the two tokens are present (`src/personalclaw/gateway.py`). The
+transport itself is registered by the **Slack channel app**, not by core â€”
+`register_default_transports()` registers only the Web UI, and enabling the channel app is
+what calls `register_transport` (`src/personalclaw/channel_transports/__init__.py`).
+
+So on a container install:
 
 ```bash
-docker compose -f deploy/compose/compose.yaml --profile with-slack up -d
+# 1. put the three values in the .env the gateway already reads
+cat >> .env <<'ENV'
+SLACK_APP_TOKEN=xapp-...
+SLACK_BOT_TOKEN=xoxb-...
+PERSONALCLAW_OWNER_ID=U0123456789
+ENV
+
+# 2. recreate the gateway so it picks them up (credentials are read at startup)
+docker compose -f deploy/compose/compose.yaml up -d --force-recreate personalclaw-gateway
 ```
+
+Then install and enable the Slack channel app from **Store** in the dashboard, the same way
+as any other channel. Tokens come from <https://api.slack.com/apps> after creating a
+Socket-Mode app. Without `PERSONALCLAW_OWNER_ID` the handler refuses every message, by
+design.
 
 ## Troubleshooting
 
