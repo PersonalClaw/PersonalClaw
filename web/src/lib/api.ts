@@ -807,6 +807,21 @@ export interface AppCronSummary {
    *  not be described — the raw `cron_expr` is the honest fallback there. */
   cadence?: string
 }
+/** One declared `pythonDependencies` entry, classified server-side by
+ *  `app_manager.describe_python_dependencies`.
+ *
+ *  `spec` is the manifest's requirement string VERBATIM (`anthropic>=0.20`) — a user
+ *  deciding about that pin has to see that pin, not a generic "this app installs
+ *  packages".
+ *
+ *  `coreOwned` is whether core itself declares the package, read from the same pin set
+ *  `_reject_core_dependency_conflicts` gates on. It is the difference between "new code
+ *  enters your interpreter" (`false`) and "a version you already have is acceptable"
+ *  (`true`, because the guard refuses the install rather than moving a core dependency).
+ *  Claimed `true` only when proven: if core's pin set cannot be read server-side every
+ *  spec arrives `false`, which is the louder of the two disclosures and the same
+ *  fail-closed direction the guard takes. */
+export interface AppPythonDependency { spec: string; coreOwned: boolean }
 export interface AppCatalogEntry {
   name: string; displayName: string; description: string; version: string
   icon: string; heroUrl?: string; author: string
@@ -831,6 +846,12 @@ export interface AppCatalogEntry {
    *  none yet, so empty permissions there mean "not known", not "declared none". */
   consentKnown?: boolean
   crons?: AppCronSummary[]
+  /** The Python packages installing this app pip-installs into the venv the GATEWAY runs
+   *  out of — the consent fact the permission block cannot state, because no gateway
+   *  permission bounds a module once it is importable in-process. `[]` for an app that
+   *  declares none and for a registry pointer; `consentKnown` says which. Read only
+   *  through `consentPythonDeps`, which owns that distinction. */
+  pythonDependencies?: AppPythonDependency[]
   /** #492 — does this app ship browser code? Same two field names and meanings as
    *  `AppSummary` above, so ONE reading serves the pre-install card and the installed
    *  one (`consentHostUi`). A UI bundle runs in the dashboard PAGE, which the
