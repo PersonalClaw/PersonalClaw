@@ -23,7 +23,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from personalclaw.apps.manager import app_dir
+from personalclaw.apps.manager import app_dir, read_app_owned_text
 from personalclaw.apps.schema_validate import validate_properties
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import secret_refs
@@ -43,16 +43,19 @@ class ProviderSettings:
 
     @staticmethod
     def _load_stored(extension_name: str) -> dict[str, Any]:
-        """The file as it is on disk — secret fields are references. For the writers."""
-        path = ProviderSettings.config_path(extension_name)
-        if not path.is_file():
-            return {}
+        """The file as it is on disk — secret fields are references. For the writers.
+
+        Never read through a link: the app writes ``data/``, so a ``config.json`` it made a
+        link reads as no settings rather than as whatever file the link names."""
+        root = app_dir(extension_name)
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else {}
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Failed to read extension config %s: %s", path, exc)
+            data = json.loads(read_app_owned_text(root, "data", "config.json"))
+        except FileNotFoundError:
             return {}
+        except (OSError, ValueError) as exc:
+            logger.warning("Failed to read extension config for %s: %s", extension_name, exc)
+            return {}
+        return data if isinstance(data, dict) else {}
 
     @staticmethod
     def load(extension_name: str) -> dict[str, Any]:

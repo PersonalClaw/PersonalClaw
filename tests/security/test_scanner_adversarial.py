@@ -91,8 +91,8 @@ def ids_of(cases: list[dict[str, Any]]) -> list[str]:
 
 
 def payload(case: dict[str, Any], key: str = "files") -> list[dict[str, Any]]:
-    """Materialize a case's file entries. ``pad_to_bytes`` inflates an entry past the
-    scanner's per-file read cap without bloating the committed JSON."""
+    """Materialize a case's file entries. ``pad_to_bytes`` inflates an entry to that size
+    without bloating the committed JSON."""
     entries: list[dict[str, Any]] = []
     for entry in case.get(key, []):
         contents = entry.get("contents", "")
@@ -388,23 +388,28 @@ def assert_integrity_tamper_detected(case: dict[str, Any], tmp_path: Path) -> No
     assert "TAMPERED" in report.summary()
 
 
-def assert_oversize_skipped_by_walk_refused_at_commit(case: dict[str, Any], tmp_path: Path) -> None:
-    """A dangerous script padded past the per-file read cap is skipped by the quarantine
-    walk (documented, deliberate — the scanner does not read unbounded blobs). Defense in
-    depth is what refuses it: the commit-side per-file gate has no cap."""
+def assert_oversize_read_by_walk_and_refused(case: dict[str, Any], tmp_path: Path) -> None:
+    """A dangerous script padded past the 512 KB the scanner once stopped reading at. The
+    quarantine walk skipped it by size, and only the skill path had a commit-side gate
+    behind that — an app install had nothing, so the padding alone installed it unread.
+    The walk now reads every file whole (up to ``_MAX_FILE_BYTES``; past it, an
+    ``unscanned_file`` finding) and refuses it itself; the commit-side gate still does."""
     files = payload(case)
     staged = tmp_path / "staged" / "helper"
     staged.mkdir(parents=True)
     write_entries(staged, files)
     blob = staged / "scripts" / "setup.sh"
-    assert blob.stat().st_size > supply_chain._MAX_FILE_BYTES
-    assert default_scanner.scan(staged).verdict is Verdict.CLEAN, "cap behaviour changed"
+    assert 512 * 1024 < blob.stat().st_size <= supply_chain._MAX_FILE_BYTES
+    report = default_scanner.scan(staged)
+    assert report.verdict is Verdict.DANGEROUS, [f.rule for f in report.findings]
+    assert "scripts/setup.sh" in {f.path for f in report.findings}
 
     with pytest.raises(ValueError, match="dangerous"):
         mk.install_skill_files(files, "helper", tmp_path / "live")
     market = AdversarialMarket(files)
-    with pytest.raises(ValueError, match="dangerous"):
+    with pytest.raises(mk.SkillInstallRefused) as refused:
         mk.install_scanned(market, "adversarial", "helper", tmp_path / "live2")
+    assert refused.value.dangerous
     assert not (tmp_path / "live2" / "helper" / "scripts").exists()
 
 
@@ -620,7 +625,7 @@ HANDLERS: dict[str, Callable[..., None]] = {
     "installed_equals_scanned": assert_installed_equals_scanned,
     "midscan_payload_swap_refused": assert_midscan_payload_swap_refused,
     "integrity_tamper_detected": assert_integrity_tamper_detected,
-    "oversize_skipped_by_walk_refused_at_commit": assert_oversize_skipped_by_walk_refused_at_commit,
+    "oversize_read_by_walk_and_refused": assert_oversize_read_by_walk_and_refused,
     "manifest_rejected": assert_manifest_rejected,
     "baseline_file_tamper_detected": assert_baseline_file_tamper_detected,
     "baseline_file_unreadable_detected": assert_baseline_file_unreadable_detected,

@@ -278,7 +278,10 @@ recalled episodes (`dashboard/handlers/memory.py`; see
 - verdicts: clean / warning (consent required — 409) / **dangerous (terminal
   refusal, non-overridable)**;
 - the integrity invariant: **scanned bytes == installed bytes** (no
-  time-of-check/time-of-use window between scan and install);
+  time-of-check/time-of-use window between scan and install). Staging leaves the same
+  tooling out of both (`supply_chain.NEVER_INSTALLED_NAMES`: `.git`, `__pycache__`,
+  virtualenvs), and the scanner skips nothing else, so no folder or file size installs
+  unread; a file it cannot read is an `unscanned_file` finding;
 - source trust tiers modulate strictness (a bundled skill's `curl` is not the
   same risk as a random repository's).
 

@@ -31,18 +31,36 @@ class TestScanTextSurfaces:
         r = default_scanner.scan_text("note ‮ malicious", surface="memory")
         assert r.verdict is Verdict.DANGEROUS
 
-    def test_scan_skips_vcs_noise_dirs(self, tmp_path):
-        # Regression (git-URL install): .git/hooks/*.sample must NOT be scanned —
-        # it's VCS metadata, not app content, and would false-positive every clone.
+    def test_scan_reads_every_folder_of_the_tree_it_is_handed(self, tmp_path):
+        # The scanner used to skip node_modules (and seven other names) while staging
+        # installed them, so this payload installed unread. What a tree holds is
+        # staging's decision; the scanner reads all of it.
         (tmp_path / "app.json").write_text('{"name": "x"}', encoding="utf-8")
-        hooks = tmp_path / ".git" / "hooks"
-        hooks.mkdir(parents=True)
-        (hooks / "pre-receive.sample").write_text("eval $(command)\n", encoding="utf-8")
         nm = tmp_path / "node_modules" / "evil"
         nm.mkdir(parents=True)
         (nm / "x.sh").write_text("rm -rf / --no-preserve-root\n", encoding="utf-8")
         r = default_scanner.scan(tmp_path)
+        assert r.verdict is Verdict.DANGEROUS, [f.rule for f in r.findings]
+        assert {f.path for f in r.findings} == {"node_modules/evil/x.sh"}
+
+    def test_a_clones_git_metadata_never_reaches_the_scan(self, tmp_path):
+        # Regression (git-URL install): .git/hooks/*.sample match the script rules and
+        # would false-positive every clone. Staging leaves .git out of the bundle, so the
+        # tree the scanner reads has none.
+        from personalclaw.apps import staging
+
+        src = tmp_path / "src"
+        hooks = src / ".git" / "hooks"
+        hooks.mkdir(parents=True)
+        (src / "app.json").write_text('{"name": "x"}', encoding="utf-8")
+        # The shape of git's own sample hook, which matches the eval rule.
+        (hooks / "pre-receive.sample").write_text('eval "$(git config hooks.x)"\n')
+        assert default_scanner.scan(src).verdict is Verdict.WARNING  # vacuity: it would trip
+        staged = tmp_path / "staged"
+        staging.survey(src).copy_to(staged)
+        r = default_scanner.scan(staged)
         assert r.verdict is Verdict.CLEAN, [f.rule for f in r.findings]
+        assert not (staged / ".git").exists()
 
 
 class TestSkillInstallGate:

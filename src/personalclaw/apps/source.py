@@ -152,10 +152,9 @@ def _clone_git(url: str) -> ResolvedSource:
         _rmtree(tmp)
         tail = (proc.stderr or proc.stdout or "").strip()[-300:]
         raise SourceError(f"git clone failed: {tail}")
-    # Drop the VCS metadata — it's not app content (and shouldn't ship into the
-    # installed tree). The scanner skips .git too, but removing it keeps the
-    # staged/installed copy clean.
-    _rmtree(tmp / ".git")
+    # The clone keeps its `.git`: staging leaves version-control metadata out of every
+    # bundle, at any depth (`supply_chain.never_installed`), so it is never scanned,
+    # digested or installed, and the caller's cleanup removes it with the clone.
     return ResolvedSource(path=tmp, origin="external", cleanup=True)
 
 

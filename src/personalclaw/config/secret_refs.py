@@ -579,6 +579,22 @@ def _read_json(path: Path) -> Any:
         return None
 
 
+def _read_app_owned_json(root: Path, *parts: str) -> Any:
+    """``_read_json`` for a file inside a folder an APP writes (its ``data/``, or a parked
+    copy of one) — never through a link it planted there, which would otherwise have this
+    move copy the linked file's content into the app's folder and file its secrets under the
+    app's name (:func:`personalclaw.apps.manager.read_app_owned_text`)."""
+    from personalclaw.apps.manager import read_app_owned_text
+
+    try:
+        return json.loads(read_app_owned_text(root, *parts))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        logger.warning("not moving secrets out of %s: %s", root.joinpath(*parts), exc)
+        return None
+
+
 def _write_json(path: Path, data: Any) -> None:
     from personalclaw.atomic_write import atomic_write
 
@@ -639,7 +655,7 @@ def _move_config_document(path: Path, *, point_only: bool) -> bool:
 
 
 def _move_app_settings(path: Path, app: str) -> bool:
-    data = _read_json(path)
+    data = _read_app_owned_json(path.parent.parent, "data", path.name)
     if not isinstance(data, dict):
         return False
     moved = store(data, owner=app_owner(app), declared=declared_app_fields(app), previous=data)
@@ -652,7 +668,7 @@ def _move_app_settings(path: Path, app: str) -> bool:
 def _strip_parked_settings(path: Path) -> bool:
     """A keep-data copy of an UNINSTALLED app: its secrets are dropped, not moved. Uninstall
     removes an app's secrets; these were parked by a release that did not."""
-    data = _read_json(path)
+    data = _read_app_owned_json(path.parent, path.name)
     if not isinstance(data, dict):
         return False
     doomed = [

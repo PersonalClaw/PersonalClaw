@@ -298,6 +298,27 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   left there is now copied as a link instead of as the bytes it names. Behaviour change: a
   bundle that relied on a link being followed must ship the file or folder itself. No bundled
   or first-party app ships a link.
+- **An app installs exactly what was scanned.** The supply-chain scanner skipped `.git`, `.hg`,
+  `.svn`, `node_modules`, `.venv`, `venv`, `__pycache__` and `.tox` entirely, and every file
+  over 512 KB, while staging copied all of it into the installed app. So `node_modules/evil.py`,
+  a virtualenv's `sitecustomize.py`, an `evil.py` padded past 512 KB, or a `__pycache__`
+  bytecode file installed without being read, and the install review said nothing about any of
+  them. The bytecode one ran. A bundle whose harmless `provider.py` came with an unchecked-hash
+  `__pycache__/provider.cpython-313.pyc` reviewed as clean, and the gateway's provider loader
+  then ran the bytecode instead of the source. Staging now leaves out the tooling no app runs,
+  at any depth: `.git`, `.hg`, `.svn`, `__pycache__`, `.venv`, `venv` and `.tox`
+  (`supply_chain.NEVER_INSTALLED_NAMES`). What it leaves out is not scanned, not in the consent
+  digest and not installed. The scanner reads everything else, `node_modules` included, each
+  file whole up to 16 MB, and a file it still can't read shows in the review as an
+  `unscanned_file` warning instead of passing silently. Skill installs follow the same rule.
+  Two more holes of the same kind are closed. The gateway's reads of an app's
+  `data/config.json` (the config API, provider settings and the boot-time move of plaintext
+  secrets) no longer follow a link the app planted there. And a registry listing's `repo` must
+  be a plain `https://` URL, so an index can no longer point a Store card at a folder on this
+  machine, a `file://` URL, `ssh` or `http://`. Behaviour change: a local-path install of a
+  checkout no longer copies its `.git`, `__pycache__` or virtualenv. A checkout with a real
+  virtualenv, refused before for linking outside the bundle, now installs without it. An app
+  that needs Python packages declares `pythonDependencies`.
 - **An installed app can no longer run a command through the gateway, set up an automation that
   approves itself, or take your access away.** With an ordinary `api` declaration an app could:
   1. define an MCP server under `/api/mcp`, which is a command the gateway launches as you, and

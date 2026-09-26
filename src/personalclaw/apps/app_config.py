@@ -22,7 +22,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from personalclaw.apps.manager import app_dir
+from personalclaw.apps.manager import app_dir, read_app_owned_text
 from personalclaw.apps.schema_validate import validate_properties
 from personalclaw.apps.secret_fields import sensitive_field_names
 from personalclaw.atomic_write import atomic_write
@@ -47,15 +47,19 @@ def _schema_properties(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def _read_stored(name: str) -> dict[str, Any]:
-    path = _config_path(name)
-    if not path.is_file():
-        return {}
+    """The file as it is on disk — secret fields are references. Never read through a link:
+    the app writes ``data/``, so a ``config.json`` it made a link reads as no config."""
+    root = app_dir(name)
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (json.JSONDecodeError, OSError):
-        logger.warning("app %s config unreadable; treating as empty", name, exc_info=True)
+        data = json.loads(read_app_owned_text(root, "data", _CONFIG_FILENAME))
+    except FileNotFoundError:
         return {}
+    except (OSError, ValueError) as exc:
+        logger.warning(
+            "app %s: data/%s not read (%s); treating as empty", name, _CONFIG_FILENAME, exc
+        )
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def read_config(name: str) -> dict[str, Any]:
