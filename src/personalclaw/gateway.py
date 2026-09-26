@@ -4851,4 +4851,16 @@ async def run_gateway(
         json_ready=json_ready,
         approval_mode=approval_mode,
     )
-    await orchestrator.run()
+    try:
+        await orchestrator.run()
+    except BaseException:
+        # `run` leaves only by ending the process (`os._exit`, after `_shutdown` stopped every app
+        # process, or the exec of a restart) or by raising. It raises when start-up fails, and
+        # when it is stopped before its signal handlers are installed (they come after the update
+        # check), since a Ctrl-C then cancels it. Startup has already started every enabled app's
+        # backend and worker by then, and each would outlive the gateway, re-parented to init,
+        # until the next boot reaped it.
+        from personalclaw.apps.app_runtime import stop_processes
+
+        stop_processes()
+        raise

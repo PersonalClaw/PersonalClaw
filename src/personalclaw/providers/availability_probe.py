@@ -38,22 +38,16 @@ from personalclaw.providers.availability import (
 
 def _records(names: list[str]) -> tuple[list["RegisteredProvider"], list[str]]:
     """Every provider record of the named apps, plus the names that are not installed."""
-    from personalclaw.apps import app_python
-    from personalclaw.providers.loader import (
-        discover_bundled_extensions,
-        discover_installed_extensions,
-    )
+    from personalclaw.apps import app_python, app_runtime
     from personalclaw.providers.registry import ProviderRegistry
 
     # The installed apps' Python packages (``<home>/app-python``) join the import path exactly as
-    # they do in the gateway (``register_extension_providers``) — before any app module is
+    # they do in the gateway (``providers.loader``'s startup) — before any app module is
     # imported. Without it a hook asking "is my package installed?" answers for a process that
     # cannot see where the installer put it, and every such app reads as not installed.
     app_python.activate()
     registry = ProviderRegistry()  # no type handlers: registering enables nothing
-    for manifest in discover_bundled_extensions():
-        registry.register(manifest)
-    for manifest, _enabled in discover_installed_extensions():
+    for manifest, _enabled in app_runtime.installed():
         registry.register(manifest)
     found: list["RegisteredProvider"] = []
     missing: list[str] = []

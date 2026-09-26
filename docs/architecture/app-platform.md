@@ -88,15 +88,40 @@ backend**.
 Every lifecycle step that starts or stops an app goes through one pair, so an update, an
 uninstall and a reinstall all leave exactly the version on disk running:
 
-- **`load(manifest)`** — install, enable, and the end of an update: register the providers
-  (which imports the app's code from its files now), seed its prompts and skills, write its MCP
-  servers, register its proposal kinds, start its backend and its background worker.
+- **`load(*manifests)`** — install, enable, the end of an update, and gateway startup: first each
+  app's code and registrations (its providers, which imports its code from its files now, its
+  prompts, skills and proposal kinds), then what each runs beside the gateway (its MCP servers,
+  backend and background worker). Startup loads every enabled app in the one call, so every app's
+  code is registered before any app's process starts — a backend that launches through another
+  app's sandbox tier finds the tier.
 - **`unload(name, manifest)`** — disable, the three uninstall rungs, and the start of an update:
   stop and hold the backend and the worker (neither watchdog starts a held app, so no process
   comes back from the old files before the swap), drop the MCP servers and close the processes
   they spawned, disable the providers (a channel's receiver stops with them, and the unload waits
   for it), take back what the app's code registered, remove its prompts, skills and proposal
   kinds, and forget its availability answers.
+- **`reload(name, manifest)`** — the two in turn, for an app that is already running: enabling an
+  app that is on (a provider whose start failed, switched on again), and an app whose missing
+  Python packages the boot-time repair just reinstalled.
+
+**Startup** (`providers/loader.py::load_all_extensions`) recovers an interrupted update, puts the
+app packages on the import path, seeds the native apps, and then hands every installed app to
+`app_runtime.start_installed`: an enabled one is loaded as above, a disabled one is listed with its
+providers off, and an enabled one this core cannot host (`minPersonalClawVersion`) is refused as
+an enable refuses it — listed, its providers saying why, its backend and worker held so no
+watchdog starts them. An app's MCP servers are written at every load, startup included; what the
+owner set on one (`disabled`, `disabledTools`, `autoApprove`) is kept. A process that is not the
+gateway (a CLI command that resolves a model) makes the same walk and loads each enabled app's
+code and registrations only. A start-up that fails, or is stopped before the gateway installs its
+signal handlers (a Ctrl-C during the update check), stops the backends and workers it already
+started (`gateway.run_gateway`), as the gateway's own stop does.
+
+**Settings → Providers** switches a provider by switching its app. A provider has no on/off of its
+own: its switch sends the Apps page's own `POST /api/apps/{name}/disable` and `…/enable` (the web
+client's `setActivation`), so the app's code leaves the process and comes back from its files, the
+two pages never disagree about whether the app is on, and only the owner can switch an app's code
+on (both routes are owner-only). Switching on a provider whose start failed enables an app that is
+already on, which reloads it.
 
 **Taking the code back** (`personalclaw/app_code.py`). The loader claims an app's directory
 before it runs any of its code. Each registry app code can write to through the SDK — model types
@@ -105,7 +130,8 @@ runners, trust-mode callbacks — records how to take an entry back, and an entr
 the app's code made the call; a core module that registers its own type while the app's import
 pulls it in stays core's. `release(name)` runs those take-backs, removes every module loaded from
 the app's directory from `sys.modules` (and its cached bytecode, since the next version's file
-reuses the path), and reports what Python cannot take back:
+reuses the path), and reports what Python cannot take back; the unload adds what it cannot
+stop:
 
 | Left in the process | Why it stays | What the owner sees |
 |---|---|---|
@@ -113,6 +139,7 @@ reuses the path), and reports what Python cannot take back:
 | a thread still running the app's code | nothing can stop an arbitrary thread | a restart reason naming it |
 | a task suspended in the app's code | it would resume the old code | a restart reason naming it |
 | a package in `app-python` the gateway had loaded, replaced by the update | an interpreter keeps the version it imported first | a restart reason naming the packages |
+| a process of the gateway's tree still running the app's files — above all an MCP server an agent CLI (an ACP session) started for itself | the agent starts the servers its own configuration names when its session starts and keeps them for the session's life; the gateway does not own them | a restart reason: the agent session keeps it until that session restarts |
 
 A restart reason is the update's `restart_reason` (with `restart_required`), the toast that
 reports the update, and the app panel's "Restart the gateway to finish" notice

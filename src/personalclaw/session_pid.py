@@ -78,6 +78,20 @@ def _track_session_pid(pid: int) -> None:
             f.write(f"{entry}\n")
 
 
+def agent_processes_of_this_gateway() -> set[int]:
+    """The agent CLI processes this gateway spawned (its ACP sessions and warm pool), by pid.
+
+    Read from the ``<gateway_pid>:<pid>`` entries :func:`_track_session_pid` writes at every
+    spawn. An entry can outlive its process until a sweep prunes it, so a caller matches these
+    against processes it sees running rather than trusting each one to be alive.
+    """
+    mine = f"{os.getpid()}:"
+    with _session_pid_file_lock():
+        path = _session_pid_file_path()
+        entries = path.read_text(encoding="utf-8").split() if path.exists() else []
+    return {int(e[len(mine) :]) for e in entries if e.startswith(mine) and e[len(mine) :].isdigit()}
+
+
 @contextmanager
 def _pid_file_lock():  # type: ignore[no-untyped-def]
     """Exclusive file lock for all PID file read-modify-write operations."""

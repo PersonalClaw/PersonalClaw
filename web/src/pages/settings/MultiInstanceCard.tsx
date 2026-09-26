@@ -12,6 +12,7 @@ import { TextInput } from '../../ui/forms'
 import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
 import { reportingWrite } from '../../app/reportingWrite'
+import { setActivation } from '../../app/appActivation'
 
 /** A multiInstance=true provider rendered as a frame for N named instances.
  *  Each instance has its own schema-driven config (test / edit / delete); an
@@ -47,13 +48,13 @@ export function MultiInstanceCard({ ext, onChanged }: { ext: SettingsProvider; o
   )
   const reloadInstances = () => { invalidateKeys(`settings:provider-instances:${ext.name}`, true); refreshInstances() }
 
-  // Reported, and re-read either way — see `ProviderCard`'s toggle: a refused enable leaves the
-  // card off with the server's sentence under it, and the toast says it at the moment it happens.
+  // The switch is its app's, and reported and re-read either way — see `ProviderCard`'s toggle: a
+  // refused enable leaves the card off with the server's sentence under it, and the toast says it
+  // at the moment it happens.
   const toggle = async () => {
     setBusyToggle(true)
     try {
-      await reportingWrite(`turn ${ext.displayName || ext.name} ${ext.enabled ? 'off' : 'on'}`, () =>
-        ext.enabled ? api.disableProvider(ext.name) : api.enableProvider(ext.name))
+      await reportingWrite(`turn ${ext.displayName || ext.name} ${ext.enabled ? 'off' : 'on'}`, () => setActivation(ext))
       onChanged()
     } finally { setBusyToggle(false) }
   }

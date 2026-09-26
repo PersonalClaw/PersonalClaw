@@ -32,8 +32,8 @@ vi.mock('../../lib/api', async (importOriginal) => {
       testProviderInstance: vi.fn(),
       updateProviderInstance: vi.fn(),
       deleteProviderInstance: vi.fn(),
-      enableProvider: vi.fn(),
-      disableProvider: vi.fn(),
+      enableApp: vi.fn(),
+      disableApp: vi.fn(),
     },
   }
 })

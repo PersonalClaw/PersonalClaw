@@ -63,12 +63,11 @@ def test_the_bundle_ships_in_the_native_tree():
 
 
 def test_the_bundle_is_declared_native():
-    """``native: true`` is mandatory, and omitting it FAILS OPEN INTO A DOUBLE REGISTRATION.
+    """``native: true`` is mandatory: without it the bundle never runs at all.
 
     ``seed_builtin_apps`` does ``if not manifest.native: continue`` — so without the flag
-    the app is never seeded through the installed-app path, and
-    ``discover_bundled_extensions()`` then picks it up on the OTHER path instead. The
-    failure mode is two registrations of one provider, not a clean "not installed".
+    the app is never seeded as an installed app, and startup loads installed apps only
+    (``app_runtime.start_installed``). The default model would silently be missing.
     """
     assert _manifest().native is True
 

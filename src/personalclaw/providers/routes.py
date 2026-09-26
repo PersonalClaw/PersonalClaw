@@ -4,8 +4,11 @@ Provides endpoints for:
 - Listing extensions with status and type filtering
 - Reading/writing per-extension config
 - Fetching settings schemas for dynamic UI rendering
-- Enabling/disabling extensions at runtime
 - Re-checking whether an extension can run on this machine
+
+A provider has no on/off of its own. It is its app's, so the Settings → Providers switch is the
+app's enable and disable (``POST /api/apps/{name}/enable|disable``): the one load and unload
+every lifecycle step goes through, on routes only the owner may call.
 """
 
 import logging
@@ -29,8 +32,6 @@ def register_routes(app: web.Application) -> None:
     app.router.add_get("/api/providers/{name}/schema", handle_get_schema)
     app.router.add_get("/api/providers/{name}/config", handle_get_config)
     app.router.add_patch("/api/providers/{name}/config", handle_patch_config)
-    app.router.add_post("/api/providers/{name}/enable", handle_enable)
-    app.router.add_post("/api/providers/{name}/disable", handle_disable)
     app.router.add_post("/api/providers/{name}/availability", handle_recheck_availability)
 
 
@@ -254,10 +255,9 @@ async def apply_saved_settings(name: str) -> None:
     and ``PUT /api/apps/{name}/config`` — the Apps page's Configure → Save, writing the same
     file — did none of it, so a token saved there read "No bot token configured" until restart.
 
-    A provider whose enable FAILED is retried too, exactly as its Settings → Providers switch
-    would retry it: its settings are what failed it (one naming a credential another owner
-    holds, say), and a fix that waits for a restart reads as a fix that did not work. A provider
-    the owner switched off carries no error, and an app that is disabled is not retried.
+    A provider whose enable FAILED is retried too: its settings are what failed it (one naming a
+    credential another owner holds, say), and a fix that waits for a restart reads as a fix that
+    did not work. A provider switched off is its app disabled, and a disabled app is not retried.
     """
     from personalclaw.apps.permissions import app_lifecycle_denial
     from personalclaw.channel_transports import settled
@@ -308,31 +308,6 @@ async def apply_changed_credentials() -> None:
         await apply_saved_settings(name)
 
 
-async def handle_enable(request: web.Request) -> web.Response:
-    name = request.match_info["name"]
-    registry = get_provider_registry()
-    ext = registry.get(name)
-    if not ext:
-        return web.json_response({"error": f"Extension {name!r} not found"}, status=404)
-
-    success = registry.enable(name)
-    if success:
-        # The names its tool providers offer are read now, so one refused for a name another
-        # provider holds fails this enable with the reason, instead of reading "on" until an
-        # agent turn first lists it.
-        await admit_tool_names()
-        success = all(rec.enabled for rec in ext.chain())
-    if not success:
-        # The records' own sentences: the Settings switch that sent this reports them under
-        # "Couldn't turn … on", so a prefix here would say it twice. 409, not 500: a refused name,
-        # a module that fails to import or a setting naming another owner's key fails the same way
-        # until something changes, so it is the provider's state refusing, not the server failing.
-        errors = " ".join(rec.error for rec in ext.chain() if rec.error)
-        return web.json_response({"error": errors or "It could not be enabled."}, status=409)
-
-    return web.json_response({"name": name, "enabled": True})
-
-
 async def admit_tool_names() -> None:
     """Read the tool names of every tool provider registered since the last read, so a refusal
     (``tool_providers.registry``: a name has one provider) is on the app's status when the change
@@ -345,17 +320,6 @@ async def admit_tool_names() -> None:
 
 #: How long a registering change waits for the new providers' tool lists before it answers.
 _ADMISSION_WAIT_SECS = 5.0
-
-
-async def handle_disable(request: web.Request) -> web.Response:
-    name = request.match_info["name"]
-    registry = get_provider_registry()
-    ext = registry.get(name)
-    if not ext:
-        return web.json_response({"error": f"Extension {name!r} not found"}, status=404)
-
-    registry.disable(name)
-    return web.json_response({"name": name, "enabled": False})
 
 
 async def handle_recheck_availability(request: web.Request) -> web.Response:

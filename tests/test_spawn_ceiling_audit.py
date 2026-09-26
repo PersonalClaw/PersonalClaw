@@ -246,13 +246,14 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     # runners/<id>.json), never from a model or a turn, and it runs no agent code: it reads a
     # host fact about a CLI the operator installed, exactly like the node/npm probes above.
     "agents/runners.py::probe_runner::subprocess.run": "host-fact: runner --version probe",
-    # EI-8's localhost preview probe. Every argv is a CONSTANT list — `lsof -nP -iTCP
-    # -sTCP:LISTEN -FpPn`, `ss -lntpH`, `ps -o comm= -p <pid>`, `lsof -a -p <pids> -d cwd -Fn`
-    # — assembled from literals plus pids the scan itself just read, never from a model, a
-    # turn, or a workflow input. No shell, `check=False`, and a 4s timeout. It reads a host
-    # fact (which ports are listening, and whose cwd) and runs no agent code, exactly like the
-    # PID and --version probes above.
-    "workflows/web_preview.py::_run::subprocess.run": "host-fact: listening-port/cwd probe",
+    # The process-fact probe EI-8's localhost preview and the app runtime's unload share. Every
+    # argv is a CONSTANT list — `lsof -nP -iTCP -sTCP:LISTEN -FpPn`, `ss -lntpH`, `ps -o comm=
+    # -p <pid>`, `ps -Awwo pid=,ppid=,command=`, `lsof -a -p <pids> -d cwd -Fn` — assembled from
+    # literals plus pids the caller just read, never from a model, a turn, a workflow input or
+    # an app. No shell, `check=False`, and a 4s timeout. It reads a host fact (which ports are
+    # listening, which processes run under which parent, and from where) and runs no agent
+    # code, exactly like the PID and --version probes above.
+    "process_facts.py::run_probe::subprocess.run": "host-fact: process table / port / cwd probe",
     # DAS-9's state-history git runner. Every verb in the argv is a module constant; the only
     # caller-supplied value that reaches git is a commit sha, hex-validated
     # (`re.fullmatch(r"[0-9a-fA-F]{4,64}")`, state_history.py:581) before use, and the root is a

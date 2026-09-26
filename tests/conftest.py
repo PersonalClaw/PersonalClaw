@@ -638,11 +638,13 @@ def _no_acp_provision(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(autouse=True)
 def _no_app_child_processes(monkeypatch: pytest.MonkeyPatch) -> None:
     """Never spawn (or orphan-reap) the user's REAL app child processes from a test.
-    Any test that reaches load_all_extensions() → start_enabled_app_backends()
-    against the real config dir would otherwise launch backends for the user's
-    installed apps — and its reaper killed the live gateway's backends once.
-    Tests that exercise the backend lifecycle explicitly (test_app_api) call
-    the supervisor directly and are unaffected by this flag.
+    Any test that reaches an app load — startup's load_all_extensions() walks every
+    installed app through it — against the real config dir would otherwise launch
+    backends for the user's installed apps, and its reaper killed the live gateway's
+    backends once. Every start the platform makes honours the flag (a load's,
+    ``backend_runtime.start_app_backend``, and each watchdog's), so a test that needs
+    an app's backend or worker running clears it in its own fixture; tests that drive
+    the supervisor directly (test_app_api) are unaffected by it.
 
     The SAME boot block also starts APE-3's app-WORKER watchdog, whose sweep spawns,
     stops and PPID-reaps a second family of children. worker_runtime declares the

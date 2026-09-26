@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ChevronDown, KeyRound, AlertTriangle, CheckCircle2, Clock, TerminalSquare, RefreshCw, Beaker, Plug, PlugZap, Loader2, HelpCircle } from 'lucide-react'
 import { api, type SettingsProvider, type AgentRuntime, type ChannelRuntime } from '../../lib/api'
 import { reportingWrite } from '../../app/reportingWrite'
+import { setActivation } from '../../app/appActivation'
 import { Toggle } from './settingsUI'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { ProviderConfigForm } from './ProviderConfigForm'
@@ -45,14 +46,15 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
     } finally { setMeasuring(false) }
   }
 
-  // Reported, and re-read either way. A refused enable (one of its tools has a name another
-  // provider holds) used to reject unhandled: the switch sprang back and nothing said why. The
-  // server's sentence is the toast, and the re-read puts the same sentence under the card.
+  // The switch is its app's: off unloads the app and on loads it from its files (`setActivation`,
+  // the Apps page's own call), so a provider never runs code its app no longer has. Reported, and
+  // re-read either way. A refused enable (one of its tools has a name another provider holds) used
+  // to reject unhandled: the switch sprang back and nothing said why. The server's sentence is the
+  // toast, and the re-read puts the same sentence under the card.
   const toggle = async () => {
     setBusy(true)
     try {
-      await reportingWrite(`turn ${who} ${ext.enabled ? 'off' : 'on'}`, () =>
-        ext.enabled ? api.disableProvider(ext.name) : api.enableProvider(ext.name))
+      await reportingWrite(`turn ${who} ${ext.enabled ? 'off' : 'on'}`, () => setActivation(ext))
       onChanged()
     } finally { setBusy(false) }
   }
