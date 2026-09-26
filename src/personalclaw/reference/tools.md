@@ -153,7 +153,7 @@ Generate a real PowerPoint deck (.pptx) from a markdown OUTLINE and save it as a
 - `format` (string, optional) — Output format (default 'pptx')
 - `markdown` (string, optional) — Outline: `##` per slide, bullets beneath (indent two spaces per sub-level), `<!-- notes: -->` for notes
 - `name` (string, required) — Display name for the deck
-- `slides` (array, optional) — Alternative to markdown: [{title, body:[str | {text, level}], notes}] — `level` is the bullet's indent depth (0 = top)
+- `slides` (array, optional) — Alternative to markdown: one object per slide — a bullet's `level` is its indent depth (0 = top)
 - `slug` (string, optional) — Existing artifact slug to update in place (bumps a version)
 - `tags` (array, optional)
 - `title` (string, optional) — Deck title slide
@@ -246,7 +246,7 @@ Generate an image from a text prompt (or edit an existing one), using the model 
 
 ### `sheet_create`
 
-Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. Supply `sheets` as {sheet name: rows} for multiple tabs, or `rows` for a single tab, or `csv` text. Row 0 is treated as the header. KEEP NUMBERS AS NUMBERS (not strings) so the result can be summed and charted — that is the main reason to produce a spreadsheet rather than a table. Re-running with the same `name` (or the same `slug`) updates that spreadsheet and bumps its version instead of creating a near-duplicate — to make a SEPARATE spreadsheet, give it a different name. Returns the slug and a download URL.
+Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. Supply `sheets` (JSON text: {sheet name: rows}) for multiple tabs, or `rows` (JSON text: an array of row arrays) for a single tab, or `csv` text. Row 0 is treated as the header. KEEP NUMBERS AS NUMBERS (not strings) so the result can be summed and charted — that is the main reason to produce a spreadsheet rather than a table. Re-running with the same `name` (or the same `slug`) updates that spreadsheet and bumps its version instead of creating a near-duplicate — to make a SEPARATE spreadsheet, give it a different name. Returns the slug and a download URL.
 
 **Response type:** `artifact.detail`
 
@@ -257,8 +257,8 @@ Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. Supply 
 - `description` (string, optional) — Optional short description
 - `format` (string, optional) — Output format (default 'xlsx')
 - `name` (string, required) — Display name for the spreadsheet
-- `rows` (array, optional) — Single-sheet rows (array of arrays; row 0 = header)
-- `sheets` (object, optional) — Map of sheet name → array of row arrays (row 0 = header)
+- `rows` (string, optional) — A single tab's rows, as JSON text: an array of row arrays (row 0 = header)
+- `sheets` (string, optional) — Several tabs, as JSON text: an object mapping each sheet name to its rows (an array of row arrays; row 0 = header)
 - `slug` (string, optional) — Existing artifact slug to update in place (bumps a version)
 - `tags` (array, optional)
 
@@ -267,18 +267,7 @@ Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. Supply 
 ```json
 {
   "name": "Regional sales",
-  "sheets": {
-    "Sales": [
-      [
-        "Region",
-        "Q1"
-      ],
-      [
-        "EMEA",
-        120
-      ]
-    ]
-  }
+  "sheets": "{\"Sales\": [[\"Region\", \"Q1\"], [\"EMEA\", 120]]}"
 }
 ```
 
@@ -307,14 +296,14 @@ Generate a video from a text prompt, using the model bound to the 'video_gen' us
 
 ### `visualize`
 
-Turn structured DATA into a generative-UI widget (charts, stat tiles, tables, callouts) rendered inline — the agency-free two-step pattern: you produce the data, this separate no-tools step renders it. Pass `data` (a JSON object/array or text) and an optional `hint` describing how to present it (e.g. 'show the monthly totals as a bar chart'). Returns a `<widget kind="genui">` block to embed directly in your reply. Use this instead of hand-writing a widget when you have data to show; it emits ONLY registered components, so invalid output is dropped, never rendered.
+Turn structured DATA into a generative-UI widget (charts, stat tiles, tables, callouts) rendered inline — the agency-free two-step pattern: you produce the data, this separate no-tools step renders it. Pass `data` (JSON text for an object/array, or plain text) and an optional `hint` describing how to present it (e.g. 'show the monthly totals as a bar chart'). Returns a `<widget kind="genui">` block to embed directly in your reply. Use this instead of hand-writing a widget when you have data to show; it emits ONLY registered components, so invalid output is dropped, never rendered.
 
 **Response type:** `genui.widget`
 
 **Safety:** requires approval
 
 **Parameters:**
-- `data` (any, required) — The data to visualize (JSON object/array, or text)
+- `data` (string, required) — The data to visualize: JSON text (an object or array), or plain text
 - `hint` (string, optional) — How to present it (chart type, framing, emphasis)
 - `title` (string, optional) — Widget title (default 'Visualization')
 
@@ -322,11 +311,7 @@ Turn structured DATA into a generative-UI widget (charts, stat tiles, tables, ca
 
 ```json
 {
-  "data": {
-    "Feb": 150,
-    "Jan": 120,
-    "Mar": 180
-  },
+  "data": "{\"Jan\": 120, \"Feb\": 150, \"Mar\": 180}",
   "hint": "show as a bar chart of monthly totals"
 }
 ```
@@ -345,7 +330,7 @@ Create an automation from ONE natural-language message. Use for 'when a file in 
 - `kind` (string, optional) — Optional explicit kind, bypassing NL routing (file/clock/event/web_watch/idle/webhook/run_completed).
 - `message` (string, optional) — What the automation should do when it fires.
 - `name` (string, required) — A short name for the automation.
-- `spec` (object, optional) — Optional explicit trigger spec when `kind` is given.
+- `spec` (string, optional) — Optional explicit trigger spec when `kind` is given, as JSON text (one object).
 - `when` (string, optional) — Plain English for WHEN it runs: a cadence ('every weekday at 9') or an event ('when a file in ~/notes changes').
 
 **Example — Create a file-watch automation in one message:**
@@ -533,16 +518,14 @@ Patch an automation. Only settable fields apply (name, spec, gates, workflow, en
 
 **Parameters:**
 - `id` (string, required) — The automation id (e.g. 'file:my-notes').
-- `patch` (object, required) — Fields to change.
+- `patch` (string, required) — The fields to change, as JSON text (one object).
 
 **Example — Rename an automation:**
 
 ```json
 {
   "id": "file:summarize-notes",
-  "patch": {
-    "name": "Notes summarizer"
-  }
+  "patch": "{\"name\": \"Notes summarizer\"}"
 }
 ```
 
@@ -890,7 +873,7 @@ Explicit channel=... or user=... always wins and suppresses the auto-default.
 **Safety:** requires approval, risk: caution
 
 **Parameters:**
-- `blocks` (array, optional) — Optional rich-message blocks array (Block Kit format). When provided, the message is sent as a rich message with text as fallback.
+- `blocks` (string, optional) — Optional rich-message blocks (Block Kit format), as JSON text: an array of up to 50 block objects. When provided, the message is sent as a rich message with text as fallback.
 - `channel` (string, optional) — Target channel ID (e.g. C0123ABC456). Must be a tracked channel. Omit to send to owner DM.
 - `reply_broadcast` (boolean, optional) — When true and 'thread_ts' is set, also broadcast the threaded reply to the channel's main message list. Requires 'thread_ts' — passing reply_broadcast=true without thread_ts returns 400. Defaults to false.
 - `session` (string, optional) — Routing opt-in/opt-out for cron messages. "origin" injects into the dashboard session that created this cron (auto-applied for cron callers that set neither channel nor user). "channel" explicitly routes to the owner's messaging channel, bypassing origin. Fallback paths (origin unreachable, explicit "channel", non-cron caller) also fire a dashboard notification so the message isn't silently dropped.
@@ -965,7 +948,7 @@ Propose (never apply) a typed diff to a workflow template. The diff is a list of
 **Safety:** requires approval
 
 **Parameters:**
-- `ops` (array, required) — Typed engine ops. Each: {op, node_id?, fields?, ...}.
+- `ops` (string, required) — Typed engine ops, as JSON text: an array of objects, each {op, node_id?, fields?, ...}.
 - `predicted_fixes` (array, optional) — What the diff is predicted to fix (graded post-accept).
 - `rationale` (string, required) — Why, grounded in the cluster — a reviewer reads this.
 - `run_ids` (array, optional) — The runs whose failures motivate the diff (the evidence).
@@ -975,15 +958,7 @@ Propose (never apply) a typed diff to a workflow template. The diff is a list of
 
 ```json
 {
-  "ops": [
-    {
-      "fields": {
-        "retries": 2
-      },
-      "node_id": "build",
-      "op": "update_node"
-    }
-  ],
+  "ops": "[{\"op\": \"update_node\", \"node_id\": \"build\", \"fields\": {\"retries\": 2}}]",
   "rationale": "The build step fails transiently; a retry clears it.",
   "run_ids": [
     "r1",
@@ -1667,16 +1642,14 @@ Load a saved Prompt and render it with variable values filled in, returning the 
 
 **Parameters:**
 - `prompt_id` (string, required) — The saved prompt name to render.
-- `vars` (object, optional) — Values for the prompt's {{variable}} placeholders (name → value).
+- `vars` (string, optional) — Values for the prompt's {{variable}} placeholders, as JSON text: an object mapping each variable name to its value.
 
 **Example — Render a saved prompt with variables:**
 
 ```json
 {
   "prompt_id": "review",
-  "vars": {
-    "file": "server.py"
-  }
+  "vars": "{\"file\": \"server.py\"}"
 }
 ```
 
@@ -1805,7 +1778,7 @@ List projects (with their task lists). No args.
 
 ### `task_create`
 
-Create a task in the user's task system. Args: title (str, required), optional description (str), priority ('critical'|'high'|'medium'|'low'|'trivial', default medium), task_list_id (str — place it in a task list; the task's project label is derived from the list), labels (list of str), due (str ISO date), exit_criteria (list of {description, met?}), action_plan (list of {content} ordered), depends_on (list of task ids that must finish first). Cycles are rejected.
+Create a task in the user's task system. Args: title (str, required), optional description (str), priority ('critical'|'high'|'medium'|'low'|'trivial', default medium), task_list_id (str — place it in a task list; the task's project label is derived from the list), labels (list of str), due (str ISO date), exit_criteria (list of {description, met?}), action_plan (list of {content, completed?} in order), depends_on (list of task ids that must finish first). Cycles are rejected.
 
 **Response type:** `task.detail`
 
@@ -2076,9 +2049,9 @@ Save a workflow definition from an explicit DAG spec — the low-level authoring
 
 **Parameters:**
 - `description` (string, optional)
-- `inputs` (object, optional) — Declared inputs: name → {type, required, default, help}.
+- `inputs` (string, optional) — Declared inputs, as JSON text: an object mapping each input name to {type, required, default, help}.
 - `name` (string, required) — Definition name: lowercase letters, digits, hyphens.
-- `root` (object, required) — The root node of the spec tree. Call workflow_manifest for the node taxonomy, binding pipes and allowed shapes.
+- `root` (string, required) — The root node of the spec tree, as JSON text (one object). Call workflow_manifest for the node taxonomy, binding pipes and allowed shapes.
 - `save` (boolean, optional) — false = validate only, write nothing (default true).
 - `tags` (array, optional)
 
@@ -2087,19 +2060,7 @@ Save a workflow definition from an explicit DAG spec — the low-level authoring
 ```json
 {
   "name": "triage-inbox",
-  "root": {
-    "children": [
-      {
-        "config": {
-          "prompt": "Classify: {{inputs.text}}"
-        },
-        "id": "classify",
-        "kind": "infer"
-      }
-    ],
-    "id": "main",
-    "kind": "sequence"
-  },
+  "root": "{\"kind\": \"sequence\", \"id\": \"main\", \"children\": [{\"kind\": \"infer\", \"id\": \"classify\", \"config\": {\"prompt\": \"Classify: {{inputs.text}}\"}}]}",
   "save": false
 }
 ```
@@ -2153,7 +2114,7 @@ Edit a RUNNING workflow's unexecuted nodes. Ops: update_node, insert, delete, mo
 **Parameters:**
 - `confirm_cascade` (boolean, optional) — Accept re-running completed nodes.
 - `expect_version` (integer, optional)
-- `ops` (array, required) — Mutation ops. See workflow_manifest for the catalog.
+- `ops` (string, required) — The mutation ops, as JSON text: an array of op objects. See workflow_manifest for the catalog.
 - `preview_only` (boolean, optional) — true = compute the cascade and queue NOTHING.
 - `run_id` (string, required) — The run id (from workflow_start).
 
@@ -2161,15 +2122,7 @@ Edit a RUNNING workflow's unexecuted nodes. Ops: update_node, insert, delete, mo
 
 ```json
 {
-  "ops": [
-    {
-      "fields": {
-        "prompt": "Be concise."
-      },
-      "node_id": "produce",
-      "op": "update_node"
-    }
-  ],
+  "ops": "[{\"op\": \"update_node\", \"node_id\": \"produce\", \"fields\": {\"prompt\": \"Be concise.\"}}]",
   "preview_only": true,
   "run_id": "a1b2c3d4"
 }
@@ -2338,7 +2291,7 @@ Turn a natural-language goal into a workflow spec for review BEFORE anything run
 
 ### `workflow_resume`
 
-Answer a workflow that is waiting on a human, or clear a pause. For an approval gate pass answer=true/false; for a choice or form pass the value or object. To change ONE step instead of accepting or rejecting the whole plan, pass answer={"revise": {"step_ref": "<step id>", "comment": "what to change"}} — that step's instruction is amended and the gate re-asks, leaving every other step exactly as it was. With no answer this just lifts a pause. Each answer is consumed once — calling twice will not approve twice. If several gates are pending you must name one with resume_token.
+Answer a workflow that is waiting on a human, or clear a pause. `answer` is JSON text: for an approval gate pass true or false; for a choice or form pass the value or object. To change ONE step instead of accepting or rejecting the whole plan, pass {"revise": {"step_ref": "<step id>", "comment": "what to change"}} — that step's instruction is amended and the gate re-asks, leaving every other step exactly as it was. With no answer this just lifts a pause. Each answer is consumed once — calling twice will not approve twice. If several gates are pending you must name one with resume_token.
 
 **Response type:** `workflow.gate.resolved`
 
@@ -2346,7 +2299,7 @@ Answer a workflow that is waiting on a human, or clear a pause. For an approval 
 
 **Parameters:**
 - `always_allow` (boolean, optional) — Auto-approve this same operation for the rest of THIS run (cleared if the run is rewound).
-- `answer` (any, optional) — true/false for an approval; a value or object otherwise; or {"revise": {"step_ref", "comment"}} to amend one step and re-ask.
+- `answer` (string, optional) — The answer as JSON text: true or false for an approval; a JSON string or object otherwise; or {"revise": {"step_ref": "...", "comment": "..."}} to amend one step and re-ask.
 - `resume_token` (string, optional) — Which gate to answer (required if several are pending).
 - `run_id` (string, required) — The run id (from workflow_start).
 
@@ -2354,7 +2307,7 @@ Answer a workflow that is waiting on a human, or clear a pause. For an approval 
 
 ```json
 {
-  "answer": true,
+  "answer": "true",
   "run_id": "a1b2c3d4"
 }
 ```
@@ -2438,7 +2391,7 @@ Start a workflow run from a saved definition. mode='background' (default) return
 
 **Parameters:**
 - `idempotency_key` (string, optional) — Caller-chosen key; a retry with the same key is deduped.
-- `inputs` (object, optional) — Values for the definition's declared inputs.
+- `inputs` (string, optional) — Values for the definition's declared inputs, as JSON text: an object mapping each input name to its value.
 - `mode` (string, optional)
 - `name` (string, required) — The definition to instantiate.
 - `project_id` (string, optional) — Optional project binding.
@@ -2447,9 +2400,7 @@ Start a workflow run from a saved definition. mode='background' (default) return
 
 ```json
 {
-  "inputs": {
-    "since": "1h"
-  },
+  "inputs": "{\"since\": \"1h\"}",
   "name": "triage-inbox"
 }
 ```

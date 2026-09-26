@@ -72,9 +72,11 @@ class Visualization:
 
 def _coerce_data(data: Any) -> str:
     """Render the caller's data as compact text for the prompt. A dict/list becomes
-    JSON (the model reads it structurally); a string passes through."""
+    JSON (the model reads it structurally); a string passes through. Both are capped the
+    same: the tool declares ``data`` as text (JSON text or plain), so structured data mostly
+    ARRIVES as a string, and a cap that applied only to dicts would no longer bound it."""
     if isinstance(data, str):
-        return data
+        return data[:8000]
     try:
         return json.dumps(data, ensure_ascii=False, default=str)[:8000]
     except (TypeError, ValueError):

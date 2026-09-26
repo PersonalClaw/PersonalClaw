@@ -804,7 +804,7 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
     Never returns an empty string: an exception with no message is described from its
     class instead (:func:`_describe_unexplained_failure`).
 
-    Two classes are answered BEFORE the matcher, because the matcher would get them wrong:
+    Three classes are answered BEFORE the matcher, because the matcher would get them wrong:
 
     * ``PromptExceedsWindow`` is already the user-facing sentence (model, limit, fix). Its
       figures are this turn's own — "1,429 tokens" contains ``429``, which the substring map
@@ -813,6 +813,10 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
       26.0 GiB for an array with shape (9, 27862, 27862)") — true, and nothing a user can act on.
       Answered before the empty-message rule too, since a bare ``MemoryError()`` is the same
       failure with the same fix.
+    * ``ToolSchemaRejected`` — a provider refusing one of the request's tool definitions — is
+      already the sentence (which tool, whose bug, and a workaround that is true on the surface
+      that shows it). The raw dump it replaces contains ``400`` and ``permission``-shaped words
+      the substring map below would misread.
 
     **``room_member`` makes the remedies true on a room.** A sentence here is product copy on
     whatever surface shows it, and four of them name a chat-only fix: the composer's model
@@ -822,7 +826,10 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
     and is the same words either way; with no member, every word is exactly the chat's.
     """
     from personalclaw.guardrails.failure import PromptExceedsWindow, request_exceeds_window_sentence
+    from personalclaw.tool_providers.portable_schema import ToolSchemaRejected
 
+    if isinstance(exc, ToolSchemaRejected):
+        return exc.sentence(room=bool(room_member))
     if isinstance(exc, PromptExceedsWindow):
         if room_member:
             return request_exceeds_window_sentence(

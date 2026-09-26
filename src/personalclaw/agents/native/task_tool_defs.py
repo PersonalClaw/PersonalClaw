@@ -33,6 +33,32 @@ def _max_task_page() -> int:
     return MAX_TASK_PAGE
 
 
+def _exit_criteria() -> dict[str, Any]:
+    """The criterion shape ``tasks.models.normalize_exit_criterion`` reads. Declared, not left
+    as a bare ``object``: a nested object with no properties has no portable schema, and a
+    strict provider rejects the whole request over it (``tool_providers.portable_schema``)."""
+    return {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {"description": {"type": "string"}, "met": {"type": "boolean"}},
+            "required": ["description"],
+        },
+    }
+
+
+def _action_plan() -> dict[str, Any]:
+    """The step shape ``tasks.models.normalize_action_plan_item`` reads, in order."""
+    return {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {"content": {"type": "string"}, "completed": {"type": "boolean"}},
+            "required": ["content"],
+        },
+    }
+
+
 def task_tool_definitions(provider: str, s: dict[str, Any]) -> list[ToolDefinition]:
     """The nine Project -> TaskList -> Task container tools, in ``builtin_tools``' order."""
     return [
@@ -47,8 +73,8 @@ def task_tool_definitions(provider: str, s: dict[str, Any]) -> list[ToolDefiniti
                 "'trivial', default medium), task_list_id (str — place it in a task list; "
                 "the task's project label is derived from the list), labels (list of str), "
                 "due (str ISO date), exit_criteria (list of {description, met?}), "
-                "action_plan (list of {content} ordered), depends_on (list of task ids "
-                "that must finish first). Cycles are rejected."
+                "action_plan (list of {content, completed?} in order), depends_on (list of "
+                "task ids that must finish first). Cycles are rejected."
             ),
             parameters={
                 **s,
@@ -62,8 +88,8 @@ def task_tool_definitions(provider: str, s: dict[str, Any]) -> list[ToolDefiniti
                     "task_list_id": {"type": "string"},
                     "labels": {"type": "array", "items": {"type": "string"}},
                     "due": {"type": "string"},
-                    "exit_criteria": {"type": "array", "items": {"type": "object"}},
-                    "action_plan": {"type": "array", "items": {"type": "object"}},
+                    "exit_criteria": _exit_criteria(),
+                    "action_plan": _action_plan(),
                     "depends_on": {"type": "array", "items": {"type": "string"}},
                 },
                 "required": ["title"],
@@ -128,8 +154,8 @@ def task_tool_definitions(provider: str, s: dict[str, Any]) -> list[ToolDefiniti
                     "task_list_id": {"type": "string"},
                     "labels": {"type": "array", "items": {"type": "string"}},
                     "due": {"type": "string"},
-                    "exit_criteria": {"type": "array", "items": {"type": "object"}},
-                    "action_plan": {"type": "array", "items": {"type": "object"}},
+                    "exit_criteria": _exit_criteria(),
+                    "action_plan": _action_plan(),
                     "depends_on": {"type": "array", "items": {"type": "string"}},
                 },
                 "required": ["id"],

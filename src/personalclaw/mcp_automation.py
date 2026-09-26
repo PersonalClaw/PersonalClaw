@@ -75,9 +75,15 @@ def _list_tools() -> list[dict[str, Any]]:
                         "description": "Optional explicit kind, bypassing NL routing "
                         "(file/clock/event/web_watch/idle/webhook/run_completed).",
                     },
+                    # JSON TEXT: a trigger spec's keys depend on its kind, and a free-form object
+                    # has no portable schema (tool_providers.portable_schema) — a strict provider
+                    # rejects the whole request over one. The validator decodes it.
                     "spec": {
-                        "type": "object",
-                        "description": "Optional explicit trigger spec when `kind` is given.",
+                        "type": "string",
+                        "description": (
+                            "Optional explicit trigger spec when `kind` is given, as JSON text "
+                            "(one object)."
+                        ),
                     },
                 },
                 "required": ["name"],
@@ -103,7 +109,10 @@ def _list_tools() -> list[dict[str, Any]]:
                 "type": "object",
                 "properties": {
                     "id": trigger_id,
-                    "patch": {"type": "object", "description": "Fields to change."},
+                    "patch": {
+                        "type": "string",
+                        "description": "The fields to change, as JSON text (one object).",
+                    },
                 },
                 "required": ["id", "patch"],
             },
