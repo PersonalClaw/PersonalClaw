@@ -94,12 +94,14 @@ class ProviderRegistry:
             logger.warning(ext.error)
             return False
         try:
+            # Cleared before the attempt, not after it: a handler that registers some of an
+            # app's providers and has others refused reports those in `error` as it goes.
+            ext.error = ""
             instance = handler.create(ext)
             if instance is not None:
                 handler.register(ext, instance)
             ext.provider_instance = instance
             ext.enabled = True
-            ext.error = ""
             logger.info("Enabled extension %s (type=%s)", ext.name, ext.provider_config.type)
             return True
         except Exception as exc:
@@ -313,20 +315,84 @@ class ToolTypeHandler(_TypeHandler):
         return factory(config)
 
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
-        from personalclaw.tool_providers.registry import register_provider
+        """Register each of the app's tool providers, under the one-name-one-provider rule
+        (``tool_providers.registry``).
+
+        One refused at registration raises when it is the app's only provider, so the enable
+        fails with the sentence as its error. Of several (one per instance), the refused ones
+        leave *instance* and ``error`` names them, and the rest serve. One refused later, when its
+        tool names are read, is withdrawn by :func:`_withdraw_tool_provider`.
+        """
+        from functools import partial
+
+        from personalclaw.tool_providers.registry import (
+            ToolRegistrationRefused,
+            register_provider,
+        )
 
         providers = instance if isinstance(instance, list) else [instance]
-        for provider in providers:
-            # The app is named here because this is the only place it is known — the tool
-            # seam names it when one of its tools has a schema no model request can carry.
-            register_provider(provider, app=ext.name)
+        core = _ships_with_core(ext.name)
+        refused: list[str] = []
+        for provider in list(providers):
+            try:
+                # The app is named here because this is the only place it is known — the tool
+                # seam names it when one of its tools has a schema no model request can carry.
+                register_provider(
+                    provider,
+                    app=ext.name,
+                    core=core,
+                    on_refused=partial(_withdraw_tool_provider, ext, provider),
+                )
+            except ToolRegistrationRefused as exc:
+                refused.append(str(exc))
+                if isinstance(instance, list):
+                    instance[:] = [p for p in instance if p is not provider]
+        if refused and not (isinstance(instance, list) and instance):
+            raise ToolRegistrationRefused(" ".join(refused))
+        if refused:
+            ext.error = " ".join(refused)
 
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.tool_providers.registry import unregister_provider
 
         providers = instance if isinstance(instance, list) else [instance]
         for provider in providers:
-            unregister_provider(getattr(provider, "name", ext.name))
+            unregister_provider(provider)
+
+
+def _ships_with_core(app: str) -> bool:
+    """Whether *app* is one core ships (the ``builtin`` trust tier core records when it seeds it).
+
+    The recorded tier, not the manifest's ``native`` flag: a bundle can declare that about itself,
+    and this decides whose tool keeps a contested name.
+    """
+    from personalclaw.apps.app_manager import trust_tier_of
+    from personalclaw.supply_chain import TrustTier
+
+    try:
+        return trust_tier_of(app) == TrustTier.BUILTIN.value
+    except Exception:  # noqa: BLE001 - unknown provenance is an app's standing, never core's
+        logger.debug("could not read the trust tier of %s", app, exc_info=True)
+        return False
+
+
+def _withdraw_tool_provider(ext: RegisteredProvider, provider: Any, sentence: str) -> None:
+    """Take a tool provider the registry refused after it registered off *ext*'s record.
+
+    The registry has already taken it off the surface. The record follows, so the card reads off
+    with the sentence under it rather than on beside a provider that serves nothing, and a later
+    disable does not reach for a provider that is gone.
+    """
+    instance = ext.provider_instance
+    if isinstance(instance, list):
+        instance[:] = [p for p in instance if p is not provider]
+        remaining = bool(instance)
+    else:
+        remaining = instance is not None and instance is not provider
+    if not remaining:
+        ext.provider_instance = None
+        ext.enabled = False
+    ext.error = sentence
 
 
 class SearchTypeHandler(_TypeHandler):

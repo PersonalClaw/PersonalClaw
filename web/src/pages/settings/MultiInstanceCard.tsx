@@ -47,10 +47,15 @@ export function MultiInstanceCard({ ext, onChanged }: { ext: SettingsProvider; o
   )
   const reloadInstances = () => { invalidateKeys(`settings:provider-instances:${ext.name}`, true); refreshInstances() }
 
+  // Reported, and re-read either way — see `ProviderCard`'s toggle: a refused enable leaves the
+  // card off with the server's sentence under it, and the toast says it at the moment it happens.
   const toggle = async () => {
     setBusyToggle(true)
-    try { ext.enabled ? await api.disableProvider(ext.name) : await api.enableProvider(ext.name); onChanged() }
-    finally { setBusyToggle(false) }
+    try {
+      await reportingWrite(`turn ${ext.displayName || ext.name} ${ext.enabled ? 'off' : 'on'}`, () =>
+        ext.enabled ? api.disableProvider(ext.name) : api.enableProvider(ext.name))
+      onChanged()
+    } finally { setBusyToggle(false) }
   }
 
   const count = instances?.length ?? 0
