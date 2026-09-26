@@ -227,6 +227,11 @@ class ModelCallGuard(ModelProvider):
         ``None`` default would otherwise answer for every guarded provider."""
         return getattr(self._inner, "sampling_temperature", None)
 
+    @property
+    def unsent_options(self) -> dict[str, str]:
+        """Explicit pass-through, for the same reason as ``sampling_temperature``."""
+        return dict(getattr(self._inner, "unsent_options", None) or {})
+
     async def served_context_window(self) -> int | None:
         """Explicit pass-through: the ABC's ``None`` would hide the inner provider's served
         window from the window resolver whenever a non-interactive axis wraps it."""
@@ -375,7 +380,12 @@ class ModelCallGuard(ModelProvider):
         # The call is published to whoever bound a `guardrails.calls` log — the workflow step
         # that is making it, a best-of-N candidate — only now, past every refusal above: a
         # breaker or budget refusal sent nothing to a provider and is not a model call.
-        call = open_call(self._provider_name, self._model, temperature=self.sampling_temperature)
+        call = open_call(
+            self._provider_name,
+            self._model,
+            temperature=self.sampling_temperature,
+            unsent=self.unsent_options,
+        )
 
         try:
             while True:

@@ -47,7 +47,6 @@ from personalclaw.llm.branded_specs import (  # noqa: E402,F401
     resolve_credential,
     resolve_spec_secret,
 )
-from personalclaw.llm.build_kwargs import output_cap, per_call_temperature  # noqa: E402
 from personalclaw.llm.capabilities import Capability, ProviderCapability  # noqa: F401
 from personalclaw.llm.catalog import (  # noqa: F401
     FAILURE_DETAIL_CHARS,
@@ -238,8 +237,10 @@ class BrandedCatalog(ModelCatalog):
         authenticated → connected.
 
         Takes the already-resolved secret (a subscription token as readily as a pasted key)
-        so the probe validates exactly what :meth:`test_connection` found."""
-        model = self._spec.default_model or "claude-3-5-haiku-latest"
+        so the probe validates exactly what :meth:`test_connection` found. It asks for the
+        instance's own Default Model first: probing a model the endpoint does not serve can
+        only ever answer "verify the model id"."""
+        model = self._default_model or self._spec.default_model or "claude-3-5-haiku-latest"
         try:
             from personalclaw.llm.credentials import Credential
 
@@ -325,41 +326,27 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         _camel_key = str(options.pop("apiKey", "") or "")
         if cred is None:
             cred, _ = resolve_spec_secret(spec, explicit_key=_snake_key or _camel_key)
+        # The configured model: the entry's, else the instance's Default Model (the field the
+        # Add-instance form writes — it creates the entry with `model: ""`), else the spec's.
+        # The order `create_provider` below follows. A model the caller BOUND for this call
+        # (the `model` build kwarg) wins over all three, in `build_protocol_provider`.
+        configured_model = str(entry.model or options.get("default_model") or spec.default_model)
         # Drop remaining routing/label fields that are NOT model-call params so they
         # don't leak into extra_options → request_kwargs → the SDK's stream()/create()
         # ("unexpected keyword argument …"). Only genuine call params (temperature,
         # top_p, …) should remain in extra_options.
         for _k in ("model", "default_model", "type", "name"):
             options.pop(_k, None)
-        # The embedding use-case binding arrives as a build kwarg (the embedder
-        # constructs its provider WITH the bound model — embed() takes no per-call
-        # model). Thread it into extra_options where the protocol client reads it.
-        _emb_model = kwargs.get("embedding_model")
-        if _emb_model:
-            options["embedding_model"] = str(_emb_model)
-        # A per-call sampling temperature arrives the same way (HARNESS-CRAFT §2.1:
-        # best-of-N needs N genuinely different samples). Same precedent as
-        # ``embedding_model`` — a named build kwarg threaded into extra_options, where
-        # both protocol clients already forward it into the request kwargs.
-        _temperature = per_call_temperature(kwargs)
-        if _temperature is not None:
-            options["temperature"] = _temperature
-        # The output cap: the entry's own ``max_tokens``, else the budget core derived for
-        # this call (the ``max_tokens`` build kwarg, #3595), else the spec default. The
-        # per-call budget used to be dropped here, so a branded app answered one-shot calls
-        # with the spec's cap whatever core had sized them to.
-        _cap = output_cap(options.pop("max_tokens", None), kwargs.get("max_tokens"))
-        eff_spec = (
-            BrandedProviderSpec(**{**spec.__dict__, "max_tokens": _cap})
-            if _cap is not None
-            else spec
-        )
+        # The build kwargs (the bound model, a per-call temperature, the output budget, the
+        # embedding binding) are applied by `build_protocol_provider`, the one place both
+        # protocol factories — this one and the eval cell's — hand them to.
         return build_protocol_provider(
-            eff_spec,
-            model=entry.model or spec.default_model,
+            spec,
+            model=configured_model,
             credential=cred or _anon_credential(spec),
             base_url=base_url,
             extra_options=options,
+            build_kwargs=kwargs,
         )
 
     def create_provider(config: dict[str, Any] | None = None) -> ModelProvider:

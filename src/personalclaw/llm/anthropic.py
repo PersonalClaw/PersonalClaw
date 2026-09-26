@@ -36,6 +36,7 @@ from personalclaw.llm.base import (
     ModelProvider,
     wire_temperature,
 )
+from personalclaw.llm.catalog import SAMPLING_PARAMETERS, refused_sampling
 from personalclaw.llm.credentials import Credential
 from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, PromptCache
 from personalclaw.llm.registry import CredentialMissing
@@ -415,11 +416,49 @@ class AnthropicProvider(ModelProvider):
     def sampling_temperature(self) -> float | None:
         """The ``temperature`` a ``stream()`` request carries from ``extra_options``.
 
+        ``None`` when the model refuses a custom temperature (see :attr:`unsent_options`).
         ``complete()`` with a reasoning effort turns extended thinking on, which forbids a custom
         temperature and drops it — a per-turn fact about the native loop's path, which one-shot
         sampling never takes.
         """
+        if "temperature" in self.unsent_options:
+            return None
         return wire_temperature(self._extra_options.get("temperature"))
+
+    @property
+    def unsent_options(self) -> dict[str, str]:
+        """The sampling options a ``stream()`` request leaves off because the model refuses them."""
+        return self._unsent(self._model, thinking=False)
+
+    def _unsent(self, model: str, *, thinking: bool) -> dict[str, str]:
+        """The extra options a request to ``model`` leaves off, each with the reason.
+
+        ``temperature`` is asked about first, so a model that takes a temperature or a top_p (not
+        both) keeps the temperature core asked for.
+        """
+        requested = [p for p in SAMPLING_PARAMETERS if p in self._extra_options]
+        unsent = refused_sampling(model, requested)
+        if thinking and "temperature" in self._extra_options and "temperature" not in unsent:
+            unsent["temperature"] = "extended thinking does not accept a custom temperature"
+        return unsent
+
+    def _add_options(self, request_kwargs: dict[str, Any], *, unsent: dict[str, str]) -> None:
+        """Put this instance's extra options on the request as BODY fields.
+
+        Through ``extra_body``, which the SDK merges into the request JSON as-is, and not as SDK
+        keywords: ``anthropic`` 1.x dropped ``temperature``, ``top_p`` and ``top_k`` from its
+        method signatures, so a keyword raised ``TypeError`` before any request went out (0.x
+        and 1.x both take ``extra_body``). A field the request already carries stays
+        authoritative (``system``, ``tools``, ``messages``), and an option in ``unsent`` is left
+        off.
+        """
+        body = {
+            key: value
+            for key, value in self._extra_options.items()
+            if key not in request_kwargs and key not in unsent
+        }
+        if body:
+            request_kwargs["extra_body"] = body
 
     # ── Image content parts (MI-4) ────────────────────────────────────
 
@@ -522,10 +561,7 @@ class AnthropicProvider(ModelProvider):
             "messages": self._with_pending_image(self._history),
             "max_tokens": self._max_tokens,
         }
-        # Allow ``system``, ``tools``, ``temperature``, etc. to flow
-        # through unchanged; the SDK ignores unknown keys.
-        for key, value in self._extra_options.items():
-            request_kwargs.setdefault(key, value)
+        self._add_options(request_kwargs, unsent=self._unsent(self._model, thinking=False))
 
         assistant_text = ""
         # Per content-block-index accumulators for tool_use blocks.
@@ -713,14 +749,9 @@ class AnthropicProvider(ModelProvider):
         if budget:
             budget = min(budget, max(1024, self._max_tokens - 1024))
             request_kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
-            # Extended thinking requires temperature unset (or 1); drop any override.
-            request_kwargs.pop("temperature", None)
-        # Allow ``temperature`` etc. to flow through from extra_options without
-        # clobbering anything set above (system/tools/messages stay authoritative).
-        for key, value in self._extra_options.items():
-            if key == "temperature" and "thinking" in request_kwargs:
-                continue  # thinking mode forbids a custom temperature
-            request_kwargs.setdefault(key, value)
+        # Extended thinking requires temperature unset (or 1), so a thinking turn drops it too.
+        unsent = self._unsent(model or self._model, thinking="thinking" in request_kwargs)
+        self._add_options(request_kwargs, unsent=unsent)
 
         # Per content-block-index accumulators for tool_use blocks.
         tool_blocks: dict[int, dict[str, str]] = {}

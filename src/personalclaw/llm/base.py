@@ -190,6 +190,18 @@ class ModelProvider(ABC):
         return None
 
     @property
+    def unsent_options(self) -> dict[str, str]:
+        """Request options this instance was given and leaves off the request, each with why.
+
+        ``{}`` by default. An adapter that omits an option it was handed — a sampling parameter
+        its model refuses (``llm.catalog.refused_sampling``) — names it here with a sentence a
+        user may be shown. The guard records it on the call (:mod:`personalclaw.guardrails.calls`)
+        next to :attr:`sampling_temperature`, so a caller that asked for a temperature can say
+        why none was sent instead of only that none was.
+        """
+        return {}
+
+    @property
     def keeps_cancelled_turns(self) -> bool:
         """Whether a turn stopped mid-way stays in this provider's OWN history.
 

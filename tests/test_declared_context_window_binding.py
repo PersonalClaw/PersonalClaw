@@ -203,8 +203,11 @@ async def test_anthropic_does_not_forward_it_to_the_sdk(fake_anthropic_module):
         pass
     assert len(fake.calls) == 1
     kwargs = fake.calls[0]
-    assert "context_window" not in kwargs
-    assert kwargs["top_k"] == 5
+    # Extra options ride the request as body fields (`extra_body`), which is where to look for
+    # the control — `anthropic` 1.x takes no `top_k` keyword.
+    body = kwargs.get("extra_body") or {}
+    assert "context_window" not in kwargs and "context_window" not in body
+    assert body["top_k"] == 5
 
 
 # ── the half that was missing: it has to reach the MEASURED gauge ─────────────

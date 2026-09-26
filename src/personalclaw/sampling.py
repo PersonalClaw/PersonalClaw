@@ -119,6 +119,8 @@ async def _sample_one(prompt: str, idx: int, temperature: float, use_case: str) 
     answered = [c for c in calls.calls if c.state == DONE]
     if answered:
         candidate["sampled_at"] = answered[-1].temperature
+        if answered[-1].unsent:
+            candidate["unsent"] = dict(answered[-1].unsent)
     if text is None:
         return candidate
     if not (text or "").strip():
@@ -140,13 +142,24 @@ def _sampling_note(candidates: list[dict[str, Any]]) -> str:
     missed = [c for c in observed if c["sampled_at"] != c["temperature"]]
     if not missed:
         return ""
+    # The provider's own reason, when it named one (`ModelProvider.unsent_options`): "not sent"
+    # alone cannot tell a model that refuses a custom temperature from an adapter that drops it.
+    reasons = sorted(
+        {
+            str(c["unsent"]["temperature"])
+            for c in missed
+            if (c.get("unsent") or {}).get("temperature")
+        }
+    )
     if len(missed) == len(observed):
+        cause = "; ".join(reasons) or "the model provider did not send the requested temperatures"
         return (
-            "not temperature-varied: the model provider did not send the requested "
-            f"temperatures, so the {len(observed)} candidates are samples at its default"
+            f"not temperature-varied: {cause}, so the {len(observed)} candidates are samples at "
+            "its default"
         )
     return (
         f"{len(missed)} of {len(observed)} candidates were not sent at their requested temperature"
+        + (f": {'; '.join(reasons)}" if reasons else "")
     )
 
 
@@ -356,7 +369,9 @@ async def best_of_n(
         ``candidates`` is always N wide, each ``{idx, temperature, text, error}`` plus
         ``failure`` for one whose call raised, and ``sampled_at`` — the temperature the
         request actually carried, ``None`` if it carried none — whenever the call was
-        observed at the guard; ``note`` says so when those differ from the ladder.
+        observed at the guard, and ``unsent`` (option → reason) when the provider left a
+        requested option off; ``note`` says so, with the reason, when those differ from the
+        ladder.
         ``judgments`` carries ``{idx, score, reason, reasoning}`` per scored candidate.
         Plain JSON shapes throughout so the MCP tool, the skill and the HC-5 workflow
         template all consume one contract.
