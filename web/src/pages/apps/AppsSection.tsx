@@ -1,14 +1,13 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
 import { motion } from 'framer-motion'
 import {
   Blocks, Plus, Download, Power, Trash2, Settings2, FolderOpen,
-  ShieldAlert, ShieldCheck, Server, LayoutGrid, RefreshCw, Plug, ChevronDown,
-  MoreVertical, Database, Sparkles, Archive, HardDrive, MapPin, AlertTriangle,
+  ShieldCheck, Server, LayoutGrid, RefreshCw, Plug, ChevronDown,
+  MoreVertical, Database, Archive, HardDrive, MapPin, AlertTriangle,
   Boxes, Package, Store, KeyRound,
 } from 'lucide-react'
-import { launchChat } from '../../app/appSdk'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring, expr } from '../../design/motion'
 import { Popover, MenuRow } from '../../ui/Popover'
@@ -34,10 +33,6 @@ import { useQuery, invalidateKeys, writeQuery } from '../../lib/data'
 import {
   api, type AppSummary, type AppDepClassification, type AppCatalogEntry, type AppCatalog,
 } from '../../lib/api'
-import {
-  useGuardedInstall, guardedFromApp, isBlockingResult, terminalRefusalReason,
-  type GuardedResult, type GuardedInstall,
-} from '../../lib/useGuardedInstall'
 import { catalogApps } from '../../lib/appCatalog'
 import { readableErrText } from '../../lib/errText'
 import { reportingWrite } from '../../app/reportingWrite'
@@ -50,21 +45,10 @@ import { artGradient } from './appArt'
 import { AppConfigFields, useAppConfig } from './appConfigForm'
 import { isInNav, setInNav } from './navApps'
 import { PageTitle } from '../../ui/PageTitle'
-// The install-consent surface is shared with the first-run essential-apps step.
-import { ScanReport, ConsentModal, PermissionList, CronConsentList, consentPermissions, consentHostUi, consentPythonDeps } from './installConsent'
+// The ONE install-consent path, shared with the first-run essential-apps step: every
+// install and update below opens its dialog through `useAppInstall`.
+import { useAppInstall, AppDisclosureView, disclosureOf, PermissionList, consentHostUi } from './installConsent'
 import { BUSY_REASON } from '../../ui/unavailable'
-
-/** An install held at the consent gate. `entry` is the catalog row the install came
- *  from — carried so `ConsentModal` can disclose the app's declared permissions and
- *  scheduled jobs beside the scan report, which is the disclosure the card-grid and
- *  source-list paths used to skip. `undefined` when the path genuinely has no manifest
- *  yet (installing from a bare source URL the catalog has not indexed): the modal states
- *  that rather than showing an empty grant list. */
-interface PendingInstall {
-  source: string
-  label: string
-  entry?: AppCatalogEntry
-}
 
 // ── Store item: the Store lists EVERY app it knows about — the available-to-
 // install catalog entries UNION the already-installed apps — so it never reads
@@ -204,17 +188,20 @@ type DispatchAppAction = (app: { name: string; displayName: string; enabled: boo
 function useAppActions(nav: (p: string) => void, reload: () => void) {
   const [busyName, setBusyName] = useState<string | null>(null)
   const [configFor, setConfigFor] = useState<{ name: string; displayName: string } | null>(null)
-  const [updateFor, setUpdateFor] = useState<string | null>(null)
-  const [uninstallFor, setUninstallFor] = useState<string | null>(null)
-  const [removeFor, setRemoveFor] = useState<string | null>(null)
+  // Each carries the display name beside the slug: the slug is the API's identifier, and a
+  // dialog title is a sentence for a person ("Update research-lab" named nobody's app).
+  type Named = { name: string; displayName: string }
+  const [updateFor, setUpdateFor] = useState<Named | null>(null)
+  const [uninstallFor, setUninstallFor] = useState<Named | null>(null)
+  const [removeFor, setRemoveFor] = useState<Named | null>(null)
 
   const dispatch: DispatchAppAction = (app, action) => {
     switch (action) {
       case 'open': nav(`app/${encodeURIComponent(app.name)}`); return
       case 'configure': setConfigFor({ name: app.name, displayName: app.displayName }); return
-      case 'update': setUpdateFor(app.name); return
-      case 'uninstall': setRemoveFor(app.name); return
-      case 'force-uninstall': setUninstallFor(app.name); return
+      case 'update': setUpdateFor({ name: app.name, displayName: app.displayName }); return
+      case 'uninstall': setRemoveFor({ name: app.name, displayName: app.displayName }); return
+      case 'force-uninstall': setUninstallFor({ name: app.name, displayName: app.displayName }); return
       case 'toggle': {
         // The CARD/menu twin of `AppDetailPanel.toggle()` below, and it had the same defect in a
         // different syntactic dress: `p.then(reload).finally(clear)` attaches no rejection handler
@@ -234,12 +221,12 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
 
   const modals = (
     <>
-      {updateFor && <UpdateModal name={updateFor} onClose={() => setUpdateFor(null)}
+      {updateFor && <UpdateModal name={updateFor.name} displayName={updateFor.displayName} onClose={() => setUpdateFor(null)}
         onUpdated={() => { setUpdateFor(null); reload() }} />}
       {configFor && <ConfigModal name={configFor.name} displayName={configFor.displayName} onClose={() => setConfigFor(null)} />}
-      {removeFor && <RemoveAppModal name={removeFor} onClose={() => setRemoveFor(null)}
+      {removeFor && <RemoveAppModal name={removeFor.name} displayName={removeFor.displayName} onClose={() => setRemoveFor(null)}
         onDone={() => { setRemoveFor(null); reload() }} />}
-      {uninstallFor && <UninstallModal name={uninstallFor} onClose={() => setUninstallFor(null)}
+      {uninstallFor && <UninstallModal name={uninstallFor.name} displayName={uninstallFor.displayName} onClose={() => setUninstallFor(null)}
         onDone={() => { setUninstallFor(null); reload() }} />}
     </>
   )
@@ -453,6 +440,15 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
   const [view, setView] = useQueryParam(q, sq, 'view', 'library', { replace: true })  // 'native' | 'library' | 'store'
   const [installing, setInstalling] = useState(false)
   const [sourcesOpen, setSourcesOpen] = useState(false)
+  // Apps installed from the Store during THIS visit. The Store lists only what can still be
+  // installed (installed apps live in the Library), so a successful install used to make its
+  // card vanish — and a search for it then said "No matching apps". These stay on their card,
+  // shown installed, until the Store is left.
+  const [installedHere, setInstalledHere] = useState<string[]>([])
+  const noteInstalled = (name: string) => {
+    setInstalledHere((cur) => (cur.includes(name) ? cur : [...cur, name]))
+    reload()
+  }
 
   // Library filter/sort state (deep-linked; defaults drop out of the URL).
   const [libSort, setLibSort] = useQueryParam(q, sq, 'sort', 'name', { replace: true })
@@ -535,9 +531,13 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
       // worse than no disclosure, so the overlay now only sets what it actually knows.
       byName.set(e.name, { ...e, installed: false, enabled: false, hasUI: Boolean(e.hasUI), native: false })
     }
+    // …plus what was installed from here this visit, as the installed app it now is.
+    for (const a of apps ?? []) {
+      if (installedHere.includes(a.name) && !byName.has(a.name)) byName.set(a.name, installedToStoreItem(a))
+    }
     return [...byName.values()]
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apps, catalog])
+  }, [apps, catalog, installedHere])
   const storeResult = useMemo(() => {
     let out = storeUniverse.filter((e) =>
       matchesText(`${e.displayName} ${e.name} ${e.description} ${e.author} ${(e.tags ?? []).join(' ')}`, n))
@@ -746,14 +746,14 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
               <AppDetailPanel app={open} onClose={() => setOpenName('')} onChanged={reload}
                 onOpen={() => nav(`app/${encodeURIComponent(open.name)}`)} />
             ) : (
-              <StoreDetailPanel item={openStore!} onInstalled={() => { setOpenName(''); reload() }} />
+              <StoreDetailPanel item={openStore!} onInstalled={noteInstalled} />
             )}
           </SidePanel>
         ) : sourcesOpen && (
           <SidePanel key="sources" fillHeight storeKey="app-sources-panel-w"
             title="Manage Sources" icon={<Database size={18} />}
             onClose={() => setSourcesOpen(false)}>
-            <SourcesPanel catalog={catalog} catalogError={catalogErr} reloadCatalog={reloadCatalog} onInstalled={reload} />
+            <SourcesPanel catalog={catalog} catalogError={catalogErr} reloadCatalog={reloadCatalog} onInstalled={noteInstalled} />
           </SidePanel>
         )}
       >
@@ -777,7 +777,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
               <div className="min-w-0 flex-1">
                 <StoreView catalog={catalog} catalogError={catalogErr} result={storeResult} totalKnown={storeUniverse.length}
                   installedCount={(apps ?? []).filter((a) => !a.native).length}
-                  onInstalled={reload} reloadCatalog={reloadCatalog} onClearFilters={clearStoreFilters(setSearch, setStoreType, setStoreEntity, setStoreTag, setStoreSrc)}
+                  onInstalled={noteInstalled} reloadCatalog={reloadCatalog} onClearFilters={clearStoreFilters(setSearch, setStoreType, setStoreEntity, setStoreTag, setStoreSrc)}
                   filtersActive={storeNarrowed}
                   onOpen={(name) => setOpenName(name)} onAction={appActions.dispatch}
                   onOpenSources={() => setSourcesOpen(true)} />
@@ -816,7 +816,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
                       <SourceDivider label={g.label} count={g.items.length} />
                       <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
                         {g.items.map((it, i) => (
-                          <AppCard key={it.name} item={it} index={i} busy={false}
+                          <AppCard key={it.name} item={it} index={i}
                             onInstall={() => {}} onOpen={() => setOpenName(it.name)} onAction={appActions.dispatch} />
                         ))}
                       </div>
@@ -829,7 +829,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
       </WorkbenchLayout>
       {appActions.modals}
 
-      {installing && <InstallModal onClose={() => setInstalling(false)} onInstalled={() => { setInstalling(false); reload() }} />}
+      {installing && <InstallModal onClose={() => setInstalling(false)} onInstalled={(name) => { setInstalling(false); noteInstalled(name) }} />}
     </>
   )
 }
@@ -878,7 +878,8 @@ export function StoreView({ catalog, catalogError, result, totalKnown, installed
   // installed non-native apps — the ones that LEFT the Store for the Library. Lets the
   // empty state say "all installed" (they're in the Library) vs "nothing discovered".
   installedCount: number
-  onInstalled: () => void
+  /** An app finished installing from this grid (its card now shows it installed). */
+  onInstalled: (name: string) => void
   reloadCatalog: () => void
   onClearFilters: () => void
   filtersActive: boolean
@@ -886,32 +887,10 @@ export function StoreView({ catalog, catalogError, result, totalKnown, installed
   onAction: DispatchAppAction
   onOpenSources: () => void
 }) {
-  const [busy, setBusy] = useState<string | null>(null)
-  // The install currently held at the consent gate: a warning-verdict app that
-  // needs "Install anyway". Card/source-list installs route through the SAME
-  // guarded state machine as the modal, so a warning surfaces its findings +
-  // consent action instead of dead-ending on a bare error string.
-  const [pending, setPending] = useState<PendingInstall | null>(null)
-  const guarded = useGuardedInstall((confirm) =>
-    api.installApp(pendingRef.current?.source ?? '', confirm).then(guardedFromApp))
-  const pendingRef = useRef<PendingInstall | null>(null)
-
-  async function installFrom(source: string, label: string, entry?: AppCatalogEntry) {
-    setBusy(label); guarded.reset()
-    pendingRef.current = { source, label, entry }
-    const r = await guarded.install()
-    setBusy(null)
-    if (r?.ok) { onInstalled(); reloadCatalog(); return }
-    // A consentable warning, a terminal refusal (dangerous content or an invalid
-    // signature), OR a P21 client-install directive opens the panel; a plain error
-    // already surfaced via `guarded.error`.
-    if (isBlockingResult(r)) setPending({ source, label, entry })
-  }
-
-  async function confirmPending() {
-    const r = await guarded.confirmInstall()
-    if (r?.ok) { setPending(null); onInstalled(); reloadCatalog() }
-  }
+  // Every card-footer Install opens the ONE consent dialog, and nothing is installed until
+  // the user confirms there. This was the fastest install path in the product and, on a clean
+  // scan, the one that disclosed nothing at all.
+  const install = useAppInstall({ onInstalled: (r) => onInstalled(r.name) })
 
   if (catalog === undefined && catalogError) {
     return <LoadError what="Store catalog" error={catalogError} onRetry={reloadCatalog} />
@@ -920,20 +899,7 @@ export function StoreView({ catalog, catalogError, result, totalKnown, installed
 
   return (
     <div className="flex flex-col gap-2xl">
-      <GuardedFailure guarded={guarded} />
-      {pending && guarded.blocked && (
-        <ConsentModal
-          label={pending.label}
-          result={guarded.blocked}
-          busy={guarded.busy}
-          permissions={consentPermissions(pending.entry)}
-          hostUi={consentHostUi(pending.entry)}
-          pythonDeps={consentPythonDeps(pending.entry)}
-          crons={pending.entry?.crons}
-          onConfirm={confirmPending}
-          onClose={() => { setPending(null); guarded.reset() }}
-        />
-      )}
+      {install.dialog}
 
       {totalKnown === 0 ? (
         <div className="rounded-lg bg-surface-container px-l py-l text-on-surface-low text-[0.8125rem]">
@@ -954,8 +920,8 @@ export function StoreView({ catalog, catalogError, result, totalKnown, installed
               <SourceDivider label={g.label} count={g.items.length} />
               <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
                 {g.items.map((e, i) => (
-                  <AppCard key={e.name} item={e} index={i} busy={busy === e.name}
-                    onInstall={() => installFrom(e.pointer || e.source, e.name, e)}
+                  <AppCard key={e.name} item={e} index={i}
+                    onInstall={() => install.begin({ source: e.pointer || e.source, label: e.displayName || e.name })}
                     onOpen={() => onOpen(e.name)} onAction={onAction} />
                 ))}
               </div>
@@ -979,42 +945,26 @@ export function SourcesPanel({ catalog, catalogError, reloadCatalog, onInstalled
    *  Same prop `StoreView` already takes, from the same `useQuery` — see the guard below. */
   catalogError?: unknown
   reloadCatalog: () => void
-  onInstalled: () => void
+  /** An app finished installing from one of these sources. */
+  onInstalled: (name: string) => void
 }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [newSource, setNewSource] = useState('')
   const [newLocal, setNewLocal] = useState('')
-  const [pending, setPending] = useState<PendingInstall | null>(null)
-  const guarded = useGuardedInstall((confirm) =>
-    api.installApp(pendingRef.current?.source ?? '', confirm).then(guardedFromApp))
-  const pendingRef = useRef<PendingInstall | null>(null)
+  // Installing by SOURCE is the same consent path as a card: the dialog reviews the source on
+  // the server, which reads the manifest whether or not the Store has indexed it.
+  const install = useAppInstall({ onInstalled: (r) => onInstalled(r.name) })
 
-  /** The catalog row for a source URL/path, when the Store has already indexed one — this
-   *  panel installs by SOURCE, but consent has to disclose the app's grants, and for an
-   *  indexed source the manifest is already in hand. `undefined` for an un-indexed source,
-   *  which the modal states plainly rather than showing an empty permission list. */
-  function entryForSource(source: string): AppCatalogEntry | undefined {
-    // 🔴 The ONE merge (`lib/appCatalog`), not a git-first concatenation of its own. This
-    // lookup used to put `gitApps` first while the card grid put `localApps` first, so for a
-    // name carried by both a local and a remote source the CONSENT modal disclosed the
-    // remote copy's permissions while the grid had shown the local copy's (#2528).
-    return catalogApps(catalog).find((e) => e.source === source || (e.pointer && e.pointer === source))
-  }
-
-  async function installFrom(source: string, label: string) {
-    setBusy(label); setErr(null); guarded.reset()
-    const entry = entryForSource(source)
-    pendingRef.current = { source, label, entry }
-    const r = await guarded.install()
-    setBusy(null)
-    if (r?.ok) { onInstalled(); reloadCatalog(); return }
-    if (isBlockingResult(r)) setPending({ source, label, entry })
-  }
-
-  async function confirmPending() {
-    const r = await guarded.confirmInstall()
-    if (r?.ok) { setPending(null); onInstalled(); reloadCatalog() }
+  /** The name to title the dialog with until its review reads the app's own: the display name
+   *  of the catalog row that installs FROM this exact location (its `pointer`, else its
+   *  `source`), else the source itself. A registry row's `source` is the registry it was listed
+   *  in, not where it installs from — matching on that titled the registry's own row after the
+   *  first app it lists. Found through the ONE merge (`lib/appCatalog`) — a git-first lookup of
+   *  its own once named a different copy of the app than the grid had shown (#2528). */
+  function labelForSource(source: string): string {
+    const entry = catalogApps(catalog).find((e) => (e.pointer || e.source) === source)
+    return entry?.displayName || source
   }
 
   /** Repaint this panel's source lists from the WRITE'S OWN ANSWER, not from a re-read.
@@ -1109,20 +1059,7 @@ export function SourcesPanel({ catalog, catalogError, reloadCatalog, onInstalled
   return (
     <div className="flex flex-col gap-xl">
       {err && <FieldError>{err}</FieldError>}
-      <GuardedFailure guarded={guarded} />
-      {pending && guarded.blocked && (
-        <ConsentModal
-          label={pending.label}
-          result={guarded.blocked}
-          busy={guarded.busy}
-          permissions={consentPermissions(pending.entry)}
-          hostUi={consentHostUi(pending.entry)}
-          pythonDeps={consentPythonDeps(pending.entry)}
-          crons={pending.entry?.crons}
-          onConfirm={confirmPending}
-          onClose={() => { setPending(null); guarded.reset() }}
-        />
-      )}
+      {install.dialog}
 
       <section>
         <div className="mb-2 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Git sources</div>
@@ -1171,7 +1108,7 @@ export function SourcesPanel({ catalog, catalogError, reloadCatalog, onInstalled
                 {isDefault && (
                   <span className="shrink-0 rounded-pill bg-surface-highest px-2 py-0.5 text-on-surface-low text-[0.75rem]">Default</span>
                 )}
-                <Button variant="ghost" size="sm" loading={busy === url} onClick={() => installFrom(url, url)}><Download size={14} /> Install
+                <Button variant="ghost" size="sm" onClick={() => install.begin({ source: url, label: labelForSource(url) })}><Download size={14} /> Install
                 </Button>
                 {!isBuiltin && (
                   <SquareIconButton icon={Trash2} tone="danger" label="Remove source" className="shrink-0"
@@ -1197,7 +1134,8 @@ export function SourcesPanel({ catalog, catalogError, reloadCatalog, onInstalled
           </p>
         )}
         <p className="mt-2 text-on-surface-low text-[0.75rem]">
-          Installing fetches the app behind the security scanner — a dangerous verdict is always refused.
+          Installing shows you what the app gets and what the security scanner found first — nothing
+          installs until you confirm, and a dangerous verdict is always refused.
         </p>
       </section>
 
@@ -1239,13 +1177,13 @@ export function SourcesPanel({ catalog, catalogError, reloadCatalog, onInstalled
 /** One Store card. Identity (icon/name/version/provider) + description + tags,
  *  and a footer of REAL, direct actions (each does its thing — nothing here just
  *  opens the sidebar):
- *   • available  → "Install" (one click installs behind the scanner).
+ *   • available  → "Install" (opens the consent dialog; nothing installs until confirmed).
  *   • installed  → primary "Open" (→ the app's page) when it has a UI, plus a "⋯"
  *     menu of the real lifecycle actions (Configure / Update / Enable-Disable /
  *     Force-uninstall). The card's NAME is a link to the detail panel (explicit
  *     "details" affordance), so the action buttons never double as "open panel". */
-function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
-  item: StoreItem; index: number; busy: boolean; onInstall: () => void; onOpen: () => void; onAction: DispatchAppAction
+function AppCard({ item, index, onInstall, onOpen, onAction }: {
+  item: StoreItem; index: number; onInstall: () => void; onOpen: () => void; onAction: DispatchAppAction
 }) {
   const providerLabel = item.isProvider
     ? `${PROVIDER_ENTITY_LABEL[item.providerType] ?? item.providerType} provider` : ''
@@ -1270,7 +1208,7 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
       ]
     : [
       { icon: <Blocks size={15} />, label: 'Details', onSelect: onOpen },
-      { icon: <Download size={15} />, label: 'Install', onSelect: onInstall, disabled: busy },
+      { icon: <Download size={15} />, label: 'Install', onSelect: onInstall },
     ]
   // PEP-3 — ONE card anatomy, art-forward, whatever the manifest declares. Previously
   // the card had four shapes (hero+icon · hero-only · icon-only · neither) and only the
@@ -1454,7 +1392,7 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
               <span onClick={stop}><Button variant="primary" size="sm" onClick={() => onAction(app, 'toggle')}><Power size={14} /> Activate</Button></span>
             )
           ) : (
-            <span onClick={stop}><Button variant="secondary" size="sm" loading={busy} onClick={onInstall}><Download size={14} /> Install
+            <span onClick={stop}><Button variant="secondary" size="sm" onClick={onInstall}><Download size={14} /> Install
             </Button></span>
           )}
         </div>
@@ -1496,121 +1434,64 @@ const PROVIDER_ENTITY_LABEL: Record<string, string> = {
 }
 
 
-// ── Install modal ──
-function InstallModal({ onClose, onInstalled }: { onClose: () => void; onInstalled: () => void }) {
+// ── Install from URL: the source is typed here; the review and the consent are the dialog's ──
+function InstallModal({ onClose, onInstalled }: { onClose: () => void; onInstalled: (name: string) => void }) {
   const [source, setSource] = useState('')
-  const guarded = useGuardedInstall((confirm) =>
-    api.installApp(source.trim(), confirm).then(guardedFromApp))
-
-  async function doInstall(confirm: boolean) {
-    if (!source.trim()) return
-    const r = confirm ? await guarded.confirmInstall() : await guarded.install()
-    if (r?.ok) onInstalled()
-  }
-
-  const refusal = terminalRefusalReason(guarded.blocked)
-  const needsConsent = guarded.blocked?.needsConsent
-
+  const install = useAppInstall({ onInstalled: (r) => onInstalled(r.name) })
+  // While the consent dialog is up it is the ONLY modal. Closing it comes back here with the
+  // typed source intact, so a mistyped URL is one edit away rather than a retyping.
+  if (install.active) return install.dialog
+  const s = source.trim()
   return (
     <Modal title="Install app" icon={<Download size={18} />} onClose={onClose}>
       <div className="flex flex-col gap-m p-l" style={{ minWidth: 420 }}>
         <label data-type="body-s" className="text-on-surface-low">Source — local path or git URL</label>
-        <TextInput value={source} onChange={(v) => { setSource(v); guarded.reset() }} autoFocus name="app-install-source"
+        <TextInput value={source} onChange={setSource} autoFocus name="app-install-source"
           placeholder="/path/to/app  or  https://github.com/owner/app.git" />
-
-        {guarded.blocked?.scan && <ScanReport scan={guarded.blocked.scan} />}
-        <GuardedFailure guarded={guarded} />
-
+        <p data-type="label-s" className="text-on-surface-low">
+          You will see what the app gets and what the security scanner found before anything is installed.
+        </p>
         <div className="flex justify-end gap-2 pt-s">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          {needsConsent ? (
-            <Button variant="primary" loading={guarded.busy} onClick={() => doInstall(true)}><ShieldAlert size={16} /> Install anyway
-            </Button>
-          ) : (
-            <Button variant="primary" loading={guarded.busy} disabled={guarded.busy || !!refusal || !source.trim()} onClick={() => doInstall(false)}
-              // A terminal refusal is a SECURITY outcome, not a missing field — it needs its own sentence.
-              disabledReason={refusal || (!source.trim() ? 'Enter a source first' : undefined)}><Download size={16} /> Install
-            </Button>
-          )}
+          <Button variant="primary" disabled={!s} disabledReason={!s ? 'Enter a source first' : undefined}
+            onClick={() => install.begin({ source: s, label: s })}><Download size={16} /> Review
+          </Button>
         </div>
       </div>
     </Modal>
   )
 }
 
-// ── Update modal (mirrors install: source → scan → consent → atomic update) ──
-function UpdateModal({ name, onClose, onUpdated }: { name: string; onClose: () => void; onUpdated: () => void }) {
+// ── Update: the new source is typed here; what it changes, and the consent, are the dialog's ──
+function UpdateModal({ name, displayName, onClose, onUpdated }: {
+  /** The app SLUG — the update API's identifier. */
+  name: string
+  /** What the title says: a person recognises "Research Lab", not `research-lab`. */
+  displayName: string
+  onClose: () => void
+  onUpdated: () => void
+}) {
   const [source, setSource] = useState('')
-  const guarded = useGuardedInstall((confirm) =>
-    api.updateApp(name, source.trim(), confirm).then(guardedFromApp))
-
-  async function doUpdate(confirm: boolean) {
-    if (!source.trim()) return
-    const r = confirm ? await guarded.confirmInstall() : await guarded.install()
-    if (r?.ok) onUpdated()
-  }
-
-  const refusal = terminalRefusalReason(guarded.blocked)
-  const needsConsent = guarded.blocked?.needsConsent
-
+  const install = useAppInstall({ onInstalled: () => onUpdated() })
+  if (install.active) return install.dialog
+  const s = source.trim()
   return (
-    <Modal title={`Update ${name}`} icon={<RefreshCw size={18} />} onClose={onClose}>
+    <Modal title={`Update ${displayName}`} icon={<RefreshCw size={18} />} onClose={onClose}>
       <div className="flex flex-col gap-m p-l" style={{ minWidth: 420 }}>
         <label data-type="body-s" className="text-on-surface-low">New source — local path or git URL (data is preserved)</label>
-        <TextInput value={source} onChange={(v) => { setSource(v); guarded.reset() }} autoFocus name="app-install-source"
+        <TextInput value={source} onChange={setSource} autoFocus name="app-install-source"
           placeholder="/path/to/app  or  https://github.com/owner/app.git" />
-        {guarded.blocked?.scan && <ScanReport scan={guarded.blocked.scan} />}
-        <GuardedFailure guarded={guarded} />
+        <p data-type="label-s" className="text-on-surface-low">
+          You will see what the new version changes, and what the security scanner found, before anything is updated.
+        </p>
         <div className="flex justify-end gap-2 pt-s">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          {needsConsent ? (
-            <Button variant="primary" loading={guarded.busy} onClick={() => doUpdate(true)}><ShieldAlert size={16} /> Update anyway
-            </Button>
-          ) : (
-            <Button variant="primary" loading={guarded.busy} disabled={guarded.busy || !!refusal || !source.trim()} onClick={() => doUpdate(false)}
-              disabledReason={refusal || (!source.trim() ? 'Enter a source first' : undefined)}><RefreshCw size={16} /> Update
-            </Button>
-          )}
+          <Button variant="primary" disabled={!s} disabledReason={!s ? 'Enter a source first' : undefined}
+            onClick={() => install.begin({ source: s, label: displayName, update: name })}><RefreshCw size={16} /> Review update
+          </Button>
         </div>
       </div>
     </Modal>
-  )
-}
-
-
-
-/** APE-8 "Fix with AI": shown when a failed install carried a build/hook log. Opens
- *  a chat pre-filled with the install log — already wrapped in the backend's
- *  untrusted-content fence (`fix_prompt` is built server-side; the FE only passes it
- *  through) — so the user/agent can debug the failure. Seeds the composer, never
- *  auto-sends. Renders nothing when there is no fix prompt. */
-export function FixWithAiButton({ fixPrompt }: { fixPrompt: string | null }) {
-  if (!fixPrompt) return null
-  return (
-    <Button variant="secondary" size="sm" onClick={() => launchChat({ prompt: fixPrompt })}>
-      <Sparkles size={15} /> Fix with AI
-    </Button>
-  )
-}
-
-/** A guarded-install failure, with the offer to hand it to the assistant.
- *
- *  This row was repeated VERBATIM at five surfaces in this file — the store view, the sources
- *  panel, the install modal, the update modal and the store detail panel — and every copy carried
- *  the same inert `text-negative` class. That pairing is the point: a hand-rolled copy is what
- *  lets a class name rot, because there is no single place where anyone would notice. The hook's
- *  own doc already treats the two fields as one unit — `fixPrompt` *"rides alongside `error` — the
- *  same surface that renders it"* — so this is the surface that comment is describing.
- *
- *  Self-guarding on `error`, so a call site is one unconditional element rather than five copies
- *  of the same `{guarded.error && (…)}` wrapper. */
-function GuardedFailure({ guarded }: { guarded: Pick<GuardedInstall, 'error' | 'fixPrompt'> }) {
-  if (!guarded.error) return null
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <FieldError>{guarded.error}</FieldError>
-      <FixWithAiButton fixPrompt={guarded.fixPrompt} />
-    </div>
   )
 }
 
@@ -1771,13 +1652,13 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
         </>)}
       </div>
 
-      {updateOpen && <UpdateModal name={app.name} onClose={() => setUpdateOpen(false)}
+      {updateOpen && <UpdateModal name={app.name} displayName={app.displayName} onClose={() => setUpdateOpen(false)}
         onUpdated={() => { setUpdateOpen(false); onChanged() }} />}
       {configOpen && <ConfigModal name={app.name} displayName={app.displayName} onClose={() => setConfigOpen(false)} />}
-      {confirmRemove && <RemoveAppModal name={app.name}
+      {confirmRemove && <RemoveAppModal name={app.name} displayName={app.displayName}
         onClose={() => setConfirmRemove(false)}
         onDone={() => { setConfirmRemove(false); onClose(); onChanged() }} />}
-      {confirmUninstall && <UninstallModal name={app.name}
+      {confirmUninstall && <UninstallModal name={app.name} displayName={app.displayName}
         onClose={() => setConfirmUninstall(false)}
         onDone={() => { setConfirmUninstall(false); onClose(); onChanged() }} />}
     </>
@@ -1785,22 +1666,16 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
 }
 
 // ── Store detail panel — the not-yet-installed side of a card click. Shows the
-// hero/icon + metadata and a guarded Install (consent-capable via ConsentModal),
-// mirroring the card's own install path so the panel is a full parallel to
-// AppDetailPanel for uninstalled catalog entries. */
-function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled: () => void }) {
+// hero/icon + metadata, what the app gets, and an Install that opens the SAME consent
+// dialog as the card, so the panel is a full parallel to AppDetailPanel for uninstalled
+// catalog entries. */
+function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled: (name: string) => void }) {
   const providerLabel = item.isProvider
     ? `${PROVIDER_ENTITY_LABEL[item.providerType] ?? item.providerType} provider` : ''
-  const [consent, setConsent] = useState<GuardedResult | null>(null)
   // A registry-indexed (P20) item installs from its `pointer` (repo[#subdirectory]); a
-  // dir-scanned/bundled item from its `source`. Both route through the scanner-gated install.
-  const guarded = useGuardedInstall((confirm) => api.installApp(item.pointer || item.source, confirm).then(guardedFromApp))
-
-  async function install(confirm: boolean) {
-    const r = confirm ? await guarded.confirmInstall() : await guarded.install()
-    if (r?.ok) { onInstalled(); return }
-    if (isBlockingResult(r)) setConsent(r)
-  }
+  // dir-scanned/bundled item from its `source`. Both are reviewed before anything installs.
+  const install = useAppInstall({ onInstalled: (r) => onInstalled(r.name) })
+  const disclosure = disclosureOf(item)
 
   return (
     <div className="flex flex-col gap-l p-l">
@@ -1841,44 +1716,35 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
         </div>
       )}
 
-      {/* P29 install-consent: what this app will be GRANTED + the recurring jobs it will
-          RUN, shown BEFORE install so the choice is informed. Keyed on consentKnown, not
-          permissions-emptiness (issue 614): a scanned manifest that declares nothing gets
-          PermissionList's own "None — no gateway capability" disclosure (33 of 36 Store
-          apps — hiding the section made "asked for nothing" indistinguishable from
-          silence), while a registry pointer — whose manifest isn't fetched until install —
-          says the permissions aren't known YET rather than pretending they're none. */}
-      {item.consentKnown ? (
-        <PermissionList perms={item.permissions ?? {}} hostUi={consentHostUi(item)}
-          pythonDeps={consentPythonDeps(item)} />
+      {/* P29: what this app will be GRANTED and what it will RUN, BEFORE install. Keyed on
+          consentKnown through `disclosureOf`, not on permissions-emptiness (issue 614): a
+          scanned manifest that declares nothing gets PermissionList's own "None — no gateway
+          capability" disclosure, while a registry pointer — whose manifest is read when the
+          install is reviewed — says so rather than pretending it asks for nothing. */}
+      {disclosure ? (
+        <AppDisclosureView disclosure={disclosure} action="install" />
       ) : (
         <div data-type="body-s" className="text-on-surface-low">
-          Permissions: not known yet — this is a registry listing, and its manifest is
-          read at install. The consent gate runs then, before anything is granted.
+          Permissions: not known yet — this is a registry listing, and its manifest is read when
+          you choose Install. You will see everything it gets before anything is installed.
         </div>
       )}
-      {(item.crons ?? []).length > 0 && <CronConsentList crons={item.crons!} />}
 
       <div className="rounded-md border border-outline-variant bg-surface-high p-m" data-type="body-s">
         <div className="flex items-center gap-2 text-on-surface"><Download size={14} /> Not installed</div>
         <div className="mt-1 text-on-surface-low" data-type="label-s">
-          Installing fetches this app behind the security scanner — a dangerous verdict is always refused.
+          Installing shows you what this app gets and what the security scanner found first — nothing
+          installs until you confirm, and a dangerous verdict is always refused.
         </div>
       </div>
 
-      <GuardedFailure guarded={guarded} />
       <div>
-        <Button variant="primary" size="sm" loading={guarded.busy} onClick={() => install(false)}><Download size={15} /> Install
+        <Button variant="primary" size="sm"
+          onClick={() => install.begin({ source: item.pointer || item.source, label: item.displayName })}>
+          <Download size={15} /> Install
         </Button>
       </div>
-
-      {consent && guarded.blocked && (
-        <ConsentModal label={item.displayName} result={guarded.blocked} busy={guarded.busy}
-          permissions={consentPermissions(item)} hostUi={consentHostUi(item)}
-          pythonDeps={consentPythonDeps(item)} crons={item.crons}
-          onConfirm={async () => { const r = await guarded.confirmInstall(); if (r?.ok) { setConsent(null); onInstalled() } }}
-          onClose={() => { setConsent(null); guarded.reset() }} />
-      )}
+      {install.dialog}
     </div>
   )
 }
@@ -1955,7 +1821,7 @@ function KeptDepsList({ kept }: { kept: AppDepClassification[] }) {
  *  because "we kept your 4 notes" and "this app had nothing stored" and "it had a
  *  data folder and it was empty" are three different promises, and a dialog that
  *  makes the same one in all three cases is wrong in two of them. */
-export function RemoveAppModal({ name, onClose, onDone }: { name: string; onClose: () => void; onDone: () => void }) {
+export function RemoveAppModal({ name, displayName, onClose, onDone }: { name: string; displayName: string; onClose: () => void; onDone: () => void }) {
   const { data } = useQuery(`app-uninstall:${name}`, () => api.appUninstallPreview(name), { persist: false })
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -1989,7 +1855,7 @@ export function RemoveAppModal({ name, onClose, onDone }: { name: string; onClos
   }
 
   return (
-    <Modal title={`Uninstall ${name}?`} icon={<Archive size={18} />} onClose={onClose}>
+    <Modal title={`Uninstall ${displayName}?`} icon={<Archive size={18} />} onClose={onClose}>
       <div className="flex flex-col gap-m p-l" style={{ minWidth: 400 }}>
         <div data-type="body-s" className="text-on-surface-low">
           This removes the app's files and providers from disk. To just turn it off and leave the
@@ -2033,7 +1899,7 @@ export function RemoveAppModal({ name, onClose, onDone }: { name: string; onClos
             "your data is kept" must not be read as "your tokens are kept". Stated only when the
             preview counted some — a count of names, no value on the wire. */}
         {!!facts?.secrets && (
-          <div className="flex items-start gap-2 rounded-md border border-outline-variant bg-surface-high p-m">
+          <div className="flex items-start gap-s rounded-md border border-outline-variant bg-surface-high p-m">
             <KeyRound size={15} className="mt-0.5 shrink-0 text-on-surface-low" />
             <div data-type="body-s" className="min-w-0 text-on-surface-low">
               <span className="text-on-surface">{facts.secrets === 1 ? 'Its saved credential is deleted' : `Its ${facts.secrets} saved credentials are deleted`}</span>
@@ -2072,7 +1938,7 @@ export function RemoveAppModal({ name, onClose, onDone }: { name: string; onClos
   )
 }
 
-export function UninstallModal({ name, onClose, onDone }: { name: string; onClose: () => void; onDone: () => void }) {
+export function UninstallModal({ name, displayName, onClose, onDone }: { name: string; displayName: string; onClose: () => void; onDone: () => void }) {
   const { data } = useQuery(`app-uninstall:${name}`, () => api.appUninstallPreview(name), { persist: false })
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -2092,7 +1958,7 @@ export function UninstallModal({ name, onClose, onDone }: { name: string; onClos
   }
 
   return (
-    <Modal title={`Force uninstall ${name}?`} icon={<Trash2 size={18} />} onClose={onClose}>
+    <Modal title={`Force uninstall ${displayName}?`} icon={<Trash2 size={18} />} onClose={onClose}>
       <div className="flex flex-col gap-m p-l" style={{ minWidth: 400 }}>
         {/* This paragraph used to end "use Uninstall instead" while no Uninstall
             control existed anywhere in the Library — the one screen warning a user

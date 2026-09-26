@@ -1,10 +1,23 @@
-import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
-import { readFileSync } from 'node:fs'
+// @vitest-environment jsdom
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { ConsentModal, PermissionList, consentPythonDeps } from './installConsent'
-import type { GuardedResult } from '../../lib/useGuardedInstall'
-import type { AppPythonDependency } from '../../lib/api'
+import type { AppCatalogEntry, AppInstallResult, AppPythonDependency } from '../../lib/api'
+
+const previewApp = vi.fn()
+vi.mock('../../lib/api', () => ({
+  api: {
+    previewApp: (...a: unknown[]) => previewApp(...a),
+    installApp: () => Promise.reject(new Error('nothing is confirmed in this file')),
+    updateApp: () => Promise.reject(new Error('nothing is confirmed in this file')),
+  },
+}))
+vi.mock('../../app/appSdk', () => ({ launchChat: vi.fn() }))
+
+// Imported after the mocks so the dialog binds them.
+import { PermissionList, disclosureOf } from './installConsent'
+import { InstallDialogHarness } from '../../test/installDialogHarness'
 
 // ── Installing an app pip-installs packages the GATEWAY loads into its own process, and
 //    consent never said so ──────────────────────────────────────────────────────────────
@@ -31,13 +44,10 @@ import type { AppPythonDependency } from '../../lib/api'
 // joins them, and deliberately does NOT borrow their "advisory only" phrase: their
 // declaration is unenforced, whereas these packages really do install.
 //
-// 🔑 WHY IT LIVES INSIDE `PermissionList`. That is what puts it on all four `ConsentModal`
-// call sites, the Store detail panel and the onboarding card by construction rather than by
-// four callers remembering a prop — the mechanism `installConsent.tsx`'s own header records
-// as the thing that failed before ("a comment asking four callers to remember is what
-// failed here").
-
-const blocked = { needsConsent: true, ok: false } as unknown as GuardedResult
+// 🔑 WHY IT LIVES INSIDE `PermissionList`. That is what puts it on the install dialog and the Store
+// detail panel by construction — both render `AppDisclosureView`, the one pre-install disclosure —
+// rather than by each caller remembering a prop, the mechanism that failed here before ("a comment
+// asking four callers to remember is what failed here").
 
 const deps = (...d: AppPythonDependency[]) => d
 
@@ -149,18 +159,27 @@ describe('the install-consent surface discloses the packages it will pip-install
     expect(t).not.toMatch(/That pin is checked/)
   })
 
-  it('reaches the ConsentModal — the screen with the button that acts on it', () => {
-    render(<ConsentModal label="slack-channel" result={blocked} busy={false}
-      permissions={{}} hostUi={{ page: false, components: false }}
-      pythonDeps={deps({ spec: 'slack-sdk>=3.27,<4', coreOwned: false })}
-      crons={undefined} onConfirm={() => {}} onClose={() => {}} />)
+  it('reaches the install dialog — the screen with the button that acts on it', async () => {
+    // The server's review of an app that pip-installs a package — what `POST /api/apps/preview`
+    // reads from the staged manifest, so a registry listing discloses it exactly as a local card.
+    previewApp.mockResolvedValue({
+      ok: false, name: 'slack-channel', error: '', needs_consent: true,
+      scan: { verdict: 'warning', tier: 'community', findings: [], signature: null },
+      displayName: 'Slack Channel', version: '0.1.0', previous: null, consent: 's'.repeat(64),
+      disclosure: {
+        permissions: {}, crons: [], hasUI: false, uiComponents: '', hasBackend: false,
+        onInstall: '', onUpdate: '', mcpServers: [],
+        pythonDependencies: deps({ spec: 'slack-sdk>=3.27,<4', coreOwned: false }),
+      },
+    } satisfies AppInstallResult)
+    render(<InstallDialogHarness target={{ source: '/apps/slack-channel', label: 'slack-channel' }} />)
+    await waitFor(() => expect(screen.getByRole('dialog').textContent).toMatch(/Security scan:/))
     const dialog = screen.getByRole('dialog')
     // 🔴 PRESENCE IS NOT THE POINT — CO-LOCATION IS. #3540 was a correctly-rendered
-    // `role="alert"` in this very dialog sitting BEHIND the modal's own backdrop, and jsdom
-    // implements no layout, so nothing here can prove visibility. What a jsdom test CAN
-    // prove is the structural precondition the browser drive then confirms: the disclosure
-    // is inside the dialog element, not on the page behind it. Occlusion itself was checked
-    // in a real browser with `elementFromPoint` (see the PR's evidence).
+    // `role="alert"` sitting BEHIND a modal's own backdrop, and jsdom implements no layout, so
+    // nothing here can prove visibility. What a jsdom test CAN prove is the structural
+    // precondition the browser drive then confirms: the disclosure is inside the dialog element,
+    // not on the page behind it.
     const chip = [...dialog.querySelectorAll('code')].find((c) => c.textContent === 'slack-sdk>=3.27,<4')
     expect(chip, 'the specifier must be INSIDE the dialog, not on the page behind it').toBeTruthy()
     expect(text(dialog)).toMatch(/loads those packages into its own process, after its own/)
@@ -169,110 +188,90 @@ describe('the install-consent surface discloses the packages it will pip-install
     expect(confirm, 'the consentable branch must still offer the override').toBeTruthy()
     expect(chip!.compareDocumentPosition(confirm!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
-
-  it('a registry POINTER says the packages are unknown, never that there are none', () => {
-    // Same failure `consentPermissions` exists to prevent, one field along: a pointer's
-    // manifest is not fetched until install, so `pythonDependencies: []` there means "not
-    // read", not "declares none". `consentPythonDeps` returns `undefined`, and the modal's
-    // unknown branch says so in words.
-    render(<ConsentModal label="remote-thing" result={blocked} busy={false}
-      permissions={undefined} hostUi={undefined} pythonDeps={undefined}
-      crons={undefined} onConfirm={() => {}} onClose={() => {}} />)
-    const t = text(screen.getByRole('dialog'))
-    expect(t).toMatch(/could not read this app's declared permissions/)
-    expect(t).toMatch(/any Python packages it adds to this gateway's environment are unknown too/)
-  })
 })
 
-describe('consentPythonDeps is the one authority, and it declines to guess', () => {
-  it('returns undefined when the manifest was never read', () => {
-    expect(consentPythonDeps(undefined)).toBeUndefined()
-    // `consentKnown: false` is the pointer case. The wire ships `pythonDependencies: []`
-    // for BOTH that and "declares none", which is exactly why the flag is consulted and not
-    // the array's emptiness.
-    expect(consentPythonDeps({ consentKnown: false, pythonDependencies: [] })).toBeUndefined()
-    expect(consentPythonDeps({ consentKnown: undefined, pythonDependencies: [] })).toBeUndefined()
+describe('disclosureOf is the one catalog authority, and it declines to guess', () => {
+  const row = (over: Partial<AppCatalogEntry>) => over as AppCatalogEntry
+
+  it('returns no disclosure at all when the manifest was never read', () => {
+    // `consentKnown: false` is the registry-pointer case. The wire ships `pythonDependencies: []`
+    // for BOTH that and "declares none", which is exactly why the flag is consulted and not the
+    // array's emptiness — and why a pointer's Store panel renders no package row rather than an
+    // empty one. (Its install dialog reads the packages from the server's review.)
+    expect(disclosureOf(undefined)).toBeUndefined()
+    expect(disclosureOf(row({ consentKnown: false, pythonDependencies: [] }))).toBeUndefined()
+    expect(disclosureOf(row({ consentKnown: undefined, pythonDependencies: [] }))).toBeUndefined()
   })
 
   it('returns the list when it was read, and [] for an app declaring none', () => {
-    expect(consentPythonDeps({ consentKnown: true, pythonDependencies: [] })).toEqual([])
+    expect(disclosureOf(row({ consentKnown: true, pythonDependencies: [] }))?.pythonDependencies).toEqual([])
     // An absent field on a read manifest is "declares none", not unknown.
-    expect(consentPythonDeps({ consentKnown: true })).toEqual([])
-    expect(consentPythonDeps({
+    expect(disclosureOf(row({ consentKnown: true }))?.pythonDependencies).toEqual([])
+    expect(disclosureOf(row({
       consentKnown: true, pythonDependencies: [{ spec: 'openai>=1.0', coreOwned: false }],
-    })).toEqual([{ spec: 'openai>=1.0', coreOwned: false }])
+    }))?.pythonDependencies).toEqual([{ spec: 'openai>=1.0', coreOwned: false }])
   })
 })
 
 // ── The call-site rail ────────────────────────────────────────────────────────────────
 //
 // A disclosure that renders correctly and is never handed its data is not a disclosure, and
-// `PermissionList` deliberately fails SILENT on an omitted `pythonDeps`. So a source rail is
-// the only thing standing between that design and the defect returning one surface at a
-// time. COUNTED PER CALL SITE, not as bare membership: an "is it passed anywhere?" rail
-// stays green with three of four sites missing. This mirrors `consentHostUiRendered.test.ts`
-// and `consentDisclosesAbsent.test.ts`, which count the same four modals.
+// `PermissionList` deliberately fails SILENT on an omitted `pythonDeps`. So a source rail is the
+// only thing standing between that design and the defect returning one surface at a time. It is a
+// CENSUS of every production file, not a list of known ones: a new surface that renders its own
+// `PermissionList` is exactly the regression this exists to catch. `consentHostUiRendered.test.ts`
+// counts the same renders for the host-page fact.
 
-const SITES = [
-  join('src/pages/apps', 'AppsSection.tsx'),
-  join('src/app/onboarding', 'EssentialsStep.tsx'),
-]
+const SRC = join(process.cwd(), 'src')
 
 /** Source with comments stripped, so the prose explaining the fix cannot satisfy — or trip —
  *  a count. A rail measures the program, not the explanation of it. */
-const code = (rel: string) =>
-  readFileSync(join(process.cwd(), rel), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+const strip = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+
+function productionFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((n) => {
+    const p = join(dir, n)
+    if (statSync(p).isDirectory()) return n === 'test' ? [] : productionFiles(p)
+    return /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n) ? [p] : []
+  })
+}
+
+/** Every `<PermissionList …/>` in production code, by file. */
+function permissionListRenders(): { rel: string; tag: string }[] {
+  return productionFiles(SRC).flatMap((abs) =>
+    [...strip(readFileSync(abs, 'utf8')).matchAll(/<PermissionList\b[\s\S]{0,300}?\/>/g)]
+      .map((m) => ({ rel: abs.slice(SRC.length + 1), tag: m[0] })))
+}
 
 describe('every consent surface is handed the Python-dependency fact', () => {
   it('the comment stripper actually strips (or every count below is unfalsifiable)', () => {
-    // The control this file's own rail needs: prove `code()` removes both comment forms,
-    // so a green below cannot be a green earned by a docstring.
-    const stripped = code(SITES[0])
-    expect(stripped.length, 'stripping removed nothing — the regexes are wrong').toBeLessThan(
-      readFileSync(join(process.cwd(), SITES[0]), 'utf8').length,
-    )
-    expect(stripped).not.toMatch(/🔑/)
+    // The control this file's own rail needs: prove `strip()` removes both comment forms, so a
+    // green below cannot be a green earned by a docstring.
+    const raw = readFileSync(join(SRC, 'pages/apps/installConsent.tsx'), 'utf8')
+    expect(strip(raw).length, 'stripping removed nothing — the regexes are wrong').toBeLessThan(raw.length)
+    expect(strip(raw)).not.toMatch(/🔑/)
   })
 
-  it('every ConsentModal render passes pythonDeps', () => {
-    let seen = 0
-    for (const rel of SITES) {
-      for (const m of code(rel).matchAll(/<ConsentModal\b[\s\S]{0,900}?\/>/g)) {
-        seen += 1
-        expect(m[0], `${rel}: a ConsentModal renders without the python-dependency fact`)
-          .toMatch(/pythonDeps=\{consentPythonDeps\(/)
-      }
-    }
-    // The same four the #492 and issue-614 rails count — they are the same modals:
-    // `AppsSection`'s StoreView and SourcesPanel, `StoreDetailPanel`'s inline onConfirm, and
-    // onboarding's essential-apps step. A fifth that forgets must fail this.
-    expect(seen).toBe(4)
+  it('the one pre-install disclosure passes the review’s packages, and only the installed panel omits them', () => {
+    const renders = permissionListRenders()
+    const withFact = renders.filter((r) => /pythonDeps=\{disclosure\.pythonDependencies\}/.test(r.tag))
+    const without = renders.filter((r) => !/pythonDeps=/.test(r.tag))
+    // `AppDisclosureView` — what the install dialog AND the Store detail panel render.
+    expect(withFact.map((r) => r.rel), 'the disclosure every pre-install surface renders').toEqual(['pages/apps/installConsent.tsx'])
+    // The INSTALLED-app panel, whose wire (`AppSummary`) has no such field. By then the packages
+    // are already installed and this is an inventory, not a consent surface — omitting the row
+    // there is honest.
+    expect(without.map((r) => r.rel), 'only the installed-app panel may omit it').toEqual(['pages/apps/AppsSection.tsx'])
+    expect(renders, 'no third PermissionList anywhere — a new surface renders AppDisclosureView').toHaveLength(2)
   })
 
-  it('the two PRE-INSTALL PermissionList sites pass it too', () => {
-    // Three `PermissionList` renders exist across these files. Two are pre-install (the
-    // Store detail panel and the onboarding card) and carry a catalog entry, so they pass
-    // it. The third is the INSTALLED-app panel, whose wire (`AppSummary`) has no such field
-    // — it omits the prop and renders no row, which is honest: by then the packages are
-    // already installed and this is a consent surface, not an inventory.
-    let withFact = 0, without = 0
-    for (const rel of SITES) {
-      for (const m of code(rel).matchAll(/<PermissionList\b[\s\S]{0,300}?\/>/g)) {
-        if (/pythonDeps=\{consentPythonDeps\(/.test(m[0])) withFact += 1
-        else without += 1
-      }
-    }
-    expect(withFact, 'both pre-install permission lists must disclose the packages').toBe(2)
-    expect(without, 'only the installed-app panel may omit it').toBe(1)
-  })
-
-  it('no call site fabricates the answer it is about to disclose', () => {
+  it('no surface fabricates the answer it is about to disclose', () => {
     // The `hasUI: false` defect (#492's follow-up) in reverse: `storeUniverse` normalised a
     // catalog row with a hard-coded value and the panel then asserted it. A hard-coded
-    // `pythonDependencies` would be worse, because the honest empty case renders NOTHING
-    // and so a fabricated `[]` is indistinguishable from a correct one on screen.
-    const src = code('src/pages/apps/AppsSection.tsx')
-    expect(src).not.toMatch(/pythonDependencies:\s*\[/)
+    // `pythonDependencies` would be worse, because the honest empty case renders NOTHING and so
+    // a fabricated `[]` is indistinguishable from a correct one on screen.
+    for (const rel of ['pages/apps/AppsSection.tsx', 'app/onboarding/EssentialsStep.tsx']) {
+      expect(strip(readFileSync(join(SRC, rel), 'utf8')), rel).not.toMatch(/pythonDependencies:\s*\[/)
+    }
   })
 })

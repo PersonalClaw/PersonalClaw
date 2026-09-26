@@ -678,6 +678,17 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The field is driven by the workflow run that owns this task; change what the run "
         "does and the task will follow."
     ),
+    # ── app install preview (dashboard/handlers/apps.py — api_app_preview) ──
+    # Split by remedy. `app_source_unresolved`: the path does not exist or the clone failed,
+    # so the fix is the source string. `app_preview_failed`: the bundle was fetched but
+    # cannot be offered for install — its manifest is unreadable or invalid, it needs a newer
+    # core, or it is already installed (or, for an update, not installed); the message says
+    # which. A bundle that WAS read always answers 200, refusals included: "the scanner found
+    # dangerous content" is a completed review whose answer is no, and the dialog shows it.
+    "app_source_unresolved": "The app source could not be read — the path does not exist or "
+    "the clone failed.",
+    "app_preview_failed": "The app was fetched but cannot be offered for install; the message "
+    "says why.",
 }
 
 

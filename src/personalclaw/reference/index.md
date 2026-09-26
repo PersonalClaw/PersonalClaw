@@ -7,7 +7,7 @@ Offline API/tool reference for PersonalClaw (manifest apiVersion 1). Generated f
 1. Read this index to locate the surface you need — don't read every file.
 2. Drill into the one relevant section:
    - **[tools.md](tools.md)** — 106 registered tools across 14 providers, with exact input schemas + examples.
-   - **[routes.md](routes.md)** — 846 agent-callable HTTP routes (of 853 total), with summaries.
+   - **[routes.md](routes.md)** — 847 agent-callable HTTP routes (of 854 total), with summaries.
    - **[providers.md](providers.md)** — the provider-type taxonomy + 32 registered providers.
 3. Copy the exact signature — never guess a parameter name.
 4. After a mutating call, read the entity back to confirm it took.
@@ -33,7 +33,7 @@ Offline API/tool reference for PersonalClaw (manifest apiVersion 1). Generated f
 
 These are environment invariants, not API facts — but they cost more driving turns than any signature:
 
-- **Installed apps run from `$PERSONALCLAW_HOME/apps/<name>/`, not the workspace tree.** Push code edits with `POST /api/apps/{name}/update` `{source, confirm:true}` — editing the workspace clone does nothing to the running app.
+- **Installed apps run from `$PERSONALCLAW_HOME/apps/<name>/`, not the workspace tree.** Push code edits with `POST /api/apps/{name}/update` `{source}` — editing the workspace clone does nothing to the running app. An edit that changes what the app gets (or that the scanner warns about) answers `409` with a review; it updates only when re-sent with that review's `consent` digest, which is the owner's to give.
 - **`static/dist` is a SYMLINK to `web/dist`, not a copy.** A `cp -R` leaves a frozen dir that shadows it and serves a stale SPA. Rebuild the frontend in place; never replace the symlink with a copy.
 - **Use the venv interpreter.** Run the gateway and tools through the project's `.venv` (`.venv/bin/personalclaw`), not a system Python that lacks the installed dependencies.
 - **Locate this reference from the binary:** `personalclaw doctor --paths` prints the reference directory (and the config / skills / install dirs) so an external agent can find these files without knowing the install layout.

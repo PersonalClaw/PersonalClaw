@@ -230,6 +230,31 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   4. **Removing a provider or an app removes its secrets.** Deleting a provider instance deletes its stored key. Both *Uninstall* (keeps your data) and *Force uninstall* delete the app's stored tokens, and both dialogs say so; *Deactivate* keeps them, like it keeps everything else.
   5. **Snapshots and exports carry no credential value.** Snapshots no longer capture `.env`, `.env.pre-keychain`, `credentials.json` (which could hold an inline key), `.local_secret` or any app's `.app_secret`. Settings travel as references, so restoring on the same machine just works, and **restoring onto a new machine means entering your API keys and app tokens again.** Snapshots still include the audit-log key (`sel_hmac.key`), so a restored audit log still verifies. Snapshots taken before this change still contain the keys they had: delete them, or rotate those keys. The same goes for the local time-travel history (`state-history/`, which never leaves the machine): its earlier versions of `config.json` can hold a provider key typed before this change.
   Not covered yet: two secrets are still stored inline, in files that are now 0600 — the `env` values of MCP servers (`mcp.json`, and the agent config they are copied into) and the webhook token (`hooks.webhook_token` in `config.json`) — so they still travel in snapshots and exports. See `docs/security/limitations.md` §6.
+- **Every app install now shows what the app gets and waits for you — a clean security scan
+  no longer installs in one click.** Behaviour change to a security control. The Store's
+  consent screen appeared only when the scanner raised warnings, so most apps installed on a
+  single click with nothing shown: in a measured run of the Store, 50 of 65 installs —
+  including apps granted API access to your projects, tasks and knowledge, the right to run
+  background agents, and scheduled jobs that start running unattended the moment the install
+  finishes. Now every way of installing — a Store card, its detail panel, Manage Sources,
+  Install from URL, and the first-run essential-apps step — opens one dialog that shows,
+  before anything is installed, the permissions the gateway enforces, each scheduled job and
+  whether installing turns it on, the Python packages it adds to the gateway's environment,
+  whether it starts its own server or runs a command while installing, the MCP servers it
+  adds, and the security scan. It installs only when you choose Install, and then says so
+  ("Installed Growth Tracker.", with a link to the app) instead of the card just vanishing.
+  An update that changes what an app gets asks the same way and lists what it adds and drops.
+  Scanner findings now say whether the app can run them at all: a match in the app's own
+  tests and fixtures, or in text nothing can execute, is grouped under *the app cannot run*
+  rather than described as what the app does. Dialogs name the app by its display name, not
+  its identifier ("Uninstall Research Lab?", not "Uninstall research-lab?").
+  **Breaking for scripts:** `POST /api/apps` no longer installs on a bare request or on
+  `confirm: true`. Ask `POST /api/apps/preview {source}` for the review — what the app gets,
+  the scan, and a `consent` digest of those exact bytes — then send `{source, consent}`; the
+  install commits only if the bytes still match, and otherwise answers `409` with a fresh
+  review. `POST /api/apps/{name}/update` works the same way when the update changes what the
+  app gets or the scan warns; one that changes none of it needs no consent. The README that
+  `personalclaw app new` writes shows the two calls.
 - **A gateway running as root can now use its own home directory as a workspace — and its
   credentials under it stay refused.** Behaviour change to a security control: the superuser's
   home (`/root`, or `/var/root` on macOS) was on the list of system folders PersonalClaw never

@@ -24,19 +24,31 @@ modules). App sources for the Store are managed at
 ## Install lifecycle (`apps/app_manager.py`)
 
 Install is: **copy → stage in quarantine → validate manifest → scan staged
-content → platform gate → pip deps → `setup.onInstall` hook (bounded
+content → platform gate → consent → pip deps → `setup.onInstall` hook (bounded
 subprocess, 60s cap) → register providers/prompts/MCP servers/crons → start
 backend**.
 
 - **Quarantine first** — staged under `~/.personalclaw/apps/.quarantine/`;
   dangerous content never touches the live tree.
-- **The scan** is the shared `SkillScanner` (`supply_chain.py`). Verdicts:
-  *clean* installs; *warning* → HTTP 409 `needs_consent` (the caller must
-  explicitly confirm); *dangerous* → terminal refusal, **non-overridable**.
-  The install invariant is scanned-bytes == installed-bytes (no
-  swap-after-scan window).
+- **The scan** is the shared `SkillScanner` (`supply_chain.py`). A *dangerous*
+  verdict (or an invalid signature) is a terminal refusal, **non-overridable**.
+  Each finding carries whether the code it sits in can run (`reachability`) and
+  whether anything the app runs loads its file at all (`runtime` — the install
+  dialog groups an app's own test files apart from the code it runs).
+- **Every install waits for consent** — a clean scan is not consent.
+  `POST /api/apps/preview {source}` stages the source and returns what installing
+  it grants and runs (`apps/disclosure.describe`: permissions, scheduled jobs and
+  whether each is switched on, Python packages, dashboard code, its own server
+  process, the install hook, MCP servers), the scan, and a `consent` digest of the
+  staged bytes. `POST /api/apps {source, consent}` commits only if the bytes still
+  have that digest; anything else — `confirm: true` included — answers 409 with
+  the review. The install invariant is scanned-bytes == reviewed-bytes ==
+  installed-bytes (no swap-after-scan window, and none after consent either).
 - **Update** is atomic with rollback: the previous install is preserved at
-  `~/.personalclaw/apps/.{name}.rollback` for the duration.
+  `~/.personalclaw/apps/.{name}.rollback` for the duration. An update that changes
+  what the app gets (compared with the installed copy's disclosure), or scans with
+  warnings, needs the same `consent` digest (`POST /api/apps/preview {source, name}`);
+  one that changes none of it needs none.
 - **Removal** distinguishes deactivate (providers deregistered, files kept)
   from force-uninstall.
 

@@ -102,7 +102,7 @@ const walk = (d: string): string[] =>
 
 const REFUSAL = 'app not installed: an earlier copy of its data is still on disk'
 
-type DialogComponent = ComponentType<{ name: string; onClose: () => void; onDone: () => void }>
+type DialogComponent = ComponentType<{ name: string; displayName: string; onClose: () => void; onDone: () => void }>
 
 function mockApi(write: 'removeApp' | 'uninstallApp', impl: () => Promise<unknown>) {
   const calls: string[] = []
@@ -135,7 +135,7 @@ describe('§A a refused app removal keeps its dialog, names the reason IN it, an
       const mod = (await import('../pages/apps/AppsSection')) as unknown as Record<string, DialogComponent>
       const Dialog = mod[name]
       const onDone = vi.fn()
-      render(<Dialog name="slack-channel" onClose={() => {}} onDone={onDone} />)
+      render(<Dialog name="slack-channel" displayName="Slack" onClose={() => {}} onDone={onDone} />)
 
       const confirm = await waitFor(() => screen.getByRole('button', { name: button }))
       fireEvent.click(confirm)
@@ -163,7 +163,7 @@ describe('§A a refused app removal keeps its dialog, names the reason IN it, an
       const mod = (await import('../pages/apps/AppsSection')) as unknown as Record<string, DialogComponent>
       const Dialog = mod[name]
       const onDone = vi.fn()
-      render(<Dialog name="slack-channel" onClose={() => {}} onDone={onDone} />)
+      render(<Dialog name="slack-channel" displayName="Slack" onClose={() => {}} onDone={onDone} />)
       fireEvent.click(await waitFor(() => screen.getByRole('button', { name: button })))
       await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1))
       expect(screen.queryByRole('alert'), 'a success must not announce a failure').toBeNull()
@@ -308,11 +308,13 @@ const SILENT_WRITE_BUDGET: Record<string, number> = {
   // value and rejects on failure, and `Onboarding.finish()` reports it. `pages/terminal/
   // closeReportsFailure.test.tsx` carries the measurement in full. A zero entry would have read as
   // live debt with a comment that is no longer true.
-  // (a) `install` / `confirmInstall`, the #3540 family — and the fix is one layer DOWN, in
-  // `lib/useGuardedInstall`, which reports through `guarded.error`; this step renders it via
-  // `GuardedFailure`. The call sites are counted because the shape is genuinely there: every one of
-  // them is `if (r?.ok) { … }` with no else, so a hook that stopped reporting would be invisible here.
-  'app/onboarding/EssentialsStep.tsx': 2,
+  // `app/onboarding/EssentialsStep.tsx` (2) and `pages/apps/AppsSection.tsx` (7) are GONE from this
+  // budget too, for the same reason as identity above. Their nine sites were the guarded-install call
+  // sites of the #3540 family — `if (r?.ok) { … }` with no else, the reporting one layer down in a
+  // hook. Every app install and update now runs through the ONE consent dialog
+  // (`pages/apps/installConsent.useAppInstall`), whose confirm reports its own failure inside the
+  // dialog beside the button that was pressed, and the scanner credits it there — so the shape no
+  // longer exists at any call site, rather than being excused at nine.
   // (a) `createAgent` inside the ACP agent-adoption helper. It returns the profile name regardless,
   // so a failed create yields a session bound to a profile that does not exist. A library module with
   // no surface; the remedy is to propagate to the picker that called it.
@@ -327,10 +329,6 @@ const SILENT_WRITE_BUDGET: Record<string, number> = {
   // repair for an optimistic move that already lied). The five organise writes are that same shape
   // with the report missing, and `userActionReported` already pinned three of their siblings.
   'pages/ChatPage.tsx': 11,
-  // (a) Seven `if (r?.ok)` guarded-install call sites — same ruling as EssentialsStep above: the
-  // reporting lives in `useGuardedInstall` and renders through `GuardedFailure`/`ConsentModal`.
-  // The three removal/lifecycle sites this file used to carry are FIXED and gone from this number.
-  'pages/apps/AppsSection.tsx': 7,
   // (b) Ruled on twice: its own comment ("a background refresh must never block the open or surface
   // an error toast") and `userActionReported`'s header, which names it as one of two deliberate
   // silences because it is a `view`-trigger side effect of navigation, not an action.
@@ -658,9 +656,10 @@ describe('§B no write path discards its own failure, tree-wide and by COUNT', (
     const stuck = walk(SRC).filter((abs) => stripComments(readFileSync(abs, 'utf8')).endState === 'block')
     expect(stuck.map(rel), 'these files leave the comment scanner stuck open').toEqual([])
 
-    // The live positive control: the guarded-install call sites are correct code whose SHAPE is
-    // permanent (the reporting lives in the hook), so this file can never legitimately score zero.
-    expect((c.get('pages/apps/AppsSection.tsx') ?? []).length, 'the live control stopped counting').toBeGreaterThan(0)
+    // The live positive control: the first-run resume write is silent BY DESIGN (its budget entry
+    // says why), so its shape is permanent and this file can never legitimately score zero. It used
+    // to be `AppsSection`'s guarded-install call sites, until one consent dialog replaced them.
+    expect((c.get('app/Onboarding.tsx') ?? []).length, 'the live control stopped counting').toBeGreaterThan(0)
   })
 
   it('every file with a silent write is in the budget — a NEW one turns CI red', () => {

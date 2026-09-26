@@ -40,11 +40,13 @@ import json
 import logging
 import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from personalclaw.apps import disclosure as app_disclosure
 from personalclaw.apps.manager import (
     APP_MANIFEST_FILENAME,
     INSTALLED_META_FILENAME,
@@ -94,13 +96,15 @@ class AppLifecycleError(Exception):
 
 @dataclass
 class InstallResult:
-    """Outcome of an install attempt — surfaced to the API/UI."""
+    """Outcome of an install attempt, or of a :func:`preview` — surfaced to the API/UI."""
 
     ok: bool
     name: str = ""
     scan: ScanReport | None = None
     error: str = ""
-    needs_consent: bool = False  # a warning verdict the caller must confirm
+    # Nothing was committed: the owner must review `disclosure` + `scan` and consent to
+    # exactly the bundle whose digest is `consent`.
+    needs_consent: bool = False
     restart_required: bool = (
         False  # an app package the gateway had already loaded was replaced; restart to reload it
     )
@@ -114,6 +118,15 @@ class InstallResult:
     # UNTRUSTED — a malicious app's build can emit attacker-controlled text — so it is
     # never dropped raw into a prompt; `fix_prompt` fences it (see the property).
     log_excerpt: str = ""
+    # What the owner consents OVER, read from the staged bytes (never from the catalog):
+    # the manifest's own name and version, `disclosure.describe` of it, and — for an update —
+    # the installed version's disclosure to compare against. `consent` is the staged bundle's
+    # digest: echo it back and the install commits only if the bytes are still those.
+    display_name: str = ""
+    version: str = ""
+    disclosure: dict[str, Any] | None = None
+    previous: dict[str, Any] | None = None
+    consent: str = ""
 
     @property
     def fix_prompt(self) -> str:
@@ -153,6 +166,11 @@ class InstallResult:
             "scan": self.scan.to_dict() if self.scan else None,
             "log_excerpt": self.log_excerpt,
             "fix_prompt": self.fix_prompt,
+            "displayName": self.display_name,
+            "version": self.version,
+            "disclosure": self.disclosure,
+            "previous": self.previous,
+            "consent": self.consent,
         }
 
 
@@ -691,19 +709,227 @@ def _remove_app_skills(manifest: AppManifest, name: str) -> None:
         logger.debug("app %s: skill remove failed", name, exc_info=True)
 
 
+@dataclass
+class _Reviewed:
+    """A staged bundle past the terminal gates, with everything consent is given over."""
+
+    manifest: AppManifest
+    report: ScanReport
+    digest: str
+    disclosure: dict[str, Any]
+
+
+@dataclass
+class _Refused:
+    """A terminal gate outcome no consent overrides, and what the audit row should say."""
+
+    result: InstallResult
+    audit_error: str
+    #: The refusal came from the SCAN, so its report belongs in the audit detail. An
+    #: invalid signature never reached the scanner, and a verdict it never computed must
+    #: not be logged as if it had.
+    scanned: bool
+
+
+def _review(staged: Path, *, origin: str, action: str) -> "_Reviewed | _Refused":
+    """Gate ``staged`` up to the point of consent — manifest, signature, scan — the ONE
+    way :func:`install`, :func:`update` and :func:`preview` read a bundle, so the review
+    a consent dialog shows and the check a commit makes cannot disagree about it.
+
+    Audits nothing: whether this was a real attempt is the caller's to say. Raises
+    :class:`AppLifecycleError` for an unusable manifest."""
+    manifest = _load_staged_manifest(staged, action=action)
+    what = app_disclosure.describe(manifest)
+    facts: dict[str, Any] = {
+        "name": manifest.name,
+        "display_name": manifest.displayName or manifest.name,
+        "version": manifest.version,
+        "disclosure": what,
+    }
+    # The signature BEFORE the scan (SH-3): "someone tampered with a signed artifact" is
+    # not a risk the user is in a position to accept, so nothing overrides it. Unsigned is
+    # not invalid — it installs at community tier.
+    signature, tier = _signature_gate(staged, origin)
+    if signature.is_invalid:
+        return _Refused(
+            InstallResult(
+                ok=False,
+                scan=ScanReport(tier=tier, signature=signature),
+                error=f"{action} refused: invalid signature — {signature.reason}",
+                **facts,
+            ),
+            audit_error=f"signature: {signature.reason}",
+            scanned=False,
+        )
+    report = default_scanner.scan(staged, tier)
+    report.signature = signature
+    if report.verdict is Verdict.DANGEROUS:
+        return _Refused(
+            InstallResult(
+                ok=False,
+                scan=report,
+                error=f"{action} refused: scanner flagged dangerous content",
+                **facts,
+            ),
+            audit_error="scan: dangerous",
+            scanned=True,
+        )
+    return _Reviewed(manifest, report, app_disclosure.bundle_digest(staged), what)
+
+
+def _awaiting_consent(
+    r: _Reviewed, *, error: str, needed: bool = True, previous: dict[str, Any] | None = None
+) -> InstallResult:
+    """What the owner is asked to consent to — nothing committed. ``needed`` is whether a
+    commit will require it (an update that changes nothing it gets does not)."""
+    return InstallResult(
+        ok=False,
+        name=r.manifest.name,
+        scan=r.report,
+        needs_consent=needed,
+        error=error,
+        display_name=r.manifest.displayName or r.manifest.name,
+        version=r.manifest.version,
+        disclosure=r.disclosure,
+        previous=previous,
+        consent=r.digest,
+    )
+
+
+def _consent_error(action: str, report: ScanReport, *, stale: bool) -> str:
+    """The API ``error`` for a commit refused for want of consent — one clause per cause."""
+    if stale:
+        return f"{action} needs consent again: the app changed after it was reviewed"
+    if report.verdict is Verdict.WARNING:
+        return f"{action} needs consent: scanner raised warnings"
+    if action == "update":
+        return "update needs consent: it changes what the app gets"
+    return "install needs consent: review what the app gets first"
+
+
+def _client_install_directive(r: _Reviewed) -> InstallResult | None:
+    """P21 Gap B: an app that must be installed on the user's own machine
+    (``installMode="client"``), or that does not support THIS server's OS, cannot be
+    server-installed here — hand back the copy-paste one-liner instead, committing nothing.
+    That shell runs on the user's machine, OUTSIDE the scanner, so it is surfaced as
+    trusted-by-inspection copy-paste and never auto-run. ``None`` for a server-installable app."""
+    import sys as _sys
+
+    platform_cfg = r.manifest.platform
+    if platform_cfg is None or (
+        platform_cfg.installMode != "client" and platform_cfg.supports_platform(_sys.platform)
+    ):
+        return None
+    name = r.manifest.name
+    return InstallResult(
+        ok=False,
+        name=name,
+        scan=r.report,
+        needs_client_install=True,
+        client_install=platform_cfg.clientInstall.to_dict() or {},
+        error=(
+            f"'{name}' installs on your local machine, not this server"
+            if platform_cfg.installMode == "client"
+            else f"'{name}' does not support this server's platform ({_sys.platform})"
+        ),
+        display_name=r.manifest.displayName or name,
+        version=r.manifest.version,
+        disclosure=r.disclosure,
+    )
+
+
+def _installed_disclosure(name: str) -> dict[str, Any] | None:
+    """What the INSTALLED copy of ``name`` gets, or ``None`` when its manifest is unreadable."""
+    manifest = _manifest_of(name)
+    return app_disclosure.describe(manifest) if manifest is not None else None
+
+
+def preview(source: str | Path, *, origin: str = "local", name: str | None = None) -> InstallResult:
+    """What installing ``source`` — or, given ``name``, updating that installed app to it —
+    puts in front of the owner, WITHOUT committing, auditing or running anything it ships.
+
+    The same staging and gates as :func:`install` / :func:`update` (:func:`_review`), so
+    the review a consent dialog shows is the one the commit checks: ``disclosure`` comes
+    from the staged manifest, ``scan`` from the staged bytes, and ``consent`` is their
+    digest. ``needs_consent`` says whether a commit will require it — always for an
+    install; for an update only when it changes what the app gets, or the scan warns.
+
+    A terminal outcome (invalid signature, ``dangerous``) comes back as its refusal with
+    the scan; a P21 client-install app as its directive; a bundle that cannot be offered at
+    all (bad manifest, too-new core, already installed / not installed) as ``ok=False``
+    with only ``error`` set."""
+    src = Path(source)
+    if not src.is_dir():
+        return InstallResult(ok=False, error=f"source is not a directory: {source}")
+    action = "update" if name else "install"
+    try:
+        peek = _load_staged_manifest(src, action=action)
+    except AppLifecycleError as exc:
+        return InstallResult(ok=False, error=str(exc))
+    target = name or peek.name
+    if name:
+        if _read_installed(name) is None:
+            return InstallResult(
+                ok=False, name=name, error=f"app {name!r} is not installed (use install)"
+            )
+        if peek.name != name:
+            return InstallResult(
+                ok=False, name=name, error=f"manifest name {peek.name!r} ≠ target {name!r}"
+            )
+    elif app_dir(target).exists():
+        return InstallResult(
+            ok=False, name=target, error=f"app {target!r} already installed (use update)"
+        )
+    # A slot of its own, so a preview never collides with a concurrent install's staging.
+    slot = Path(tempfile.mkdtemp(prefix=f"{target}.preview-", dir=_quarantine_dir()))
+    staged = slot / target
+    try:
+        shutil.copytree(src, staged)
+        gate = _review(staged, origin=origin, action=action)
+        if isinstance(gate, _Refused):
+            return gate.result
+        if not name:
+            directive = _client_install_directive(gate)
+            if directive is not None:
+                return directive
+            return _awaiting_consent(gate, error="")
+        previous = _installed_disclosure(name)
+        needed = gate.report.verdict is Verdict.WARNING or app_disclosure.changed(
+            previous, gate.disclosure
+        )
+        return _awaiting_consent(gate, error="", needed=needed, previous=previous)
+    except AppLifecycleError as exc:
+        return InstallResult(ok=False, name=target, error=str(exc))
+    finally:
+        shutil.rmtree(slot, ignore_errors=True)
+
+
 def install(
     source: str | Path,
     *,
     origin: str = "local",
     confirm: bool = False,
+    consent: str = "",
     caller: str = "app_manager",
     source_ref: str | None = None,
 ) -> InstallResult:
     """Install an app from a local directory ``source`` (path/git → A4 fetch).
 
-    Staged → scanned → (consent) → onInstall → registered. A ``dangerous`` scan
-    verdict is terminal: never installs, ``confirm`` does NOT override it. A
-    ``warning`` requires ``confirm=True`` (the install UI's explicit consent).
+    Staged → gated (signature, scan) → CONSENT → onInstall → registered.
+
+    🔑 EVERY install needs consent. A clean scan says the content looks safe; it does not
+    say the owner agreed to what the app is granted and will run — and treating it as if
+    it did is how an app with API reach, an agent grant and a daily cron installed in one
+    click while the consent screen appeared only for scanner warnings. ``confirm=True`` is
+    the owner's agreement, to the grants and to any scanner warning alike. ``consent`` is
+    that agreement bound to BYTES: the digest :func:`preview` returned for the copy the
+    owner reviewed. A non-empty ``consent`` is itself the agreement, and it commits only if
+    the staged bundle still has that digest — a source that changed after review (a git
+    remote serving a different tree on the second fetch) gets a fresh review, never the
+    first one's yes. Without either, the result carries the disclosure, scan and digest —
+    the review :func:`preview` returns — and nothing is committed.
+
+    A ``dangerous`` verdict or an invalid signature is terminal: nothing overrides it.
 
     ``source_ref`` is the provenance recorded in ``installed.json`` — the ORIGINAL
     source string (e.g. the git URL), not the resolved local dir. A git clone
@@ -728,74 +954,28 @@ def install(
         shutil.rmtree(staged, ignore_errors=True)
     shutil.copytree(src, staged)
 
+    granted = confirm or bool(consent)
     try:
-        # 2. Re-validate the staged manifest (source-of-truth is the staged copy).
-        manifest = _load_staged_manifest(staged)
-
-        # 3. Verify the signature BEFORE the scan and before anything is committed
-        # (SH-3). An invalid signature is terminal: `confirm` does not override it,
-        # because "someone tampered with a signed artifact" is not a risk the user is in
-        # a position to accept. Unsigned is not invalid — it installs at community tier.
-        signature, tier = _signature_gate(staged, origin)
-        if signature.is_invalid:
-            _audit(
-                "install", "refused", name, caller=caller, error=f"signature: {signature.reason}"
-            )
-            return InstallResult(
-                ok=False,
-                name=name,
-                scan=ScanReport(tier=tier, signature=signature),
-                error=f"install refused: invalid signature — {signature.reason}",
-            )
-
-        # 4. Scan the staged content — the gate.
-        report = default_scanner.scan(staged, tier)
-        report.signature = signature
-        if report.verdict is Verdict.DANGEROUS:
+        # 2-4. Manifest (source of truth is the staged copy), signature, scan — terminal
+        # refusals first, before anything the owner could be asked to accept.
+        gate = _review(staged, origin=origin, action="install")
+        if isinstance(gate, _Refused):
             _audit(
                 "install",
                 "refused",
                 name,
                 caller=caller,
-                error="scan: dangerous",
-                detail=_scan_detail(report, consent=confirm),
+                error=gate.audit_error,
+                detail=_scan_detail(gate.result.scan, consent=granted) if gate.scanned else "",
             )
-            return InstallResult(
-                ok=False,
-                name=name,
-                scan=report,
-                error="install refused: scanner flagged dangerous content",
-            )
-        if report.verdict is Verdict.WARNING and not confirm:
-            _audit(
-                "install",
-                "needs_consent",
-                name,
-                caller=caller,
-                detail=_scan_detail(report, consent=False),
-            )
-            return InstallResult(
-                ok=False,
-                name=name,
-                scan=report,
-                needs_consent=True,
-                error="install needs consent: scanner raised warnings",
-            )
+            return gate.result
+        manifest = gate.manifest
+        report = gate.report
 
-        # 4.5 Platform gate (P21 Gap B). An app that must be installed on the user's
-        # local machine (installMode="client") or that doesn't support THIS server's OS
-        # can't be server-installed here — short-circuit to a client-install result
-        # (the copy-paste one-liner) WITHOUT committing anything to the live tree. The
-        # client-install shell runs on the user's machine, OUTSIDE the scanner, so it's
-        # surfaced as trusted-by-inspection copy-paste, never auto-run.
-        import sys as _sys
-
-        platform_cfg = manifest.platform
-        if platform_cfg is not None and (
-            platform_cfg.installMode == "client"
-            or not platform_cfg.supports_platform(_sys.platform)
-        ):
-            ci = platform_cfg.clientInstall.to_dict()
+        # 4.5 Platform gate (P21 Gap B) — a directive, not an install, so it needs no consent.
+        directive = _client_install_directive(gate)
+        if directive is not None:
+            platform_cfg = manifest.platform
             _audit(
                 "install",
                 "client_install_required",
@@ -803,21 +983,8 @@ def install(
                 caller=caller,
                 error=f"installMode={platform_cfg.installMode} os={platform_cfg.os}",
             )
-            return InstallResult(
-                ok=False,
-                name=name,
-                scan=report,
-                needs_client_install=True,
-                client_install=ci or {},
-                error=(
-                    f"'{name}' installs on your local machine, not this server"
-                    if platform_cfg.installMode == "client"
-                    else f"'{name}' does not support this server's platform ({_sys.platform})"
-                ),
-            )
+            return directive
 
-        # 5. Commit: move staged → live app dir. These are the exact bytes the signature
-        # covered and the scanner read — nothing re-fetches between the gate and here.
         dest = app_dir(name)
         if dest.exists():
             _audit("install", "error", name, caller=caller, error="already installed")
@@ -827,6 +994,21 @@ def install(
                 scan=report,
                 error=f"app {name!r} already installed (use update)",
             )
+
+        # 4.9 Consent — for EVERY install, and bound to these bytes when a digest was given.
+        stale = bool(consent) and consent != gate.digest
+        if stale or not granted:
+            _audit(
+                "install",
+                "needs_consent",
+                name,
+                caller=caller,
+                detail=_scan_detail(report, consent=False),
+            )
+            return _awaiting_consent(gate, error=_consent_error("install", report, stale=stale))
+
+        # 5. Commit: move staged → live app dir. These are the exact bytes the signature
+        # covered, the scanner read and the owner consented to — nothing re-fetches between.
         shutil.move(str(staged), str(dest))
 
         # Put back a data/ that an earlier keep-data uninstall parked for this name,
@@ -883,7 +1065,7 @@ def install(
             # The tier the gate above settled on for these exact bytes — recorded so
             # every later provenance surface (the Tools badge, #2627) reads the SAME
             # value the install dialog just disclosed, rather than re-deriving one.
-            tier=tier.value,
+            tier=report.tier.value,
         )
         _write_installed(name, meta)
         if manifest.all_providers():
@@ -922,9 +1104,18 @@ def install(
             "ok",
             name,
             caller=caller,
-            detail=" ".join(x for x in (_scan_detail(report, consent=confirm), data_fact) if x),
+            detail=" ".join(x for x in (_scan_detail(report, consent=granted), data_fact) if x),
         )
-        return InstallResult(ok=True, name=name, scan=report, restart_required=restart_required)
+        # Named for the person told about it: "Installed Growth Tracker." — not the slug, and
+        # not whatever the install surface had to go on (a pasted URL, for one).
+        return InstallResult(
+            ok=True,
+            name=name,
+            scan=report,
+            restart_required=restart_required,
+            display_name=manifest.displayName or name,
+            version=manifest.version,
+        )
     except AppLifecycleError as exc:
         _audit("install", "error", name, caller=caller, error=str(exc))
         return InstallResult(ok=False, name=name, error=str(exc))
@@ -1166,9 +1357,16 @@ def update(
     *,
     origin: str = "local",
     confirm: bool = False,
+    consent: str = "",
     caller: str = "app_manager",
 ) -> InstallResult:
     """Atomically update an installed app to new code at ``source`` (A2).
+
+    Consent is the same contract as :func:`install` (``confirm``, or a ``consent`` digest
+    bound to the reviewed bytes), required when the update CHANGES what the app gets —
+    any grant, scheduled job, package, hook, server or dashboard code
+    (:func:`disclosure.changed` against the installed copy) — or the scan warns. An update
+    that changes none of that needs none: nothing new is being agreed to.
 
     State machine, rollback on ANY failure:
 
@@ -1212,38 +1410,28 @@ def update(
                 scan=None,
                 error=f"manifest name {manifest.name!r} ≠ target {name!r}",
             )
-        # Verify the new content's signature before the scan and before the swap — an
-        # update is a fresh fetch of mutable content, so it re-passes the FULL install
-        # gate. Skipping it here would make "update" the way around signing.
-        signature, tier = _signature_gate(staged, origin)
-        if signature.is_invalid:
-            _audit("update", "refused", name, caller=caller, error=f"signature: {signature.reason}")
-            return InstallResult(
-                ok=False,
-                name=name,
-                scan=ScanReport(tier=tier, signature=signature),
-                error=f"update refused: invalid signature — {signature.reason}",
-            )
-
-        # Scan the new content (fresh fetch → re-scan; same gate as install).
-        report = default_scanner.scan(staged, tier)
-        report.signature = signature
-        if report.verdict is Verdict.DANGEROUS:
+        # The FULL install gate on the new content — an update is a fresh fetch of mutable
+        # content, so skipping the signature or the scan here would make "update" the way
+        # around both.
+        granted = confirm or bool(consent)
+        gate = _review(staged, origin=origin, action="update")
+        if isinstance(gate, _Refused):
             _audit(
                 "update",
                 "refused",
                 name,
                 caller=caller,
-                error="scan: dangerous",
-                detail=_scan_detail(report, consent=confirm),
+                error=gate.audit_error,
+                detail=_scan_detail(gate.result.scan, consent=granted) if gate.scanned else "",
             )
-            return InstallResult(
-                ok=False,
-                name=name,
-                scan=report,
-                error="update refused: scanner flagged dangerous content",
-            )
-        if report.verdict is Verdict.WARNING and not confirm:
+            return gate.result
+        report = gate.report
+        previous = _installed_disclosure(name)
+        needed = report.verdict is Verdict.WARNING or app_disclosure.changed(
+            previous, gate.disclosure
+        )
+        stale = bool(consent) and consent != gate.digest
+        if stale or (needed and not granted):
             _audit(
                 "update",
                 "needs_consent",
@@ -1251,12 +1439,10 @@ def update(
                 caller=caller,
                 detail=_scan_detail(report, consent=False),
             )
-            return InstallResult(
-                ok=False,
-                name=name,
-                scan=report,
-                needs_consent=True,
-                error="update needs consent: scanner raised warnings",
+            return _awaiting_consent(
+                gate,
+                error=_consent_error("update", report, stale=stale),
+                previous=previous,
             )
 
         # The new version's python deps, BEFORE anything of the installed version is touched.
@@ -1351,7 +1537,7 @@ def update(
             # The update re-ran the signature gate on the NEW bytes, so the tier it
             # produced is the one that now describes what is installed. Leaving the old
             # value would let a version that dropped its signature keep reading `official`.
-            meta.tier = tier.value
+            meta.tier = report.tier.value
             _write_installed(name, meta)
         if manifest.all_providers():
             _provider_registry().register(manifest, enabled=bool(meta and meta.enabled))
@@ -1364,8 +1550,15 @@ def update(
             _start_backend(manifest)  # launch the new backend (skip if disabled)
         # Same gap as install: an update that re-passed the gate only because the user
         # confirmed a warning has to say so on its success event.
-        _audit("update", "ok", name, caller=caller, detail=_scan_detail(report, consent=confirm))
-        return InstallResult(ok=True, name=name, scan=report, restart_required=restart_required)
+        _audit("update", "ok", name, caller=caller, detail=_scan_detail(report, consent=granted))
+        return InstallResult(
+            ok=True,
+            name=name,
+            scan=report,
+            restart_required=restart_required,
+            display_name=manifest.displayName or name,
+            version=manifest.version,
+        )
     except AppLifecycleError as exc:
         _audit("update", "error", name, caller=caller, error=str(exc))
         return InstallResult(ok=False, name=name, error=str(exc))

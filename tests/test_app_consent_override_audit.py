@@ -175,7 +175,7 @@ class TestUpdateConsentIsAudited:
 
     def _install_clean(self, tmp_path) -> None:
         src = _make_app_source(tmp_path)
-        assert app_manager.install(src, origin="local").ok
+        assert app_manager.install(src, origin="local", confirm=True).ok
 
     def test_a_clean_update_does_not_claim_consent(self, tmp_path, sel_rows):
         self._install_clean(tmp_path)

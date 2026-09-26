@@ -1,29 +1,46 @@
-import { useState } from 'react'
+import { useCallback, useRef, useState, type ReactNode } from 'react'
 import { SCAN_FINDINGS_SHOWN, hiddenFindingsNote, ruleGloss } from '../../lib/scanFindings'
 import { trustTierLabel } from '../../lib/trustTier'
-import { ShieldAlert, ShieldCheck, ShieldQuestion, BadgeCheck, AlertTriangle, Terminal, CalendarClock, Bot, Globe, LayoutDashboard, PackagePlus, Copy, Check } from 'lucide-react'
+import {
+  ShieldAlert, ShieldCheck, ShieldQuestion, BadgeCheck, AlertTriangle, Terminal, CalendarClock, Bot,
+  Globe, LayoutDashboard, PackagePlus, Copy, Check, Server, Download, RefreshCw, Sparkles, Loader2,
+} from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Modal } from '../../ui/Modal'
 import { SquareIconButton } from '../../ui/SquareIconButton'
-import type { AppSummary, AppInstallResult, AppCronSummary, AppScanReport, AppCatalogEntry, AppPythonDependency } from '../../lib/api'
-import { terminalRefusalReason, type GuardedResult } from '../../lib/useGuardedInstall'
+import { FieldError } from '../../ui/forms'
+import {
+  api, type AppSummary, type AppInstallResult, type AppCronSummary, type AppScanReport, type AppCatalogEntry,
+  type AppPythonDependency, type AppDisclosure, type AppScanFinding,
+} from '../../lib/api'
+import { terminalRefusalReason } from '../../lib/useGuardedInstall'
+import { readableErrText } from '../../lib/errText'
 import { copyText } from '../../app/clipboard'
+import { launchChat } from '../../app/appSdk'
 
-/** The APP INSTALL-CONSENT surface — everything a user is shown BEFORE an app is
- *  installed, and the override they must click if the supply-chain scanner objects.
+/** The APP INSTALL-CONSENT surface — the one path every install and update takes, and
+ *  everything a user is shown before anything is installed.
  *
- *  It lives in its own module because it now has two call sites: the Store
- *  (`AppsSection`) and the first-run essential-apps step
- *  (`app/onboarding/EssentialsStep`). Installing from onboarding must disclose exactly
- *  what installing from the Store discloses — same bullets, same advisory rows, same
- *  "Install anyway" — so both import these components rather than each rendering its
- *  own idea of consent. Splitting it out also keeps `AppsSection` lazily loaded: a
- *  static import of the whole Store page from the onboarding flow would have pulled the
- *  Store into the first-load bundle.
+ *  🔑 ONE PATH, NOT A COMPONENT PER SURFACE. The Store card, the Store detail panel, Manage
+ *  Sources, Install from URL, Update, and the first-run essential-apps step all open THIS
+ *  dialog through {@link useAppInstall}. It used to be a modal each caller opened only when
+ *  the scanner objected, so a clean-scanning app installed on one click with no consent
+ *  screen at all — measured on the real image, 50 of 65 Store installs, including Growth
+ *  Tracker (API reach into projects, tasks and knowledge, an agent grant, a daily cron) and
+ *  Research Lab (an hourly background agent), whose jobs then sat in `triggers.json`,
+ *  enabled, unseen.
  *
- *  Nothing here installs anything. Every component is presentation over data the
- *  catalog already returned, or over a scan verdict the install endpoint returned; the
- *  caller owns the request. */
+ *  🔑 WHAT IT DISCLOSES IS THE SERVER'S READING OF THE BYTES ABOUT TO BE INSTALLED. The
+ *  dialog opens by asking `POST /api/apps/preview`, which stages the source, scans it and
+ *  returns what it grants and runs (`apps/disclosure.describe`) plus a `consent` digest of
+ *  those exact bytes; Install sends the digest back, and the server installs only if the
+ *  bytes still match. So a registry listing or a pasted URL — whose manifest the catalog
+ *  never read — is disclosed as fully as a local card, and a source that changes between
+ *  the review and the click is reviewed again instead of installed on the first yes.
+ *
+ *  It lives in its own module because the onboarding step renders it too, and a static
+ *  import of the whole Store page from the first-run flow would pull the Store into the
+ *  first-load bundle. */
 
 /** Close a server-composed clause so a following sentence reads as a separate one. Backend error
  *  strings are composed without terminal punctuation (they are API fields, not prose), so any surface
@@ -57,8 +74,8 @@ function SignatureRow({ signature, verdict, tier }: {
       : s === 'invalid' ? 'Invalid signature — install refused'
         : `Unsigned — ${trustTierLabel(tier)}`
   return (
-    <div className="mt-2 flex flex-col gap-1">
-      <div className={`flex items-center gap-2 ${tone}`} data-type="body-m">
+    <div className="mt-s flex flex-col gap-xs">
+      <div className={`flex items-center gap-s ${tone}`} data-type="body-m">
         <Icon size={16} /> {label}
       </div>
       {s === 'invalid' && signature.reason && (
@@ -82,86 +99,227 @@ function SignatureRow({ signature, verdict, tier }: {
   )
 }
 
-export function ScanReport({ scan }: { scan: NonNullable<AppInstallResult['scan']> }) {
+/** Whether a finding describes something this app's OWN code does when it runs — the
+ *  question consent turns on. Two server-side proofs say it does not: the match is inert
+ *  text (`reachability` unreachable / commentary), or it sits in a file nothing the app
+ *  runs loads (`runtime` unloaded — its own tests and fixtures). Everything else stays in
+ *  the prominent group, `untraceable` included: "PersonalClaw could not rule it out" is no
+ *  reason to move a finding out of sight. Never decided from a file NAME — a module called
+ *  `test_x.py` that the provider imports is code the app runs, and the server says so. */
+export function findingNotRunByApp(f: AppScanFinding): boolean {
+  return f.reachability === 'unreachable' || f.reachability === 'commentary' || f.runtime === 'unloaded'
+}
+
+/** The one-line reading of a finding's reachability/runtime facts, or `''` when there is
+ *  nothing to add to the row. The server's own reason rides along as the line's `title`. */
+function findingStatus(f: AppScanFinding): string {
+  if (f.reachability === 'unreachable') return 'Inert text: the app holds this string, but nothing in it can run it.'
+  if (f.reachability === 'commentary') return 'Inside a comment: text the code never runs.'
+  if (f.runtime === 'unloaded') return "In the app's own tests or fixtures: nothing the app runs loads this file."
+  if (f.reachability === 'reachable') return 'Live code: the app can run this.'
+  if (f.reachability === 'unparseable') return 'This file could not be analysed, so it is treated as code that runs.'
+  if (f.runtime === 'untraceable') return "PersonalClaw couldn't check whether the app runs this file, so it is counted as code that does."
+  return ''
+}
+
+function FindingList({ findings }: { findings: AppScanFinding[] }) {
+  return (
+    <ul className="mt-xs flex flex-col gap-xs">
+      {/* rule (severity) — path: evidence, then what the rule MEANS, then whether the app can
+          even run it. The first line is the scanner's own vocabulary and the evidence is the
+          real argv; neither tells a non-expert what the app can do to their machine, which is
+          the only question they can actually answer. */}
+      {findings.slice(0, SCAN_FINDINGS_SHOWN).map((f, i) => {
+        const status = findingStatus(f)
+        return (
+          <li key={i} data-type="body-s" className="text-on-surface-low" data-finding={f.rule}>
+            <span className="text-on-surface">{f.rule}</span> ({f.severity})
+            {f.path ? ` — ${f.path}` : ''}{f.evidence ? `: ${f.evidence}` : ''}
+            {ruleGloss(f.rule) && (
+              <span className="block text-on-surface-var">{ruleGloss(f.rule)}</span>
+            )}
+            {status && (
+              <span className="block text-on-surface-low italic" data-testid="finding-status"
+                title={f.reachability_reason || f.runtime_reason || undefined}>{status}</span>
+            )}
+          </li>
+        )
+      })}
+      {/* The list stops at the cap; without this the eight shown read as all of them, on the
+          one screen whose entire job is an informed yes/no. */}
+      {hiddenFindingsNote(findings.length) && (
+        <li data-type="body-s" className="text-on-surface-low italic">
+          {hiddenFindingsNote(findings.length)}
+        </li>
+      )}
+    </ul>
+  )
+}
+
+export function ScanReport({ scan }: { scan: AppScanReport }) {
   const v = scan.verdict
   const tone = v === 'dangerous' ? 'text-danger' : v === 'warning' ? 'text-warn' : 'text-ok'
   const Icon = v === 'clean' ? ShieldCheck : v === 'dangerous' ? ShieldAlert : AlertTriangle
+  // 🔑 Everything not proven inert first and in full; what the app provably cannot run grouped
+  // below it. A dialog that led with a test fixture's "reads a credential file and sends its
+  // contents off this machine" described the app's tests as its behaviour (Spec Builder, and 14
+  // others). The first group carries no heading of its own: it holds text as well as code (a
+  // README addressing your assistant), so "code this app can run" would be a claim about half
+  // of it — the collapsed group's own summary is the separation.
+  const runs = scan.findings.filter((f) => !findingNotRunByApp(f))
+  const notRun = scan.findings.filter(findingNotRunByApp)
   return (
     <div className="rounded-md border border-outline-variant bg-surface-high p-m">
-      <div className={`flex items-center gap-2 ${tone}`} data-type="body-m"><Icon size={16} /> Security scan: {v}
+      <div className={`flex items-center gap-s ${tone}`} data-type="body-m"><Icon size={16} /> Security scan: {v}
         {scan.findings.length > 0 && ` · ${scan.findings.length} finding${scan.findings.length === 1 ? '' : 's'}`}
       </div>
       {scan.signature && <SignatureRow signature={scan.signature} verdict={v} tier={scan.tier} />}
-      {scan.findings.length > 0 && (
-        <ul className="mt-2 flex flex-col gap-1">
-          {/* rule (severity) — path: evidence, then what the rule MEANS. The first line is
-              the scanner's own vocabulary and the evidence is the real argv; neither tells a
-              non-expert what the app can do to their machine, which is the only question they
-              can actually answer. The gloss is a second line rather than an inline clause so
-              the technical row stays greppable/comparable against the scanner's output. */}
-          {scan.findings.slice(0, SCAN_FINDINGS_SHOWN).map((f, i) => (
-            <li key={i} data-type="body-s" className="text-on-surface-low">
-              <span className="text-on-surface">{f.rule}</span> ({f.severity})
-              {f.path ? ` — ${f.path}` : ''}{f.evidence ? `: ${f.evidence}` : ''}
-              {ruleGloss(f.rule) && (
-                <span className="block text-on-surface-var">{ruleGloss(f.rule)}</span>
-              )}
-            </li>
-          ))}
-          {/* The list stops at the cap; without this the eight shown read as all of them, on the
-              one screen whose entire job is an informed yes/no. */}
-          {hiddenFindingsNote(scan.findings.length) && (
-            <li data-type="body-s" className="text-on-surface-low italic">
-              {hiddenFindingsNote(scan.findings.length)}
-            </li>
-          )}
-        </ul>
+      {runs.length > 0 && (
+        <div className="mt-s" data-testid="scan-runs">
+          <FindingList findings={runs} />
+        </div>
       )}
-      {v === 'dangerous' && <div data-type="body-s" className="mt-2 text-danger">This app is blocked — dangerous content cannot be installed.</div>}
+      {notRun.length > 0 && (
+        <details className="mt-s" data-testid="scan-not-run" open={runs.length === 0}>
+          <summary data-type="label-m" className="cursor-pointer text-on-surface">
+            {notRun.length} the app cannot run
+          </summary>
+          <div data-type="body-s" className="mt-xs text-on-surface-low">
+            Inert text, or files nothing the app runs loads — usually its own tests and fixtures.
+            They are listed because the scanner matched them, not because installing runs them.
+          </div>
+          <FindingList findings={notRun} />
+        </details>
+      )}
+      {v === 'dangerous' && <div data-type="body-s" className="mt-s text-danger">This app is blocked — dangerous content cannot be installed.</div>}
     </div>
   )
 }
 
-// ── Consent modal — shown when a one-click (card / source-list) install hits an
-// overridable WARNING (or a terminal dangerous) verdict, so the scanner findings
-// and the "Install anyway" action are reachable without re-typing the source. */
-// Exported so the onboarding essential-apps step consents through THIS surface rather
-// than a second, quieter one: a warning verdict must show the same scanner findings and
-// demand the same explicit "Install anyway" wherever the install was initiated.
-//
-// 🔑 THE GRANTS ARE PART OF CONSENT, AND THIS MODAL OWNS THEM NOW. The module header
-// promised every install path discloses the same thing, and two of four callers broke it:
-// the Store CARD's Install and Manage Sources → Install rendered this modal with the scan
-// report only, so the fastest path to an install disclosed the scanner's findings and never
-// what the app is permitted to do or what it will run unattended. The other two disclosed
-// them on the panel BEHIND this modal — which this modal covers at the moment the user
-// clicks "Install anyway". So the bullets moved inside: the disclosure is now on the same
-// screen as the button that acts on it, for every caller, by construction.
-//
-// 🪤 `permissions` and `crons` are REQUIRED props, not optional ones — that is the whole
-// mechanism. A comment asking four callers to remember is what failed here; a required
-// prop makes forgetting a type error. Pass `undefined` when the grants genuinely are not
-// known yet (a registry pointer's manifest is not fetched until install) and the modal says
-// so out loud, which is a different and honest disclosure — never silence. Derive that
-// `undefined` with `consentPermissions` — a catalog row can never be trusted to express it,
-// because the wire ships `permissions: {}` for BOTH cases.
-
-/** The grants to disclose for *entry*, or `undefined` when they are NOT KNOWN YET.
+/** The disclosure a CATALOG row can make, or `undefined` when its manifest was never read.
  *
- *  🔑 The catalog's `permissions` alone cannot answer this, and reading it as if it could
- *  is the bug this closes. `CatalogEntry.to_dict` is `asdict`, so **every** row ships a
- *  `permissions` object — `{}` both for a scanned manifest that declares nothing and for
- *  a registry POINTER whose manifest is not fetched until install. `{}` is truthy in JS,
- *  so the modal's `permissions ? … : …` guard took the pointer down the known branch and
- *  asserted "None — this app is granted no gateway capability" about an app nobody had
- *  read. `consentKnown` is the one authority for the distinction (it is False only at the
- *  pointer builder), and this helper is the single place the four consent call sites
- *  consult it, so the two cases cannot diverge per caller again. */
-export function consentPermissions(
-  entry: Pick<AppCatalogEntry, 'permissions' | 'consentKnown'> | undefined,
-): AppSummary['permissions'] | undefined {
+ *  🔑 The catalog's fields alone cannot answer this. `CatalogEntry.to_dict` is `asdict`, so
+ *  every row ships `permissions: {}` — both for a scanned manifest that declares nothing and
+ *  for a registry POINTER whose manifest is not fetched until the install is reviewed — and
+ *  `{}` is truthy. `consentKnown` is the one authority for the distinction, and this is the
+ *  one place it is consulted, so no surface can claim "granted no gateway capability" about
+ *  an app nobody read. The install dialog never uses this: it discloses the server's reading
+ *  of the bytes being installed, which exists for a pointer too. */
+export function disclosureOf(entry: AppCatalogEntry | undefined): AppDisclosure | undefined {
   if (!entry?.consentKnown) return undefined
-  return entry.permissions ?? {}
+  return {
+    permissions: entry.permissions ?? {},
+    crons: entry.crons ?? [],
+    pythonDependencies: entry.pythonDependencies ?? [],
+    hasUI: Boolean(entry.hasUI),
+    uiComponents: entry.uiComponents ?? '',
+    hasBackend: Boolean(entry.hasBackend),
+    onInstall: entry.onInstall ?? '',
+    onUpdate: entry.onUpdate ?? '',
+    mcpServers: entry.mcpServers ?? [],
+  }
+}
+
+type DisclosureAction = 'install' | 'update'
+
+/** Everything installing (or updating to) an app grants and runs, on ONE surface — the
+ *  scheduled jobs it switches on, the permissions the gateway enforces with the advisory
+ *  rows beside them, and what it runs on this machine. Every consent surface renders this
+ *  and nothing else, so none can show the bullets and forget the jobs, or show the jobs and
+ *  forget the packages — the failures this module has had one at a time. */
+export function AppDisclosureView({ disclosure, action }: { disclosure: AppDisclosure; action: DisclosureAction }) {
+  return (
+    <div className="flex flex-col gap-m" data-testid="app-disclosure">
+      {disclosure.crons.length > 0 && <CronConsentList crons={disclosure.crons} action={action} />}
+      <PermissionList perms={disclosure.permissions ?? {}} hostUi={consentHostUi(disclosure)}
+        pythonDeps={disclosure.pythonDependencies} />
+      <RunsRow disclosure={disclosure} action={action} />
+    </div>
+  )
+}
+
+/** What the install runs on this machine beyond its grants: a server process of its own,
+ *  the shell command its install (or update) hook executes in the app's folder, and each
+ *  MCP server it adds to the assistant. Renders nothing when there is none of it. */
+function RunsRow({ disclosure: d, action }: { disclosure: AppDisclosure; action: DisclosureAction }) {
+  const hook = action === 'update' ? d.onUpdate : d.onInstall
+  const items: ReactNode[] = []
+  if (d.hasBackend) items.push('Starts its own server process, which keeps running while the app is on.')
+  if (hook) {
+    items.push(<>Runs <code className="font-mono text-on-surface">{hook}</code> in the app's folder during the {action}.</>)
+  }
+  if (d.mcpServers.length) {
+    items.push(
+      <>Adds {d.mcpServers.length === 1 ? 'an MCP server' : `${d.mcpServers.length} MCP servers`} your assistant can call:{' '}
+        {d.mcpServers.map((s, i) => (
+          <span key={s.name}>{i > 0 ? ', ' : ''}<span className="text-on-surface">{s.name}</span>
+            {s.launches && <> (<code className="font-mono">{s.launches}</code>)</>}</span>
+        ))}.
+      </>,
+    )
+  }
+  if (!items.length) return null
+  return (
+    <div className="flex gap-s rounded-md border border-outline-variant bg-surface-high p-m" data-testid="consent-runs">
+      <Server size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-on-surface-low" />
+      <div data-type="body-s" className="text-on-surface-low">
+        <div className="text-on-surface">What it runs on this machine</div>
+        <ul className="mt-xs flex flex-col gap-xs">
+          {items.map((item, i) => <li key={i}>• {item}</li>)}
+        </ul>
+      </div>
+    </div>
+  )
+}
+
+/** One comparable line per thing an app gets, keyed so an update can say what it ADDS and
+ *  what it REMOVES. The keys carry the whole fact (a job's cadence, agent and prompt), so a
+ *  retimed job reads as one gone and one new rather than as no change. */
+function disclosureFacts(d: AppDisclosure): { key: string; label: string }[] {
+  return [
+    ...permissionRows(d.permissions ?? {}).map((r) => ({ key: `perm:${r}`, label: r })),
+    ...(d.permissions?.network ? [{ key: 'network', label: 'Network access declared' }] : []),
+    ...d.crons.filter((c) => c.scheduled !== false).map((c) => ({
+      key: `cron:${JSON.stringify([c.name, c.every, c.cron_expr, c.agent, c.message])}`,
+      label: `Scheduled job “${c.name || 'job'}” — ${fmtCadence(c)}`,
+    })),
+    ...d.pythonDependencies.map((p) => ({ key: `py:${p.spec}`, label: `Python package ${p.spec}` })),
+    ...(d.hasUI || d.uiComponents ? [{ key: 'ui', label: 'Runs in this dashboard page' }] : []),
+    ...(d.hasBackend ? [{ key: 'backend', label: 'Its own server process' }] : []),
+    ...(d.onInstall ? [{ key: `oninstall:${d.onInstall}`, label: `Install command: ${d.onInstall}` }] : []),
+    ...(d.onUpdate ? [{ key: `onupdate:${d.onUpdate}`, label: `Update command: ${d.onUpdate}` }] : []),
+    ...d.mcpServers.map((s) => ({ key: `mcp:${s.name}:${s.launches}`, label: `MCP server “${s.name}”` })),
+  ]
+}
+
+/** On an update review: what the new version gets that the installed one did not, and what
+ *  it stops getting. The server decided whether consent is needed (`needed`) on the same
+ *  projection, so when it says yes and nothing here differs, that is said too rather than
+ *  showing an empty list beside a consent button. */
+function DisclosureChanges({ previous, current, needed }: { previous: AppDisclosure; current: AppDisclosure; needed: boolean }) {
+  const before = disclosureFacts(previous)
+  const after = disclosureFacts(current)
+  const had = new Set(before.map((f) => f.key))
+  const has = new Set(after.map((f) => f.key))
+  const added = after.filter((f) => !had.has(f.key))
+  const removed = before.filter((f) => !has.has(f.key))
+  return (
+    <div className="rounded-md border border-outline-variant bg-surface-high p-m" data-testid="update-changes">
+      <div data-type="label-m" className="text-on-surface">What this update changes</div>
+      {added.length === 0 && removed.length === 0 ? (
+        <div data-type="body-s" className="mt-xs text-on-surface-low">
+          {needed
+            ? 'Details of what the app gets change — review the full list below.'
+            : 'Nothing the app gets changes.'}
+        </div>
+      ) : (
+        <ul className="mt-xs flex flex-col gap-xs">
+          {added.map((f) => <li key={`+${f.key}`} data-type="body-s" className="text-on-surface">+ Adds: {f.label}</li>)}
+          {removed.map((f) => <li key={`-${f.key}`} data-type="body-s" className="text-on-surface-low">− Drops: {f.label}</li>)}
+        </ul>
+      )}
+    </div>
+  )
 }
 
 /** What browser code this app ships (#492) — the consent fact the permission block
@@ -171,145 +329,22 @@ export function consentPermissions(
  *
  *  🔑 ONE reading for both wires. The pre-install `AppCatalogEntry` and the installed
  *  `AppSummary` carry the same two field names for it, so this accepts either and the
- *  Store card, the install modal, onboarding and the installed-app panel cannot answer
- *  the question differently — the mistake `consentPermissions` exists to prevent, one
- *  field along. The two facts stay SEPARATE because a components module is the broader
+ *  Store card, the install dialog, and the installed-app panel cannot answer the
+ *  question differently — the mistake `disclosureOf` exists to prevent, one field
+ *  along. The two facts stay SEPARATE because a components module is the broader
  *  one: the shell loads it for an enabled app with no page visit at all.
  *
  *  `undefined` in, `undefined` out — and the row then renders nothing. A registry
  *  POINTER ships `hasUI: false` for the same reason it ships `permissions: {}` (its
  *  manifest is not read until install), and "no browser code" is a CLAIM, not a
  *  default, so it must not be made about an app nobody has read. Nothing needs to
- *  re-check `consentKnown` here: this rides inside `PermissionList`, which every caller
- *  already gates on the same flag through {@link consentPermissions}. */
+ *  re-check `consentKnown` here: a catalog row reaches this only through
+ *  {@link disclosureOf}, which gates on that flag. */
 export function consentHostUi(
   a: Pick<AppCatalogEntry, 'hasUI' | 'uiComponents'> | undefined,
 ): { page: boolean; components: boolean } | undefined {
   if (!a) return undefined
   return { page: Boolean(a.hasUI), components: Boolean(a.uiComponents) }
-}
-
-/** The Python packages this install will pip-install for the gateway's own process to load, or
- *  `undefined` when the manifest has NOT been read.
- *
- *  🔑 The consent surface never said this. It enumerated gateway permissions, app
- *  messaging, desktop capabilities, network reach and dashboard code, and told the user
- *  "Installing fetches this app behind the security scanner" — and said nothing about a
- *  third-party package landing in the interpreter the gateway runs in, holding the
- *  owner's credentials, their filesystem and their network reach. Measured on a fresh
- *  container: of nine apps installed from the Store, FOUR ran `pip install` (`anthropic`,
- *  `openai`, `slack_sdk`, and a `Pillow>=10,<13` pin) with nothing on the consent screen
- *  naming any of them. `docs/security/limitations.md` §3 documents where they go and what
- *  they can reach, which is not the same as disclosing it where consent is given — a user
- *  clicking a modal does not read the threat model.
- *
- *  Same `consentKnown` gate as {@link consentPermissions}, for the same reason and read
- *  from the same flag: a registry POINTER ships `pythonDependencies: []` because its
- *  manifest is not fetched until install, and "installs no packages" is a CLAIM that must
- *  not be made about an app nobody has read. An app that genuinely declares none also
- *  ships `[]`, and that renders nothing — an empty scare-section would alarm without
- *  informing (five of those nine apps declared no dependency at all). */
-export function consentPythonDeps(
-  entry: Pick<AppCatalogEntry, 'pythonDependencies' | 'consentKnown'> | undefined,
-): AppPythonDependency[] | undefined {
-  if (!entry?.consentKnown) return undefined
-  return entry.pythonDependencies ?? []
-}
-
-export function ConsentModal({ label, result, busy, permissions, hostUi, pythonDeps, crons, onConfirm, onClose }: {
-  label: string; result: GuardedResult; busy: boolean
-  permissions: AppSummary['permissions'] | undefined
-  /** #492 — what browser code the app ships, from {@link consentHostUi}. */
-  hostUi: { page: boolean; components: boolean } | undefined
-  /** What the install pip-installs for the gateway's own process to load, from
-   *  {@link consentPythonDeps}. REQUIRED for the same reason `permissions` and `crons` are:
-   *  a package entering the interpreter the gateway runs in is part of what the user is
-   *  agreeing to, and four callers remembering an optional prop is the failure mode this
-   *  file already learned once. */
-  pythonDeps: AppPythonDependency[] | undefined
-  crons: AppCronSummary[] | undefined
-  onConfirm: () => void; onClose: () => void
-}) {
-  // P21: a client-install directive — the app installs on the user's local machine,
-  // not this server. Show the copy-paste one-liner instead of the scanner consent UI.
-  if (result.clientInstall) {
-    return (
-      <Modal title={`Install ${label}`} icon={<Terminal size={18} />} onClose={onClose}>
-        <div className="flex flex-col gap-m p-l" style={{ minWidth: 460 }}>
-          {/* Two sentences, so they have to READ as two. The server's reason arrives WITHOUT terminal
-              punctuation (`app_manager` composes "'<name>' installs on your local machine, not this
-              server"), and this line appends an instruction to it — which rendered as
-              "…not this server Run this in your terminal:". Only the hard-coded fallback ends in a
-              period, so the seam is invisible in code review and shows up only on the real path.
-              Normalizing here rather than adding a period server-side: the same string is an API
-              error field with other consumers, and a sentence boundary is this surface's concern. */}
-          <p data-type="body-s" className="text-on-surface-low">
-            {sentence(result.error || 'This app installs on your local machine, not this server.')} Run this in your terminal:
-          </p>
-          {result.clientInstall.shell && <ClientInstallCommand label="Install command" cmd={result.clientInstall.shell} />}
-          {result.clientInstall.postInstall && <ClientInstallCommand label="Then" cmd={result.clientInstall.postInstall} />}
-          <p data-type="label-s" className="text-on-surface-low">
-            The command runs on your machine, outside PersonalClaw's security scanner — review it before running.
-          </p>
-          <div className="flex justify-end gap-2 pt-s">
-            <Button variant="ghost" onClick={onClose}>Done</Button>
-          </div>
-        </div>
-      </Modal>
-    )
-  }
-  // A terminal refusal (dangerous content OR an invalid signature) explains itself and
-  // offers no override; anything else here is a consentable warning.
-  const refusal = terminalRefusalReason(result)
-  return (
-    <Modal title={`Install ${label}`} icon={<ShieldAlert size={18} />} onClose={onClose}>
-      <div className="flex flex-col gap-m p-l" style={{ minWidth: 420 }}>
-        <p data-type="body-s" className="text-on-surface-low">
-          {refusal
-            || 'The security scanner raised warnings. Review the findings — you can install anyway if you trust the source.'}
-        </p>
-        {result.scan && <ScanReport scan={result.scan} />}
-        {/* What the app is GRANTED and what it will RUN, beside the scanner's verdict on its
-            CONTENT. Three different questions; a screen answering only the third lets "the
-            scan found two warnings" stand in for "and it may also read your credentials
-            store on a schedule". Rendered on a refusal too: a user is owed the reason the
-            platform said no, and the grants are why the findings matter. */}
-        {permissions
-          ? <PermissionList perms={permissions} hostUi={hostUi} pythonDeps={pythonDeps} />
-          : (
-            <div data-type="body-s" className="text-on-surface-low">
-              {/* The Python-package disclosure is gated on the SAME `consentKnown` flag
-                  (`consentPythonDeps`), so it is unknown here for exactly the same reason and
-                  cannot diverge. It is named in this one sentence rather than given a second
-                  box repeating it: "the manifest was not read" is a single fact about every
-                  disclosure on this screen. */}
-              PersonalClaw could not read this app's declared permissions before installing —
-              its manifest is fetched as part of the install, so any Python packages it adds to
-              this gateway's environment are unknown too. Open the app in the Store to see
-              them, or review them on its page once installed.
-            </div>
-          )}
-        {(crons ?? []).length > 0 && <CronConsentList crons={crons!} />}
-        <div className="flex justify-end gap-2 pt-s">
-          {/* A terminal refusal leaves NOTHING to cancel — the install was already refused server-side,
-              so this button only dismisses. "Cancel" claims the user is abandoning a pending action and
-              invites the reading that the app might otherwise still install. `Done` is the verb this
-              file already uses for its one dismiss-only footer (the client-install branch above), and
-              the two other dismiss-only modals in the app (`chat/SessionSkillsReview`,
-              `ChatPage`) — so this converges, it does not invent. When the verdict IS consentable the
-              footer keeps "Cancel", because there a real pending action ("Install anyway") is being
-              abandoned. `AppsSection`'s install/update modals keep "Cancel" for the same reason: they
-              always render a commit button (disabled, with the refusal as its `disabledReason`), so
-              they are never dismiss-only. */}
-          <Button variant="ghost" onClick={onClose}>{refusal ? 'Done' : 'Cancel'}</Button>
-          {!refusal && (
-            <Button variant="primary" loading={busy} onClick={onConfirm}><ShieldAlert size={16} /> Install anyway
-            </Button>
-          )}
-        </div>
-      </div>
-    </Modal>
-  )
 }
 
 /** A monospace command row with a copy button — for the P21 client-install one-liner. */
@@ -318,8 +353,8 @@ function ClientInstallCommand({ label, cmd }: { label: string; cmd: string }) {
   const copy = async () => { if (await copyText(cmd, 'the command')) { setCopied(true); setTimeout(() => setCopied(false), 1500) } }
   return (
     <div>
-      <div data-type="label-s" className="mb-1 text-on-surface-low uppercase tracking-wide">{label}</div>
-      <div className="flex items-center gap-2 rounded-lg bg-surface-container px-3 py-2">
+      <div data-type="label-s" className="mb-xs text-on-surface-low uppercase tracking-wide">{label}</div>
+      <div className="flex items-center gap-s rounded-lg bg-surface-container px-m py-s">
         <code className="min-w-0 flex-1 overflow-x-auto whitespace-pre font-mono text-[0.75rem] text-on-surface">{cmd}</code>
         <SquareIconButton label="Copy command" title={copied ? 'Copied' : 'Copy'} onClick={copy} className="shrink-0">
           {copied ? <Check size={14} /> : <Copy size={14} />}
@@ -387,7 +422,7 @@ function networkClaim(network: boolean | undefined): string {
 function HostPageRow({ hostUi }: { hostUi: { page: boolean; components: boolean } }) {
   const runs = hostUi.page || hostUi.components
   return (
-    <div className="mt-2 flex gap-2 rounded-md border border-outline-variant bg-surface-high p-m">
+    <div className="mt-s flex gap-s rounded-md border border-outline-variant bg-surface-high p-m">
       <LayoutDashboard size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-on-surface-low" />
       <div data-type="body-s" className="text-on-surface-low">
         <span className="text-on-surface">Runs in this dashboard page: {runs ? 'yes' : 'no'}</span>
@@ -424,10 +459,9 @@ function specList(specs: string[]) {
 // capability the platform polices, which is the one thing that is false about it.
 //
 // It lives INSIDE `PermissionList` rather than at each consent surface, which is what puts
-// it on all four `ConsentModal` call sites, the Store detail panel and the onboarding card
-// by construction — the mechanism this module's header already leans on ("a comment asking
-// four callers to remember is what failed here"). `consentPythonDepsRendered.test.ts` is
-// the call-site rail that keeps it that way.
+// it on the install dialog and the Store detail panel by construction: both render
+// `AppDisclosureView`, and a disclosure that has to be remembered per caller is exactly what
+// failed here before.
 //
 // 🔑 IT IS NOT "ADVISORY ONLY", AND MUST NOT BORROW THAT PHRASE. Its two neighbours say
 // advisory because a manifest DECLARATION is not enforced there. Here the packages really
@@ -473,17 +507,10 @@ function PythonDepsRow({ deps }: { deps: AppPythonDependency[] }) {
   )
 }
 
-export function PermissionList({ perms, hostUi, pythonDeps }: {
-  perms: AppSummary['permissions']
-  /** #492 — what browser code the app ships, from {@link consentHostUi}. */
-  hostUi?: { page: boolean; components: boolean }
-  /** The packages the install pip-installs for the gateway to load, from
-   *  {@link consentPythonDeps}. Omitted (an installed app's wire does not carry it) or `[]`
-   *  renders NOTHING: an empty section would alarm without informing, and there is no claim
-   *  in the silence — unlike `hostUi`, absence here cannot be read as a promise, because the
-   *  surrounding surface already says whether the manifest was read at all. */
-  pythonDeps?: AppPythonDependency[]
-}) {
+/** The enforced-grant bullets for `perms`, worded as the consent surface shows them. ONE
+ *  builder, so the install dialog's bullets and an update's "what changes" list cannot word
+ *  one grant two ways. */
+export function permissionRows(perms: AppSummary['permissions']): string[] {
   const rows: string[] = []
   if (perms.api?.length) rows.push(`API: ${perms.api.join(', ')}`)
   if (perms.events?.length) rows.push(`Events: ${perms.events.join(', ')}`)
@@ -547,16 +574,33 @@ export function PermissionList({ perms, hostUi, pythonDeps }: {
   // box would now UNDERSTATE what the gateway does — the mirror image of the D2 defect that
   // kept it out of the bullets while no host existed.
   if (perms.backgroundTasks) rows.push('Run a long-lived background worker')
+  return rows
+}
+
+export function PermissionList({ perms, hostUi, pythonDeps }: {
+  perms: AppSummary['permissions']
+  /** #492 — what browser code the app ships, from {@link consentHostUi}. */
+  hostUi?: { page: boolean; components: boolean }
+  /** The packages the install pip-installs for the gateway to load, from the disclosure's
+   *  `pythonDependencies`. Omitted (an installed app's wire does not carry it) or `[]`
+   *  renders NOTHING: an empty section would alarm without informing, and there is no claim
+   *  in the silence — unlike `hostUi`, absence here cannot be read as a promise, because the
+   *  surrounding surface already says whether the manifest was read at all. */
+  pythonDeps?: AppPythonDependency[]
+}) {
+  const rows = permissionRows(perms)
+  const messaging = perms.appMessaging ?? []
+  const desktopCaps = perms.desktop ?? []
   return (
     <div>
-      <div data-type="label-m" className="mb-1 text-on-surface">Permissions the gateway enforces</div>
+      <div data-type="label-m" className="mb-xs text-on-surface">Permissions the gateway enforces</div>
       {rows.length === 0 ? <div data-type="body-s" className="text-on-surface-low">None — this app is granted no gateway capability.</div> : (
-        <ul className="flex flex-col gap-1">
+        <ul className="flex flex-col gap-xs">
           {rows.map((r, i) => <li key={i} data-type="body-s" className="text-on-surface-low">• {r}</li>)}
         </ul>
       )}
       {messaging.length === 0 && (
-        <div data-type="body-s" className="mt-1 text-on-surface-low">
+        <div data-type="body-s" className="mt-xs text-on-surface-low">
           App messaging: none — it declared no target, and the gateway broker is the only
           way one app can reach another, so it can message no other app.
         </div>
@@ -565,12 +609,12 @@ export function PermissionList({ perms, hostUi, pythonDeps }: {
           real behaviour, and staying silent about it would let absence read as
           "unrestricted" rather than "no native reach at all". */}
       {desktopCaps.length === 0 && (
-        <div data-type="body-s" className="mt-1 text-on-surface-low">
+        <div data-type="body-s" className="mt-xs text-on-surface-low">
           Desktop capabilities: none — it declared no native capability, and the gateway
           mediates every app→desktop call, so it can reach nothing native on this machine.
         </div>
       )}
-      <div className="mt-2 flex gap-2 rounded-md border border-outline-variant bg-surface-high p-m">
+      <div className="mt-s flex gap-s rounded-md border border-outline-variant bg-surface-high p-m">
         <Globe size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-on-surface-low" />
         <div data-type="body-s" className="text-on-surface-low">
           <span className="text-on-surface">Network access: {networkClaim(perms.network)}</span>
@@ -614,21 +658,45 @@ function cadenceTitle(c: AppCronSummary): string | undefined {
   return `cron: ${c.cron_expr}`
 }
 
-export function CronConsentList({ crons }: { crons: AppCronSummary[] }) {
+/** The recurring jobs an app declares. Each is an AGENT run on a schedule — so the block
+ *  shows the cadence, the agent and the prompt, and above all SAYS that installing turns
+ *  them on: an app's crons become live, enabled triggers the moment the install commits, run
+ *  unattended with no approval prompt, and until this sentence existed nothing on the consent
+ *  screen said so. Whether a job is on comes from the server (`scheduled`, the trigger
+ *  store's own predicate) — a job declared without the `cron` permission is inert, and it is
+ *  disclosed as inert rather than as something that will run. */
+export function CronConsentList({ crons, action = 'install' }: { crons: AppCronSummary[]; action?: DisclosureAction }) {
+  const on = crons.filter((c) => c.scheduled !== false)
+  const off = crons.length - on.length
+  const jobs = (n: number) => (n === 1 ? 'a scheduled job' : `${n} scheduled jobs`)
   return (
-    <div>
+    <div data-testid="consent-scheduled-jobs">
       <div data-type="label-m" className="mb-1 flex items-center gap-1.5 text-on-surface">
         <CalendarClock size={14} /> Scheduled jobs
       </div>
-      <div data-type="body-s" className="mb-2 text-on-surface-low">
-        This app runs {crons.length === 1 ? 'a background agent' : `${crons.length} background agents`} on a schedule once installed.
+      <div data-type="body-s" className="mb-s text-on-surface-low">
+        {on.length > 0 && (
+          <>
+            <span className="text-on-surface">
+              {action === 'update' ? `After the update it runs ${jobs(on.length)}` : `Installing turns on ${jobs(on.length)}`}
+            </span>
+            {` — ${on.length === 1 ? 'it runs' : 'each runs'} an agent on its own, on the schedule below, without asking you first. You can pause ${on.length === 1 ? 'it' : 'them'} on the Triggers page.`}
+          </>
+        )}
+        {off > 0 && (
+          `${on.length > 0
+            ? ` ${off === 1 ? 'One more is' : `${off} more are`}`
+            : off === 1 ? 'This job is' : 'These jobs are'} declared but will not run: the app does not have the Scheduled jobs permission.`
+        )}
       </div>
       <ul className="flex flex-col gap-1.5">
         {crons.map((c, i) => (
           <li key={c.name || i} className="rounded-md border border-outline-variant bg-surface-high p-m">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between gap-s">
               <span data-type="body-s" className="text-on-surface">{c.name || 'job'}</span>
-              <span data-type="label-s" className="shrink-0 text-on-surface-low" title={cadenceTitle(c)}>{fmtCadence(c)}</span>
+              <span data-type="label-s" className="shrink-0 text-on-surface-low" title={cadenceTitle(c)}>
+                {c.scheduled === false ? `off · ${fmtCadence(c)}` : fmtCadence(c)}
+              </span>
             </div>
             {(c.agent || c.message) && (
               <div className="mt-1 flex items-start gap-1.5 text-on-surface-low" data-type="label-s">
@@ -646,3 +714,252 @@ export function CronConsentList({ crons }: { crons: AppCronSummary[] }) {
     </div>
   )
 }
+
+/** APE-8 "Fix with AI": shown when a failed install carried a build/hook log. Opens a chat
+ *  pre-filled with the install log — already wrapped in the backend's untrusted-content
+ *  fence (`fix_prompt` is built server-side; the FE only passes it through) — so the user or
+ *  agent can debug the failure. Seeds the composer, never auto-sends. Renders nothing when
+ *  there is no fix prompt. */
+export function FixWithAiButton({ fixPrompt }: { fixPrompt: string | null }) {
+  if (!fixPrompt) return null
+  return (
+    <Button variant="secondary" size="sm" onClick={() => launchChat({ prompt: fixPrompt })}>
+      <Sparkles size={15} /> Fix with AI
+    </Button>
+  )
+}
+
+/** A consented install or update that failed past the gate — a pip refusal, a hook error,
+ *  an "already installed" race — INSIDE the dialog, beside the button that caused it. The
+ *  error and its fix-prompt are one unit and are declared once, here, for every install
+ *  surface: rendered in the page behind a modal they were covered by its own backdrop, and
+ *  "Install anyway" read as doing nothing (#3540). */
+function InstallFailure({ error, fixPrompt }: { error: string; fixPrompt: string }) {
+  return (
+    <div className="flex items-center justify-between gap-m" data-testid="install-failure">
+      <FieldError>{error}</FieldError>
+      <FixWithAiButton fixPrompt={fixPrompt || null} />
+    </div>
+  )
+}
+
+/** What an install surface hands the one consent path. `source` is what the installer
+ *  fetches (a registry item's `pointer`, else its `source`); `label` names it until the
+ *  review reads the app's own display name; `update` is an INSTALLED app's name when the
+ *  review is for updating it to `source`. */
+export interface InstallTarget {
+  source: string
+  label: string
+  update?: string
+}
+
+type Phase =
+  | { k: 'reviewing' }
+  | { k: 'unreadable'; error: string }
+  | { k: 'review'; review: AppInstallResult; changed: boolean }
+  | { k: 'installing'; review: AppInstallResult; changed: boolean }
+  | { k: 'failed'; review: AppInstallResult; changed: boolean; error: string; fixPrompt: string }
+
+/** The one install path: `begin(target)` opens the consent dialog, which reviews the source
+ *  on the server BEFORE anything is installed, shows what the app gets, and installs only
+ *  when the user confirms — sending back the review's `consent` digest, so what they saw is
+ *  what lands. `dialog` is rendered once by the caller; `onInstalled` runs after a
+ *  successful commit (a visible confirmation has already been shown by then). */
+export function useAppInstall({ onInstalled }: { onInstalled: (result: AppInstallResult, target: InstallTarget) => void }) {
+  const [open, setOpen] = useState<{ target: InstallTarget; phase: Phase } | null>(null)
+  // Every begin/confirm/close bumps this, so an answer arriving after the user has moved on
+  // (closed, or opened another app) never overwrites what they are looking at.
+  const seq = useRef(0)
+  const onInstalledRef = useRef(onInstalled)
+  onInstalledRef.current = onInstalled
+
+  const begin = useCallback(async (target: InstallTarget) => {
+    const mine = ++seq.current
+    setOpen({ target, phase: { k: 'reviewing' } })
+    let phase: Phase
+    try {
+      phase = { k: 'review', review: await api.previewApp(target.source, target.update), changed: false }
+    } catch (e) {
+      phase = { k: 'unreadable', error: readableErrText(e) || `PersonalClaw could not read ${target.label}.` }
+    }
+    if (seq.current === mine) setOpen({ target, phase })
+  }, [])
+
+  const close = useCallback(() => {
+    seq.current += 1
+    setOpen(null)
+  }, [])
+
+  const confirm = useCallback(async () => {
+    if (!open || (open.phase.k !== 'review' && open.phase.k !== 'failed')) return
+    const { target } = open
+    const { review, changed } = open.phase
+    const mine = ++seq.current
+    setOpen({ target, phase: { k: 'installing', review, changed } })
+    const token = review.consent ?? ''
+    const r = target.update
+      ? await api.updateApp(target.update, target.source, token)
+      : await api.installApp(target.source, token)
+    const stillOpen = seq.current === mine
+    // The app's own name: the server's, else the one the review read — never a pasted URL.
+    const label = r.displayName || review.displayName || target.label
+    if (r.ok) {
+      // Confirmed whether or not the dialog is still up: the app IS installed, and closing a
+      // dialog mid-install does not un-install it, so the user is told either way.
+      if (stillOpen) setOpen(null)
+      announce(r, target, label)
+      onInstalledRef.current(r, target)
+      return
+    }
+    if (!stillOpen) {
+      if (!r.needs_consent) announceFailure(r, target, label)
+      return
+    }
+    if (r.needs_consent && r.consent) {
+      // The bytes changed after the review: show the new review; never install on the old yes.
+      setOpen({ target, phase: { k: 'review', review: r, changed: true } })
+      return
+    }
+    setOpen({
+      target,
+      phase: {
+        k: 'failed', review, changed,
+        error: sentence(r.error || `That ${target.update ? 'update' : 'install'} did not go through`),
+        fixPrompt: r.fix_prompt || '',
+      },
+    })
+  }, [open])
+
+  const dialog = open
+    ? <AppInstallDialog target={open.target} phase={open.phase} onConfirm={confirm} onClose={close} />
+    : null
+  return { begin, dialog, active: open?.target ?? null }
+}
+
+/** The visible confirmation of a successful install — a card that just vanished from the
+ *  Store, followed by "No matching apps" on a search for it, is how the old flow ended. */
+function announce(r: AppInstallResult, target: InstallTarget, label: string) {
+  const done = target.update ? `Updated ${label}` : `Installed ${label}`
+  window.dispatchEvent(new CustomEvent('ne:toast', {
+    detail: {
+      level: 'success',
+      message: r.restart_required ? `${done} — restart the gateway for it to fully take effect.` : `${done}.`,
+      href: `#/apps?view=library&open=${encodeURIComponent(r.name)}`,
+      hrefLabel: 'Show in Library',
+    },
+  }))
+}
+
+function announceFailure(r: AppInstallResult, target: InstallTarget, label: string) {
+  window.dispatchEvent(new CustomEvent('ne:toast', {
+    detail: { level: 'error', message: `${target.update ? 'Updating' : 'Installing'} ${label} did not go through: ${sentence(r.error || 'unknown error')}` },
+  }))
+}
+
+function AppInstallDialog({ target, phase, onConfirm, onClose }: {
+  target: InstallTarget; phase: Phase; onConfirm: () => void; onClose: () => void
+}) {
+  const updating = Boolean(target.update)
+  const verb = updating ? 'Update' : 'Install'
+  const icon = updating ? <RefreshCw size={18} /> : <Download size={18} />
+  const review = 'review' in phase ? phase.review : null
+  // The app's own display name once the review has read it — never the slug, which is an
+  // identifier ("Install ops"), not a name a person recognises.
+  const label = review?.displayName || target.label
+  const title = `${verb} ${label}`
+
+  if (phase.k === 'reviewing') {
+    return (
+      <Modal title={title} icon={icon} onClose={onClose}>
+        <div className="flex flex-col gap-m p-l" style={{ minWidth: 420 }}>
+          <div role="status" className="flex items-center gap-s text-on-surface-low" data-type="body-s">
+            <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+            Checking {label} and what it gets. Nothing is installed yet.
+          </div>
+          <div className="flex justify-end pt-s"><Button variant="ghost" onClick={onClose}>Cancel</Button></div>
+        </div>
+      </Modal>
+    )
+  }
+  if (phase.k === 'unreadable') {
+    return (
+      <Modal title={title} icon={icon} onClose={onClose}>
+        <div className="flex flex-col gap-m p-l" style={{ minWidth: 420 }}>
+          <FieldError>{sentence(phase.error)}</FieldError>
+          <p data-type="body-s" className="text-on-surface-low">Nothing was installed.</p>
+          <div className="flex justify-end pt-s"><Button variant="ghost" onClick={onClose}>Close</Button></div>
+        </div>
+      </Modal>
+    )
+  }
+
+  const r = phase.review
+  // P21: the app installs on the user's own machine, not this server — the one-liner, never a
+  // consent button, and the scan beside it because the command runs outside the scanner.
+  if (r.needs_client_install) {
+    return (
+      <Modal title={title} icon={<Terminal size={18} />} onClose={onClose}>
+        <div className="flex flex-col gap-m p-l" style={{ minWidth: 460 }}>
+          {/* The server's reason arrives without terminal punctuation (`app_manager` composes
+              "'<name>' installs on your local machine, not this server"), and this line appends
+              an instruction to it, so the boundary is supplied here. */}
+          <p data-type="body-s" className="text-on-surface-low">
+            {sentence(r.error || 'This app installs on your local machine, not this server.')} Run this in your terminal:
+          </p>
+          {r.client_install?.shell && <ClientInstallCommand label="Install command" cmd={r.client_install.shell} />}
+          {r.client_install?.postInstall && <ClientInstallCommand label="Then" cmd={r.client_install.postInstall} />}
+          <p data-type="label-s" className="text-on-surface-low">
+            The command runs on your machine, outside PersonalClaw's security scanner — review it before running.
+          </p>
+          {r.scan && <ScanReport scan={r.scan} />}
+          <div className="flex justify-end gap-s pt-s">
+            <Button variant="ghost" onClick={onClose}>Done</Button>
+          </div>
+        </div>
+      </Modal>
+    )
+  }
+
+  // A terminal refusal (dangerous content or an invalid signature) explains itself and offers
+  // no override; the grants still render, because they are why the findings matter.
+  const refusal = terminalRefusalReason(r)
+  const warned = r.scan?.verdict === 'warning'
+  const version = r.version ? ` to v${r.version}` : ''
+  const intro = refusal
+    || (phase.changed
+      ? `${label} changed after you opened this, so this is what it is now. Review it again before you ${verb.toLowerCase()}.`
+      : updating
+        ? (r.needs_consent
+          ? `Updating ${label}${version} changes what it gets. Nothing changes until you choose Update.`
+          : `Updating ${label}${version} does not change anything it gets.`)
+        : warned
+          ? `The security scanner raised warnings. Review them and what ${label} gets — install only if you trust the source.`
+          : `This is everything ${label} gets. Nothing is installed until you choose Install.`)
+  return (
+    <Modal title={title} icon={refusal || warned ? <ShieldAlert size={18} /> : icon} onClose={onClose}>
+      <div className="flex flex-col gap-m p-l" style={{ minWidth: 420 }}>
+        <p data-type="body-s" className={refusal ? 'text-danger' : 'text-on-surface-low'} role={phase.changed ? 'status' : undefined}>
+          {intro}
+        </p>
+        {updating && r.previous && r.disclosure && (
+          <DisclosureChanges previous={r.previous} current={r.disclosure} needed={r.needs_consent} />
+        )}
+        {r.disclosure && <AppDisclosureView disclosure={r.disclosure} action={updating ? 'update' : 'install'} />}
+        {r.scan && <ScanReport scan={r.scan} />}
+        {phase.k === 'failed' && <InstallFailure error={phase.error} fixPrompt={phase.fixPrompt} />}
+        <div className="flex justify-end gap-s pt-s">
+          {/* A terminal refusal leaves nothing to cancel — the server already said no — so its one
+              button only dismisses, and says "Done" like this dialog's other dismiss-only footer. */}
+          <Button variant="ghost" onClick={onClose}>{refusal ? 'Done' : 'Cancel'}</Button>
+          {!refusal && (
+            <Button variant="primary" loading={phase.k === 'installing'} onClick={onConfirm}>
+              {warned ? <ShieldAlert size={16} /> : updating ? <RefreshCw size={16} /> : <Download size={16} />}
+              {' '}{verb}{warned ? ' anyway' : ''}
+            </Button>
+          )}
+        </div>
+      </div>
+    </Modal>
+  )
+}
+

@@ -57,8 +57,8 @@ def _app(
 
 
 def test_data_dir_isolated_per_app(tmp_path):
-    app_manager.install(_app(tmp_path, "app-a"))
-    app_manager.install(_app(tmp_path, "app-b", subdir="s2"))
+    app_manager.install(_app(tmp_path, "app-a"), confirm=True)
+    app_manager.install(_app(tmp_path, "app-b", subdir="s2"), confirm=True)
     da, db = manager.app_data_dir("app-a"), manager.app_data_dir("app-b")
     assert da != db
     assert da == manager.app_dir("app-a") / "data"
@@ -68,15 +68,15 @@ def test_data_dir_isolated_per_app(tmp_path):
 
 
 def test_data_dir_survives_update(tmp_path):
-    app_manager.install(_app(tmp_path, "app-a"))
+    app_manager.install(_app(tmp_path, "app-a"), confirm=True)
     data = manager.app_data_dir("app-a")
     (data / "state.json").write_text('{"runs": 7}', encoding="utf-8")
-    app_manager.update(_app(tmp_path, "app-a", version="2.0.0", subdir="s2"))
+    app_manager.update(_app(tmp_path, "app-a", version="2.0.0", subdir="s2"), confirm=True)
     assert (manager.app_dir("app-a") / "data" / "state.json").read_text() == '{"runs": 7}'
 
 
 def test_data_dir_survives_disable_enable(tmp_path):
-    app_manager.install(_app(tmp_path, "app-a"))
+    app_manager.install(_app(tmp_path, "app-a"), confirm=True)
     data = manager.app_data_dir("app-a")
     (data / "keep.txt").write_text("v", encoding="utf-8")
     app_manager.disable("app-a")
@@ -108,7 +108,9 @@ def test_backend_gets_data_dir_env(tmp_path, monkeypatch):
 
     # storage is a declared capability (sandbox P3) — grant it so the backend
     # receives its DATA_DIR.
-    app_manager.install(_app(tmp_path, "svc", backend=True, permissions={"storage": True}))
+    app_manager.install(
+        _app(tmp_path, "svc", backend=True, permissions={"storage": True}), confirm=True
+    )
     manifest = AppManifest.from_json_file(manager.app_dir("svc") / "app.json")
     sup.start(manifest)
     assert captured["env"]["PERSONALCLAW_APP_DATA_DIR"] == str(manager.app_dir("svc") / "data")
@@ -137,7 +139,7 @@ def test_backend_without_storage_permission_gets_no_data_dir(tmp_path, monkeypat
     sup = backend_runtime.BackendSupervisor()
     from personalclaw.apps.manifest import AppManifest
 
-    app_manager.install(_app(tmp_path, "nostore", backend=True))  # no permissions
+    app_manager.install(_app(tmp_path, "nostore", backend=True), confirm=True)  # no permissions
     manifest = AppManifest.from_json_file(manager.app_dir("nostore") / "app.json")
     sup.start(manifest)
     assert "PERSONALCLAW_APP_DATA_DIR" not in captured["env"]

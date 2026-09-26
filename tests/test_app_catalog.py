@@ -1399,17 +1399,19 @@ def test_the_install_scanner_gate_has_exactly_three_call_sites():
     """No new install path — pinned by census, not by reading a diff.
 
     ``default_scanner.scan(`` is the supply-chain gate over a STAGED tree. The whole
-    package reaches it from three places, and only two of them are app installs:
+    package reaches it from two places, and only one of them is the app lifecycle:
 
-    * ``app_manager.install`` — first install of an app.
-    * ``app_manager.update`` — re-install over an existing app.
+    * ``app_manager._review`` — the ONE gate every app lifecycle path crosses before
+      consent. It used to be inlined twice (``install`` and ``update``); the consent
+      review (``preview``) made it three readers of one gate, and three copies of a gate
+      are three chances to disagree about what a bundle is. Its callers are pinned below.
     * ``supply_chain.scan_dir`` — the module-level re-export, whose only production
       caller is ``skills/marketplace.py`` (a SKILL, not an app). Listed so the census
       is the real one rather than a filtered one; it is not an app install path.
 
     Adding a registry-aware install route (the tempting shortcut is "it came from the
-    curated registry, skip the scan") must either add a fourth call site — which reds
-    this — or route around the scanner entirely, which reds
+    curated registry, skip the scan") must either add a call site — which reds this —
+    or route around the scanner entirely, which reds
     ``test_a_registry_listed_app_still_hits_the_scanner_gate``. Between the two rails
     there is no third way to add an ungated install path.
 
@@ -1417,11 +1419,18 @@ def test_the_install_scanner_gate_has_exactly_three_call_sites():
     set. It is to justify the new install path, and then widen it deliberately.
     """
     expected = {
-        ("apps/app_manager.py", "install"),
-        ("apps/app_manager.py", "update"),
+        ("apps/app_manager.py", "_review"),
         ("supply_chain.py", "scan_dir"),
     }
     assert _scanner_gate_call_sites("default_scanner.scan(") == expected
+    # …and the one lifecycle gate is reached by exactly the three lifecycle entry points:
+    # first install, update over an installed app, and the read-only consent review.
+    # (The call shape, so the `def _review(staged: Path, …)` line is not counted as a caller.)
+    assert _scanner_gate_call_sites("_review(staged, origin") == {
+        ("apps/app_manager.py", "install"),
+        ("apps/app_manager.py", "update"),
+        ("apps/app_manager.py", "preview"),
+    }
 
     # Vacuity control: the same census over a token that is not in the package must
     # come back empty. Without this, a walker that silently reads nothing (or an

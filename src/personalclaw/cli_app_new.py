@@ -952,12 +952,21 @@ pytest {app_name}
 From the dashboard: **Store → Add source → local path**, point it at this directory,
 then install and enable it. Or from a shell against a running gateway — the gateway takes
 the owner token as a `?token=` query parameter (`personalclaw token` prints a URL
-carrying it), not an `Authorization` header:
+carrying it), not an `Authorization` header.
+
+An install is two calls: a review of what the app gets and what the security scanner
+found (nothing is installed yet), then the install itself, carrying the review's `consent`
+digest — so it installs exactly the bytes you reviewed. Keep the review out of this
+directory: a new file here is a different app, and it gets a fresh review instead.
 
 ```bash
+review=$(curl -sS -X POST "$PERSONALCLAW_URL/api/apps/preview?token=$PERSONALCLAW_TOKEN" \\
+  -H 'Content-Type: application/json' -d '{{"source": "'"$PWD"'"}}')
+echo "$review" | python3 -m json.tool      # read it: permissions, jobs, packages, the scan
+consent=$(echo "$review" | python3 -c 'import json, sys; print(json.load(sys.stdin)["consent"])')
 curl -X POST "$PERSONALCLAW_URL/api/apps?token=$PERSONALCLAW_TOKEN" \\
   -H 'Content-Type: application/json' \\
-  -d '{{"source": "'"$PWD"'", "confirm": true}}'
+  -d '{{"source": "'"$PWD"'", "consent": "'"$consent"'"}}'
 curl -X POST "$PERSONALCLAW_URL/api/apps/{app_name}/enable?token=$PERSONALCLAW_TOKEN"
 ```
 

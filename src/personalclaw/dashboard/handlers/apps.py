@@ -4,7 +4,8 @@ The lifecycle layer (A1–A3) exposed over HTTP, plus the backend reverse-proxy:
 
     GET    /api/apps                      — installed apps + state
     GET    /api/apps/{name}               — manifest + status + config + backend
-    POST   /api/apps                      — install from source (path | git URL)
+    POST   /api/apps/preview              — what installing/updating a source grants + runs
+    POST   /api/apps                      — install from source (path | git URL), with consent
     POST   /api/apps/{name}/enable        — enable (run onEnable, register)
     POST   /api/apps/{name}/disable       — disable
     POST   /api/apps/{name}/update        — atomic update from source
@@ -16,9 +17,14 @@ The lifecycle layer (A1–A3) exposed over HTTP, plus the backend reverse-proxy:
     *      /apps/{name}/api/{tail:.*}      — reverse-proxy to the app's backend
 
 Lifecycle routes are SEL-audited inside the manager. Install/update run the
-shared scanner gate: a ``dangerous`` verdict is refused (non-overridable); a
-``warning`` returns ``needs_consent`` unless the request passes ``confirm:true``
-(the install UI's explicit owner consent).
+shared scanner gate: a ``dangerous`` verdict or an invalid signature is refused
+(non-overridable). Everything else commits only with CONSENT: ``POST
+/api/apps/preview`` stages the source and returns what it grants and runs, the
+scan of those exact bytes, and a ``consent`` digest; an install (or an update that
+changes what the app gets, or scans with warnings) commits only when the request
+echoes that digest back as ``consent``, and only if the bytes still match it. A
+request without it — ``confirm: true`` included — is answered 409 with the same
+review, and nothing is installed.
 """
 
 from __future__ import annotations
@@ -33,7 +39,6 @@ from aiohttp import web
 
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import json_object_body
-from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import (
     is_sensitive_path,
     redact_credentials,
@@ -76,6 +81,8 @@ def register_app_routes(app: web.Application) -> None:
     GET/DELETE so routing isn't shadowed."""
     app.router.add_get("/api/apps", api_apps_list)
     app.router.add_post("/api/apps", api_app_install)
+    # Registered BEFORE the catch-all /api/apps/{name} so "preview" isn't parsed as a name.
+    app.router.add_post("/api/apps/preview", api_app_preview)
     # Store catalog + git-source management — registered BEFORE the catch-all
     # /api/apps/{name} so "catalog"/"sources" aren't parsed as an app name.
     app.router.add_get("/api/apps/catalog", api_app_catalog)
@@ -524,11 +531,69 @@ async def api_app_get(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 
-async def api_app_install(request: web.Request) -> web.Response:
-    """POST /api/apps — install from ``{source, confirm?}``.
+def _consent_token(body: Any) -> str:
+    """The ``consent`` digest a request echoes back from ``POST /api/apps/preview``, or ``""``.
 
-    ``source`` is a local directory path or a git URL. ``confirm:true`` consents
-    to a ``warning`` scan verdict; a ``dangerous`` verdict is always refused."""
+    Only a string is consent. ``confirm: true``, ``consent: true`` and every other
+    stand-in read as NO consent — the point of a digest is that a client cannot hold one
+    without having fetched the review it came with, so nothing that could be sent blind
+    may substitute for it."""
+    value = body.get("consent") if isinstance(body, dict) else None
+    return value.strip() if isinstance(value, str) else ""
+
+
+async def api_app_preview(request: web.Request) -> web.Response:
+    """POST /api/apps/preview — review ``{source, name?}`` before anything is installed.
+
+    Stages the source (clones a git URL) and answers what installing it — or, with
+    ``name``, updating that installed app to it — would grant and run
+    (``disclosure``; ``previous`` for an update), the scan of those exact bytes, and the
+    ``consent`` digest the install must echo back. Commits nothing, runs nothing the
+    bundle ships, and writes no audit row: it is a read.
+
+    200 for every bundle it could read, a refusal included — "the scanner found dangerous
+    content" is a finished review whose answer is no, and the dialog shows it.
+    400 ``app_source_unresolved`` when the source cannot be fetched, and
+    ``app_preview_failed`` when the bundle cannot be offered at all (the message says why).
+    """
+    from personalclaw.apps import app_manager
+    from personalclaw.apps import source as app_source
+
+    body = await json_object_body(request)
+    src = str(body.get("source", "")).strip()
+    if not src:
+        return json_error("field_required", message="source is required", status=400)
+    name = str(body.get("name") or "").strip() or None
+
+    try:
+        resolved = await asyncio.to_thread(app_source.resolve, src)
+    except app_source.SourceError as exc:
+        return json_error("app_source_unresolved", message=str(exc), status=400)
+
+    def _do_preview():
+        try:
+            return app_manager.preview(resolved.path, origin=resolved.origin, name=name)
+        finally:
+            if resolved.cleanup:
+                app_source._rmtree(resolved.cleanup_path)
+
+    result = await asyncio.to_thread(_do_preview)
+    if result.scan is None and not result.needs_client_install:
+        return json_error(
+            "app_preview_failed", message=result.error or "this app cannot be read", status=400
+        )
+    return web.json_response(result.to_dict(), status=200)
+
+
+async def api_app_install(request: web.Request) -> web.Response:
+    """POST /api/apps — install from ``{source, consent}``.
+
+    ``source`` is a local directory path or a git URL. ``consent`` is the digest
+    ``POST /api/apps/preview`` returned for the review the owner accepted; the install
+    commits only if the staged bytes still carry it. Without it — or when the bytes have
+    changed since — the answer is 409 with a fresh review (disclosure, scan, digest) and
+    nothing is installed. A ``dangerous`` verdict or an invalid signature is always
+    refused."""
     from personalclaw.apps import app_manager
     from personalclaw.apps import source as app_source
 
@@ -539,7 +604,7 @@ async def api_app_install(request: web.Request) -> web.Response:
     src = str(body.get("source", "")).strip()
     if not src:
         return web.json_response({"error": "source is required"}, status=400)
-    confirm = confirm_granted(body)
+    consent = _consent_token(body)
 
     try:
         resolved = await asyncio.to_thread(app_source.resolve, src)
@@ -552,7 +617,7 @@ async def api_app_install(request: web.Request) -> web.Response:
             return app_manager.install(
                 resolved.path,
                 origin=resolved.origin,
-                confirm=confirm,
+                consent=consent,
                 caller=request.get("user", "dashboard"),
                 source_ref=src,
             )
@@ -562,7 +627,7 @@ async def api_app_install(request: web.Request) -> web.Response:
 
     result = await asyncio.to_thread(_do_install)
 
-    # 201 installed · 409 scan-warning needs consent · 200 client-install directive
+    # 201 installed · 409 awaiting consent · 200 client-install directive
     # (a VALID app that installs on the user's machine, not a bad request — the body
     # carries the copy-paste one-liner) · 400 a genuine bad/failed request.
     if result.ok:
@@ -586,7 +651,11 @@ async def api_app_install(request: web.Request) -> web.Response:
 
 
 async def api_app_update(request: web.Request) -> web.Response:
-    """POST /api/apps/{name}/update — atomic update from ``{source, confirm?}``."""
+    """POST /api/apps/{name}/update — atomic update from ``{source, consent?}``.
+
+    An update that changes what the app gets, or scans with warnings, commits only with
+    the ``consent`` digest ``POST /api/apps/preview {source, name}`` returned; one that
+    changes none of it needs none (409 otherwise, with the review)."""
     from personalclaw.apps import app_manager
     from personalclaw.apps import source as app_source
 
@@ -595,7 +664,7 @@ async def api_app_update(request: web.Request) -> web.Response:
     src = str(body.get("source", "")).strip()
     if not src:
         return web.json_response({"error": "source is required"}, status=400)
-    confirm = confirm_granted(body)
+    consent = _consent_token(body)
 
     try:
         resolved = await asyncio.to_thread(app_source.resolve, src)
@@ -608,7 +677,7 @@ async def api_app_update(request: web.Request) -> web.Response:
                 resolved.path,
                 name,
                 origin=resolved.origin,
-                confirm=confirm,
+                consent=consent,
                 caller=request.get("user", "dashboard"),
             )
         finally:

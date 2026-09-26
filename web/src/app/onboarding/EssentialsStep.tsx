@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Cpu, Search, Mic, MessagesSquare, Download, Check, Loader2, ShieldCheck } from 'lucide-react'
+import { Cpu, Search, Mic, MessagesSquare, Download, Check, Loader2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { LoadError, LoadingStatus } from '../../ui/ListScaffold'
 import { TextLink } from '../../ui/TextLink'
 import { listItemEnter, stagger, spring } from '../../design/motion'
 import { useQuery } from '../../lib/data'
-import { useGuardedInstall, guardedFromApp } from '../../lib/useGuardedInstall'
 import { catalogApps } from '../../lib/appCatalog'
 import { boundModelLabel } from '../../lib/modelRef'
-import { ConsentModal, PermissionList, CronConsentList, consentPermissions, consentHostUi, consentPythonDeps } from '../../pages/apps/installConsent'
+import { useAppInstall } from '../../pages/apps/installConsent'
 import { SchemaField } from '../../pages/settings/ModelBackends'
 import { SchemaFields } from '../../pages/tools/schema'
 import { BundledModelOffer } from './BundledModelOffer'
@@ -25,16 +24,17 @@ import { api, type AppCatalogEntry, type ChatModelOption, type LocalModelEndpoin
  *  binding. Search, speech and channel are opt-in single-step installs; their
  *  configuration belongs in Settings, not in a first run.
  *
- *  **Nothing installs on its own.** Every install is a click on a card's own Install
- *  button, after that card has disclosed what the app will be granted. The step
- *  mounts, lists, and waits — `essentialsStep.test.tsx` asserts zero install requests
- *  fire without a click, which is the guarantee that makes a Store catalog safe to
- *  render in a flow the user is being walked through.
+ *  **Nothing installs on its own.** A card's Install opens the Store's own consent
+ *  dialog (`useAppInstall`), which reviews the app on the server and installs only when
+ *  the user confirms there. The step mounts, lists, and waits —
+ *  `essentialsStep.test.tsx` asserts zero install requests fire without a click AND a
+ *  confirmation, which is the guarantee that makes a Store catalog safe to render in a
+ *  flow the user is being walked through.
  *
- *  **The consent surface is the Store's, not a quieter copy.** `PermissionList`,
- *  `CronConsentList` and `ConsentModal` are imported from the Store itself, so the
- *  disclosure and the scanner-warning override are the same components with the same
- *  copy. A second consent path here would be a second thing to keep honest.
+ *  **The consent surface is the Store's, not a quieter copy.** This step renders no
+ *  disclosure of its own: the dialog is the same one every Store install opens, with
+ *  the same grants, scheduled jobs, scan and override. A second consent path here would
+ *  be a second thing to keep honest — and this card's inline copy was one.
  *
  *  Every API call is one the Store/Settings already own — `POST /api/apps`,
  *  `POST /api/model-providers` (+ its Test), `PUT /api/models/active/{use_case}`. No
@@ -156,7 +156,6 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
   const missingProviderTypes = useMemo(
     () => typesMissingFromCatalog(providerTypes, lanes.model), [providerTypes, lanes.model])
   const [installed, setInstalled] = useState<Record<string, true>>({})
-  const [open, setOpen] = useState<string>('')       // app name whose disclosure is open
   const [expanded, setExpanded] = useState<Record<string, true>>({})  // lanes showing all cards
   const [modelApp, setModelApp] = useState<string>('')
   // The model lane starts by VERIFYING when the coarse readiness probe claims chat can
@@ -190,12 +189,9 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
    *  which provider is configured is genuinely unknown here. */
   const [configured, setConfigured] = useState<{ provider: string; unprobed: string } | null>(null)
 
-  // One guarded-install state machine for the whole step, exactly as the Store's card
-  // grid does it: the pending source rides a ref so the consent re-attempt targets the
-  // same app the user was shown findings for.
+  // The card the consent dialog was opened from, so a confirmed install records the lane it
+  // belongs to — the dialog itself only knows the source it installed.
   const pendingRef = useRef<AppCatalogEntry | null>(null)
-  const guarded = useGuardedInstall((confirm) =>
-    api.installApp(pendingRef.current?.pointer || pendingRef.current?.source || '', confirm).then(guardedFromApp))
 
   const recordInstall = useCallback((entry: AppCatalogEntry, lane: LaneId) => {
     setInstalled((m) => ({ ...m, [entry.name]: true }))
@@ -207,21 +203,22 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
     else onProgress({ essentials: { channel: entry.name } })
   }, [onProgress])
 
-  // The ONLY install trigger in this component: a click on a disclosed card's own
-  // Install button. Nothing here runs from an effect or a render.
-  const install = useCallback(async (entry: AppCatalogEntry, lane: LaneId) => {
-    pendingRef.current = entry
-    guarded.reset()
-    const r = await guarded.install()
-    if (r?.ok) { setOpen(''); recordInstall(entry, lane) }
-  }, [guarded, recordInstall])
+  // The ONE consent path every Store install takes. It records the lane only after the
+  // user confirmed in the dialog and the install committed.
+  const consent = useAppInstall({
+    onInstalled: () => {
+      const entry = pendingRef.current
+      const lane = entry ? laneOf(entry) : null
+      if (entry && lane) recordInstall(entry, lane)
+    },
+  })
 
-  const confirmInstall = useCallback(async () => {
-    const entry = pendingRef.current
-    const lane = entry ? laneOf(entry) : null
-    const r = await guarded.confirmInstall()
-    if (r?.ok && entry && lane) { setOpen(''); recordInstall(entry, lane) }
-  }, [guarded, recordInstall])
+  // The ONLY install trigger in this component: a click on a card's own Install button, which
+  // opens the review. Nothing here runs from an effect or a render.
+  const install = useCallback((entry: AppCatalogEntry) => {
+    pendingRef.current = entry
+    void consent.begin({ source: entry.pointer || entry.source, label: entry.displayName || entry.name })
+  }, [consent])
 
   // OU-13 — a local/LAN Ollama bind needs no API key and no model pick (the endpoint's own
   // chat model is bound for you), so it skips the 'configure'/'bind' phases. It still goes
@@ -386,11 +383,8 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
               <motion.div className="flex flex-col gap-1.5" initial="initial" animate="animate"
                 variants={{ animate: { transition: stagger(0.04) } }}>
                 {shown.map((e) => (
-                  <AppCard key={e.name} entry={e} open={open === e.name} installed={!!installed[e.name]}
-                    busy={guarded.busy && pendingRef.current?.name === e.name}
-                    error={pendingRef.current?.name === e.name ? guarded.error : null}
-                    onToggle={() => { setOpen((cur) => (cur === e.name ? '' : e.name)); guarded.reset() }}
-                    onInstall={() => install(e, lane.id)} />
+                  <AppCard key={e.name} entry={e} installed={!!installed[e.name]}
+                    onInstall={() => install(e)} />
                 ))}
                 {items.length > shown.length && (
                   <TextLink onClick={() => setExpanded((m) => ({ ...m, [lane.id]: true }))}>
@@ -426,26 +420,17 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
         <TextLink onClick={onSkip}>Set up later</TextLink>
       </div>
 
-      {/* A scanner WARNING routes through the Store's own consent modal — same
-          findings, same explicit "Install anyway". */}
-      {guarded.blocked && pendingRef.current && (
-        <ConsentModal label={pendingRef.current.displayName || pendingRef.current.name}
-          result={guarded.blocked} busy={guarded.busy}
-          permissions={consentPermissions(pendingRef.current)}
-          hostUi={consentHostUi(pendingRef.current)}
-          pythonDeps={consentPythonDeps(pendingRef.current)} crons={pendingRef.current.crons}
-          onConfirm={confirmInstall} onClose={() => guarded.reset()} />
-      )}
+      {/* The Store's own consent dialog — same disclosure, same scan, same explicit confirm. */}
+      {consent.dialog}
     </div>
   )
 }
 
-/** One catalog card. Collapsed it is a name + a Review button; expanded it discloses
- *  what the app will be granted and what it will run on a schedule, and only THEN
- *  offers Install. The disclosure is the Store's components verbatim. */
-function AppCard({ entry, open, installed, busy, error, onToggle, onInstall }: {
-  entry: AppCatalogEntry; open: boolean; installed: boolean; busy: boolean
-  error: string | null; onToggle: () => void; onInstall: () => void
+/** One catalog card: the app's name and what it is for, and an Install that opens the
+ *  Store's consent dialog — the review of everything it gets happens there, before anything
+ *  is installed. */
+function AppCard({ entry, installed, onInstall }: {
+  entry: AppCatalogEntry; installed: boolean; onInstall: () => void
 }) {
   const label = entry.displayName || entry.name
   return (
@@ -461,45 +446,11 @@ function AppCard({ entry, open, installed, busy, error, onToggle, onInstall }: {
             <Check size={13} aria-hidden="true" /> Installed
           </span>
         ) : (
-          <Button variant="ghost" size="sm" ariaExpanded={open} onClick={onToggle}>
-            {open ? 'Close' : 'Review'}
+          <Button variant="ghost" size="sm" ariaLabel={`Install ${label}`} onClick={onInstall}>
+            <Download size={14} aria-hidden="true" /> Install
           </Button>
         )}
       </div>
-
-      {open && !installed && (
-        <div className="mt-3 flex flex-col gap-m border-t border-outline-variant pt-3">
-          {/* Keyed on consentKnown, exactly as the Store panel is (issue 614): this card
-           *  still carried the hide-when-empty gate that issue removed there, so an app
-           *  declaring nothing rendered no disclosure at all — and issue 492's host-page
-           *  row lives inside `PermissionList`, which is precisely the app that most
-           *  needs it (declares no permission, still runs in this page once its UI
-           *  mounts). The docstring above promises the Store's components verbatim; this
-           *  is what keeps that true. (Continuation lines lead with `*`: `tokenLint`
-           *  skips only lines that start with a comment marker, so an unmarked JSX
-           *  comment line is linted as code — and `#492` parses as a 3-digit hex.) */}
-          {entry.consentKnown ? (
-            <PermissionList perms={entry.permissions ?? {}} hostUi={consentHostUi(entry)}
-              pythonDeps={consentPythonDeps(entry)} />
-          ) : (
-            <div data-type="body-s" className="text-on-surface-low">
-              Permissions: not known yet — this is a registry listing, and its manifest is
-              read at install. The consent gate runs then, before anything is granted.
-            </div>
-          )}
-          {(entry.crons ?? []).length > 0 && <CronConsentList crons={entry.crons!} />}
-          <div className="flex items-start gap-2 text-on-surface-low" data-type="body-s">
-            <ShieldCheck size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
-            <span>Installing fetches this app behind the security scanner — a dangerous verdict is always refused.</span>
-          </div>
-          {error && <div className="text-danger text-[0.8125rem]" role="alert">{error}</div>}
-          <div>
-            <Button variant="primary" size="sm" loading={busy} onClick={onInstall}>
-              <Download size={15} aria-hidden="true" /> Install {label}
-            </Button>
-          </div>
-        </div>
-      )}
     </motion.div>
   )
 }

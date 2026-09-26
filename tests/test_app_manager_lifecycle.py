@@ -90,7 +90,7 @@ class TestNativeLock:
 class TestInstall:
     def test_clean_install_succeeds(self, tmp_path):
         src = _make_app_source(tmp_path)
-        res = app_manager.install(src)
+        res = app_manager.install(src, confirm=True)
         assert res.ok and res.name == "demo-app"
         assert (manager.app_dir("demo-app") / "app.json").is_file()
         meta = manager._read_installed("demo-app")
@@ -102,7 +102,7 @@ class TestInstall:
             tmp_path,
             manifest_extra={"setup": {"onInstall": "echo hi > installed_marker.txt"}},
         )
-        res = app_manager.install(src)
+        res = app_manager.install(src, confirm=True)
         assert res.ok
         assert (manager.app_dir("demo-app") / "installed_marker.txt").is_file()
 
@@ -112,7 +112,7 @@ class TestInstall:
             tmp_path,
             manifest_extra={"setup": {"onInstall": "echo seeded > data/seed.txt"}},
         )
-        res = app_manager.install(src)
+        res = app_manager.install(src, confirm=True)
         assert res.ok, res.error
         assert (manager.app_dir("demo-app") / "data" / "seed.txt").is_file()
 
@@ -145,14 +145,14 @@ class TestInstall:
             tmp_path,
             manifest_extra={"setup": {"onInstall": "exit 7"}},
         )
-        res = app_manager.install(src)
+        res = app_manager.install(src, confirm=True)
         assert not res.ok and "onInstall" in res.error
         assert not manager.app_dir("demo-app").exists()  # rolled back
 
     def test_double_install_refused(self, tmp_path):
         src = _make_app_source(tmp_path)
-        assert app_manager.install(src).ok
-        res2 = app_manager.install(src)
+        assert app_manager.install(src, confirm=True).ok
+        res2 = app_manager.install(src, confirm=True)
         assert not res2.ok and "already installed" in res2.error
 
     def test_invalid_manifest_refused(self, tmp_path):
@@ -166,7 +166,7 @@ class TestInstall:
 class TestEnableDisable:
     def test_disable_then_enable(self, tmp_path):
         src = _make_app_source(tmp_path)
-        app_manager.install(src)
+        app_manager.install(src, confirm=True)
         assert app_manager.disable("demo-app")
         assert manager._read_installed("demo-app").enabled is False
         assert app_manager.enable("demo-app")
@@ -180,7 +180,7 @@ class TestUninstall:
     def test_uninstall_deactivates_keeps_files(self, tmp_path):
         # Uninstall = deactivate: files stay on disk, enabled flips to false.
         src = _make_app_source(tmp_path)
-        app_manager.install(src)
+        app_manager.install(src, confirm=True)
         assert manager.app_dir("demo-app").is_dir()
         assert app_manager.uninstall("demo-app")
         assert manager.app_dir("demo-app").exists()  # files kept
@@ -189,7 +189,7 @@ class TestUninstall:
 
     def test_force_uninstall_removes_dir(self, tmp_path):
         src = _make_app_source(tmp_path)
-        app_manager.install(src)
+        app_manager.install(src, confirm=True)
         assert manager.app_dir("demo-app").is_dir()
         assert app_manager.force_uninstall("demo-app")
         assert not manager.app_dir("demo-app").exists()  # files gone
@@ -202,7 +202,7 @@ class TestUninstall:
             tmp_path,
             manifest_extra={"setup": {"onUninstall": f"touch {out}/uninstalled.txt"}},
         )
-        app_manager.install(src)
+        app_manager.install(src, confirm=True)
         app_manager.force_uninstall("demo-app")
         assert (out / "uninstalled.txt").is_file()
 

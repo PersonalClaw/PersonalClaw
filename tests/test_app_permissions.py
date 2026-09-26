@@ -473,9 +473,10 @@ def test_event_subscriptions_do_not_widen_the_ws_event_allowlist():
 
 def test_declared_grants_reach_the_pre_install_consent_payload():
     """APE-12's leg, for the new grants: the Store's PRE-install panel renders
-    ``CatalogEntry.permissions`` built by ``catalog._manifest_consent``, so a grant has to
-    survive THAT extraction, not just ``Permissions.to_dict()``."""
-    from personalclaw.apps.catalog import _manifest_consent
+    ``CatalogEntry.permissions`` built by ``disclosure.describe`` (the install dialog reads the
+    same projection), so a grant has to survive THAT extraction, not just
+    ``Permissions.to_dict()``."""
+    from personalclaw.apps.disclosure import describe
     from personalclaw.apps.manifest import AppManifest
 
     m = AppManifest.from_dict(
@@ -490,7 +491,7 @@ def test_declared_grants_reach_the_pre_install_consent_payload():
             },
         }
     )
-    perms, _crons, _deps = _manifest_consent(m)
+    perms = describe(m)["permissions"]
     assert perms["backgroundTasks"] is True
     assert perms["eventSubscriptions"] == ["session.created"]
 
@@ -524,7 +525,7 @@ async def test_declared_grants_reach_the_installed_app_consent_wire(tmp_path, mo
             if perms is not None:
                 mani["permissions"] = perms
             (d / "app.json").write_text(json.dumps(mani), encoding="utf-8")
-            res = app_manager.install(d)
+            res = app_manager.install(d, confirm=True)
             assert res.ok, res.error
 
         app = web.Application()

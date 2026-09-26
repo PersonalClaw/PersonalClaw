@@ -88,6 +88,16 @@ def _make_backend(secret: str | None = _SECRET) -> web.Application:
     return app
 
 
+async def _consented_install(client, source: str):
+    """Install ``source`` the way the consent dialog does: review it with
+    ``POST /api/apps/preview``, then echo the review's ``consent`` digest back. A bare
+    ``POST /api/apps`` never installs anything any more — it answers 409 with the review."""
+    review = await client.post("/api/apps/preview", json={"source": source})
+    assert review.status == 200, await review.text()
+    token = (await review.json())["consent"]
+    return await client.post("/api/apps", json={"source": source, "consent": token})
+
+
 async def _client(secret: str | None = _SECRET) -> TestClient:
     c = TestClient(TestServer(_make_backend(secret)))
     await c.start_server()
@@ -279,7 +289,7 @@ async def test_end_to_end_proxy_signed_and_direct_refused(tmp_path, monkeypatch)
     (d / "backend" / "server.py").write_text(_BACKEND_SRC, encoding="utf-8")
 
     async with _proxy_client() as client:
-        assert (await client.post("/api/apps", json={"source": str(d)})).status == 201
+        assert (await _consented_install(client, str(d))).status == 201
 
         # Through the proxy: the signed request gets through.
         got = None
