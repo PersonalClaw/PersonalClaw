@@ -120,8 +120,6 @@ def _redact_meta(meta: dict) -> dict:
 
 logger = logging.getLogger(__name__)
 
-_MAX_HISTORY_CHARS = 8000
-
 # Reasoning-effort is no longer a fixed PClaw scale — each backend declares its
 # OWN effort options (native: low/medium/high/max; ACP: whatever configOptions.
 # effort advertises, e.g. minimal/xhigh). Persisted JSON is untrusted input and
@@ -1011,25 +1009,53 @@ def save_session_to_history(
         raise
 
 
-def _build_history_prefix(session: _ChatSession) -> str:
-    """Build a condensed history prefix from session messages for session re-injection."""
-    lines: list[str] = []
-    total = 0
-    for m in session.messages:
+#: The roles a dispatcher appends a turn's own message under before starting it: the
+#: dashboard's user bubble, a queue drain's inject/subagent row, a goal loop's nudge.
+_TURN_DISPATCH_ROLES = frozenset({"user", "inject", "subagent", "nudge"})
+
+
+def prior_turns_transcript(
+    session: _ChatSession, in_flight: str, *, nested: bool = False
+) -> list[dict]:
+    """THIS session's conversation BEFORE the turn now being sent — the only history a
+    fresh runtime is ever given back.
+
+    Read from the session's own buffer, not from disk, and cut at the in-flight message.
+    Both halves were once wrong, and each sent the user's message twice:
+
+    * The in-flight message is appended to the buffer before the turn starts (the
+      dashboard adds the user's bubble, a queue drain its row, a loop its nudge), and
+      nothing on disk can say which line is the one being sent — the 5 s flush loop
+      persists it whenever it happens to run. A history read that did not cut it off
+      replayed the current request as "previous history" ahead of the request itself,
+      on every brand-new chat.
+    * A second, in-memory re-injection sat beside the disk bootstrap for messages "not
+      yet flushed". It re-sent the WHOLE buffer — the in-flight message included —
+      beneath the history the bootstrap had already sent, so an existing conversation
+      reached a fresh runtime twice over.
+
+    The buffer is the session's own transcript — seeded only from its own file, and a
+    superset of what is on disk while the session is resident — so there is nothing to
+    reconcile and no second path. The in-flight message is the latest entry after the
+    last assistant reply whose text is the message being sent; ``nested`` (a
+    re-entered turn such as ``/prompts get``, whose text is the EXPANSION) cuts at the
+    latest non-assistant entry instead, because that entry is this same user turn.
+
+    Returns ``[{role, content}]`` of the user/assistant turns only, oldest first — the
+    roles the history bootstrap has always restored.
+    """
+    msgs = session.messages
+    cut = len(msgs)
+    for i in range(len(msgs) - 1, -1, -1):
+        m = msgs[i]
         role = m.get("role", "")
-        if role in ("streaming", "queued", "permission", "error", "tool"):
-            continue
-        label = "User" if role == "user" else "Assistant"
-        text = m.get("content", "")[:500]
-        line = f"{label}: {text}"
-        if total + len(line) > _MAX_HISTORY_CHARS:
+        if role == "assistant":
             break
-        lines.append(line)
-        total += len(line)
-    if not lines:
-        return ""
-    return (
-        "[Previous chat history for this tab — session was reset after stop]\n"
-        + "\n".join(lines)
-        + "\n[End of history]\n\n"
-    )
+        if role in _TURN_DISPATCH_ROLES and (nested or m.get("content", "") == in_flight):
+            cut = i
+            break
+    return [
+        {"role": m["role"], "content": m.get("content", "")}
+        for m in msgs[:cut]
+        if m.get("role") in ("user", "assistant")
+    ]

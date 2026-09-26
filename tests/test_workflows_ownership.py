@@ -151,8 +151,6 @@ def test_an_owned_session_resolves_to_the_BACKGROUND_prompt():
     "key,expected",
     [
         ("dashboard:x", "chat"),
-        ("loop:3", "goal_loop"),
-        ("code:2", "code"),
         ("cron:1", "background"),
         ("subagent:9", "background"),
     ],

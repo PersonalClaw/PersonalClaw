@@ -23,7 +23,7 @@ from personalclaw.constants import CHAT_TURN_TIMEOUT
 from personalclaw.context_engine import assemble_context, check_headroom
 from personalclaw.context_headroom import HeadroomState, resolve_window
 from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
-from personalclaw.dashboard.chat_persistence import _build_history_prefix, save_session_to_history
+from personalclaw.dashboard.chat_persistence import prior_turns_transcript, save_session_to_history
 from personalclaw.dashboard.chat_session_map import (
     build_turn_telemetry,
     stamp_finish_reason,
@@ -48,7 +48,6 @@ from personalclaw.dashboard.chat_utils import (
     _project_context_preamble,
     _redact_for_display,
     _validate_tool_name,
-    persisted_history_key,
     stream_slash_command,
     strip_status_sentinel,
     task_mode_denies,
@@ -1665,6 +1664,10 @@ async def run_chat(
     """
     # Reset the per-turn error flag; the except block sets it True on a crash.
     session._last_turn_errored = False
+    # The text this turn's dispatcher appended to the buffer, captured before anything
+    # below rewrites ``message`` (attachments, @prompt expansion, preambles). It is how
+    # the history restore finds — and leaves out — the message now being sent.
+    _in_flight_text = message
     # Phase 1 of the turn checkpoint (EXECUTION-ISOLATION §6): open a numbered turn and
     # record the identity set. Only at depth 0 — a nested `run_chat` (prompt expansion,
     # auto-continue) is the SAME user turn, and numbering it separately would make
@@ -1997,6 +2000,7 @@ async def run_chat(
         provider_agent: str | None = None
         memory_store: str | None = None
         agent_system_prompt: str = ""
+        agent_voice: str = ""
         provider_kind: str = ""
         acp_mode: str = ""
         agent_approval_mode: str = ""
@@ -2009,6 +2013,7 @@ async def run_chat(
             acp_mode = getattr(bindings, "acp_mode", "") or ""
             memory_store = bindings.memory_store_name
             agent_system_prompt = bindings.system_prompt
+            agent_voice = bindings.voice
             # The bound agent's EXPLICIT persistent approval grant (the "Always allow for
             # this agent" the card's scope picker writes → AgentProfile.approval_mode).
             # Consumed below to seed a NEW session's trust — the single seam that makes the
@@ -2026,10 +2031,12 @@ async def run_chat(
 
         # Task-mode framing — a LAYER on the resolved system prompt, threaded as
         # system_prompt_suffix (NOT folded into the override): for the default
-        # agent bindings.system_prompt is empty, and folding the framing into it
-        # made build_message treat the 4-line posture block as the ENTIRE system
-        # prompt — silently dropping identity/{{bot_name}}, widget instructions,
-        # output format, and safety rules on every default-agent chat.
+        # agent bindings.system_prompt is empty (its prompt is the one bound in
+        # Settings → Prompts), and folding the framing into it made build_message
+        # treat the 4-line posture block as the ENTIRE system prompt — silently
+        # dropping identity/{{bot_name}}, widget instructions, output format, and
+        # safety rules on every default-agent chat. The agent's voice rides beside
+        # it (agent_voice) for the same reason.
         _tm_framing = task_mode_framing(session)
 
         # Ephemeral discovered-ACP-agent override (picked live in the chat picker,
@@ -2203,20 +2210,13 @@ async def run_chat(
         # only, so anything that lived in a tool result is gone. Printing "resumed"
         # there would claim a protocol resume that did not happen; printing "created"
         # denies a restore that did. ``_restoring_history`` is computed from the very
-        # predicate the bootstrap consumes (one predicate, so the label cannot drift
-        # from the behaviour it names).
-        from personalclaw.context import (  # circular: context -> chat -> chat_runner
-            has_restorable_history,
+        # transcript the bootstrap consumes (one source, so the label cannot drift
+        # from the behaviour it names): THIS session's turns before the one being
+        # sent — never the in-flight message, never another session's.
+        _prior_transcript = prior_turns_transcript(
+            session, _in_flight_text, nested=_prompt_depth > 0
         )
-
-        _restore_log = (
-            getattr(state.context_builder, "conversation_log", None)
-            if state.context_builder is not None
-            else None
-        )
-        _restoring_history = bool(
-            is_new and not resumed and has_restorable_history(_restore_log, session_key)
-        )
+        _restoring_history = bool(is_new and not resumed and _prior_transcript)
         if not is_new:
             _session_verb = "continued"
         elif resumed:
@@ -2357,20 +2357,18 @@ async def run_chat(
 
             compressed: str | None = None
             # is_new = new ACP agent/dashboard process, NOT new conversation.
-            # The channel thread persists across processes, so we compress its
+            # The conversation persists across processes, so we compress its
             # history to bootstrap the fresh session's context window. The gate is
             # ``_restoring_history`` — the same value the activity line printed
             # "restored from history" from, so the sentence and the bootstrap can
-            # never disagree about whether a restore happened. The ``is not None`` is a
-            # TYPE narrowing only — ``_restoring_history`` is already false for a missing
-            # log — so it cannot reintroduce a second, drifting predicate.
-            if _restoring_history and _restore_log is not None:
+            # never disagree about whether a restore happened.
+            if _restoring_history:
                 from personalclaw.context import (  # circular: context -> chat
                     compress_thread_history,
                 )
 
                 compressed = await compress_thread_history(
-                    _restore_log,
+                    _prior_transcript,
                     session_key,
                     message,
                     state.sessions,
@@ -2547,6 +2545,10 @@ async def run_chat(
                 cwd=session.workspace_dir or None,
                 memory_store=memory_store,
                 compressed_history=compressed,
+                # The session's own prior turns — what a fresh runtime is restored FROM
+                # when compression is not needed or fails. Handed over rather than
+                # re-read from the log, which may already hold the in-flight message.
+                prior_transcript=_prior_transcript,
                 mode=session.mode,
                 blocks_reads=session.blocks_reads,
                 # The push reflex logs a volunteer event per offered record; incognito
@@ -2559,6 +2561,7 @@ async def run_chat(
                 active_recall=getattr(session, "_app", "") not in ("loop", "code"),
                 system_prompt_override=agent_system_prompt,
                 system_prompt_suffix=_tm_framing,
+                agent_voice=agent_voice,
                 # Resolve the turn's agent to the binding-id form workflow
                 # scope_ref uses (native profile name | acp:<cli>/<modeId>), so
                 # agent-scoped SOPs surface only on that agent's turns.
@@ -2634,41 +2637,6 @@ async def run_chat(
                 )
         else:
             full_message = message
-
-        # Re-inject history if session was reset but messages haven't been
-        # saved to JSONL yet (e.g. stop button killed the process mid-chat).
-        # build_session_context already injects recent() from JSONL, so this
-        # only adds value when in-memory messages are newer than disk.
-        # Skip for soft stops — session is preserved, no re-injection needed.
-        if is_new and session.messages:
-            # Check if last stop was soft (session preserved, no re-injection).
-            # cls is a JSON-encoded dict (see api_chat_session_stop); parse it.
-            _last_stop_soft = False
-            for m in reversed(session.messages):
-                cls_val = m.get("cls", "")
-                if not isinstance(cls_val, str) or not cls_val.startswith("{"):
-                    continue
-                try:
-                    _cls = json.loads(cls_val)
-                except (json.JSONDecodeError, TypeError):
-                    continue
-                if not isinstance(_cls, dict) or _cls.get("kind") != "stop_event":
-                    continue
-                if _cls.get("outcome") == "soft":
-                    _last_stop_soft = True
-                break
-            if not _last_stop_soft:
-                history_key = persisted_history_key(state.conversation_log, session.key)
-                disk_count = 0
-                if state.conversation_log:
-                    disk_count = len(state.conversation_log.read_messages(history_key))
-                mem_count = sum(
-                    1 for m in session.messages if m.get("role") in ("user", "assistant")
-                )
-                if mem_count > disk_count:
-                    history = _build_history_prefix(session)
-                    if history:
-                        full_message = history + full_message
 
         if is_new:
             await _fire(HOOK_EVENT_SESSION_START, session_key)

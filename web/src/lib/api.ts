@@ -7172,7 +7172,7 @@ export const api = {
   // the UI can explain why a delete was refused — not the generic del() "delete failed".
   deleteSnippet: (name: string) => fetch(`/api/prompt-snippets/${encodeURIComponent(name)}`, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) }),
   renderSnippet: (name: string, variables: Record<string, unknown>) => post<{ name: string; rendered: string }>(`/api/prompt-snippets/${encodeURIComponent(name)}/render`, { variables }),
-  // prompt use-case bindings (which system prompt serves chat/background/code/goal_loop)
+  // prompt use-case bindings (which prompt serves each runtime context and internal task)
   promptBindings: () => get<PromptBindings>('/api/prompts/bindings'),
   setPromptBinding: (use_case: string, ref: string) => put<PromptBindings>('/api/prompts/bindings', { use_case, ref }),
 

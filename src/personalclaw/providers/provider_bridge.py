@@ -445,11 +445,12 @@ def _build_native_runtime(
             f"(Settings → Models), not an ACP agent runtime."
         )
 
-    # Pull the agent's persona/model/tools/skills from its profile when present.
+    # Pull the agent's model/tools/skills from its profile when present. Its PROMPT is
+    # not read here: the system prompt reaches the model through the turn's assembled
+    # context (``ContextBuilder.build_message``), the one place it is resolved.
     # Strip any "<provider>:" prefix so the bare model id reaches complete()
     # (the inner ModelProvider is resolved above; this is the id label the SDK
     # call uses — a "Bedrock:…" ref here means an invalid AWS model identifier).
-    system_prompt = ""
     # Reconcile the per-turn override too (not just the profile pin): a chat
     # session persists its model as a "<provider>:model" ref, and after a
     # provider is uninstalled that ref is stale. Healing it to "" lets the
@@ -466,13 +467,6 @@ def _build_native_runtime(
         cfg = AppConfig.load()
         prof = (cfg.agents or {}).get(agent) if agent else None
         if prof is not None:
-            # Voice layer (#42): WHO the agent is, injected HIGH-PRIORITY (before the
-            # operating rules) so its personality survives a long system prompt.
-            from personalclaw.config.loader import _compose_voice
-
-            system_prompt = _compose_voice(
-                getattr(prof, "voice", ""), getattr(prof, "system_prompt", "") or ""
-            )
             # Heal a stale pin: an explicit agent model (or per-turn override)
             # that's no longer active reconciles to "" → the chat-binding
             # fallback below. Both the override and the profile pin may be the
@@ -510,7 +504,6 @@ def _build_native_runtime(
     definition = AgentRuntimeDefinition(
         name=name,
         provider="native",
-        system_prompt=system_prompt,
         model=model,
         tools=tools,
         skills=skills,

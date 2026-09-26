@@ -286,6 +286,29 @@ async def api_prompt_create(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "name": tpl.name, "prompt": tpl.to_dict()})
 
 
+#: Use cases whose rendered prompt is WRITTEN TO DISK rather than rendered per turn — so a
+#: change to the binding, or to the bound prompt's text, reaches nothing until the file is
+#: regenerated. The orchestrator skill is rendered into ``skills/orchestrator/SKILL.md`` and
+#: that file is what loads; saving a binding used to leave it on the previous prompt.
+_MATERIALIZED_USE_CASES = ("orchestrator_skill",)
+
+
+def _serves(use_case: str, prompt_name: str) -> bool:
+    """Whether ``prompt_name`` (a native prompt) is the one ``use_case`` resolves to now."""
+    from personalclaw.providers.prompt_use_cases import DEFAULT_PROMPT_PROVIDER, active_prompt_ref
+
+    return active_prompt_ref(use_case) == f"{DEFAULT_PROMPT_PROVIDER}:{prompt_name}"
+
+
+def _rematerialize(use_cases: "list[str] | tuple[str, ...]") -> None:
+    """Regenerate every on-disk rendering among ``use_cases`` so the saved binding or text
+    is what loads. Each regenerator honours its own feature gate."""
+    if "orchestrator_skill" in use_cases:
+        from personalclaw.dashboard.handlers.agents import _regen_orchestrator
+
+        _regen_orchestrator()
+
+
 async def api_prompt_save(request: web.Request) -> web.Response:
     """PUT /api/prompts/{name} — update an existing prompt template."""
     raw = request.match_info["name"]
@@ -317,6 +340,7 @@ async def api_prompt_save(request: web.Request) -> web.Response:
         return web.json_response({"error": "not found"}, status=404)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
+    _rematerialize([uc for uc in _MATERIALIZED_USE_CASES if _serves(uc, bare)])
     return web.json_response({"ok": True, "prompt": tpl.to_dict()})
 
 
@@ -328,8 +352,12 @@ async def api_prompt_delete(request: web.Request) -> web.Response:
     provider = _get_default_prompt_provider()
     if provider is None:
         return web.json_response({"error": "no prompt provider registered"}, status=503)
+    # Decided BEFORE the delete: afterwards the binding still names the prompt, but it is
+    # no longer there to compare against.
+    served = [uc for uc in _MATERIALIZED_USE_CASES if _serves(uc, bare)]
     if not provider.delete_prompt(bare):
         return web.json_response({"error": "not found"}, status=404)
+    _rematerialize(served)
     return web.json_response({"ok": True})
 
 
@@ -955,6 +983,8 @@ async def api_prompt_bindings_save(request: web.Request) -> web.Response:
     else:
         active.pop(use_case, None)  # clear → falls back to default
     save_active_prompts(active)
+    if use_case in _MATERIALIZED_USE_CASES:
+        _rematerialize([use_case])
     _sel().log_api_access(
         caller=request.get("user") or "dashboard",
         operation="prompt.binding.set",

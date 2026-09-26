@@ -81,13 +81,31 @@ def apply_config_migrations(cfg: "AppConfig") -> bool:
     # in-process NATIVE PersonalClaw agent (governed by Settings →
     # Models) — no external CLI required for first-run chat. ACP agents
     # are created only when the user explicitly adds an acp:<cli> one.
-    if not cfg.agents:
-        from personalclaw.agents.defaults import (
-            DEFAULT_NATIVE_AGENT_NAME,
-            make_default_native_profile,
-        )
+    from personalclaw.agents.defaults import (
+        DEFAULT_NATIVE_AGENT_NAME,
+        RETIRED_SEEDED_DEFAULT_PROMPT,
+        make_default_native_profile,
+    )
 
+    if not cfg.agents:
         cfg.agents[DEFAULT_NATIVE_AGENT_NAME] = make_default_native_profile(AgentProfile)
+        needs_migration = True
+
+    # Repair the default agent's SEEDED system prompt. Every install seeded before the
+    # default agent went prompt-less carries the retired literal in config.json, and an
+    # agent's own prompt replaces the one bound in Settings → Prompts — so on those
+    # installs the bound prompt, and with it the saved assistant name, never reached the
+    # model. Only the exact seeded text is cleared: any other text is the user's own edit.
+    _default_profile = cfg.agents.get(DEFAULT_NATIVE_AGENT_NAME)
+    if (
+        _default_profile is not None
+        and (_default_profile.system_prompt or "").strip() == RETIRED_SEEDED_DEFAULT_PROMPT
+    ):
+        _default_profile.system_prompt = ""
+        logger.info(
+            "Config migration: cleared the retired seeded system prompt from agent %r",
+            DEFAULT_NATIVE_AGENT_NAME,
+        )
         needs_migration = True
 
     # Seed the built-in goal-loop worker if absent. Idempotent

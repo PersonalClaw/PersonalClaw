@@ -18,9 +18,18 @@ from typing import Any
 # the chat-runner fallbacks, and the warm-pool/background-session agent.
 DEFAULT_NATIVE_AGENT_NAME = "PersonalClaw"
 
-# The default persona for the seeded native agent. Vendor-neutral, capability-
-# oriented; the model is whatever Settings → Models binds to "chat".
-DEFAULT_NATIVE_SYSTEM_PROMPT = (
+# The system prompt the default agent was once SEEDED with. It is not a prompt anything
+# serves any more — it is here only so the config migration can recognise it in an
+# existing config.json and clear it (never a user's own edit, which is any other text).
+#
+# Why it had to go: an agent profile's ``system_prompt`` REPLACES the prompt bound in
+# Settings → Prompts (``build_message``'s override branch), so seeding the default agent
+# with this literal made the bound prompt unreachable from a default chat. Measured on a
+# live install: the request began "You are PersonalClaw, a helpful…", the saved assistant
+# name appeared zero times, and binding "Prompt for Chat" to another prompt changed
+# nothing. The default agent's prompt IS the bound use-case prompt — so its own field is
+# empty.
+RETIRED_SEEDED_DEFAULT_PROMPT = (
     "You are PersonalClaw, a helpful personal AI agent running locally for the "
     "user. You can read and write files in the user's workspace, run code, "
     "search the web, manage tasks and memory, and use the tools available to "
@@ -45,7 +54,10 @@ def make_default_native_profile(profile_cls: type) -> Any:
     return profile_cls(
         provider="native",
         description="Built-in native agent. Inference governed by Settings → Models.",
-        system_prompt=DEFAULT_NATIVE_SYSTEM_PROMPT,
+        # Empty on purpose: the default agent's system prompt is whatever Settings →
+        # Prompts binds for the turn's context (chat by default), rendered with the
+        # user's settings. A value here would REPLACE that binding on every turn.
+        system_prompt="",
         model="",  # inherit the chat use-case binding
         skills=[],
         tools=list(DEFAULT_NATIVE_TOOLS),
@@ -479,6 +491,19 @@ def persistable_grant_target(session_agent: str, cfg: Any) -> str:
     if not name or is_reserved_agent(name) or name not in agents:
         return ""
     return name
+
+
+def is_default_agent(agent: str | None) -> bool:
+    """True when ``agent`` names the default native agent, under any of its spellings.
+
+    ``build_message`` receives ``None`` for an implicit default chat, the lowercase
+    ``personalclaw`` sentinel from the ACP path, and ``PersonalClaw`` when the user
+    picked the default agent in the chat picker. Treating the last of those as a
+    CUSTOM agent sent it down the custom-agent branch, which reads a legacy prompt file
+    that does not exist for it — so an explicitly chosen default agent got no system
+    prompt at all, and no skills.
+    """
+    return normalize_agent_name(agent) == DEFAULT_NATIVE_AGENT_NAME
 
 
 def normalize_agent_name(agent: str | None) -> str:

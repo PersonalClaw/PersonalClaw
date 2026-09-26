@@ -2061,6 +2061,14 @@ class NativeAgentRuntime(AgentProvider):
         """
         return True
 
+    @property
+    def keeps_cancelled_turns(self) -> bool:
+        """True — a stopped turn stays in ``self._messages``: :meth:`stream` appends the
+        user message before the first inference, and a stop breaks out of the stream into
+        the same assistant-record path, so whatever was answered is kept too. Re-injecting
+        the turn as a "[PREVIOUS TURN WAS CANCELLED]" preamble would send it twice."""
+        return True
+
     async def compact(self, context: str = "") -> None:
         """Compact this session's history NOW, unconditionally.
 

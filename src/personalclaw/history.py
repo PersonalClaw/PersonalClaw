@@ -325,22 +325,6 @@ class ConversationLog:
             messages = [m for m in messages if m["role"] in roles]
         return [{"role": m["role"], "content": m["content"]} for m in messages[-max_messages:]]
 
-    def recent_with_provenance(self, key: str, max_messages: int = 3) -> list[dict]:
-        """Return recent entries with source_thread provenance for cross-session citation."""
-        messages = self._read_messages(key)
-        with_source = [m for m in messages if m.get("source_thread")]
-        result: list[dict] = []
-        for m in with_source[-max_messages:]:
-            snippet = m["content"][:150] + "…" if len(m["content"]) > 150 else m["content"]
-            result.append(
-                {
-                    "source_thread": m["source_thread"],
-                    "ts": m.get("ts", "?"),
-                    "snippet": snippet,
-                }
-            )
-        return result
-
     def get_unconsolidated(self, key: str) -> tuple[list[dict], int]:
         """Return (messages_after_last_consolidated, total_message_count)."""
         messages = self._read_messages(key)
@@ -617,71 +601,6 @@ class ConversationLog:
             scored.append((score, -rank, meta))
         scored.sort(reverse=True)
         return [meta for _, _, meta in scored[:limit]]
-
-    def recent_from_source(
-        self, source_prefix: str, exclude_key: str = "", max_messages: int = 20
-    ) -> list[dict]:
-        """Return recent messages from sessions matching *source_prefix*.
-
-        Optimized: only scans the 5 most recently modified files and reads
-        only the last 50 lines from each, avoiding full-file I/O on large
-        session histories.
-        """
-        if not self._dir.exists():
-            return []
-        safe_exclude = _safe_key(exclude_key) if exclude_key else ""
-        safe_prefix = _safe_key(source_prefix)
-        # Collect matching paths and sort by mtime (newest first)
-        paths: list[Path] = []
-        for path in self._dir.glob(f"{safe_prefix}*.jsonl"):
-            if safe_exclude and path.stem == safe_exclude:
-                continue
-            paths.append(path)
-        paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        candidates: list[dict] = []
-        included = 0
-        _max_scan = 50  # bound I/O even with many ephemeral sessions
-        for path in paths[:_max_scan]:
-            if included >= 5:
-                break
-            # Single-pass read: check metadata head, then read remainder via same handle
-            is_restricted = False
-            try:
-                with open(path, encoding="utf-8") as f:
-                    head_lines = []
-                    for _, line in zip(range(5), f):
-                        head_lines.append(line)
-                        try:
-                            d = json.loads(line.strip())
-                            if d.get("_type") == "metadata" and d.get("memory_mode") in (
-                                "incognito",
-                                "temporary",
-                            ):
-                                is_restricted = True
-                                break
-                        except (json.JSONDecodeError, ValueError):
-                            pass
-                    if is_restricted:
-                        continue
-                    raw = "".join(head_lines) + f.read()
-            except OSError:
-                continue
-            included += 1
-            lines = raw.splitlines()
-            for line in lines[-50:]:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if data.get("_type") == "metadata":
-                    continue
-                candidates.append(data)
-        # Sort by timestamp and return most recent
-        candidates.sort(key=lambda m: m.get("ts", ""))
-        return [{"role": m["role"], "content": m["content"]} for m in candidates[-max_messages:]]
 
     def read_messages(self, key: str) -> list[dict]:
         """Public access to session messages."""

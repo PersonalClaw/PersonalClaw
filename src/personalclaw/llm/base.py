@@ -189,6 +189,18 @@ class ModelProvider(ABC):
         """
         return None
 
+    @property
+    def keeps_cancelled_turns(self) -> bool:
+        """Whether a turn stopped mid-way stays in this provider's OWN history.
+
+        False by default: an ACP agent discards a cancelled turn from its conversation
+        log, so the next prompt re-injects it as the "[PREVIOUS TURN WAS CANCELLED]"
+        preamble. A provider that keeps the turn (the native loop records the user
+        message and whatever it had answered) must say True, or that preamble sends the
+        stopped message a second time.
+        """
+        return False
+
     async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
         """Execute a slash command and yield streaming events.
 

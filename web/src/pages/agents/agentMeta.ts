@@ -24,3 +24,12 @@ export const APPROVAL_MODES = [
 export function isReservedAgent(a: { reserved?: boolean }): boolean {
   return a.reserved === true
 }
+
+/** The built-in default agent — the seeded `PersonalClaw`, matched case-insensitively
+ *  exactly as the server's `is_default_agent` matches it. It ships with no prompt of its
+ *  own ON PURPOSE: with none, a turn is served the prompt bound in Settings → Prompts
+ *  (Chat, or Background for unattended runs), rendered with the names in Settings →
+ *  Account. A prompt written into the agent REPLACES that binding. */
+export function isBuiltinDefaultAgent(a: { name: string }): boolean {
+  return String(a.name ?? '').trim().toLowerCase() === 'personalclaw'
+}

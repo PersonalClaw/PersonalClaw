@@ -12,7 +12,7 @@ import { Skeleton } from '../../ui/ListScaffold'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type SavedAgent, type DiscoveredAgent, type McpActiveServer, type AgentHook } from '../../lib/api'
 import { useActiveChatModelOptions, canonicalAgentKey } from '../../lib/agents'
-import { providerMeta, isReservedAgent } from './agentMeta'
+import { providerMeta, isReservedAgent, isBuiltinDefaultAgent } from './agentMeta'
 import { AgentForm, toDraft, draftToPayload, type AgentDraft } from './AgentForm'
 import { accentChip, toneChipSkin } from '../../design/accent'
 import { repoDocUrl } from '../../lib/repoDocs'
@@ -113,8 +113,18 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
 
       {agent.description && <p className="text-on-surface text-[0.9375rem] leading-relaxed">{agent.description}</p>}
 
-      {agent.system_prompt && (
+      {agent.system_prompt ? (
         <Section label="System prompt"><div tabIndex={0} role="group" aria-label="System prompt" className="rounded-md bg-surface-container px-m py-2 max-h-72 overflow-y-auto text-on-surface-var text-[0.8125rem] leading-relaxed"><Markdown>{agent.system_prompt}</Markdown></div></Section>
+      ) : isBuiltinDefaultAgent(agent) && (
+        // The default agent's prompt is NOT empty in effect — it is the bound one. Hiding the
+        // section made it look like this agent ran with no instructions at all.
+        <Section label="System prompt">
+          <p className="text-on-surface-var text-[0.8125rem] leading-relaxed">
+            None of its own — it answers with the prompt bound in{' '}
+            <TextLink href="#/settings/prompts" size="sm">Settings → Prompts</TextLink>
+            {' '}(Chat, or Background for unattended runs), using the names in Settings → Account. A prompt written here replaces that binding for this agent.
+          </p>
+        </Section>
       )}
 
       <Caps label="Skills" items={agent.skills} />

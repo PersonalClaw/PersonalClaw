@@ -33,7 +33,7 @@ async def _payload():
 @pytest.mark.asyncio
 async def test_every_binding_arrives_named_described_and_grouped():
     data = await _payload()
-    assert len(data["bindings"]) >= 40, "vacuity floor — the vocabulary must resolve"
+    assert len(data["bindings"]) >= 35, "vacuity floor — the vocabulary must resolve"
     for b in data["bindings"]:
         assert b["label"], f"{b['use_case']} unnamed"
         assert b["hint"], f"{b['use_case']} undescribed"
@@ -80,3 +80,55 @@ async def test_an_app_owned_use_case_is_grouped_with_the_rest():
         assert "internal" in [c["key"] for c in data["categories"]]
     finally:
         prompt_registry.unregister_app("native-widgets")
+
+
+class _JsonRequest(dict):
+    """The two things the save handler reads off a request: its JSON body and `user`."""
+
+    def __init__(self, body: dict) -> None:
+        super().__init__()
+        self._body = body
+
+    async def json(self) -> dict:
+        return self._body
+
+
+@pytest.mark.asyncio
+async def test_rebinding_the_orchestrator_skill_rewrites_the_skill_file_that_loads(tmp_path):
+    """The orchestrator skill is rendered into ``skills/orchestrator/SKILL.md`` and that
+    FILE is what loads. Saving the binding (or editing the bound prompt) used to leave the
+    file on the previous prompt until an unrelated agent edit regenerated it."""
+    from personalclaw.config.loader import config_path
+    from personalclaw.dashboard.handlers.prompts import api_prompt_bindings_save, api_prompt_delete
+    from personalclaw.prompt_providers.base import PromptTemplate
+    from personalclaw.prompt_providers.registry import (
+        _ensure_default_providers_registered,
+        get_prompt_provider,
+    )
+    from personalclaw.skills import SkillsLoader
+
+    config_path().write_text(json.dumps({"agent": {"orchestrator_skill": True}}))
+    _ensure_default_providers_registered()
+    native = get_prompt_provider("native")
+    native.create_prompt(
+        PromptTemplate(
+            name="my-orchestrator",
+            content="---\nalways: true\n---\n# MY ROUTING RULES ORCH-9120\n{{roster}}",
+        )
+    )
+    skill = SkillsLoader()._dir / "orchestrator" / "SKILL.md"
+
+    resp = await api_prompt_bindings_save(
+        _JsonRequest({"use_case": "orchestrator_skill", "ref": "native:my-orchestrator"})
+    )
+    assert resp.status == 200
+    assert "ORCH-9120" in skill.read_text(), "the saved binding never reached the loaded file"
+
+    # Deleting the bound prompt regenerates from the use case's own bundled prompt.
+    from aiohttp.test_utils import make_mocked_request
+
+    req = make_mocked_request(
+        "DELETE", "/api/prompts/my-orchestrator", match_info={"name": "my-orchestrator"}
+    )
+    assert (await api_prompt_delete(req)).status == 200
+    assert "ORCH-9120" not in skill.read_text()

@@ -24,8 +24,51 @@ def test_default_native_profile_is_native():
     prof = make_default_native_profile(AgentProfile)
     assert prof.provider == "native"
     assert prof.source == "builtin"
-    assert prof.system_prompt  # has a persona
+    # No prompt of its own: an agent prompt REPLACES the one bound in Settings → Prompts,
+    # so a seeded persona here made the binding (and the saved assistant name) dead.
+    assert prof.system_prompt == ""
     assert prof.model == ""  # inherits the chat use-case binding
+
+
+def _migrated(agents: dict) -> dict:
+    from personalclaw.config.loader import AgentProfile, AppConfig
+    from personalclaw.config.migrations import apply_config_migrations
+
+    cfg = AppConfig()
+    cfg.agents = {name: AgentProfile(**fields) for name, fields in agents.items()}
+    changed = apply_config_migrations(cfg)
+    return {"changed": changed, "cfg": cfg}
+
+
+def test_the_migration_clears_the_retired_seeded_prompt():
+    """An install seeded before the fix persisted the literal in config.json; the repair
+    clears it (once — the second pass changes nothing) so the binding can serve."""
+    from personalclaw.agents.defaults import RETIRED_SEEDED_DEFAULT_PROMPT
+    from personalclaw.config.migrations import apply_config_migrations
+
+    out = _migrated(
+        {"PersonalClaw": {"provider": "native", "system_prompt": RETIRED_SEEDED_DEFAULT_PROMPT}}
+    )
+    assert out["changed"] is True
+    assert out["cfg"].agents["PersonalClaw"].system_prompt == ""
+    assert apply_config_migrations(out["cfg"]) is False  # idempotent
+
+
+def test_the_migration_never_touches_a_users_own_prompt():
+    """Only the exact seeded text is repaired — anything else is the user's edit."""
+    from personalclaw.agents.defaults import RETIRED_SEEDED_DEFAULT_PROMPT
+
+    for mine in ("You are my assistant.", RETIRED_SEEDED_DEFAULT_PROMPT + " Also: be terse."):
+        out = _migrated({"PersonalClaw": {"provider": "native", "system_prompt": mine}})
+        assert out["cfg"].agents["PersonalClaw"].system_prompt == mine
+    # …and the literal on ANOTHER agent is that agent's prompt, not a seed.
+    out = _migrated(
+        {
+            "PersonalClaw": {"provider": "native"},
+            "Copycat": {"provider": "native", "system_prompt": RETIRED_SEEDED_DEFAULT_PROMPT},
+        }
+    )
+    assert out["cfg"].agents["Copycat"].system_prompt == RETIRED_SEEDED_DEFAULT_PROMPT
 
 
 def test_global_agent_provider_defaults_native():

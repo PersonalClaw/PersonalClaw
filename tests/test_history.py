@@ -49,20 +49,6 @@ class TestConversationLog:
         log = ConversationLog(base_dir=tmp_path)
         assert log.recent("nonexistent") == []
 
-    def test_provenance(self, tmp_path):
-        log = ConversationLog(base_dir=tmp_path)
-        log.append("t1", "user", "hello", source_thread="1234.5678", source_user="U123")
-        log.append("t1", "assistant", "hi there")
-        prov = log.recent_with_provenance("t1")
-        assert len(prov) == 1
-        assert prov[0]["source_thread"] == "1234.5678"
-        assert "hello" in prov[0]["snippet"]
-
-    def test_provenance_empty(self, tmp_path):
-        log = ConversationLog(base_dir=tmp_path)
-        log.append("t1", "user", "hello")  # no provenance
-        assert log.recent_with_provenance("t1") == []
-
     def test_unconsolidated_count(self, tmp_path):
         log = ConversationLog(base_dir=tmp_path)
         for i in range(10):
@@ -248,57 +234,6 @@ class TestRewriteSession:
         log.rewrite_session("t1", [{"role": "user", "content": "new", "ts": "now"}])
         tmp_files = list(tmp_path.glob("*.tmp"))
         assert tmp_files == []
-
-
-class TestRecentFromSource:
-    def test_recent_from_source_collects_across_sessions(self, tmp_path):
-        log = ConversationLog(base_dir=tmp_path)
-        log.append("dashboard:chat-1-100", "user", "hello from chat 1")
-        log.append("dashboard:chat-1-100", "assistant", "hi back from 1")
-        log.append("dashboard:chat-2-200", "user", "hello from chat 2")
-        log.append("dashboard:chat-2-200", "assistant", "hi back from 2")
-        result = log.recent_from_source("dashboard:")
-        assert len(result) == 4
-        contents = [m["content"] for m in result]
-        assert "hello from chat 1" in contents
-        assert "hello from chat 2" in contents
-
-    def test_recent_from_source_excludes_key(self, tmp_path):
-        log = ConversationLog(base_dir=tmp_path)
-        log.append("dashboard:chat-1-100", "user", "hello 1")
-        log.append("dashboard:chat-2-200", "user", "hello 2")
-        result = log.recent_from_source("dashboard:", exclude_key="dashboard:chat-1-100")
-        assert len(result) == 1
-        assert result[0]["content"] == "hello 2"
-
-    def test_recent_from_source_respects_max(self, tmp_path):
-        log = ConversationLog(base_dir=tmp_path)
-        for i in range(30):
-            log.append("dashboard:chat-1-100", "user", f"msg {i}")
-        result = log.recent_from_source("dashboard:", max_messages=5)
-        assert len(result) == 5
-        assert result[-1]["content"] == "msg 29"
-
-    def test_recent_from_source_no_match(self, tmp_path):
-        log = ConversationLog(base_dir=tmp_path)
-        log.append("slack:thread-123", "user", "hello from slack")
-        result = log.recent_from_source("dashboard:")
-        assert result == []
-
-    def test_recent_from_source_empty_dir(self, tmp_path):
-        log = ConversationLog(base_dir=tmp_path / "nonexistent")
-        result = log.recent_from_source("dashboard:")
-        assert result == []
-
-    def test_recent_from_source_sorted_by_ts(self, tmp_path):
-        log = ConversationLog(base_dir=tmp_path)
-        # Append in different sessions — timestamps will be ordered
-        log.append("dashboard:chat-1-100", "user", "first")
-        log.append("dashboard:chat-2-200", "user", "second")
-        log.append("dashboard:chat-1-100", "user", "third")
-        result = log.recent_from_source("dashboard:")
-        contents = [m["content"] for m in result]
-        assert contents == ["first", "second", "third"]
 
 
 class TestSessionManagerCompaction:

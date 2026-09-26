@@ -2533,7 +2533,14 @@ class ResolvedBindings:
     # approval_mode (the host gate). Empty = adapter default; ignored by runtimes
     # with no separate mode axis (the default dialect). Threaded to the acp factory as acp_mode.
     acp_mode: str = ""
+    # The agent's OWN system prompt, as the Agents UI saved it — "" when it has none. A
+    # value replaces the prompt bound in Settings → Prompts; "" (the default agent) lets
+    # the bound prompt serve.
     system_prompt: str = ""
+    # The agent's VOICE (#42), kept apart from ``system_prompt`` so it can LAYER on
+    # whichever prompt resolves. Folded into ``system_prompt`` it turned an agent with a
+    # voice and no prompt of its own into a system prompt that was the voice block alone.
+    voice: str = ""
     tools: list = field(default_factory=list)
     skills: list = field(default_factory=list)
     approval_mode: str = ""
@@ -4905,7 +4912,8 @@ def resolve_agent_bindings(
         effective_memory_config=effective_memory,
         provider_agent=provider_agent,
         acp_mode=acp_mode,
-        system_prompt=_compose_voice(getattr(agent_cfg, "voice", ""), agent_cfg.system_prompt),
+        system_prompt=agent_cfg.system_prompt or "",
+        voice=getattr(agent_cfg, "voice", "") or "",
         tools=list(agent_cfg.tools or []),
         skills=list(agent_cfg.skills or []),
         approval_mode=agent_cfg.approval_mode,
