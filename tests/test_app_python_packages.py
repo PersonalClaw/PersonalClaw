@@ -543,12 +543,22 @@ def test_boot_repair_with_nothing_missing_runs_no_pip(fake_pip):
 # ── the real pip ────────────────────────────────────────────────────────────────────
 
 
-def _wheel(directory: Path, name: str, version: str, *, requires: list[str] = ()) -> Path:
-    """A minimal pure-Python wheel, so pip can install offline from a local directory."""
+def _wheel(
+    directory: Path,
+    name: str,
+    version: str,
+    *,
+    requires: list[str] = (),
+    extra: dict[str, str] | None = None,
+) -> Path:
+    """A minimal pure-Python wheel, so pip can install offline from a local directory.
+    ``extra`` adds files (``{relative path: text}``), for a version that ships one the other
+    does not."""
     dist, mod = name.replace("-", "_"), name.replace("-", "_")
     info = f"{dist}-{version}.dist-info"
     files = {
         f"{mod}/__init__.py": f"VERSION = {version!r}\n",
+        **(extra or {}),
         f"{info}/METADATA": f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
         + "".join(f"Requires-Dist: {r}\n" for r in requires),
         f"{info}/WHEEL": "Wheel-Version: 1.0\nGenerator: pclaw-test\nRoot-Is-Purelib: true\n"
@@ -606,3 +616,167 @@ class TestRealPip:
         assert f"PersonalClaw runs packaging {have}" in message, message
         assert importlib.metadata.version("packaging") == have
         assert not (_site() / "pclaw_badpin").exists()
+
+
+# ── an update moves a pin: exactly the new version, nothing of the old ─────────────────
+#
+# Measured: PersonalClawApps #126 pinned `anthropic>=0.20,<1`, and an install that already had
+# 1.8.0 in `<home>/app-python` kept crashing on it after the update. pip resolved the new pin,
+# but running from the gateway's virtualenv it will not uninstall anything outside that
+# environment ("Not uninstalling anthropic at …/app-python/…, outside environment …"), so it
+# wrote the new version over the old: two dist-infos, and the old version's own files still
+# there. Which copy then counted as installed was the directory listing's order, and that order
+# is the file system's own: APFS lists `anthropic-1.8.0.dist-info` before
+# `anthropic-0.125.0.dist-info`, and `pclaw_fixture_sdk-1.5` before `-2.0`, whichever was written
+# first. So every move below runs in both directions: on any file system, one of them lists the
+# old copy first.
+
+SDK = "pclaw-fixture-sdk"
+
+#: (installed before, what the new pin wants, the new pin), both ways.
+_MOVES = [
+    pytest.param("1.5", "2.0", f"{SDK}>=2", id="up"),
+    pytest.param("2.0", "1.5", f"{SDK}<2", id="down"),
+]
+
+
+def _only_in(version: str) -> str:
+    return f"pclaw_fixture_sdk/only_in_{version.replace('.', '_')}.py"
+
+
+def _versions(name: str = SDK) -> list[str]:
+    """Every copy of *name* in the app-package directory, by version."""
+    found = importlib.metadata.distributions(path=[str(_site())])
+    return sorted(d.version for d in found if d.metadata["Name"] == name)
+
+
+def _fresh_import(module: str):
+    sys.modules.pop(module, None)
+    importlib.invalidate_caches()
+    try:
+        return importlib.import_module(module)
+    finally:
+        sys.modules.pop(module, None)
+
+
+class TestAnUpdateMovesAPin:
+    """Through the real `install` and `update`, with the real pip, offline."""
+
+    @pytest.fixture(autouse=True)
+    def _offline_index(self, tmp_path, monkeypatch):
+        self.wheels = tmp_path / "wheels"
+        monkeypatch.setenv("PIP_NO_INDEX", "1")
+        monkeypatch.setenv("PIP_FIND_LINKS", str(self.wheels))
+        monkeypatch.setenv("PIP_NO_CACHE_DIR", "1")
+
+    def _two_versions(self) -> None:
+        for version in ("1.5", "2.0"):
+            _wheel(self.wheels, SDK, version, extra={_only_in(version): f"X = {version!r}\n"})
+
+    def _install(self, tmp_path: Path, pin: str) -> None:
+        result = app_manager.install(_source(tmp_path, "dep-app", [pin]), confirm=True)
+        assert result.ok, result.error
+
+    def _update(self, tmp_path: Path, pin: str):
+        return app_manager.update(
+            _source(tmp_path, "dep-app", [pin], version="2.0.0"), confirm=True
+        )
+
+    @pytest.mark.parametrize("old, new, pin", _MOVES)
+    def test_a_moved_pin_installs_that_version_and_nothing_of_the_old_one(
+        self, tmp_path, old, new, pin
+    ):
+        self._two_versions()
+        self._install(tmp_path, f"{SDK}=={old}")
+        assert _versions() == [old]  # positive control: the version the old manifest pinned
+
+        result = self._update(tmp_path, pin)
+
+        assert result.ok, result.error
+        assert _versions() == [new]
+        assert not (_site() / _only_in(old)).exists()
+        assert (_site() / _only_in(new)).is_file()
+        assert _fresh_import("pclaw_fixture_sdk").VERSION == new
+
+    def test_a_replaced_package_the_gateway_had_loaded_asks_for_a_restart(self, tmp_path):
+        """The running process still holds the old module, so the new pin only takes effect
+        after a restart, and the update has to say so."""
+        self._two_versions()
+        self._install(tmp_path, f"{SDK}<2")
+        _ap().activate()
+        importlib.import_module("pclaw_fixture_sdk")  # the gateway has used it
+        try:
+            result = self._update(tmp_path, f"{SDK}>=2")
+        finally:
+            sys.modules.pop("pclaw_fixture_sdk", None)
+
+        assert result.ok, result.error
+        assert result.restart_required is True
+
+    def test_an_update_another_apps_pin_excludes_is_refused_and_changes_nothing(self, tmp_path):
+        """One interpreter holds one version: an update may not move a package another installed
+        app needs where it is. Refused, naming that app, with the installed version untouched."""
+        self._two_versions()
+        _write_app("other-app", [f"{SDK}>=2"])
+        self._install(tmp_path, f"{SDK}>=1")
+        assert _versions() == ["2.0"]
+
+        result = self._update(tmp_path, f"{SDK}<2")
+
+        assert result.ok is False
+        assert (
+            "the installed app Other App requires pclaw-fixture-sdk>=2" in result.error
+        ), result.error
+        assert _versions() == ["2.0"]
+        assert manager._read_installed("dep-app").version == "1.0.0"
+
+    @pytest.mark.parametrize("old, new, pin", _MOVES)
+    def test_the_boot_repair_replaces_a_version_the_pin_no_longer_allows(self, old, new, pin):
+        """The same move at boot: the installed apps' pins no longer allow what is here."""
+        self._two_versions()
+        _write_app("dep-app", [pin])
+        subprocess.run(  # the version an earlier manifest left here
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--quiet",
+                "--prefix",
+                str(_root()),
+                "--no-warn-script-location",
+                f"{SDK}=={old}",
+            ],
+            check=True,
+            capture_output=True,
+        )
+        assert _versions() == [old]
+
+        assert app_manager.repair_app_packages() == ["dep-app"]
+
+        assert _versions() == [new]
+        assert not (_site() / _only_in(old)).exists()
+        assert _fresh_import("pclaw_fixture_sdk").VERSION == new
+
+
+@pytest.mark.parametrize("old, new, pin", _MOVES)
+def test_a_directory_left_with_two_copies_heals_at_boot(fake_pip, old, new, pin):
+    """What the installer left before this fix: the new version written over the old, both
+    dist-infos present. The copy pip wrote last is what is on disk, so it is the one that counts,
+    and the boot's collection removes the rest."""
+    _write_app("dep-app", [pin])
+    _fake_dist(SDK, old)
+    (_site() / _only_in(old)).write_text("X = 1\n", encoding="utf-8")
+    old_record = _site() / f"pclaw_fixture_sdk-{old}.dist-info" / "RECORD"
+    old_record.write_text(old_record.read_text() + f"{_only_in(old)},,\n", encoding="utf-8")
+    os.utime(old_record, ns=(1_000_000_000, 1_000_000_000))
+    _fake_dist(SDK, new)  # pip writing the new version over the old, as the old installer did
+    assert _versions() == sorted([old, new])  # positive control: the leftover state
+    fake = fake_pip()
+
+    assert app_manager.repair_app_packages() == []
+
+    assert fake.calls == [], "the newest copy satisfies the pin; nothing needs reinstalling"
+    assert _versions() == [new]
+    assert not (_site() / _only_in(old)).exists()
+    assert (_site() / "pclaw_fixture_sdk" / "__init__.py").read_text() == f"VERSION = {new!r}\n"

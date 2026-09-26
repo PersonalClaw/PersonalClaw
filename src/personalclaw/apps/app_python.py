@@ -28,6 +28,11 @@ Why here, and why this shape:
   distribution here that no app's requirement closure reaches — after an uninstall, an update,
   a failed install and at boot. It is derived from the manifests and dist-info on disk each
   time, so there is no ledger to drift out of step with them.
+* **A version change replaces the old copy.** An update whose new manifest pins another
+  version (up or down) gets exactly that version. pip resolves it, but it cannot remove the
+  copy it replaces here (:func:`_drop_displaced` says why), so the installer does, right after
+  pip succeeds. The copy pip wrote last is the one every reader of this directory treats as
+  installed.
 * **Reproducible, so rebuilt rather than backed up.** The directory is a function of the
   installed apps' manifests and the running interpreter (its layout is keyed by the Python
   version), which is why :func:`broken_apps` + :func:`install_everything` can rebuild whatever a
@@ -199,8 +204,16 @@ def _base_paths() -> list[str]:
     return [p for p in sys.path if p and not _within(p, here)]
 
 
-def _index(paths: list[str]) -> dict[str, list[importlib.metadata.Distribution]]:
-    """Canonical name → distributions on *paths*, in import-resolution order (first one wins)."""
+def _index(
+    paths: list[str], *, newest_first: bool = False
+) -> dict[str, list[importlib.metadata.Distribution]]:
+    """Canonical name → distributions on *paths*, in import-resolution order (first one wins).
+
+    *newest_first* orders the copies of one name by when pip wrote them instead, newest first.
+    That is the order for the app packages: two copies of one distribution there are the same
+    package directory written twice (see :func:`_drop_displaced`), so the files an import loads
+    are the last copy's, and the directory listing's order says nothing about which that is.
+    """
     from packaging.utils import canonicalize_name
 
     out: dict[str, list[importlib.metadata.Distribution]] = {}
@@ -211,7 +224,23 @@ def _index(paths: list[str]) -> dict[str, list[importlib.metadata.Distribution]]
             name = None
         if name:
             out.setdefault(canonicalize_name(name), []).append(dist)
+    if newest_first:
+        for dists in out.values():
+            if len(dists) > 1:
+                dists.sort(key=_installed_at, reverse=True)
     return out
+
+
+def _installed_at(dist: importlib.metadata.Distribution) -> int:
+    """When pip installed *dist*: its RECORD's modification time, which pip writes last.
+    ``0`` for a distribution with no readable RECORD, so it never outranks one that has one."""
+    for entry in dist.files or []:
+        if entry.name == "RECORD" and entry.parent.name.endswith(".dist-info"):
+            try:
+                return Path(str(dist.locate_file(entry))).stat().st_mtime_ns
+            except OSError:
+                return 0
+    return 0
 
 
 @dataclass
@@ -223,7 +252,9 @@ class _Env:
 
     @classmethod
     def read(cls) -> _Env:
-        return cls(base=_index(_base_paths()), apps=_index(_existing_site_dirs()))
+        return cls(
+            base=_index(_base_paths()), apps=_index(_existing_site_dirs(), newest_first=True)
+        )
 
     def find(self, key: str) -> tuple[importlib.metadata.Distribution | None, bool]:
         """The distribution an import of *key* loads, and whether it is an app package."""
@@ -570,6 +601,38 @@ def _pip_install(target: Declared, others: list[Declared], env: _Env) -> None:
         raise PackageInstallError(
             message, log_excerpt=output.strip()[-_LOG_TAIL_CHARS:] if actionable else ""
         )
+    _drop_displaced()
+
+
+def _drop_displaced() -> list[str]:
+    """Remove the copy of each app package that pip just installed another version over.
+
+    pip cannot remove it itself. It runs from the gateway's virtualenv, and pip changes nothing
+    outside that environment's ``sys.prefix``: replacing a version here logs "Not uninstalling
+    <name> at <home>/app-python/…, outside environment …" and writes the new version over the
+    old. That leaves two dist-infos, and every file only the old version had still importable
+    beside the new one's (measured with ``anthropic`` 1.8.0 → 0.125.0). So an update could not
+    move a pin: whichever copy the directory listed first decided what counted as installed.
+
+    The copy pip wrote last is the live one (:func:`_index`'s ``newest_first``); every older
+    copy is removed by its RECORD, the way pip's own uninstall would have done it, except that
+    a path the live copy lists is never deleted, because pip has just rewritten it.
+    """
+    env = _Env.read()
+    live = [dists[0] for dists in env.apps.values()]
+    displaced = [dist for dists in env.apps.values() for dist in dists[1:]]
+    if not displaced:
+        return []
+    keep = frozenset(path for dist in live for path in _record_paths(dist))
+    here = root()
+    removed: list[str] = []
+    for dist in displaced:
+        label = f"{dist.metadata['Name']} {dist.version}"  # read before it is deleted
+        if _remove_distribution(dist, here, keep=keep):
+            removed.append(label)
+    importlib.invalidate_caches()
+    logger.info("app packages: removed the versions pip replaced: %s", removed)
+    return removed
 
 
 def _loaded_from(directory: Path) -> bool:
@@ -725,8 +788,10 @@ def collect() -> list[str]:
     """Delete every distribution here that no app tree's requirement closure reaches.
 
     Also drops the layout of any OTHER Python version (``lib/python3.12`` after an image moved to
-    3.13) and duplicate copies of one distribution. Removal is by each distribution's own RECORD,
-    and never outside this directory. Returns ``"name version"`` for what it removed.
+    3.13) and every copy of a distribution but the newest (:func:`_drop_displaced`), which is how
+    a directory an older installer left with two copies heals at the next boot. Removal is by
+    each distribution's own RECORD, and never outside this directory. Returns ``"name version"``
+    for what it removed.
     """
     here = root()
     if not here.is_dir():
