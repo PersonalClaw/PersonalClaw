@@ -46,7 +46,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/apps/local-sources` — add a local app-source dir ``{path}`` (a
 - `GET /api/apps/message` — drain THIS app's inbox (read-once).
 - `POST /api/apps/message` — send a typed message ``{to, type, payload}`` to
-- `POST /api/apps/preview` — review ``{source, name?}`` before anything is installed.
+- `POST /api/apps/preview` — review ``{source, name?, listedBy?}`` before anything is installed.
 - `DELETE /api/apps/sources` — remove a user git source URL.
 - `GET /api/apps/sources` — the configured git source URLs (defaults + user).
 - `POST /api/apps/sources` — add a user git source URL ``{url}``.
@@ -636,8 +636,6 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/providers/{name}/availability` — measure again whether it can run here.
 - `GET /api/providers/{name}/config` — _(no summary)_
 - `PATCH /api/providers/{name}/config` — _(no summary)_
-- `POST /api/providers/{name}/disable` — _(no summary)_
-- `POST /api/providers/{name}/enable` — _(no summary)_
 - `GET /api/providers/{name}/instances` — _(no summary)_
 - `POST /api/providers/{name}/instances` — _(no summary)_
 - `DELETE /api/providers/{name}/instances/{id}` — _(no summary)_

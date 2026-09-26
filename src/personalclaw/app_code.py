@@ -61,6 +61,12 @@ def claim(app: str, root: Path) -> None:
             _roots[os.path.join(path, "")] = app
 
 
+def roots(app: str) -> tuple[str, ...]:
+    """The directories claimed as *app*'s code, each ending in a separator."""
+    with _lock:
+        return tuple(prefix for prefix, owner_ in _roots.items() if owner_ == app)
+
+
 def owner() -> str | None:
     """The app whose code made the current call, or ``None`` when core made it.
 

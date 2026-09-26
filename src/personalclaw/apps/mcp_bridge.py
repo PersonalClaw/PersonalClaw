@@ -75,8 +75,16 @@ def server_app(key: str) -> str | None:
 
 def register_app_mcp_servers(manifest: AppManifest) -> list[str]:
     """Write the app's manifest ``mcpServers`` into the live MCP config,
-    namespaced ``{app}:{server}``. Returns the registered keys. Idempotent —
-    re-registering overwrites the app's own entries."""
+    namespaced ``{app}:{server}``. Returns the registered keys.
+
+    Idempotent, because every load runs it — gateway startup included. The manifest defines each
+    server (``secret_refs.MCP_DEFINITION_KEYS``: its command, arguments, environment, URL…), so
+    those are written from it; what the owner set on the entry (``disabled``, ``disabledTools``,
+    ``autoApprove``) stays. A restart used to leave the file alone, and writing the whole entry
+    at every start would switch a server the owner turned off back on. Nothing is written when
+    nothing changed."""
+    from personalclaw.config.secret_refs import MCP_DEFINITION_KEYS
+
     servers = manifest.mcpServers or {}
     if not isinstance(servers, dict) or not servers:
         return []
@@ -99,6 +107,7 @@ def register_app_mcp_servers(manifest: AppManifest) -> list[str]:
     from personalclaw.mcp_discovery import server_name_problem
 
     registered: list[str] = []
+    changed = False
     for name, spec in servers.items():
         if not isinstance(spec, dict):
             continue
@@ -111,9 +120,18 @@ def register_app_mcp_servers(manifest: AppManifest) -> list[str]:
         if base is not None and spec.get("command") and "url" not in spec and not spec.get("cwd"):
             spec["cwd"] = str(base)
         key = _ns(manifest.name, str(name))
-        bucket[key] = spec
+        existing = bucket.get(key)
+        kept = (
+            {k: v for k, v in existing.items() if k not in MCP_DEFINITION_KEYS and k not in spec}
+            if isinstance(existing, dict)
+            else {}
+        )
+        entry = {**kept, **spec}
+        if entry != existing:
+            bucket[key] = entry
+            changed = True
         registered.append(key)
-    if registered:
+    if changed:
         _save(data)
         logger.info("app %s: registered MCP servers %s", manifest.name, registered)
     return registered

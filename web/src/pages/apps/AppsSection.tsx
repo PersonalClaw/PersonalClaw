@@ -37,7 +37,7 @@ import {
 import { catalogApps } from '../../lib/appCatalog'
 import { readableErrText } from '../../lib/errText'
 import { reportingWrite } from '../../app/reportingWrite'
-import { notify } from '../../app/appSdk'
+import { setActivation } from '../../app/appActivation'
 import { provenance, registryListing } from '../../lib/provenance'
 import { dayStamp } from '../../lib/epoch'
 import { AppIcon } from './appIcon'
@@ -195,16 +195,6 @@ type DispatchAppAction = (app: {
 /** Owns the app-action modal state + the enable/disable call, and renders the
  *  modals ONCE at the host level. Returns a `dispatch` both the cards and the
  *  detail panel call, the `busyName` (app mid-toggle), and the `modals` node. */
-/** Activate or deactivate *app*, the one call both routes to the action make. An activation can
- *  land with a provider of the app refused: a tool it offers has a name another provider holds, so
- *  that provider is off while the app is on. The answer names it, and that is said out loud here
- *  (its card in Settings → Providers keeps the same sentence). */
-async function setActivation(app: { name: string; enabled: boolean }): Promise<void> {
-  if (app.enabled) { await api.disableApp(app.name); return }
-  const { providerErrors = [] } = await api.enableApp(app.name)
-  for (const why of providerErrors) notify(why, 'error')
-}
-
 function useAppActions(nav: (p: string) => void, reload: () => void) {
   const [busyName, setBusyName] = useState<string | null>(null)
   const [configFor, setConfigFor] = useState<{ name: string; displayName: string } | null>(null)
@@ -1635,13 +1625,16 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
           </div>
         )}
 
-        {/* What an update or reinstall could not take out of the gateway's process, stated
-            until a restart does — the toast that first said it is gone by now. */}
+        {/* What an update, a reinstall or turning the app off could not take out of the gateway,
+            stated until a restart does — the toast that first said it is gone by now. A turned-off
+            app is not "running", so its sentence does not open by saying it is. */}
         {app.restartReason && (
           <div role="status" className="rounded-md border border-outline-variant bg-surface-high p-m" data-type="body-s">
             <div className="flex items-center gap-2 text-on-surface"><RotateCw size={14} /> Restart the gateway to finish</div>
             <div className="mt-1 text-on-surface-low" data-type="label-s">
-              {`The installed version is running, but ${app.restartReason}. Restart it from System status, top right.`}
+              {app.enabled
+                ? `The installed version is running, but ${app.restartReason}. Restart it from System status, top right.`
+                : `This app is turned off, but ${app.restartReason}. Restart the gateway from System status, top right.`}
             </div>
           </div>
         )}

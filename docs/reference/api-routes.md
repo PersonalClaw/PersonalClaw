@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **857 registrations** over **694 distinct paths** — 850 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **855 registrations** over **692 distinct paths** — 848 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -38,12 +38,12 @@ The 127 families the surface divides into, largest first.
 | `/api/triggers` | 16 | 14 |
 | `/api/mcp` | 15 | 12 |
 | `/api/projects` | 14 | 10 |
-| `/api/providers` | 14 | 10 |
 | `/api/sessions` | 14 | 11 |
 | `/api/dashboard` | 13 | 8 |
 | `/api/packs` | 13 | 13 |
 | `/api/tasks` | 13 | 9 |
 | `/api/agents` | 12 | 8 |
+| `/api/providers` | 12 | 8 |
 | `/api/durability` | 11 | 11 |
 | `/api/model-providers` | 11 | 9 |
 | `/api/prompts` | 11 | 7 |
@@ -154,7 +154,7 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 850 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 848 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -198,7 +198,7 @@ The 850 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/apps/local-sources` | add a local app-source dir ``{path}`` (a |
 | `GET` | `/api/apps/message` | drain THIS app's inbox (read-once). |
 | `POST` | `/api/apps/message` | send a typed message ``{to, type, payload}`` to |
-| `POST` | `/api/apps/preview` | review ``{source, name?}`` before anything is installed. |
+| `POST` | `/api/apps/preview` | review ``{source, name?, listedBy?}`` before anything is installed. |
 | `DELETE` | `/api/apps/sources` | remove a user git source URL. |
 | `GET` | `/api/apps/sources` | the configured git source URLs (defaults + user). |
 | `POST` | `/api/apps/sources` | add a user git source URL ``{url}``. |
@@ -788,8 +788,6 @@ The 850 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/providers/{name}/availability` | measure again whether it can run here. |
 | `GET` | `/api/providers/{name}/config` | _(no summary)_ |
 | `PATCH` | `/api/providers/{name}/config` | _(no summary)_ |
-| `POST` | `/api/providers/{name}/disable` | _(no summary)_ |
-| `POST` | `/api/providers/{name}/enable` | _(no summary)_ |
 | `GET` | `/api/providers/{name}/instances` | _(no summary)_ |
 | `POST` | `/api/providers/{name}/instances` | _(no summary)_ |
 | `DELETE` | `/api/providers/{name}/instances/{id}` | _(no summary)_ |

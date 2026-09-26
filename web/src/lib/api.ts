@@ -6762,12 +6762,11 @@ export const api = {
   providerConfig: (name: string) => get<{ config: Record<string, unknown>; _secret_set?: string[] }>(`/api/providers/${encodeURIComponent(name)}/config`),
   saveProviderConfig: (name: string, config: Record<string, unknown>) =>
     patch<{ config: Record<string, unknown> }>(`/api/providers/${encodeURIComponent(name)}/config`, config),
-  enableProvider: (name: string) => post<{ enabled: boolean }>(`/api/providers/${encodeURIComponent(name)}/enable`),
   // Measure again whether a provider can run here (answers 202 at once: the check runs in the
   // gateway's availability child, and the card reads `checking` until the answer lands).
+  // (A provider has no on/off of its own: its switch is its app's `enableApp` / `disableApp`.)
   recheckProviderAvailability: (name: string) =>
     post<{ name: string; availability: ProviderAvailability }>(`/api/providers/${encodeURIComponent(name)}/availability`),
-  disableProvider: (name: string) => post<{ enabled: boolean }>(`/api/providers/${encodeURIComponent(name)}/disable`),
   // agent runtimes (native + acp:<cli>) with readiness — merged onto agent cards. A plain read
   // never spawns a runtime: it answers from the live connection or the last measurement, and a
   // never-measured runtime reads `checking`. refresh=true measures now (post-sign-in / manual
