@@ -257,6 +257,8 @@ export interface DoctorProbe {
   detail: string
   evidence: Record<string, unknown>
   fix_id?: string
+  /** A failure's other half when no Fix repairs it: one sentence saying so and what to do. */
+  remedy?: string
 }
 export interface DoctorCapability {
   ok: boolean
@@ -571,8 +573,9 @@ export interface RemediationSnapshot {
   /** `blocked_by` is the actionable half of `reachable`: one sentence naming the missing
    *  prerequisite, produced by `Deficit.blocked_by` and non-empty exactly when `reachable`
    *  is false. Without it a surface can say no more than "not fixable yet", which reads as
-   *  "the system will get to it" for a deficit nothing will ever get to. */
-  deficits: { key: string; count: number; penalty: number; reachable: boolean; blocked_by: string }[]
+   *  "the system will get to it" for a deficit nothing will ever get to. `title` is the label
+   *  when the key is not one — a failed Doctor check (`check:<probe id>`) carries its probe's. */
+  deficits: { key: string; title: string; count: number; penalty: number; reachable: boolean; blocked_by: string }[]
   plan: RemediationJobRow[]
   recent_runs: RemediationRun[]
 }
@@ -3965,7 +3968,7 @@ export type MemoryVaultMode = 'off' | 'mirror' | 'two_way'
  *  behaviour + vault fields ride the PUT on this same path, while `graph_topology_in_context`,
  *  `holder_attribution` and `slot_size_cap` ride the `_EDITABLE_CONFIG` PATCH — one writer
  *  each, never two. See `SettingsTab`'s `patch` vs `patchCfg`. */
-export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_mode?: MemoryVaultMode; vault_path?: string; graph_enabled?: boolean; push_context?: boolean; push_min_confidence?: number; graph_topology_in_context?: boolean; holder_attribution?: boolean; slot_size_cap?: number }
+export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_mode?: MemoryVaultMode; vault_path?: string; graph_enabled?: boolean; push_context?: boolean; push_min_confidence?: number; graph_topology_in_context?: boolean; holder_attribution?: boolean; slot_size_cap?: number; semantic_confidence_threshold?: number }
 
 // ── The triage digest (PROACTIVE-ASSISTANT §5.1/§5.2/§5.4 — PA-5) ──
 
@@ -6325,7 +6328,9 @@ export const api = {
     post<{ ok: boolean; code: string; action_type: string; demoted: boolean; detail?: string }>('/api/autonomy/undo', { id }),
 
   // ── Doctor: tiered read-only health probes (PLATFORM-RESILIENCE §1) ──
-  doctor: () => get<DoctorReport>('/api/doctor'),
+  /** `fresh` re-probes past the server's 30s cache — for the Doctor page's own Re-run and the
+   *  re-read after a Fix, where a cached report would show the verdict from before the repair. */
+  doctor: (fresh = false) => get<DoctorReport>(fresh ? '/api/doctor?fresh=1' : '/api/doctor'),
   doctorCapability: (capability: string) =>
     get<{ capability: string; ok: boolean; probes: DoctorProbe[]; unknown?: boolean }>(
       `/api/doctor/${encodeURIComponent(capability)}`,

@@ -223,6 +223,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     ),
     # ── security audit (handlers/security_audit.py) ──
     "audit_owner_only": "The audit trail is owner-only; an app-scoped token may not read it.",
+    # the SEL rotate (handlers/core.py `api_sel_rotate`)
+    "sel_archive_failed": "The audit log could not be moved into its archive, so it was kept "
+    "as it is and no new chain was started.",
     "invalid_cursor": "The pagination cursor is malformed.",
     "invalid_limit": "The limit parameter is out of range or not an integer.",
     "invalid_time_filter": "A since/until filter is not a recognized timestamp.",

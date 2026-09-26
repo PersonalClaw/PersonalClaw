@@ -80,9 +80,10 @@ _LEDGER_CAP = 500  # trim at 2× (notifications.jsonl pattern)
 _DEFAULT_TARGET_SCORE = 90.0
 _MIN_SCHEDULABLE_PENALTY = 100.0 - _DEFAULT_TARGET_SCORE
 
-#: The score at or above which the adaptive clock takes its LONG sleep (§4.3's "Healthy (≥95)").
+#: The adaptive clock takes its LONG sleep (§4.3's "Healthy (≥95)") while the engine's own jobs
+#: could win back no more than ``100 − HEALTHY_SCORE`` points (:attr:`RunResult.fixable_after`).
 #:
-#: Deliberately higher than ``_DEFAULT_TARGET_SCORE``: the target is "stop working", this is "stop
+#: Deliberately stricter than ``_DEFAULT_TARGET_SCORE``: the target is "stop working", this is "stop
 #: watching closely". A store that was just brought back to exactly 90 has a deficit the engine
 #: chose not to spend more on, and looking again in five minutes is the right answer for it — so the
 #: two numbers must not be one number. Lived as a bare ``95.0`` literal inside the heartbeat job
@@ -103,15 +104,15 @@ class Deficit:
 
     ``count`` is the current problem magnitude (0 = healthy). ``weight`` is the score
     penalty per unit, capped so one noisy source can't dominate. ``max_penalty`` is
-    the ceiling this deficit can subtract (GBrain's ``max_reachable_score`` inverse):
-    when the deficit is unfixable right now (e.g. no embedder bound), the caller sets
-    ``reachable=False`` so the engine never burns budget on futile work.
+    the ceiling this deficit can subtract. When the deficit is unfixable by the engine right now
+    (e.g. no embedder bound), the caller sets ``reachable=False`` so the engine never burns budget
+    on futile work — it still COUNTS against the score, because the home is no healthier for the
+    engine being unable to help (:func:`health_score`).
 
     🔴 ``blocked_by`` IS THE HALF OF ``reachable`` A READER CAN ACT ON. ``reachable=False``
     says the engine will not touch this; it does not say WHY, and the why is the only part
     a person can do something about. Measured on a seeded home: 25 knowledge items with no
-    vectors, score 100 (correctly — the penalty is excluded because no maintenance run can
-    improve it), and the surfaces could say no more than "not fixable yet" — which reads as
+    vectors, and the surfaces could say no more than "not fixable yet" — which reads as
     "the system will get to it" for a deficit nothing will ever get to. The prerequisite is
     known exactly where ``reachable`` is computed (``can_resolve_use_case("embedding")``),
     and it was discarded one line later.
@@ -133,19 +134,32 @@ class Deficit:
     max_penalty: float
     reachable: bool = True
     job_id: str = ""  # the remediation job that reduces this deficit (if any)
-    blocked_by: str = ""  # why an unreachable deficit is at its floor, in one sentence
+    blocked_by: str = ""  # why the engine cannot clear an unreachable deficit, in one sentence
+    #: The human label when the key is not one: a failed Doctor check carries its probe title.
+    title: str = ""
 
     @property
     def penalty(self) -> float:
         return min(self.max_penalty, self.count * self.weight)
 
 
+#: What one failed Doctor capability check subtracts from the health score. Above
+#: ``_MIN_SCHEDULABLE_PENALTY`` so a single failure crosses the default target on its own: the
+#: score must never read "target met" while the Doctor shows a failed check.
+_FAILED_CHECK_PENALTY = 15.0
+
+#: A failed check's deficit key is its probe id under this prefix (`check:durability.inventory`),
+#: which keeps it apart from the measured deficits' own keys.
+CHECK_PREFIX = "check:"
+
+
 def measure_deficits() -> list[Deficit]:
     """Measure every deficit source that has a REAL count today. Read-only and
     exception-safe — a source that can't be read contributes nothing (never a guess).
 
-    Sources with no count function yet (FTS desync, failed-run backlog, LEARN-R19
-    staging) are deliberately absent — the plan forbids guessing.
+    Sources with no count function yet (failed-run backlog, LEARN-R19 staging) are
+    deliberately absent — the plan forbids guessing. Last come the failed Doctor capability
+    checks (:func:`_failed_check_deficits`), so the score reads every failure the Doctor shows.
     """
     out: list[Deficit] = []
 
@@ -241,6 +255,29 @@ def measure_deficits() -> list[Deficit]:
     except Exception:
         logger.debug("deficit: memory FTS desync measure failed", exc_info=True)
 
+    # Memory: embedded rows the faiss index recall reads does not hold — settings B16's "faiss
+    # index desync: 0 indexed vs 2 embedded rows". A row missing from the index is a memory
+    # semantic recall can never return, so ONE crosses the gate, like the FTS desync above. The
+    # count is the `memory.store` Doctor check's own measurement (`memory_index_gaps`), so the
+    # check and the score cannot disagree; the index is derived, so its rebuild is a safe job.
+    # Rows embedded by another model are NOT counted: a rebuild cannot index them (the check says
+    # what can — a re-embed — and scores that failure itself).
+    try:
+        from personalclaw.resilience.doctor import MEMORY_INDEX_FIX, memory_index_gaps
+
+        gaps = memory_index_gaps(config_dir())
+        out.append(
+            Deficit(
+                key="memory_index_desync",
+                count=int(gaps.get("missing") or 0) if gaps.get("faiss_available") else 0,
+                weight=11.0,
+                max_penalty=22.0,
+                job_id=MEMORY_INDEX_FIX,
+            )
+        )
+    except Exception:
+        logger.debug("deficit: memory index measure failed", exc_info=True)
+
     # Daily history past its retention window. Retention is a PROMISE, so one file over
     # the line is already a policy violation → weighted to cross the gate at count 1,
     # which reproduces the old daily prune (the count self-clears every pass).
@@ -310,9 +347,10 @@ def measure_deficits() -> list[Deficit]:
     # on every engine pass and every Doctor read, instead of only when a human opens the
     # Skills page). Deliberately job-less and ``reachable=False``: verification is a
     # DETECTOR, not a fix — no job can un-tamper a skill, and re-baselining a mutated one
-    # would launder the tamper. So it never burns budget and never depresses a score the
-    # engine cannot improve; it surfaces on the Doctor's deficit list, and
-    # ``verify_skill_integrity`` emits its own SEL audit on every detection.
+    # would launder the tamper. So it never burns budget; it DOES lower the score (a tampered
+    # skill is a health problem whether or not a job can clear it), it surfaces on the
+    # Doctor's deficit list, and ``verify_skill_integrity`` emits its own SEL audit on every
+    # detection.
     try:
         out.append(
             Deficit(
@@ -334,6 +372,61 @@ def measure_deficits() -> list[Deficit]:
     except Exception:
         logger.debug("deficit: skill-integrity measure failed", exc_info=True)
 
+    out.extend(_failed_check_deficits({d.key: d.count for d in out}))
+    return out
+
+
+def _failed_check_deficits(measured: dict[str, int]) -> list[Deficit]:
+    """One deficit per FAILED Doctor capability check — the "one authority" half of the score.
+
+    🔴 THE SCORE USED TO READ NONE OF THEM. Settings B16: the Doctor showed "faiss index desync:
+    0 indexed vs 2 embedded rows" and "4 unclaimed paths … in NO snapshot" as failed checks, and
+    Maintenance directly below read "Health score 100 / target 90 — no deficits measured", with
+    Run now answering "target_score already met". Two surfaces of one page disagreeing about the
+    same home is the defect; reading the Doctor's own verdicts here is the fix, rather than a
+    second, drifting copy of each check.
+
+    A failed check whose repair is an engine JOB is already on the list while that job's
+    measured deficit reads non-zero (``memory_index_desync`` for the index): it counts the fault
+    with its magnitude, and counting the check too would charge one fault twice. At zero the
+    check is failing for a reason the job cannot clear (memories another model embedded), so it
+    counts here. Every check counted here is unreachable — the engine never presses a
+    confirm-gated Fix on the user's behalf, and a check with no fix has nothing to run — and
+    ``blocked_by`` says what the user can do instead.
+    """
+    try:
+        from personalclaw.resilience.doctor import failed_checks
+
+        rows = failed_checks()
+    except Exception:
+        logger.debug("deficit: Doctor checks could not be run", exc_info=True)
+        return []
+    out: list[Deficit] = []
+    for row in rows:
+        fix = str(row.get("fix_id") or "")
+        job = _JOBS.get(fix)
+        if job is not None and measured.get(job.fixes_deficit, 0) > 0:
+            continue
+        if fix:
+            blocked = (
+                "press Fix on its row on the Doctor page — it confirms before it changes anything"
+            )
+        else:
+            blocked = str(row.get("remedy") or "") or (
+                "no automatic fix — use Investigate in chat on its Doctor card to find the "
+                "next step"
+            )
+        out.append(
+            Deficit(
+                key=f"{CHECK_PREFIX}{row['id']}",
+                count=1,
+                weight=_FAILED_CHECK_PENALTY,
+                max_penalty=_FAILED_CHECK_PENALTY,
+                reachable=False,
+                blocked_by=blocked,
+                title=str(row.get("title") or row["id"]),
+            )
+        )
     return out
 
 
@@ -365,10 +458,21 @@ def _count_tampered_skills() -> int:
 
 
 def health_score(deficits: list[Deficit]) -> float:
-    """``100 − Σ penalties`` over REACHABLE deficits (an unreachable deficit is at its
-    floor — it doesn't count against a score the engine can't improve). Clamped 0-100."""
-    total = sum(d.penalty for d in deficits if d.reachable)
+    """``100 − Σ penalties`` over EVERY measured deficit, clamped 0-100 — the one number every
+    surface shows (the Doctor's Maintenance row, Run now, ``personalclaw doctor``).
+
+    🔴 IT USED TO COUNT ONLY THE REACHABLE ONES, so the score was "how much work the engine can
+    still do" presented as "how healthy the home is": a tampered skill, 25 knowledge items with no
+    vectors, or (once failed checks were counted) a store in no snapshot all scored 100. Whether
+    the ENGINE can act is a separate question with its own number, :func:`fixable_penalty`, which
+    is what the adaptive cadence and the plan read."""
+    total = sum(d.penalty for d in deficits)
     return max(0.0, min(100.0, 100.0 - total))
+
+
+def fixable_penalty(deficits: list[Deficit]) -> float:
+    """The part of the score the engine's own jobs can win back (reachable deficits only)."""
+    return sum(d.penalty for d in deficits if d.reachable)
 
 
 # ── Jobs (the remediation plan's steps) ───────────────────────────────────────
@@ -464,6 +568,15 @@ class RunResult:
     score_after: float
     jobs: list[dict] = field(default_factory=list)
     stopped_reason: str = ""
+    #: What the engine's own jobs could still win back after this pass — the adaptive cadence's
+    #: input. A failed check nothing automatic repairs lowers the SCORE, not this, so it does not
+    #: keep the engine waking every few minutes to find it still has nothing to do.
+    fixable_after: float = 0.0
+
+
+#: The stop reason when what keeps the score under its target needs a person. One string, so the
+#: panel, the ledger and the tests read the same words.
+NOTHING_FIXABLE = "nothing left that maintenance can fix"
 
 
 def run_remediation(
@@ -472,12 +585,15 @@ def run_remediation(
     max_cost_usd: float = 1.0,
     now: float,
     dry_run: bool = False,
+    deficits: list[Deficit] | None = None,
 ) -> RunResult:
     """Execute a dependency-ordered remediation plan under the caps. Re-measures the
     score after each step, stops at target/cost/exhausted. Charges the guardrails
     SpendMeter under run_key ``doctor`` for judgment jobs; deterministic jobs are free.
 
     ``dry_run`` computes the plan + score without running any job (the Doctor preview).
+    ``deficits`` passes a measurement the caller already took, so a preview beside a score does
+    not measure (and run every Doctor check) twice.
     """
     from personalclaw.guardrails.budgets import (
         get_meter,
@@ -485,9 +601,13 @@ def run_remediation(
         set_current_run_key,
     )
 
-    deficits = measure_deficits()
+    deficits = measure_deficits() if deficits is None else deficits
     score_before = health_score(deficits)
-    result = RunResult(score_before=score_before, score_after=score_before)
+    result = RunResult(
+        score_before=score_before,
+        score_after=score_before,
+        fixable_after=fixable_penalty(deficits),
+    )
 
     if score_before >= target_score:
         result.stopped_reason = "target_score already met"
@@ -538,13 +658,18 @@ def run_remediation(
             )
             continue
         # Re-check the score after each step.
-        result.score_after = health_score(measure_deficits())
+        fresh = measure_deficits()
+        result.score_after = health_score(fresh)
+        result.fixable_after = fixable_penalty(fresh)
         if result.score_after >= target_score:
             result.stopped_reason = "target_score reached"
             break
 
     if not result.stopped_reason:
-        result.stopped_reason = "plan exhausted"
+        # Below target with the plan spent: say whether the engine could still have done more
+        # (a job in cooldown) or whether what is left needs a person — "plan exhausted" alone
+        # read the same for both.
+        result.stopped_reason = "plan exhausted" if result.fixable_after > 0 else NOTHING_FIXABLE
     if not dry_run:
         _save_job_state(state)
         _write_ledger(result, now=now)
@@ -670,6 +795,13 @@ def _job_rebuild_memory_fts() -> str:
     return f"FTS index rebuilt: {MemoryStore().rebuild_index()} file(s)"
 
 
+def _job_rebuild_memory_index() -> str:
+    from personalclaw.resilience.fixes import rebuild_memory_index
+
+    # Rebuild only: an unattended pass never spends an embedding call (the Fix re-embeds).
+    return rebuild_memory_index(reembed=False)
+
+
 def _job_prune_history() -> str:
     from personalclaw.config.loader import AppConfig
     from personalclaw.memory import MemoryStore
@@ -747,6 +879,21 @@ def _register_builtin_jobs() -> None:
             after=("memory.prune-history",),
             cooldown_hours=0.25,  # the old heartbeat floor (15 min)
             fixes_deficit="memory_fts_desync",
+        )
+    )
+    # The one Doctor check the engine repairs unattended: the faiss index recall reads is a
+    # derived cache of memory.db, so rebuilding it touches no user content. The job IS the
+    # Doctor's Fix (`fixes.rebuild_memory_index`) — one repair, reachable two ways.
+    from personalclaw.resilience.doctor import MEMORY_INDEX_FIX
+
+    register_job(
+        RemediationJob(
+            id=MEMORY_INDEX_FIX,
+            title="Rebuild the memory search index",
+            run=_job_rebuild_memory_index,
+            lane="deterministic",
+            cooldown_hours=1.0,
+            fixes_deficit="memory_index_desync",
         )
     )
     register_job(

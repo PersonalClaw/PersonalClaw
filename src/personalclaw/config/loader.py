@@ -1185,8 +1185,9 @@ class MemoryConfig:
     semantic_confidence_threshold: float = field(
         default=0.8,
         metadata=_meta(
-            "Semantic Confidence Threshold",
-            "Minimum similarity score for semantic search results.",
+            "Learned-fact confidence",
+            "How confident an automatically learned fact must be before memory keeps it "
+            "(0-1). Facts you add yourself are always kept.",
         ),
     )
     episodic_dedup_threshold: float = field(
@@ -3926,7 +3927,12 @@ class AppConfig:
                 worktree_sparse=bool(loops_data.get("worktree_sparse", True)),
             ),
             memory=MemoryConfig(
-                semantic_confidence_threshold=memory_data.get("semantic_confidence_threshold", 0.8),
+                # A probability, clamped like `push_min_confidence`: a hand-edited 8 would make
+                # memory refuse every learned fact, and a -1 would admit every guess.
+                semantic_confidence_threshold=max(
+                    0.0,
+                    min(1.0, _safe_float(memory_data.get("semantic_confidence_threshold"), 0.8)),
+                ),
                 episodic_dedup_threshold=memory_data.get("episodic_dedup_threshold", 0.88),
                 episodic_max_results=memory_data.get("episodic_max_results", 8),
                 episodic_max_count=memory_data.get("episodic_max_count", 10_000),

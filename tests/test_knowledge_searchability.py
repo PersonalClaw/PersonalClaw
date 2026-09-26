@@ -246,7 +246,7 @@ def test_each_fixture_surfaces_exactly_one_attention_row(
     # rides in `by_reason` for machines and stays out of the prose a person reads.
     assert result.detail == result.evidence["summaries"][0], result.detail
     assert reason not in result.detail and "cannot be found by search" not in result.detail
-    assert result.evidence.get("remedy")
+    assert result.remedy and "remedy" not in result.evidence, "the remedy is the row's field"
 
 
 # ── clause 3 — knowledge_search answers with a TYPED reason, never a bare empty set ──

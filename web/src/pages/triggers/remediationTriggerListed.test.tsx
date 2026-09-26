@@ -27,7 +27,7 @@ const REMEDIATION_ROW = {
   enabled: true,
   // What `describe_cadence` renders for an `adaptive` clock — pinned here in the shape the wire
   // carries it, not re-derived, so a change to that sentence surfaces as a diff in both halves.
-  schedule: 'adaptive — every 60m healthy, 5m degraded (now: healthy)',
+  schedule: 'adaptive — every 60m with nothing to repair, 5m while repairing (now: every 60m)',
   action: { provider: 'self-remediation', config: {} },
   last_run_ts: null,
   last_run_status: '',

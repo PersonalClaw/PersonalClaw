@@ -18,15 +18,15 @@ import { join } from 'node:path'
 //   plan                        []   ("target_score already met")
 //
 // So the panel said "healthy" while 26 orphan locks sat there fixable, and the button that would
-// fix them was a no-op — because health_score() sums penalties over REACHABLE deficits only, and
-// run_remediation() stops the moment score >= target. Every fact needed to understand that was in
-// the payload and none of it was on screen. A score without its breakdown cannot distinguish
-// "nothing is wrong" from "nothing the engine will act on".
+// fix them was a no-op — because run_remediation() stops the moment score >= target. Every fact
+// needed to understand that was in the payload and none of it was on screen. A score without its
+// breakdown cannot distinguish "nothing is wrong" from "nothing the engine will act on".
 //
-// `reachable` is the load-bearing field: an unreachable deficit is at its floor (missing
-// embeddings with no embedder bound), is NOT subtracted from the score, and pressing Run now will
-// not clear it — so it renders greyed, marked, and with no penalty number, because showing one
-// would misattribute the score above it.
+// `reachable` decides what Run now touches — an unreachable deficit (missing embeddings with no
+// embedder bound, a failed Doctor check no job repairs) renders greyed and names its own next
+// step. It is NOT left out of the score any more (settings B16): health_score() used to sum
+// reachable deficits only, which is how "Health score 100" sat under two failed Doctor checks. So
+// every row carries the penalty it subtracts, and the column adds up to 100 minus the score.
 
 const PANEL = join(process.cwd(), 'src/pages/settings/DoctorPanel.tsx')
 
@@ -86,10 +86,28 @@ describe('deficits reach the panel', () => {
 })
 
 describe('reachable vs unreachable is not flattened', () => {
-  it('shows a penalty only for a deficit that actually counts against the score', async () => {
+  it('shows the penalty every row subtracts, reachable or not', async () => {
     const text = (await mount()).container.textContent ?? ''
-    expect(text).toContain('−10.0')          // reachable → subtracted
-    expect(text).not.toContain('−13.0')      // unreachable → at its floor, NOT subtracted
+    expect(text).toContain('−10.0')          // reachable → subtracted, and Run now can win it back
+    expect(text).toContain('−13.0')          // unreachable → subtracted too: the home is no healthier
+  })
+
+  it('labels a failed Doctor check by its title and names its next step', async () => {
+    // A failed check reaches the score as a `check:<probe id>` deficit carrying the probe's title
+    // and its remedy — the same sentence its Doctor row shows.
+    const remedy = 'No automatic fix — copy the paths listed in this row\'s details somewhere safe.'
+    const text = (await mount({
+      score: 85,
+      deficits: [{
+        key: 'check:durability.inventory', title: 'Every state path is claimed by the manifest',
+        count: 1, penalty: 15, reachable: false, blocked_by: remedy,
+      }],
+    })).container.textContent ?? ''
+    expect(text).toContain('Every state path is claimed by the manifest')
+    expect(text).not.toContain('Check:durability')
+    expect(text).toContain(remedy)
+    expect(text).toContain('−15.0')
+    expect(text).toContain('nothing measured above is fixable by maintenance')
   })
 
   it('names WHY an unreachable deficit will not clear, not just that it will not', async () => {
@@ -129,6 +147,15 @@ describe('the plan explains what Run now would do', () => {
     expect(container.textContent).toContain('Serving fs.prune orphans')
   })
 
+  it('does not promise a job that is cooling down', async () => {
+    // The dry-run plan lists a job inside its cooldown as `skipped_cooldown`: it will not run.
+    const { container } = await mount({
+      score: 60,
+      plan: [{ id: 'memory.rebuild-faiss-index', status: 'skipped_cooldown', cost: 0 }],
+    })
+    expect(container.textContent).toContain('Memory.rebuild faiss index (cooling down — not yet)')
+  })
+
   it('says WHY an empty plan is empty when fixable deficits remain', async () => {
     // The contradiction this cycle found: a nonzero fixable deficit list next to a no-op button.
     // Silence here reads as a bug; the reason is the whole point.
@@ -142,7 +169,8 @@ describe('the plan explains what Run now would do', () => {
     // does not stop on the word "fixable" — which is exactly the reading the green 100 above it
     // already invites. An empty deficit list and a list of unfixable ones are different facts.
     const blocked = await mount({
-      deficits: [{ key: 'knowledge_missing_embeddings', count: 4, penalty: 2, reachable: false, blocked_by: BLOCKER }],
+      score: 85,
+      deficits: [{ key: 'knowledge_missing_embeddings', count: 30, penalty: 15, reachable: false, blocked_by: BLOCKER }],
     })
     expect(blocked.container.textContent).toContain('nothing measured above is fixable by maintenance')
 

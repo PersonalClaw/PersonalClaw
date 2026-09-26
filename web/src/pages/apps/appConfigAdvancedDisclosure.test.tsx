@@ -57,26 +57,34 @@ describe('app config advanced-field disclosure (#500 defect B)', () => {
   })
 
   it('falls back to the flat form when EVERY field is advanced, rather than hiding the whole surface', () => {
-    // Pin the escape to the shipped shape whose whole config surface depends on it: one optional,
-    // advanced-tagged STRING field. A fictional property here let the real manifest drift away
-    // from the branch without making the regression red.
-    const manifest = nativeManifest('native-tasks')
-    const props = manifest.provider.settingsSchema.properties
-    expect(Object.keys(props)).toEqual(['storage_dir'])
-    expect(props.storage_dir.type).toBe('string')
+    // No core manifest has this shape any more: native-tasks' lone advanced `storage_dir` was
+    // removed because nothing read it (the settings-B10 family). The shape still ships in the
+    // first-party apps repository, whose manifests this suite cannot read, so the fixture copies
+    // one verbatim: duckduckgo-search's whole config surface is one optional, advanced field.
+    const props: Record<string, SchemaProp> = {
+      timeout_secs: {
+        type: 'integer',
+        default: 20,
+        'x-meta': {
+          label: 'Request Timeout',
+          help: 'Maximum seconds to wait for a search response.',
+          tags: ['advanced'],
+        },
+      },
+    }
 
     render(
       <AppConfigFields
-        appName="native-tasks"
+        appName="duckduckgo-search"
         props={props}
         cur={{}}
         set={() => {}}
-        required={manifest.provider.settingsSchema.required ?? []}
+        required={[]}
       />,
     )
 
     expect(
-      document.getElementById('app-cfg-native-tasks-storage_dir'),
+      document.getElementById('app-cfg-duckduckgo-search-timeout_secs'),
       'an all-advanced schema still shows its fields',
     ).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Advanced/ }), 'nothing left to rank').toBeNull()

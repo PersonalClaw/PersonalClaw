@@ -18,9 +18,11 @@ The doctrine (§1.3), enforced as tests: a tier-3 capability failure degrades ON
 that capability's row. It never marks the gateway unhealthy and never justifies a
 restart — restart is justified only when the tier-2 cheap-RPC probe itself fails.
 
-This module owns the framework + the initial probe packs. It is read-only; the
-confirm-gated fixes (§2), simulators (§3), degraded contract (§5), and remediation
-engine (§4) land in later sessions.
+This module owns the framework and the probe packs, and every probe is read-only. A failed
+probe names its repair (``fix_id``, a confirm-gated fix in :mod:`~personalclaw.resilience.fixes`)
+or says plainly it has none (``remedy``). Failed capability checks are ALSO the remediation
+engine's input: :func:`failed_checks` is what `remediation.measure_deficits` reads, so the
+Maintenance health score cannot read 100 while this page shows a failure — one authority.
 """
 
 from __future__ import annotations
@@ -73,20 +75,26 @@ class ProbeResult:
 
     ``ok`` is the only pass/fail signal. ``detail`` is a one-line human summary;
     ``evidence`` carries structured specifics (counts, paths, states) for the
-    disclosure UI. ``fix_id`` names a confirm-gated fix (§2, later session) when a
-    remediation exists — ``None`` today for every probe (fixes are a later slice).
-    Both ``detail`` and string ``evidence`` values are redacted before return.
+    disclosure UI. ``fix_id`` names a registered confirm-gated fix
+    (:mod:`personalclaw.resilience.fixes`) when one repairs this failure. ``remedy`` is the
+    failure's other half when no fix does: one plain sentence saying there is no automatic fix
+    and what to do instead. The Doctor page promises "a failed probe's Fix"; a failure that has
+    none must say so rather than leave the row a dead end. Both ``detail`` and ``remedy`` (and
+    string ``evidence`` values) are redacted before return.
     """
 
     ok: bool
     detail: str = ""
     evidence: dict[str, Any] = field(default_factory=dict)
     fix_id: Optional[str] = None
+    remedy: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"ok": self.ok, "detail": self.detail, "evidence": self.evidence}
         if self.fix_id:
             d["fix_id"] = self.fix_id
+        if self.remedy:
+            d["remedy"] = self.remedy
         return d
 
 
@@ -149,6 +157,17 @@ def _mask(text: str) -> str:
         return str(text)
 
 
+#: The remedy for a check that could not run at all: its own exception, not a finding.
+_CHECK_CRASHED_REMEDY = (
+    "No automatic fix — the check itself failed to run, which is a defect in PersonalClaw rather "
+    "than a problem with your data. Re-run it; if it fails again, Settings → Diagnostics → Live "
+    "logs shows the error to report."
+)
+
+#: "Restart the gateway", for the core-tier failures: the one step that clears them.
+_RESTART_REMEDY = "No automatic fix — restart the gateway: `personalclaw restart`."
+
+
 async def _safe_run(probe: Probe, ctx: DoctorContext) -> ProbeResult:
     """Run one probe, converting ANY exception into an ``ok=False`` result.
 
@@ -163,10 +182,15 @@ async def _safe_run(probe: Probe, ctx: DoctorContext) -> ProbeResult:
             ok=False,
             detail=_mask(f"probe raised: {type(exc).__name__}: {exc}"),
             evidence={"error": _mask(str(exc))},
+            remedy=_CHECK_CRASHED_REMEDY,
         )
-    # Defensively mask the human-facing string even on the happy path.
+    # Defensively mask the human-facing strings even on the happy path.
     return ProbeResult(
-        ok=res.ok, detail=_mask(res.detail), evidence=res.evidence, fix_id=res.fix_id
+        ok=res.ok,
+        detail=_mask(res.detail),
+        evidence=res.evidence,
+        fix_id=res.fix_id,
+        remedy=_mask(res.remedy) if res.remedy else "",
     )
 
 
@@ -253,6 +277,27 @@ async def run_doctor(
     return report
 
 
+def failed_checks(ctx: Optional[DoctorContext] = None) -> list[dict[str, Any]]:
+    """Every FAILED capability (tier-3) check, as report rows — what the health score reads.
+
+    The remediation engine's `measure_deficits` is synchronous and runs on worker threads, the
+    CLI's main thread and in tests, so the probes run on a fresh event loop in a helper thread:
+    that works whether or not the calling thread already has a loop. Core tiers are not re-run —
+    in-process they report the process this is running in.
+    """
+    import concurrent.futures
+
+    probes = [p for p in all_probes() if p.tier == Tier.CAPABILITY]
+    ctx = ctx or DoctorContext()
+
+    async def _run() -> list[dict[str, Any]]:
+        results = await asyncio.gather(*(_safe_run(p, ctx) for p in probes))
+        return [_row(p, res) for p, res in zip(probes, results) if not res.ok]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, _run()).result()
+
+
 async def run_capability(capability: str, ctx: Optional[DoctorContext] = None) -> dict[str, Any]:
     """Run just one capability's probes (the ``GET /api/doctor/{capability}`` path).
 
@@ -302,6 +347,7 @@ async def _probe_gateway_socket(ctx: DoctorContext) -> ProbeResult:
         ok=listening,
         detail=f"port {port} {'listening' if listening else 'not connectable'}",
         evidence={"port": int(port)},
+        remedy="" if listening else _RESTART_REMEDY,
     )
 
 
@@ -314,63 +360,129 @@ async def _probe_status_snapshot(ctx: DoctorContext) -> ProbeResult:
     try:
         snap = state.status_snapshot()
     except Exception as exc:
-        return ProbeResult(ok=False, detail=_mask(f"status snapshot failed: {exc}"))
+        return ProbeResult(
+            ok=False, detail=_mask(f"status snapshot failed: {exc}"), remedy=_RESTART_REMEDY
+        )
     return ProbeResult(ok=True, detail="status snapshot ok", evidence={"keys": len(snap or {})})
 
 
 # ── Capability probe packs (tier 3) ──────────────────────────────────────────
 
 
-async def _probe_memory(ctx: DoctorContext) -> ProbeResult:
-    """memory — memory.db opens + WAL, and faiss index size matches embedded count.
+#: The Fix (and maintenance job) for a memory index that is missing embedded rows.
+MEMORY_INDEX_FIX = "memory.rebuild-faiss-index"
 
-    Read-only: opens a short-lived connection to ``memory.db`` and reads the
-    ``memory.ids.json`` faiss sidecar directly, replicating memory_stats()'s
-    consistency check without touching the live faiss handle (which would auto-wire
-    an embed_fn — a side effect a probe must not cause).
+
+def memory_index_gaps(home: Path) -> dict[str, Any]:
+    """Which embedded memories the faiss index semantic recall reads does NOT hold. Read-only.
+
+    "The index" is the one recall reads: in the gateway, the live store it registered
+    (`vector_memory.recall_store`), whose in-memory copy is what a turn searches; in a process
+    with none (the CLI) the persisted sidecar, which is what the next open loads after
+    reconciling it. Reading another store instance's copy, or the file while a live index has
+    moved on, would report on something recall does not use — in either direction. It never
+    touches a live handle beyond reading its id list, so no embed_fn is wired as a side effect.
+
+    Missing rows split two ways because their remedies differ: ``missing`` rows are at the width
+    the current model produces and a rebuild indexes them; ``other_model`` rows were embedded by
+    a different model and only a re-embed can make them searchable. A deleted row still in the
+    index is not counted — search skips it.
+
+    Shared by the ``memory.store`` probe and its Fix preview, so the row and the Fix cannot
+    disagree about what is broken.
     """
-    home = ctx.home
+    import json
+
+    from personalclaw import vector_memory as vm
+
     db_path = home / "memory.db"
-    ids_path = home / "memory.ids.json"
-
-    def _read() -> dict[str, Any]:
-        ev: dict[str, Any] = {"db_present": db_path.exists()}
-        if not db_path.exists():
-            return ev
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
-        try:
-            ev["journal_mode"] = str(conn.execute("PRAGMA journal_mode").fetchone()[0])
-            ev["integrity"] = str(conn.execute("PRAGMA integrity_check(1)").fetchone()[0])
-            row = conn.execute(
-                "SELECT COUNT(*) FROM episodic_memories "
-                "WHERE is_deleted=0 AND embedding IS NOT NULL"
-            ).fetchone()
-            ev["embedded_count"] = int(row[0]) if row else 0
-        finally:
-            conn.close()
-        if ids_path.exists():
-            import json
-
-            try:
-                ids = json.loads(ids_path.read_text(encoding="utf-8"))
-                ev["faiss_ids"] = len(ids) if isinstance(ids, list) else 0
-            except Exception:
-                ev["faiss_ids"] = None
-        else:
-            ev["faiss_ids"] = 0
+    ev: dict[str, Any] = {"db_present": db_path.exists(), "faiss_available": vm.faiss_available()}
+    if not db_path.exists():
         return ev
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+    try:
+        ev["journal_mode"] = str(conn.execute("PRAGMA journal_mode").fetchone()[0])
+        ev["integrity"] = str(conn.execute("PRAGMA integrity_check(1)").fetchone()[0])
+        rows = conn.execute(
+            "SELECT id, length(embedding) FROM episodic_memories "
+            "WHERE is_deleted=0 AND embedding IS NOT NULL ORDER BY created_at, id"
+        ).fetchall()
+    finally:
+        conn.close()
+    ev["embedded_count"] = len(rows)
+    live = vm.recall_store(db_path)
+    if live is not None:
+        indexed = set(live.index_state()["ids"])
+        ev["index_source"] = "live"
+    else:
+        ids_path = home / "memory.ids.json"
+        try:
+            ids = json.loads(ids_path.read_text(encoding="utf-8")) if ids_path.exists() else []
+        except (OSError, ValueError):
+            ids = []
+        indexed = set(ids) if isinstance(ids, list) else set()
+        ev["index_source"] = "file"
+    current = rows[-1][1] if rows else 0  # the newest row's byte width: the model bound now
+    ev["faiss_ids"] = sum(1 for r in rows if r[0] in indexed)
+    ev["missing"] = sum(1 for r in rows if r[1] == current and r[0] not in indexed)
+    ev["other_model"] = sum(1 for r in rows if r[1] != current)
+    ev["dim"] = current // 4
+    return ev
 
-    ev = await asyncio.to_thread(_read)
+
+async def _probe_memory(ctx: DoctorContext) -> ProbeResult:
+    """memory — memory.db opens + WAL, and the index recall reads holds every embedded row.
+
+    Read-only; the measurement is :func:`memory_index_gaps`. Without faiss there is no index to
+    hold anything — recall searches the SQLite vectors directly — so that is a note, not a desync.
+    """
+    ev = await asyncio.to_thread(memory_index_gaps, ctx.home)
     if not ev.get("db_present"):
         return ProbeResult(ok=True, detail="no memory.db yet (fresh install)", evidence=ev)
     if ev.get("integrity") not in (None, "ok"):
-        return ProbeResult(ok=False, detail="memory.db integrity check failed", evidence=ev)
-    embedded, faiss_ids = ev.get("embedded_count"), ev.get("faiss_ids")
-    if isinstance(embedded, int) and isinstance(faiss_ids, int) and embedded != faiss_ids:
         return ProbeResult(
             ok=False,
-            detail=f"faiss index desync: {faiss_ids} indexed vs {embedded} embedded rows",
+            detail="memory.db integrity check failed",
             evidence=ev,
+            remedy=(
+                "No automatic fix — restore memory.db from a snapshot under Settings → "
+                "Durability, or copy the file aside before anything writes to it again."
+            ),
+        )
+    if not ev.get("faiss_available"):
+        return ProbeResult(
+            ok=True,
+            detail="faiss is not installed — semantic recall searches the stored vectors directly",
+            evidence=ev,
+        )
+    embedded, missing, other = ev["embedded_count"], ev["missing"], ev["other_model"]
+    if missing:
+        return ProbeResult(
+            ok=False,
+            detail=f"faiss index desync: {ev['faiss_ids']} indexed vs {embedded} embedded rows",
+            evidence=ev,
+            fix_id=MEMORY_INDEX_FIX,
+        )
+    if other:
+        detail = (
+            f"{other} of {embedded} embedded memor{'y was' if other == 1 else 'ies were'} "
+            "embedded by a different model — semantic recall cannot search "
+            f"{'it' if other == 1 else 'them'}"
+        )
+        from personalclaw.providers.provider_bridge import can_resolve_use_case
+
+        if await asyncio.to_thread(can_resolve_use_case, "embedding"):
+            # The Fix re-embeds exactly these rows with the model bound now, then rebuilds.
+            return ProbeResult(ok=False, detail=detail, evidence=ev, fix_id=MEMORY_INDEX_FIX)
+        return ProbeResult(
+            ok=False,
+            detail=detail,
+            evidence=ev,
+            remedy=(
+                "No automatic fix while no embedding model is bound — nothing can re-embed them. "
+                "Bind one in Settings → Models: that re-embeds every memory. Keyword recall still "
+                "finds them meanwhile."
+            ),
         )
     return ProbeResult(ok=True, detail="memory.db healthy", evidence=ev)
 
@@ -410,6 +522,13 @@ async def _probe_channels(ctx: DoctorContext) -> ProbeResult:
             else f"{len(transports)} transport{'s' if len(transports) != 1 else ''} ok"
         ),
         evidence={"transports": transports},
+        remedy=(
+            "No automatic fix — check the connection and credentials of each channel this row's "
+            "details mark `error` under Settings → Providers → Channel providers, or disable one "
+            "you no longer use there."
+            if errored
+            else ""
+        ),
     )
 
 
@@ -488,6 +607,13 @@ async def _probe_local_models(ctx: DoctorContext) -> ProbeResult:
             "unavailable": unavailable,
             "phantom_bindings": sorted(phantom),
         },
+        remedy=(
+            "No automatic fix — each binding under `phantom_bindings` names a local model its "
+            "provider no longer lists (deleted or renamed). Bind that use case to a model that "
+            "exists in Settings → Models, or download the model again."
+            if phantom
+            else ""
+        ),
     )
 
 
@@ -548,6 +674,17 @@ async def _probe_apps(ctx: DoctorContext) -> ProbeResult:
             else f"{len(ev['backends'])} app backend{'s' if len(ev['backends']) != 1 else ''} ok"
         ),
         evidence=ev,
+        # An interrupted update's leftover is what the orphan prune reconciles (restore or drop,
+        # decided by the apps reconciler) — a working Fix for that half.
+        fix_id="serving-fs.orphan-prune" if ev["rollback_leftovers"] else None,
+        remedy=(
+            "No automatic fix for a backend that is down: the app watchdog already relaunches "
+            "one every 30 seconds, so a backend that stays down is failing to start — Settings → "
+            "Diagnostics → Live logs shows why. Disable the app under Settings → Apps to stop "
+            "the retries."
+            if dead
+            else ""
+        ),
     )
 
 
@@ -668,16 +805,22 @@ async def _probe_serving_fs(ctx: DoctorContext) -> ProbeResult:
     dist = ev.get("dist", {})
     problems = []
     fix_id: Optional[str] = None
+    remedy = ""
     if dist.get("kind") == "copy":
         problems.append("static/dist is a COPY shadowing the runtime symlink (serves a stale SPA)")
         fix_id = "serving-fs.symlink-repair"  # confirm-gated repair (§2)
     elif not dist.get("target_ok"):
         problems.append(f"static/dist {dist.get('kind')} — SPA not resolvable")
+        remedy = (
+            "No automatic fix — the dashboard's built files are missing. From a source checkout, "
+            "build them with `make web-build`; an installed copy needs reinstalling."
+        )
     if ev.get("dist_freshness", {}).get("state") == "stale":
         problems.append(
             "the built SPA is STALE — web/dist was built from different sources than the "
             "checked-out web/ (serves an old dashboard); rebuild with `make web-build`"
         )
+        remedy = remedy or "No automatic fix — rebuild the dashboard with `make web-build`."
     if ev.get("dead_locks") or ev.get("dead_pids"):
         fix_id = fix_id or "serving-fs.orphan-prune"
     return ProbeResult(
@@ -685,6 +828,7 @@ async def _probe_serving_fs(ctx: DoctorContext) -> ProbeResult:
         detail=("; ".join(problems) if problems else "serving/fs healthy"),
         evidence=ev,
         fix_id=fix_id,
+        remedy=remedy if problems else "",
     )
 
 
@@ -709,6 +853,13 @@ async def _probe_model_providers(ctx: DoctorContext) -> ProbeResult:
             else f"{len(providers)} provider{'s' if len(providers) != 1 else ''}, no open breakers"
         ),
         evidence={"providers": providers, "generated_from": health.get("generated_from", 0)},
+        remedy=(
+            "No automatic fix, and none is needed to re-close a breaker: after its recovery "
+            "window the next call goes through as a test, and a success closes it. If calls keep "
+            "failing, check that provider's key and status under Settings → Providers."
+            if open_breakers
+            else ""
+        ),
     )
 
 
@@ -733,6 +884,12 @@ async def _probe_crashes(ctx: DoctorContext) -> ProbeResult:
             f"{latest.get('exception_type')}"
         ),
         evidence={"crashes": recent},
+        remedy=(
+            "No automatic fix — these record failures that already happened, not a live one. "
+            "Each is a JSON file (named under `crashes` in the details) in "
+            f"{ctx.home / 'crashes'}: read them, report one that keeps recurring, then remove "
+            "them to clear this row."
+        ),
     )
 
 
@@ -819,7 +976,12 @@ async def _probe_memory_pipeline(ctx: DoctorContext) -> ProbeResult:
     try:
         ev = await asyncio.to_thread(_read)
     except Exception as exc:  # noqa: BLE001 — a probe must never raise
-        return ProbeResult(ok=False, detail=f"staging log unreadable: {exc}", evidence={})
+        return ProbeResult(
+            ok=False,
+            detail=f"staging log unreadable: {exc}",
+            evidence={},
+            remedy=_CHECK_CRASHED_REMEDY,
+        )
 
     if not ev.get("staging_log"):
         return ProbeResult(
@@ -839,7 +1001,15 @@ async def _probe_memory_pipeline(ctx: DoctorContext) -> ProbeResult:
     if ev["staging_backlog"] >= _MEMORY_BACKLOG_WARN:
         reasons.append(f"{ev['staging_backlog']} staged entries unconsumed (drain not running)")
     if reasons:
-        return ProbeResult(ok=False, detail="; ".join(reasons), evidence=ev)
+        return ProbeResult(
+            ok=False,
+            detail="; ".join(reasons),
+            evidence=ev,
+            remedy=(
+                "No automatic fix — this row's details count the week's passes by outcome, and "
+                "Settings → Diagnostics → Live logs has each flush error in full."
+            ),
+        )
     return ProbeResult(
         ok=True,
         detail=(
@@ -870,10 +1040,11 @@ async def _probe_state_inventory(ctx: DoctorContext) -> ProbeResult:
     fixture
     is testing the fixture.
 
-    So the Doctor runs it on the actual home. Read-only: `audit_home` only stats and globs. Reports
-    **degraded, not failed** — unclaimed state is a backup-coverage gap the user should see and act
-    on, not a reason to declare the install broken, and failing hard here would make an unrelated
-    new file look like an outage.
+    So the Doctor runs it on the actual home. Read-only: `audit_home` only stats and globs. A gap
+    FAILS this tier-3 check, which degrades the durability card and nothing else — unclaimed state
+    is a backup-coverage gap the user should see and act on, never a reason to call the install
+    broken. There is no automatic fix (claiming a path is a change to the manifest, which ships
+    with a release), so the row says that and what to do meanwhile.
     """
     home = ctx.home
 
@@ -895,7 +1066,12 @@ async def _probe_state_inventory(ctx: DoctorContext) -> ProbeResult:
     try:
         ev = await asyncio.to_thread(_read)
     except Exception as exc:  # noqa: BLE001 — a probe must never raise
-        return ProbeResult(ok=False, detail=f"inventory audit failed: {exc}", evidence={})
+        return ProbeResult(
+            ok=False,
+            detail=f"inventory audit failed: {exc}",
+            evidence={},
+            remedy=_CHECK_CRASHED_REMEDY,
+        )
 
     gaps = ev["unclaimed_count"] + ev["undeclared_db_count"]
     if not gaps:
@@ -910,6 +1086,12 @@ async def _probe_state_inventory(ctx: DoctorContext) -> ProbeResult:
             f"{'these are' if gaps != 1 else 'this is'} in NO snapshot"
         ),
         evidence=ev,
+        remedy=(
+            "No automatic fix — a snapshot leaves out any path the state manifest does not "
+            "claim, and claiming one ships with a release. The files are still on disk: copy the "
+            "paths listed in this row's details somewhere safe before you restore a snapshot, "
+            "and report them so the manifest claims them."
+        ),
     )
 
 
@@ -979,6 +1161,11 @@ async def _probe_remote_reachability(ctx: DoctorContext) -> ProbeResult:
                 "auth_off": True,
                 "guide": "docs/guides/remote-access.md",
             },
+            remedy=(
+                "No automatic fix — the gateway was started this way (PERSONALCLAW_BIND_HOST with "
+                "auth off). Restart it (`personalclaw restart`) without PERSONALCLAW_BIND_HOST, or "
+                "with auth on; docs/guides/remote-access.md covers both."
+            ),
         )
 
     # ── The bypass-behind-a-proxy hazard (RUA-5) ──
@@ -1033,6 +1220,11 @@ async def _probe_remote_reachability(ctx: DoctorContext) -> ProbeResult:
                     "public_url_declared": has_public_url,
                     "guide": "docs/guides/remote-access.md",
                 },
+                remedy=(
+                    "No automatic fix — restart the gateway (`personalclaw restart`) without "
+                    "PERSONALCLAW_BYPASS_LOCAL_NETWORKS, or clear trusted_proxies and public_url "
+                    "from its config (docs/guides/remote-access.md)."
+                ),
             )
 
     if tnet:
@@ -1110,7 +1302,12 @@ async def _probe_knowledge_vector_index(ctx: DoctorContext) -> ProbeResult:
     try:
         ev = await asyncio.to_thread(_read)
     except Exception as exc:  # noqa: BLE001 — a probe must never raise
-        return ProbeResult(ok=False, detail=f"vector index probe failed: {exc}", evidence={})
+        return ProbeResult(
+            ok=False,
+            detail=f"vector index probe failed: {exc}",
+            evidence={},
+            remedy=_CHECK_CRASHED_REMEDY,
+        )
 
     if not ev.get("extension_available"):
         ev["degraded"] = True
@@ -1176,6 +1373,13 @@ async def _probe_baseline_denylist(_ctx: DoctorContext) -> ProbeResult:
             "patterns": report["count"],
             "file_verified": ok,
         },
+        remedy=(
+            ""
+            if ok
+            else "No automatic fix — the denylist file on disk no longer matches the one that "
+            "shipped (an edit, or a damaged install). The verified patterns stay enforced, so "
+            "nothing is weaker; reinstall PersonalClaw to restore the file."
+        ),
     )
 
 
@@ -1221,7 +1425,16 @@ async def _probe_credential_backend(_ctx: DoctorContext) -> ProbeResult:
     }
 
     if warning:
-        return ProbeResult(ok=False, detail=warning, evidence=evidence)
+        return ProbeResult(
+            ok=False,
+            detail=warning,
+            evidence=evidence,
+            remedy=(
+                "No automatic fix — make an OS keyring available to this process, or stop "
+                'asking for one: turn off "Store credentials in the OS keychain" under '
+                "Settings → Security, and unset PERSONALCLAW_CREDENTIAL_BACKEND if it is set."
+            ),
+        )
 
     if state.backend == "keychain":
         return ProbeResult(
@@ -1253,6 +1466,10 @@ async def _probe_credential_backend(_ctx: DoctorContext) -> ProbeResult:
                 "it is repaired to 0600 on the next credential read"
             ),
             evidence=evidence,
+            remedy=(
+                "No automatic fix is needed: the next credential read sets it back to 0600. "
+                f"To close it now, run `chmod 600 {state.env_path}`."
+            ),
         )
     return ProbeResult(
         ok=True,
@@ -1375,7 +1592,10 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
         ev = await asyncio.to_thread(_read)
     except Exception as exc:  # noqa: BLE001 — a probe must never raise
         return ProbeResult(
-            ok=False, detail=f"knowledge searchability probe failed: {exc}", evidence={}
+            ok=False,
+            detail=f"knowledge searchability probe failed: {exc}",
+            evidence={},
+            remedy=_CHECK_CRASHED_REMEDY,
         )
 
     if not ev.get("db_present") or not ev.get("items_table"):
@@ -1384,18 +1604,22 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
         return ProbeResult(
             ok=True, detail="every ingested item is fully reachable by search", evidence=ev
         )
-    ev["remedy"] = (
-        "Each row under `items` is in your library and missing from part of search; its "
-        "reason names which part. `no_embedding_provider`/`not_indexed`: keyword search "
-        "already finds the item, so bind an embedding model (Settings → Models) and re-index "
-        "to add semantic search. `no_extractable_text`: the file is a scan, so add a text "
-        "version or bind an OCR/vision model, then re-ingest the item. `stale_index`: the item "
-        "is fine and its vectors are not — they came from a different embedding model, so run "
-        "the embedding re-index; nothing needs re-ingesting. Rows under `unlisted_items` are "
-        "search copies the library does not list (an artifact's mirror, a report's finding) "
-        "and take the same fix."
+    return ProbeResult(
+        ok=False,
+        detail="; ".join(ev["summaries"]),
+        evidence=ev,
+        remedy=(
+            "Each row under `items` is in your library and missing from part of search; its "
+            "reason names which part. `no_embedding_provider`/`not_indexed`: keyword search "
+            "already finds the item, so bind an embedding model (Settings → Models) and re-index "
+            "to add semantic search. `no_extractable_text`: the file is a scan, so add a text "
+            "version or bind an OCR/vision model, then re-ingest the item. `stale_index`: the "
+            "item is fine and its vectors are not — they came from a different embedding model, "
+            "so run the embedding re-index; nothing needs re-ingesting. Rows under "
+            "`unlisted_items` are search copies the library does not list (an artifact's mirror, "
+            "a report's finding) and take the same fix."
+        ),
     )
-    return ProbeResult(ok=False, detail="; ".join(ev["summaries"]), evidence=ev)
 
 
 async def _probe_knowledge_vault(ctx: DoctorContext) -> ProbeResult:
@@ -1459,7 +1683,12 @@ async def _probe_knowledge_vault(ctx: DoctorContext) -> ProbeResult:
     try:
         ev = await asyncio.to_thread(_read)
     except Exception as exc:  # noqa: BLE001 — a probe must never raise
-        return ProbeResult(ok=False, detail=f"knowledge vault probe failed: {exc}", evidence={})
+        return ProbeResult(
+            ok=False,
+            detail=f"knowledge vault probe failed: {exc}",
+            evidence={},
+            remedy=_CHECK_CRASHED_REMEDY,
+        )
 
     waiting = int(ev.get("conflicts") or 0) + int(ev.get("owner_deleted") or 0)
     if not ev.get("db_present") or not ev.get("projected"):
@@ -1588,6 +1817,11 @@ async def _probe_sandbox_cgroup_scopes(ctx: DoctorContext) -> ProbeResult:
                 "it back to 0 so the config stops promising a bound nothing applies."
             ),
             evidence=evidence,
+            remedy=(
+                "No automatic fix — this host cannot apply the ceiling, so set it back to 0 ("
+                + ", ".join(f"`personalclaw config set sandbox.{name} 0`" for name in requested)
+                + ") or run the gateway on Linux with a systemd user session."
+            ),
         )
     return ProbeResult(
         ok=True,
@@ -1622,7 +1856,15 @@ async def _probe_timezone(_ctx: DoctorContext) -> ProbeResult:
     facts = await asyncio.to_thread(zone_report)
     evidence = {k: v for k, v in facts.items() if k != "warning"}
     if facts["warning"]:
-        return ProbeResult(ok=False, detail=facts["warning"], evidence=evidence)
+        return ProbeResult(
+            ok=False,
+            detail=facts["warning"],
+            evidence=evidence,
+            remedy=(
+                "No automatic fix — set the zone your schedules should use with "
+                "`personalclaw setup`."
+            ),
+        )
     return ProbeResult(
         ok=True,
         detail=(

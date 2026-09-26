@@ -133,7 +133,7 @@ Behavior toggles live in Settings → Memory; tuning constants are backend-only.
 
 | Key | Type | Default | Where to set | Description |
 |---|---|---|---|---|
-| `memory.semantic_confidence_threshold` | number | `0.8` | backend-only | Minimum similarity for a semantic-memory hit to be injected. |
+| `memory.semantic_confidence_threshold` | number | `0.8` | Settings → Memory | Confidence (0-1) an automatically learned semantic fact needs before memory keeps it; facts you add yourself are always kept. Read live — a change applies on the next write. |
 | `memory.episodic_dedup_threshold` | number | `0.88` | backend-only | Cosine similarity above which a new episodic record is treated as a duplicate and skipped. |
 | `memory.episodic_max_results` | integer | `8` | backend-only | Episodic records recalled per query. |
 | `memory.episodic_max_count` | integer | `10000` | backend-only | Episodic store size cap; oldest records are pruned past it. |

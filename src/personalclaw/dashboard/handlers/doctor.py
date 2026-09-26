@@ -53,13 +53,27 @@ def _resilience_cfg():
     return AppConfig.load().resilience
 
 
+def _invalidate_doctor_cache() -> None:
+    """Drop the cached report. Called after anything that changes what a probe would find — a
+    Fix, a maintenance run — so the next read re-probes instead of serving the pre-repair
+    verdict for up to 30s, which is how a Fix that worked read as a Fix that did nothing."""
+    global _doctor_cache
+    _doctor_cache = None
+
+
 async def api_doctor(request: web.Request) -> web.Response:
-    """GET /api/doctor — all probes, grouped by capability, cached 30s."""
+    """GET /api/doctor — all probes, grouped by capability, cached 30s.
+
+    ``?fresh=1`` re-probes regardless: the cache exists so a dashboard poll cannot turn the probe
+    suite into a load source, and the page's own Re-run is not a poll — serving it a 30s-old
+    report made the button a no-op.
+    """
     if not _resilience_cfg().doctor_enabled:
         return json_error("doctor_disabled", status=404)
     global _doctor_cache, _doctor_cache_ts
     now = time.monotonic()
-    if _doctor_cache is not None and now - _doctor_cache_ts < _DOCTOR_TTL:
+    fresh = request.query.get("fresh") in ("1", "true")
+    if not fresh and _doctor_cache is not None and now - _doctor_cache_ts < _DOCTOR_TTL:
         return web.json_response(_doctor_cache)
     report = await run_doctor(_ctx(request))
     _doctor_cache = report
@@ -160,6 +174,7 @@ async def api_doctor_fix_apply(request: web.Request) -> web.Response:
     if _fixes.get_fix(fix_id) is None:
         return json_error("unknown_fix", message=f"No such fix: {fix_id}.", status=404)
     result = await asyncio.to_thread(_fixes.apply_fix, fix_id)
+    _invalidate_doctor_cache()
     return web.json_response(result)
 
 
@@ -652,6 +667,7 @@ def remediation_snapshot() -> dict:
         max_cost_usd=cfg.max_cost_usd,
         now=_t.time(),
         dry_run=True,
+        deficits=deficits,
     )
     return {
         "score": _rem.health_score(deficits),
@@ -659,12 +675,14 @@ def remediation_snapshot() -> dict:
         "deficits": [
             {
                 "key": d.key,
+                # The label when the key is not one: a failed Doctor check's probe title.
+                "title": d.title,
                 "count": d.count,
                 "penalty": round(d.penalty, 1),
                 "reachable": d.reachable,
-                # WHY an unreachable deficit is at its floor. Computed where `reachable` is
-                # and dropped here until now, which left every surface with nothing to say
-                # past "not fixable yet". See `Deficit.blocked_by`.
+                # WHY the engine cannot clear an unreachable deficit. Computed where `reachable`
+                # is, and once dropped here, which left every surface with nothing to say past
+                # "not fixable yet". See `Deficit.blocked_by`.
                 "blocked_by": d.blocked_by,
             }
             for d in deficits
@@ -721,7 +739,9 @@ async def api_doctor_remediation_run(request: web.Request) -> web.Response:
             "stopped_reason": result.stopped_reason,
         }
 
-    return web.json_response(await asyncio.to_thread(_run))
+    body = await asyncio.to_thread(_run)
+    _invalidate_doctor_cache()
+    return web.json_response(body)
 
 
 # ── Crash artifact detail (§6.5) ──────────────────────────────────────────────

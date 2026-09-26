@@ -843,6 +843,10 @@ async def _resolve_doctor_finding(entity_id: str, state) -> InvestigateContext |
                     lines.append(f"    preview: {fix.dry_preview()}")
             except Exception:  # noqa: BLE001
                 logger.debug("fix preview failed for %s", fix_id, exc_info=True)
+        elif r.get("remedy"):
+            # The probe's own "no automatic fix — do this instead", so the chat starts from the
+            # same next step the Doctor row shows rather than inventing one.
+            lines.append(f"  no automatic fix: {r['remedy']}")
     healthy = all(r.get("ok") for r in picked)
     return InvestigateContext(
         kind="doctor_finding",

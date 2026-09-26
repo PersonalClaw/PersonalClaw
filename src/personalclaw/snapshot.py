@@ -127,8 +127,6 @@ CORE_FILES: dict[str, tuple[str, ...]] = {
         # (MODEL-ROUTING-TELEMETRY §7): it holds DECISIONS — the per-use-case routing mode,
         # the pin, and any manual reorder. Losing it is not catastrophic (routing falls back
         # to off/heuristic) but it is a choice the user made by hand, so it travels.
-        # `routing_stats.json` deliberately does NOT: it is a derived fold, rebuildable from
-        # `model_calls.jsonl`, so backing it up would only duplicate recoverable data.
         "routing_policy.json",
     ),
     "notifications": ("notifications.jsonl",),
@@ -1773,6 +1771,7 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
             ("hooks.json", "hooks", "id"),
             ("inbox.json", "items", "id"),
             ("tags.json", None, "id"),
+            ("tag_boards.json", None, "id"),
         ):
             n = _merge_json_collection(snap / rel, pc / rel, wrapper=wrapper, key=key)
             if n:

@@ -1097,11 +1097,8 @@ INVENTORY: tuple[StateEntry, ...] = (
     # ── #2217: the stores the static census pinned as debt, each decided at its own
     # call site. Fifteen of the twenty-one were determinate — the write shape names the
     # `kind`, and an already-declared store with the SAME shape names the `merge`, so
-    # none of these is a guess. The four still pinned in the census
-    # (`incident.json`, `browse_kill.json`, `push_subscriptions.json`,
-    # `push_relay_tokens.json`) are the ones whose call site genuinely does NOT decide:
-    # each carries "a human stopped this" or "this one physical device", and whether a
-    # RESTORE should re-plant that is a product decision, not a shape reading.
+    # none of these is a guess. The ones left pinned then — the two kill switches, the two
+    # push stores and the digest queue — are decided in the block that closes this manifest.
     StateEntry(
         id="app_messages",
         kind=KIND_JSON_ENTITY_DIR,
@@ -1253,6 +1250,259 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_PLATFORM,
         merge=MERGE_UNION_BY_ID,
         help="user-authored surface overlay files",
+    ),
+    # ── the stores a week of normal use found in NO snapshot (settings B17, day 8) ──
+    # After a power user's week `audit_home()` named the rotated audit log, `incident.json`,
+    # `routing_stats.json`, `trigger-idle/` and `capture/` as unclaimed — and the census that
+    # was meant to catch a new store before it shipped could not see four of them: each was
+    # spelled a way its regexes did not know (`Path(config_dir()) / …`, a home on the fallback
+    # branch of `x if base_dir else config_dir()`, a home passed as a parameter into another
+    # module, a directory the SEL resolves itself). The census now reads the syntax tree and
+    # found these; every one is decided here, beside its reason, and none is left pinned. (The
+    # fifth, the audit log's rotated files, is `security_events_archive` above.)
+    #
+    # AUTONOMY-GUARDRAILS §1.3's incident switch and BA-5's browse switch: `{active, reason,
+    # started_at}`, set by a human to stop unattended work. Captured, because the other answer
+    # is the destructive one: a restore that dropped `active: true` would silently resume every
+    # cron, hook and trigger a human had deliberately stopped. A restored stop is visible — the
+    # incident banner on every page, the browse mirror's stop state — with its release one click
+    # away, which is the fail-closed direction this codebase takes for every safety control.
+    # `replace_only`: the sync cycle skips it, so stopping one machine never stops another.
+    StateEntry(
+        id="incident",
+        kind=KIND_JSON_FILE,
+        path="incident.json",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        help="incident mode: a human-set stop on all unattended work",
+    ),
+    StateEntry(
+        id="browse_kill",
+        kind=KIND_JSON_FILE,
+        path="browse_kill.json",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        help="the browse kill switch: a human-set stop on unattended browsing",
+    ),
+    # The operator's trust root: the governance ceiling (`guardrails/ceiling.py`) and the
+    # computer-use keystone (`computer_use/enable_state.py`). An operator writes these by hand
+    # and the agent cannot. A restore that lost `ceiling.json` would be a silent privilege
+    # escalation — an absent ceiling reads as OPEN_CEILING, so every unattended action would
+    # run wider than the operator declared — which is the one outcome the ceiling's own loader
+    # refuses to fall back to for an unreadable file.
+    StateEntry(
+        id="governance",
+        kind=KIND_TREE,
+        path="governance",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        help="the operator's governance ceiling and computer-use keystone",
+    ),
+    # The fold behind Settings → Routing & Efficiency and the learned policy's sample counts.
+    # NOT derived, although `personalclaw doctor --rebuild-routing-stats` refolds it: the
+    # rebuild reads `model_calls.jsonl`, which is capped and rotated, so it recovers the
+    # retained tail and not the history — and nothing refolds on read, so a restore without it
+    # left the view blank and the learned policy below its sample floor.
+    StateEntry(
+        id="routing_stats",
+        kind=KIND_JSON_FILE,
+        path="routing_stats.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_REPLACE_ONLY,
+        help="per-route call outcomes behind routing telemetry and the learned policy",
+    ),
+    # The three routing decisions the user makes by hand (MODEL-ROUTING-TELEMETRY): the policy
+    # table (mode, pin, order — `CORE_FILES["config"]` already staged it, and nothing claimed
+    # it), the proposal queue with its rejection ledger (a rejection is what stops the same
+    # finding re-nagging), and the price overlay a user writes when a rate drifts.
+    StateEntry(
+        id="routing_policy",
+        kind=KIND_JSON_FILE,
+        path="routing_policy.json",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        help="per-use-case routing mode, pin and manual order",
+    ),
+    StateEntry(
+        id="routing_proposals",
+        kind=KIND_JSON_FILE,
+        path="routing_proposals.json",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        help="pending routing proposals and the ones you rejected",
+    ),
+    StateEntry(
+        id="model_rates",
+        kind=KIND_JSON_FILE,
+        path="model_rates.json",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        help="your corrections to model prices",
+    ),
+    # EXTERNAL-ACCESS §7.2's capture sessions: external coding agents' turns, screened for
+    # credentials and fenced AT INGESTION (`inbound/capture_store.py`), which the learning
+    # passes mine. User state in the same sense as `sessions`, and exported like it: the bytes
+    # on disk carry no credential by construction.
+    StateEntry(
+        id="capture_sessions",
+        kind=KIND_TREE,
+        path="capture",
+        domain=DOMAIN_WORK,
+        merge=MERGE_UNION_BY_ID,
+        help="captured sessions from your external coding agents (credentials redacted)",
+    ),
+    # The idle trigger's sidecar (`triggers/idle_poll.py`): `cycle_count` is what enforces a
+    # trigger's `max_cycles`, and the legacy `autonudge.json` loops were migrated INTO these
+    # files — so a restore without them resets every bounded nudge loop to a fresh budget.
+    # `replace_only`: counters of runs on THIS machine, which the sync cycle must not merge.
+    # Its three sibling sidecars are in IGNORED, for a reason that does not hold here.
+    StateEntry(
+        id="trigger_idle",
+        kind=KIND_TREE,
+        path="trigger-idle",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_REPLACE_ONLY,
+        help="idle-trigger cycle counts (what enforces max_cycles)",
+    ),
+    # User-authored agent overrides beside the bundled agent (`agent.py`): the system-prompt
+    # override, the `agent.json` field overrides, and the hook scripts directory.
+    StateEntry(
+        id="agent_prompt_override",
+        kind=KIND_TREE,
+        path="prompt.md",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_REPLACE_ONLY,
+        help="your override of the agent's system prompt",
+    ),
+    StateEntry(
+        id="agent_overrides",
+        kind=KIND_JSON_FILE,
+        path="agent.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_REPLACE_ONLY,
+        help="your overrides of the agent's settings",
+    ),
+    StateEntry(
+        id="agent_hooks",
+        kind=KIND_TREE,
+        path="hooks",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_UNION_BY_ID,
+        help="your agent hook scripts",
+    ),
+    # KL-20's knowledge projection, the direct twin of `memory_vault`: NOT derived for the same
+    # reason — in `two_way` mode a page may hold an edit the owner made and the sync has not
+    # read back, which exists nowhere else. The path is the DEFAULT `knowledge.vault_path`.
+    StateEntry(
+        id="knowledge_vault",
+        kind=KIND_TREE,
+        path="knowledge-vault",
+        domain=DOMAIN_KNOWLEDGE,
+        merge=MERGE_REPLACE_ONLY,
+        help="readable markdown vault of your knowledge (may hold unsynced edits)",
+    ),
+    # Notifications a rule routes to the morning digest are written HERE and nowhere else
+    # (`DashboardState.notify` returns before the history append), so until the digest runs this
+    # file is the only copy of them. `replace_only` is the answer to the question the census
+    # pin left open — whether a restore should resume a drained queue: never by union. The
+    # drain is read-then-truncate, so an `append_dedup` merge would re-queue notes the live
+    # home already digested; `replace_only` restores the queue into a home that has none and
+    # leaves an existing one alone.
+    StateEntry(
+        id="digest_queue",
+        kind=KIND_JSONL_APPEND,
+        path="digest_queue.jsonl",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_REPLACE_ONLY,
+        help="notifications waiting for the next digest",
+    ),
+    # Kanban columns over tags (`DashboardState.save_tag_boards`): a bare list of `id` rows,
+    # the same shape as its `tags.json` neighbour, so the same merge and the same executor.
+    StateEntry(
+        id="tag_boards",
+        kind=KIND_JSON_FILE,
+        path="tag_boards.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_LWW,
+        help="tag board columns",
+    ),
+    # Per-project dismissals of surfaced packs: a dismissal is a decision, and losing it
+    # re-proposes everything the user already said no to.
+    StateEntry(
+        id="surfacing_dismissals",
+        kind=KIND_TREE,
+        path="surfacing",
+        domain=DOMAIN_WORK,
+        merge=MERGE_UNION_BY_ID,
+        help="packs you dismissed, per project",
+    ),
+    # The scratchpad scan's per-line decisions, keyed by content hash. Without them a restored
+    # home re-surfaces every line the scan already turned into a task or dismissed.
+    StateEntry(
+        id="planning_scratchpad_seen",
+        kind=KIND_TREE,
+        path="planning",
+        domain=DOMAIN_WORK,
+        merge=MERGE_REPLACE_ONLY,
+        help="what the scratchpad scan has already decided, per line",
+    ),
+    # The connector catalog is seeded from a bundled set and then extended by the user, and an
+    # existing file is never re-seeded — so the extensions exist only here.
+    StateEntry(
+        id="connector_catalog",
+        kind=KIND_JSON_FILE,
+        path="connector_catalog.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_REPLACE_ONLY,
+        help="the connector catalog packs resolve against, with your additions",
+    ),
+    # The monthly usage recap's idempotency mark, the same kind of bookkeeping as
+    # `durability_state.json`: without it a restore in the first week of a month sends the
+    # recap again.
+    StateEntry(
+        id="usage_recap_sent",
+        kind=KIND_JSON_FILE,
+        path="usage_recap_sent.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_REPLACE_ONLY,
+        help="which monthly usage recaps were already sent",
+    ),
+    # The pre-vector-memory lessons file, read once by `migrate_from_markdown` and never
+    # deleted. Declared for the window `legacy_mcp_settings` names: a home that has not run the
+    # migration holds its lessons ONLY here, and the backup the release notes ask for must not
+    # drop them.
+    StateEntry(
+        id="legacy_lessons",
+        kind=KIND_JSONL_APPEND,
+        path="lessons.jsonl",
+        domain=DOMAIN_MEMORY,
+        merge=MERGE_REPLACE_ONLY,
+        help="legacy lessons file (migrated into memory on first run)",
+    ),
+    # Deliberately EXCLUDED, like `credentials.json`: a web-push subscription (its endpoint plus
+    # the `auth` secret) and a relay device token are each a capability to deliver to one
+    # device, and a snapshot is a file that gets copied off the machine. They are also bound to
+    # the VAPID keypair in the credential store, which no snapshot carries, so a restored copy
+    # on a wiped machine could not send anyway. The device re-subscribes when it next connects.
+    StateEntry(
+        id="push_subscriptions",
+        kind=KIND_JSON_FILE,
+        path="push_subscriptions.json",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        secret=True,
+        credential=True,
+        help="web-push subscriptions for your devices (re-created when a device reconnects)",
+    ),
+    StateEntry(
+        id="push_relay_tokens",
+        kind=KIND_JSON_FILE,
+        path="push_relay_tokens.json",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        secret=True,
+        credential=True,
+        help="native push relay device tokens (re-registered when a device reconnects)",
     ),
 )
 
@@ -1435,9 +1685,35 @@ IGNORED: tuple[str, ...] = (
     # .terminalize_orphans` consumes `orphaned_ids` at boot to clear exactly these, so a restore
     # that re-plants them manufactures work for the reaper in the best case. Nothing is lost:
     # high-churn sidecar state whose whole meaning is "a process on THIS machine holds this
-    # trigger", the same posture as `locks` and `*.lock` above and the same convention as
-    # `trigger-watch/` and `task_leases/`.
+    # trigger", the same posture as `locks` and `*.lock` above.
     "trigger-claims",
+    # The task lease sidecars (`workflows/pool.py`): the claim-store argument above, for tasks.
+    # A lease names the worker renewing it once a minute, and a restored one would show a task as
+    # claimed by a worker that does not exist until it expired. The module's own contract is that
+    # a sidecar "can be deleted to force-release without touching user data".
+    "task_leases",
+    # The trigger dispatch spool and its retry hold (`triggers/dispatch.py`): fires parked for
+    # seconds until a loop drains them. `dispatch.py` already recorded this decision in prose —
+    # "high-churn runtime bookkeeping that is meaningless once restored" — and a restored spool
+    # would re-deliver fires the pre-restore home already delivered. The row makes the audit
+    # honour the decision the code made.
+    "trigger-spool.jsonl",
+    "trigger-spool-hold.json",
+    # The poll cursors of the file, web and view triggers (`file_poll`, `web_poll`,
+    # `pull_on_view`). Each module treats a MISSING state as a quiet re-seed — a watch's first
+    # look records what it sees and fires nothing, a view binding refreshes on its next render —
+    # so a restore without them costs nothing, while a restored stale file or web cursor re-fires
+    # every change the pre-restore home already acted on. That is what separates them from
+    # `trigger-idle/`, which IS declared: its `cycle_count` enforces a `max_cycles` budget, and a
+    # re-seed there would hand every bounded loop a fresh one.
+    "trigger-watch",
+    "trigger-web-watch",
+    "trigger-view",
+    # A store migrated in place is renamed `<name>.migrated` (`triggers/nudge.py` does this to
+    # `autonudge.json` once its loops are rows in `triggers.json` plus `trigger-idle/` sidecars,
+    # both declared). What remains is a pre-migration copy of state that now lives elsewhere —
+    # the same category as `*.bak`.
+    "*.migrated",
 )
 
 

@@ -401,11 +401,15 @@ async def api_sel_rotate(request: web.Request) -> web.Response:
 
     Recovers from a broken HMAC chain. The previous log file moves into ``sel_archive/``
     under a UTC timestamp (where retention and snapshots cover it) unless
-    ``{"archive": false}`` is sent.
+    ``{"archive": false}`` is sent. An archive that could not be written leaves the log where
+    it was and answers ``sel_archive_failed``: a 200 there rendered as "a fresh chain has
+    started" when nothing had changed.
     """
     body = await json_object_body(request)
     archive = body.get("archive") is not False
     result = _sel().rotate(archive=archive)
+    if not result.get("rotated"):
+        return json_error("sel_archive_failed", status=500)
     return web.json_response(result)
 
 
@@ -1300,6 +1304,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # reads them per turn, so a change takes effect on the next message with no restart.
     "memory.push_context": {"type": "bool"},
     "memory.push_min_confidence": {"type": "float", "min": 0.0, "max": 1.0},
+    # The confidence a LEARNED semantic fact needs before memory keeps it (settings B10). Its
+    # only control used to be a field on the Vector Memory app that nothing read; this is the
+    # value the store actually applies, read live, so a change takes effect on the next write.
+    "memory.semantic_confidence_threshold": {"type": "float", "min": 0.0, "max": 1.0},
     # MEMORY-GRAPH-AND-VAULT §2.4 / §4.2 — the topology block and the holder axis. Both
     # runtime-editable: the block is read per new session and the axis per write, so a
     # change takes effect without a restart. Turning the axis OFF stops NEW attribution

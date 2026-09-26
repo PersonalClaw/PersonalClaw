@@ -949,8 +949,8 @@ def _build_consolidator() -> tuple["SessionManager", HistoryConsolidator, Conver
         get_active_embedding_dim,
     )
 
+    # confidence_threshold is read live by the store (`memory.semantic_confidence_threshold`).
     vector_memory = VectorMemoryStore(
-        confidence_threshold=cfg.memory.semantic_confidence_threshold,
         extra_prefixes=cfg.memory.semantic_keys or None,
         dedup_threshold=cfg.memory.episodic_dedup_threshold,
         episodic_max=cfg.memory.episodic_max_count,
@@ -962,6 +962,7 @@ def _build_consolidator() -> tuple["SessionManager", HistoryConsolidator, Conver
     if embed_fn:
         vector_memory.embed_fn = embed_fn
     memory.vector_store = vector_memory
+    vector_memory.serve_recall()
 
     conv_log = ConversationLog()
     conv_log.init()

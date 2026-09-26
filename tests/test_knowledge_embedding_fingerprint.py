@@ -545,7 +545,7 @@ def test_the_doctor_row_names_the_items_whose_passages_are_on_the_old_model(tmp_
     assert ev["active_embedding_model"] == "native:bge-small-en"
     assert ev["by_reason"] == {STALE_INDEX: 1}
     assert [row["item_id"] for row in ev["items"]] == [item_id]
-    assert "run the embedding re-index" in ev["remedy"]
+    assert "run the embedding re-index" in result.remedy
 
     # Its own negative case: under the model that wrote them, the row is clean.
     _bind(monkeypatch, MODEL_A)

@@ -843,8 +843,10 @@ class GatewayOrchestrator:
         # Vector memory (structured semantic store)
         from personalclaw.vector_memory import VectorMemoryStore
 
+        # confidence_threshold is deliberately NOT pinned either: the store reads
+        # `memory.semantic_confidence_threshold` live, so Settings → Memory applies it on the
+        # next write and every store instance applies the same value.
         self.vector_memory = VectorMemoryStore(
-            confidence_threshold=self._cfg.memory.semantic_confidence_threshold,
             extra_prefixes=self._cfg.memory.semantic_keys or None,
             dedup_threshold=self._cfg.memory.episodic_dedup_threshold,
             episodic_max=self._cfg.memory.episodic_max_count,
@@ -854,6 +856,7 @@ class GatewayOrchestrator:
         # `memory.graph_enabled` live so the Settings toggle works without a restart.
         self.vector_memory.init()
         memory.vector_store = self.vector_memory
+        self.vector_memory.serve_recall()
 
         skills = SkillsLoader()
         hooks = HookManager(HooksConfig.from_dict(self._cfg.hooks))

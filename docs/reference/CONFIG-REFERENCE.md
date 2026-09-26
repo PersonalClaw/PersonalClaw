@@ -40,7 +40,7 @@ are in Settings → Memory. These are the tuning constants under them:
 
 | Key | Default | What it does |
 |---|---|---|
-| `memory.semantic_confidence_threshold` | `0.8` | Minimum similarity for a semantic-memory hit to be injected. |
+| `memory.semantic_confidence_threshold` | `0.8` | Confidence (0-1) an automatically learned semantic fact needs before memory keeps it; facts you add yourself are always kept. Settings → Memory → Learned-fact confidence. |
 | `memory.episodic_dedup_threshold` | `0.88` | Cosine similarity above which a new episodic record is treated as a duplicate and skipped. |
 | `memory.episodic_max_results` | `8` | Episodic records recalled per query. |
 | `memory.episodic_max_count` | `10000` | Episodic store size cap; oldest records are pruned past it. |
