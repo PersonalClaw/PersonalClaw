@@ -629,10 +629,19 @@ def sync_entries_from_config() -> int:
                 name,
             )
         # LOGICAL options: a secret field on disk is a `{{secret:…}}` reference into the
-        # credential store, and the provider factory reads the value, not the pointer.
+        # credential store, and the provider factory reads the value, not the pointer — the
+        # value of a key this record's owner holds, and no other (`secret_refs.resolve`).
+        from personalclaw.config.secret_refs import (
+            ForeignSecretReference,
+            provider_owner,
+        )
         from personalclaw.config.secret_refs import resolve as _resolve_secrets
 
-        options = _resolve_secrets(p.get("options") or {})
+        try:
+            options = _resolve_secrets(p.get("options") or {}, owner=provider_owner(name))
+        except ForeignSecretReference as exc:
+            logger.warning("sync_entries_from_config: provider %r not registered: %s", name, exc)
+            continue
         if ptype != registry_type:
             options["_original_type"] = ptype
         try:

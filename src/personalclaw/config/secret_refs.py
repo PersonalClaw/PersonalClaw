@@ -34,9 +34,20 @@ still catches the field when it is not (a provider type whose app has not loaded
 **Ownership.** The store key encodes its owner — ``PCSECRET_PROVIDER_…``, ``PCSECRET_APP_…``,
 ``PCSECRET_INSTANCE_…``, ``PCSECRET_MCP_…``, ``PCSECRET_CONFIG_…`` — deterministically, so
 re-saving a record re-uses its key and deleting
-the record (or uninstalling the app) removes exactly what it owned, by prefix. A reference to a
-key the record does NOT own (``{{secret:MY_VAULT_KEY}}``, typed by hand to share a Secrets-panel
-credential) is resolved like any other but never deleted: it belongs to the vault.
+the record (or uninstalling the app) removes exactly what it owned, by prefix.
+
+🔴 **A reference resolves only against its own owner's credentials.** Every record belongs to
+core or to one app (:attr:`SecretOwner.app`), and a reference in it names a key — any key, since
+a settings file is text an app can write. :func:`resolve` used to read whatever it named, so a
+reference in one app's settings to another app's token, or to a provider key, handed that value
+to the first app. Now a record resolves only keys its owner holds (:meth:`SecretOwner.holds`):
+an app its own settings' and instances' keys; core everything no app holds, which includes the
+Secrets-panel vault (``{{secret:MY_VAULT_KEY}}`` typed into a provider's settings by hand). A
+reference to another owner's key is refused — at :func:`resolve`, where the consumer gets
+:class:`ForeignSecretReference` and the security log a row, and at :func:`store`, where a save is
+refused with what to do instead. There is deliberately no grant: an app that needs a key has it
+stored under the app, by typing it into that app's own setting. A reference a record does not
+OWN (a vault key in a provider's settings) is never deleted by it: it belongs to the vault.
 """
 
 from __future__ import annotations
@@ -92,17 +103,44 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:8].upper()
 
 
+#: Where an APP's keys live: its settings and its instances. No core record resolves one.
+_APP_KEY_PREFIXES = (f"{OWNED_KEY_PREFIX}APP_", f"{OWNED_KEY_PREFIX}INSTANCE_")
+
+
 @dataclass(frozen=True)
 class SecretOwner:
-    """The settings record a stored secret belongs to. ``prefix`` ends in ``__``."""
+    """The settings record a stored secret belongs to, and whose record that is.
+
+    ``prefix`` (ends in ``__``) is the record's own namespace — every key :func:`store` mints
+    for it — so :meth:`owns` is "this record put it there". ``app`` is who the record belongs
+    to: an app by name, or ``None`` for core. It has no default on purpose: a defaulted owner
+    would silently read as core, and core holds every key no app does.
+    """
 
     prefix: str
+    app: str | None
 
     def key(self, field_name: str) -> str:
         return f"{self.prefix}{_segment(field_name, 32)}"
 
     def owns(self, key: str) -> bool:
         return key.startswith(self.prefix)
+
+    def holds(self, key: str) -> bool:
+        """Whether a reference in this record may resolve ``key``: a key stored under the
+        record's own owner. An app holds its settings' and its instances' keys; core holds
+        every key no app holds. An MCP server's keys are held by that server alone, since a
+        key's name cannot say whose server minted it."""
+        if self.owns(key):
+            return True
+        if self.app is not None:
+            return key.startswith(app_owned_prefixes(self.app))
+        return _core_holds(key)
+
+
+def _core_holds(key: str) -> bool:
+    """Whether a core record may resolve ``key``: it is no app's, and no MCP server's."""
+    return not key.startswith((*_APP_KEY_PREFIXES, _MCP_OWNED_PREFIX))
 
 
 def _app_part(app: str) -> str:
@@ -114,25 +152,158 @@ def _instances_prefix(app: str) -> str:
 
 
 def provider_owner(name: str) -> SecretOwner:
-    """A ``config.json`` ``providers[]`` instance, by its name."""
-    return SecretOwner(f"{OWNED_KEY_PREFIX}PROVIDER_{_segment(name, 32)}_{_digest(name)}__")
+    """A ``config.json`` ``providers[]`` instance, by its name. Core's."""
+    return SecretOwner(
+        f"{OWNED_KEY_PREFIX}PROVIDER_{_segment(name, 32)}_{_digest(name)}__", app=None
+    )
 
 
 def app_owner(app: str) -> SecretOwner:
-    """An app's own settings file (``apps/<app>/data/config.json``)."""
-    return SecretOwner(f"{OWNED_KEY_PREFIX}APP_{_app_part(app)}__")
+    """An app's own settings file (``apps/<app>/data/config.json``). The app's."""
+    return SecretOwner(f"{OWNED_KEY_PREFIX}APP_{_app_part(app)}__", app=app)
 
 
 def instance_owner(app: str, instance_id: str) -> SecretOwner:
-    """One record of a multi-instance provider (``extensions/<app>/instances/<id>.json``)."""
+    """One record of a multi-instance provider (``extensions/<app>/instances/<id>.json``).
+    The app's."""
     return SecretOwner(
-        f"{_instances_prefix(app)}{_segment(instance_id, 16)}_{_digest(instance_id)}__"
+        f"{_instances_prefix(app)}{_segment(instance_id, 16)}_{_digest(instance_id)}__", app=app
     )
 
 
 def app_owned_prefixes(app: str) -> tuple[str, ...]:
     """Every prefix an app's secrets are stored under: its settings and its instances."""
     return (app_owner(app).prefix, _instances_prefix(app))
+
+
+# ── a reference to another owner's key ──────────────────────────────────────
+
+
+class ForeignSecretReference(ValueError):
+    """A settings record references a credential that belongs to a different owner.
+
+    ``refs`` holds each ``(field, key)`` the record named that its owner does not hold. The
+    message names the key and says so; raised by :func:`store` it also says what to do instead.
+    A :class:`ValueError`, so every writer that already refuses an unstorable value refuses this
+    one too, and relays the sentence.
+    """
+
+    def __init__(self, message: str, *, owner: SecretOwner, refs: tuple[tuple[str, str], ...]):
+        super().__init__(message)
+        self.owner = owner
+        self.refs = refs
+
+
+def _field_label(owner: SecretOwner, field_name: str) -> str:
+    """The name the form shows for ``field_name``: the app schema's ``x-meta.label`` when the
+    owner is an app that declares one, else the field's own name."""
+    manifest = _app_manifest(owner.app) if owner.app is not None else None
+    schemas = [getattr(getattr(manifest, "setup", None), "configSchema", None) or {}]
+    for provider in manifest.all_providers() if manifest is not None else ():
+        schemas.append(provider.settingsSchema or {})
+    for schema in schemas:
+        props = schema.get("properties") if isinstance(schema, dict) else None
+        spec = props.get(field_name) if isinstance(props, dict) else None
+        meta = spec.get("x-meta") if isinstance(spec, dict) else None
+        label = meta.get("label") if isinstance(meta, dict) else None
+        if isinstance(label, str) and label.strip():
+            return label.strip()
+    return field_name
+
+
+def _app_label(app: str) -> str:
+    manifest = _app_manifest(app)
+    shown = getattr(manifest, "displayName", "") if manifest is not None else ""
+    return shown.strip() if isinstance(shown, str) and shown.strip() else app
+
+
+def _where_it_lives(key: str, owner: SecretOwner) -> str:
+    """Whose ``key`` is, as the person reading the refusal knows it — a place, never a value.
+    "A different owner" alone reads as nonsense to someone who stored the key themselves."""
+    if key.startswith(_APP_KEY_PREFIXES):
+        return "another app's credential" if owner.app is not None else "an app's credential"
+    if key.startswith(_MCP_OWNED_PREFIX):
+        return "another MCP server's credential"
+    if key.startswith(OWNED_KEY_PREFIX) or key.startswith("BROWSE_PROFILE_KEY_"):
+        return "a credential of PersonalClaw's own settings"
+    return "a credential in Settings → Secrets"
+
+
+def _foreign_message(owner: SecretOwner, refs: tuple[tuple[str, str], ...], *, advise: bool) -> str:
+    """What the consumer — or, with ``advise``, the person saving — is told: which key each
+    field named, whose it is, that it belongs to a different owner, and (saving) what to do
+    instead. Names keys and places, never a value."""
+    labels = [_field_label(owner, name) for name, _ in refs]
+    named = ", and ".join(
+        f"{label} refers to {make_ref(key)}, {_where_it_lives(key, owner)}"
+        for label, (_, key) in zip(labels, refs, strict=True)
+    )
+    one = len(refs) == 1
+    who = _app_label(owner.app) if owner.app is not None else ""
+    if who:
+        consequence = f"so {who} cannot use {'it' if one else 'them'}"
+    else:
+        consequence = f"so {'it' if one else 'they'} cannot be used here"
+    text = f"{named}. {'It belongs' if one else 'They belong'} to a different owner, {consequence}."
+    if not advise:
+        return text
+    fields = " and ".join(labels)
+    itself = "the key itself — not a reference —"
+    if not who:
+        return (
+            f"{text} Type {itself} into {fields} instead, or refer to a credential in "
+            "Settings → Secrets."
+        )
+    if owner.prefix.startswith(_instances_prefix(owner.app or "")):
+        where = "on this instance in Settings → Providers"
+    elif owner.prefix.startswith(_MCP_OWNED_PREFIX):
+        where = "on this server"
+    else:
+        where = f"on {who}'s Configure page"
+    return f"{text} Store the key under {who} instead: type {itself} into {fields} {where}."
+
+
+def _refuse_foreign(
+    values: Mapping[str, Any], owner: SecretOwner, *, operation: str, advise: bool
+) -> None:
+    """Raise :class:`ForeignSecretReference` if ``values`` names a key ``owner`` does not hold.
+
+    Runs BEFORE any value is read or stored, so a refused record reads nothing and leaves
+    nothing behind. Each refused key gets its own security-log row naming who asked (the app,
+    or core) and the key — never a value, which was never read.
+    """
+    refs = tuple(
+        (str(name), key)
+        for name, value in values.items()
+        if (key := ref_key(value)) is not None and not owner.holds(key)
+    )
+    if not refs:
+        return
+    who = f"app:{owner.app}" if owner.app is not None else "core"
+    for name, key in refs:
+        logger.warning(
+            "%s: %s names the credential %s, which belongs to a different owner — refused",
+            who,
+            name,
+            key,
+        )
+        try:
+            from personalclaw.sel import sel
+
+            sel().log_api_access(
+                caller=who,
+                operation=operation,
+                outcome="denied",
+                source="secret_refs",
+                resources=f"secret:{key}",
+                error="the credential belongs to a different owner",
+                metadata={"field": name},
+            )
+        except Exception:  # noqa: BLE001 — a log that cannot write must not un-refuse the read
+            logger.warning("SEL audit failed for a refused secret reference", exc_info=True)
+    raise ForeignSecretReference(
+        _foreign_message(owner, refs, advise=advise), owner=owner, refs=refs
+    )
 
 
 # ── which fields ────────────────────────────────────────────────────────────
@@ -212,14 +383,20 @@ def _unstorable_message(name: str) -> str:
     return f"{name}: the value contains a NUL character, which no credential can hold"
 
 
-def resolve(settings: Mapping[str, Any] | None) -> dict[str, Any]:
+def resolve(settings: Mapping[str, Any] | None, *, owner: SecretOwner) -> dict[str, Any]:
     """The LOGICAL form: every top-level field holding a reference gets the stored value.
+
+    ``owner`` is the record the settings are — the one :func:`store` wrote them for — and a
+    reference resolves only a key that owner holds (:meth:`SecretOwner.holds`). A reference to
+    another owner's key raises :class:`ForeignSecretReference` before any value is read, and the
+    refusal is in the security log. Required, never defaulted: a default owner would be core.
 
     A reference whose key the store does not hold resolves to ``""``: the field reads as UNSET,
     so a provider falls back to its env var or reports "no API key configured" — it never sends
     the placeholder upstream as though it were a credential.
     """
     out = dict(settings or {})
+    _refuse_foreign(out, owner, operation="secrets.resolve", advise=False)
     for name, value in out.items():
         key = ref_key(value)
         if key is not None:
@@ -236,6 +413,12 @@ def store(
 ) -> dict[str, Any]:
     """The STORED form of LOGICAL ``settings``, with each secret value moved into the store.
 
+    This is a WRITE someone is making to the record — a settings form, an app saving its own
+    settings — so a reference to a key ``owner`` does not hold is refused before anything is
+    stored: :class:`ForeignSecretReference`, whose message says what to do instead. (The boot
+    move and the whole-document writers use :func:`_move_into_store`, which judges no
+    reference: one already on disk is refused where it is used, and must not stop a move.)
+
     ``previous`` is the record's stored form before this write: an owned key it referenced that
     this form no longer does is deleted, so a rotated-away or cleared credential does not linger.
     The reference is written only after the store has provably kept the value — a write that
@@ -247,6 +430,18 @@ def store(
     Surrounding whitespace is dropped — it is never part of a key or a token, and a pasted value
     often carries a trailing newline.
     """
+    _refuse_foreign(settings or {}, owner, operation="secrets.store", advise=True)
+    return _move_into_store(settings, owner=owner, declared=declared, previous=previous)
+
+
+def _move_into_store(
+    settings: Mapping[str, Any] | None,
+    *,
+    owner: SecretOwner,
+    declared: Iterable[str],
+    previous: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """:func:`store` without its judgment of references — see there."""
     out = dict(settings or {})
     for name in sorted(secret_fields(out, declared)):
         value = out.get(name)
@@ -324,7 +519,9 @@ def resolve_provider_records(records: Any) -> list[dict[str, Any]]:
 
     For the readers that hand a record's options to something that uses them (a catalog, a
     media adapter, an app's scanner). Records are copied, never mutated in place: a caller that
-    later writes the document must write the STORED form it read.
+    later writes the document must write the STORED form it read. A record whose options name
+    another owner's credential is left out — it cannot be used, and :func:`resolve` has logged
+    why — rather than costing every other record its discovery.
     """
     out: list[dict[str, Any]] = []
     for record in records if isinstance(records, list) else []:
@@ -332,7 +529,11 @@ def resolve_provider_records(records: Any) -> list[dict[str, Any]]:
             continue
         copy = dict(record)
         if isinstance(record.get("options"), dict):
-            copy["options"] = resolve(record["options"])
+            owner = provider_owner(str(record.get("name") or ""))
+            try:
+                copy["options"] = resolve(record["options"], owner=owner)
+            except ForeignSecretReference:
+                continue
         out.append(copy)
     return out
 
@@ -359,6 +560,10 @@ def resolve_provider_records(records: Any) -> list[dict[str, Any]]:
 # **Removing a server** goes through :func:`remove_mcp_servers`, and only through it: it takes the
 # server out of both documents, so the second write finds its keys referenced nowhere and deletes
 # them. A delete that reached one document left the other holding the server and its secrets.
+#
+# **Whose server it is.** An app's server is registered as ``{app}:{server}``
+# (``apps.mcp_bridge``), so its env and headers resolve only that app's keys and its own; every
+# other server is core's (a pack connector's ``{{secret:NAME}}`` into the vault included).
 
 #: Spec key listing the ``env`` variables that stay inline — settings that are not secret.
 MCP_PLAIN_ENV = "plainEnv"
@@ -391,7 +596,11 @@ def mcp_server_prefix(server: str) -> str:
 
 
 def _mcp_owner(server: str, part: str) -> SecretOwner:
-    return _ExactNameOwner(f"{mcp_server_prefix(server)}{_MCP_PARTS[part]}__")
+    from personalclaw.apps.mcp_bridge import server_app
+
+    return _ExactNameOwner(
+        f"{mcp_server_prefix(server)}{_MCP_PARTS[part]}__", app=server_app(server)
+    )
 
 
 def plain_env_names(spec: Mapping[str, Any]) -> set[str]:
@@ -409,9 +618,11 @@ def store_mcp_spec(server: str, spec: Mapping[str, Any], *, strict: bool) -> dic
     ``headers`` value saved under a key the server owns, the field holding the reference.
 
     ``strict`` is for a value a user is typing now: one no credential can hold (a NUL character)
-    raises :class:`ValueError` and nothing is stored, so the caller can refuse it. Otherwise that
-    value is left inline and logged: the write chokepoint and the boot move must never drop a
-    server, or the rest of its secrets, over one value they cannot move. A multi-line value is
+    raises :class:`ValueError`, and a reference to a key another owner holds raises
+    :class:`ForeignSecretReference`, with nothing stored, so the caller can refuse it. Otherwise
+    that value is left as it is and logged: the write chokepoint and the boot move must never
+    drop a server, or the rest of its secrets, over one value they cannot move — a foreign
+    reference left in place is refused where the server is started. A multi-line value is
     stored like any other.
     """
     if strict:
@@ -419,14 +630,20 @@ def store_mcp_spec(server: str, spec: Mapping[str, Any], *, strict: bool) -> dic
         # it had already saved in the store with no file referencing them.
         for part in _MCP_PARTS:
             values = spec.get(part)
-            for name, value in values.items() if isinstance(values, Mapping) else ():
+            if not isinstance(values, Mapping):
+                continue
+            for name, value in values.items():
                 if _unstorable(value):
                     raise ValueError(_unstorable_message(name))
+            _refuse_foreign(
+                values, _mcp_owner(server, part), operation="secrets.store", advise=True
+            )
     out = dict(spec)
     for part in _MCP_PARTS:
         values = spec.get(part)
         if not isinstance(values, Mapping) or not values:
             continue
+        owner = _mcp_owner(server, part)
         movable = dict(values)
         inline: dict[str, Any] = {}
         for name in [n for n, v in movable.items() if _unstorable(v)]:
@@ -438,18 +655,33 @@ def store_mcp_spec(server: str, spec: Mapping[str, Any], *, strict: bool) -> dic
                 part,
                 name,
             )
+        for name in [n for n, v in movable.items() if (k := ref_key(v)) and not owner.holds(k)]:
+            inline[name] = movable.pop(name)
+            logger.warning(
+                "MCP server %r: %s %s names a credential that belongs to a different owner; "
+                "it stays in the file and is refused when the server starts",
+                server,
+                part,
+                name,
+            )
         plain = plain_env_names(spec) if part == "env" else set()
-        stored = store(
+        stored = _move_into_store(
             movable,
-            owner=_mcp_owner(server, part),
+            owner=owner,
             declared=[n for n in movable if n not in plain],
+            previous=None,
         )
         out[part] = {n: inline[n] if n in inline else stored[n] for n in values}
     return out
 
 
-def resolve_mcp_values(values: Mapping[str, Any] | None) -> dict[str, Any]:
-    """An ``env`` or ``headers`` map in LOGICAL form, for the moment a server is started."""
+def resolve_mcp_values(server: str, part: str, values: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Server ``server``'s ``env`` or ``headers`` map (``part``) in LOGICAL form, for the moment
+    it is started. Resolves only keys the server's owner holds: a reference to another owner's
+    raises :class:`ForeignSecretReference` before any value is read."""
+    _refuse_foreign(
+        values or {}, _mcp_owner(server, part), operation="secrets.resolve", advise=False
+    )
     out: dict[str, Any] = {}
     for name, value in (values or {}).items():
         key = ref_key(value)
@@ -465,14 +697,15 @@ def resolve_mcp_values(values: Mapping[str, Any] | None) -> dict[str, Any]:
     return out
 
 
-def resolve_mcp_spec(spec: Mapping[str, Any]) -> dict[str, Any]:
-    """The LOGICAL form of one MCP server spec — for the moment a server is started, never for
-    a file. ``plainEnv`` is dropped: it describes the stored form and means nothing to a child."""
+def resolve_mcp_spec(server: str, spec: Mapping[str, Any]) -> dict[str, Any]:
+    """The LOGICAL form of server ``server``'s spec — for the moment it is started, never for a
+    file. ``plainEnv`` is dropped: it describes the stored form and means nothing to a child.
+    Raises :class:`ForeignSecretReference` as :func:`resolve_mcp_values` does."""
     out = {k: v for k, v in spec.items() if k != MCP_PLAIN_ENV}
     for part in _MCP_PARTS:
         values = spec.get(part)
         if isinstance(values, Mapping):
-            out[part] = resolve_mcp_values(values)
+            out[part] = resolve_mcp_values(server, part, values)
     return out
 
 
@@ -533,15 +766,17 @@ def remove_mcp_servers(names: Iterable[str]) -> list[str]:
     return sorted(removed)
 
 
-def foreign_mcp_spec(spec: Mapping[str, Any], *, with_secrets: bool) -> dict[str, Any]:
-    """A spec for ANOTHER tool's config file (Claude Code's), which cannot read this store.
+def foreign_mcp_spec(server: str, spec: Mapping[str, Any], *, with_secrets: bool) -> dict[str, Any]:
+    """Server ``server``'s spec for ANOTHER tool's config file (Claude Code's), which cannot
+    read this store.
 
     ``with_secrets`` is the user putting a server into that tool's scope on purpose: the values
-    go with it, in the only form that tool reads. Without it — a copy nobody asked for — every
-    stored value is left out, and only the plain ones travel.
+    go with it, in the only form that tool reads — resolved against the server's own owner, so
+    :class:`ForeignSecretReference` as for a start. Without it — a copy nobody asked for —
+    every stored value is left out, and only the plain ones travel.
     """
     if with_secrets:
-        return resolve_mcp_spec(spec)
+        return resolve_mcp_spec(server, spec)
     out = {k: v for k, v in spec.items() if k != MCP_PLAIN_ENV}
     for part in _MCP_PARTS:
         values = spec.get(part)
@@ -608,8 +843,8 @@ _CONFIG_SECRET_FIELDS: dict[str, tuple[str, ...]] = {"hooks": ("webhook_token",)
 
 
 def config_owner(section: str) -> SecretOwner:
-    """A secret-bearing section of core ``config.json``."""
-    return SecretOwner(f"{OWNED_KEY_PREFIX}CONFIG_{_segment(section, 32)}__")
+    """A secret-bearing section of core ``config.json``. Core's."""
+    return SecretOwner(f"{OWNED_KEY_PREFIX}CONFIG_{_segment(section, 32)}__", app=None)
 
 
 def store_config_secrets(
@@ -624,14 +859,16 @@ def store_config_secrets(
     the documented ``--reveal`` → edit → ``config set --file`` loop hands them back in plaintext. A
     value typed into the file by hand is moved at the next boot (:func:`migrate_plaintext_secrets`).
     ``previous`` is the document on disk before the write, so a secret this write drops —
-    ``config unset hooks.webhook_token`` — is deleted from the store.
+    ``config unset hooks.webhook_token`` — is deleted from the store. A whole-document writer, so
+    it judges no reference: one naming another owner's key must not make every config save fail,
+    and is refused where it is used.
     """
     for section, declared in _CONFIG_SECRET_FIELDS.items():
         before = previous.get(section) if isinstance(previous, Mapping) else None
         before = before if isinstance(before, Mapping) else None
         values = doc.get(section)
         if isinstance(values, dict):
-            doc[section] = store(
+            doc[section] = _move_into_store(
                 values, owner=config_owner(section), declared=declared, previous=before
             )
         else:
@@ -648,8 +885,11 @@ def store_config_secrets(
             continue
         name = str(record.get("name") or "")
         if name:
-            record["options"] = store_provider_options(
-                name, str(record.get("type") or ""), record["options"], earlier_options.get(name)
+            record["options"] = _move_into_store(
+                record["options"],
+                owner=provider_owner(name),
+                declared=declared_provider_type_fields(str(record.get("type") or "")),
+                previous=earlier_options.get(name),
             )
     return doc
 
@@ -662,7 +902,10 @@ def reveal_stored_values(doc: Any) -> tuple[Any, list[str]]:
     of references whose key the store no longer holds; those are left as they are, because an
     empty value would read as "not set". Only an OWNED key (``PCSECRET_…``) is resolved: a
     reference the owner typed to a Secrets-panel credential is theirs and stays one, so a revealed
-    document written back with ``config set --file`` keeps it a reference.
+    document written back with ``config set --file`` keeps it a reference. And only a key core
+    holds: ``config.json`` is core's, so a reference in it to an app's key is not revealed — it
+    stays the reference it is, refused where it is used, and the round trip cannot copy another
+    owner's value into core's settings.
     """
     from personalclaw.config.credentials import is_owned_key
 
@@ -674,7 +917,7 @@ def reveal_stored_values(doc: Any) -> tuple[Any, list[str]]:
         if isinstance(node, list):
             return [walk(v, f"{path}[{i}]") for i, v in enumerate(node)]
         key = ref_key(node)
-        if key is None or not is_owned_key(key):
+        if key is None or not is_owned_key(key) or not _core_holds(key):
             return node
         value = get_credential(key)
         if not value:
@@ -745,7 +988,7 @@ def _move_config_document(path: Path, *, point_only: bool) -> bool:
         if point_only:
             moved = _point_at(values, secret_fields(values, declared), owner)
         else:
-            moved = store(values, owner=owner, declared=declared)
+            moved = _move_into_store(values, owner=owner, declared=declared, previous=None)
         if moved != values:
             doc[section] = moved
             changed = True
@@ -761,7 +1004,12 @@ def _move_config_document(path: Path, *, point_only: bool) -> bool:
             fields = secret_fields(options, declared_provider_type_fields(str(record.get("type"))))
             moved = _point_at(options, fields, provider_owner(name))
         else:
-            moved = store_provider_options(name, str(record.get("type") or ""), options, options)
+            moved = _move_into_store(
+                options,
+                owner=provider_owner(name),
+                declared=declared_provider_type_fields(str(record.get("type") or "")),
+                previous=options,
+            )
         if moved != options:
             record["options"] = moved
             changed = True
@@ -774,7 +1022,9 @@ def _move_app_settings(path: Path, app: str) -> bool:
     data = _read_app_owned_json(path.parent.parent, "data", path.name)
     if not isinstance(data, dict):
         return False
-    moved = store(data, owner=app_owner(app), declared=declared_app_fields(app), previous=data)
+    moved = _move_into_store(
+        data, owner=app_owner(app), declared=declared_app_fields(app), previous=data
+    )
     if moved == data:
         return False
     _write_json(path, moved)
@@ -806,7 +1056,9 @@ def _move_instance_record(path: Path, app: str) -> bool:
         return False
     config = record["config"]
     owner = instance_owner(app, str(record.get("id") or path.stem))
-    moved = store(config, owner=owner, declared=declared_app_fields(app), previous=config)
+    moved = _move_into_store(
+        config, owner=owner, declared=declared_app_fields(app), previous=config
+    )
     if moved == config:
         return False
     record["config"] = moved

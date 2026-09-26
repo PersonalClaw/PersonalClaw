@@ -12,7 +12,10 @@ are rejected, because an app shouldn't receive config it never declared.
 
 A field the schema declares ``x-meta.sensitive`` (or whose name is credential-shaped) is kept
 in the credential store, and the file holds a ``{{secret:…}}`` reference: :func:`write_config`
-stores, :func:`read_config` resolves (:mod:`personalclaw.config.secret_refs`).
+stores (:mod:`personalclaw.config.secret_refs`), refusing a reference to a credential another
+owner holds. The settings routes read :func:`read_stored`, never the values: what they send is
+the references, masked. The app itself reads the values through ``ProviderSettings.load`` (the
+same file), which resolves only keys the app holds.
 """
 
 from __future__ import annotations
@@ -46,7 +49,7 @@ def _schema_properties(schema: dict[str, Any]) -> dict[str, Any]:
     return props if isinstance(props, dict) else {}
 
 
-def _read_stored(name: str) -> dict[str, Any]:
+def read_stored(name: str) -> dict[str, Any]:
     """The file as it is on disk — secret fields are references. Never read through a link:
     the app writes ``data/``, so a ``config.json`` it made a link reads as no config."""
     root = app_dir(name)
@@ -60,12 +63,6 @@ def _read_stored(name: str) -> dict[str, Any]:
         )
         return {}
     return data if isinstance(data, dict) else {}
-
-
-def read_config(name: str) -> dict[str, Any]:
-    """Return the persisted config for an app (empty dict if none saved yet), each secret
-    field holding its value."""
-    return secret_refs.resolve(_read_stored(name))
 
 
 def validate_config(values: dict[str, Any], schema: dict[str, Any]) -> list[str]:
@@ -96,7 +93,8 @@ def validate_config(values: dict[str, Any], schema: dict[str, Any]) -> list[str]
 
 def write_config(name: str, values: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
     """Validate then persist an app's config. Raises :class:`AppConfigError` on
-    invalid input; returns the saved values on success."""
+    invalid input — a reference to a credential another owner holds included, with the
+    sentence that says what to do instead; returns the saved values on success."""
     if not isinstance(values, dict):
         raise AppConfigError("config must be a JSON object")
     errors = validate_config(values, schema)
@@ -107,7 +105,7 @@ def write_config(name: str, values: dict[str, Any], schema: dict[str, Any]) -> d
             values,
             owner=secret_refs.app_owner(name),
             declared=sensitive_field_names(schema) | secret_refs.declared_app_fields(name),
-            previous=_read_stored(name),
+            previous=read_stored(name),
         )
     except ValueError as exc:
         raise AppConfigError(str(exc)) from exc

@@ -722,6 +722,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "mcp_server_not_editable": (
         "PersonalClaw or an app provides this MCP server, so it cannot be saved from here."
     ),
+    # ── a secret reference to another owner's credential (config/secret_refs.py) ──
+    # 400: the settings name a `{{secret:…}}` stored under a different owner (another app, or
+    # core for an app's settings). A reference resolves only against its own owner's keys, and
+    # the message names the key and says how to store one under this owner instead.
+    "secret_owned_elsewhere": (
+        "The settings reference a credential that belongs to a different owner; store the key "
+        "under this owner instead."
+    ),
 }
 
 

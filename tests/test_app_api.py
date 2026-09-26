@@ -19,6 +19,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.apps import backend_runtime, manager
+from personalclaw.apps.secret_fields import SECRET_MASK
 from personalclaw.dashboard.handlers.apps import register_app_routes
 
 
@@ -289,8 +290,11 @@ async def test_config_get_put_validated(tmp_path):
         r = await client.put("/api/apps/notes/config", json={"apiKey": "sk-1", "maxItems": 10})
         assert r.status == 200
         assert (await client.get("/api/apps/notes/config")).status == 200
-        saved = (await (await client.get("/api/apps/notes/config")).json())["config"]
-        assert saved == {"apiKey": "sk-1", "maxItems": 10}
+        body = await (await client.get("/api/apps/notes/config")).json()
+        # `apiKey` is credential-NAMED, so it lives in the credential store though the schema
+        # never declared it sensitive — and the read-back masks it rather than resolving it.
+        assert body["config"] == {"apiKey": SECRET_MASK, "maxItems": 10}
+        assert body["_secret_set"] == ["apiKey"]
 
         # unknown key rejected
         r = await client.put("/api/apps/notes/config", json={"apiKey": "x", "bogus": 1})
@@ -338,10 +342,10 @@ async def test_sensitive_config_field_is_write_only(tmp_path):
         )
         assert r.status == 200
 
-        # confirm on-disk stored secret is still the real one (via the manager's raw read)
-        from personalclaw.apps.app_config import read_config
+        # confirm the stored secret is still the real one (as the app itself reads it)
+        from personalclaw.providers.settings import ProviderSettings
 
-        raw = read_config("sec")
+        raw = ProviderSettings.load("sec")
         assert raw["api_key"] == "sk-REALSECRET-123"  # NOT overwritten by the sentinel
         assert raw["endpoint"] == "https://y"  # normal field updated
 
@@ -350,7 +354,7 @@ async def test_sensitive_config_field_is_write_only(tmp_path):
             "/api/apps/sec/config", json={"api_key": "sk-NEW-456", "endpoint": "https://y"}
         )
         assert r.status == 200
-        assert read_config("sec")["api_key"] == "sk-NEW-456"
+        assert ProviderSettings.load("sec")["api_key"] == "sk-NEW-456"
 
 
 @pytest.mark.asyncio
@@ -364,8 +368,6 @@ async def test_the_app_detail_route_masks_the_same_secret_the_config_route_does(
     (``test_provider_instance_secrets.py``) rather than by inspection, which is the whole
     argument for deriving the population instead of listing the routes.
     """
-    from personalclaw.apps.secret_fields import SECRET_MASK
-
     schema = {
         "type": "object",
         "properties": {
@@ -392,9 +394,89 @@ async def test_the_app_detail_route_masks_the_same_secret_the_config_route_does(
         assert body["_secret_set"] == ["api_key"]
 
         # …and the stored value is untouched.
-        from personalclaw.apps.app_config import read_config
+        from personalclaw.providers.settings import ProviderSettings
 
-        assert read_config("sec")["api_key"] == "sk-DETAIL-SECRET-789"
+        assert ProviderSettings.load("sec")["api_key"] == "sk-DETAIL-SECRET-789"
+
+
+@pytest.mark.asyncio
+async def test_saving_config_that_names_another_owners_key_is_refused(tmp_path, monkeypatch):
+    """A reference resolves only against its own owner's credentials, so a save that names a
+    key another owner holds — a Secrets-panel credential, another app's token — is refused
+    with 400 and the sentence that says what to do, and nothing reaches the disk. On main the
+    save was accepted, and the app's settings then resolved the other owner's value."""
+    from personalclaw.config.credentials import save_credential
+    from personalclaw.config.secret_refs import make_ref, ref_key
+    from personalclaw.providers.settings import ProviderSettings
+
+    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
+    schema = {
+        "type": "object",
+        "properties": {
+            "api_key": {"type": "string", "x-meta": {"label": "API Key", "sensitive": True}},
+            "endpoint": {"type": "string"},
+        },
+    }
+    async with _client(tmp_path) as client:
+        await _consented_install(client, _app_src(tmp_path, "sec", setup={"configSchema": schema}))
+        save_credential("VAULT_FIXTURE_KEY", "ghp-vault-value-never-an-apps")
+        ProviderSettings.save("other-app", {"bot_token": "xoxb-other-app-value"})
+        other_file = tmp_path / "apps" / "other-app" / "data" / "config.json"
+        others = ref_key(json.loads(other_file.read_text(encoding="utf-8"))["bot_token"])
+        config_file = tmp_path / "apps" / "sec" / "data" / "config.json"
+
+        for key, whose in (
+            ("VAULT_FIXTURE_KEY", "a credential in Settings → Secrets"),
+            (others, "another app's credential"),
+        ):
+            r = await client.put(
+                "/api/apps/sec/config", json={"api_key": make_ref(key), "endpoint": "https://x"}
+            )
+            text = await r.text()
+            assert r.status == 400, text
+            message = json.loads(text)["error"]
+            assert f"API Key refers to {make_ref(key)}, {whose}." in message, message
+            assert "It belongs to a different owner, so Sec cannot use it." in message
+            assert (
+                "Store the key under Sec instead: type the key itself — not a reference — into "
+                "API Key on Sec's Configure page." in message
+            ), message
+            assert "ghp-vault-value" not in text and "xoxb-other-app-value" not in text
+            assert not config_file.exists(), "a refused save reached the disk"
+
+        # The supported path: type the key itself, and it is stored under this app.
+        r = await client.put(
+            "/api/apps/sec/config", json={"api_key": "sk-typed-here", "endpoint": "https://x"}
+        )
+        assert r.status == 200, await r.text()
+        assert ProviderSettings.load("sec")["api_key"] == "sk-typed-here"
+
+
+@pytest.mark.asyncio
+async def test_a_reference_in_a_field_the_schema_does_not_call_secret_is_masked(tmp_path):
+    """No read-back hands out a resolved value: a reference is masked whatever its field is
+    called. On main the route resolved it and returned the stored credential in the clear."""
+    from personalclaw.providers.settings import ProviderSettings
+
+    schema = {"type": "object", "properties": {"endpoint": {"type": "string"}}}
+    async with _client(tmp_path) as client:
+        await _consented_install(client, _app_src(tmp_path, "sec", setup={"configSchema": schema}))
+        ProviderSettings.save("sec", {"api_key": "sk-own-app-value-123"})
+        config_file = tmp_path / "apps" / "sec" / "data" / "config.json"
+        ref = json.loads(config_file.read_text(encoding="utf-8"))["api_key"]
+        config_file.write_text(json.dumps({"endpoint": ref}), encoding="utf-8")
+
+        for route in ("/api/apps/sec/config", "/api/apps/sec"):
+            raw = await (await client.get(route)).text()
+            assert "sk-own-app-value-123" not in raw, f"{route} handed out a resolved reference"
+            body = json.loads(raw)
+            assert body["config"] == {"endpoint": SECRET_MASK}
+            assert body["_secret_set"] == ["endpoint"]
+
+        # …and the mask a form sends back keeps the reference rather than storing the dots.
+        r = await client.put("/api/apps/sec/config", json={"endpoint": SECRET_MASK})
+        assert r.status == 200, await r.text()
+        assert json.loads(config_file.read_text(encoding="utf-8")) == {"endpoint": ref}
 
 
 @pytest.mark.asyncio

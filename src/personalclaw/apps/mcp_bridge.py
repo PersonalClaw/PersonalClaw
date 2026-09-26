@@ -65,6 +65,14 @@ def _ns(app_name: str, server: str) -> str:
     return f"{app_name}{_NS_SEP}{server}"
 
 
+def server_app(key: str) -> str | None:
+    """The app a namespaced ``{app}:{server}`` key belongs to, or ``None`` for a user's own
+    server. The credential-reference resolver reads it: an app's server resolves only that
+    app's keys (``config.secret_refs.SecretOwner.holds``)."""
+    app, sep, server = key.partition(_NS_SEP)
+    return app if sep and app and server else None
+
+
 def register_app_mcp_servers(manifest: AppManifest) -> list[str]:
     """Write the app's manifest ``mcpServers`` into the live MCP config,
     namespaced ``{app}:{server}``. Returns the registered keys. Idempotent —

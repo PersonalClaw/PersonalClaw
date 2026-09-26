@@ -74,7 +74,7 @@ def _hits(root: Path, needle: str) -> list[str]:
 def test_app_config_is_not_read_through_a_link(outside: Path) -> None:
     os.symlink(outside, _data_dir() / "config.json")
 
-    assert app_config.read_config(APP) == {}, "the config API read a file the app linked to"
+    assert app_config.read_stored(APP) == {}, "the config API read a file the app linked to"
 
 
 def test_provider_settings_are_not_read_through_a_link(outside: Path) -> None:
@@ -88,21 +88,21 @@ def test_nor_through_a_data_folder_that_is_itself_a_link(tmp_path: Path, outside
     os.symlink(outside.parent, manager.app_dir(APP) / "data")
     (outside.parent / "config.json").write_text(outside.read_text(encoding="utf-8"))
 
-    assert app_config.read_config(APP) == {}
+    assert app_config.read_stored(APP) == {}
     assert ProviderSettings.load(APP) == {}
 
 
 def test_a_real_config_file_still_reads() -> None:
     (_data_dir() / "config.json").write_text(json.dumps({"mode": "fast"}), encoding="utf-8")
 
-    assert app_config.read_config(APP) == {"mode": "fast"}
+    assert app_config.read_stored(APP) == {"mode": "fast"}
     assert ProviderSettings.load(APP) == {"mode": "fast"}
 
 
 def test_a_pipe_in_place_of_the_config_does_not_hang_the_reader() -> None:
     os.mkfifo(_data_dir() / "config.json")
     got: list[dict] = []
-    reader = threading.Thread(target=lambda: got.append(app_config.read_config(APP)), daemon=True)
+    reader = threading.Thread(target=lambda: got.append(app_config.read_stored(APP)), daemon=True)
 
     reader.start()
     reader.join(timeout=5)

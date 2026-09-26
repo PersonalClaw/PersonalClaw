@@ -51,11 +51,11 @@ def _stored_options(cfg, name: str) -> dict:
     """The entry's options as a provider reads them. On disk a secret option is a reference into
     the credential store (``config.secret_refs``); the value is what the merge semantics are
     about, so that is what these assertions read."""
-    from personalclaw.config.secret_refs import resolve
+    from personalclaw.config.secret_refs import provider_owner, resolve
 
     data = json.loads(cfg.read_text())
     entry = next(p for p in data["providers"] if p["name"] == name)
-    return resolve(entry.get("options", {}))
+    return resolve(entry.get("options", {}), owner=provider_owner(name))
 
 
 def test_update_with_explicit_null_clears_a_previously_stored_key(tmp_path, monkeypatch):

@@ -367,6 +367,18 @@ async def _read_jsonrpc_response(resp: aiohttp.ClientResponse) -> dict:
 
 async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
     """Probe a remote Streamable HTTP MCP server via POST."""
+    from personalclaw.config.secret_refs import ForeignSecretReference, resolve_mcp_values
+
+    try:
+        # The spec holds `{{secret:…}}` references; the header values are resolved here, where
+        # the request is made, and never written anywhere — only keys the server's owner holds.
+        headers = resolve_mcp_values(server.name, "headers", server.headers)
+    except ForeignSecretReference as exc:
+        # No request was made and no value was read: the whole sentence is this server's error.
+        server.status = "error"
+        server.error = str(exc)
+        _cache_probe(server)
+        return server
     server.status = "probing"
     try:
         init_body = {
@@ -379,12 +391,8 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
                 "clientInfo": {"name": "personalclaw-probe", "version": "1.0.0"},
             },
         }
-        from personalclaw.config.secret_refs import resolve_mcp_values
-
-        # The spec holds `{{secret:…}}` references; the header values are resolved here, where
-        # the request is made, and never written anywhere.
         hdrs = {
-            **resolve_mcp_values(server.headers),
+            **headers,
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
@@ -473,14 +481,21 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
         logger.warning("MCP probe failed [%s]: no command configured", server.name)
         return server
 
+    from personalclaw.config.secret_refs import ForeignSecretReference, resolve_mcp_values
+
+    try:
+        # The spec holds `{{secret:…}}` references; the values are resolved here, at spawn, and
+        # reach only the child's environment — only keys the server's owner holds.
+        server_env = resolve_mcp_values(server.name, "env", server.env)
+    except ForeignSecretReference as exc:
+        # Nothing was spawned and no value was read: the whole sentence is this server's error.
+        server.status = "error"
+        server.error = str(exc)
+        _cache_probe(server)
+        return server
     server.status = "probing"
     proc = None
     try:
-        from personalclaw.config.secret_refs import resolve_mcp_values
-
-        # The spec holds `{{secret:…}}` references; the values are resolved here, at spawn, and
-        # reach only the child's environment.
-        server_env = resolve_mcp_values(server.env)
         env = dict(os.environ)
         env["PATH"] = augmented_path(env.get("PATH", ""))
         # Merge server-specific env additively
@@ -863,7 +878,7 @@ def register_servers_for_cc(
     changed = False
 
     for s in servers:
-        plain = foreign_mcp_spec({"env": s.env, "headers": s.headers}, with_secrets=False)
+        plain = foreign_mcp_spec(s.name, {"env": s.env, "headers": s.headers}, with_secrets=False)
         if s.is_remote:
             entry: dict = {"url": s.url, "type": "streamable-http"}
             if plain.get("headers"):

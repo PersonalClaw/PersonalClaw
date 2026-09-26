@@ -130,13 +130,16 @@ def _wire_settings(options: dict[str, Any] | None, schema: dict[str, Any]) -> tu
     """An instance's settings for the wire: secrets masked, core bookkeeping dropped.
 
     Returns ``(settings, secret_set)`` — ``secret_set`` names the secret settings that hold
-    a value, so the edit form can say "a key is saved" without being handed it.
+    a value, so the edit form can say "a key is saved" without being handed it. ``options``
+    is the STORED form where there is one, so a ``{{secret:…}}`` reference is masked whatever
+    its field is called — a hand-typed one in a field no schema calls secret included.
     """
     from personalclaw.apps.secret_fields import SECRET_MASK
 
     settings = {k: v for k, v in (options or {}).items() if not str(k).startswith("_")}
     secret_set: list[str] = []
-    for key in _sensitive_settings(schema, settings):
+    held = {k for k, v in settings.items() if secret_refs.ref_key(v) is not None}
+    for key in _sensitive_settings(schema, settings) | held:
         if key in settings and str(settings[key] or ""):
             settings[key] = SECRET_MASK
             secret_set.append(key)
@@ -222,7 +225,12 @@ async def api_providers_list(request: web.Request) -> web.Response:
         declared = _declared_type(entry)
         app = type_apps.get(declared) or type_apps.get(entry.type)
         schema = (app.provider_config.settingsSchema or {}) if app is not None else {}
-        settings, secret_set = _wire_settings(entry.options, schema)
+        # The document's stored form when the entry has one: the registry's copy holds the
+        # VALUES, and a reference shown resolved is a credential handed out.
+        stored = stored_options.get(entry.name)
+        settings, secret_set = _wire_settings(
+            stored if isinstance(stored, dict) else entry.options, schema
+        )
 
         # Get static capability descriptor for this type
         try:
@@ -1130,27 +1138,39 @@ async def api_provider_update(request: web.Request) -> web.Response:
             # key being absent from the payload at all (leave whatever is stored alone) —
             # so absence still means "unchanged" and only an explicit `null` deletes.
             #
-            # The merge runs on the LOGICAL options (references resolved), and the result is
-            # stored back through the credential store: a rotated key replaces the stored one,
-            # a cleared key is deleted from the store, an untouched one is left where it is.
-            # The list route hands secrets out MASKED, so the mask arriving back is the other
-            # spelling of "unchanged" — storing it would replace a working key with eight dots.
+            # The merge runs on the STORED options, and the result is stored back through the
+            # credential store: a rotated key replaces the stored one, a cleared key is deleted
+            # from the store, an untouched one stays the reference it is — no value is read out
+            # to be merged. The list route hands secrets out MASKED, so the mask arriving back
+            # is the other spelling of "unchanged" — storing it would replace a working key with
+            # eight dots. A reference to a credential another owner holds is refused by the
+            # store, with what to do instead.
             previous = target.get("options") or {}
-            logical = secret_refs.resolve(previous)
+            merged = dict(previous)
             for key, value in incoming.items():
                 if value is None:
-                    logical.pop(key, None)
+                    merged.pop(key, None)
                 elif value != SECRET_MASK:
-                    logical[key] = value
+                    merged[key] = value
             try:
                 target["options"] = secret_refs.store_provider_options(
-                    name, str(target.get("type") or ""), logical, previous
+                    name, str(target.get("type") or ""), merged, previous
                 )
             except ValueError as exc:
                 return web.json_response({"error": relayed_failure_copy(exc)}, status=400)
 
+        # Resolved BEFORE the write: options already on disk that name another owner's
+        # credential refuse the whole edit, rather than a saved change the registry then
+        # cannot load.
+        try:
+            logical_options = (
+                secret_refs.resolve(target["options"], owner=secret_refs.provider_owner(name))
+                if "options" in target
+                else None
+            )
+        except secret_refs.ForeignSecretReference as exc:
+            return web.json_response({"error": relayed_failure_copy(exc)}, status=400)
         atomic_write(path, _json.dumps(data, indent=2) + "\n", fsync=True)
-        logical_options = secret_refs.resolve(target["options"]) if "options" in target else None
 
     from personalclaw.llm.registry import get_default_registry
     from personalclaw.providers.connection import get_connection_board
@@ -1276,7 +1296,12 @@ async def api_provider_test(request: web.Request) -> web.Response:
             p = next((p for p in data.get("providers", []) if p.get("name") == name), None)
             if not p:
                 return web.json_response({"error": "not found"}, status=404)
-            options = secret_refs.resolve(p.get("options") or {})
+            try:
+                options = secret_refs.resolve(
+                    p.get("options") or {}, owner=secret_refs.provider_owner(name)
+                )
+            except secret_refs.ForeignSecretReference as exc:
+                return web.json_response({"error": relayed_failure_copy(exc)}, status=400)
             # ``_original_type`` preserves the branded config type; the registry type
             # (openai/anthropic/…) is what a catalog is keyed on.
             ptype = options.get("_original_type") or p.get("type", "")

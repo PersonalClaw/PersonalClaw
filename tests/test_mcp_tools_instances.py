@@ -105,7 +105,7 @@ def test_update_preserves_env(_home):
     assert spec["args"] == ["new"]
     # Preserved across the edit — as a reference in the file, the value in the credential store.
     assert spec["env"]["API_KEY"].startswith("{{secret:")
-    assert resolve_mcp_spec(spec)["env"] == {"API_KEY": "secret"}
+    assert resolve_mcp_spec("s", spec)["env"] == {"API_KEY": "secret"}
 
 
 def test_update_toggle_enabled(_home):

@@ -49,6 +49,7 @@ import logging
 from aiohttp import web
 
 from personalclaw.apps.secret_fields import mask_instance, preserve_unchanged_secrets
+from personalclaw.config.secret_refs import ForeignSecretReference
 from personalclaw.http_errors import json_error
 from personalclaw.providers import mcp_instances as _mcp
 from personalclaw.providers.failure_copy import connectivity_guidance
@@ -234,7 +235,9 @@ async def handle_create_instance(request: web.Request) -> web.Response:
 
     try:
         inst = create_instance(name, display_name=display_name, config=config)
-    except ValueError as exc:  # a secret the credential store cannot hold (multi-line)
+    except ForeignSecretReference as exc:
+        return _secret_owned_elsewhere(exc)
+    except ValueError as exc:  # a value no credential can hold (a NUL character)
         return _unstorable_secret(exc)
     _refresh_multi_instance_provider_safe(name)
     return web.json_response({"instance": mask_instance(inst, schema)}, status=201)
@@ -247,6 +250,11 @@ def _unstorable_secret(exc: ValueError) -> web.Response:
         status=422,
         error_extra={"details": [str(exc)]},
     )
+
+
+def _secret_owned_elsewhere(exc: ForeignSecretReference) -> web.Response:
+    """The instance names a credential another owner holds; the message says what to do."""
+    return json_error("secret_owned_elsewhere", message=str(exc), status=400)
 
 
 async def handle_get_instance(request: web.Request) -> web.Response:
@@ -351,6 +359,8 @@ async def handle_update_instance(request: web.Request) -> web.Response:
             config=config,
             enabled=body.get("enabled"),
         )
+    except ForeignSecretReference as exc:
+        return _secret_owned_elsewhere(exc)
     except ValueError as exc:
         return _unstorable_secret(exc)
     if not inst:
@@ -412,7 +422,7 @@ def _probe_failure(exc: BaseException, *, context: str) -> web.Response:
 
 async def handle_test_instance(request: web.Request) -> web.Response:
     """POST /api/providers/{name}/instances/{id}/test — test connectivity."""
-    from personalclaw.providers.instances import get_instance
+    from personalclaw.providers.instances import get_instance, resolved_config
     from personalclaw.providers.registry import get_provider_registry
 
     name = request.match_info["name"]
@@ -460,12 +470,16 @@ async def handle_test_instance(request: web.Request) -> web.Response:
     inst = get_instance(name, instance_id)
     if not inst:
         return json_error("not_found", message="No instance exists with that id.", status=404)
+    try:
+        config = resolved_config(inst)
+    except ForeignSecretReference as exc:
+        return _secret_owned_elsewhere(exc)
 
     try:
         from personalclaw.providers.loader import load_factory
 
         factory = load_factory(ext)
-        provider = factory(inst.config)
+        provider = factory(config)
         if hasattr(provider, "is_available"):
             available = await provider.is_available()
             if available:

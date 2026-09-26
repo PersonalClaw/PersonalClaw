@@ -194,15 +194,19 @@ def _verify_hook_token(request: web.Request) -> bool:
 
     ``config.json`` holds a ``{{secret:…}}`` reference; the token itself is in the credential
     store, resolved here, where it is used. A reference the store cannot answer resolves to
-    ``""``, which is "no token configured" — every request is refused.
+    ``""``, which is "no token configured" — every request is refused — and so does one naming
+    a credential another owner holds (refused and logged by ``resolve``).
     """
     import hmac  # noqa: F811
 
     from personalclaw.config.loader import AppConfig
-    from personalclaw.config.secret_refs import resolve
+    from personalclaw.config.secret_refs import ForeignSecretReference, config_owner, resolve
 
     cfg = AppConfig.load()
-    token = resolve(cfg.hooks).get("webhook_token", "")
+    try:
+        token = resolve(cfg.hooks, owner=config_owner("hooks")).get("webhook_token", "")
+    except ForeignSecretReference:
+        return False
     if not isinstance(token, str) or not token:
         return False
     auth = request.headers.get("Authorization", "")
