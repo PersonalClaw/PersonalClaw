@@ -30,6 +30,9 @@ function room(extra: Partial<RoomRecord> = {}): RoomRecord {
     rounds_used: 0,
     round_budget: 0,
     pending_queue: [],
+    speaking: '',
+    owed: [],
+    round_running: false,
     members: [],
     effective_round_budget: 6,
     max_round_budget: 100,
@@ -45,7 +48,7 @@ describe('the rooms list', () => {
   it('shows each room with its member count, its budget and its state', () => {
     render(<RoomsScope
       rooms={[room({
-        paused: true, rounds_used: 6, pending_queue: ['skeptic'],
+        paused: true, rounds_used: 6, pending_queue: ['skeptic'], owed: ['skeptic'],
         members: [
           { name: 'analyst', role_blurb: '', listen_policy: 'all', profile_narrowing: {} },
           { name: 'skeptic', role_blurb: '', listen_policy: 'mention', profile_narrowing: {} },
@@ -59,6 +62,24 @@ describe('the rooms list', () => {
     // The parked queue on the ROW: "paused" alone does not say whether anyone is still waiting to
     // speak, which is the difference between replying and archiving.
     expect(screen.getByText('1 still owed a turn')).toBeTruthy()
+  })
+
+  it('says a room whose round was cut off is INTERRUPTED, on the row', () => {
+    // The user may not be looking at the room when the gateway restarts; the list is where they
+    // find out that an answer they asked for never arrived.
+    render(<RoomsScope
+      rooms={[room({ speaking: 'analyst', owed: ['analyst'], round_running: false })]}
+      error={null} loading={false} onRefresh={() => {}} navigate={() => {}} />)
+    expect(screen.getByText('Interrupted')).toBeTruthy()
+    expect(screen.getByText('1 still owed a turn')).toBeTruthy()
+  })
+
+  it('promises no turn on an archived room — nobody may speak in it', () => {
+    render(<RoomsScope
+      rooms={[room({ archived: true, owed: ['analyst'] })]}
+      error={null} loading={false} onRefresh={() => {}} navigate={() => {}} />)
+    expect(screen.getByText('Archived')).toBeTruthy()
+    expect(screen.queryByText(/still owed a turn/)).toBeNull()
   })
 
   it('opens a room by its own id', async () => {

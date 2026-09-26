@@ -639,6 +639,84 @@ class TestHumanizeProviderError:
         assert humanize_provider_error(MemoryError()) == out
 
 
+class TestHumanizeProviderErrorInARoom:
+    """A room member's failed turn is shown IN the room, so the sentence must be true there.
+
+    Four of the humanizer's remedies name a chat-only fix — the composer's model selector, a new
+    chat, "your message" — and a room has none of them: a member's model is its agent binding's,
+    set on the Agents page, and what outgrows a model is the room's conversation. With
+    ``room_member`` those four say so; every other sentence is surface-neutral and identical;
+    and with no member the chat's words are exactly what they were, pinned verbatim below.
+    """
+
+    def _window_refusal(self):
+        from personalclaw.sdk.model import PromptExceedsWindow
+
+        return PromptExceedsWindow(
+            model="gemma3:1b", room_tokens=8_192, request_tokens=9_000, request_chars=36_000
+        )
+
+    def _surface_bound(self):
+        return {
+            "credits": Exception("Error code: 400 - credit balance is too low"),
+            "model_id": Exception("model not found: gemma9:900b"),
+            "memory": MemoryError("Unable to allocate 26.0 GiB"),
+            "window": self._window_refusal(),
+        }
+
+    def test_the_four_surface_bound_remedies_name_the_members_agent_and_no_chat_control(self):
+        for label, exc in self._surface_bound().items():
+            out = humanize_provider_error(exc, room_member="critic")
+            assert "the critic agent" in out and "Agents page" in out, (label, out)
+            for chat_only in ("composer", "new chat", "for this chat", "Your message"):
+                assert chat_only not in out, (label, chat_only, out)
+
+    def test_a_window_refusal_in_a_room_is_about_the_rooms_conversation(self):
+        out = humanize_provider_error(self._window_refusal(), room_member="critic")
+        assert out == (
+            "This room's conversation is too long for gemma3:1b: it can read about 8,192 tokens "
+            "(roughly 33,000 characters of text like this) at a time, and critic's turn needs "
+            "9,000 tokens (36,000 characters). Start a new room, or give the critic agent a model "
+            "with a larger context window on the Agents page."
+        )
+
+    def test_the_chat_keeps_its_own_words_exactly(self):
+        bound = self._surface_bound()
+        assert humanize_provider_error(bound["credits"]) == (
+            "This model's provider account is out of credits/quota. Top it up, or pick a "
+            "different model for this chat (the model selector is in the composer)."
+        )
+        assert humanize_provider_error(bound["model_id"]) == (
+            "The selected model id isn't valid for this provider. Pick a listed model in the "
+            "composer's model selector."
+        )
+        assert humanize_provider_error(bound["memory"]) == (
+            "This machine ran out of memory while the model was reading this conversation, so "
+            "no reply was produced. Shorten the message or start a new chat — or bind a model "
+            "that does not run on this machine in Settings → Models."
+        )
+        assert humanize_provider_error(bound["window"]) == (
+            "Your message is too long for gemma3:1b: it can read about 8,192 tokens (roughly "
+            "33,000 characters of text like this) at a time, and this message is 9,000 tokens "
+            "(36,000 characters). Shorten it, or bind a model with a larger context window in "
+            "Settings → Models."
+        )
+
+    def test_a_surface_neutral_sentence_is_the_same_on_both_surfaces(self):
+        import httpx
+
+        req = httpx.Request("POST", "http://127.0.0.1:11434/api/chat")
+        for exc in (
+            httpx.ReadTimeout("", request=req),
+            Exception("Error code: 429 rate limit"),
+            Exception("401 invalid x-api-key"),
+            Exception("some brand new failure mode nobody mapped"),
+        ):
+            assert humanize_provider_error(exc, room_member="critic") == humanize_provider_error(
+                exc
+            ), exc
+
+
 class TestHumanizeProviderErrorWithNoMessage:
     """An exception whose ``str()`` is empty still gets a sentence (day-56b evidence).
 

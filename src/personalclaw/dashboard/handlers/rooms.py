@@ -21,16 +21,16 @@ Two postures worth naming here, because they are invisible in the route bodies:
   permission an app has not declared — so an installed app cannot reach these routes
   unless it declares them. That is asserted in the tests rather than re-implemented.
 
-The human is the only caller that reaches these routes. Posting a message is the one route
-that runs anything afterwards: it hands the room to ``rooms.arbiter`` (see
-:func:`api_room_message_post`), which decides the speaker order, bounds the round, and drives
-each member's turn through ``rooms.turn``. The cursors that keep that feed from re-sending
-what a member has already read are `AR-4`.
+The human is the only caller that reaches these routes. Two routes run anything afterwards:
+posting a message hands the room to ``rooms.arbiter`` (see :func:`api_room_message_post`),
+which decides the speaker order, bounds the round, and drives each member's turn through
+``rooms.turn``; and continuing an interrupted room (:func:`api_room_continue`) restarts the
+round a stopped gateway left owing. The cursors that keep that feed from re-sending what a
+member has already read are `AR-4`.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -153,7 +153,7 @@ def _refusal(exc: store.RoomError) -> web.Response:
     return emit(exc.message)
 
 
-def _room_payload(room: store.Room) -> dict:
+def _room_payload(room: store.Room, state: Any) -> dict:
     """One room on the wire, with its resolved budget alongside its declared one.
 
     ``effective_round_budget`` is included because a caller reading ``round_budget: 0``
@@ -163,8 +163,18 @@ def _room_payload(room: store.Room) -> dict:
     disagrees with the writer's is an offer the writer refuses. ``max_members`` is the same
     rule for the roster: without it a full room still offered an agent, and the add was
     refused ``room_member_limit``.
+
+    **``owed`` and ``round_running`` are how a reader follows a round**, and both are answers
+    the reader cannot compute. ``owed`` is ``Room.owed`` — the open turn, then the queue, on the
+    current roster — so there is one rule for "who is still to answer", not one per client.
+    ``round_running`` is whether THIS gateway is running the room's round right now, read off
+    the live task (:func:`~personalclaw.rooms.arbiter.round_running`): the room view polls
+    exactly while it is true, and a room that owes turns while it is false was interrupted.
+    Guessing either from the transcript is what froze the view once every member had spoken.
     """
     payload = room.to_dict()
+    payload["owed"] = room.owed()
+    payload["round_running"] = arbiter.round_running(state, room.id)
     payload["effective_round_budget"] = store.effective_round_budget(room)
     payload["max_round_budget"] = store.MAX_ROOM_ROUND_BUDGET
     payload["max_members"] = store.max_members()
@@ -222,7 +232,7 @@ async def api_rooms_list(request: web.Request) -> web.Response:
         return _refusal(exc)
     include_archived = request.query.get("archived", "") in ("1", "true", "yes")
     rooms = store.list_rooms(include_archived=include_archived)
-    return web.json_response({"rooms": [_room_payload(r) for r in rooms]})
+    return web.json_response({"rooms": [_room_payload(r, _gateway_state(request)) for r in rooms]})
 
 
 async def api_rooms_create(request: web.Request) -> web.Response:
@@ -236,7 +246,7 @@ async def api_rooms_create(request: web.Request) -> web.Response:
         return exc.response
     except store.RoomError as exc:
         return _refusal(exc)
-    return web.json_response({"room": _room_payload(room)}, status=201)
+    return web.json_response({"room": _room_payload(room, _gateway_state(request))}, status=201)
 
 
 async def api_room_get(request: web.Request) -> web.Response:
@@ -267,7 +277,7 @@ async def api_room_get(request: web.Request) -> web.Response:
         return _refusal(exc)
     return web.json_response(
         {
-            "room": _room_payload(room),
+            "room": _room_payload(room, _gateway_state(request)),
             "member_posture": member_posture,
             "member_bindings": member_bindings,
             "messages": messages,
@@ -304,7 +314,7 @@ async def api_room_update(request: web.Request) -> web.Response:
         return exc.response
     except store.RoomError as exc:
         return _refusal(exc)
-    return web.json_response({"room": _room_payload(room)})
+    return web.json_response({"room": _room_payload(room, _gateway_state(request))})
 
 
 async def api_room_archive(request: web.Request) -> web.Response:
@@ -315,7 +325,7 @@ async def api_room_archive(request: web.Request) -> web.Response:
         room = store.archive_room(room_id)
     except store.RoomError as exc:
         return _refusal(exc)
-    return web.json_response({"room": _room_payload(room)})
+    return web.json_response({"room": _room_payload(room, _gateway_state(request))})
 
 
 async def api_room_member_add(request: web.Request) -> web.Response:
@@ -349,7 +359,7 @@ async def api_room_member_add(request: web.Request) -> web.Response:
         return exc.response
     except store.RoomError as exc:
         return _refusal(exc)
-    return web.json_response({"room": _room_payload(room)}, status=201)
+    return web.json_response({"room": _room_payload(room, _gateway_state(request))}, status=201)
 
 
 async def api_room_member_remove(request: web.Request) -> web.Response:
@@ -361,7 +371,7 @@ async def api_room_member_remove(request: web.Request) -> web.Response:
         room = store.remove_member(room_id, name)
     except store.RoomError as exc:
         return _refusal(exc)
-    return web.json_response({"room": _room_payload(room)})
+    return web.json_response({"room": _room_payload(room, _gateway_state(request))})
 
 
 async def api_room_message_post(request: web.Request) -> web.Response:
@@ -376,15 +386,18 @@ async def api_room_message_post(request: web.Request) -> web.Response:
 
     The human's line is appended FIRST and synchronously, so a 201 means it is durable even
     if every member then fails; the round itself runs in the background because N provider
-    turns do not fit in a request. The response carries ``speaking``: the arbiter's FIFO
-    speaker queue for this message, in the order those members will speak — which is what
-    lets a caller (and the `AR-8` UI) distinguish "nobody was listening" from "the answers
-    have not landed yet". Poll ``GET /api/rooms/{room_id}`` for the replies.
+    turns do not fit in a request. The response carries the ``room``, whose ``owed`` is the
+    arbiter's FIFO queue after this message — the turns the room already owed, then the ones this
+    message asks for, in the order they will be taken — and whose ``round_running`` says whether
+    a round is now answering them. That is what lets a caller (and the `AR-8` UI) distinguish
+    "nobody was listening" from "the answers have not landed yet". Poll
+    ``GET /api/rooms/{room_id}`` for the replies while ``round_running`` holds.
 
-    ``speaking`` is computed through :func:`~personalclaw.rooms.arbiter.resume_queue` rather
-    than the bare mention queue, so answering a PAUSED room reports the turns it still owed
-    ahead of the ones this message asks for — the same order the round will actually take. The
-    parked queue is read here and not consumed; the round drains it.
+    **The queue is persisted before the round starts**, and a message that arrives mid-round
+    joins the running round's queue rather than starting a second round (one per room — see
+    :func:`~personalclaw.rooms.arbiter.start_round`). Because the queue is on disk, a gateway
+    that stops before the round finishes leaves the room *interrupted* rather than silently
+    unanswered, and this same message route — or :func:`api_room_continue` — picks it back up.
 
     **The budget is refilled synchronously too**, on the same reasoning as the append: a human
     message is what resets ``rounds_used`` and closes a standing pause item, and doing that
@@ -398,17 +411,51 @@ async def api_room_message_post(request: web.Request) -> web.Response:
         content = require_string(body, "content")
         store.append_message(room_id, role="user", content=content, speaker=store.HUMAN_SPEAKER)
         state = _gateway_state(request)
-        owed = store.require_room(room_id).pending_queue
         arbiter.note_human_message(state, room_id)
+        arbiter.queue_human_turns(room_id, content)
         messages = store.read_messages(room_id)
-        speaking = arbiter.resume_queue(owed, store.members_for_turn(room_id), content)
+        owes = bool(store.require_room(room_id).owed())
     except RequestValidationError as exc:
         return exc.response
     except store.RoomError as exc:
         return _refusal(exc)
-    if speaking:
-        _start_round(state, room_id, content)
-    return web.json_response({"messages": messages, "speaking": speaking}, status=201)
+    if owes:
+        _start_round(state, room_id)
+    payload = _room_payload(store.require_room(room_id), state)
+    return web.json_response({"messages": messages, "room": payload}, status=201)
+
+
+async def api_room_continue(request: web.Request) -> web.Response:
+    """POST /api/rooms/{room_id}/continue — finish an interrupted round.
+
+    A room is interrupted when it still owes turns and no round is running them: the gateway
+    that was running it stopped mid-round. Its queue and the cut-off turn survived on the room
+    record, so this answers the human message already on the transcript — the cut-off member
+    first — without asking the human to send it again. That is the whole difference from
+    replying, which also resumes the room but adds a new message the members must answer too.
+
+    Deliberately NOT a resume for a PAUSED room. A pause is the round budget speaking, and its
+    only resume is a human message, because a budget pause means the agents have been talking
+    among themselves and continuing without a word from the human is the thing the budget
+    exists to stop. An interrupted round has nothing of the kind to wait for: its human spoke,
+    and nobody has answered yet.
+
+    **Idempotent**: a room that is running, paused, or owes nothing is answered as it stands,
+    because a second click on Continue — or one from a tab that has not seen the round finish —
+    wants a room that is not interrupted, and that is already true.
+    """
+    room_id = request.match_info["room_id"]
+    try:
+        _require_enabled()
+        room = store.require_room(room_id)
+        if room.archived:
+            raise store.RoomError("room_archived", f"Room {room_id!r} is archived.")
+    except store.RoomError as exc:
+        return _refusal(exc)
+    state = _gateway_state(request)
+    if not room.paused and room.owed():
+        _start_round(state, room_id)
+    return web.json_response({"room": _room_payload(store.require_room(room_id), state)})
 
 
 def _gateway_state(request: web.Request) -> Any:
@@ -430,18 +477,15 @@ def _gateway_state(request: web.Request) -> Any:
         return None
 
 
-def _start_round(state: Any, room_id: str, content: str) -> None:
-    """Fire the arbiter's round in the background, holding a reference so it is not GC'd.
-
-    ``state._background_tasks`` is the shipped set every other fire-and-forget handler
-    parks its task in (``dashboard/side.py`` is the closest sibling); an un-referenced
-    ``create_task`` is collectable mid-turn, which would make a member's reply vanish for
-    reasons no log explains.
+def _start_round(state: Any, room_id: str) -> None:
+    """Hand the room's round to the arbiter, which runs it in the background (one per room).
 
     A missing ``SessionManager`` is logged at ERROR and drops the round rather than 500-ing a
     request whose message is already durably on the transcript — the human's words are the
-    part they cannot re-derive, and every member's reply is one more human message away. The
-    log is the point: a dropped round must be findable, not inferred from a quiet room.
+    part they cannot re-derive. The log is the point: a dropped round must be findable, not
+    inferred from a quiet room. And the room itself says so too: its queue is on disk and
+    nothing is running it, so it reads as interrupted, with Continue, rather than as a room
+    that is answering.
     """
     sessions = getattr(state, "sessions", None) if state is not None else None
     if sessions is None:
@@ -449,9 +493,7 @@ def _start_round(state: Any, room_id: str, content: str) -> None:
             "rooms: no SessionManager on the dashboard state — room %s takes no turn", room_id
         )
         return
-    task = asyncio.create_task(arbiter.run_round(state, sessions, room_id, content))
-    state._background_tasks.add(task)
-    task.add_done_callback(state._background_tasks.discard)
+    arbiter.start_round(state, sessions, room_id)
 
 
 async def api_room_export(request: web.Request) -> web.Response:

@@ -789,7 +789,7 @@ def _describe_unexplained_failure(exc: object) -> str:
     )
 
 
-def humanize_provider_error(exc: object) -> str:
+def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
     """Turn a raw LLM-provider exception into a short, actionable user-facing line.
 
     Providers (Anthropic/OpenAI/…-compatible) surface failures as verbose SDK
@@ -813,12 +813,33 @@ def humanize_provider_error(exc: object) -> str:
       26.0 GiB for an array with shape (9, 27862, 27862)") — true, and nothing a user can act on.
       Answered before the empty-message rule too, since a bare ``MemoryError()`` is the same
       failure with the same fix.
+
+    **``room_member`` makes the remedies true on a room.** A sentence here is product copy on
+    whatever surface shows it, and four of them name a chat-only fix: the composer's model
+    selector, "start a new chat", "your message". A room member's model is its AGENT BINDING's,
+    chosen on the Agents page, and what outgrows a model there is the room's conversation — so
+    given the member's name those four say that instead. Every other sentence is surface-neutral
+    and is the same words either way; with no member, every word is exactly the chat's.
     """
-    from personalclaw.guardrails.failure import PromptExceedsWindow
+    from personalclaw.guardrails.failure import PromptExceedsWindow, request_exceeds_window_sentence
 
     if isinstance(exc, PromptExceedsWindow):
+        if room_member:
+            return request_exceeds_window_sentence(
+                model=exc.model,
+                room_tokens=exc.room_tokens,
+                request_tokens=exc.request_tokens,
+                request_chars=exc.request_chars,
+                room_member=room_member,
+            )
         return str(exc)
     if isinstance(exc, MemoryError):
+        if room_member:
+            return (
+                "This machine ran out of memory while the model was reading this room's "
+                "conversation, so no reply was produced. Start a new room, or give the "
+                f"{room_member} agent a model that does not run on this machine on the Agents page."
+            )
         return (
             "This machine ran out of memory while the model was reading this conversation, so "
             "no reply was produced. Shorten the message or start a new chat — or bind a model "
@@ -828,12 +849,24 @@ def humanize_provider_error(exc: object) -> str:
     if not raw:
         return _describe_unexplained_failure(exc)
     low = raw.lower()
-    # (needle, friendly) — order matters; first match wins.
+    # (needle, friendly) — order matters; first match wins. The two surface-bound remedies are
+    # resolved first, so the table below stays one row per failure class.
+    credits_fix = (
+        f"give the {room_member} agent a different model on the Agents page."
+        if room_member
+        else "pick a different model for this chat (the model selector is in the composer)."
+    )
+    model_id = (
+        f"The model the {room_member} agent names isn't valid for this provider. Pick a listed "
+        "model for it on the Agents page."
+        if room_member
+        else "The selected model id isn't valid for this provider. Pick a listed model in "
+        "the composer's model selector."
+    )
     _MAP = [
         (
             ("credit balance is too low", "insufficient_quota", "insufficient credit", "billing"),
-            "This model's provider account is out of credits/quota. Top it up, or pick a "
-            "different model for this chat (the model selector is in the composer).",
+            f"This model's provider account is out of credits/quota. Top it up, or {credits_fix}",
         ),
         (
             (
@@ -868,8 +901,7 @@ def humanize_provider_error(exc: object) -> str:
                 "unknown model",
                 "invalid model",
             ),
-            "The selected model id isn't valid for this provider. Pick a listed model in "
-            "the composer's model selector.",
+            model_id,
         ),
     ]
     for needles, friendly in _MAP:

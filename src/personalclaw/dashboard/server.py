@@ -1422,6 +1422,7 @@ async def start_dashboard(
     # flipping the config takes effect without a gateway restart.
     from personalclaw.dashboard.handlers.rooms import (
         api_room_archive,
+        api_room_continue,
         api_room_export,
         api_room_get,
         api_room_member_add,
@@ -1442,6 +1443,7 @@ async def start_dashboard(
     app.router.add_post("/api/rooms/{room_id}/members", api_room_member_add)
     app.router.add_delete("/api/rooms/{room_id}/members/{name}", api_room_member_remove)
     app.router.add_post("/api/rooms/{room_id}/messages", api_room_message_post)
+    app.router.add_post("/api/rooms/{room_id}/continue", api_room_continue)
     app.router.add_get("/api/rooms/{room_id}/export", api_room_export)
     app.router.add_get("/api/rooms/{room_id}", api_room_get)
     app.router.add_patch("/api/rooms/{room_id}", api_room_update)

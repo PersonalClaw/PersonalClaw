@@ -23,7 +23,6 @@ import {
   memberReachLabel,
   memberRuntimeLabel,
   memberStateMeta,
-  parkedQueue,
   roomLines,
   roomMemberViews,
   roomState,
@@ -45,6 +44,9 @@ function room(extra: Partial<RoomRecord> = {}): RoomRecord {
     rounds_used: 0,
     round_budget: 0,
     pending_queue: [],
+    speaking: '',
+    owed: [],
+    round_running: false,
     members: [],
     effective_round_budget: 6,
     max_round_budget: 100,
@@ -181,7 +183,7 @@ describe('per-member status — absent is unknown, never healthy', () => {
       }],
       member_bindings: [{ name: 'critic', configured: true, model: 'gemma4:12b', provider: 'native' }],
     })
-    const [view] = roomMemberViews(d, ['critic'])
+    const [view] = roomMemberViews({ ...d, room: { ...d.room, owed: ['critic'] } })
     // Refused beats "owed a turn": a queue position is meaningless for a member that cannot take
     // one, and refused beats the binding answer because it is the one with an actionable reason.
     expect(view.state).toBe('refused')
@@ -204,7 +206,7 @@ describe('per-member status — absent is unknown, never healthy', () => {
       ],
     })
     // The queue order is the product fact: skeptic was enqueued first, so it is #1.
-    const views = roomMemberViews(d, ['skeptic', 'analyst'])
+    const views = roomMemberViews({ ...d, room: { ...d.room, owed: ['skeptic', 'analyst'] } })
     expect(memberStateMeta('owed')?.tone).toBe('info')
     const byName = new Map(views.map((v) => [v.member.name, v]))
     expect(byName.get('skeptic')!.queuePosition).toBe(1)
@@ -229,14 +231,25 @@ describe('per-member status — absent is unknown, never healthy', () => {
       .toEqual(['Everything', 'When named', 'Observer'])
   })
 
-  it('never reports a member as owed a turn when it is no longer in the room', () => {
-    // The arbiter's `resume_queue` filters the parked queue to the current roster, so a member the
-    // human removed while the room was paused does not speak. Listing it would promise a turn the
-    // backend will skip.
-    const d = detail({ room: room({ members: [member('analyst')] }) })
-    const views = roomMemberViews(d, ['departed', 'analyst'])
-    expect(views).toHaveLength(1)
-    expect(views[0].queuePosition).toBe(1)
+  it('reports ANSWERING only for the open turn of a RUNNING round', () => {
+    // `speaking` with a live round is the member talking now; the same `speaking` with no round
+    // running is a turn a stopped gateway cut off, and that member is OWED — first — not answering.
+    const base = detail({
+      room: room({ members: [member('analyst'), member('skeptic')], speaking: 'analyst', owed: ['analyst', 'skeptic'] }),
+      member_posture: [
+        { name: 'analyst', declared: {}, tool_grants: 'read', tool_allowlist: [] },
+        { name: 'skeptic', declared: {}, tool_grants: 'read', tool_allowlist: [] },
+      ],
+      member_bindings: [
+        { name: 'analyst', configured: true, model: 'x', provider: 'native' },
+        { name: 'skeptic', configured: true, model: 'x', provider: 'native' },
+      ],
+    })
+    const live = roomMemberViews({ ...base, room: { ...base.room, round_running: true } })
+    expect(live.map((v) => v.state)).toEqual(['answering', 'owed'])
+    expect(memberStateMeta('answering')?.label).toBe('Answering')
+    const cutOff = roomMemberViews(base)
+    expect(cutOff.map((v) => [v.state, v.queuePosition])).toEqual([['owed', 1], ['owed', 2]])
   })
 })
 
@@ -303,12 +316,14 @@ describe("the room's own state and its budget", () => {
     expect(roomState(room())).toBe('active')
   })
 
-  it('filters the parked queue to the members still in the room', () => {
-    const r = room({
-      paused: true,
-      members: [member('analyst')],
-      pending_queue: ['analyst', 'departed'],
-    })
-    expect(parkedQueue(r)).toEqual(['analyst'])
+  it('reads INTERRUPTED from two backend facts: turns owed, and no round running them', () => {
+    // The restart case. No flag says "interrupted" — the room owes turns and the live task is gone,
+    // so a round that died any way at all (restart, crash, a drain bug) reads the same.
+    expect(roomState(room({ owed: ['analyst'], round_running: false }))).toBe('interrupted')
+    expect(roomState(room({ owed: ['analyst'], round_running: true }))).toBe('active')
+    expect(roomState(room({ owed: [], round_running: false }))).toBe('active')
+    // A pause is not an interruption: the budget stopped it on purpose, and a reply resumes it.
+    expect(roomState(room({ paused: true, owed: ['analyst'] }))).toBe('paused')
+    expect(roomState(room({ archived: true, owed: ['analyst'] }))).toBe('archived')
   })
 })

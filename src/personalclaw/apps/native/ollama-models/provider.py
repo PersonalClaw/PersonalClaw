@@ -202,6 +202,44 @@ def resolve_output_format(options: dict[str, object]) -> object | None:
     return None
 
 
+def _ollama_error_reason(body: str) -> str:
+    """Ollama's own sentence for a refused request, or its raw body when it sent no sentence.
+
+    Ollama answers a refusal with ``{"error": "..."}`` — e.g. ``model "x" not found, try pulling
+    it first`` — and that sentence is the only place the actual reason exists.
+    """
+    text = body.strip()
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, dict):
+        reason = parsed.get("error")
+        if isinstance(reason, str) and reason.strip():
+            text = reason.strip()
+    return text[:300] or "it gave no reason"
+
+
+def _raise_refused(response: Any, body: str) -> None:
+    """Raise a refused ``/api/chat`` as ``httpx.HTTPStatusError`` carrying OLLAMA's sentence.
+
+    ``response.raise_for_status()`` says "Client error '404 Not Found' for url
+    'http://localhost:11434/api/chat'" plus a link to MDN, and that is what a chat turn and an
+    Agent Rooms member's failed turn both showed for a model that is not pulled — measured in a
+    live room, where the next member read it as a connectivity problem. Ollama's body, already
+    read and logged by the caller, said exactly what was wrong. Same exception type with the
+    same response attached, so nothing that classifies or retries on it changes; only the
+    sentence a person reads does.
+    """
+    import httpx
+
+    raise httpx.HTTPStatusError(
+        f"Ollama answered {response.status_code}: {_ollama_error_reason(body)}",
+        request=response.request,
+        response=response,
+    )
+
+
 def _is_tools_unsupported_error(status_code: int, body: str) -> bool:
     """Heuristic: does this 4xx mean the model can't accept a ``tools`` schema?
 
@@ -564,14 +602,15 @@ class OllamaProvider(ModelProvider):
 
         async with self._client.stream("POST", "/api/chat", json=body) as response:
             if response.status_code >= 400:
-                err_body = await response.aread()
+                err_text = (await response.aread()).decode(errors="replace")
                 logger.error(
                     "Ollama %d: %s (model=%r, msg_count=%d)",
                     response.status_code,
-                    err_body.decode(errors="replace")[:200],
+                    err_text[:200],
                     self._model,
                     len(self._history),
                 )
+                _raise_refused(response, err_text)
             response.raise_for_status()
             async for line in response.aiter_lines():
                 if not line:
@@ -694,6 +733,7 @@ class OllamaProvider(ModelProvider):
                     model or self._model,
                     len(messages),
                 )
+                _raise_refused(response, err_text)
             response.raise_for_status()
             async for line in response.aiter_lines():
                 if not line:

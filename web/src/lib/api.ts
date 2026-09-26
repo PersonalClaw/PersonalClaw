@@ -1048,9 +1048,18 @@ export interface RoomMemberRecord {
  *  the roster — the configured `rooms.max_members` the add route enforces — so a full room
  *  refuses the extra agent in the picker instead of offering it and answering `room_member_limit`.
  *
- *  `pending_queue` is the speaker queue's remainder at the moment the room paused — the
- *  members still OWED a turn, in the order they will take it. It is the field that makes a
- *  pause a suspension rather than a cancellation, and it is what the pause card lists. */
+ *  The ROUND is on the record too, because the view must follow it by what the room says rather
+ *  than guess it from the transcript — a guess froze the view once every member had spoken once:
+ *
+ *  · `pending_queue` — who the room owes a turn whose turn has not begun, in FIFO order: draining
+ *    while a round runs, PARKED while the room is paused.
+ *  · `speaking` — the member whose turn is open, or `''`. Set while no round is running, it is a
+ *    turn a stopped gateway cut off.
+ *  · `owed` — the open turn, then the queue, on the current roster: the one list of "who is
+ *    still to answer", computed once by the backend (`Room.owed`) rather than per client.
+ *  · `round_running` — whether the gateway is running this room's round RIGHT NOW, read off the
+ *    live task. The view polls exactly while it holds, and a room that owes turns while it does
+ *    not was interrupted. */
 export interface RoomRecord {
   id: string
   title: string
@@ -1060,6 +1069,9 @@ export interface RoomRecord {
   rounds_used: number
   round_budget: number
   pending_queue: string[]
+  speaking: string
+  owed: string[]
+  round_running: boolean
   members: RoomMemberRecord[]
   effective_round_budget: number
   max_round_budget: number
@@ -1119,12 +1131,13 @@ export interface RoomDetail {
   messages: RoomMessage[]
 }
 
-/** The answer to a human message: the transcript including that message, plus the FIFO
- *  speaker queue this message produced. `speaking: []` is meaningful — nobody was listening
- *  — and is what lets the UI distinguish that from "the answers have not landed yet". */
+/** The answer to a human message: the transcript including that message, plus the room as it
+ *  stands once the message's turns are queued. `room.owed` is the FIFO queue in the order the
+ *  members will answer, and `owed: []` is meaningful — nobody was listening — which is what lets
+ *  the UI tell that from "the answers have not landed yet". */
 export interface RoomMessagePosted {
   messages: RoomMessage[]
-  speaking: string[]
+  room: RoomRecord
 }
 
 /** One recorded disagreement between two stored claims (KNOWLEDGE-SYNTHESIS §3.2).
@@ -6654,6 +6667,10 @@ export const api = {
   // loop after its provider answers, never by a caller naming a speaker.
   postRoomMessage: (id: string, content: string) =>
     post<RoomMessagePosted>(`/api/rooms/${encodeURIComponent(id)}/messages`, { content }),
+  // Finish a round a stopped gateway cut off, answering the message already on the transcript.
+  // Idempotent, and NOT a resume for a budget pause — that one resumes on a human message only.
+  continueRoom: (id: string) =>
+    post<{ room: RoomRecord }>(`/api/rooms/${encodeURIComponent(id)}/continue`),
   // This room's OWN budget; 0 goes back to inheriting `rooms.round_budget`.
   setRoomRoundBudget: (id: string, roundBudget: number) =>
     patch<{ room: RoomRecord }>(`/api/rooms/${encodeURIComponent(id)}`, { round_budget: roundBudget }),

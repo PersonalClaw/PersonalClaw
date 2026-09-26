@@ -200,7 +200,7 @@ def _about(chars: float) -> int:
 
 
 def request_exceeds_window_sentence(
-    *, model: str, room_tokens: int, request_tokens: int, request_chars: int
+    *, model: str, room_tokens: int, request_tokens: int, request_chars: int, room_member: str = ""
 ) -> str:
     """THE sentence for "your message alone does not fit this model", wherever it is decided.
 
@@ -213,14 +213,29 @@ def request_exceeds_window_sentence(
     while pasting. The conversion uses THIS message's own ratio (``request_chars /
     request_tokens``), so the figure is true of the text the user actually sent, not of an
     average that code or a log file would be far from.
+
+    ``room_member`` is the Agent Rooms reading of the same limit. A member's turn is not the
+    user's message: it is the room's whole conversation, fed to that member's model, so "your
+    message" and "shorten it" would both be false there — the fixes are a new room or a bigger
+    model for that member's agent, which is set on the Agents page rather than Settings → Models.
     """
     room = max(0, int(room_tokens))
     ratio = (request_chars / request_tokens) if request_tokens > 0 else 0.0
+    capacity = (
+        f"it can read about {room:,} tokens (roughly {_about(room * ratio):,} characters of "
+        "text like this) at a time"
+    )
+    if room_member:
+        return (
+            f"This room's conversation is too long for {model}: {capacity}, and "
+            f"{room_member}'s turn needs {request_tokens:,} tokens ({request_chars:,} "
+            f"characters). Start a new room, or give the {room_member} agent a model with a "
+            "larger context window on the Agents page."
+        )
     return (
-        f"Your message is too long for {model}: it can read about {room:,} tokens "
-        f"(roughly {_about(room * ratio):,} characters of text like this) at a time, and this "
-        f"message is {request_tokens:,} tokens ({request_chars:,} characters). Shorten it, or "
-        f"bind a model with a larger context window in Settings → Models."
+        f"Your message is too long for {model}: {capacity}, and this message is "
+        f"{request_tokens:,} tokens ({request_chars:,} characters). Shorten it, or bind a model "
+        "with a larger context window in Settings → Models."
     )
 
 
