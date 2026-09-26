@@ -97,7 +97,7 @@ async function confirmAndFail() {
   fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /Install anyway/ }))
   // The confirmed request fired, with the digest of what was reviewed (this was never the
   // failure mode — the request always reached the server and always got a real answer back).
-  await waitFor(() => expect(installApp).toHaveBeenCalledWith(SOURCE, DIGEST))
+  await waitFor(() => expect(installApp).toHaveBeenCalledWith(SOURCE, DIGEST, undefined))
   return within(screen.getByRole('dialog')).findByRole('alert')
 }
 
@@ -130,7 +130,7 @@ describe('a confirmed install that fails past the consent gate (#3540)', () => {
     expect(retry).not.toBeDisabled()
     fireEvent.click(retry)
     await waitFor(() => expect(installApp).toHaveBeenCalledTimes(2))
-    expect(installApp).toHaveBeenLastCalledWith(SOURCE, DIGEST)
+    expect(installApp).toHaveBeenLastCalledWith(SOURCE, DIGEST, undefined)
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(onInstalled).toHaveBeenCalledWith('slack-channel')
     expect(toasts).toContainEqual(expect.objectContaining({ level: 'success', message: 'Installed Slack Channel.' }))

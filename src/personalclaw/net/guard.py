@@ -66,6 +66,14 @@ class GuardDecision:
     reason: str = ""
     risk_level: str = "safe"
     recovery_hints: list[str] = field(default_factory=list)
+    # On a deny, WHAT was refused, for a caller that writes its own sentence (the Store says
+    # "this computer" where ``reason`` says "loopback"). ``category`` is an :class:`IpVerdict`
+    # category (``loopback``, ``private``, ``link_local``, …), or ``metadata`` for a cloud
+    # metadata endpoint, ``deny_list`` for an operator deny, ``not_listed`` for a host off an
+    # exclusive allow-list, ``unresolvable`` for a name with no answer, and ``malformed`` for a
+    # URL the guard could not read. ``address`` is the offending address when there is one.
+    category: str = ""
+    address: str = ""
 
 
 def classify_host(ip_str: str) -> IpVerdict:
@@ -163,12 +171,23 @@ def _resolve(host: str) -> list[str]:
     return out
 
 
-def evaluate(url: str, policy: EgressPolicy, *, resolver=_resolve) -> GuardDecision:
+def _literal(host: str) -> str:
+    """``host`` as a normalised IP string when it is an IP literal, else ``""``."""
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        return ""
+
+
+def evaluate(url: str, policy: EgressPolicy, *, resolver=None) -> GuardDecision:
     """Evaluate a URL against a policy. Pure aside from the DNS resolve (injectable).
 
     Returns a :class:`GuardDecision`. On allow, ``pinned_ips`` carries the validated
-    IPs the client must dial. ``resolver`` is injectable for testing (fake DNS).
+    IPs the client must dial. ``resolver`` is injectable for testing (fake DNS); left out, the
+    module's :func:`_resolve` is looked up at CALL time, so a test that replaces it reaches every
+    caller, including one that runs on a thread of its own (the git tunnel).
     """
+    resolve = resolver or _resolve
     try:
         parsed = urlparse(url)
     except Exception as exc:
@@ -178,6 +197,7 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=_resolve) -> GuardDecis
             reason=f"invalid URL: {exc}",
             risk_level="caution",
             recovery_hints=["Pass a well-formed http(s) URL."],
+            category="malformed",
         )
 
     scheme = (parsed.scheme or "").lower()
@@ -188,6 +208,7 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=_resolve) -> GuardDecis
             reason=f"scheme {scheme!r} not allowed (only {list(policy.allow_schemes)})",
             risk_level="caution",
             recovery_hints=["Use an http or https URL."],
+            category="malformed",
         )
     host = parsed.hostname or ""
     if not host:
@@ -197,16 +218,20 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=_resolve) -> GuardDecis
             reason="URL is missing a host",
             risk_level="caution",
             recovery_hints=["Include a host in the URL."],
+            category="malformed",
         )
 
     # Operator deny always wins, before any resolution.
     if host_matches(host, policy.deny_hosts):
+        metadata = host_matches(host, METADATA_SERVICE_HOSTS)
         return GuardDecision(
             allow=False,
             url=url,
             host=host,
             reason=f"host {host!r} is on the egress deny list",
             risk_level="destructive",
+            category="metadata" if metadata else "deny_list",
+            address=_literal(host),
         )
     # An operator allow-listed host bypasses the private-range block (the homelab
     # LAN-webhook opt-in) — but still resolves + pins so the connection is honest.
@@ -230,10 +255,11 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=_resolve) -> GuardDecis
                 "An operator can add the host via security.egress allow_hosts, or widen the "
                 "egress tier in the governance ceiling.",
             ],
+            category="not_listed",
         )
 
     try:
-        ips = resolver(host)
+        ips = resolve(host)
     except socket.gaierror:
         return GuardDecision(
             allow=False,
@@ -242,6 +268,7 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=_resolve) -> GuardDecis
             reason=f"host {host!r} is not resolvable",
             risk_level="caution",
             recovery_hints=["Check the hostname; the fetch fails closed on an unresolvable host."],
+            category="unresolvable",
         )
     if not ips:
         return GuardDecision(
@@ -250,6 +277,7 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=_resolve) -> GuardDecis
             host=host,
             reason=f"host {host!r} resolved to no addresses",
             risk_level="caution",
+            category="unresolvable",
         )
 
     verdicts = [classify_host(ip) for ip in ips]
@@ -281,6 +309,8 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=_resolve) -> GuardDecis
                 "If this hostname should be legitimate, its DNS is resolving to a "
                 "metadata/link-local address - investigate the record before retrying.",
             ],
+            category=("metadata" if metadata_hits[0].ip in _METADATA_SERVICE_IPS else "link_local"),
+            address=metadata_hits[0].ip,
         )
 
     # Loopback-inverted policy (gateway↔mcp): require loopback, deny public.
@@ -293,6 +323,8 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=_resolve) -> GuardDecis
                 host=host,
                 reason=f"LOOPBACK_INTERNAL policy: {host!r} resolves to non-loopback {non_loopback[0].ip}",  # noqa: E501
                 risk_level="destructive",
+                category=non_loopback[0].category,
+                address=non_loopback[0].ip,
             )
         return GuardDecision(
             allow=True, url=url, host=host, pinned_ips=[v.ip for v in verdicts], risk_level="safe"
@@ -316,6 +348,8 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=_resolve) -> GuardDecis
                     "Fetch a public URL.",
                     "An operator can allow-list an internal host via security.egress allow_hosts.",
                 ],
+                category=bad[0].category,
+                address=bad[0].ip,
             )
 
     return GuardDecision(

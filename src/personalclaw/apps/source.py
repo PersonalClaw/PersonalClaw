@@ -11,6 +11,13 @@ This module turns either into a directory + a derived ``origin`` for the scanner
 trust tier (``local`` for a path, ``external`` for a remote clone). The clone is
 bounded (``--depth 1`` + timeout) and never runs hooks — that's the lifecycle's
 job, behind the scanner gate.
+
+A source a registry LISTING named is not the owner's choice, so it is held to the listing
+rules (``apps/catalog.py`` "What a registry listing may name"): its form is checked, its host
+is resolved now and refused when it is this computer, a private network or the metadata
+service, and the clone runs through ``net/git.run_git_guarded``, which judges every host git
+connects to, redirects included. Everything else here is the owner's own act and fetches as
+it always has.
 """
 
 from __future__ import annotations
@@ -21,6 +28,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from personalclaw.apps.manager import APP_MANIFEST_FILENAME
 
@@ -32,6 +40,11 @@ _MULTI_APP_PREVIEW = 5  # apps named in the multi-app hint before it says "and N
 
 class SourceError(Exception):
     """The install source could not be resolved (bad path / clone failed)."""
+
+
+class SourceRefused(SourceError):
+    """A registry listing named a download address PersonalClaw will not fetch from for it.
+    The message is the sentence the Store shows for the same listing."""
 
 
 @dataclass
@@ -78,7 +91,7 @@ def _multi_app_hint(url: str, apps: list[str]) -> str:
     )
 
 
-def resolve(source: str) -> ResolvedSource:
+def resolve(source: str, *, listed_by: str = "") -> ResolvedSource:
     """Resolve an install source string to a local directory.
 
     A local directory path resolves in place (no cleanup). A git URL is
@@ -86,7 +99,11 @@ def resolve(source: str) -> ResolvedSource:
     ``url#subdirectory`` format for installing a specific app from a
     multi-app git repo — a multi-app repo given WITHOUT that suffix raises
     with the ``#app`` form and the app names it found. Raises
-    :class:`SourceError` on a missing path or a failed clone."""
+    :class:`SourceError` on a missing path or a failed clone.
+
+    ``listed_by`` is the registry whose listing named *source*, as a Store card sends it. A
+    source is also a listing's when an index this process read names it. Either way it is
+    fetched under the listing rules, and :class:`SourceRefused` says why when it may not be."""
     s = str(source).strip()
     if not s:
         raise SourceError("empty install source")
@@ -98,8 +115,10 @@ def resolve(source: str) -> ResolvedSource:
         base, subdir = s.rsplit("#", 1)
         subdir = subdir.strip("/") or None
 
+    policy = _listing_fetch_policy(s, base, listed_by)
+
     if _looks_like_git_url(base):
-        resolved = _clone_git(base)
+        resolved = _clone_git(base, policy=policy)
         if subdir:
             target = resolved.path / subdir
             # The `#subdirectory` is text a registry index supplies verbatim, so it is
@@ -133,21 +152,58 @@ def resolve(source: str) -> ResolvedSource:
     return ResolvedSource(path=path, origin="local", cleanup=False)
 
 
-def _clone_git(url: str) -> ResolvedSource:
+def _listing_fetch_policy(source: str, base: str, listed_by: str) -> Any:
+    """The egress policy to clone *base* under when a registry listing named *source*, or
+    ``None`` when *source* is the owner's own. Raises :class:`SourceRefused` for a listing
+    that may not be fetched at all, before anything is fetched."""
+    from personalclaw.apps import catalog
+    from personalclaw.net.git import preflight
+
+    registry = listed_by.strip() or catalog.listing_source_for(source)
+    if registry is None:
+        return None
+    refused = catalog.listing_repo_refusal(base)
+    if refused:
+        raise SourceRefused(refused)
+    policy = catalog.listing_policy(registry)
+    decision = preflight(base, policy)
+    if decision.allow:
+        return policy
+    if decision.category == "unresolvable":
+        raise SourceError(catalog.listing_unreachable(decision.host, "it does not resolve"))
+    raise SourceRefused(catalog.listing_address_refusal(decision))
+
+
+def _clone_git(url: str, *, policy: Any = None) -> ResolvedSource:
+    """Shallow-clone *url*. With a ``policy`` (a listing's fetch), git runs through the egress
+    guard's tunnel; without one (the owner's own URL), it runs as a plain ``git clone``."""
+    from personalclaw.net.git import GitEgressRefused, GitHostUnreachable, run_git_guarded
+
     tmp = Path(tempfile.mkdtemp(prefix="pclaw-app-clone-"))
+    clone = ["clone", "--depth", "1", "--", url, str(tmp)]
     try:
-        proc = subprocess.run(
-            ["git", "clone", "--depth", "1", "--", url, str(tmp)],
-            capture_output=True,
-            text=True,
-            timeout=_CLONE_TIMEOUT,
-        )
+        if policy is None:
+            proc = subprocess.run(
+                ["git", *clone], capture_output=True, text=True, timeout=_CLONE_TIMEOUT
+            )
+        else:
+            proc = run_git_guarded(clone, policy=policy, timeout=_CLONE_TIMEOUT)
     except subprocess.TimeoutExpired as exc:
         _rmtree(tmp)
         raise SourceError(f"git clone timed out after {_CLONE_TIMEOUT}s") from exc
     except FileNotFoundError as exc:
         _rmtree(tmp)
         raise SourceError("git is not available to clone the app source") from exc
+    except GitEgressRefused as exc:
+        _rmtree(tmp)
+        from personalclaw.apps.catalog import listing_fetch_refusal
+
+        raise SourceRefused(listing_fetch_refusal(url, exc.refusal)) from exc
+    except GitHostUnreachable as exc:
+        _rmtree(tmp)
+        from personalclaw.apps.catalog import listing_unreachable
+
+        raise SourceError(listing_unreachable(exc.host, exc.reason)) from exc
     if proc.returncode != 0:
         _rmtree(tmp)
         tail = (proc.stderr or proc.stdout or "").strip()[-300:]

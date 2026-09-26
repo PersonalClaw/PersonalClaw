@@ -826,11 +826,24 @@ function InstallFailure({ error, fixPrompt }: { error: string; fixPrompt: string
 /** What an install surface hands the one consent path. `source` is what the installer
  *  fetches (a registry item's `pointer`, else its `source`); `label` names it until the
  *  review reads the app's own display name; `update` is an INSTALLED app's name when the
- *  review is for updating it to `source`. */
+ *  review is for updating it to `source`; `listedBy` is the registry whose listing named
+ *  `source`, sent back so the gateway holds the fetch to the listing rules. Build it from a
+ *  catalog entry with `installTargetFor`, so no card forgets that last one. */
 export interface InstallTarget {
   source: string
   label: string
   update?: string
+  listedBy?: string
+}
+
+/** The install target for a Store/catalog entry: what it fetches, what to call it, and which
+ *  registry listed it. The one constructor for every card surface (grid, detail, onboarding). */
+export function installTargetFor(entry: AppCatalogEntry): InstallTarget {
+  return {
+    source: entry.pointer || entry.source,
+    label: entry.displayName || entry.name,
+    ...(entry.listedBy ? { listedBy: entry.listedBy } : {}),
+  }
 }
 
 type Phase =
@@ -858,7 +871,7 @@ export function useAppInstall({ onInstalled }: { onInstalled: (result: AppInstal
     setOpen({ target, phase: { k: 'reviewing' } })
     let phase: Phase
     try {
-      phase = { k: 'review', review: await api.previewApp(target.source, target.update), changed: false }
+      phase = { k: 'review', review: await api.previewApp(target.source, target.update, target.listedBy), changed: false }
     } catch (e) {
       phase = { k: 'unreadable', error: readableErrText(e) || `PersonalClaw could not read ${target.label}.` }
     }
@@ -879,7 +892,7 @@ export function useAppInstall({ onInstalled }: { onInstalled: (result: AppInstal
     const token = review.consent ?? ''
     const r = target.update
       ? await api.updateApp(target.update, target.source, token)
-      : await api.installApp(target.source, token)
+      : await api.installApp(target.source, token, target.listedBy)
     const stillOpen = seq.current === mine
     // The app's own name: the server's, else the one the review read — never a pasted URL.
     const label = r.displayName || review.displayName || target.label
