@@ -6,19 +6,19 @@ import { ConsentModal, PermissionList, consentPythonDeps } from './installConsen
 import type { GuardedResult } from '../../lib/useGuardedInstall'
 import type { AppPythonDependency } from '../../lib/api'
 
-// ── Installing an app pip-installs into the venv the GATEWAY runs out of, and consent
-//    never said so ─────────────────────────────────────────────────────────────────────
+// ── Installing an app pip-installs packages the GATEWAY loads into its own process, and
+//    consent never said so ──────────────────────────────────────────────────────────────
 //
 // Measured on a fresh `python:3.13-slim` container running a wheel built from this branch:
 // of nine apps installed through the Store, FOUR declared `dependencies.pythonDependencies`
-// and each `pip install`ed into the gateway's own virtualenv — `anthropic`, `openai`,
+// and each `pip install`ed a package the gateway would load — `anthropic`, `openai`,
 // `slack_sdk`, and a `Pillow>=10,<13` pin the installer evaluates against core's own. The
 // consent dialog enumerated gateway permissions, app messaging, desktop capabilities,
 // network reach and dashboard code, and said *"Installing fetches this app behind the
 // security scanner"* — and nothing at all about a third-party package entering the
 // interpreter that holds the owner's credentials, filesystem and network reach.
 //
-// `docs/security/limitations.md` §3 documents the shared-venv behaviour. That is not the
+// `docs/security/limitations.md` §3 documents where they go and what they reach. That is not the
 // same as disclosing it: a user consenting in a modal does not read the threat model, and
 // documenting a behaviour elsewhere does not discharge the duty of the surface where
 // consent is actually given. So this is the dialog completing its own stated purpose.
@@ -60,16 +60,22 @@ describe('the install-consent surface discloses the packages it will pip-install
   it('says WHERE they land, in the installer\'s own words', () => {
     render(<PermissionList perms={{}} pythonDeps={deps({ spec: 'openai>=1.30', coreOwned: false })} />)
     const t = text(document.body)
-    // `app_manager._reject_core_dependency_conflicts`'s docstring is the source of this
-    // framing, deliberately rather than a second vocabulary invented here: "the deps land
-    // in the **shared** venv the gateway is running out of … under a live process that has
-    // already imported those modules".
-    expect(t).toMatch(/shared virtualenv the gateway is running out of/)
-    expect(t).toMatch(/a live process that has already imported those modules/)
-    expect(t).toMatch(/no per-app site-packages/)
+    // `apps/app_python.py` is the source of this framing, deliberately rather than a second
+    // vocabulary invented here: the packages go to `<home>/app-python`, and the gateway
+    // APPENDS that directory to its import path — so they can add code, never replace a
+    // package it (or another app) already uses, and they run in-process once loaded.
+    expect(t).toMatch(/into your PersonalClaw data folder \(app-python\)/)
+    expect(t).toMatch(/loads those packages into its own process, after its own/)
+    expect(t).toMatch(/never replace a package PersonalClaw or another app already uses/)
+    expect(t).toMatch(/importable by PersonalClaw itself and by every other app you install/)
     // And the consequence a permission list cannot express: nothing above bounds it.
     expect(t).toMatch(/none of the permissions above bound it/)
     expect(t).toMatch(/pip install/)
+    // 🔴 The two sentences this row used to say are no longer TRUE, so they must be gone:
+    // packages no longer go into the gateway's own virtualenv, and "no per-app site-packages"
+    // described that shared venv.
+    expect(t).not.toMatch(/virtualenv/)
+    expect(t).not.toMatch(/site-packages/)
   })
 
   it('an app that declares none grows NO section — absence renders nothing', () => {
@@ -105,8 +111,8 @@ describe('the install-consent surface discloses the packages it will pip-install
     expect(t).toMatch(/a package PersonalClaw itself depends on/)
     expect(t).toMatch(/the install is refused rather than changing it/)
     // 🔴 The loud sentence must NOT fire for a pin that installs nothing — that is the
-    // whole point of the split. A row that said "pip install … into the shared venv the
-    // gateway is running out of" about `Pillow>=10,<13` would be false.
+    // whole point of the split. A row that said "pip install … the gateway loads those
+    // packages" about `Pillow>=10,<13` would be false.
     expect(t).not.toMatch(/pip install/)
   })
 
@@ -157,7 +163,7 @@ describe('the install-consent surface discloses the packages it will pip-install
     // in a real browser with `elementFromPoint` (see the PR's evidence).
     const chip = [...dialog.querySelectorAll('code')].find((c) => c.textContent === 'slack-sdk>=3.27,<4')
     expect(chip, 'the specifier must be INSIDE the dialog, not on the page behind it').toBeTruthy()
-    expect(text(dialog)).toMatch(/shared virtualenv the gateway is running out of/)
+    expect(text(dialog)).toMatch(/loads those packages into its own process, after its own/)
     // And above the button it informs.
     const confirm = [...dialog.querySelectorAll('button')].find((b) => /Install anyway/.test(b.textContent || ''))
     expect(confirm, 'the consentable branch must still offer the override').toBeTruthy()

@@ -92,7 +92,8 @@ def test_no_bundled_app_declares_python_dependencies():
     ``update()``. ``seed_builtin_apps()`` — the only auto-install path, and the only one a
     bundled app ever takes — calls neither. ``apps/native_contract.py`` documents this as
     deliberate ("it cannot declare its own dependencies; the manifest ``dependencies`` block
-    installs into an app venv, which a bundled module does not get"), so a declared
+    is installed by the Store's install/update path, and seeding a bundled app never takes
+    it"), so a declared
     dependency on a bundled app is not a slow install — it is a tile that is dead on arrival
     with no error anywhere.
 

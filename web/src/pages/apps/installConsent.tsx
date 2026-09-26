@@ -189,7 +189,7 @@ export function consentHostUi(
   return { page: Boolean(a.hasUI), components: Boolean(a.uiComponents) }
 }
 
-/** The Python packages this install will pip-install into the gateway's own venv, or
+/** The Python packages this install will pip-install for the gateway's own process to load, or
  *  `undefined` when the manifest has NOT been read.
  *
  *  🔑 The consent surface never said this. It enumerated gateway permissions, app
@@ -199,8 +199,8 @@ export function consentHostUi(
  *  owner's credentials, their filesystem and their network reach. Measured on a fresh
  *  container: of nine apps installed from the Store, FOUR ran `pip install` (`anthropic`,
  *  `openai`, `slack_sdk`, and a `Pillow>=10,<13` pin) with nothing on the consent screen
- *  naming any of them. `docs/security/limitations.md` §3 documents the shared-venv
- *  behaviour, which is not the same as disclosing it where consent is given — a user
+ *  naming any of them. `docs/security/limitations.md` §3 documents where they go and what
+ *  they can reach, which is not the same as disclosing it where consent is given — a user
  *  clicking a modal does not read the threat model.
  *
  *  Same `consentKnown` gate as {@link consentPermissions}, for the same reason and read
@@ -221,7 +221,7 @@ export function ConsentModal({ label, result, busy, permissions, hostUi, pythonD
   permissions: AppSummary['permissions'] | undefined
   /** #492 — what browser code the app ships, from {@link consentHostUi}. */
   hostUi: { page: boolean; components: boolean } | undefined
-  /** What the install pip-installs into the gateway's own venv, from
+  /** What the install pip-installs for the gateway's own process to load, from
    *  {@link consentPythonDeps}. REQUIRED for the same reason `permissions` and `crons` are:
    *  a package entering the interpreter the gateway runs in is part of what the user is
    *  agreeing to, and four callers remembering an optional prop is the failure mode this
@@ -415,8 +415,9 @@ function specList(specs: string[]) {
   ))
 }
 
-// The install runs `pip install` into the venv the GATEWAY runs out of. This row is that
-// disclosure, and it belongs with `network` and the host-page row rather than in the
+// The install runs `pip install` into `<home>/app-python`, which the GATEWAY loads into its own
+// process (`apps/app_python.py`). This row is that disclosure, and it belongs with `network`
+// and the host-page row rather than in the
 // bullets above them — the same argument EI-12 D2 made for `network` and #492 made for
 // dashboard code. The bullets are grants the gateway ENFORCES; a module that is importable
 // in-process has no chokepoint to enforce at, so rendering it as a bullet would read as a
@@ -452,10 +453,11 @@ function PythonDepsRow({ deps }: { deps: AppPythonDependency[] }) {
         {fresh.length > 0 ? (
           <>
             {' — installing this app runs '}<code className="font-mono">pip install</code>
-            {' into the shared virtualenv the gateway is running out of, under a live process '}
-            that has already imported those modules. There is no per-app site-packages, so
-            this code becomes importable by PersonalClaw itself and by every other app you
-            install, and none of the permissions above bound it.
+            {' into your PersonalClaw data folder ('}<code className="font-mono">app-python</code>
+            {'), and the gateway loads those packages into its own process, after its own. '}
+            They can add code but never replace a package PersonalClaw or another app already
+            uses. Once loaded, that code is importable by PersonalClaw itself and by every other
+            app you install, and none of the permissions above bound it.
           </>
         ) : ' — every package it declares is one PersonalClaw already ships.'}
         {owned.length > 0 && (
@@ -475,7 +477,7 @@ export function PermissionList({ perms, hostUi, pythonDeps }: {
   perms: AppSummary['permissions']
   /** #492 — what browser code the app ships, from {@link consentHostUi}. */
   hostUi?: { page: boolean; components: boolean }
-  /** The packages the install pip-installs into the gateway's venv, from
+  /** The packages the install pip-installs for the gateway to load, from
    *  {@link consentPythonDeps}. Omitted (an installed app's wire does not carry it) or `[]`
    *  renders NOTHING: an empty section would alarm without informing, and there is no claim
    *  in the silence — unlike `hostUi`, absence here cannot be read as a promise, because the

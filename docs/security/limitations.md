@@ -90,19 +90,36 @@ supply-chain scanner (quarantine → scan → consent → install, with `dangero
 terminal) is the control that vets what you install; the `network` flag is
 disclosure, not containment.
 
-## 3. App Python dependencies install into the venv the gateway runs from
+## 3. App Python dependencies load into the gateway's own process
 
 An app may declare `dependencies.pythonDependencies` in its manifest, and the
-installer pip-installs them into the **shared** virtualenv the gateway itself runs
-out of — there is no per-app site-packages. Core ships lean deliberately (heavy
-provider and ML libraries are not core dependencies), so this is how an app brings
-what it needs.
+installer pip-installs them into `<home>/app-python` — one directory every app
+shares, on the same volume as the rest of your data — which the gateway loads into
+its **own process**, after its own packages (`apps/app_python.py`). Core ships lean
+deliberately (heavy provider and ML libraries are not core dependencies), so this is
+how an app brings what it needs. Nothing is installed into the environment the
+gateway runs from: in the container image that environment is read-only to the
+gateway's user, and an install there would not survive the next `docker run`.
 
-**What is enforced:** an app may not re-pin a dependency core owns. Before anything
-is installed, `app_manager._reject_core_dependency_conflicts` refuses any declared
-requirement that names a core-declared dependency unless the version already
-installed satisfies it — so pip is never in a position to move a core dependency
-under the running gateway. The check is fail-closed: an unparseable requirement, or
+**What is enforced:** an app can add packages, but it cannot change or shadow one the
+gateway uses.
+
+- The directory is appended to the import path after the gateway's own entries, so a
+  module the gateway already provides always wins the import.
+- pip resolves with every distribution the gateway can import pinned, so a
+  dependency — direct or transitive — that needs another version of one of them fails
+  resolution instead of being installed, and nothing outside `app-python` is ever
+  uninstalled or replaced. (Measured without the pins: pip resolved a conflicting
+  `urllib3` by uninstalling the base environment's copy.)
+- Every installed app's requirements resolve in the same pip run, so the version of a
+  package two apps share is one both accept — or the install is refused, naming the
+  conflict. One interpreter can hold only one version of a module, so this is the
+  honest form of isolation between apps, not a weaker one.
+
+Before pip runs, `app_manager._reject_core_dependency_conflicts` also refuses any
+declared requirement that names a core-declared dependency unless the version already
+installed satisfies it — the gateway's copy loads first, so such a pin could never
+take effect. The check is fail-closed: an unparseable requirement, or
 a core-owned name whose installed version cannot be read, denies rather than
 installs. Requirements for libraries core does not own are unaffected — that is 20
 of the 22 first-party apps that declare dependencies, so the check has something to
@@ -115,18 +132,22 @@ the 22 manifests declaring `dependencies.pythonDependencies`, compared against
 core's `pyproject.toml` `[project].dependencies`. It is a claim about another
 repository at a moment in time: re-derive it, do not trust it.)
 
-**What is not enforced:** the packages an app adds are still importable by
-everything in the process, and pip may still move a *transitive* dependency that
-core does not declare directly. Isolating app dependencies properly requires
-out-of-process providers — today an app's provider code is imported in-process, so
-there is no import boundary to scope a path to. That is a platform-seam change,
-recorded as such rather than approximated here.
+**What is not enforced:** the packages an app adds are importable by everything in
+the gateway's process — PersonalClaw itself and every other app. Isolating app
+dependencies properly requires out-of-process providers — today an app's provider
+code is imported in-process, so there is no import boundary to scope a path to. That
+is a platform-seam change, recorded as such rather than approximated here. And the
+pins protect against a *resolution* moving the gateway's packages, not against the
+code itself: an app's dependency runs with the gateway's own access once imported, so
+on an install where the environment is writable by your user it could rewrite it,
+as any program you run could. The container image's environment is read-only to the
+gateway's user.
 
 **What the consent surface tells you:** the declared specifiers, verbatim, on the
 install-consent screen itself — `anthropic>=0.20`, not "this app installs some
 packages". `app_manager.describe_python_dependencies` classifies each against the
 same core pin set the guard above gates on, so a package core does not own reads as
-new code entering the interpreter, while a core-owned pin (`Pillow>=10,<13`) reads
+new code the gateway will load, while a core-owned pin (`Pillow>=10,<13`) reads
 as "the version you already have must satisfy this, or the install is refused". An
 app declaring none shows nothing at all. This section documenting the behaviour is
 not a substitute for that: a user consenting in a modal does not read a threat
@@ -137,9 +158,9 @@ install outright — every specifier degrades to the *new code* reading rather t
 disappearing. Over-disclosing a package is safe; under-disclosing one is not.
 
 **What this means for you:** an installed app can add libraries to the gateway's
-environment, so install apps you trust — the supply-chain scanner (quarantine →
+process, so install apps you trust — the supply-chain scanner (quarantine →
 scan → consent → install, with `dangerous` terminal) is the control that vets them.
-What an app cannot do is silently change the version of a library the gateway
+What an app's install cannot do is change the version of a library the gateway
 depends on.
 
 ## 4. An app's frontend bundle runs in the dashboard's own page

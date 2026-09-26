@@ -102,9 +102,10 @@ class SidecarCrashed(RuntimeError):
 def sidecar_venv_dir(app: str) -> Path:
     """The dedicated venv for app *app* — ``~/.personalclaw/apps/{app}/venv``.
 
-    Deliberately NOT the shared core venv: today's ``dependencies.pythonDependencies``
-    land there and need a gateway restart to import. A sidecar app escapes both problems
-    because its deps are only ever imported by its own child process.
+    Deliberately NOT ``<home>/app-python``, where every other app's
+    ``dependencies.pythonDependencies`` land: that directory is loaded into the gateway's
+    own process, so all apps share one version of each package. A sidecar app's deps are
+    only ever imported by its own child process, so it gets an interpreter of its own.
     """
     from personalclaw.apps.manager import app_dir
 

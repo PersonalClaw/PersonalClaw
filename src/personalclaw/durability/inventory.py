@@ -1291,6 +1291,16 @@ IGNORED: tuple[str, ...] = (
     # (credentials), never exported". That is this list, not the secret set. The profiles are also
     # unbounded in size and trivially re-creatable by signing in again, so nothing is lost.
     "browse",
+    # The installed apps' Python packages (`apps/app_python.py`): a pip `--prefix` rebuilt from
+    # the apps' own manifests. IGNORED, not declared, because it is a function of two things a
+    # restore does not carry over — the manifests (restored with `apps/`) and the INTERPRETER
+    # (its layout is keyed by the Python version, and its wheels are built for one platform). A
+    # restored copy would be at best redundant and at worst extension modules compiled for
+    # another machine's Python; the boot-time repair (`app_manager.repair_app_packages`)
+    # reinstalls from the manifests instead. It is also unbounded in size (PyTorch alone is ~1
+    # GB), and a dependency may ship a `.db` file that is data, not a store this gateway holds
+    # open — which the undeclared-database audit would otherwise report.
+    "app-python",
     "update_check.json",  # last update check — regenerated on the next poll
     # RUM-2's releases-LIST cache, the direct twin of update_check.json above: the
     # ETag-cached, offline-tolerant releases view the channel/pin resolver reads,
@@ -1583,7 +1593,7 @@ def audit_home(home: Path) -> AuditResult:
     # filesystem-copied while open in WAL mode. So the exemption is opt-in per entry
     # (`db_container=True`), naming the stores whose whole content IS databases.
     declared_trees = tuple(e.path + "/" for e in INVENTORY if e.db_container)
-    for db in sorted(home.rglob("*.db")):
+    for db in _db_files(home):
         rel_db = db.relative_to(home).as_posix()
         if is_ignored(rel_db) or rel_db in declared:
             continue
@@ -1591,3 +1601,21 @@ def audit_home(home: Path) -> AuditResult:
             continue
         result.undeclared_dbs.append(rel_db)
     return result
+
+
+def _db_files(home: Path) -> list[Path]:
+    """Every ``*.db`` file under *home*, never descending into an IGNORED directory.
+
+    The same answer as ``home.rglob("*.db")`` filtered by :func:`is_ignored` — a database under
+    an ignored segment is dropped from the report either way — but the walk no longer costs a
+    visit to every file of trees that can hold tens of thousands (the app packages under
+    ``app-python``, browser profiles, git object stores), none of which it could report.
+    """
+    import os
+
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(home):
+        rel_dir = Path(dirpath).relative_to(home)
+        dirnames[:] = [d for d in dirnames if not is_ignored((rel_dir / d).as_posix())]
+        found.extend(Path(dirpath) / f for f in filenames if f.endswith(".db"))
+    return sorted(found)

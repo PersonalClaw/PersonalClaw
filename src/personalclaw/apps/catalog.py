@@ -200,8 +200,8 @@ class CatalogEntry:
     # registry-index card (pointer-only, manifest not yet fetched — surfaced post-clone).
     permissions: dict[str, Any] = field(default_factory=dict)
     crons: list[dict[str, Any]] = field(default_factory=list)
-    # The Python packages installing this app pip-installs into the venv the GATEWAY
-    # runs out of, each tagged with whether core owns the name — from
+    # The Python packages installing this app pip-installs into ``<home>/app-python``, which
+    # the GATEWAY loads into its own process, each tagged with whether core owns the name — from
     # ``app_manager.describe_python_dependencies``, which reads the same core pin set the
     # install guard gates on. Consent enumerated permissions, messaging, desktop reach,
     # network and dashboard code and never this, which is the more consequential of the
@@ -1301,8 +1301,9 @@ def _manifest_consent(
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
     """(permissions, crons, pythonDependencies) an app declares — the P29 install-consent
     surface, extracted from a scanned manifest so the Store can show what the app will be
-    granted, what recurring jobs it will run, and what Python packages it will install into
-    the gateway's own venv, all BEFORE install. Best-effort; empty on any shape surprise.
+    granted, what recurring jobs it will run, and what Python packages it will install for
+    the gateway's own process to load, all BEFORE install. Best-effort; empty on any shape
+    surprise.
 
     All three facts are returned TOGETHER rather than read per scan site, which is what
     makes a new scan site unable to surface two of them and forget the third: the
