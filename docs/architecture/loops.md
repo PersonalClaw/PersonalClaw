@@ -22,7 +22,7 @@ verdict helpers), `lifecycle.py`, `watchdog.py` (stall detection),
 
 | Kind | What it is |
 |---|---|
-| `general` | generic iterative goal in a chat session (nudge + watchdog) |
+| `general` | generic iterative goal — runs as a **workflow run** (PP-16), see below |
 | `goal` | open-ended / verifiable / monitor research + action |
 | `code` | SDLC stage-gated work in a workspace (mini-IDE cockpit) |
 | `design` | design-system creation (live canvas, tokens, components) |
@@ -59,6 +59,52 @@ place, for every kind at once.
 | `goal:verifiable`, `research:verifiable` | `verify_command`, plus a sub-goal judge when >1 sub-goal is declared |
 | `goal:open_ended`, `research:open_ended` | `judge_assessment` (ground truth: `REPORT.md` / `RESEARCH.md`) |
 | `goal:monitor`, `research:monitor` | `never` — only a user Stop (or the budget, counted as a clean stop) ends it |
+
+## One listing, two homes (PP-16)
+
+A kind in `workflows/service.py:PORTED_LOOP_KINDS` (today `general`) no longer writes a
+loops-table row: `POST /api/loops` starts a `WorkflowRun` on the kind's bundled template
+(`general-project`: a root `loop` over `sequence[work, judge]`), stamping the run with the loop's
+`loop_kind` and `title` and carrying the composer's knobs as the run's sparse `policy_overrides`.
+Every other kind stays a loops-table row driven by `loop/watchdog.py` + autonudge.
+
+The loop surfaces do not care which home a loop has:
+
+- **Listing.** `GET /api/loops` returns both — loops-table rows and every run started as a loop,
+  projected into the loop wire shape by `workflows/loop_view.py` — newest first, filtered alike.
+  A projected row carries **`run_id`**; that field, never the kind, is how a surface tells the two
+  apart (`web/src/lib/loopKind.ts:loopRoute`, `lib/loopStatus.ts:loopActionSources`). The Loops
+  list, Home (hero + Active Work) and Mission Control's Working lane all read this one listing.
+- **Status.** A run status is projected onto the nearest truthful loop status (`loop_view._STATUS`):
+  `cancelled` → `stopped`; `escalated` → `complete` with a non-`done` stop reason, which renders
+  "Ended early" (`cycle_budget` when the loop spent its iterations, `worker_failed` otherwise).
+- **Actions.** `GET/PATCH/DELETE /api/loops/{id}` and `/nudge` answer for a run-backed id through
+  the RUN's own verbs and guards (pause/resume/cancel/delete/steer). Its action table is narrower
+  (`loop_view.RUN_ACTION_SOURCE_STATES`, mirrored in `RUN_LOOP_ACTION_SOURCE_STATUSES`): a run has
+  one attempt, so no resume from `failed`, and a gate is answered on the run page.
+- **Unattended.** `attended: false` in the overlay is the explicit grant that lets the run's stages
+  spawn without a per-stage approval (`approval_mode: auto`), still inside the operator's safety
+  ceiling; anything else asks per stage. `max_cycles` bounds the root loop's iterations. The grant
+  reaches the worker's own tool calls because `SessionManager.get_or_create` hands a session's
+  approval policy to its provider (a native runtime gates tools itself), and a native session
+  spawned with no cwd works in the validated workspace root — never the gateway process's cwd.
+- **Pause** stops the step in flight: the controller reads a sticky `PAUSE` intent in the run dir,
+  cancels the dispatched stage's subagent and re-queues it at the same epoch, and a paused run is
+  not re-adopted after a restart. Resume clears the intent and wakes the controller.
+- **Restart.** A resumed controller rebuilds each loop's iteration counter from the ledger's
+  `continue` iteration rows (`_rehydrate_loop_progress`) and re-queues a dispatched stage whose
+  subagent this process does not know (`_requeue_orphaned_stages`) — without both, a run past its
+  first iteration failed "run deadlocked" after a restart.
+- **Ending.** A run with a `loop_kind` announces its end as a loops-table loop does
+  (`workflows/attention.py:announce_loop_end`): a `loop_complete` / `loop_failed` notification, and
+  a "Loop needs a decision" inbox item when it escalates; a cancel says nothing.
+
+For a loops-table loop, pause, stop and delete also stop the worker's turn IN FLIGHT
+(`manager.halt_worker_turns`) — disarming the nudge loop only stops the NEXT cycle — and the cycle
+driver checks the loop is still armed before each re-prompt. A restart re-arm keeps the running
+stretch's `started_at` (the trust window and deadline are measured from it), and the watchdog's
+credited-cycle baseline is durable (`credited.json`), so a restart neither resets elapsed time nor
+re-credits a cycle.
 
 ## Stage progression
 
@@ -140,13 +186,18 @@ The supervisor does not take the worker's word for it:
 
 ## Cockpit dispatch (frontend)
 
-`web/src/pages/loops/LoopsSection.tsx` dispatches on the loop's kind:
+`web/src/pages/loops/LoopsSection.tsx` dispatches on the loop's kind — after first
+redirecting a run-backed loop (`run_id`) to its run page, `#/workflows/runs/<id>`, so every
+`#/loops/<id>` link lands:
 
 - `kind === 'design'` → `DesignCockpitPage.tsx` (live canvas, token views,
   and an "agentic build" path that seeds a project-bound chat with the loop id
   so react artifacts tagged `loop:<id>` render on the canvas);
 - everything else → `LoopCockpitPage.tsx` (the generic loop cockpit: cycle
-  trail, findings, sub-goal prompt bar, artifact/task/project links);
+  trail, findings, sub-goal prompt bar, artifact/task/project links). It names
+  the loop's `work_dir` — `loop.effective_dir`, where the worker's own files land,
+  which for a goal/general loop is not `files_dir` — with a link into Files, and a
+  failed outputs read renders as an error, never as "No outputs saved yet";
 - code loops additionally get the mini-IDE at
   `web/src/pages/code/CodeCockpitPage.tsx` — Monaco-based edit/save,
   PTY-backed build/test commands, and the SDLC stage trail.

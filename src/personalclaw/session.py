@@ -224,6 +224,29 @@ def _resolve_acp_spawn_cwd(cwd: str | None) -> Path:
     )
 
 
+def _push_approval_policy(provider: Any, policy: str) -> None:
+    """Hand a session's approval policy to a provider that gates tools ITSELF (the native runtime).
+
+    🔴 ``get_or_create(approval_policy=...)`` used to record the policy on the session RECORD only.
+    ``set_approval_policy`` pushed to the provider; creation did not. So a native subagent spawned
+    with an explicit ``auto`` grant — an unattended loop stage, a scheduled run-prompt — ran with
+    the runtime's own policy EMPTY, and with ``unattended`` set the runtime answers every tool that
+    needs approval with "needs approval but the run is unattended — auto-declined". Measured
+    2026-09-25 and again here: a General loop's worker was granted, then had ``write_file`` and
+    ``bash`` declined one by one, and reported it could not create the file. An ACP provider
+    enforces approval through its own protocol path and has no setter, so it is untouched by this.
+
+    Only the approval PROMPT is affected: the runtime's deny-list, sensitive-path, read-only and
+    task-mode gates run before it regardless, and the policy itself has already been bounded by
+    the operator's governance ceiling at the one place that grants it (``subagent._run_inner``).
+    """
+    if not policy:
+        return
+    setter = getattr(provider, "set_approval_policy", None)
+    if callable(setter):
+        setter(policy)
+
+
 @dataclass
 class _Session:
     provider: ModelProvider
@@ -1234,6 +1257,7 @@ class SessionManager:
                     sess.last_used = time.monotonic()
                     if approval_policy:
                         sess.approval_policy = approval_policy
+                        _push_approval_policy(sess.provider, approval_policy)
                     if agent:
                         sess.agent = agent
                     # Defer the (possibly blocking) semaphore acquire until after
@@ -1246,6 +1270,7 @@ class SessionManager:
                         approval_policy=approval_policy,
                         agent=agent or "",
                     )
+                    _push_approval_policy(provider, approval_policy)
                     self._sessions[key] = sess
                     logger.info(
                         "New session: %s agent=%s resumed=%s (total=%d)",

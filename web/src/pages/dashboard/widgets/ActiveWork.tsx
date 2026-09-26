@@ -3,7 +3,8 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Send, MessageCircleQuestion, Coffee } from 'lucide-react'
 import { api, type Loop } from '../../../lib/api'
 import { useDashboardLive } from '../DashboardLive'
-import { loopStatusLabel, loopStatusColor, effectiveLoopStatus, ACTIVE_LOOP_STATUSES } from '../../../lib/loopStatus'
+import { loopStatusLabel, loopStatusColor, effectiveLoopStatus, shownCycle, ACTIVE_LOOP_STATUSES } from '../../../lib/loopStatus'
+import { loopRoute } from '../../../lib/loopKind'
 import { SlotEmptyState, RowAction, StatusDot } from './kit'
 import { ListSkeleton } from '../../../ui/ListScaffold'
 import { ProgressRing } from '../../../ui/ProgressRing'
@@ -60,9 +61,17 @@ function ActiveRow({ loop, navigate }: { loop: Loop; navigate: RouteProps['navig
   const [busy, setBusy] = useState(false)
 
   const pct = loop.max_cycles > 0 ? Math.min(1, loop.total_cycles / loop.max_cycles) : null
+  // The number a user READS is `shownCycle`'s — the open cycle counts — so this row agrees with
+  // the cockpit and the list on the same screen. It printed the raw COMPLETED count, which read
+  // "cycle 1/30" beside a cockpit saying "Cycle 2/30" (issue 274's shape, one surface it missed).
+  const cycleNo = shownCycle(loop.status, loop.total_cycles)
   const cycleText = loop.max_cycles > 0
-    ? `cycle ${loop.total_cycles}/${loop.max_cycles}`
-    : `cycle ${loop.total_cycles} · ongoing`
+    ? `cycle ${cycleNo}/${loop.max_cycles}`
+    : `cycle ${cycleNo} · ongoing`
+  // A RUN-BACKED loop (`run_id`, PP-16) waiting on the user is parked at a gate, and a gate is
+  // answered on the run page — typing into this box would STEER the run (the loop nudge route's
+  // run verb), which leaves the gate exactly as unanswered as before. So its Answer opens the run.
+  const answersOnItsPage = !!loop.run_id && loop.status === 'needs_input'
 
   const send = async () => {
     const t = text.trim()
@@ -80,7 +89,7 @@ function ActiveRow({ loop, navigate }: { loop: Loop; navigate: RouteProps['navig
       className="rounded-lg bg-surface-low p-m"
     >
       <div className="flex items-center gap-s">
-        <button type="button" onClick={() => navigate(`loops/${loop.id}`)} className="flex min-w-0 flex-1 items-center gap-s text-left">
+        <button type="button" onClick={() => navigate(loopRoute(loop))} className="flex min-w-0 flex-1 items-center gap-s text-left">
           {pct != null
             ? <ProgressRing pct={pct} tone={statusColor} label={`Cycle progress for ${loop.name || loop.task || 'this loop'}`} />
             : <StatusDot color={statusColor} pulse={loop.status === 'running'} />}
@@ -92,7 +101,8 @@ function ActiveRow({ loop, navigate }: { loop: Loop; navigate: RouteProps['navig
           </div>
         </button>
         {loop.status === 'needs_input' && !answering && (
-          <RowAction tone="primary" onClick={() => setAnswering(true)} title="Answer the loop's question"
+          <RowAction tone="primary" onClick={() => (answersOnItsPage ? navigate(loopRoute(loop)) : setAnswering(true))}
+            title={answersOnItsPage ? 'Open the run to answer its question' : "Answer the loop's question"}
             ariaLabel={`Answer: ${loopLabel}`}><MessageCircleQuestion size={14} /> Answer</RowAction>
         )}
         {loop.status !== 'needs_input' && !answering && (

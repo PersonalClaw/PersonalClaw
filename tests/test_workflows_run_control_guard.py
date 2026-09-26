@@ -148,13 +148,12 @@ def _terminal_run(status: RunStatus):
 def test_resume_REFUSES_a_terminal_run_and_does_not_write_to_it(status: RunStatus) -> None:
     """issue 679. The refusal matters, and so does the absence of the write.
 
-    The clear-pause path pops `pause_requested` and calls `store.save`, so answering 200 here was
-    not cosmetic — it mutated a finished run. Asserting only the status code would leave the write
-    unexamined, so this marks the run and checks the mark survives.
+    The clear-pause path WRITES (it removes the run's sticky pause intent), so answering 200 here
+    was not cosmetic — it mutated a finished run. Asserting only the status code would leave the
+    write unexamined, so this marks the run and checks the mark survives.
     """
     run = _terminal_run(status)
-    run.extra["pause_requested"] = True
-    store.save(run)
+    store.request_pause(run.id)
 
     body = service.resume_run(run.id, supervisor=_FakeSupervisor())
 
@@ -162,7 +161,7 @@ def test_resume_REFUSES_a_terminal_run_and_does_not_write_to_it(status: RunStatu
     assert body["code"] == "WF_RUN_ALREADY_TERMINAL"
     assert status.value in body["message"]
     # The finished run is untouched — this is the half that made 679 more than a wrong status.
-    assert store.get(run.id).extra.get("pause_requested") is True
+    assert store.pause_requested(run.id) is True
 
 
 def test_the_table_covers_every_control_verb() -> None:

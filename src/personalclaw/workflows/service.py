@@ -554,6 +554,9 @@ async def start_run(
     idempotency_key: str = "",
     blocking_timeout: float = 0.0,
     skip_preflight: bool = False,
+    loop_kind: str = "",
+    title: str = "",
+    policy_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Instantiate a def and start driving it.
 
@@ -562,8 +565,30 @@ async def start_run(
 
     Preflight runs first unless explicitly skipped: a missing credential caught here costs
     nothing, and caught at node 7 has already paid for six nodes of model calls.
+
+    ``loop_kind``/``title``/``policy_overrides`` are what a LOOP start carries that no other start
+    does (:func:`start_kind_run` is their one caller): the kind the user asked for, the loop's
+    name, and the per-instance knobs it was created with. They are written onto the run AT
+    CREATE — before the supervisor launches it — because the overlay is frozen once a run has
+    launched (:func:`set_policy_overrides`) and the first tick must already see it: an unattended
+    grant applied one tick late is one approval prompt too many.
     """
     from personalclaw.workflows.effects import START_DEDUPE
+    from personalclaw.workflows.supervisor_policy import OVERRIDABLE_POLICY_KEYS
+
+    overrides = dict(policy_overrides or {})
+    unknown = sorted(set(overrides) - OVERRIDABLE_POLICY_KEYS)
+    if unknown:
+        # The write seam's strictness (`store.set_policy_overrides`), applied at the only other
+        # door an overlay enters by — a typo'd knob persisted here would resolve to nothing forever
+        # while the user believes it is set. Same code, so both doors refuse alike.
+        return _service_failure(
+            "WF_POLICY_KEY_UNKNOWN",
+            f"unknown policy override key(s) {unknown} — "
+            f"the overridable set is {sorted(OVERRIDABLE_POLICY_KEYS)}",
+            unknown_keys=unknown,
+            overridable=sorted(OVERRIDABLE_POLICY_KEYS),
+        )
 
     if idempotency_key:
         existing = START_DEDUPE.lookup(idempotency_key)
@@ -667,6 +692,9 @@ async def start_run(
             mode=mode if mode in ("blocking", "background") else "background",
             project_id=project_id,
             origin=RunOrigin(kind=origin_kind, session_key=session_key),
+            policy_overrides=overrides,
+            loop_kind=loop_kind,
+            title=title,
             extra=run_extra,
         )
     )
@@ -776,9 +804,17 @@ async def start_kind_run(
     exit_condition: str = "",
     variant: str = "",
     has_verify_command: bool = False,
+    title: str = "",
+    policy_overrides: dict[str, Any] | None = None,
     **start_kw: Any,
 ) -> dict[str, Any]:
     """Start a legacy loop `kind` as a `WorkflowRun` on the template that replaced it.
+
+    The run is stamped with the kind it was started as (``WorkflowRun.loop_kind``) and the loop's
+    ``title``, which is what puts it in the ONE loop listing; ``policy_overrides`` is the loop's
+    per-instance knobs (``attended``, ``max_cycles``, …) under the sparse-overlay contract. Before
+    these three arrived here the loop door handed the run nothing but the task, so an "Unattended"
+    loop ran attended, its cycle budget was the template's, and it was listed nowhere as a loop.
 
     Two refusals, both deliberately BEFORE any run exists:
 
@@ -854,7 +890,14 @@ async def start_kind_run(
     criterion_input = intake.get("success_criteria", "")
     if criterion_input and exit_condition:
         inputs[criterion_input] = exit_condition
-    return await start_run(name=template, inputs=inputs, **start_kw)
+    return await start_run(
+        name=template,
+        inputs=inputs,
+        loop_kind=normalized,
+        title=title,
+        policy_overrides=policy_overrides,
+        **start_kw,
+    )
 
 
 def status(run_id: str) -> dict[str, Any]:
@@ -880,6 +923,14 @@ def status(run_id: str) -> dict[str, Any]:
         # user overrode; an empty dict means "kind/template defaults throughout". The run
         # view's prelaunch policy editor renders and writes this (seam 4f).
         policy_overrides=run.policy_overrides,
+        # A run started as a loop is headed by the loop's name, not by its template's — the run
+        # page was titled "general-project" for a loop the user had just named.
+        loop_kind=run.loop_kind,
+        title=run.title,
+        # A pause is applied on the controller's next step, so between the click and the step the
+        # status still reads `running`. Reported so the page can say "Pausing…" rather than go
+        # on showing a Pause button that looks like it did nothing.
+        pause_requested=store.pause_requested(run_id),
         nodes=_nodes_of(run_id),
     )
 
@@ -1319,6 +1370,9 @@ def cancel_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
     controller = _live(run_id, supervisor)
     if controller is not None:
         controller.request_cancel()
+        # A PAUSED run's controller has no tick loop running to read the intent, so it is woken
+        # to apply it; a running loop reads it on its next step and this is a no-op.
+        controller.wake()
         return _ok(run_id=run_id, cancel_requested=True)
     if RUN_PHASES[run.status] is LifecyclePhase.PRELAUNCH:
         run.status = RunStatus.CANCELLED
@@ -2124,18 +2178,31 @@ def workspace_review(run_id: str) -> dict[str, Any]:
 
 
 def pause_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
-    """Stop launching new nodes; in-flight ones finish.
+    """Pause a run: the work in flight is withdrawn and nothing more runs until it is resumed.
 
-    A pause is a REQUEST recorded on the run, consumed by the tick loop — the same
-    single-writer discipline as cancel.
+    A pause is a STICKY INTENT (`store.request_pause`, a file like cancel's), applied by the tick
+    loop on its next step — the single-writer discipline. What the step does with it is
+    `RunController._pause_inflight`: a running stage's subagent is stopped and re-queued, so
+    "paused" means paused rather than "stops launching new nodes while the current one writes for
+    another ten minutes". The intent was a key in ``run.extra`` until this, which the live
+    controller's next save overwrote and nothing ever read (#370), so Pause did nothing at all.
+
+    Sticky across a restart: the watchdog does not re-adopt a paused run, so it stays paused.
     """
     run = store.get(run_id)
     if run is None:
         return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
     if run.status in TERMINAL_RUN_STATUSES:
         return _service_failure("WF_RUN_ALREADY_TERMINAL", f"run is already {run.status.value}")
-    run.extra["pause_requested"] = True
-    store.save(run)
+    if RUN_PHASES[run.status] is LifecyclePhase.PRELAUNCH:
+        # A draft has no work to pause, and recording an intent on one would make its first
+        # tick pause a run the user then has to resume before it ever started.
+        return _service_failure(
+            "WF_RUN_NOT_LIVE",
+            f"run {run_id!r} has not started, so there is nothing to pause — start it first.",
+            status=run.status.value,
+        )
+    store.request_pause(run_id)
     return _ok(run_id=run_id, pause_requested=True)
 
 
@@ -2268,8 +2335,8 @@ def resume_run(
     if run is None:
         return _run_not_found(run_id)
     # A finished run cannot be resumed, and saying otherwise was not merely cosmetic: the
-    # clear-pause path below pops `pause_requested` and SAVES, so a resume against a complete,
-    # failed or cancelled run wrote to the finished run's `extra` and answered
+    # clear-pause path below WRITES (it removes the run's sticky pause intent), so a resume against
+    # a complete, failed or cancelled run wrote to the finished run and answered
     # `{"resumed": true}` (issue 679). Its three siblings — cancel, pause, steer — already refuse
     # with this exact code; `resume` was the one that did not ask.
     if run.status in TERMINAL_RUN_STATUSES:
@@ -2278,8 +2345,8 @@ def resume_run(
     # `resumed: true` to one was the false success at the centre of #372's closed loop: `run_from`
     # refused with "resume the run before run_from", `resume` reported success, and the draft stayed
     # draft forever. The refusal names `start`, which is the verb that actually applies. Sits above
-    # the clear-pause path deliberately — that path is what produced the lie, by popping a key a
-    # draft never had and saving.
+    # the clear-pause path deliberately — that path is what produced the lie, by clearing a pause a
+    # draft never had and reporting it resumed.
     if RUN_PHASES[run.status] is LifecyclePhase.PRELAUNCH:
         return _service_failure(
             "WF_RUN_NOT_LIVE",
@@ -2289,8 +2356,15 @@ def resume_run(
         )
 
     if answer is None and not token:
-        run.extra.pop("pause_requested", None)
-        store.save(run)
+        # Clear the pause, then restart the loop that was stopped by it. A controller that is
+        # still registered has an EXITED tick loop (that is what a pause is), so it must be woken;
+        # with none (a restart), the watchdog adopts the run on its next poll now that no pause
+        # intent holds it back. Clearing an intent the step has not applied yet simply withdraws
+        # the pause before it lands.
+        store.clear_pause(run_id)
+        controller = _live(run_id, supervisor)
+        if controller is not None:
+            controller.wake()
         return _ok(run_id=run_id, resumed=True, gate_answered=False)
 
     controller = _live(run_id, supervisor)

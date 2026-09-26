@@ -1020,6 +1020,18 @@ class WorkflowRun:
     #: (how a change was made, not who), which is untouched.
     owner_username: str = ""
     origin_harness: str = ""
+    #: The loop kind this run was started AS, through `POST /api/loops` (PP-16: a ported loop kind
+    #: IS a run). ``""`` for every run that is not a loop — a template started from the Workflows
+    #: page, a chat tool, a trigger. This is what makes "a run-backed loop is a loop" answerable
+    #: from the run row: the loop listing selects on it, and nothing resolves a TEMPLATE back to a
+    #: kind (the one-way rule `loop_aliases` states) — the kind the user asked for is recorded at
+    #: the door, the same way `origin` records how the run was started.
+    loop_kind: str = ""
+    #: The user-facing title of a run started as a loop (the loop's `name`). ``""`` for a run that
+    #: is not one, whose surfaces go on labelling it by its template. A declared field rather than a
+    #: key in `extra`, because it is shown on every loop surface and `extra` is a tolerant-reader
+    #: spillover, not a place a first-class value can be relied on to survive.
+    title: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -1061,6 +1073,8 @@ class WorkflowRun:
             "policy_overrides",
             "owner_username",
             "origin_harness",
+            "loop_kind",
+            "title",
         }
     )
 
@@ -1110,6 +1124,8 @@ class WorkflowRun:
             "policy_overrides": dict(self.policy_overrides),
             "owner_username": self.owner_username,
             "origin_harness": self.origin_harness,
+            "loop_kind": self.loop_kind,
+            "title": self.title,
         }
         d.update(self.extra)
         return d
@@ -1159,6 +1175,8 @@ class WorkflowRun:
             # a live username/machine_id is minted. Mirrors `Task.author`'s empty-is-owner rule.
             owner_username=str(d.get("owner_username", "") or ""),
             origin_harness=str(d.get("origin_harness", "") or ""),
+            loop_kind=str(d.get("loop_kind", "") or ""),
+            title=str(d.get("title", "") or ""),
             extra={k: v for k, v in d.items() if k not in cls._KNOWN},
         )
 

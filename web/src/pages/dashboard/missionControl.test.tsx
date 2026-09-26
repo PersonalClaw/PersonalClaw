@@ -24,6 +24,7 @@ import type { InboxItem, PendingApproval } from '../../lib/api'
 const inboxOpen = vi.fn()
 const approvals = vi.fn()
 const chatSessions = vi.fn()
+const uLoops = vi.fn()
 const resolveApproval = vi.fn()
 const resumeWorkflowRun = vi.fn()
 
@@ -35,6 +36,7 @@ vi.mock('../../lib/api', async (orig) => ({
     inboxOpen: (...a: unknown[]) => inboxOpen(...a),
     approvals: (...a: unknown[]) => approvals(...a),
     chatSessions: (...a: unknown[]) => chatSessions(...a),
+    uLoops: (...a: unknown[]) => uLoops(...a),
     resolveApproval: (...a: unknown[]) => resolveApproval(...a),
     resumeWorkflowRun: (...a: unknown[]) => resumeWorkflowRun(...a),
   },
@@ -103,6 +105,7 @@ beforeEach(() => {
   inboxOpen.mockResolvedValue([])
   approvals.mockResolvedValue([])
   chatSessions.mockResolvedValue([])
+  uLoops.mockResolvedValue([])
   toLanes.mockReturnValue(lanes())
 })
 
@@ -272,8 +275,21 @@ describe('the lane split comes from lib/attentionLanes, not from this view', () 
         [item],
         [appr],
         [{ key: 'chat-1', title: 'nightly sweep', running: true, stopping: false, pending_approval: false }],
+        [],
       ),
     )
+  })
+
+  it('hands the loop listing to the Working lane — a run-backed loop has no chat session', async () => {
+    // Measured 2026-09-25: a General loop ran while this lane said "Nothing is running right now".
+    // It is a workflow run, so no chat session carries it; `GET /api/loops` lists it (with
+    // `run_id`), and that listing is the lane's second source of in-flight evidence.
+    const loop = { id: 'r1', run_id: 'r1', kind: 'general', name: 'Weekly checklist', status: 'running' }
+    uLoops.mockResolvedValue([loop])
+    render(<MissionControl />)
+
+    await waitFor(() => expect(toLanes).toHaveBeenCalled())
+    expect(toLanes.mock.calls[toLanes.mock.calls.length - 1][3]).toEqual([loop])
   })
 
   it('hands the three lists over UNMERGED — a mirrored approval is on the wire twice', async () => {

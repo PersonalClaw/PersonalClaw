@@ -26,7 +26,7 @@ import { loopKindMeta } from '../../lib/loopKind'
 import { loopToGoalLoop } from './goalAdapter'
 import { rowSubject } from '../../lib/rowSubject'
 import { activePhaseIndex, phaseMinCycles, phaseForCycle, hasDistinctName } from './loopPhases'
-import { loopStatusLabel, loopStatusColor, loopStatusTone, effectiveLoopStatus, shownCycle, ACTIVE_LOOP_STATUSES, PRELAUNCH_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES } from '../../lib/loopStatus'
+import { loopStatusLabel, loopStatusColor, loopStatusTone, effectiveLoopStatus, shownCycle, ACTIVE_LOOP_STATUSES, PRELAUNCH_LOOP_STATUSES, loopActionSources } from '../../lib/loopStatus'
 import { PageTitle } from '../../ui/PageTitle'
 
 // The status word + accent come from `lib/loopStatus` — the ONE registry every loop
@@ -51,7 +51,11 @@ function order(a: GoalLoop, b: GoalLoop) {
   return (b.started_at ?? b.created_at) - (a.started_at ?? a.created_at)
 }
 
-export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (id: string) => void; onCreate: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
+/** A row as `onOpen` receives it: enough to route it (`lib/loopKind:loopRoute`) — a run-backed loop
+ *  opens on its run page, so the id alone cannot say where to go. */
+export type OpenableLoop = Pick<GoalLoop, 'id' | 'run_id'> & { kind?: string }
+
+export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (loop: OpenableLoop) => void; onCreate: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
   // Cached list (instant paint on revisit) that still polls — persist:false so the
   // live status (running / cycle counts) is never stale across a hard reload.
   // This list is the back-target for the general/goal/design cockpits (Code keeps its own
@@ -159,7 +163,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
         <SidePanel key={peek.id} fillHeight storeKey="loop-peek-w"
           icon={(() => { const KI = loopKindMeta((peek as { kind?: string }).kind).icon; return <KI size={18} className="text-primary" /> })()} title={peek.name || peek.goal.slice(0, 60)}
           onClose={() => setPeekId('')}>
-          <LoopPeek loop={peek} onOpenFull={() => onOpen(peek.id)} />
+          <LoopPeek loop={peek} onOpenFull={() => onOpen(peek)} />
         </SidePanel>
       )}
     >
@@ -231,17 +235,21 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                 // take an optional event, so there's no click to stopPropagation here.
                 //
                 // Every lifecycle gate below asks `lib/loopStatus`'s LOOP_ACTION_SOURCE_STATUSES —
-                // the mirror of the backend guard the action route enforces. These two sites (menu
-                // + hover button) each carried their own resume list, both short of the backend's
-                // by two states, so a blocked loop could not be resumed from this page at all and a
-                // failed one offered Resume in the cockpit and nothing here. Delete is NOT on that
-                // map (it is a different route with its own terminal-only rule), so it keeps its
-                // own condition rather than borrowing an unrelated action's set.
+                // the mirror of the backend guard the action route enforces — through
+                // `loopActionSources`, because this list holds BOTH kinds of loop: a run-backed row
+                // (`run_id`, PP-16) has the run's narrower lifecycle (no resume from `failed`, and a
+                // gate is answered on the run page). These two sites (menu + hover button) each
+                // carried their own resume list, both short of the backend's by two states, so a
+                // blocked loop could not be resumed from this page at all and a failed one offered
+                // Resume in the cockpit and nothing here. Delete is NOT on that map (it is a
+                // different route with its own terminal-only rule), so it keeps its own condition
+                // rather than borrowing an unrelated action's set.
+                const can = loopActionSources(c)
                 const menuItems: ContextMenuItem[] = [
                   { icon: <ExternalLink size={15} />, label: 'Open', onSelect: () => setPeekId(c.id) },
-                  ...(LOOP_ACTION_SOURCE_STATUSES.pause.has(c.status) ? [{ icon: <Pause size={15} />, label: 'Pause', onSelect: () => act(undefined, c.id, 'pause') }] : []),
-                  ...(LOOP_ACTION_SOURCE_STATUSES.resume.has(c.status) ? [{ icon: <Play size={15} />, label: 'Resume', onSelect: () => act(undefined, c.id, 'resume') }] : []),
-                  ...(LOOP_ACTION_SOURCE_STATUSES.stop.has(c.status) ? [{ icon: <Square size={15} />, label: 'Stop', onSelect: () => act(undefined, c.id, 'stop') }] : []),
+                  ...(can.pause.has(c.status) ? [{ icon: <Pause size={15} />, label: 'Pause', onSelect: () => act(undefined, c.id, 'pause') }] : []),
+                  ...(can.resume.has(c.status) ? [{ icon: <Play size={15} />, label: 'Resume', onSelect: () => act(undefined, c.id, 'resume') }] : []),
+                  ...(can.stop.has(c.status) ? [{ icon: <Square size={15} />, label: 'Stop', onSelect: () => act(undefined, c.id, 'stop') }] : []),
                   ...(['complete', 'stopped', 'failed'].includes(c.status) ? [{ icon: <Trash2 size={15} />, label: 'Delete', danger: true, onSelect: () => del(undefined, c.id) }] : []),
                 ]
                 return (
@@ -293,9 +301,9 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
 
                     {/* hover quick-actions */}
                     <div className={`flex items-center gap-1 shrink-0 transition-opacity ${confirmDelete === c.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`}>
-                      {LOOP_ACTION_SOURCE_STATUSES.pause.has(c.status) && <IconButton icon={Pause} label="Pause" size={34} onClick={(e) => act(e, c.id, 'pause')} />}
-                      {LOOP_ACTION_SOURCE_STATUSES.resume.has(c.status) && <IconButton icon={Play} label="Resume" size={34} onClick={(e) => act(e, c.id, 'resume')} />}
-                      {LOOP_ACTION_SOURCE_STATUSES.stop.has(c.status) && <IconButton icon={Square} label="Stop" size={34} onClick={(e) => act(e, c.id, 'stop')} />}
+                      {can.pause.has(c.status) && <IconButton icon={Pause} label="Pause" size={34} onClick={(e) => act(e, c.id, 'pause')} />}
+                      {can.resume.has(c.status) && <IconButton icon={Play} label="Resume" size={34} onClick={(e) => act(e, c.id, 'resume')} />}
+                      {can.stop.has(c.status) && <IconButton icon={Square} label="Stop" size={34} onClick={(e) => act(e, c.id, 'stop')} />}
                       {['complete', 'stopped', 'failed'].includes(c.status) && (
                         <IconButton icon={Trash2} size={34} tone="danger"
                           label={confirmDelete === c.id ? 'Click again to delete' : 'Delete loop'}
@@ -311,11 +319,16 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                           widening it reflows the row — so the abbreviation stays for the eye and the full
                           word is added for assistive tech, through the `sr-only` idiom this app already
                           uses in 19 places. `title` gives a sighted user the same expansion on hover. */}
-                      <span data-type="caption" className="text-on-surface-low tabular-nums w-9"
-                        title={`${c.findings?.length ?? 0} findings`}>
-                        <span aria-hidden="true">{c.findings?.length ?? 0} fnd</span>
-                        <span className="sr-only">{c.findings?.length ?? 0} findings</span>
-                      </span>
+                      {/* A run-backed loop has no findings files — its work is the run's step
+                          outputs, on the run page — so a count here would be a confident "0" about a
+                          thing it does not have. The empty box keeps the row's rhythm. */}
+                      {c.run_id ? <span className="w-9" aria-hidden="true" /> : (
+                        <span data-type="caption" className="text-on-surface-low tabular-nums w-9"
+                          title={`${c.findings?.length ?? 0} findings`}>
+                          <span aria-hidden="true">{c.findings?.length ?? 0} fnd</span>
+                          <span className="sr-only">{c.findings?.length ?? 0} findings</span>
+                        </span>
+                      )}
                     </div>
                   </motion.div>
                   </ContextMenu>
@@ -344,7 +357,8 @@ function LoopPeek({ loop, onOpenFull }: { loop: GoalLoop; onOpenFull: () => void
   const latestText = latest?.key_insight || latest?.summary
   return (
     <div className="flex flex-col gap-l">
-      <Button onClick={onOpenFull}><ExternalLink size={15} /> Open full loop</Button>
+      {/* A run-backed loop opens on its RUN page — say so, since the page it lands on is a run's. */}
+      <Button onClick={onOpenFull}><ExternalLink size={15} /> {loop.run_id ? 'Open the run' : 'Open full loop'}</Button>
 
       <div data-type="body-s" className="flex flex-wrap items-center gap-s">
         <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={loopStatusTone(dispStatus)}>

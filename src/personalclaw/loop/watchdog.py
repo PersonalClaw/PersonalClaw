@@ -919,10 +919,10 @@ class LoopWatchdog:
             perfectly healthy idle loop as a crash survivor and re-arms it. It was harmless
             only because the boot hook ran before any session could exist; moving the sweep
             into the poll that DOES see sessions is exactly the drift that would have made it
-            bite. `test_expired_trust_pauses_for_reauth` is the shipped test that proves the
-            difference — under the strict predicate its live-but-idle loop is re-armed instead
-            of being trust-expired, and `manager.start` re-stamps the RUNNING row on the way
-            past, which is how a re-arm silently resets the trust window.
+            bite. A re-arm used to be worse than wasted work: `manager.start` re-stamped the
+            RUNNING row's `started_at`, silently resetting the trust window. It no longer does
+            (`store.update_status` keeps the stretch on RUNNING -> RUNNING), so re-arming a live
+            loop now costs a redundant worker re-arm — still wrong, no longer a grant extension.
             """
             if loop.status != LoopStatus.RUNNING.value:
                 return False
@@ -1088,7 +1088,15 @@ class LoopWatchdog:
             if cid not in self._last_count or self._last_activity.get(cid, 0.0) < (
                 loop.started_at or 0.0
             ):
-                self._last_count.setdefault(cid, 0)
+                # Seeded from what an EARLIER process already credited, not from 0: this dict is
+                # empty after a gateway restart, and seeding 0 re-credited the latest finding on the
+                # first poll — a second "Cycle 1/30 complete", a second judge call, and a second
+                # run of the kind's cycle hook. 0 stays the seed on genuine first sight (nothing
+                # recorded), which keeps a fast first cycle credited. Capped at `count`: the record
+                # lives in the worker-writable loop dir, and a baseline above the findings on disk
+                # would silently stop crediting real cycles.
+                if cid not in self._last_count:
+                    self._last_count[cid] = min(loop_files.credited_cycles(cid), count)
                 self._last_activity[cid] = time.time()
                 if count <= self._last_count[cid]:
                     # Nothing uncredited — this poll is the pure seed it always was.
@@ -1097,6 +1105,7 @@ class LoopWatchdog:
             if count > self._last_count[cid]:
                 # 3. New finding — progress.
                 self._last_count[cid] = count
+                loop_files.write_credited_cycles(cid, count)
                 self._last_activity[cid] = time.time()
                 self._running_since.pop(cid, None)
                 self._consec_errors[cid] = 0

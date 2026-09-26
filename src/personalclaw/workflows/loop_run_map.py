@@ -26,11 +26,11 @@ that established it has no home.
 
 **Three findings this map surfaced, recorded here because they are the expensive half of PP-16:**
 
-1. **A run has no user-facing title.** The runs list labels a row ``{workflow_name} — run {id}``
-   (`web/src/pages/workflows/WorkflowsListPage.tsx:372`). `Loop.name` — shown on every loop
-   surface, and user-editable via `store.rename` — has nowhere to live. `WorkflowRun.extra` is a
-   tolerant-reader spillover dict, not a declared field, so parking a first-class user-visible
-   string there is a shape decision, not a migration detail.
+1. **A run had no user-facing title — RESOLVED.** The runs list labelled a row
+   ``{workflow_name} — run {id}`` and `Loop.name` had nowhere to live, so a loop started as a run
+   lost its name at the door. `WorkflowRun.title` is now a DECLARED field the loop door writes
+   (see the `name` row), rather than a key parked in `extra`, the tolerant-reader spillover dict.
+   Renaming a run-backed loop after launch is not wired yet: the title is set at create only.
 2. **The status vocabularies are not a superset relationship.** `LoopStatus` has twelve members and
    `RunStatus` eight, and each has members the other cannot express — see `STATUS_VOCABULARY_DELTA`.
    "One status vocabulary" therefore costs a decision per orphan, not a rename.
@@ -92,19 +92,22 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
     ),
     FieldHome(
         "name",
-        NONE,
-        "",
-        "NO HOME. A run has no user-facing title — the runs list labels a row "
-        "`{workflow_name} — run {id}` (WorkflowsListPage.tsx:372). A loop's name is user-set "
-        "(`store.rename`) and shown on every loop surface. Owner decision: declare a `title` on "
-        "WorkflowRun, or accept `extra['name']` (a spillover dict, not a declared field).",
+        RUN,
+        "WorkflowRun.title",
+        "A DECLARED field, set by the loop door (`loop_routes._create_ported_kind_as_run`) with "
+        "the same precedence a loops row gets (name → classifier title → derived from the task), "
+        "and read by the loop listing (`workflows.loop_view`) and the run page's header. Declared "
+        "rather than parked in `extra`, the spillover dict, because it is shown on every loop "
+        "surface.",
     ),
     FieldHome(
         "kind",
         DEF,
         "WorkflowDef.name",
         "The kind IS the template: `loop_aliases.KIND_TO_TEMPLATE` already resolves all five at "
-        "read time, so this row needs no new machinery.",
+        "read time. The kind a run was started AS is also recorded at the door "
+        "(`WorkflowRun.loop_kind`), which is what lists it as a loop — nothing resolves a template "
+        "back to a kind.",
     ),
     FieldHome(
         "task",
@@ -246,7 +249,8 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         "",
         "NO HOME. Scratch-workspace teardown on terminal is a loop lifecycle flag; the run side "
         "owns isolation per node (`config['isolation']`, `worktrees.py`) with no run-level "
-        "teardown opt-in.",
+        "teardown opt-in. A run-backed loop has no scratch dir to reclaim, so the create gate "
+        "REFUSES the flag for a ported kind (`loop.validation.validate`) rather than dropping it.",
     ),
     FieldHome(
         "attended",
@@ -254,7 +258,9 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         "SupervisorPolicy.hitl_posture",
         "Already mapped by `supervisor_policy.POLICY_KNOB_MAP` (knob 11) — one of the three knobs "
         "that collapse onto this field. Persisted per run since seam 4d: "
-        "`WorkflowRun.policy_overrides[attended]` (OWNER RULING 2, sparse overlay).",
+        "`WorkflowRun.policy_overrides[attended]` (OWNER RULING 2, sparse overlay), written at "
+        "create by the loop door. An explicit `false` is the unattended grant a run's stages "
+        "spawn on (`supervisor_policy.unattended_grant`).",
     ),
     FieldHome(
         "autopilot",
@@ -268,9 +274,11 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         "max_cycles",
         POLICY,
         "SupervisorPolicy.budget_max_cycles",
-        "Already mapped by `POLICY_KNOB_MAP` (knob 12), same `0 = uncapped` semantics. "
-        "deep-research additionally exposes it as its `rounds` input. Persisted per run since "
-        "seam 4d: `WorkflowRun.policy_overrides[max_cycles]`.",
+        "Already mapped by `POLICY_KNOB_MAP` (knob 12). deep-research additionally exposes it as "
+        "its `rounds` input. Persisted per run since seam 4d: "
+        "`WorkflowRun.policy_overrides[max_cycles]`, written at create by the loop door, and it "
+        "bounds the loop node's iterations (`supervisor_policy.loop_iteration_cap`); `0` keeps the "
+        "template's own cap, because a run loop is always bounded.",
     ),
     FieldHome(
         "idle_secs",

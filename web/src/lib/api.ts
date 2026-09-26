@@ -1745,6 +1745,14 @@ export interface WorkflowRunDetailData {
   // success_criteria). `{}` means every knob follows the kind/template default. The
   // prelaunch policy editor renders and PUTs this; frozen once the run launches.
   policy_overrides?: Record<string, unknown>
+  /** The loop kind a run was started AS through `POST /api/loops` (PP-16), `''` for a run started
+   *  from a template. With `title`, what heads a loop's run page: the name the user gave the loop,
+   *  not its template's (`general-project`). */
+  loop_kind?: string
+  title?: string
+  /** A pause is applied on the controller's next step, so between the click and that step the
+   *  status still reads `running`. True in that window, so the page says "Pausing…". */
+  pause_requested?: boolean
   nodes: WorkflowNodeState[]
 }
 // One pending human-input gate. `ask` is the typed payload ONE renderer covers
@@ -5025,6 +5033,10 @@ export interface LoopNudge { text: string; sent_at: number; sent_at_cycle: numbe
 export interface RosterMember { role: string; persona: string; role_hint?: string; agent_name?: string }
 export interface GoalLoop {
   id: string; name: string; goal: string; sub_goals: string[]; deliverables?: string[]; scope?: string[]
+  /** Carried through from `Loop.run_id` by `loopToGoalLoop`'s spread — see there. */
+  run_id?: string
+  /** Carried through from `Loop.work_dir` — where the worker's own files land. */
+  work_dir?: string
   goal_type: GoalType; intake_rigor: string
   execution: 'solo' | 'multi_agent'; roster?: RosterMember[]; strategy_id?: string
   agent: string; model: string; provider?: string; provider_agent?: string; reasoning_effort?: string
@@ -5268,6 +5280,14 @@ export interface LoopSpend {
 }
 export interface Loop {
   id: string; kind: LoopKind; name: string; task: string; summary?: string
+  /** Present when the loop is a WORKFLOW RUN (PP-16: a ported kind — `general` — runs on the
+   *  workflows engine and has no loops-table row), absent on a loops-table loop. `GET /api/loops`
+   *  lists both, so this is how a surface tells which cockpit opens the loop (`lib/loopKind:
+   *  loopRoute`) and which lifecycle it has (`lib/loopStatus:loopActionSources`). Decide by this
+   *  field, never by the kind: which kinds are run-backed is the backend's to decide and it grows.
+   *  A run-backed row carries no findings, worker session or kind_config — its work is on the run
+   *  page. Equal to `id`. */
+  run_id?: string
   /** Detail-only (see `LoopSpend`). Absent on the list and on the SSE snapshot. */
   spend?: LoopSpend
   intake_rigor?: string
@@ -5287,6 +5307,11 @@ export interface Loop {
   // deliverables (REPORT.md/MONITOR_LOG.md) land when no workspace is bound. The
   // cockpit roots its file tree + terminal here for no-workspace loops.
   files_dir?: string
+  /** Where the WORKER's own files land (`loop.effective_dir`) — the bound workspace, the project's
+   *  context dir, or the workspace root. Not `files_dir` for a goal/general loop, whose deliverable
+   *  never goes to the loop dir; the cockpit names this directory so a result is findable.
+   *  Detail + snapshot only. */
+  work_dir?: string
   max_cycles: number; max_cost_usd?: number; deadline_secs?: number; idle_secs: number
   stop_reason?: string
   success_criteria: string | null

@@ -401,7 +401,9 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
               route (`?item=`, `?open=` — the peek), the list keeps its h1 and the panel gets none. All
               five surfaces measured agree, and it is the row lesson from cycle 161 one level up: a
               destination is named by its identity, not by its category. */}
-          {run && <PageTitle className="truncate">{run.workflow}</PageTitle>}
+          {/* A run started as a loop is named by the loop (`title`), not by its template — the page
+              read "general-project" for a loop the user had just named. */}
+          {run && <PageTitle className="truncate">{run.title || run.workflow}</PageTitle>}
           {/* FEED liveness, distinct from the RUN's status beside it. A live run whose stream has
               dropped keeps showing "Running" while nothing arrives — indistinguishable from a run that
               is simply quiet. Same dot-plus-WORD form `settings/DiagnosticsPanel` already ships for its
@@ -468,9 +470,24 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                 <QuietButton onClick={() => setSteerOpen((v) => !v)} ariaExpanded={steerOpen} title="Steer this run — queue an instruction or accept a judge comment">
                   <MessageSquarePlus size={13} /> Steer
                 </QuietButton>
-                <QuietButton onClick={() => act('Pause', () => api.pauseWorkflowRun(runId))} title="Pause — in-flight steps finish">
-                  <Pause size={13} /> Pause
-                </QuietButton>
+                {/* A pause STOPS the step in flight and re-queues it — the old "in-flight steps
+                    finish" promise was a pause that paused nothing. It lands on the controller's
+                    next step, so the gap between the click and that step says so instead of
+                    looking ignored. A paused run is resumed here: it had no way forward on this
+                    page. */}
+                {run.status === 'paused' ? (
+                  <QuietButton onClick={() => act('Resume', () => api.resumeWorkflowRun(runId, {}))} title="Resume — the step the pause stopped runs again">
+                    <Play size={13} /> Resume
+                  </QuietButton>
+                ) : run.pause_requested ? (
+                  <QuietButton disabled disabledReason="the step in flight is being stopped" title="Pausing">
+                    <Pause size={13} /> Pausing…
+                  </QuietButton>
+                ) : (
+                  <QuietButton onClick={() => act('Pause', () => api.pauseWorkflowRun(runId))} title="Pause — stops the step in flight; Resume runs it again">
+                    <Pause size={13} /> Pause
+                  </QuietButton>
+                )}
                 <QuietButton onClick={cancel} title="Cancel this run"><X size={13} /> Cancel</QuietButton>
               </>
             ) : (

@@ -186,6 +186,10 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   const [log, setLog] = useState('')
   // Outputs: the loop's artifacts (the general outcome channel) + linked Tasks.
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
+  // Why the outputs could not be read, when they could not. Both reads used to `.catch(() => {})`,
+  // so a failed read painted "No outputs saved yet" — a confident claim about work the page never
+  // saw, on the one panel a user opens to get the result.
+  const [outputsError, setOutputsError] = useState<unknown>(null)
   const [tasks, setTasks] = useState<TaskItem[]>([])
   // Right rail + its drill-down are URL-backed (?details=1, ?sel=log|roi|cycle-N)
   // so a refresh / shared link reopens the same Details view.
@@ -258,9 +262,15 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
     let alive = true
     everLoaded.current = false
     const loadOutputs = () => {
-      api.uLoopReport(id).then((rep) => { if (alive && rep) { setReport(rep.report || ''); setLog(rep.log || '') } }).catch(() => {})
-      // Outcomes: every artifact tagged for this loop.
-      api.artifacts({ tag: `loop:${id}` }).then((a) => { if (alive) setArtifacts(a) }).catch(() => {})
+      // Outcomes: the deliverable + log, and every artifact tagged for this loop. Settled together
+      // so the empty state can tell "nothing yet" from "could not look".
+      void Promise.allSettled([api.uLoopReport(id), api.artifacts({ tag: `loop:${id}` })]).then(([rep, arts]) => {
+        if (!alive) return
+        if (rep.status === 'fulfilled' && rep.value) { setReport(rep.value.report || ''); setLog(rep.value.log || '') }
+        if (arts.status === 'fulfilled') setArtifacts(arts.value)
+        const failed = [rep, arts].find((r): r is PromiseRejectedResult => r.status === 'rejected')
+        setOutputsError(failed ? (failed.reason ?? new Error('read failed')) : null)
+      })
     }
     // Linked Tasks live in the loop's own task-list (under the "Goal Loops"
     // project), NOT under project=<loop id> — so fetch them by the authoritative
@@ -626,7 +636,9 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
             <FolderKanban size={11} className="shrink-0" /><span className="truncate">{projName}</span>
           </button>
         : <MetaPill icon={<FolderKanban size={11} />} text={projName} tone="primary" title="Project" />)}
-      {wsDir && <MetaPill icon={<FolderOpen size={11} />} text={wsDir.split('/').pop() || wsDir} title={`Workspace: ${wsDir}`} />}
+      {wsDir
+        ? <MetaPill icon={<FolderOpen size={11} />} text={wsDir.split('/').pop() || wsDir} title={`Workspace: ${wsDir}`} />
+        : c.work_dir && <MetaPill icon={<FolderOpen size={11} />} text={c.work_dir.split('/').pop() || c.work_dir} title={`Works in: ${c.work_dir}`} />}
       <MetaPill icon={<Bot size={11} />} text={c.agent || 'default'} title="Worker agent" />
       {modelLabel && <MetaPill icon={<Cpu size={11} />} text={modelLabel} title={c.model} />}
       <MetaPill text={c.attended ? 'Attended' : 'Unattended'} title="Mode" />
@@ -846,7 +858,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
               summary) + the linked Tasks + the raw log. Fills remaining height;
               its inner content scrolls. */}
           <OutputsPanel
-            loop={c} artifacts={artifacts} tasks={tasks} report={report} active={active}
+            loop={c} artifacts={artifacts} tasks={tasks} report={report} active={active} outputsError={outputsError}
             onOpenArtifact={onOpenArtifact}
             onOpenTask={onOpenTask}
             onExpandReport={() => setReportOpen(true)}
@@ -887,7 +899,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                  )}
                  {pending.length > 0 && (
                    <div data-type="body-s" className="rounded-lg px-m py-2" style={{ background: 'color-mix(in srgb, var(--color-info) 8%, transparent)', border: '1px dashed color-mix(in srgb, var(--color-info) 30%, transparent)' }}>
-                     <Eyebrow tone="info" className="flex items-center gap-1.5 mb-1"><MessageSquarePlus size={12} /> nudge queued — applies next cycle</Eyebrow>
+                     <Eyebrow tone="info" className="flex items-center gap-1.5 mb-1"><MessageSquarePlus size={12} /> {pendingNudgeLabel(c.status)}</Eyebrow>
                      {pending.map((n, i) => <p key={i} className="text-on-surface-var">{n.text}</p>)}
                    </div>
                  )}
@@ -1004,8 +1016,19 @@ type OutputTab =
   | { id: 'deliverable'; kind: 'deliverable'; label: string }
   | { id: 'tasks'; kind: 'tasks'; label: string }
 
-function OutputsPanel({ loop, artifacts, tasks, report, active, onOpenArtifact, onOpenTask, onExpandReport, onDownloadReport }: {
+/** What an UNAPPLIED nudge is waiting for, in this loop's state. It always said "queued — applies
+ *  next cycle", including on a loop that had stopped and would never run another cycle — on
+ *  2026-09-25 a stopped loop's cockpit said it, a promise nothing was going to keep. Exported for
+ *  its test. */
+export function pendingNudgeLabel(status: string): string {
+  if (status === 'paused') return 'nudge queued — applies when the loop resumes'
+  if (ACTIVE_LOOP_STATUSES.has(status)) return 'nudge queued — applies next cycle'
+  return 'nudge not applied — the loop ended before its next cycle'
+}
+
+function OutputsPanel({ loop, artifacts, tasks, report, active, outputsError, onOpenArtifact, onOpenTask, onExpandReport, onDownloadReport }: {
   loop: GoalLoop; artifacts: Artifact[]; tasks: TaskItem[]; report: string; active: boolean
+  outputsError: unknown
   onOpenArtifact?: (slug: string) => void
   onOpenTask?: (taskId: string) => void
   onExpandReport: () => void; onDownloadReport: () => void
@@ -1082,16 +1105,31 @@ function OutputsPanel({ loop, artifacts, tasks, report, active, onOpenArtifact, 
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-l py-l">
-        {!current ? (
-          <p data-type="body-s" className="text-on-surface-low">
-            {active
-              ? (loop.goal_type === 'verifiable'
-                  ? 'This goal produces a passing check, not a document — outcomes will appear as the worker saves them.'
-                  : (loop.total_cycles > 0
-                      ? 'No outputs saved yet — they’ll appear here as the loop produces them.'
-                      : 'Working on the first cycle… outputs appear here as the loop produces them.'))
-              : 'No outputs yet.'}
-          </p>
+        {!current && outputsError ? (
+          <InlineLoadError what="this loop's outputs" error={outputsError} />
+        ) : !current ? (
+          <div className="flex flex-col gap-s">
+            <p data-type="body-s" className="text-on-surface-low">
+              {active
+                ? (loop.goal_type === 'verifiable'
+                    ? 'This goal produces a passing check, not a document — outcomes will appear as the worker saves them.'
+                    : (loop.total_cycles > 0
+                        ? 'No outputs saved yet — they’ll appear here as the loop produces them.'
+                        : 'Working on the first cycle… outputs appear here as the loop produces them.'))
+                : 'No outputs yet.'}
+            </p>
+            {/* Where the worker's own files went. Outputs lists the deliverable document and the
+                artifacts the loop saved, and a worker can finish its task writing neither — on
+                2026-09-25 a Goal loop wrote packing.md into its working directory while this panel
+                said "No outputs saved yet". Naming the directory, with the way to open it, is what
+                makes that result findable. */}
+            {loop.work_dir && (
+              <p data-type="body-s" className="text-on-surface-low">
+                Files the worker writes land in <span className="font-mono text-on-surface-var">{loop.work_dir}</span>{' — '}
+                <TextLink href={`#/files?dir=${encodeURIComponent(loop.work_dir)}`} ink="emphasis">open it in Files</TextLink>.
+              </p>
+            )}
+          </div>
         ) : current.kind === 'deliverable' ? (
           <DeliverableDoc report={report} loop={loop} />
         ) : current.kind === 'tasks' ? (

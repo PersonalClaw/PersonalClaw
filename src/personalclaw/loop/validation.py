@@ -296,6 +296,20 @@ def validate(config: dict, *, agent_exists: bool = True) -> ValidationResult:
                 "kind %s validate_config errored", kind, exc_info=True
             )
 
+    # A run-backed kind (PP-16) works in its project's context dir or the default workspace — it
+    # has no scratch dir of its own — so "Scratch (auto-clean when done)" has nothing it could
+    # reclaim. REFUSED rather than dropped: the create path used to discard the flag without a
+    # word, which told the user their workspace would be cleaned up and then did nothing.
+    # Lazy: the workflows service is heavy, and this module is imported by every loop surface.
+    from personalclaw.workflows.service import PORTED_LOOP_KINDS
+
+    if kind in PORTED_LOOP_KINDS and config.get("auto_teardown_on_complete") is True:
+        errors.append(
+            f"Scratch cleanup isn't available for a {kind} loop: it works in your project's "
+            "folder (or the default workspace), so there is no scratch folder to reclaim. "
+            "Untick Scratch to start it."
+        )
+
     # An uncapped loop (max_cycles=0) estimates against the hard cap — and the duration
     # must derive from the SAME effective count, never N cycles but 0 minutes.
     effective_cycles = max_cycles or cfg.max_cycles_hard_cap

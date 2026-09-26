@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { LoopsListPage } from './LoopsListPage'
 import type { LoopDraft } from './loopDraft'
 import { LoopPlanReview } from './LoopPlanReview'
@@ -8,6 +8,9 @@ import { DesignCockpitPage } from './DesignCockpitPage'
 import type { RouteProps } from '../../app/useQueryState'
 import { api, type Loop } from '../../lib/api'
 import { invalidateKeys } from '../../lib/data'
+import { loopRoute } from '../../lib/loopKind'
+import { Button } from '../../ui/Button'
+import { ArrowLeft } from 'lucide-react'
 
 /** Goal navigation — URL-driven so loops are deep-linkable, shareable, and
  *  survive refresh (the user can re-open a loop by its link):
@@ -99,7 +102,7 @@ export function LoopsSection({ sub, navigate, query, setQuery }: RouteProps) {
 
   // #/loops/history → the goal list (history). A "new goal" button sits on top.
   if (seg === 'history') {
-    return <LoopsListPage onCreate={() => navigate('loops')} onOpen={(id) => navigate(`loops/${id}`)} query={query} setQuery={setQuery} />
+    return <LoopsListPage onCreate={() => navigate('loops')} onOpen={(l) => navigate(loopRoute(l))} query={query} setQuery={setQuery} />
   }
 
   // #/loops/<id> → cockpit (deep-linkable; refresh-safe). The router fetches the loop
@@ -119,22 +122,41 @@ export function LoopsSection({ sub, navigate, query, setQuery }: RouteProps) {
 /** Fetches a loop by id ONCE and dispatches to the kind-appropriate cockpit. Keeping
  *  the kind in this component's own state (not a sibling state in LoopsSection) avoids
  *  a parallel-state render race: the goal cockpit would otherwise mount first and never
- *  yield to the design cockpit. */
+ *  yield to the design cockpit.
+ *
+ *  A RUN-BACKED loop (its row carries `run_id`, PP-16) is not rendered here at all: it is a
+ *  workflow run, and its cockpit is the run page. Every `#/loops/<id>` link in the app —
+ *  notifications, inbox rows, chat tags, prompt usages — was minted before that loop had a second
+ *  home, so this redirect (replacing the history entry, so Back does not bounce) is what keeps all
+ *  of them landing, instead of a loop cockpit rendering an empty goal-shaped view of a run. */
 function CockpitRouter({ id, navigate, query, setQuery }: { id: string } & Pick<RouteProps, 'navigate' | 'query' | 'setQuery'>) {
   const [kind, setKind] = useState<Loop['kind'] | null>(null)
   const [missing, setMissing] = useState(false)
+  // Through a ref: `navigate` is a new function on every render (`useHashRoute`), so as an effect
+  // dependency it would refetch the loop on each render this effect's own state changes cause.
+  const navigateRef = useRef(navigate)
+  navigateRef.current = navigate
   useEffect(() => {
     let alive = true
     setKind(null); setMissing(false)
-    api.uLoop(id).then((l) => { if (alive) setKind(l?.kind ?? null) })
+    api.uLoop(id).then((l) => {
+      if (!alive) return
+      if (l?.run_id) { navigateRef.current(loopRoute(l), { replace: true }); return }
+      setKind(l?.kind ?? null)
+    })
       .catch(() => { if (alive) setMissing(true) })
     return () => { alive = false }
   }, [id])
 
   if (missing) {
+    // The same gone-state the loop cockpit renders (`LoopCockpitPage`'s `notFound`): what
+    // happened, and the way back — a link to a deleted loop used to end on a bare sentence.
     return (
-      <div data-type="body-s" className="grid h-full place-items-center text-on-surface-low">
-        This loop no longer exists.
+      <div className="flex h-full flex-col items-center justify-center gap-m px-l text-center">
+        <p data-type="body-s" className="max-w-md text-on-surface-low">
+          This loop no longer exists — it may have been deleted, or the link is out of date.
+        </p>
+        <Button size="sm" onClick={() => navigate('loops/history')}><ArrowLeft size={15} /> Back to loops</Button>
       </div>
     )
   }

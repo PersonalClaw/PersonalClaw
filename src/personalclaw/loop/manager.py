@@ -262,12 +262,62 @@ async def rearm_nudge_message(svc, loop_id: str) -> None:
         logger.debug("rearm_nudge_message failed for %s", loop_id, exc_info=True)
 
 
+def _worker_session_keys(state, loop_id: str) -> list[str]:
+    """The live worker sessions of ``loop_id``: the main worker and every parallel task-worker."""
+    main = session_key(loop_id)
+    return [
+        k
+        for k in list(getattr(state, "_sessions", {}) or {})
+        if k == main or k.startswith(f"{main}-")
+    ]
+
+
+async def halt_worker_turns(state, loop_id: str) -> int:
+    """Stop the turn in flight on every worker session of ``loop_id``. Returns how many it stopped.
+
+    🔴 Deactivating the nudge loop only stops the NEXT cycle from being fired. A cycle already in
+    flight is one task that runs a turn and then up to `_MAX_CYCLE_REPROMPTS` re-prompt turns when
+    no finding appeared (gateway `_run_turn_bounded`), and nothing told it the loop had changed. So
+    a paused loop kept working — measured 2026-09-25, it wrote ``findings/cycle_2.json`` 3.5 minutes
+    after the cockpit said "Paused" — and a DELETED loop's in-flight cycle re-prompted itself onto
+    the session the delete had just removed, re-saving a 219k-token transcript as an orphan chat.
+
+    So this is the second half of pause/stop/delete: the queued turns go (a cancelled turn's
+    `run_chat` finally-block would otherwise start the next one) and the running turn is stopped
+    through the chat Stop's own path (`SessionManager.stop_turn`: cooperative cancel, kill
+    fallback, and it stops the subagents that turn spawned). The re-prompt loop itself checks that
+    its loop is still armed before each re-prompt, which is what keeps it from starting a new turn
+    once this one ends.
+    """
+    from personalclaw.constants import dashboard_session_key
+
+    sessions = getattr(state, "sessions", None)
+    halted = 0
+    for key in _worker_session_keys(state, loop_id):
+        session = state._sessions.get(key)
+        if session is None:
+            continue
+        queue = getattr(session, "_queue", None)
+        if queue:
+            queue.clear()
+        if not getattr(session, "running", False) or sessions is None:
+            continue
+        try:
+            await sessions.stop_turn(dashboard_session_key(key), force=False)
+            halted += 1
+        except Exception:
+            # A worker that will not stop must not keep the loop from reaching the state the user
+            # asked for — the nudge loop is already disarmed, so no further cycle starts.
+            logger.warning("loop: stopping the worker turn failed for %s", key, exc_info=True)
+    return halted
+
+
 async def pause(state, svc, loop_id: str) -> Loop:
-    """Pause: deactivate the main worker AND any parallel task-workers; each stops
-    after its current cycle. Deactivate (not remove) so a resume re-arms them. A
-    parallel code/design loop left only its main worker paused would otherwise keep
-    its task-workers burning cycles + editing worktrees while the user thinks it's
-    paused."""
+    """Pause: deactivate the main worker AND any parallel task-workers, and STOP the cycle in
+    flight (:func:`halt_worker_turns`) — so nothing more is done until Resume, which re-arms them.
+    Deactivate (not remove) so a resume re-arms them. A parallel code/design loop left only its
+    main worker paused would otherwise keep its task-workers burning cycles + editing worktrees
+    while the user thinks it's paused."""
     main = svc.get_by_session(session_key(loop_id))
     if main is not None:
         await svc.update(main.id, active=False)
@@ -277,14 +327,20 @@ async def pause(state, svc, loop_id: str) -> Loop:
     for lp in svc.list_all():
         if str(getattr(lp, "session_name", "")).startswith(prefix):
             await svc.update(lp.id, active=False)
-    return store.update_status(loop_id, LoopStatus.PAUSED)
+    # The status goes first, so every surface already reads "Paused" while the turn is winding
+    # down — and the halt comes second, so it is disarmed nudge loops the stopping turn sees.
+    paused = store.update_status(loop_id, LoopStatus.PAUSED)
+    await halt_worker_turns(state, loop_id)
+    return paused
 
 
 async def stop(state, svc, loop_id: str) -> Loop:
-    """Stop (terminal): tear down + drop the STOP sentinel."""
+    """Stop (terminal): tear down, drop the STOP sentinel, and stop the turn in flight."""
     await _teardown(svc, loop_id)
     loop_files.write_stop_sentinel(loop_id)
-    return store.update_status(loop_id, LoopStatus.STOPPED, stop_reason=LoopStopReason.USER)
+    stopped = store.update_status(loop_id, LoopStatus.STOPPED, stop_reason=LoopStopReason.USER)
+    await halt_worker_turns(state, loop_id)
+    return stopped
 
 
 async def nudge(state, svc, loop_id: str, text: str, task_id: str = "") -> Loop | None:
@@ -550,11 +606,14 @@ async def teardown_worker(svc, loop_id: str) -> None:
     await _teardown(svc, loop_id)
 
 
-async def teardown_for_delete(svc, loop_id: str) -> None:
-    """Full teardown before the loop row + dir are DELETED: stop the worker AND
-    delete the backing Tasks Project (else each create-and-delete orphans a Project
-    + its lists + tasks). Must run BEFORE store.delete (reads links off the row)."""
+async def teardown_for_delete(state, svc, loop_id: str) -> None:
+    """Full teardown before the loop row + dir are DELETED: stop the worker AND its turn in
+    flight AND delete the backing Tasks Project (else each create-and-delete orphans a Project
+    + its lists + tasks). Must run BEFORE store.delete (reads links off the row), and before the
+    worker session is reaped — a turn still running there would re-save the transcript the reap
+    just deleted."""
     await _teardown(svc, loop_id)
+    await halt_worker_turns(state, loop_id)
     try:
         from personalclaw.loop import tasks_link
 
@@ -572,7 +631,10 @@ async def _teardown(svc, loop_id: str) -> None:
     if main is not None:
         await svc.remove(main.id)
     prefix = f"{session_key(loop_id)}-"
-    for lp in list(getattr(svc, "_loops", {}).values()):
+    # `list_all()`, the service's public surface — the same fix `pause` got. The nudge service
+    # keeps no `_loops` dict any more (WF2AUT-11), so the old `getattr(svc, "_loops", {})` peek read
+    # an empty dict and a stopped or deleted parallel loop's task-workers were never removed.
+    for lp in svc.list_all():
         if str(getattr(lp, "session_name", "")).startswith(prefix):
             await svc.remove(lp.id)
     loop = store.get(loop_id)

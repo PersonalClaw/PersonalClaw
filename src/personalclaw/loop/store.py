@@ -347,7 +347,8 @@ def update_status(loop_id: str, new_status: LoopStatus, **fields: Any) -> Loop:
     """Transition status + stamp timing. Raises TransitionError out of a terminal
     state, KeyError if missing. Banks the just-finished running stretch into
     elapsed_seconds whenever we LEAVE running (so displayed time excludes pauses);
-    sets started_at on entering RUNNING (+ clears stale error); stamps completed_at on arriving
+    sets started_at on entering RUNNING (+ clears stale error) — RUNNING -> RUNNING, a restart
+    re-arm, keeps the stretch it is continuing; stamps completed_at on arriving
     at an ENDED status and clears it on leaving one. Extra ``fields`` are written through
     (JSON-encoded if needed).
 
@@ -378,8 +379,18 @@ def update_status(loop_id: str, new_status: LoopStatus, **fields: Any) -> Loop:
                 sets.append("elapsed_seconds = ?")
                 vals.append(float(prior) + max(0.0, now - float(started)))
         if new_status == LoopStatus.RUNNING:
-            sets.append("started_at = ?")
-            vals.append(now)
+            # RUNNING -> RUNNING is not a new running stretch: it is the watchdog re-arming a
+            # loop whose worker died with the previous process (`manager.start` is the one
+            # RUNNING writer, and start/resume leave from a non-running status). Restamping here
+            # threw the stretch away — measured 2026-09-25, the cockpit's elapsed fell 17m -> 2m
+            # across one gateway restart — and it silently restarted every clock measured from
+            # `started_at`: the `deadline_secs` ceiling, and the trust window that expires an
+            # unattended loop's auto-approval grant. A restart is not the user re-authorizing, so
+            # that window keeps running from the grant (the downtime counts toward it, which
+            # errs toward the ceiling, never past it).
+            if current != LoopStatus.RUNNING or row["started_at"] is None:
+                sets.append("started_at = ?")
+                vals.append(now)
             fields.setdefault("error_message", None)
         if new_status in ENDED_STATUSES:
             sets.append("completed_at = ?")
@@ -711,6 +722,18 @@ def get_redacted(loop_id: str) -> dict | None:
     # path); reported even before the dir's first write (the file API tolerates a
     # not-yet-created dir). Ported from the legacy code redacted view.
     view["files_dir"] = str(files.loop_dir(loop_id) or "")
+    # Where the worker's OWN files land — `effective_dir`, the one resolver the supervisor's
+    # ground-truth checks read too. Not the same place as `files_dir` for a goal/general loop: its
+    # deliverable goes to the bound workspace, the project's context dir or the workspace root, and
+    # only the engine files live in the loop dir. Measured 2026-09-25: a Goal loop wrote
+    # `packing.md` there while its cockpit said "No outputs saved yet", because nothing on it named
+    # that directory. Same posture as `files_dir` (a server-local path, not redacted).
+    try:
+        from personalclaw.loop.loop import effective_dir
+
+        view["work_dir"] = str(effective_dir(loop) or "")
+    except Exception:
+        view["work_dir"] = ""
     return view
 
 

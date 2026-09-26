@@ -317,6 +317,12 @@ class WorkflowWatchdog:
             if store.cancel_requested(run.id):
                 await self._honor_cancel(run)
                 continue
+            if run.status == RunStatus.PAUSED and store.pause_requested(run.id):
+                # Paused by the user, and the pause is sticky. Adopting it would launch a
+                # controller whose `_prepare` flips the row back to RUNNING — a restart would
+                # silently resume every paused run. Resume clears the intent, and the next poll
+                # adopts it then.
+                continue
             live = self._controllers.get(run.id)
             if live is None:
                 await self._adopt(run)
