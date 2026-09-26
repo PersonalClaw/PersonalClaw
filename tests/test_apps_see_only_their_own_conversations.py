@@ -357,13 +357,18 @@ OWNER_ONLY_READS: list[tuple[str, str]] = [
     ("GET", "/api/inbox/providers"),
     ("GET", "/api/inbox/settings"),
     ("GET", "/api/inbox/status"),
+    # How loudly what reaches you reaches you: your mute, quiet hours and per-kind rules.
+    ("GET", "/api/notifications/settings"),
+    ("GET", "/api/notifications/rules"),
 ]
 
-#: The reads that list conversations: an app reaches them, and the handler filters.
+#: The reads that list conversations, or what reached you about them: an app reaches them, and
+#: the handler filters (the notifications list is section 9's).
 LIST_READS: list[tuple[str, str]] = [
     ("GET", "/api/chat/sessions"),
     ("GET", "/api/sessions"),
     ("GET", "/api/sessions/search"),
+    ("GET", "/api/notifications"),
 ]
 
 
@@ -978,3 +983,446 @@ class TestYouSeeWhichAppStartedAConversation:
                 )
                 assert resp.status == 200, await resp.text()
         assert json.loads(recents.read_text(encoding="utf-8")) == [str(Path(folder).resolve())]
+
+
+# ── 8. Your approval posture is not part of the session list ─────────────────────────
+
+
+class TestTheSessionListSaysNothingAboutYourApprovals:
+    """#3632 cut the session-list frame to an app's own rows and left its envelope alone, so every
+    app socket that declared `sessions` still read a top-level `yolo`: whether YOUR tool calls run
+    without asking you, flipping the moment you turn YOLO on. No client reads it (the web reads
+    YOLO from `GET /api/status`), and `channelTrusted` beside it was set by no producer at all, so
+    both went, with the `extra` envelope that carried them: every frame is `{type, data}`."""
+
+    @pytest.mark.asyncio
+    async def test_the_broadcast_list_carries_rows_and_nothing_else(self, sockets) -> None:
+        state, socks = sockets
+        state.enable_yolo()
+        try:
+            state.push_sessions_update()
+        finally:
+            state.disable_yolo()
+        for who in ("yours", APP, OTHER):
+            (frame,) = [f for f in _frames(socks[who]) if f["type"] == "sessions"]
+            assert set(frame) == {"type", "data"}, f"{who}'s session list carries {sorted(frame)}"
+
+    @pytest.mark.asyncio
+    async def test_the_on_connect_list_carries_rows_and_nothing_else(self, tmp_path) -> None:
+        """The first frame of every connection, through the real `/api/ws` route."""
+        from test_ws_app_event_gate import _drain, _server_app
+
+        import personalclaw.config.loader as loader
+        from personalclaw.apps import manager as apps_manager
+        from personalclaw.dashboard import session_store as ss
+        from personalclaw.dashboard import state as state_mod
+        from personalclaw.dashboard import token_auth
+
+        with (
+            patch.object(loader, "config_dir", return_value=tmp_path),
+            patch.object(ss, "config_dir", return_value=tmp_path, create=True),
+            patch.object(apps_manager, "config_dir", return_value=tmp_path),
+            patch.object(state_mod, "config_dir", return_value=tmp_path),
+        ):
+            _install(tmp_path, APP, {"api": ["/api/ws"], "events": ["sessions"]})
+            state = _make_state(tmp_path)
+            _resident(state, "ours", "the app's own line", creator=APP)
+            token_auth.use_persistent_secret()
+            token_auth.revoke_all_sessions()
+            server = TestServer(_server_app(state))
+            await server.start_server()
+            state.enable_yolo()
+            try:
+                owner = token_auth.generate_token("owner")
+                app_token = token_auth.generate_token("owner", app=APP)
+                from aiohttp import ClientSession
+
+                url = server.make_url(f"/api/ws?token={owner}&app_token={app_token}")
+                async with ClientSession() as sess:
+                    async with sess.ws_connect(
+                        url, headers={"Origin": f"http://localhost:{server.port}"}
+                    ) as sock:
+                        first = await _drain(sock)
+            finally:
+                state.disable_yolo()
+                await server.close()
+                token_auth.revoke_all_sessions()
+        (frame,) = [f for f in first if f["type"] == "sessions"]
+        assert [r["key"] for r in frame["data"]] == ["ours"]
+        assert set(frame) == {"type", "data"}, f"the app's first frame carries {sorted(frame)}"
+
+    def test_a_lapsed_yolo_still_expires_when_the_list_is_pushed(self, tmp_path) -> None:
+        """The push used to READ YOLO to put it in the frame, and a read is what expires a lapsed
+        TTL (`trust_mode`), clearing the auto-approve it left on your chats. The push runs on
+        every session change, mid-turn included, so it keeps doing that without sending it."""
+        from personalclaw import trust_mode
+
+        state = _make_state(tmp_path)
+        state.enable_yolo()
+        try:
+            with patch.object(
+                trust_mode, "is_yolo_active", wraps=trust_mode.is_yolo_active
+            ) as read:
+                state.push_sessions_update()
+            assert read.called, "the list push no longer reads YOLO, so a lapsed TTL waits"
+        finally:
+            state.disable_yolo()
+
+
+# ── 9. Notifications: an app reads what it raised ──────────────────────────────────────
+
+
+#: What an app declares to raise a notification: a proposal kind (INU-7). Its `api` still has to
+#: reach `/api/inbox/proposals`, which `DECLARED`'s `/api/inbox` does.
+PROPOSES = {"proposals": [{"kind_suffix": "note"}]}
+
+
+async def _propose(state, app: str, title: str, body: str = "") -> None:
+    """Raise a notification the way an app does: a proposal, through the real middleware and the
+    real door (`POST /api/inbox/proposals`)."""
+    from personalclaw.dashboard import handlers_inbox
+
+    route = ("POST", "/api/inbox/proposals", handlers_inbox.api_inbox_proposal_create)
+    with patch.object(handlers_inbox, "sel", MagicMock()):
+        async with TestClient(TestServer(_gateway(state, app, [route]))) as client:
+            resp = await client.post(
+                "/api/inbox/proposals",
+                json={
+                    "kind_suffix": "note",
+                    "title": title,
+                    "preview": body,
+                    "apply": {"app_callback": {"route": "ack"}},
+                },
+            )
+            assert resp.status == 201, await resp.text()
+
+
+async def _raise_notes(state) -> dict[str, str]:
+    """One notification of each kind of owner, and the `ts` each got: yours, one APP raised (its
+    proposal), one the other app raised, and two the platform raised about a conversation, APP's
+    and yours. Returns title → ts."""
+    from personalclaw import notification_kinds as nk
+
+    state.notify(nk.INFO, "your bank", "your PIN is 4471")
+    await _propose(state, APP, "raised by the app", "a")
+    await _propose(state, OTHER, "raised by the other app", "o")
+    state.notify(nk.HEARTBEAT, "about the app's chat", "h", meta={"session": "ours"})
+    state.notify(nk.HEARTBEAT, "about your chat", "h", meta={"session": "mine"})
+    return {n["title"]: n["ts"] for n in state._notification_log}
+
+
+class TestAnAppReadsOnlyTheNotificationsItRaised:
+    """`GET /api/notifications` answered every app that declared the path with your whole log —
+    what reached you from your crons, loops, inbox, channels and other apps. It answers an app
+    with the notifications the app raised and those about a conversation it started; yours are
+    all yours."""
+
+    @pytest.mark.asyncio
+    async def test_the_list_holds_what_the_app_raised_and_what_is_about_its_chats(
+        self, tmp_path
+    ) -> None:
+        from personalclaw.dashboard.handlers.messaging import api_notifications
+
+        state = _make_state(tmp_path)
+        _resident(state, "mine", "my bank PIN is 4471")
+        _resident(state, "ours", "the app's own line", creator=APP)
+        route = ("GET", "/api/notifications", api_notifications)
+        seen: dict[str, dict] = {}
+        with _home(tmp_path):
+            _install(tmp_path, APP, {**DECLARED, **PROPOSES})
+            _install(tmp_path, OTHER, {**DECLARED, **PROPOSES})
+            await _raise_notes(state)
+            for caller in (APP, OTHER, ""):
+                async with TestClient(TestServer(_gateway(state, caller, [route]))) as client:
+                    resp = await client.get("/api/notifications")
+                    assert resp.status == 200, await resp.text()
+                    seen[caller] = await resp.json()
+
+        def titles(who: str) -> list[str]:
+            return sorted(n["title"] for n in seen[who]["notifications"])
+
+        assert titles(APP) == ["about the app's chat", "raised by the app"]
+        assert titles(OTHER) == ["raised by the other app"]
+        assert len(titles("")) == 5, "you still read every notification"
+        assert "4471" not in json.dumps(seen[APP])
+        assert seen[APP]["unread"] == 2, "the count is over the app's own rows, not yours"
+
+    @pytest.mark.asyncio
+    async def test_an_apps_proposal_is_the_note_it_reads_back(self, tmp_path, sel_rows) -> None:
+        """Through the real middleware and the real door: `POST /api/inbox/proposals` names the
+        app on the note it raises, and each app's list holds its own proposal and nothing else."""
+        from personalclaw.dashboard import handlers_inbox
+        from personalclaw.dashboard.handlers.messaging import api_notifications
+
+        state = _make_state(tmp_path)
+        routes = [
+            ("POST", "/api/inbox/proposals", handlers_inbox.api_inbox_proposal_create),
+            ("GET", "/api/notifications", api_notifications),
+        ]
+        proposes = {**DECLARED, **PROPOSES}
+        seen: dict[str, list[str]] = {}
+        with _home(tmp_path), patch.object(handlers_inbox, "sel", MagicMock()):
+            _install(tmp_path, APP, proposes)
+            _install(tmp_path, OTHER, proposes)
+            for caller in (APP, OTHER):
+                async with TestClient(TestServer(_gateway(state, caller, routes))) as client:
+                    resp = await client.post(
+                        "/api/inbox/proposals",
+                        json={
+                            "kind_suffix": "note",
+                            "title": f"{caller}'s note",
+                            "apply": {"app_callback": {"route": "ack"}},
+                        },
+                    )
+                    assert resp.status == 201, await resp.text()
+            for caller in (APP, OTHER):
+                async with TestClient(TestServer(_gateway(state, caller, routes))) as client:
+                    resp = await client.get("/api/notifications")
+                    seen[caller] = [n["title"] for n in (await resp.json())["notifications"]]
+        assert [n.get("raised_by_app") for n in state._notification_log] == [APP, OTHER]
+        assert seen == {APP: [f"{APP}'s note"], OTHER: [f"{OTHER}'s note"]}
+
+    @pytest.mark.asyncio
+    async def test_a_note_the_platform_raises_during_an_apps_request_is_yours(
+        self, tmp_path, sel_rows
+    ) -> None:
+        """Only the producer names the raiser. A note raised inside an app's request, or by a task
+        that request started, is yours: the request's app scope is copied into every task it
+        starts, so read off the request, a platform worker an app's request happened to start
+        would raise your notes as the app's for as long as it ran."""
+        import asyncio
+
+        from aiohttp import web
+
+        from personalclaw import notification_kinds as nk
+
+        state = _make_state(tmp_path)
+        started: list[asyncio.Task] = []
+
+        async def raises(request: web.Request) -> web.Response:
+            request.app["state"].notify(nk.INFO, "raised in the request", "b")
+
+            async def later() -> None:
+                request.app["state"].notify(nk.INFO, "raised by a task it started", "c")
+
+            started.append(asyncio.create_task(later()))
+            return web.json_response({"ok": True})
+
+        route = ("POST", "/api/probe/raise", raises)
+        with _home(tmp_path):
+            _install(tmp_path, APP, {**DECLARED, "api": [*DECLARED["api"], "/api/probe"]})
+            async with TestClient(TestServer(_gateway(state, APP, [route]))) as client:
+                resp = await client.post("/api/probe/raise", json={})
+                assert resp.status == 200, await resp.text()
+                await asyncio.gather(*started)
+        assert [n["title"] for n in state._notification_log] == [
+            "raised in the request",
+            "raised by a task it started",
+        ]
+        assert [n.get("raised_by_app", "") for n in state._notification_log] == ["", ""]
+
+    @pytest.mark.asyncio
+    async def test_a_proposal_withheld_then_restored_is_still_the_apps(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """A second opinion can withhold an app's proposal note (INU-6), and Restore replays it.
+        The replay is still the app's to read."""
+        from personalclaw import inbox as inbox_mod
+        from personalclaw import notification_verify
+        from personalclaw import proposals_contract as pc
+        from personalclaw.dashboard import handlers_inbox
+
+        state = _make_state(tmp_path)
+        monkeypatch.setattr(inbox_mod, "_verification_opted_in", lambda source, kind: True)
+        monkeypatch.setattr(
+            notification_verify,
+            "run_verification_sync",
+            lambda *a, **k: notification_verify.REFUTED,
+        )
+        with _home(tmp_path), patch.object(handlers_inbox, "sel", MagicMock()):
+            _, store = handlers_inbox._get_inbox(state)
+            item_id = inbox_mod.emit_attention_item(
+                state,
+                source=pc.app_source(APP),
+                kind=pc.app_kind("note"),
+                title="the app's claim",
+                store=store,
+                raised_by_app=APP,
+            )
+            assert state._notification_log == [], "the second opinion did not withhold it"
+            request = MagicMock()
+            request.app = {"state": state}
+            request.match_info = {"id": item_id}
+            resp = await handlers_inbox.api_inbox_restore(request)
+            assert resp.status == 200, resp.text
+        assert [(n["title"], n.get("raised_by_app")) for n in state._notification_log] == [
+            ("the app's claim", APP)
+        ]
+
+    def test_no_note_can_say_another_raised_it(self, tmp_path) -> None:
+        """Meta is the one part of a note its emitter controls, so it cannot name the raiser."""
+        from personalclaw import notification_kinds as nk
+
+        state = _make_state(tmp_path)
+        with _home(tmp_path):
+            state.notify(
+                nk.INFO, "says the other app", "b", meta={"raised_by_app": OTHER}, raised_by_app=APP
+            )
+            state.notify(nk.INFO, "says the app", "b", meta={"raised_by_app": APP})
+        assert [n.get("raised_by_app", "") for n in state._notification_log] == [APP, ""]
+
+
+#: Every frame about a notification: the note itself, and the ones that name notes by `ts`.
+NOTIFICATION_EVENTS = [
+    "notification",
+    "notification_logged",
+    "notification_removed",
+    "notification_ack",
+    "notification_unack",
+]
+
+
+@pytest.fixture
+def noted(tmp_path):
+    """Your socket, APP's and the other app's, each declaring every notification frame, over a
+    state holding APP's conversation and yours."""
+    state = _make_state(tmp_path)
+    _resident(state, "mine", "my bank PIN is 4471")
+    _resident(state, "ours", "the app's own line", creator=APP)
+    with _home(tmp_path):
+        for name in (APP, OTHER):
+            _install(
+                tmp_path,
+                name,
+                {"api": ["/api/ws", "/api/inbox"], "events": NOTIFICATION_EVENTS, **PROPOSES},
+            )
+        socks = {"yours": _socket(), APP: _socket(), OTHER: _socket()}
+        state.register_ws(socks["yours"])
+        for name in (APP, OTHER):
+            state.register_ws(socks[name], app=name)
+        yield state, socks
+
+
+def _of(sock: MagicMock, event: str) -> list[dict]:
+    return [f["data"] for f in _frames(sock) if f["type"] == event]
+
+
+class TestAnAppsSocketCarriesOnlyItsOwnNotifications:
+    """A notification frame with no `session` was delivered to every app that declared the event:
+    the whole note, title and body, of everything that reached you. A frame now reaches an app's
+    socket only about a notification the app raised or one about a conversation it started."""
+
+    @pytest.mark.asyncio
+    async def test_a_notification_reaches_its_raiser_and_the_app_whose_chat_it_is_about(
+        self, noted
+    ) -> None:
+        state, socks = noted
+        await _raise_notes(state)
+        assert sorted(n["title"] for n in _of(socks[APP], "notification")) == [
+            "about the app's chat",
+            "raised by the app",
+        ]
+        assert [n["title"] for n in _of(socks[OTHER], "notification")] == [
+            "raised by the other app"
+        ]
+        assert len(_of(socks["yours"], "notification")) == 5, "yours carries every one"
+        assert "4471" not in json.dumps(_frames(socks[APP]))
+
+    @pytest.mark.asyncio
+    async def test_marking_one_read_is_told_only_to_its_raiser(self, noted) -> None:
+        state, socks = noted
+        ts = await _raise_notes(state)
+        for sock in socks.values():
+            sock.send_str.reset_mock()
+        state.ack_notification(ts["raised by the app"])
+        state.ack_notification(ts["your bank"])
+        state.unack_notification(ts["raised by the app"])
+        assert [(f["type"], f["data"]["ts"]) for f in _frames(socks[APP])] == [
+            ("notification_ack", ts["raised by the app"]),
+            ("notification_unack", ts["raised by the app"]),
+        ]
+        assert _frames(socks[OTHER]) == []
+        assert len(_frames(socks["yours"])) == 3
+
+    @pytest.mark.asyncio
+    async def test_a_note_logged_without_a_toast_is_told_only_to_its_raiser(
+        self, noted, tmp_path
+    ) -> None:
+        """A `badge` note sends `notification_logged` with its `ts` alone, which is read against
+        the log the note has just joined."""
+        from personalclaw import notification_kinds as nk
+
+        state, socks = noted
+        rules = tmp_path / "entity_settings" / "notification_rules.json"
+        rules.parent.mkdir(parents=True, exist_ok=True)
+        rules.write_text(json.dumps({"rules": {"system/info": {"mode": "badge"}}}), "utf-8")
+        state.notify(nk.INFO, "your bank", "your PIN is 4471")
+        state.notify(nk.INFO, "raised by the app", "a", raised_by_app=APP)
+        ts = {n["title"]: n["ts"] for n in state._notification_log}
+        assert all(n.get("badge_only") for n in state._notification_log), "not the badge path"
+        assert _of(socks[APP], "notification_logged") == [{"ts": ts["raised by the app"]}]
+        assert _of(socks[OTHER], "notification_logged") == []
+        assert len(_of(socks["yours"], "notification_logged")) == 2
+        assert _of(socks[APP], "notification") == [], "a badge raises no toast"
+
+    @pytest.mark.asyncio
+    async def test_a_frame_naming_several_notes_is_cut_to_the_apps_own(self, noted) -> None:
+        state, socks = noted
+        ts = await _raise_notes(state)
+        named = [ts["raised by the app"], ts["your bank"], ts["raised by the other app"]]
+        for sock in socks.values():
+            sock.send_str.reset_mock()
+        state.broadcast_ws("notification_ack", {"ts": named})
+        assert _of(socks[APP], "notification_ack") == [{"ts": [ts["raised by the app"]]}]
+        assert _of(socks[OTHER], "notification_ack") == [{"ts": [ts["raised by the other app"]]}]
+        assert _of(socks["yours"], "notification_ack") == [{"ts": named}]
+
+    @pytest.mark.asyncio
+    async def test_a_removal_is_told_only_to_the_notes_raiser(self, noted) -> None:
+        state, socks = noted
+        ts = await _raise_notes(state)
+        for sock in socks.values():
+            sock.send_str.reset_mock()
+        assert state.delete_notification(ts["your bank"])
+        assert state.delete_notification(ts["raised by the app"])
+        assert _of(socks[APP], "notification_removed") == [{"ts": ts["raised by the app"]}]
+        assert _frames(socks[OTHER]) == []
+        assert len(_of(socks["yours"], "notification_removed")) == 2
+
+    @pytest.mark.asyncio
+    async def test_a_frame_about_every_note_reaches_an_app_only_with_notes_in_it(
+        self, noted
+    ) -> None:
+        """`*` (read all, clear all) is about the app's notes only if it has any: telling one with
+        none would say what you did to notifications it cannot read."""
+        state, socks = noted
+        from personalclaw import notification_kinds as nk
+
+        state.notify(nk.INFO, "your bank", "your PIN is 4471")
+        await _propose(state, APP, "raised by the app", "a")
+        for sock in socks.values():
+            sock.send_str.reset_mock()
+        state.clear_notifications()
+        assert _of(socks[APP], "notification_removed") == [{"ts": "*"}]
+        assert _frames(socks[OTHER]) == [], "the other app raised nothing that was cleared"
+        assert _of(socks["yours"], "notification_removed") == [{"ts": "*"}]
+
+    @pytest.mark.asyncio
+    async def test_a_frame_about_no_notification_at_all_reaches_no_app(self, noted) -> None:
+        state, socks = noted
+        await _raise_notes(state)
+        for sock in socks.values():
+            sock.send_str.reset_mock()
+        state.broadcast_ws("notification_logged", {"ts": "2026-01-01T00:00:00+00:00"})
+        assert _frames(socks[APP]) == [] and _frames(socks[OTHER]) == []
+        assert len(_frames(socks["yours"])) == 1
+
+
+class TestTheGateReadsEveryNotificationFrame:
+    def test_every_notification_frame_in_the_tree_is_listed(self) -> None:
+        """A notification frame the gate does not list would reach an app by its type alone."""
+        from personalclaw.dashboard.ws_state import NOTIFICATION_FRAMES
+
+        produced = {t for t in _producer_types() if t.startswith("notification")}
+        assert "notification_ack" in produced, "the census found no notification frame — vacuous"
+        assert produced | {"notification"} <= NOTIFICATION_FRAMES

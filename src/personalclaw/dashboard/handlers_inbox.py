@@ -588,6 +588,8 @@ async def api_inbox_restore(request: web.Request) -> web.Response:
                 for k, v in item.refs.items()
                 if k not in ("verify", "verify_withheld", "dedup_key")
             }
+            # The app the withheld note was raised for, so the replay is still the app's to read.
+            raiser = str(withheld.get("raised_by_app") or "")
             state.notify(
                 str(withheld.get("kind") or ""),
                 str(withheld.get("title") or ""),
@@ -597,6 +599,7 @@ async def api_inbox_restore(request: web.Request) -> web.Response:
                     "item_kind": withheld.get("item_kind") or item.item_kind,
                     **passthrough,
                 },
+                **({"raised_by_app": raiser} if raiser else {}),
             )
         except Exception:
             logger.warning("inbox restore: notify failed", exc_info=True)
@@ -1156,6 +1159,7 @@ async def api_inbox_proposal_create(request: web.Request) -> web.Response:
         refs={pc.REFS_KEY: proposal.to_dict(), "app": app_name},
         store=inbox,
         dedup_key=str(body.get("dedup_key") or ""),
+        raised_by_app=app_name,
     )
     _sel_proposal_emission(app_name, pc.app_kind(kind_suffix), "granted")
     return web.json_response({"ok": True, "id": item_id}, status=201)

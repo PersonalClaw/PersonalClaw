@@ -1360,6 +1360,10 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
     #: label its own note "already routed to Dana" while it was in fact fired at the local
     #: owner. The `addressee` ITSELF is deliberately NOT reserved: naming who a notification is
     #: for is the emitter's job (see `inbox.emit_attention_item`).
+    #:
+    #: `raised_by_app` is WHICH APP raised the note, named by the producer that raises it for the
+    #: app (`notify(raised_by_app=...)`). It is what lets an app read the note back
+    #: (`notification_reaches`), so meta that could supply it could hand any note to any app.
     _RESERVED_NOTE_KEYS: frozenset[str] = frozenset(
         {
             "mode",
@@ -1371,10 +1375,19 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             "acked",
             "withheld_reason",
             "routed_to",
+            "raised_by_app",
         }
     )
 
-    def notify(self, kind: str, title: str, body: str, *, meta: dict | None = None) -> None:
+    def notify(
+        self,
+        kind: str,
+        title: str,
+        body: str,
+        *,
+        meta: dict | None = None,
+        raised_by_app: str = "",
+    ) -> None:
         """Push a notification to ALL connected SSE clients and persist to disk.
 
         THE single delivery choke point for every emitter (crons, loops, hooks, inbox
@@ -1405,6 +1418,10 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         and this behaves exactly as it did before either layer existed — that equivalence is
         the safety property of shipping without a gate, and `test_notification_rules.py` /
         `test_notification_addressing.py` pin the two halves of it.
+
+        ``raised_by_app`` names the app a note is raised for (an app's proposal). Besides a note
+        about a conversation it started, it is the one note an app may read
+        (:meth:`notification_reaches`).
         """
         from personalclaw import identity
         from personalclaw import notification_addressing as addressing
@@ -1458,6 +1475,14 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
                 "ts": datetime.now(tz=timezone.utc).isoformat(),
             }
         )
+        # Which app raised it, named by the producer that raises a note for an app (its proposal,
+        # through `inbox.emit_attention_item`). What an app raised is what it may read back, and
+        # everything else that reaches you is yours (`notification_reaches`). Never read off the
+        # request: an app's request scope is copied into every task the request starts, so a
+        # platform worker one of its requests happened to start would raise your notes as the
+        # app's, and the app would read them.
+        if raised_by_app:
+            note["raised_by_app"] = raised_by_app
 
         # Resolve the rule. Every failure path here falls through to immediate delivery:
         # a policy layer that can't read its own config must not be able to silence the
@@ -1732,14 +1757,18 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         return self._embedding_reindex
 
     def delete_notification(self, ts: str) -> bool:
-        """Remove a single notification by timestamp and persist to disk."""
-        before = len(self._notification_log)
+        """Remove a single notification by timestamp and persist to disk.
+
+        Announced BEFORE the note leaves the log: an app's socket is told of a removal only when
+        the note was one it may read, which is read off the note (``ws_state._own_notifications``).
+        On the gateway loop the frame is only scheduled here and goes out after this returns, so
+        no client hears of the removal before the log has changed."""
+        if not any(n.get("ts") == ts for n in self._notification_log):
+            return False
+        self.broadcast_ws("notification_removed", {"ts": ts})
         self._notification_log = [n for n in self._notification_log if n.get("ts") != ts]
-        removed = len(self._notification_log) < before
-        if removed:
-            _rewrite_notifications(self._notification_log)
-            self.broadcast_ws("notification_removed", {"ts": ts})
-        return removed
+        _rewrite_notifications(self._notification_log)
+        return True
 
     def delete_notifications_for_loop(self, loop_id: str) -> int:
         """Remove all notifications tagged with ``loop_id`` and persist. Called
@@ -1748,16 +1777,16 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         count removed."""
         if not loop_id:
             return 0
-        before = len(self._notification_log)
         removed_ts = [
             n.get("ts", "") for n in self._notification_log if n.get("loop_id") == loop_id
         ]
+        if not removed_ts:
+            return 0
+        # Announced first, like `delete_notification`: each app hears only its own notes' ts.
+        self.broadcast_ws("notification_removed", {"ts": removed_ts})
         self._notification_log = [n for n in self._notification_log if n.get("loop_id") != loop_id]
-        removed = before - len(self._notification_log)
-        if removed:
-            _rewrite_notifications(self._notification_log)
-            self.broadcast_ws("notification_removed", {"ts": removed_ts})
-        return removed
+        _rewrite_notifications(self._notification_log)
+        return len(removed_ts)
 
     def _append_notification(self, note: dict[str, Any]) -> None:
         """Append to the log — the ONE seam that enforces the size cap.
@@ -1817,7 +1846,11 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         return False
 
     def clear_notifications(self) -> None:
-        """Remove all notifications from memory and disk."""
+        """Remove all notifications from memory and disk.
+
+        Announced first, like `delete_notification`: an app hears ``*`` only while the log still
+        holds a note of its."""
+        self.broadcast_ws("notification_removed", {"ts": "*"})
         self._notification_log.clear()
         path = _notifications_path()
         try:
@@ -1825,7 +1858,6 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
                 path.write_text("", encoding="utf-8")
         except Exception:
             logger.debug("Failed to clear notifications file", exc_info=True)
-        self.broadcast_ws("notification_removed", {"ts": "*"})
 
     def get_session(self, name: str) -> _ChatSession | None:
         """Look up a session by name without creating it. Returns None if absent."""
@@ -2026,6 +2058,20 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             return session.created_by_app
         return self._persisted_creating_app(name) or ""
 
+    def notification_reaches(self, app: str, note: dict[str, Any]) -> bool:
+        """Whether the app *app* may read the notification *note*: one it raised
+        (``raised_by_app``), or one about a conversation it started (``session``).
+
+        Everything else that reached you is yours: what your crons, loops, inbox, channels and
+        other apps raised. The one rule for ``GET /api/notifications`` and for a notification
+        frame on an app's socket (``ws_state._own_notifications``)."""
+        if not app:
+            return False
+        if note.get("raised_by_app") == app:
+            return True
+        about = note.get("session")
+        return isinstance(about, str) and bool(about) and self.session_creating_app(about) == app
+
     def _persisted_creating_app(self, name: str) -> str | None:
         """The creating app the meta line persisted under *name* records (``""`` for yours), or
         ``None`` when nothing is persisted under it or its record cannot be read."""
@@ -2158,13 +2204,16 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
 
     def push_sessions_update(self) -> None:
         """Push current session list to all SSE clients (instant UI update)."""
-        yolo_active = self.is_yolo_active()  # expire first if needed
+        # Read for its effect, not its answer: a lapsed dashboard YOLO expires when it is read
+        # (`trust_mode`), which clears the auto-approve it left on your chats. This push runs on
+        # every change to a session, mid-turn included, so it is where a TTL that ran out takes
+        # hold soonest. The list itself no longer carries the flag.
+        self.is_yolo_active()
         sessions_data = [s.to_dict() for s in self._sessions.values()]
         self._broadcast(
             {
                 "_type": "sessions",
                 "_sessions_list": sessions_data,
-                "_yolo": yolo_active,
                 "sessions": json.dumps(sessions_data),
             }
         )

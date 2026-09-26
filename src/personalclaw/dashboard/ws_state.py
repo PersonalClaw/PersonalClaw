@@ -54,6 +54,32 @@ INBOX_ITEM_FRAMES: frozenset[str] = frozenset({"inbox_new_item", "inbox_item_upd
 #: An app's socket gets the list with the rows of its own conversations only.
 CONVERSATION_LIST_FRAMES: dict[str, str] = {"sessions": "key"}
 
+#: Frames about the notifications in your log: the note itself (``notification``), and the frames
+#: that name notes by ``ts`` — one, a list, or ``"*"`` for every note. What reached you is yours,
+#: so an app's socket gets such a frame cut to the notes the app may read
+#: (``DashboardState.notification_reaches``: one it raised, or one about a conversation it
+#: started), or not at all. Their type was the whole filter, so an app that declared
+#: ``notification`` read the title and body of everything that reached you.
+NOTIFICATION_FRAMES: frozenset[str] = frozenset(
+    {
+        NOTE_TYPE_NOTIFICATION,
+        "notification_logged",
+        "notification_removed",
+        "notification_ack",
+        "notification_unack",
+    }
+)
+
+#: What :meth:`DashboardWebSocketState._app_view` answers when an app's socket carries nothing of
+#: a frame — distinct from every payload, an empty list included.
+_UNHEARD = object()
+
+
+def _has_app_view(event_type: str) -> bool:
+    """Whether an app's socket gets *event_type* in a view of its own rather than as sent."""
+    return event_type in CONVERSATION_LIST_FRAMES or event_type in NOTIFICATION_FRAMES
+
+
 #: The approval registry's frames. They say no more than ``GET /api/approvals`` answers, and the
 #: relay an app declares for your approvals (the menu-bar companion) reads that route in full and
 #: rings on these frames — so an app the permission middleware lets read it may hear an approval
@@ -71,8 +97,13 @@ def frame_subject(event_type: str, data: object) -> FrameSubject | None:
     """What a frame is about, or ``None`` for a frame about nothing an app could not see.
 
     A value that is present but not a name answers as something no app owns, never as nothing,
-    so a malformed frame reaches owner sockets only."""
-    if not isinstance(data, dict):
+    so a malformed frame reaches owner sockets only. A notification frame answers ``None`` too,
+    and never reaches an app's socket as it is: ``broadcast_ws`` and ``send_ws_event`` send an app
+    its own view of it (:meth:`DashboardWebSocketState._app_view`), cut to the notes the app raised
+    or that are about a conversation it started. Read as a conversation subject, a note with no
+    ``session`` reached every app that declared the type, which is how an app read everything
+    that reached you."""
+    if not isinstance(data, dict) or event_type in NOTIFICATION_FRAMES:
         return None
     if event_type in INBOX_ITEM_FRAMES:
         source = data.get("source")
@@ -97,6 +128,9 @@ class DashboardWebSocketState:
     _stream_seq: int
     # DashboardState's: the app that started a conversation, or "" (``session_creating_app``).
     session_creating_app: Callable[[str], str]
+    # DashboardState's: the notification log, and whether an app may read one of its notes.
+    _notification_log: list[dict[str, Any]]
+    notification_reaches: Callable[[str, dict[str, Any]], bool]
 
     def next_stream_seq(self) -> int:
         """Stamp the next streamed text chunk — the ``seq`` every ``chat_chunk`` carries.
@@ -150,16 +184,13 @@ class DashboardWebSocketState:
         if not self._ws_clients:
             return
         msg_type = note.get("_type") or NOTE_TYPE_NOTIFICATION
-        extra: dict[str, Any] | None = None
         if msg_type == "sessions":
+            # The rows and nothing beside them. This frame used to carry `yolo` and
+            # `channelTrusted` as top-level envelope keys, and an app's socket that declared
+            # `sessions` read `yolo` with its own rows: whether YOUR tool calls run without
+            # asking. No client read either (the web reads YOLO from `GET /api/status`), and no
+            # producer ever set `channelTrusted`.
             data: object = note.get("_sessions_list") or json.loads(note["sessions"])
-            # Envelope keys preserved verbatim. No consumer for either appears in `web/`
-            # today, but dropping a field as a side effect of a permissions fix is not this
-            # change's business — if they are dead, they die in their own commit.
-            extra = {
-                "yolo": note.get("_yolo", False),
-                "channelTrusted": note.get("channelTrusted", False),
-            }
         elif msg_type == "session_title":
             data = {"key": note["key"], "title": note["title"]}
         elif msg_type == "refresh":
@@ -195,7 +226,7 @@ class DashboardWebSocketState:
                 msg_type,
             )
             return
-        self.broadcast_ws(msg_type, data, extra=extra)
+        self.broadcast_ws(msg_type, data)
 
     def _dispatch_ws(
         self,
@@ -242,14 +273,7 @@ class DashboardWebSocketState:
         for ws in dead:
             self._remove_ws(ws)
 
-    async def send_ws_event(
-        self,
-        ws: web.WebSocketResponse,
-        event_type: str,
-        data: object,
-        *,
-        extra: dict[str, Any] | None = None,
-    ) -> None:
+    async def send_ws_event(self, ws: web.WebSocketResponse, event_type: str, data: object) -> None:
         """Send ONE event to ONE socket, through the same gate as :meth:`_dispatch_ws`.
 
         The connect-time replays — the ``sessions`` push, the log ring, the subagent
@@ -259,20 +283,18 @@ class DashboardWebSocketState:
         permission check is the same call. Each of those three replays used to call
         ``ws.send_json`` itself, which is how an app-scoped socket received the session
         list and the whole log ring it never declared (issue 2963). An app's socket gets a
-        conversation list with its own rows only, and a frame about one conversation only when
-        the app started it."""
+        conversation list with its own rows only, a frame about one conversation only when
+        the app started it, and a notification frame cut to its own notes (:meth:`_app_view`).
+        The envelope is ``type`` and ``data`` and nothing else, for every socket."""
         if not self._ws_may_receive(ws, event_type, frame_subject(event_type, data)):
             return
         app = self._ws_app.get(ws, "")
-        if app and event_type in CONVERSATION_LIST_FRAMES:
-            data = self._own_rows(app, event_type, data)
-        envelope: dict[str, Any] = {"type": event_type, "data": data}
-        if extra:
-            # Envelope keys only — `type`/`data` stay owned by this method so a caller
-            # cannot rename the event out from under the permission check.
-            envelope.update({k: v for k, v in extra.items() if k not in ("type", "data")})
+        if app and _has_app_view(event_type):
+            data = self._app_view(app, event_type, data)
+            if data is _UNHEARD:
+                return
         try:
-            await ws.send_str(json.dumps(envelope))
+            await ws.send_str(json.dumps({"type": event_type, "data": data}))
         except Exception as exc:
             logger.debug("WS send failed (client gone?): %s", exc)
             self._remove_ws(ws)
@@ -324,6 +346,13 @@ class DashboardWebSocketState:
             logger.debug("approval relay check failed for %s", app, exc_info=True)
             return False
 
+    def _app_view(self, app: str, event_type: str, data: object) -> object:
+        """*data* as *app*'s socket may carry it, or :data:`_UNHEARD` when it carries none of it:
+        a conversation list with the app's own rows, a notification frame cut to its own notes."""
+        if event_type in CONVERSATION_LIST_FRAMES:
+            return self._own_rows(app, event_type, data)
+        return self._own_notifications(app, event_type, data)
+
     def _own_rows(self, app: str, event_type: str, data: object) -> object:
         """A conversation list frame's *data* with only *app*'s own conversations in it."""
         field = CONVERSATION_LIST_FRAMES[event_type]
@@ -336,6 +365,35 @@ class DashboardWebSocketState:
             and isinstance(row.get(field), str)
             and self.session_creating_app(row[field]) == app
         ]
+
+    def _own_notifications(self, app: str, event_type: str, data: object) -> object:
+        """A notification frame's *data* cut to the notes *app* may read, or :data:`_UNHEARD`.
+
+        ``notification`` carries the note itself. The others name notes by ``ts`` — one, a list,
+        or ``"*"`` for every note — and are read against the log as it is when the frame is sent,
+        which is why a removal is announced before its note leaves the log. A ``ts`` naming no
+        note in it names nothing an app may hear. ``"*"`` (read all, clear all) reaches an app
+        while the log holds a note of its, because then it is about that note; told to an app
+        with none, it would say what you did with notifications the app cannot read."""
+        if event_type == NOTE_TYPE_NOTIFICATION:
+            reaches = isinstance(data, dict) and self.notification_reaches(app, data)
+            return data if reaches else _UNHEARD
+        if not isinstance(data, dict):
+            return _UNHEARD
+        named = data.get("ts")
+        if named == "*":
+            held = any(self.notification_reaches(app, n) for n in self._notification_log)
+            return data if held else _UNHEARD
+        notes = {n.get("ts"): n for n in self._notification_log}
+
+        def own(ts: object) -> bool:
+            note = notes.get(ts) if isinstance(ts, str) else None
+            return note is not None and self.notification_reaches(app, note)
+
+        if isinstance(named, list):
+            kept = [ts for ts in named if own(ts)]
+            return {**data, "ts": kept} if kept else _UNHEARD
+        return data if own(named) else _UNHEARD
 
     def _schedule_ws_send(  # type: ignore[no-untyped-def]
         self, coro, ws: "web.WebSocketResponse | None" = None
@@ -387,9 +445,7 @@ class DashboardWebSocketState:
             if ws is not None:
                 self._remove_ws(ws)
 
-    def broadcast_ws(
-        self, msg_type: str, data: object, *, extra: dict[str, Any] | None = None
-    ) -> None:
+    def broadcast_ws(self, msg_type: str, data: object) -> None:
         """Send a typed message to all WS clients (not SSE). THE one WS producer.
 
         Owner/dashboard connections get every event. An app-scoped connection
@@ -397,37 +453,38 @@ class DashboardWebSocketState:
         ``permissions.events`` — server-side enforcement so an untrusted app can't
         observe events it didn't ask for (the SDK's client-side filter is advisory).
 
-        ``extra`` merges additional TOP-LEVEL envelope keys, which exists so the
-        dashboard-state translator (`_broadcast`) can route through this filter instead of
-        writing to the sockets itself. It had its own raw fan-out call, so every
-        always-on frame — sessions, titles, refresh hints, chat messages, notifications —
-        reached app-scoped sockets regardless of what the app declared. One gate for
-        every producer; a second write path is a second place for it to be missing
-        from.
+        The dashboard-state translator (`_broadcast`) routes through here instead of writing to
+        the sockets itself. It had its own raw fan-out call, so every always-on frame —
+        sessions, titles, refresh hints, chat messages, notifications — reached app-scoped
+        sockets regardless of what the app declared. One gate for every producer; a second
+        write path is a second place for it to be missing from.
 
-        A frame about one conversation reaches an app's socket only when the app started it,
-        and a conversation list frame is serialized per app socket with that app's rows only."""
+        A frame about one conversation reaches an app's socket only when the app started it.
+        A conversation list and a notification frame are serialized per app socket in that
+        app's own view (:meth:`_app_view`): its own rows (an empty list when it has none), or
+        its own notes (no frame when it has none). The envelope is ``type`` and ``data`` and
+        nothing else: it had an ``extra`` of top-level keys, which is how your YOLO state rode
+        the session list to every app socket that declared it."""
         if not self._ws_clients:
             return
-        envelope: dict[str, Any] = {"type": msg_type, "data": data}
-        if extra:
-            # Envelope keys only — `type`/`data` stay owned by this method so a caller
-            # cannot rename the event out from under the permission check.
-            envelope.update({k: v for k, v in extra.items() if k not in ("type", "data")})
-        if msg_type in CONVERSATION_LIST_FRAMES:
-            apps = [ws for ws in self._ws_clients if self._ws_app.get(ws)]
-            owners = [ws for ws in self._ws_clients if not self._ws_app.get(ws)]
-            self._dispatch_ws(owners, msg_type, json.dumps(envelope))
-            for ws in apps:
-                own = {**envelope, "data": self._own_rows(self._ws_app[ws], msg_type, data)}
-                self._dispatch_ws([ws], msg_type, json.dumps(own))
+        envelope = json.dumps({"type": msg_type, "data": data})
+        if not _has_app_view(msg_type):
+            self._dispatch_ws(
+                self._ws_clients, msg_type, envelope, subject=frame_subject(msg_type, data)
+            )
             return
         self._dispatch_ws(
-            self._ws_clients,
-            msg_type,
-            json.dumps(envelope),
-            subject=frame_subject(msg_type, data),
+            [ws for ws in self._ws_clients if not self._ws_app.get(ws)], msg_type, envelope
         )
+        for ws in [ws for ws in self._ws_clients if self._ws_app.get(ws)]:
+            app = self._ws_app[ws]
+            # The manifest first: a view is a read of your log or your conversations, and an app
+            # that did not declare the frame is sent none of it anyway.
+            if not self._app_may_see_event(app, msg_type):
+                continue
+            view = self._app_view(app, msg_type, data)
+            if view is not _UNHEARD:
+                self._dispatch_ws([ws], msg_type, json.dumps({"type": msg_type, "data": view}))
 
     def _app_may_see_event(self, app: str, event_type: str) -> bool:
         """Whether an app-scoped WS may receive ``event_type`` per its manifest."""

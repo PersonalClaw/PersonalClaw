@@ -145,7 +145,10 @@ says what that means.
   read of one conversation reaches only one the app started, lists and searches answer with
   the app's own, rooms and the inbox are yours, and the websocket carries a frame about a
   conversation to an app only when it started that conversation, and an inbox item only when
-  the app raised it (`dashboard/ws_state.py::frame_subject`).
+  the app raised it (`dashboard/ws_state.py::frame_subject`). Your notification log is held to
+  the same rule: an app reads a notification, from `GET /api/notifications` or its socket, only
+  when it raised it or it is about a conversation the app started
+  (`DashboardState.notification_reaches`), and the session list carries no YOLO flag.
 - **Your access, and who else has any, is yours.** Demoting an autonomy grant, undoing
   an automation's action, signing out a device, revoking a chat sender, and connecting
   or disconnecting a chat channel refuse an app token. Two levers stay with apps on
@@ -163,7 +166,7 @@ says what that means.
   Log row naming the app and the path (`files.py::_app_path_refusal`).
 - **A new route fails closed.** Every write route under a family that decides what runs
   as you, whether it asks first, or who may reach you (`SECURITY_ROUTE_FAMILIES`), and every
-  read under your conversation families (`READ_DECLARED_FAMILIES`), is either owner-only or
+  read under your conversation families and your notification log (`READ_DECLARED_FAMILIES`), is either owner-only or
   declared `AppMay` with its reason. An undeclared one is refused to every app token at
   runtime (`undeclared_security_route`), and `tests/test_security_posture_rail.py` fails the
   build on it.
@@ -303,7 +306,7 @@ deliberate, disclosed gap — see [limitations.md](limitations.md)). A row may c
 |---|---|---|---|
 | **ASI01** Agent goal / instruction manipulation | Untrusted-content fencing, approval modes, and data-not-instructions framing on recalled memory; an app token cannot write your agents, skills, prompts or routing notes, or post into your chats, rooms or inbox answers | `security.py::fence_untrusted`; `dashboard/handlers/memory.py` (recall framing); `apps/permissions.py` (`ROUTE_AUTHZ`, `OWNER_ONLY_API_PATHS["/api/onboarding/import"]`, `OWNER_ONLY_API_PATHS["/api/send-message"]`) | enforced |
 | **ASI02** Tool misuse | Command deny/suspicious patterns, task-mode gating, OS child sandbox | `security.py` (`BUILTIN_DENIED_COMMAND_PATTERNS`, `SUSPICIOUS_BASH_PATTERNS`); `task_modes.py`; `sandbox.py` | enforced |
-| **ASI03** Identity & privilege abuse | App-scoped tokens, reverse-proxy credential stripping, permission middleware (holds even in `none` mode), an owner-only registry plus per-route declarations that refuse an undeclared write, settings scoped to the fields a manifest declares, conversations held to the app that started them (reads and socket frames included) and run under its own `agent` grant | `dashboard/handlers/apps.py::api_app_proxy`; `dashboard/token_auth.py`; `dashboard/server.py` (`_dev_user_middleware`, `app_permission_middleware`, `_conversation_denial`); `apps/permissions.py` (`OWNER_ONLY_API_PATHS`, `ROUTE_AUTHZ`, `undeclared_security_route`, `app_conversation_auto_approves`); `dashboard/ws_state.py::frame_subject` | enforced |
+| **ASI03** Identity & privilege abuse | App-scoped tokens, reverse-proxy credential stripping, permission middleware (holds even in `none` mode), an owner-only registry plus per-route declarations that refuse an undeclared write, settings scoped to the fields a manifest declares, conversations held to the app that started them (reads and socket frames included) and run under its own `agent` grant, notifications held to the app that raised them | `dashboard/handlers/apps.py::api_app_proxy`; `dashboard/token_auth.py`; `dashboard/server.py` (`_dev_user_middleware`, `app_permission_middleware`, `_conversation_denial`); `apps/permissions.py` (`OWNER_ONLY_API_PATHS`, `ROUTE_AUTHZ`, `undeclared_security_route`, `app_conversation_auto_approves`); `dashboard/ws_state.py` (`frame_subject`, `_own_notifications`); `dashboard/state.py::notification_reaches` | enforced |
 | **ASI04** Supply-chain & dependency risk | Quarantine → scan → consent → install; `dangerous` verdict terminal; scanned-tree == installed-tree (tooling left out of both, nothing skipped in what remains, an unreadable file disclosed); staging never follows a link out of the bundle; a registry listing names an `https://` repo | `apps/app_manager.py::install`; `apps/staging.py`; `supply_chain.py` (`SkillScanner`, `Verdict`, `never_installed`); `apps/catalog.py::_listing_repo_refusal` | enforced |
 | **ASI05** Unauthorized code execution | Command screening + OS sandbox + credential-env denylist; an app token cannot define an MCP server or an automation, and the owner confirms an automation step that approves its own tool calls | `security.py`; `sandbox.py`; `apps/permissions.py` (`OWNER_ONLY_API_PATHS["/api/mcp"]`, `ROUTE_AUTHZ`); `automation_posture.py` | enforced *(an installed app's own code runs as you: documented limitation, [limitations.md](limitations.md) §7)* |
 | **ASI06** Memory & context poisoning | Fenced recall, propose-only (never live-write) learning, temporary/incognito session modes; an app writes memory, lessons included, only with its `memory` grant | `dashboard/handlers/memory.py`; `after_turn_review.py` (propose-only queue); `session_restrictions.py`; `apps/permissions.py::MEMORY_API_PATHS` | enforced |
