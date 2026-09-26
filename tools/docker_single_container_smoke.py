@@ -13,7 +13,18 @@ That is the exact failure this file exists to catch, and why it asserts an asset
      directory with no PersonalClaw files in it;
   2. `GET /api/healthz` → 200 with `status: ok`;
   3. `GET /` → 200 HTML carrying the SPA shell's root mount point;
-  4. the FIRST script the shell references → 200 **with a JavaScript content-type**.
+  4. the FIRST script the shell references → 200 **with a JavaScript content-type**;
+  5. the image's INSTALLED package carries the default chat model's sign-off record — the
+     one its bundled-chat app reads — and it parses under a permitted licence;
+  6. `GET /api/onboarding` on the fresh volume → a non-null `chat_download_offer`.
+
+**Steps 5 and 6 are the 2026-09-25 release blocker.** The record was a symlink into `docs/`,
+the image copies only `src/`, so the image installed no record: every response 200, no
+download offer in onboarding, on the chat screen or in Settings → Models, and a first chat
+that pointed at a download nothing offered. The wheel gate could not see it because it read
+the record out of the repository. Both steps use `scripts/installed_bundled_model_probe.py`,
+the same probe `scripts/verify_wheel.py` runs inside the installed wheel — one question, one
+dialect, asked of both artifacts.
 
 **Step 4 is the whole point and the content-type is not decoration.** The SPA serves an
 `index.html` fallback for unknown paths, so a bundle that never made it into the image
@@ -52,6 +63,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -78,6 +90,10 @@ _JS_CONTENT_TYPES = ("javascript", "ecmascript")
 #: What replaces a token span in captured output. A marker, never a deletion: the dump
 #: exists to be read, so a reader must still see THAT a token was printed and where.
 _REDACTED = "<redacted>"
+#: The probe the built IMAGE runs against its own installed package (steps 5 and 6).
+_BUNDLED_MODEL_PROBE = (
+    Path(__file__).resolve().parents[1] / "scripts" / "installed_bundled_model_probe.py"
+)
 
 
 class Unmeasurable(Exception):
@@ -403,6 +419,67 @@ def _assert_asset(base: str, src: str) -> None:
     _log(f"OK (control): {bogus} → {status} {ctype!r} — not served as JavaScript")
 
 
+def _bundled_model_probe():
+    """The shared probe's JUDGES, imported by path — stdlib-only, it imports no ``personalclaw``."""
+    spec = importlib.util.spec_from_file_location(
+        "_installed_bundled_model_probe", _BUNDLED_MODEL_PROBE
+    )
+    if spec is None or spec.loader is None:
+        raise Unmeasurable(f"cannot load the bundled-model probe at {_BUNDLED_MODEL_PROBE}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _assert_installed_record(name: str) -> None:
+    """Step 5: the image's installed package carries the record its bundled-chat app reads.
+
+    The probe's SOURCE is handed to the container's own interpreter, so the answer comes from
+    the image's site-packages and nothing on this machine can stand in for it. ``-I`` keeps the
+    container's working directory and ``PYTHON*`` variables out of the import path.
+    """
+    source = _BUNDLED_MODEL_PROBE.read_text(encoding="utf-8")
+    proc = _docker("exec", name, "python", "-I", "-c", source, check=False)
+    lines = proc.stdout.strip().splitlines()
+    if proc.returncode != 0 or not lines:
+        _fail(
+            "the bundled-model probe did not run inside the image: "
+            f"rc={proc.returncode} stderr={redact_secrets(proc.stderr).strip()[-1500:]!r}"
+        )
+    try:
+        report = json.loads(lines[-1])
+    except ValueError:
+        _fail(f"the bundled-model probe printed no report: {lines[-1][:300]!r}")
+    failures = _bundled_model_probe().record_failures(report)
+    if failures:
+        _fail("the image cannot offer its default chat model:\n  " + "\n  ".join(failures))
+    declaration = report["declaration"]
+    _log(
+        f"OK: the image's installed app reads {report['record']['path']} — "
+        f"{declaration['model_id']} signed off under {declaration['licence']}"
+    )
+
+
+def _assert_download_offer(base: str, token: str) -> None:
+    """Step 6: on the fresh volume the gateway OFFERS the default model's download.
+
+    What onboarding, the chat screen and Settings → Models all render the offer from. ``null``
+    here is the measured image defect: all-200 responses and no offer anywhere.
+    """
+    status, _ctype, body = _get(f"{base}/api/onboarding?token={token}")
+    if status != 200:
+        _fail(f"/api/onboarding returned {status} (want 200) — body: {body[:300]!r}")
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        _fail(f"/api/onboarding did not answer JSON: {body[:300]!r}")
+    failure = _bundled_model_probe().offer_failure(payload)
+    if failure:
+        _fail(failure)
+    offer = payload["chat_download_offer"]
+    _log(f"OK: /api/onboarding offers {offer.get('model')} ({offer['bytes']} bytes)")
+
+
 def _dump_container_logs(name: str) -> None:
     """Print the container's tail for diagnosis, with session tokens redacted.
 
@@ -469,18 +546,26 @@ def main() -> int:
         token = _mint_token(name)
         first_script = _assert_shell(base, token)
         _assert_asset(base, first_script)
+        _assert_installed_record(name)
+        _assert_download_offer(base, token)
     except Unmeasurable as exc:
         print(f"UNMEASURABLE: {exc}", file=sys.stderr)
         return 2
     finally:
         if started:
             _dump_container_logs(name)
+            # STOP before removing. The README command carries `--restart unless-stopped`, and an
+            # explicit stop is what that policy honours. Measured on Finch: after a bare `rm -f`
+            # the container was still serving the README's port, with its volume attached, once
+            # this run had printed PASS, so the next run could not measure at all.
+            _docker("stop", name, check=False)
             _docker("rm", "-f", "-v", name, check=False)
             _docker("volume", "rm", "-f", volume, check=False)
 
     _log("")
     _log("PASS: one `docker run` from README.md reaches a usable dashboard — healthz 200, the")
-    _log("      SPA shell, and its first bundle served as JavaScript.")
+    _log("      SPA shell, its first bundle served as JavaScript, the installed sign-off record,")
+    _log("      and a download offer for the default chat model.")
     return 0
 
 

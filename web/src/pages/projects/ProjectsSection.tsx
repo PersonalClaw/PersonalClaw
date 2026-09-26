@@ -21,7 +21,9 @@ import { SidePanel } from '../../ui/SidePanel'
 import { Button } from '../../ui/Button'
 import { FieldHintProvider, FieldLabelProvider, TextArea, TextInput } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
+import { StatusPill } from '../../ui/StatusPill'
 import { WorkspacePicker } from '../code/WorkspacePicker'
+import { useWorkspaceMissing } from '../../lib/useWorkspaceMissing'
 import { api, ApiError, MAX_NAME_LEN, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry, type WorkRow, type WorkState, type WorkOutcome, type WorkBoard, type ProjectKnowledgeItem, type SharingPolicy } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { DEFAULT_PROJECT_KEY, useDefaultProject } from '../../lib/defaultProject'
@@ -568,6 +570,10 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
   // bound, so the button appears only then (server still re-checks + 403s if stale).
   const { data: pcfg } = useQuery('config:personalclaw', () => api.personalclawConfig())
   const adaptersEnabled = Boolean((pcfg as { legibility?: { context_adapters?: boolean } } | undefined)?.legibility?.context_adapters)
+  // The bound workspace folder is GONE — a container recreated without it on its volume, or a
+  // repo moved or deleted. The page kept showing the dead path as if it were fine, so a user found
+  // out only when work there failed. Re-probed whenever the project record refreshes.
+  const wsMissing = useWorkspaceMissing(project?.workspace_dir, { recheck: project })
   const [renaming, setRenaming] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
   const [pickWs, setPickWs] = useState(false)
@@ -793,10 +799,12 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
               grid so Work + Tasks own the screen). Clicking the path opens the dir tree
               in the side panel; an arrow jumps to the full Files page. ── */}
           <div className="flex flex-wrap items-center gap-2 text-[0.75rem]">
-            <FolderChip label="Workspace" icon={project.workspace_dir ? FolderOpen : Folder}
+            {/* A missing folder offers no peek or "Open in Files": both would open a folder that
+                is not there. Change and Unbind stay — they are the way out. */}
+            <FolderChip label="Workspace" icon={project.workspace_dir && !wsMissing ? FolderOpen : Folder}
               path={project.workspace_dir}
-              onPeek={project.workspace_dir ? () => setPanel({ kind: 'dir', label: 'Workspace', path: project.workspace_dir! }) : undefined}
-              onBrowse={project.workspace_dir ? () => navigate(`files?dir=${encodeURIComponent(project.workspace_dir!)}`) : undefined}
+              onPeek={project.workspace_dir && !wsMissing ? () => setPanel({ kind: 'dir', label: 'Workspace', path: project.workspace_dir! }) : undefined}
+              onBrowse={project.workspace_dir && !wsMissing ? () => navigate(`files?dir=${encodeURIComponent(project.workspace_dir!)}`) : undefined}
               onAction={() => setPickWs(true)} actionLabel={project.workspace_dir ? 'Change' : 'Bind'}
               onClear={project.workspace_dir ? () => patch({ workspace_dir: '' }) : undefined}
               emptyText="No workspace bound" />
@@ -814,6 +822,16 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
               </Button>
             )}
           </div>
+          {wsMissing && project.workspace_dir && (
+            <p role="status" data-type="body-s" className="flex flex-wrap items-center gap-2 text-on-surface-var">
+              <StatusPill tone="warn">Folder missing</StatusPill>
+              <span className="min-w-0">
+                The workspace folder <span className="font-mono">{folderName(project.workspace_dir)}</span> no longer
+                exists at <span className="break-all font-mono">{project.workspace_dir}</span>. Choose Change to bind a
+                folder that exists, or restore it at that path.
+              </span>
+            </p>
+          )}
         </div>
 
         {/* ── 2-region grid (Work + Tasks fill remaining height; files moved to the bar
@@ -1025,6 +1043,11 @@ function WorkRowCard({ row, onResume }: { row: WorkRow; onResume: () => void }) 
 /** A compact horizontal folder chip (workspace / context) for the hub's directory bar:
  *  label · path (click → peek dir tree in the side panel) · arrow → full Files page ·
  *  optional Bind/Change + Unbind actions. */
+/** A path's last segment — the name a person knows the folder by. */
+function folderName(path: string): string {
+  return path.replace(/\/+$/, '').split('/').pop() || path
+}
+
 function FolderChip({ label, icon: Icon, path, emptyText, title, onPeek, onBrowse, onAction, actionLabel, onClear }: {
   label: string; icon: LucideIcon; path?: string; emptyText: string; title?: string
   onPeek?: () => void; onBrowse?: () => void; onAction?: () => void; actionLabel?: string; onClear?: () => void

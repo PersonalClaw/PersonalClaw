@@ -19,7 +19,7 @@ floor stops being used automatically.
 | | |
 |---|---|
 | Model | `unsloth/SmolLM2-135M-Instruct-GGUF` (a GGUF build of `HuggingFaceTB/SmolLM2-135M-Instruct`) |
-| Licence | **Apache-2.0**, both the base model and the GGUF build — see [`bundled-model-signoff.txt`](bundled-model-signoff.txt) (a symlink to the one copy under `docs/architecture/`) for the recorded sign-off, and `weights/MODEL_LICENSE` for the licence text, which the fetcher copies next to the downloaded weight so Apache-2.0 §4 is satisfied on the machine holding the bytes |
+| Licence | **Apache-2.0**, both the base model and the GGUF build — see [`bundled-model-signoff.txt`](bundled-model-signoff.txt) (the one copy of the record, kept beside the code that reads it; the docs link here) for the recorded sign-off, and `weights/MODEL_LICENSE` for the licence text, which the fetcher copies next to the downloaded weight so Apache-2.0 §4 is satisfied on the machine holding the bytes |
 | Quantization | Q8_0 — 144,811,072 bytes (138.1 MiB) |
 | Runtime | `numpy`, already a core dependency. No compiler, no vendor runtime, no platform-specific wheel |
 | Memory | ~540 MB resident once loaded (the weight is dequantized to float32), loaded **lazily** on the first turn |

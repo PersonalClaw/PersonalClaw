@@ -17,7 +17,11 @@ from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import _DEFAULT_PORT
 from personalclaw.constants import DATA_WARNING
-from personalclaw.dashboard.origin import dashboard_origin, parse_dashboard_url
+from personalclaw.dashboard.origin import (
+    container_port_note,
+    dashboard_origin,
+    parse_dashboard_url,
+)
 from personalclaw.dashboard.token_auth import parse_duration
 from personalclaw.frontend import build_frontend_sync, ensure_dev_dist_symlink
 from personalclaw.gateway import run_gateway
@@ -121,6 +125,11 @@ def _token(args: argparse.Namespace) -> None:
         print("❌ Gateway returned empty token")
         sys.exit(1)
     print(f"http://localhost:{port}?token={token}")
+    # On stderr, so stdout stays a list of URLs a script can open; a person running
+    # `docker exec … personalclaw token` sees both.
+    note = container_port_note(port)
+    if note:
+        print(note, file=sys.stderr)
     origin = dashboard_origin(AppConfig.load().dashboard.url)
     if origin and "localhost" not in origin:
         print(f"{origin}/?token={token}")

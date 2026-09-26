@@ -384,8 +384,8 @@ personalclaw = [
     # There is no `*.gguf` glob and there must not be one: the weight is 138 MiB, which is
     # over PyPI's 100 MiB per-file limit, and a ~147 MiB wheel for every install is a cost
     # most users would pay for a model they replace on day one. It is fetched ONCE into
-    # `$PERSONALCLAW_HOME/models/bundled-chat/`, digest-verified against
-    # `docs/architecture/bundled-model-signoff.txt`, at the user's explicit go-ahead.
+    # `$PERSONALCLAW_HOME/models/bundled-chat/`, digest-verified against the sign-off record
+    # below, at the user's explicit go-ahead.
     # `scripts/verify_wheel.py` assertion 7 enforces the absence: a wheel that grew a
     # weight-shaped member REDS, because that member would silently reintroduce the limit
     # problem and nothing else in the pipeline is looking.
@@ -396,11 +396,13 @@ personalclaw = [
     "apps/native/*/weights/MODEL_LICENSE",
     "apps/native/*/weights/MODEL_NOTICE",
     # The sign-off record itself — the RUNTIME reads it, because it carries the source pin, the
-    # digest and the exact size the first-run download needs. In the tree it is a SYMLINK to the
-    # one copy under `docs/architecture/`, which is where the atom requires the sign-off to be
-    # checked in; setuptools dereferences it, so the wheel gets real bytes and git keeps exactly
-    # one authority. A second committed copy would be two things that can disagree about which
-    # model an install will fetch.
+    # digest and the exact size the first-run download needs. It is a REAL file in the app dir,
+    # the one copy git holds, and the docs link to it. It used to be a symlink into
+    # `docs/architecture/`, which setuptools dereferenced only when `docs/` sat beside `src/`:
+    # true for a checkout and for `uv build`, false for the container image, which copies
+    # `src/` alone — so the image installed no record and could neither offer nor fetch its
+    # default model. `tests/test_src_tree_is_self_contained.py` reds on any link that leaves
+    # `src/`, and `scripts/verify_wheel.py` reads this record out of the INSTALLED wheel.
     "apps/native/*/bundled-model-signoff.txt",
     # The ONE token-lint rule (APE-4), shared by web/src/design/tokenLintRule.ts and
     # apps/quality.py. The apps-repo CI verifies a `quality.designSystem: "v2"` claim

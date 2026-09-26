@@ -252,7 +252,7 @@ One container, nothing to check out and no `.env` — the gateway image bundles 
 dashboard:
 
 ```bash
-docker run -d --name personalclaw -p 127.0.0.1:10000:10000 -e PERSONALCLAW_BIND_HOST=0.0.0.0 -v personalclaw_home:/data ghcr.io/personalclaw/personalclaw-gateway:latest
+docker run -d --name personalclaw --restart unless-stopped -p 127.0.0.1:10000:10000 -e PERSONALCLAW_BIND_HOST=0.0.0.0 -v personalclaw_home:/data ghcr.io/personalclaw/personalclaw-gateway:latest
 ```
 
 Then print the dashboard URL (it carries a one-time token — the default auth mode):
@@ -261,8 +261,16 @@ Then print the dashboard URL (it carries a one-time token — the default auth m
 docker exec personalclaw personalclaw token
 ```
 
-State lives in the named volume `personalclaw_home`, so it survives
-`docker rm`/`docker run`. `-p 127.0.0.1:…` keeps the port on the host's loopback;
+The URL carries the container's own port, 10000. If you published a different host port,
+open that one instead; the command reminds you.
+
+State lives in the named volume `personalclaw_home`, mounted at `/data`, so it survives
+`docker rm`/`docker run`. That includes your work: the image puts the workspace at
+`/data/workspace`, where the default chat workspace lives and where the folder picker opens
+to create a project folder. A folder you bind outside `/data` exists only inside that
+container and is gone when it is recreated; the project page then says so.
+`--restart unless-stopped` brings the gateway back by itself after a crash, an out-of-memory
+kill or a Docker restart. `-p 127.0.0.1:…` keeps the port on the host's loopback;
 `PERSONALCLAW_BIND_HOST=0.0.0.0` is what lets that published port reach the gateway
 *inside* the container (its own default is loopback, which a container cannot publish).
 Swap `:latest` for a release tag to pin one.

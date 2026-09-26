@@ -104,7 +104,7 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
   // A typed path the user has NOT navigated to yet — the draft differing from the browsed dir.
   // This is the whole of issue 311: the footer button submitted `path` while the input visibly
   // showed something else, so typing `/tmp` and clicking "Use this folder" bound the browsed
-  // directory — by default the user's entire HOME — with no error and no hint. `workspace_dir` is
+  // directory — then, by default, the user's entire HOME — with no error and no hint. `workspace_dir` is
   // what loops and code sessions read, write and run `bash` in, so a silent substitution points
   // real agent work at an unintended tree.
   const typedTarget = pathDraft.trim() && pathDraft.trim() !== path ? pathDraft.trim() : ''
@@ -125,7 +125,10 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
     if (path) onPick(path)
   }
 
-  // The only browse nobody asked for — so it yields the path bar to anything already typed.
+  // The only browse nobody asked for — so it yields the path bar to anything already typed. With no
+  // path, browse-dirs opens the WORKSPACE root (`_default_browse_dir`), so a folder made with "New
+  // folder here" lands where work lives: in the container image that is the /data volume, where a
+  // $HOME default was container-local and lost on recreate.
   useEffect(() => { void browse(undefined, undefined, true) }, [browse])
 
   const shownDirs = useMemo(() => {

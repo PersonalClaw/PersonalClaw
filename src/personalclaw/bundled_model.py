@@ -25,9 +25,9 @@ CARRIED the weight; it now gates a wheel that must not:
   moved upstream file from pulling gigabytes onto a user's disk.
 
 What is NOT here is the bundle CHOICE: which model, under which licence, from which pinned
-revision, at which digest, is recorded in ``docs/architecture/bundled-model-signoff.txt``, and
-that record — not this module — is what a reader consults. As of OU-14 it names
-``unsloth/SmolLM2-135M-Instruct-GGUF`` under Apache-2.0.
+revision, at which digest, is recorded in :data:`DECLARATION_RELPATH` — the bundled-chat app's
+own ``bundled-model-signoff.txt`` — and that record, not this module, is what a reader
+consults. As of OU-14 it names ``unsloth/SmolLM2-135M-Instruct-GGUF`` under Apache-2.0.
 
 **Why default-DENY and no fuzzy licence matching.** The known-false cases this rail exists for
 all *look* permissive: Gemma ships under Google's own Gemma Terms with use restrictions,
@@ -44,8 +44,9 @@ So a zero-byte download is refused, and so is an unset ceiling: an unset number 
 permission.
 
 Everything in this module is pure stdlib and reads no configuration, so the release gate
-(``scripts/verify_wheel.py``) can call it against a built wheel on a bare runner, and the
-bundled-chat app can call it against a download with nothing else imported.
+(``scripts/verify_wheel.py``, through ``scripts/installed_bundled_model_probe.py``) runs the
+INSTALLED copy of it against the wheel that installed it, and the bundled-chat app can call it
+against a download with nothing else imported.
 """
 
 from __future__ import annotations
@@ -65,10 +66,14 @@ from personalclaw.local_models.layouts import DIRECT_FILE_EXTENSIONS
 #: commit.
 PERMITTED_LICENCES: frozenset[str] = frozenset({"apache-2.0", "mit"})
 
-#: Where the owner's sign-off record lives, relative to the repository root. A RELATIVE path on
-#: purpose: this module ships inside the wheel, where no repository exists, so resolving a
-#: default absolute path here would be a lie that only fails at a release gate.
-DECLARATION_RELPATH = "docs/architecture/bundled-model-signoff.txt"
+#: Where the owner's sign-off record lives, relative to the repository root — inside the
+#: bundled-chat app that reads it, because that is the only location every install carries. It
+#: was once under ``docs/`` with a symlink into the app, and the container image, which copies
+#: only ``src/``, shipped the link without its target. A RELATIVE path on purpose: this module
+#: ships inside the wheel, where no repository exists, so resolving a default absolute path here
+#: would be a lie that only fails at a release gate. Refusals name it so a maintainer knows which
+#: file to edit; the runtime reads the app's own copy.
+DECLARATION_RELPATH = "src/personalclaw/apps/native/bundled-chat/bundled-model-signoff.txt"
 
 #: Every key a complete sign-off record carries. All seven are required — see
 #: :func:`parse_declaration` for why a partial record is refused rather than ignored.

@@ -338,7 +338,7 @@ Not config-file fields, but part of the same operator surface:
 |---|---|
 | `PERSONALCLAW_HOME` | Relocate the config/state directory (default `~/.personalclaw`). |
 | `PERSONALCLAW_PORT` | Override the dashboard/API port (default `10000`). Validated at CLI entry. A running gateway **overwrites** this in its own environment with the port it actually bound, so every child it spawns agrees with the live socket even under `--port` / `--port auto`. |
-| `PERSONALCLAW_WORKSPACE` | Workspace root for LLM working directories. |
+| `PERSONALCLAW_WORKSPACE` | Workspace root for LLM working directories: the default chat workspace, and where the folder picker opens. Default `~/workplace/personalclaw-workspace`; the container image sets `/data/workspace`, so it lives on the image's one volume. |
 | `PERSONALCLAW_BIND_HOST` | Bind address for the gateway (e.g. `0.0.0.0` for LAN access). |
 | `PERSONALCLAW_BYPASS_LOCAL_NETWORKS` | `1` = skip token auth for any client whose **resolved** address is private (loopback/RFC1918/link-local/ULA). Dev convenience for a trusted LAN. **Do not set it behind a reverse proxy:** the address the gateway resolves is then the proxy's own, which is private, so requests forwarded from anywhere are admitted with no token. `personalclaw doctor`'s `remote` row fails when this is set together with `dashboard.trusted_proxies` or `dashboard.public_url`. See [remote-access.md](../guides/remote-access.md). |
 | `PERSONALCLAW_FIRST_PARTY_APPS_DIR` | Point a packaged install at a first-party apps directory. |

@@ -34,6 +34,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -300,3 +301,72 @@ def test_build_clears_the_stale_staging_tree(verify_wheel, tmp_path, monkeypatch
     )
     assert invocations, "--build removed the trees but never invoked the build command"
     assert invocations[-1][1:] == ["-m", "build", "--wheel"], invocations[-1]
+
+
+# ── A relative --wheel reaches every process that opens it ────────────────────
+
+
+@pytest.mark.timeout(240)
+def test_a_relative_wheel_from_the_checkout_root_reaches_the_installed_probe(
+    verify_wheel, tmp_path, monkeypatch, capsys
+) -> None:
+    """``--wheel dist/<name>.whl`` from the checkout root, the shape ``release.yml`` passes.
+
+    🔴 Measured by the batch validation of the change that added assertion 7's probe. The probe
+    runs with the scratch home as its working directory (so no source tree can stand in for the
+    install), the wheel path arrived RELATIVE, and ``gate_wheel`` died with
+    ``FileNotFoundError: 'dist/personalclaw-0.2.0-py3-none-any.whl'`` in a directory that has no
+    ``dist/``. Every earlier drive of the gate had passed an absolute path.
+
+    Driven through ``main()`` with the REAL probe subprocess, because the defect is two processes
+    disagreeing about the working directory, and a faked subprocess cannot disagree. The install
+    and the boot are stubbed: pip would need the network, a gateway takes a minute, and neither is
+    where the path went wrong. The test's own interpreter stands in for the installed wheel's.
+    That works because CI installs the package (``uv sync``) instead of putting ``src/`` on
+    ``PYTHONPATH``, which the probe's ``-I`` would ignore.
+    """
+    root = tmp_path / "checkout"
+    wheel_name = "personalclaw-0.2.0-py3-none-any.whl"
+    (root / "dist").mkdir(parents=True)
+    with zipfile.ZipFile(root / "dist" / wheel_name, "w") as zf:
+        zf.writestr("personalclaw/__init__.py", "")
+        zf.writestr("personalclaw/static/dist/index.html", "<!doctype html>")
+    monkeypatch.chdir(root)
+
+    handed: dict[str, Path] = {}
+    monkeypatch.setattr(verify_wheel, "_make_venv", lambda venv_root: Path(sys.executable))
+    monkeypatch.setattr(
+        verify_wheel, "_pip_install_wheel", lambda py, wheel: handed.update(pip=wheel)
+    )
+    monkeypatch.setattr(
+        verify_wheel,
+        "_boot_and_probe",
+        lambda py, home, bundled_apps=0: handed.update(home=home),
+    )
+    monkeypatch.setattr(sys, "argv", ["verify_wheel.py", "--wheel", f"dist/{wheel_name}"])
+
+    try:
+        rc = verify_wheel.main()
+    except SystemExit as exc:
+        pytest.fail(
+            f"verify_wheel exited {exc.code} on a relative --wheel from the checkout root:\n"
+            f"{capsys.readouterr().err[-2500:]}"
+        )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "read from the installed package, not the repository" in out, out
+    assert "carries no model weight" in out, out
+    # Every process that opens the wheel was handed a path that does not depend on its cwd.
+    assert handed["pip"] == (root / "dist" / wheel_name).resolve(), handed
+    assert handed["home"].is_absolute(), handed
+
+
+def test_the_wheel_it_verifies_is_named_absolutely(verify_wheel, tmp_path, monkeypatch) -> None:
+    """``_find_wheel`` is where the path enters, so it is where the path becomes absolute."""
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist" / "personalclaw-0.2.0-py3-none-any.whl").write_bytes(b"")
+    monkeypatch.chdir(tmp_path)
+    expected = (tmp_path / "dist" / "personalclaw-0.2.0-py3-none-any.whl").resolve()
+    assert verify_wheel._find_wheel("dist/*.whl") == expected
+    assert verify_wheel._find_wheel("dist/personalclaw-0.2.0-py3-none-any.whl") == expected
+    assert verify_wheel._find_wheel(None) == expected

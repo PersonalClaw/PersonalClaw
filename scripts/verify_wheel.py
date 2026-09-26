@@ -11,10 +11,18 @@ It asserts, against a real wheel and a scratch venv with NO Node present:
   4. ``GET /api/healthz`` → 200 JSON (auth-exempt liveness);
   5. ``GET /`` → 200 HTML (the SPA shell, served from the packaged assets), and
   6. every bundled app/extension the wheel ships actually ENABLED — see
-     :func:`extension_failures` for why assertion 6 exists (#2758), and
-  7. the default chat model is signed off under a permitted licence and is NOT in the wheel —
-     it is fetched at first use — and the wheel is still small; see
-     :func:`_assert_no_bundled_weight_in_wheel` (OU-14).
+     :func:`extension_failures` for why assertion 6 exists (#2758);
+  7. the INSTALLED package carries the default chat model's sign-off record — the one the
+     installed bundled-chat app reads — under a permitted licence, and the wheel carries no
+     model weight and is still small; see :func:`_assert_installed_bundled_model` (OU-14), and
+  8. the booted install OFFERS that model's download on a fresh home (``chat_download_offer``
+     on ``GET /api/onboarding``); see :func:`_assert_download_offer`.
+
+Everything is read from the ARTIFACT, never from this repository. Assertion 7 used to import
+``personalclaw.bundled_model`` from ``src/`` and read the record from ``docs/`` — so it passed
+for an image whose installed package had no record at all (2026-09-25), because the repository
+always has one. Assertions 7 and 8 share ``scripts/installed_bundled_model_probe.py`` with the
+container-image gate, so the wheel and the image are asked the same question the same way.
 
 Exit 0 = contract met. Run locally after ``npm run build && python -m build``,
 and in ``release.yml`` (replacing the shallow namelist check).
@@ -36,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import importlib.util
 import json
 import os
 import shutil
@@ -72,6 +81,14 @@ _EXTENSION_SUCCESS_MARKER = "Enabled extension"
 #: Where a bundled app lives inside the wheel — used only to report the two counts side by side.
 _BUNDLED_APP_PREFIX = "personalclaw/apps/native/"
 
+#: The probe the INSTALLED artifact runs to report on its own bundled-model record. Shared with
+#: ``tools/docker_single_container_smoke.py``, so the wheel gate and the image gate ask one
+#: question in one dialect.
+_BUNDLED_MODEL_PROBE = Path(__file__).resolve().with_name("installed_bundled_model_probe.py")
+
+#: How long the probe may take: it imports the installed package and loads one app.
+_PROBE_TIMEOUT_S = 120.0
+
 
 def _log(msg: str) -> None:
     print(f"[verify_wheel] {msg}", flush=True)
@@ -83,15 +100,26 @@ def _fail(msg: str) -> NoReturn:
 
 
 def _find_wheel(explicit: str | None) -> Path:
+    """The wheel to verify, as an ABSOLUTE path.
+
+    🔴 Absolute because the path leaves this process. pip installs it, and the bundled-model
+    probe opens it with the scratch home as its working directory, which is not this one.
+    ``release.yml`` passes ``--wheel "dist/*.whl"``, relative to the checkout, and a relative
+    path handed across that boundary names a file that is not there. Measured: the probe died
+    with ``FileNotFoundError: 'dist/personalclaw-0.2.0-py3-none-any.whl'``, and every drive of
+    the gate before it had passed an absolute path. ``resolve()`` rather than ``absolute()``
+    because a wheel is a file whose NAME pip parses: a ``dist/latest.whl`` symlink would be
+    refused as an invalid wheel filename, and its target's real name is the one pip needs.
+    """
     if explicit:
         matches = sorted(glob.glob(explicit))
         if not matches:
             _fail(f"no wheel matched {explicit!r}")
-        return Path(matches[-1])
+        return Path(matches[-1]).resolve()
     matches = sorted(glob.glob("dist/*.whl"))
     if not matches:
         _fail("no wheel in dist/ — run `python -m build --wheel` (or pass --wheel)")
-    return Path(matches[-1])
+    return Path(matches[-1]).resolve()
 
 
 def _build_wheel() -> None:
@@ -124,64 +152,109 @@ def _build_wheel() -> None:
     subprocess.run([sys.executable, "-m", "build", "--wheel"], check=True)
 
 
-def _load_bundled_model_rail():
-    """Import ``personalclaw.bundled_model`` from the SOURCE tree, by path.
+def bundled_model_probe():
+    """The shared probe's JUDGES, imported by path — stdlib-only, it imports no ``personalclaw``.
 
-    By path and not by ``import personalclaw.bundled_model`` because this script runs on a bare
-    runner before anything is installed — that is the whole reason it is stdlib-only. The module
-    it loads is stdlib-only too, and it is the SAME module the tests exercise, so the release
-    gate and ``tests/test_bundled_model_gate.py`` cannot drift into two dialects of the rule.
+    By path because this script runs on a bare runner. Only the judges run here; the probe's
+    ``probe()`` runs inside the artifact (:func:`_installed_bundled_model_report`).
     """
-    root = Path(__file__).resolve().parents[1]
-    src = root / "src"
-    if str(src) not in sys.path:
-        sys.path.insert(0, str(src))
-    import importlib
+    spec = importlib.util.spec_from_file_location(
+        "_installed_bundled_model_probe", _BUNDLED_MODEL_PROBE
+    )
+    if spec is None or spec.loader is None:
+        _fail(f"cannot load the bundled-model probe at {_BUNDLED_MODEL_PROBE}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
-    return root, importlib.import_module("personalclaw.bundled_model")
 
+def _installed_bundled_model_report(py: Path, home: Path, wheel: Path) -> dict:
+    """Run the probe with the scratch venv's OWN interpreter, so the installed package answers.
 
-def _assert_no_bundled_weight_in_wheel(wheel: Path) -> None:
-    """Assertion 7 (OU-14): the wheel carries NO model weight, and stays small.
-
-    🔴 This asserts the OPPOSITE of what it asserted on 2026-09-23, and the direction is the
-    whole point. That revision required the wheel to CARRY the signed-off weight. The owner then
-    settled the shape — *"the intention was always to ship the wheel without the weight and
-    fetch it on first run"* — so the model is downloaded once into ``$PERSONALCLAW_HOME`` at the
-    user's go-ahead, and a wheel carrying one is now the defect. Left pointing the old way this
-    gate would have refused every release.
-
-    Both halves are the same regression seen twice: a ``*.gguf``-shaped glob returning to
-    ``package-data`` puts the wheel over PyPI's 100 MiB per-file limit, and the first symptom of
-    that would be PyPI rejecting the upload of an already-tagged release. The size ceiling also
-    catches the form the member scan would miss — the same weight arriving as a directory of
-    shards, none of them individually weight-shaped.
-
-    The sign-off record is still READ here, and a record that cannot be parsed is still a
-    failure: it carries the licence, the source pin and the digest the runtime fetch depends on,
-    so a release that shipped an unreadable one would ship an install that can never fetch.
+    ``-I`` (isolated) ignores ``PYTHONPATH`` and the script's directory, so nothing from a source
+    tree can stand in for the install. ``PERSONALCLAW_HOME`` is the scratch home, because loading
+    the app resolves a home and it must never be the real one.
     """
-    root, rail = _load_bundled_model_rail()
-    try:
-        declaration = rail.repo_declaration(root)
-    except rail.BundleDeclarationError as exc:
-        _fail(f"the bundled-model sign-off record is unreadable: {exc}")
-    if declaration is None:
+    # Every path is made absolute HERE, because this is the call that changes the working
+    # directory: a relative one would be read against the scratch home and name nothing. With
+    # `absolute()`, never `resolve()`: a venv's `bin/python` is a symlink to the base interpreter,
+    # and following it would run a Python that does not have the wheel installed.
+    py, home, wheel = py.absolute(), home.absolute(), wheel.absolute()
+    env = dict(os.environ)
+    env["PERSONALCLAW_HOME"] = str(home)
+    proc = subprocess.run(
+        [str(py), "-I", str(_BUNDLED_MODEL_PROBE), str(wheel)],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(home),
+        timeout=_PROBE_TIMEOUT_S,
+    )
+    lines = proc.stdout.strip().splitlines()
+    if proc.returncode != 0 or not lines:
         _fail(
-            "no default chat model is signed off in "
-            f"{rail.DECLARATION_RELPATH} — the first-run fetch has nothing to fetch, so a fresh "
-            "install would reach no chat at all"
+            f"the bundled-model probe did not run inside the installed wheel (rc={proc.returncode})"
+            f": {proc.stderr.strip()[-2000:]}"
         )
-    licence = rail.licence_decision(declaration.licence)
-    _log(f"bundled model: {declaration.model_id} signed off under {declaration.licence}")
-    if not licence.permitted:
-        _fail(f"the signed-off licence is not permitted: {licence.reason}")
-    result = rail.gate_wheel(wheel)
-    _log(f"bundled model: {result.summary}")
-    for refusal in result.refusals:
-        _log(f"bundled model REFUSAL: {refusal}")
-    if not result.ok:
-        _fail(f"bundled-model wheel gate refused this wheel ({len(result.refusals)} refusal(s))")
+    try:
+        return json.loads(lines[-1])
+    except ValueError:
+        _fail(f"the bundled-model probe printed no report: {proc.stdout.strip()[-2000:]!r}")
+
+
+def _assert_installed_bundled_model(py: Path, home: Path, wheel: Path) -> None:
+    """Assertion 7 (OU-14): the INSTALLED package can say what it would download.
+
+    🔴 This read the record from the REPOSITORY until 2026-09-25, through a copy of
+    ``personalclaw.bundled_model`` imported from ``src/``. The repository always has the record,
+    so the gate passed while the container image — whose installed package had none, because the
+    record was a symlink into ``docs/`` and the image copies only ``src/`` — offered no download
+    anywhere. Now the scratch venv's interpreter reports on the record the installed
+    bundled-chat app reads, judged by :func:`record_failures`.
+
+    The record is still load-bearing although the weight is not in the wheel: it carries the
+    licence, the source pin and the digest the first-run fetch depends on. The same probe runs
+    the INSTALLED wheel gate — the wheel carries NO weight-shaped member and stays small — which
+    is the opposite of what this asserted on 2026-09-23, when the weight briefly shipped.
+    """
+    report = _installed_bundled_model_report(py, home, wheel)
+    judges = bundled_model_probe()
+    record = report.get("record", {})
+    _log(f"bundled model: the installed app reads {record.get('path')}")
+    failures = judges.record_failures(report, wheel_gate_required=True)
+    if failures:
+        detail = "\n".join(f"  {line}" for line in failures)
+        _fail(f"the installed wheel cannot offer its default chat model:\n{detail}")
+    declaration = report["declaration"]
+    _log(
+        f"bundled model: {declaration['model_id']} signed off under {declaration['licence']} "
+        "(read from the installed package, not the repository)"
+    )
+    _log(f"bundled model: {report['wheel_gate']['summary']}")
+
+
+def _assert_download_offer(base: str) -> None:
+    """Assertion 8: the booted install OFFERS the default model's download on a fresh home.
+
+    The user-facing half of assertion 7, and the one the image defect was actually measured on:
+    every response 200, ``chat_download_offer`` null, and so no download offer in onboarding, on
+    the chat screen or in Settings → Models. Judged by the shared probe's
+    :func:`offer_failure`, so this and the image gate cannot drift into two readings of it.
+    """
+    status, _ctype, body = _http_get(f"{base}/api/onboarding", limit=None)
+    if status != 200:
+        _fail(f"/api/onboarding returned {status} (want 200)")
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        _fail(f"/api/onboarding did not answer JSON: {body[:300]!r}")
+    failure = bundled_model_probe().offer_failure(payload)
+    if failure:
+        _fail(failure)
+    offer = payload["chat_download_offer"]
+    _log(
+        f"OK: /api/onboarding offers {offer.get('model')} ({offer['bytes']} bytes) on a fresh home"
+    )
 
 
 def _assert_spa_in_wheel(wheel: Path) -> None:
@@ -345,11 +418,13 @@ def _drain(proc: "subprocess.Popen[str]", transcript: list[str]) -> None:
         return
 
 
-def _http_get(url: str, timeout: float = 10.0) -> tuple[int, str, str]:
+def _http_get(url: str, timeout: float = 10.0, limit: int | None = 4096) -> tuple[int, str, str]:
+    """GET *url*. *limit* caps the body read; ``None`` reads it whole (a JSON body must be)."""
     req = urllib.request.Request(url, headers={"Accept": "*/*"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-            body = resp.read(4096).decode("utf-8", "replace")
+            raw = resp.read() if limit is None else resp.read(limit)
+            body = raw.decode("utf-8", "replace")
             return resp.status, resp.headers.get("Content-Type", ""), body
     except urllib.error.HTTPError as exc:  # non-2xx
         return exc.code, exc.headers.get("Content-Type", "") if exc.headers else "", ""
@@ -407,6 +482,9 @@ def _boot_and_probe(py: Path, home: Path, bundled_apps: int = 0) -> None:
         if "text/html" not in ctype.lower() and "<!doctype html" not in body.lower():
             _fail(f"/ did not return HTML (content-type={ctype!r})")
         _log("OK: / → 200 HTML (SPA shell served from the wheel's static/dist)")
+
+        # 8. /api/onboarding — the install offers its default chat model's download.
+        _assert_download_offer(base)
     finally:
         _log("stopping gateway…")
         proc.terminate()
@@ -437,16 +515,18 @@ def main() -> int:
     wheel = _find_wheel(args.wheel)
     _log(f"verifying {wheel}")
     _assert_spa_in_wheel(wheel)
-    _assert_no_bundled_weight_in_wheel(wheel)
     _assert_no_node()
 
-    scratch = Path(tempfile.mkdtemp(prefix="pc_verify_wheel_"))
+    # Absolute like the wheel, and for the same reason: the venv interpreter and the home are
+    # handed to child processes, and a relative TMPDIR would make both depend on this one's cwd.
+    scratch = Path(tempfile.mkdtemp(prefix="pc_verify_wheel_")).absolute()
     venv_dir = scratch / "venv"
     home_dir = scratch / "home"
     home_dir.mkdir(parents=True, exist_ok=True)
     try:
         py = _make_venv(venv_dir)
         _pip_install_wheel(py, wheel)
+        _assert_installed_bundled_model(py, home_dir, wheel)
         _boot_and_probe(py, home_dir, bundled_app_count(wheel))
     finally:
         if args.keep:
@@ -455,9 +535,9 @@ def main() -> int:
             shutil.rmtree(scratch, ignore_errors=True)
 
     _log(
-        "PASS: wheel contract met (SPA packaged, installs Node-free, "
-        "gateway serves / + /api/healthz, every bundled app enabled, bundled-model gate "
-        "not refused — read its own line above for whether it measured anything)."
+        "PASS: wheel contract met (SPA packaged, installs Node-free, the installed package "
+        "carries a permitted bundled-model record and no weight, gateway serves / + "
+        "/api/healthz, every bundled app enabled, and the install offers its default model)."
     )
     return 0
 

@@ -51,7 +51,7 @@ model is a floor rather than a way to get work done. Concretely:
   can chat. It has 135 million parameters and no tools, and it doesn't see your memory,
   skills or knowledge. [Security limitations §5](../security/limitations.md#5-the-bundled-default-model-is-a-floor-not-an-assistant)
   records what it did with real requests, and
-  [bundled-model-signoff.txt](../architecture/bundled-model-signoff.txt) records the model,
+  [bundled-model-signoff.txt](../../src/personalclaw/apps/native/bundled-chat/bundled-model-signoff.txt) records the model,
   its licence and its digest.
 - Core contains `llm/anthropic.py` and `llm/openai.py`, but these are *wire-protocol
   clients only* — neither registers itself as a provider at import. Registration is

@@ -14,13 +14,19 @@ The gateway image bundles the dashboard, so a single container is a complete
 install — no checkout, no compose file, no `.env`:
 
 ```bash
-docker run -d --name personalclaw -p 127.0.0.1:10000:10000 -e PERSONALCLAW_BIND_HOST=0.0.0.0 -v personalclaw_home:/data ghcr.io/personalclaw/personalclaw-gateway:latest
+docker run -d --name personalclaw --restart unless-stopped -p 127.0.0.1:10000:10000 -e PERSONALCLAW_BIND_HOST=0.0.0.0 -v personalclaw_home:/data ghcr.io/personalclaw/personalclaw-gateway:latest
 docker exec personalclaw personalclaw token          # prints the dashboard URL
 ```
 
 `PERSONALCLAW_BIND_HOST=0.0.0.0` is what lets the published port reach the gateway
 *inside* the container — its own default is loopback, which a container cannot
-publish. Compose sets it for the same reason.
+publish. Compose sets it for the same reason. `--restart unless-stopped` brings the
+gateway back by itself after a crash, an out-of-memory kill or a Docker restart; without
+it the dashboard stays down until you `docker start` it. Compose sets the same policy.
+
+Nothing else is needed for your work to survive `docker rm` + `docker run`: the image
+sets `PERSONALCLAW_WORKSPACE=/data/workspace`, so the workspace is on the volume (see
+[Volumes](#volumes)).
 
 Take the two-service deployment below instead when you want the nginx TLS/HTTP2
 proxy in front (self-signed out of the box), a Slack worker, or `.env`-driven
@@ -76,6 +82,13 @@ the gateway container (`PERSONALCLAW_HOME=/data`). It holds config, credentials,
 memory, knowledge, apps, and the workspace — everything that must survive a
 container recreation.
 
+The workspace is `/data/workspace`: the image sets `PERSONALCLAW_WORKSPACE` to it, and
+so does compose. The default chat workspace lives there, and the folder picker opens
+there, so a project folder created with **New folder here** lands on the volume. `/data`
+is the only volume, so a folder you bind anywhere else — `/home/personalclaw`, `/tmp` —
+exists only inside that container and is gone when it is recreated. The project page
+then says the folder no longer exists, and **Change** binds a new one.
+
 ```bash
 docker compose -f deploy/compose/compose.yaml exec personalclaw-gateway du -sh /data   # inspect state size
 docker volume ls | grep personalclaw_home                                              # find the volume
@@ -119,6 +132,11 @@ printed to the gateway logs at startup and can be regenerated:
 ```bash
 docker compose -f deploy/compose/compose.yaml exec personalclaw-gateway personalclaw token
 ```
+
+Both URLs carry the container's own port (10000). Nothing inside the container can see
+which host port you published, so it does not guess: if you mapped a different one
+(`-p 127.0.0.1:8080:10000`), open the URL on that port instead. The command and the
+startup log both say so.
 
 ## Owner login (a password instead of a token URL)
 

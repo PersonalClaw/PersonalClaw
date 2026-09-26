@@ -375,6 +375,25 @@ def build_dashboard_url(base_url: str, token: str = "", *, local_only: bool = Tr
     return f"{base_url}?token={quote(token, safe='')}" if token else base_url
 
 
+def container_port_note(port: int) -> str | None:
+    """What a printed dashboard URL must add inside a container, or ``None`` anywhere else.
+
+    Inside the image the gateway listens on the CONTAINER's port (``PERSONALCLAW_PORT``,
+    10000), so every URL it prints carries that port. The host reaches it through whatever
+    ``docker run -p HOST:CONTAINER`` published, which nothing inside the container can see — so
+    this does not guess the host port. It says whose port the URL carries and what to use
+    instead, which is the step a user otherwise works out by editing the URL by hand.
+    """
+    from personalclaw.self_update import detect_install_kind
+
+    if detect_install_kind() != "container":
+        return None
+    return (
+        f"Port {port} is this container's own port. If you published it on a different host "
+        f"port (the HOST side of `docker run -p HOST:{port}`), open the URL on that port instead."
+    )
+
+
 def format_dashboard_urls(
     authed_url: str,
     *,
@@ -397,6 +416,9 @@ def format_dashboard_urls(
         ]
     else:
         lines = ["Dashboard:", f"   {authed_url}"]
+    note = container_port_note(port)
+    if note:
+        lines.append(f"   {note}")
 
     if local_only and not has_custom_host and not _is_remote:
         mh_local = machine_hostname()
