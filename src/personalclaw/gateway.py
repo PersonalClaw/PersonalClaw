@@ -2350,8 +2350,14 @@ class GatewayOrchestrator:
                 _acquired = True
                 from personalclaw.context_headroom import resolve_window
 
+                # Named, not derived: this call passes no session key, and a keyless build
+                # derives the CHAT use case — so a heartbeat ran on the interactive-chat
+                # prompt while Settings → Prompts promised it the Background one.
                 full_message, _ = self.ctx_builder.build_message(
-                    task_text, is_new, window=await resolve_window(serving=client)
+                    task_text,
+                    is_new,
+                    prompt_use_case="background",
+                    window=await resolve_window(serving=client),
                 )
 
                 # Heartbeat is a pure UNATTENDED background loop — no user present.

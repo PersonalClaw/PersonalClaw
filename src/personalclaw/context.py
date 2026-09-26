@@ -8,7 +8,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from personalclaw.agent import _shipped_prompt
-from personalclaw.config.loader import AppConfig, memory_dir_for_cwd
+from personalclaw.agents.defaults import is_default_agent
+from personalclaw.config.loader import AppConfig, _compose_voice, memory_dir_for_cwd
 from personalclaw.context_headroom import Component, Window
 from personalclaw.hooks import (
     HOOK_INJECT_CONTEXT,
@@ -177,7 +178,7 @@ _MULTIBYTE_TABLE = str.maketrans(
 # category from dominating. The sum of soft caps (~145k) is under the hard
 # cap (165k), so all components can coexist without silent truncation.
 _HISTORY_BUDGET_CHARS = 35_000  # thread history (fallback/truncated)
-_CROSS_TAB_BUDGET_CHARS = 6_000  # sibling dashboard sessions
+_FALLBACK_HISTORY_MESSAGES = 20  # turns the truncation fallback restores
 # Memory-injection per-section caps. These are the BASELINE (calibrated for a 200k-
 # token window); mem-adaptive-budget scales them proportionally to the resolved
 # model's context window (via _memory_caps) so a 1M-window model recalls more, and a
@@ -579,21 +580,24 @@ def _runtime_display_name(session_key: str) -> str:
 
 def _prompt_use_case_for(session_key: str | None, explicit: str = "") -> str:
     """The prompt use-case for a session. An explicit non-default value wins;
-    otherwise derive from the session_key prefix (background/subagent/cron → the
-    ``background`` prompt; code/loop workers → ``code``/``goal_loop``). Defaults
-    to ``chat``."""
+    otherwise derive from the session_key prefix (background/subagent/cron/webhook →
+    the ``background`` prompt). Defaults to ``chat``.
+
+    Loop and Code workers derive nothing here: they run as reserved agents whose own
+    prompt is the override, so no bound prompt could reach them (their session keys are
+    ``dashboard:loop-<id>`` besides, which no prefix below matches)."""
     if explicit and explicit != "chat":
         return explicit
     sk = session_key or ""
-    if sk.startswith("code:") or sk.startswith("code_"):
-        return "code"
-    if sk.startswith("loop:") or sk.startswith("loop_") or sk.startswith("campaign"):
-        return "goal_loop"
     if (
         sk == "_bg"
         or sk.startswith("cron:")
         or sk.startswith("cron_")
         or sk.startswith("subagent:")
+        # A webhook-triggered session (`hook:<id>` — `dashboard/handlers/hooks.py`). The
+        # Background prompt names this context explicitly, and without the entry a webhook
+        # run was framed as an interactive chat.
+        or sk.startswith("hook:")
         # A run-owned stage session (WORK-CONTAINERS §5.1, S50). Measured: without this an owned
         # session resolved to the `chat` prompt — a stage worker framed as a conversational
         # assistant, which is the wrong framing for unattended work and the same near-miss the
@@ -766,47 +770,25 @@ def build_cancelled_turn_preamble(
     )
 
 
-def has_restorable_history(conversation_log: "ConversationLog | None", session_key: str) -> bool:
-    """True when *session_key* has prior conversation the history bootstrap will restore.
-
-    This is the SAME question :func:`compress_thread_history` asks first, factored out so
-    the caller can answer it before paying for the compression. Two callers share it and
-    must agree: the bootstrap decides whether to inject restored history at all, and the
-    session activity line decides which verb it is allowed to print. A fresh runner over
-    an existing conversation is "restored from history"; a fresh runner over nothing is
-    "created". Deriving the sentence from a *different* predicate is how a label starts
-    lying, so there is one predicate.
-
-    Note the roles filter: only ``user``/``assistant`` turns can be restored, which is why
-    a fact that lives solely in a tool result does NOT survive a non-protocol restart —
-    the honest boundary the label exists to state.
-    """
-    if conversation_log is None:
-        return False
-    try:
-        recent = conversation_log.recent(
-            session_key,
-            max_messages=_COMPRESSION_MAX_MESSAGES,
-            roles={"user", "assistant"},
-        )
-    except Exception:  # a pluggable log must not be able to break the turn's sentence
-        logger.debug("conversation_log.recent failed for %s", session_key, exc_info=True)
-        return False
-    return bool(recent)
-
-
 async def compress_thread_history(
-    conversation_log: "ConversationLog",
+    prior_turns: list[dict],
     session_key: str,
     query: str,
     sessions: "SessionManager",
 ) -> str | None:
-    """Compress full thread history via background LLM call.
+    """Compress a session's prior turns via background LLM call.
 
     ``is_new`` in callers means a new ACP agent process (or dashboard tab)
-    attached to an *existing* channel thread — not a brand-new conversation.
-    The thread already has history from prior processes, so we compress it
-    to fit within the context window of the fresh session.
+    attached to an *existing* conversation — not a brand-new conversation.
+    The conversation already has history from prior processes, so we compress
+    it to fit within the context window of the fresh session.
+
+    ``prior_turns`` is THAT session's own ``[{role, content}]`` turns BEFORE the one
+    being sent, oldest first — the caller's to supply, because only the caller knows
+    which buffered message is in flight (see ``chat_persistence.prior_turns_transcript``).
+    Reading the log here instead replayed the in-flight message as history whenever
+    the flush loop had already persisted it. ``session_key`` names the session for the
+    ``ContextCompact`` lifecycle event only.
 
     Returns the compressed summary string, or None on failure (callers
     fall back to raw truncation).  This is the ONLY async function in
@@ -821,11 +803,9 @@ async def compress_thread_history(
     from personalclaw.llm_helpers import stream_and_collect  # circular import
     from personalclaw.session import BACKGROUND_KEY  # circular import
 
-    recent = conversation_log.recent(
-        session_key,
-        max_messages=_COMPRESSION_MAX_MESSAGES,
-        roles={"user", "assistant"},
-    )
+    recent = [m for m in prior_turns if m.get("role") in ("user", "assistant")][
+        -_COMPRESSION_MAX_MESSAGES:
+    ]
     if not recent:
         return None
 
@@ -1067,6 +1047,17 @@ class ContextBuilder:
         except Exception:
             return "PersonalClaw"
 
+    @staticmethod
+    def _user_name() -> str:
+        """The owner's name from Settings → Account, read live like ``_bot_name``.
+
+        Through THE operator-name resolver, so the model is told the same name every other
+        surface uses — and "" for the ``Operator`` placeholder a skipped setup stores, which
+        would otherwise introduce the owner to the model as "Operator"."""
+        from personalclaw.identity import operator_name
+
+        return operator_name()
+
     def _runtime_prompt_values(
         self, session_key: str, *, window: int | None = None
     ) -> dict[str, Any]:
@@ -1077,6 +1068,7 @@ class ContextBuilder:
         unknown window does."""
         return {
             "bot_name": self._bot_name,
+            "user_name": self._user_name(),
             "widget_block": self._widget_block(session_key, window=window),
         }
 
@@ -1212,6 +1204,10 @@ class ContextBuilder:
         # number the budget check bounds by. `None` = no window was resolved (a standalone
         # caller), which budgets as an unknown window: the calibrated baseline.
         window: int | None = None,
+        # The session's own prior turns, supplied by a caller that holds the live session
+        # (the chat runner). When given, the history block is built from it and the log is
+        # not read — the log may already hold the in-flight message. None = read the log.
+        prior_transcript: list[dict] | None = None,
     ) -> str:
         """Build context for a new session (memory + skills + history).
 
@@ -1221,11 +1217,14 @@ class ContextBuilder:
         truncation of thread history.  Callers obtain it by awaiting
         ``compress_thread_history()`` before calling this method.
 
+        History is only ever THIS session's own: *prior_transcript* or this key's log.
+        No other session's text is read into it.
+
         For custom agents (non-personalclaw), skills and workspace identity
         are skipped — the agent loads its own. Memory,
         lessons, critical rules, and hooks are injected for all agents.
         """
-        is_custom = agent and agent != "personalclaw"
+        is_custom = bool(agent) and not is_default_agent(agent)
         parts: list[str] = []
 
         if is_custom:
@@ -1268,13 +1267,21 @@ class ContextBuilder:
         #
         # Runtime detection reuses the same heuristic as sel.py
         # _infer_source() to keep a single source of truth.
-        agent_label = agent or "personalclaw"
+        #
+        # The default agent IS the assistant the user named in Settings → Account, so its
+        # label is that name — not the internal agent key. Labelled "personalclaw", this
+        # block contradicted the system prompt's "You are <name>" in the same request.
+        agent_label = agent if is_custom else self._bot_name
         if session_key:
             runtime = _runtime_display_name(session_key)
             parts.append(
                 render_snippet_block(
                     "agent-runtime-identity",
-                    {"agent_label": agent_label, "runtime": runtime},
+                    {
+                        "agent_label": agent_label,
+                        "runtime": runtime,
+                        "user_name": self._user_name(),
+                    },
                 )
                 + "\n\n"
             )
@@ -1287,7 +1294,7 @@ class ContextBuilder:
 
         # Thread conversation history — highest priority context.
         # Use pre-computed LLM compression when available; fall back to truncation.
-        if session_key and self.conversation_log and not resumed:
+        if session_key and not resumed and (prior_transcript is not None or self.conversation_log):
             _history_header = render_snippet_block("thread-history-header") + "\n"
             if compressed_history:
 
@@ -1301,7 +1308,18 @@ class ContextBuilder:
                 )
                 parts.append(_history_header + compressed_history + "\n[End of thread history]\n\n")
             else:
-                recent = self.conversation_log.recent(session_key, roles={"user", "assistant"})
+                if prior_transcript is not None:
+                    recent = [
+                        m for m in prior_transcript if m.get("role") in ("user", "assistant")
+                    ][-_FALLBACK_HISTORY_MESSAGES:]
+                elif self.conversation_log is not None:
+                    recent = self.conversation_log.recent(
+                        session_key,
+                        max_messages=_FALLBACK_HISTORY_MESSAGES,
+                        roles={"user", "assistant"},
+                    )
+                else:
+                    recent = []
                 logger.info(
                     "🔍 build_session_context: session_key=%s resumed=%s "
                     "conv_log_entries=%d (fallback truncation)",
@@ -1497,46 +1515,10 @@ class ContextBuilder:
         if _ambient:
             parts.append(_ambient)
 
-        # Cross-tab context (dashboard only, skipped for temporary sessions)
-        if (
-            session_key
-            and self.conversation_log
-            and session_key.startswith("dashboard:")
-            and not blocks_reads
-        ):
-            cross = self.conversation_log.recent_from_source(
-                "dashboard:", exclude_key=session_key, max_messages=10
-            )
-            if cross:
-                cross_lines: list[str] = []
-                cross_len = 0
-                for m in cross:
-                    content = _MODE_IDENTITY_RE.sub("", m["content"])
-                    if len(content) > _PER_MESSAGE_CAP:
-                        content = content[:_PER_MESSAGE_CAP] + "…[truncated]"
-                    line = f"{m['role'].title()}: {content}"
-                    if cross_len + len(line) > _CROSS_TAB_BUDGET_CHARS:
-                        break
-                    cross_lines.append(line)
-                    cross_len += len(line)
-                if cross_lines:
-                    parts.append(
-                        render_snippet_block(
-                            "cross-tab-context", {"cross_lines": "\n".join(cross_lines)}
-                        )
-                        + "\n\n"
-                    )
-
-        # Provenance-tagged entries from recent sessions (skipped for temporary)
-        if session_key and self.conversation_log and not blocks_reads:
-            provenance = self.conversation_log.recent_with_provenance(session_key)
-            if provenance:
-                prov_lines: list[str] = []
-                for p in provenance:
-                    prov_lines.append(
-                        f"- [thread {p['source_thread']}, {p['ts'][:16]}] {p['snippet']}"
-                    )
-                parts.append("## Recent Session Context\n" + "\n".join(prov_lines) + "\n\n")
+        # No block reads ANOTHER session's transcript. An "[Other chat tabs]" block once
+        # copied other dashboard sessions' latest messages into every new session's first
+        # request; cross-session knowledge reaches a turn only through memory, which has
+        # its own consent controls (incognito / temporary sessions, the memory settings).
 
         context = "".join(parts)
         if len(context) > _MAX_CONTEXT_CHARS:
@@ -1587,6 +1569,8 @@ class ContextBuilder:
         memory_store: str | None = None,
         user_display_name: str | None = None,
         compressed_history: str | None = None,
+        # THIS session's turns before the one being sent (see build_session_context).
+        prior_transcript: list[dict] | None = None,
         mode: str = "",
         prompt_use_case: str = "chat",
         blocks_reads: bool = False,
@@ -1594,6 +1578,9 @@ class ContextBuilder:
         thread_parent_text: str | None = None,
         system_prompt_override: str = "",
         system_prompt_suffix: str = "",
+        # The bound agent's VOICE (#42): layered, high-priority, over whichever system
+        # prompt resolves below — the agent's own or the prompt bound for the context.
+        agent_voice: str = "",
         resolved_agent_id: str = "",
         force_skill_ids: list[str] | None = None,
         # Accepted and currently unused: the loop engine still resolves per-phase
@@ -1643,7 +1630,7 @@ class ContextBuilder:
         Returns:
             (full_message, hook_result) — hook_result may be a reply/modify/inject.
         """
-        is_custom = agent and agent != "personalclaw"
+        is_custom = bool(agent) and not is_default_agent(agent)
         hook_result = self.hooks.on_message(text)
 
         # ONE window for the whole turn's assembly: the one the budget check bounds by. Every
@@ -1675,9 +1662,9 @@ class ContextBuilder:
                 agent_prompt = self._load_agent_prompt(agent or "")
             else:
                 # Default-agent system prompt resolves from the prompt provider,
-                # via the use-case binding (chat / background / code / goal_loop;
-                # derived from the session_key when not set explicitly). Falls back
-                # to the shipped prompt file when the provider can't resolve it.
+                # via the use-case binding (chat / background; derived from the
+                # session_key when not set explicitly). Falls back to the shipped
+                # prompt file when the provider can't resolve it.
                 _uc = _prompt_use_case_for(session_key, prompt_use_case)
                 agent_prompt = _resolve_use_case_prompt(
                     _uc, self._runtime_prompt_values(session_key or "", window=_window)
@@ -1687,6 +1674,11 @@ class ContextBuilder:
                         agent_prompt = _shipped_prompt().read_text(encoding="utf-8")
                     except OSError:
                         agent_prompt = ""
+            # The voice LAYERS on the resolved prompt too, for the same reason the suffix
+            # below does: composed into the agent's own (empty) prompt upstream, an agent
+            # with a voice and no prompt of its own sent the voice block as its ENTIRE
+            # system prompt — identity, output format and safety rules gone.
+            agent_prompt = _compose_voice(agent_voice, agent_prompt)
             # A suffix LAYERS on the resolved prompt (task-mode framing) — it
             # must never REPLACE it the way the override does, or the posture
             # block becomes the entire system prompt (dropping identity/safety).
@@ -1721,6 +1713,7 @@ class ContextBuilder:
                 blocks_reads=blocks_reads,
                 dropped_out=notices_out,
                 window=_window,
+                prior_transcript=prior_transcript,
             )
             if session_ctx:
                 from personalclaw.prompt_providers.runtime import render_snippet_block

@@ -364,8 +364,9 @@ class TestContextBuilder:
         msg, hook = builder.build_message("deploy app", is_new_session=False)
         assert msg.startswith(f"{USER_REQUEST_MARKER}\n[DEPLOY]")
 
-    def test_dashboard_cross_session_history(self, tmp_path):
-        """New dashboard session gets history from other dashboard sessions."""
+    def test_a_new_dashboard_session_gets_no_other_sessions_history(self, tmp_path):
+        """History is only ever the session's OWN. Another dashboard session's messages
+        used to arrive as an "[Other chat tabs]" block in every new session's context."""
         from personalclaw.history import ConversationLog
 
         conv_log = ConversationLog(base_dir=tmp_path / "sessions")
@@ -379,10 +380,10 @@ class TestContextBuilder:
             skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
             conversation_log=conv_log,
         )
-        # New dashboard session should pick up cross-session history
         ctx = builder.build_session_context("dashboard:chat-2-200")
-        assert "what is 2+2?" in ctx
-        assert "Other chat tabs" in ctx
+        assert "what is 2+2?" not in ctx
+        assert "Other chat tabs" not in ctx
+        assert "THREAD CONVERSATION HISTORY" not in ctx
 
     def test_dashboard_cross_session_excludes_self(self, tmp_path):
         """Cross-session history excludes the current session."""
@@ -511,44 +512,62 @@ class TestCompressAssistantMessage:
 
 
 class TestCompressThreadHistory:
+    """``compress_thread_history`` compresses the transcript it is HANDED — the session's
+    own turns before the one being sent — rather than re-reading the log, which may
+    already hold the in-flight message."""
+
+    @staticmethod
+    def _turns(n: int, width: int) -> list[dict]:
+        out: list[dict] = []
+        for i in range(n):
+            out.append({"role": "user", "content": f"msg {i} " + "x" * width})
+            out.append({"role": "assistant", "content": f"reply {i} " + "y" * width})
+        return out
+
     @pytest.mark.asyncio
     async def test_returns_none_when_no_history(self, tmp_path):
         from personalclaw.context import compress_thread_history
-        from personalclaw.history import ConversationLog
 
-        conv_log = ConversationLog(base_dir=tmp_path / "sessions")
-        conv_log.init()
         sessions = object()  # unused — no messages to compress
-        result = await compress_thread_history(conv_log, "no-thread", "hi", sessions)
+        result = await compress_thread_history([], "no-thread", "hi", sessions)
         assert result is None
 
     @pytest.mark.asyncio
     async def test_short_transcript_returned_without_llm(self, tmp_path):
         from personalclaw.context import compress_thread_history
-        from personalclaw.history import ConversationLog
 
-        conv_log = ConversationLog(base_dir=tmp_path / "sessions")
-        conv_log.init()
-        conv_log.append("t1", "user", "hello")
-        conv_log.append("t1", "assistant", "hi there")
+        transcript = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi there"},
+        ]
         sessions = object()  # unused — transcript is short
-        result = await compress_thread_history(conv_log, "t1", "hello", sessions)
+        result = await compress_thread_history(transcript, "t1", "hello", sessions)
         assert result is not None
         assert "hello" in result
         assert "hi there" in result
+
+    @pytest.mark.asyncio
+    async def test_only_user_and_assistant_turns_are_compressed(self, tmp_path):
+        """The roles the bootstrap has always restored — a tool row or a system notice in
+        the handed transcript is not conversation."""
+        from personalclaw.context import compress_thread_history
+
+        transcript = [
+            {"role": "user", "content": "hello"},
+            {"role": "tool", "content": "TOOL-ROW-ONLY"},
+            {"role": "system", "content": "SYSTEM-NOTICE-ONLY"},
+            {"role": "assistant", "content": "hi there"},
+        ]
+        result = await compress_thread_history(transcript, "t1", "hello", object())
+        assert result is not None
+        assert "TOOL-ROW-ONLY" not in result
+        assert "SYSTEM-NOTICE-ONLY" not in result
 
     @pytest.mark.asyncio
     async def test_long_transcript_calls_llm(self, tmp_path, monkeypatch):
         from unittest.mock import AsyncMock, MagicMock
 
         from personalclaw.context import compress_thread_history
-        from personalclaw.history import ConversationLog
-
-        conv_log = ConversationLog(base_dir=tmp_path / "sessions")
-        conv_log.init()
-        for i in range(50):
-            conv_log.append("t1", "user", f"msg {i} " + "x" * 1400)
-            conv_log.append("t1", "assistant", f"reply {i} " + "y" * 1400)
 
         mock_client = MagicMock()
         mock_sessions = MagicMock()
@@ -562,7 +581,9 @@ class TestCompressThreadHistory:
             AsyncMock(return_value="compressed summary here"),
         )
 
-        result = await compress_thread_history(conv_log, "t1", "latest q", mock_sessions)
+        result = await compress_thread_history(
+            self._turns(50, 1400), "t1", "latest q", mock_sessions
+        )
         assert result is not None
         assert "compressed summary here" in result
         assert "Thread start (verbatim)" in result
@@ -576,13 +597,6 @@ class TestCompressThreadHistory:
         from unittest.mock import AsyncMock, MagicMock
 
         from personalclaw.context import compress_thread_history
-        from personalclaw.history import ConversationLog
-
-        conv_log = ConversationLog(base_dir=tmp_path / "sessions")
-        conv_log.init()
-        for i in range(50):
-            conv_log.append("t1", "user", f"msg {i} " + "x" * 1400)
-            conv_log.append("t1", "assistant", f"reply {i} " + "y" * 1400)
 
         mock_sessions = MagicMock()
         mock_sessions.get_pid = MagicMock(return_value=None)
@@ -590,7 +604,7 @@ class TestCompressThreadHistory:
         mock_sessions.release = MagicMock()
         mock_sessions.recycle_background = AsyncMock()
 
-        result = await compress_thread_history(conv_log, "t1", "q", mock_sessions)
+        result = await compress_thread_history(self._turns(50, 1400), "t1", "q", mock_sessions)
         assert result is None
         mock_sessions.release.assert_not_called()
         mock_sessions.recycle_background.assert_not_awaited()
@@ -620,13 +634,6 @@ class TestCompressThreadHistory:
         from unittest.mock import AsyncMock, MagicMock
 
         from personalclaw.context import compress_thread_history
-        from personalclaw.history import ConversationLog
-
-        conv_log = ConversationLog(base_dir=tmp_path / "sessions")
-        conv_log.init()
-        for i in range(50):
-            conv_log.append("t1", "user", f"msg {i} " + "x" * 500)
-            conv_log.append("t1", "assistant", f"reply {i} " + "y" * 500)
 
         mock_sessions = MagicMock()
         mock_sessions.get_pid = MagicMock(return_value=None)
@@ -640,7 +647,7 @@ class TestCompressThreadHistory:
             AsyncMock(return_value=f"summary with {fake_key} leaked"),
         )
 
-        result = await compress_thread_history(conv_log, "t1", "q", mock_sessions)
+        result = await compress_thread_history(self._turns(50, 500), "t1", "q", mock_sessions)
         assert result is not None
         assert fake_key not in result
 
@@ -706,11 +713,35 @@ class TestRuntimeDisplayName:
         assert "[CURRENT AGENT]" not in ctx
         assert "[RUNTIME]" not in ctx
 
-    def test_agent_defaults_to_personalclaw(self, tmp_path):
-        """Agent label defaults to 'personalclaw' when agent param is None."""
+    def test_the_default_agent_is_labelled_with_the_assistant_name(self, tmp_path):
+        """The default agent IS the assistant the user named, so the identity block names
+        it that way — never the internal key, which contradicted "You are <name>"."""
+        builder = ContextBuilder(memory=MemoryStore(workspace=tmp_path), bot_name="Chlos Aide")
+        for agent in (None, "personalclaw", "PersonalClaw"):
+            ctx = builder.build_session_context("dashboard:chat-1", agent=agent)
+            assert "[CURRENT AGENT] Chlos Aide" in ctx, agent
+            assert "[CURRENT AGENT] personalclaw" not in ctx, agent
+
+    def test_the_owner_is_named_through_the_one_operator_name_resolver(self, tmp_path):
+        """Settings → Account → Your name reaches the model — except the ``Operator``
+        placeholder a skipped setup stores, which would introduce the owner as "Operator"."""
+        import json
+
+        from personalclaw.config.loader import config_path
+
         builder = ContextBuilder(memory=MemoryStore(workspace=tmp_path))
-        ctx = builder.build_session_context("dashboard:chat-1")
-        assert "[CURRENT AGENT] personalclaw" in ctx
+        for stored, line in (("Maya R. Chen", "[USER] Maya R. Chen"), ("Operator", None)):
+            config_path().write_text(json.dumps({"dashboard": {"user_name": stored}}))
+            ctx = builder.build_session_context("dashboard:chat-1")
+            if line:
+                assert line in ctx
+            else:
+                assert "[USER]" not in ctx
+
+    def test_a_custom_agent_keeps_its_own_label(self, tmp_path):
+        builder = ContextBuilder(memory=MemoryStore(workspace=tmp_path), bot_name="Chlos Aide")
+        ctx = builder.build_session_context("dashboard:chat-1", agent="Researcher")
+        assert "[CURRENT AGENT] Researcher" in ctx
 
 
 class TestMultibyteSanitization:
@@ -761,14 +792,13 @@ class TestMultibyteSanitization:
     async def test_compress_thread_history_strips_multibyte(self, tmp_path):
         """Short transcript with multi-byte chars gets sanitized."""
         from personalclaw.context import compress_thread_history
-        from personalclaw.history import ConversationLog
 
-        conv_log = ConversationLog(base_dir=tmp_path / "sessions")
-        conv_log.init()
-        conv_log.append("t1", "user", "what\u2019s the status \u2014 any update?")
-        conv_log.append("t1", "assistant", "All good \u2026 no issues.")
+        transcript = [
+            {"role": "user", "content": "what\u2019s the status \u2014 any update?"},
+            {"role": "assistant", "content": "All good \u2026 no issues."},
+        ]
         sessions = object()
-        result = await compress_thread_history(conv_log, "t1", "hello", sessions)
+        result = await compress_thread_history(transcript, "t1", "hello", sessions)
         assert result is not None
         assert "\u2019" not in result
         assert "\u2014" not in result

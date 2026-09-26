@@ -202,7 +202,7 @@ def test_seed_writes_shared_snippets_and_prompts_include_them(provider, monkeypa
     def resolver(n):
         return provider.get_snippet(n)
 
-    for pname in ("system-chat", "system-background", "system-code", "system-goal-loop"):
+    for pname in ("system-chat", "system-background"):
         p = provider.get_prompt(pname)
         assert p is not None and "{{>" in p.content, f"{pname} should include snippets"
         rendered = render_template(p, {"bot_name": "X", "widget_block": ""}, resolver=resolver)

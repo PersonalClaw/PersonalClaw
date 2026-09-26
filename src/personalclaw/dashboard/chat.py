@@ -80,8 +80,8 @@ from personalclaw.dashboard.chat_handlers import (  # noqa: F401
 )
 from personalclaw.dashboard.chat_persistence import (  # noqa: F401
     _attach_variants,
-    _build_history_prefix,
     _rehydrate_session_from_history,
+    prior_turns_transcript,
     restore_recent_sessions,
     save_all_sessions_to_history,
     save_session_to_history,

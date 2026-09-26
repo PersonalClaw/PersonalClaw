@@ -31,12 +31,12 @@ class AgentRuntimeDefinition:
 
     The runtime-facing shape carrying the per-agent ``provider`` selection,
     distinct from ``agents.marketplace.AgentDefinition`` (the user-authored,
-    persisted config).
+    persisted config). It carries no system prompt: the prompt reaches the model in
+    the turn's assembled context, resolved in one place (``ContextBuilder.build_message``).
     """
 
     name: str
     provider: str = "native"  # "native" | "acp:<cli>"
-    system_prompt: str = ""
     model: str = ""  # native: binds a ModelProvider; acp: hint only
     tools: list[str] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
@@ -169,6 +169,13 @@ class AgentProvider(ABC):
         contract is declared identically on both ABCs, like the property above, because
         they are deliberately method-compatible.
         """
+        return False
+
+    @property
+    def keeps_cancelled_turns(self) -> bool:
+        """Whether a turn stopped mid-way stays in this provider's OWN history. False by
+        default. See :attr:`personalclaw.llm.base.ModelProvider.keeps_cancelled_turns` —
+        declared identically on both ABCs, like :attr:`compacts_in_process` above."""
         return False
 
     async def stream_command(self, command: str) -> AsyncIterator[AgentEvent]:

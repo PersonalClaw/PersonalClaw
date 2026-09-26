@@ -1893,8 +1893,12 @@ class SessionManager:
             logger.debug("stop_turn: provider.cancel outcome=%r for %s", outcome, key)
             if outcome == "acked":
                 # ACP agent discards cancelled turns from its conversation log,
-                # so the next prompt must re-inject the cancelled turn context.
-                session.prev_turn_cancelled = True
+                # so the next prompt must re-inject the cancelled turn context — but only
+                # for a provider that DROPPED it. The native loop keeps the stopped turn in
+                # its own history, and re-injecting it there sent the stopped message twice.
+                session.prev_turn_cancelled = (
+                    getattr(session.provider, "keeps_cancelled_turns", False) is not True
+                )
                 if on_soft:
                     try:
                         await on_soft()

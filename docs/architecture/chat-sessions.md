@@ -69,14 +69,18 @@ chat, channel thread, loop worker, webhook, subagent).
    `~/.personalclaw/prompts/`, snippets at `prompt_snippets/`; the composer's
    @-menu suggests prompts only at message start).
 2. **Context assembly** — `context.py` (`ContextBuilder`) builds the system
-   context: the `{{bot_name}}` variable (live-resolved from `agent.bot_name`),
-   memory context, and — for channel-linked sessions — the
-   `channel-thread-context` snippet. `context_engine.py` and
+   context: the runtime values `{{bot_name}}` and `{{user_name}}` (live-resolved
+   from `agent.bot_name` and `dashboard.user_name`, Settings → Account), memory
+   context, and — for channel-linked sessions — the `channel-thread-context`
+   snippet. A fresh runtime is restored ONLY from the session's own turns before
+   the one being sent (`chat_persistence.prior_turns_transcript`) — never the
+   in-flight message, never another session's transcript. `context_engine.py` and
    `context_compaction.py` manage sizing and compaction.
-3. **Agent resolution** — the selected agent's prompt governs. Task-mode
-   posture is layered as a `system_prompt_suffix` ON TOP of the resolved agent
-   prompt — never a replacement (see `chat_runner.py` around the
-   `system_prompt_suffix` call site).
+3. **Agent resolution** — an agent's own `system_prompt` governs when it has one;
+   the default agent ships with none, so its prompt is the one bound in Settings →
+   Prompts for the turn's context (`chat`, or `background` for unattended runs).
+   The agent's voice and the task-mode posture (`system_prompt_suffix`) are layered
+   ON TOP of whichever prompt resolved — never a replacement (see `build_message`).
 4. **Model resolution** — the `chat` use-case binding from
    `active_models.json`, unless the agent pins a model or the composer
    overrides per-session (the `model` kwarg threads through
