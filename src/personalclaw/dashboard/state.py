@@ -19,6 +19,7 @@ from personalclaw import trust_mode
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import DASHBOARD_PORT
+from personalclaw.constants import DASHBOARD_SESSION_PREFIX
 from personalclaw.dashboard.approval_state import DashboardApprovalState
 from personalclaw.dashboard.desktop_registry import DesktopRegistry
 from personalclaw.dashboard.sse import SseRegistry
@@ -657,10 +658,17 @@ class _ChatSession:
 
     # ── Queue helpers (dict-based queue items) ──
 
-    def queue_append(self, content: str) -> str:
-        """Append a message to the queue. Returns the generated queue ID."""
+    def queue_append(self, content: str, *, channel: str = "") -> str:
+        """Append a message to the queue. Returns the generated queue ID.
+
+        ``channel`` names the chat channel the message came from, when it came from one. That
+        channel already shows it, so the turn that runs it does not send it back there.
+        """
         qid = uuid.uuid4().hex[:12]
-        self._queue.append({"id": qid, "content": content})
+        item = {"id": qid, "content": content}
+        if channel:
+            item["channel"] = channel
+        self._queue.append(item)
         return qid
 
     def queue_insert(self, index: int, content: str) -> str:
@@ -1089,14 +1097,13 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         (`channel_inbound._route_to_session` → `get_or_create_session(app=provider)`), which is
         also the code that already knows the provider — it just had nowhere to put it that the
         outbound side could read.
-        """
-        # Local import, as every other `_history_key_for` use in this module does (it lives in
-        # `dashboard.chat`, which imports this module).
-        from personalclaw.dashboard.chat import _history_key_for
 
-        session = self._sessions.get(session_key) or self._sessions.get(
-            _history_key_for(session_key)
-        )
+        Takes either key a caller holds: the chat's name, which ``_sessions`` is keyed by, or its
+        history key (``dashboard:<name>``), which is what a turn carries. The mirror in
+        ``chat_runner`` asks with the history key, and reading it as a name is how every answer
+        to a channel message stayed in the dashboard.
+        """
+        session = self._sessions.get(session_key.removeprefix(DASHBOARD_SESSION_PREFIX))
         return str(getattr(session, "_app", "") or "") if session is not None else ""
 
     _LAST_SPOKEN_MAX_SESSIONS = 32
