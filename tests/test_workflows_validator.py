@@ -465,6 +465,100 @@ class TestSecurityLint:
         assert "WF_UNKNOWN_PIPE" in _codes(spec)
 
 
+def _piped(call: str) -> dict:
+    """A foreach whose items read a null input through one pipe call — the `rich-ingest` shape."""
+    return _wrap(
+        {
+            "kind": "foreach",
+            "id": "each",
+            "config": {"items": f"{{{{inputs.empty | {call}}}}}"},
+            "body": {"kind": "transform", "id": "t", "config": {"expr": "{{item}}"}},
+        }
+    )
+
+
+class TestPipeCallsParseAsResolutionReadsThem:
+    """A pipe call is refused at authoring time exactly when resolution would refuse it.
+
+    The validator used to check only the pipe NAME, so `rich-ingest` shipped `| default([])` —
+    a real pipe with an argument that is not a literal — and validated strictly while every
+    resolution of it raised.
+    """
+
+    def test_a_non_literal_argument_is_refused_with_what_to_write_instead(self) -> None:
+        issues = [i for i in validate_spec(_piped("default([])")).issues if i.code == "WF_BAD_PIPE"]
+        assert len(issues) == 1, [i.to_dict() for i in validate_spec(_piped("default([])")).issues]
+        message = issues[0].message
+        assert "'[]' is not a literal" in message
+        assert "a quoted string, a number, true, false or null" in message
+        assert "`| filter`" in message, "the refusal must say how to write an empty-list fallback"
+        assert "{{inputs.empty | default([])}}" in message, "the refusal must name the expression"
+        assert issues[0].path == "root"
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            "default([])",
+            "default({})",
+            "default(some_var)",
+            "default('x'",
+            "",
+            "default('a', 'b')",
+            "json(1)",
+            "unseen(3)",
+        ],
+    )
+    def test_a_call_resolution_cannot_evaluate_is_refused(self, call: str) -> None:
+        assert "WF_BAD_PIPE" in _codes(_piped(call)), call
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            "default('x')",
+            'default("a, b")',
+            "default(false)",
+            "default(null)",
+            "default(0)",
+            "default(1.5)",
+            "filter",
+            "filter('verdict', 'CONFIRMED')",
+            "count()",
+            "json",
+        ],
+    )
+    def test_a_well_formed_call_is_accepted(self, call: str) -> None:
+        codes = _codes(_piped(call))
+        assert not codes & {"WF_BAD_PIPE", "WF_UNKNOWN_PIPE"}, (call, codes)
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            "default([])",
+            "default(some_var)",
+            "default('x'",
+            "",
+            "default('a', 'b')",
+            "json(1)",
+            "unseen(3)",
+            "eval",
+            "default('x')",
+            "default(false)",
+            "filter",
+            "count()",
+        ],
+    )
+    def test_authoring_refuses_exactly_what_resolution_refuses(self, call: str) -> None:
+        from personalclaw.workflows.bindings import BindingContext, BindingError, resolve_expr
+
+        try:
+            resolve_expr(f"inputs.empty | {call}", BindingContext(inputs={"empty": None}))
+            resolution_refuses = False
+        except BindingError:
+            resolution_refuses = True
+        authoring_refuses = bool(_codes(_piped(call)) & {"WF_BAD_PIPE", "WF_UNKNOWN_PIPE"})
+        assert authoring_refuses == resolution_refuses, (call, authoring_refuses)
+
+
 class TestMalformedInput:
     def test_a_non_object_spec_is_reported_not_raised(self) -> None:
         for bad in ([], "string", 42, None):

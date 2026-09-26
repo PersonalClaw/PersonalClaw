@@ -531,6 +531,67 @@ class TestOutputContractCensus:
         assert subpath_scoped < unscoped, "sub-path scoping should reduce the volume"
 
 
+#: The two codes a pipe call resolution cannot evaluate is refused under.
+_PIPE_CODES = {"WF_BAD_PIPE", "WF_UNKNOWN_PIPE"}
+
+
+class TestEveryPipeCallParses:
+    """Every pipe call the library ships is one resolution can evaluate.
+
+    `rich-ingest` shipped `| default([])` seven times — its five `foreach` item lists and its
+    judge gate's prompt — and validated STRICTLY, because the validator checked a pipe's NAME and
+    never its arguments. `[]` is not a pipe literal, so every resolution of those expressions
+    raised: the gate failed its prompt on every run, and each `foreach` swallowed the error as
+    "not ready yet". The validator now parses each call with resolution's own grammar
+    (`bindings.parse_pipe`). This class holds each template to it by name, loaded the way the
+    gateway serves it, and proves the check reaches a nested shape the library really ships.
+
+    Measured when the rule landed: 78 pipe calls across 16 templates, 44 of them with arguments.
+    """
+
+    @staticmethod
+    def _served(name: str) -> dict:
+        """The spec as the bundled provider serves it: macros expanded, blocks resolved."""
+        loaded = read_template(name)
+        assert loaded is not None, f"{name} does not load"
+        return loaded.to_dict()
+
+    @pytest.mark.parametrize("name", sorted(EXPECTED))
+    def test_every_pipe_call_parses(self, name: str) -> None:
+        issues = validate_spec(self._served(name), strict=True).issues
+        bad = [f"{i.path}: {i.message}" for i in issues if i.code in _PIPE_CODES]
+        assert not bad, f"{name} ships pipe calls resolution cannot evaluate: {bad}"
+
+    def test_the_rule_sees_the_library_s_pipe_calls(self) -> None:
+        """The vacuity floor, below the measured 78/44/16 so ordinary edits do not red it."""
+        from personalclaw.workflows.bindings import refs_in
+
+        calls = {
+            name: [p.strip() for expr in refs_in(self._served(name)) for p in expr.split("|")[1:]]
+            for name in sorted(EXPECTED)
+        }
+        total = sum(len(c) for c in calls.values())
+        with_args = sum(1 for c in calls.values() for call in c if "(" in call)
+        assert total >= 50, f"the rule examined only {total} pipe calls across the library"
+        assert with_args >= 25, f"only {with_args} calls carry arguments for the rule to parse"
+        assert sum(1 for c in calls.values() if c) >= 10, f"too few templates covered: {calls}"
+
+    def test_a_bad_argument_nested_in_a_shipped_action_is_caught(self) -> None:
+        """The mutation control: a non-literal argument inside a `foreach` body's action
+        arguments — `config.with`, two levels below the node — is refused at that node."""
+        spec = self._served("rich-ingest")
+        root = Node.from_dict(spec["root"])
+        [(path, node)] = [(p, n) for p, n in walk(root) if n.id == "create-task"]
+        notes = node.config["with"]["notes"]
+        assert "default('unassigned')" in notes
+        node.config["with"]["notes"] = notes.replace("default('unassigned')", "default(unassigned)")
+        spec["root"] = root.to_dict()
+
+        issues = [i for i in validate_spec(spec, strict=True).issues if i.code in _PIPE_CODES]
+        assert [(i.code, i.path) for i in issues] == [("WF_BAD_PIPE", path)], issues
+        assert "'unassigned' is not a literal" in issues[0].message
+
+
 class TestProvider:
     async def test_it_lists_every_template(self) -> None:
         provider = BundledWorkflowDefProvider()

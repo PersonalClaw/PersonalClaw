@@ -612,41 +612,53 @@ class TestAllowFailure:
 
     def test_the_shipped_template_lenses_are_all_tolerated(self) -> None:
         """Read from the bundled library rather than restated, so it keeps tracking the template it
-        protects. Also asserts the CONSUMERS default their inputs — a tolerated lens yields no
-        output, and a downstream `foreach` without `| default([])` would fail on the missing key,
-        turning the tolerance back into a run failure one node later."""
-        import json
-        import pathlib
+        protects. Also asserts what becomes of a tolerated lens's CONSUMERS. The failed lens left
+        no output, and a read of it fails on the path before any pipe runs — no fallback pipe can
+        rescue it. The frontier skips such a reader as dataflow-unreachable instead, which is what
+        keeps the tolerance from turning back into a run failure one node later, and every other
+        lens's fan-out still runs. Driven through the pure frontier on the template as the gateway
+        serves it."""
+        from personalclaw.workflows.bundled_defs import read_template
+        from personalclaw.workflows.models import walk
 
-        spec = json.loads(
-            pathlib.Path("src/personalclaw/workflows/bundled/rich-ingest/workflow.json").read_text()
-        )
-        lenses: list[str] = []
-        consumers: list[tuple[str, str]] = []
-
-        def walk_spec(node: object) -> None:
-            if isinstance(node, dict):
-                cfg = node.get("config") if isinstance(node.get("config"), dict) else {}
-                node_id = str(node.get("id", "") or "")
-                if node_id.startswith("lens-"):
-                    assert cfg.get("allow_failure") is True, node_id
-                    lenses.append(node_id)
-                items = cfg.get("items")
-                if isinstance(items, str) and "nodes.lens-" in items:
-                    consumers.append((node_id, items))
-                for value in node.values():
-                    walk_spec(value)
-            elif isinstance(node, list):
-                for value in node:
-                    walk_spec(value)
-
-        walk_spec(spec)
+        loaded = read_template("rich-ingest")
+        assert loaded is not None
+        by_id = {node.id: (path, node) for path, node in walk(loaded.root) if node.id}
+        lenses = sorted(i for i in by_id if i.startswith("lens-"))
         assert len(lenses) == 5, lenses
-        assert consumers, "no lens consumer found — did the template change shape?"
-        for node_id, expr in consumers:
-            assert (
-                "default([])" in expr
-            ), f"{node_id} would fail on a tolerated lens's missing output"
+        for lens in lenses:
+            assert by_id[lens][1].config.get("allow_failure") is True, lens
+        fan_outs = {
+            i: path
+            for i, (path, node) in by_id.items()
+            if node.kind == NodeKind.FOREACH and "nodes.lens-" in str(node.config.get("items"))
+        }
+        assert len(fan_outs) == 5, "no lens consumer found — did the template change shape?"
+
+        failed = "lens-decisions"
+        states = {by_id["classify"][0]: InstanceState.DONE}
+        states.update({by_id[lens][0]: InstanceState.DONE for lens in lenses})
+        states[by_id[failed][0]] = InstanceState.FAILED
+        # The judge gate's own fate is not this test's question: mark it decided.
+        states[by_id["grounded-in-transcript"][0]] = InstanceState.DONE
+        item = {"title": "t", "body": "said", "evidence": "line 1", "owner": "", "due": ""}
+        outputs = {lens: {"items": [item]} for lens in lenses if lens != failed}
+
+        skipped: list[str] = []
+        for _tick in range(20):
+            fr = frontier(loaded.root, states, outputs=outputs, inputs={"source_label": "x"})
+            if fr.complete or fr.blocked:
+                break
+            for path in fr.to_skip:
+                states[path] = InstanceState.SKIPPED
+                skipped.append(path)
+            for ready in fr.ready:
+                states[ready.path] = InstanceState.DONE
+        assert fr.complete, f"the run did not complete: {fr.block_reason or states}"
+        assert skipped == [fan_outs["store-decisions"]], skipped
+        for fan_out, path in fan_outs.items():
+            if fan_out != "store-decisions":
+                assert states.get(f"{path}.body#0") == InstanceState.DONE, fan_out
 
 
 class TestNodeKindCoverage:

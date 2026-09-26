@@ -551,6 +551,51 @@ class TestFailureRemediation:
         assert "cannot rescue" in failure.remediation, failure.remediation
         assert "genuinely optional" not in failure.remediation, failure.remediation
 
+    @pytest.mark.parametrize(
+        ("call", "fix"),
+        [
+            ("default([])", "use `| filter` instead"),
+            ("default(topic)", "quote it if it is text"),
+            ("default('x'", "write a pipe as `name` or `name(<literal>, …)`"),
+            ("json(1)", "`json` takes no arguments"),
+            ("default('a', 'b')", "`default` takes at most 1 argument"),
+            ("filter(1, 2, 3)", "`filter` takes at most 2 arguments"),
+            ("evalx", "the pipes are: clamp, count, default"),
+        ],
+    )
+    def test_a_pipe_call_that_cannot_evaluate_says_how_to_fix_the_call(
+        self, ctx, call: str, fix: str
+    ) -> None:
+        """The reference resolves — `inputs.topic` exists — so "check the referenced node id and
+        field exist" would send the author after a problem they do not have. The call is what is
+        wrong, and only the grammar knows which part."""
+        with pytest.raises(BindingError) as exc:
+            resolve(f"{{{{inputs.topic | {call}}}}}", ctx)
+        assert fix in exc.value.remediation, exc.value.remediation
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("anyio_backend", ["asyncio"])
+    async def test_every_dispatcher_surfaces_the_pipe_remediation(self, ctx, anyio_backend) -> None:
+        """Measured on a dev gateway: `rich-ingest`'s judge gate failed on `| default([])` with
+        the fix "check the referenced node id and field exist" — false, the node and field both
+        existed. `resolve_config` already preferred the raise site's remediation; the transform
+        dispatcher replaced it with that sentence unconditionally."""
+        from personalclaw.workflows.engine import dispatch_transform
+        from personalclaw.workflows.engine_support import resolve_config
+        from personalclaw.workflows.models import Node
+
+        expr = "{{nodes.find.output.findings | default([])}}"
+        _, failure = resolve_config(
+            Node.from_dict({"kind": "stage", "id": "s", "config": {"prompt": f"x {expr}"}}), ctx
+        )
+        assert failure is not None and "`| filter`" in failure.remediation, failure
+        result = await dispatch_transform(
+            Node.from_dict({"kind": "transform", "id": "t", "config": {"expr": expr}}), ctx
+        )
+        assert result.failure is not None
+        assert "`| filter`" in result.failure.remediation, result.failure.remediation
+        assert "node id" not in result.failure.remediation
+
 
 class TestSecrets:
     def test_secret_resolves_through_the_injected_resolver(self) -> None:
