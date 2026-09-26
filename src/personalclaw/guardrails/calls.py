@@ -11,7 +11,9 @@ without a way back:
   samples plus a judge pass per survivor) journaled ``tokens: 0`` and no model, and Introspect
   told the user nothing was costing money;
 * a cancelled step's in-flight generations were spend nobody counted;
-* best-of-N could not tell a temperature ladder from N calls at the provider's default.
+* best-of-N could not tell a temperature ladder from N calls at the provider's default;
+* a step whose model was streaming its answer looked silent to the workflow stall clock, and was
+  killed mid-generation as "no progress".
 
 Same shape as :mod:`personalclaw.guardrails.wire`, for the same reason: a caller-bound MUTABLE
 record, because the guard runs inside tasks whose context is a copy (a copy of the reference, not
@@ -26,7 +28,8 @@ records nowhere: this is an observation channel and must never be able to stop a
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Iterator
+import time
+from collections.abc import Iterable, Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 
@@ -62,6 +65,10 @@ class ModelCall:
     #: False when neither the provider nor the price table can say what the call cost. A local
     #: model counts as priced — at zero — because nothing it does is billed.
     priced: bool = True
+    #: When the provider last sent anything on this call (``time.time()``): the call opening, then
+    #: every streamed event. What a workflow's stall clock reads, so a model that is still
+    #: generating is not mistaken for one that went silent.
+    last_event_at: float = field(default_factory=time.time)
 
 
 @dataclass
@@ -103,28 +110,44 @@ class CallLog:
         return round(sum(c.cost_usd for c in done), 6)
 
     @property
-    def floor_tokens(self) -> int:
+    def floor_tokens(self) -> int | None:
         """The tokens the finished calls' providers DID report, however much else is unknown.
 
-        What a cancel can still say about the step it stopped: its cut-off generations spent
-        something unmeasured, and the finished ones spent exactly this. A floor, never a total.
+        What a stopped step can still say: its cut-off generations spent something unmeasured, and
+        the finished ones spent exactly this. A floor, never a total. ``None`` when no provider
+        reported any, because a floor of zero reads as a measurement of nothing.
         """
         done = [c for c in self.calls if c.state == DONE and c.usage_reported]
-        return sum(c.input_tokens + c.output_tokens for c in done)
+        return sum(c.input_tokens + c.output_tokens for c in done) if done else None
 
     @property
-    def floor_cost_usd(self) -> float:
+    def floor_cost_usd(self) -> float | None:
         """What the finished, priceable calls cost — the same floor as :attr:`floor_tokens`."""
-        return round(sum(c.cost_usd for c in self.calls if c.state == DONE and c.priced), 6)
+        priced = [c for c in self.calls if c.state == DONE and c.priced]
+        return round(sum(c.cost_usd for c in priced), 6) if priced else None
 
     @property
     def models(self) -> list[str]:
         """The distinct models that served these calls, in first-use order."""
-        seen: list[str] = []
-        for call in self.calls:
-            if call.model and call.model not in seen:
-                seen.append(call.model)
-        return seen
+        return _distinct(c.model for c in self.calls)
+
+    @property
+    def providers(self) -> list[str]:
+        """The distinct providers these calls went to, in first-use order."""
+        return _distinct(c.provider for c in self.calls)
+
+    @property
+    def last_activity(self) -> float | None:
+        """When any of these calls last heard from its provider, or ``None`` before the first."""
+        return max((c.last_event_at for c in self.calls), default=None)
+
+
+def _distinct(names: Iterable[str]) -> list[str]:
+    seen: list[str] = []
+    for name in names:
+        if name and name not in seen:
+            seen.append(name)
+    return seen
 
 
 _BOUND: ContextVar[tuple[CallLog, ...]] = ContextVar("personalclaw_model_call_logs", default=())

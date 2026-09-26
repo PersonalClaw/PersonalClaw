@@ -19,6 +19,10 @@ defect below lived in a seam a stub would have skipped:
   money", while the step had just made N+judge model calls.
 * **cancel** — the header said 10s and Introspect said 0s, and four in-flight generations
   read as "nothing costing money".
+* **liveness** — a model streaming its answer slower than the stall window was killed as
+  "no progress", because nothing a best-of-n step does reached the stall clock.
+* **failed usage** — a step that failed or was stall-killed wrote no usage at all: a run that made
+  five calls said "no model recorded", and a measured row's `provider` was always empty.
 """
 
 from __future__ import annotations
@@ -62,6 +66,9 @@ class FakeOllama:
     `report_usage` is off). `hold` parks every chat request until released, which is how a test
     gets generations genuinely IN FLIGHT at the moment it cancels.
 
+    A candidate's answer is `sample_text`, streamed in `sample_chunks` pieces `chunk_delay` seconds
+    apart: a model that is generating, slowly. The judge's answer always arrives at once.
+
     `chats` is every `/api/chat` body a live server received: the outgoing request, parsed.
     """
 
@@ -72,6 +79,9 @@ class FakeOllama:
         self.status = 200
         self.error = ""
         self.report_usage = True
+        self.sample_text = "Blue"
+        self.sample_chunks = 1
+        self.chunk_delay = 0.0
         self.hold: asyncio.Event | None = None
         self.chats: list[dict[str, Any]] = []
         self.refused = 0
@@ -116,9 +126,10 @@ class FakeOllama:
             for k, v in (h.split(":", 1) for h in lines[1:] if ":" in h)
         }
         raw = await reader.readexactly(int(headers.get("content-length", "0") or 0))
+        delay = 0.0
         if path == "/api/chat" and self.status != 200:
             self.chats.append(json.loads(raw or b"{}"))
-            payload = json.dumps({"error": self.error}).encode()
+            parts = [json.dumps({"error": self.error}).encode()]
             status, ctype = f"{self.status} Refused", "application/json"
         elif path == "/api/chat":
             body = json.loads(raw or b"{}")
@@ -126,23 +137,36 @@ class FakeOllama:
             if self.hold is not None:
                 self.held += 1
                 await self.hold.wait()
-            text = "Blue" if _last_user(body) == PROMPT else '{"score": 0.5, "reason": "fine"}'
+            sample = _last_user(body) == PROMPT
+            text = self.sample_text if sample else '{"score": 0.5, "reason": "fine"}'
+            pieces = _pieces(text, self.sample_chunks) if sample else [text]
+            delay = self.chunk_delay if sample else 0.0
             done: dict[str, Any] = {"done": True}
             if self.report_usage:
                 done.update(prompt_eval_count=PROMPT_TOKENS, eval_count=EVAL_TOKENS)
-            chunk = {"message": {"role": "assistant", "content": text}, "done": False}
-            payload = (json.dumps(chunk) + "\n" + json.dumps(done) + "\n").encode()
+            parts = [
+                (
+                    json.dumps({"message": {"role": "assistant", "content": p}, "done": False})
+                    + "\n"
+                ).encode()
+                for p in pieces
+            ] + [(json.dumps(done) + "\n").encode()]
             status, ctype = "200 OK", "application/x-ndjson"
         elif path == "/api/ps":
-            payload, status, ctype = b'{"models": []}', "200 OK", "application/json"
+            parts, status, ctype = [b'{"models": []}'], "200 OK", "application/json"
         else:
-            payload, status, ctype = b"", "404 Not Found", "text/plain"
+            parts, status, ctype = [b""], "404 Not Found", "text/plain"
         try:
             writer.write(
-                f"HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {len(payload)}"
-                "\r\nConnection: close\r\n\r\n".encode() + payload
+                f"HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\n"
+                f"Content-Length: {sum(len(p) for p in parts)}"
+                "\r\nConnection: close\r\n\r\n".encode()
             )
-            await writer.drain()
+            for i, part in enumerate(parts):
+                if i and delay:
+                    await asyncio.sleep(delay)
+                writer.write(part)
+                await writer.drain()
         except ConnectionError:
             pass
         finally:
@@ -154,8 +178,14 @@ def _last_user(body: dict[str, Any]) -> str:
     return str(users[-1]).strip() if users else ""
 
 
+def _pieces(text: str, n: int) -> list[str]:
+    """`text` in `n` consecutive pieces (fewer when it is shorter than `n`)."""
+    size = max(1, -(-len(text) // max(1, n)))
+    return [text[i : i + size] for i in range(0, len(text), size)] or [""]
+
+
 @contextlib.asynccontextmanager
-async def _wired(monkeypatch, tmp_path) -> AsyncIterator[tuple[FakeOllama, Any]]:
+async def _wired(monkeypatch, tmp_path, **services: Any) -> AsyncIterator[tuple[FakeOllama, Any]]:
     """A fake Ollama, the bundled Ollama app pointed at it, and a real supervisor.
 
     The bundle's provider module is loaded by path (it is what the gateway loads — a core copy
@@ -163,6 +193,8 @@ async def _wired(monkeypatch, tmp_path) -> AsyncIterator[tuple[FakeOllama, Any]]
     that `conftest._restore_provider_registry` puts back afterwards. The resolution chain and the
     active refs are pinned to the one entry, so no developer binding can leak in; the output
     budget is pinned so a budget lookup cannot reach a real local-model server.
+
+    `services` are the supervisor's `EngineServices` fields, as the gateway sets them from config.
     """
     from personalclaw.apps.native_contract import (
         NATIVE_DIR,
@@ -202,7 +234,7 @@ async def _wired(monkeypatch, tmp_path) -> AsyncIterator[tuple[FakeOllama, Any]]
         )
     )
     bundled_defs.register_bundled_provider()
-    supervisor = WorkflowWatchdog(state=None, services=EngineServices())
+    supervisor = WorkflowWatchdog(state=None, services=EngineServices(**services))
     try:
         yield fake, supervisor
     finally:
@@ -423,6 +455,8 @@ async def test_a_completed_run_reports_what_its_model_calls_used(monkeypatch, tm
         rows = {r["node_id"]: r for r in J.ledger(run_id, kinds={J.STEP_COMPLETED})}
         assert rows["sample"]["tokens"] == calls * (PROMPT_TOKENS + EVAL_TOKENS)
         assert rows["sample"]["model"] == MODEL
+        # The provider that served them, which the guard saw and the row used to leave empty.
+        assert rows["sample"]["provider"] == ENTRY
         # A local model: measured, and free — not "no model recorded".
         assert rows["sample"]["cost_usd"] == 0.0
 
@@ -485,8 +519,89 @@ async def test_a_cancel_counts_the_generations_it_cut_off_and_keeps_one_duration
 
         cut = J.ledger(run_id, kinds={"step_cancelled"})
         assert [(r["node_id"], r["model_calls_open"]) for r in cut] == [("sample", 4)], cut
-        assert cut[0]["model"] == MODEL
-        # A floor: none of the four finished, so nothing was measured — and the row says it is a
-        # floor through `model_calls_open`, which both aggregates read as "not recorded".
-        assert (cut[0]["tokens"], cut[0]["cost_usd"]) == (0, 0.0)
+        assert (cut[0]["model"], cut[0]["provider"]) == (MODEL, ENTRY)
+        # None of the four finished, so no provider reported anything: `null`, not a zero that
+        # reads as four calls measured at nothing.
+        assert (cut[0]["tokens"], cut[0]["cost_usd"]) == (None, None)
         assert any(row["kind"] == "step_cancelled" for row in body["answers"]["changed"])
+
+
+# ── liveness ─────────────────────────────────────────────────────────────────
+
+#: The stall window these tests run under, and the controller's tick, both shrunk so a stall takes
+#: seconds rather than the shipped 300s. The tick is how often the window is checked.
+STALL_SECS = 1
+TICK_SECS = 0.2
+
+
+async def test_a_model_still_generating_is_not_killed_as_stalled(monkeypatch, tmp_path):
+    """Measured on a dev gateway with the stall window at 4s: a best-of-n whose model was streaming
+    its answer over 8s failed "no progress for 4s (timeout_stall)" 5s in, mid-generation."""
+    monkeypatch.setattr("personalclaw.workflows.controller.TICK_WAKE_SECS", TICK_SECS)
+    async with _wired(monkeypatch, tmp_path, node_timeout_stall=STALL_SECS) as (fake, supervisor):
+        fake.up = True
+        fake.sample_text = "Blue is one of the three primary colors."
+        # About 2.5s of steady output per candidate, never silent for more than 0.25s.
+        fake.sample_chunks, fake.chunk_delay = 10, 0.25
+        run_id = await _start(supervisor, n=2)
+        status = await _terminal(supervisor, run_id)
+        assert status is RunStatus.COMPLETE, service.status(run_id)["nodes"]
+
+        (row,) = [r for r in J.ledger(run_id, kinds={J.STEP_COMPLETED}) if r["node_id"] == "sample"]
+        # The control: the step really did outlast the window it was checked against.
+        assert row["duration_secs"] > 2 * STALL_SECS, row
+
+
+async def test_a_model_that_sends_nothing_is_still_stopped_and_its_calls_are_counted(
+    monkeypatch, tmp_path
+):
+    """Silence is still a stall. And the step it stops had called the model twice, which its row
+    has to say: the row carried no usage, and Introspect read "Models: none recorded"."""
+    monkeypatch.setattr("personalclaw.workflows.controller.TICK_WAKE_SECS", TICK_SECS)
+    async with _wired(monkeypatch, tmp_path, node_timeout_stall=STALL_SECS) as (fake, supervisor):
+        fake.up = True
+        fake.hold = asyncio.Event()  # every request is accepted and never answered
+        run_id = await _start(supervisor, n=2)
+        assert await _terminal(supervisor, run_id) is RunStatus.FAILED
+        assert fake.held == 2
+
+        (row,) = [r for r in J.ledger(run_id, kinds={J.STEP_FAILED}) if r["node_id"] == "sample"]
+        assert row["failure"]["class"] == "timeout" and "timeout_stall" in row["error"], row
+        assert row["model_calls_open"] == 2, row
+        assert (row["model"], row["provider"]) == (MODEL, ENTRY)
+        # Neither call finished, so neither provider reported usage: unknown, never zero.
+        assert (row["tokens"], row["cost_usd"]) == (None, None)
+
+        stats = service.introspect(run_id)["stats"]
+        assert stats["calls_cut_off"] == 2
+        assert stats["models"] == [MODEL]
+        assert stats["tokens_recorded"] is False and stats["priced"] is False
+
+
+# ── failed usage ─────────────────────────────────────────────────────────────
+
+
+async def test_a_step_that_failed_after_its_calls_answered_records_what_they_used(
+    monkeypatch, tmp_path
+):
+    """Every candidate came back empty, so the step failed, after two calls that each reported
+    their usage. The row that ends the step is the only record of them."""
+    async with _wired(monkeypatch, tmp_path) as (fake, supervisor):
+        fake.up = True
+        fake.sample_text = ""
+        run_id = await _start(supervisor, n=2)
+        assert await _terminal(supervisor, run_id) is RunStatus.FAILED
+        assert len(fake.sample_requests()) == 2
+
+        (row,) = [r for r in J.ledger(run_id, kinds={J.STEP_FAILED}) if r["node_id"] == "sample"]
+        spent = 2 * (PROMPT_TOKENS + EVAL_TOKENS)
+        assert row["tokens"] == spent, row
+        assert (row["model"], row["provider"], row["cost_usd"]) == (MODEL, ENTRY, 0.0)
+        assert row["model_calls_open"] == 0
+
+        stats = service.introspect(run_id)["stats"]
+        assert (stats["tokens"], stats["tokens_recorded"]) == (spent, True)
+        assert stats["models"] == [MODEL]
+        # The run row is charged the same number, so the header and Introspect agree, and a token
+        # budget sees spend that ended in a failure.
+        assert service.status(run_id)["tokens"] == spent

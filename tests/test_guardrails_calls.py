@@ -111,7 +111,17 @@ def test_the_floor_is_what_the_finished_calls_reported():
         ]
     )
     assert (log.floor_tokens, log.floor_cost_usd) == (7, 0.01)
-    assert CallLog([_call_record(OPEN)]).floor_tokens == 0
+
+
+def test_a_floor_with_nothing_reported_is_unknown_not_zero():
+    """No call finished, so no provider said anything: a floor of 0 would read as a measurement."""
+    log = CallLog([_call_record(OPEN), _call_record(ABANDONED)])
+    assert (log.floor_tokens, log.floor_cost_usd) == (None, None)
+
+
+def test_the_log_names_each_provider_once_in_first_use_order():
+    calls = [ModelCall(provider=p, model="m") for p in ("cloud-b", "cloud-a", "cloud-b", "")]
+    assert CallLog(calls).providers == ["cloud-b", "cloud-a"]
 
 
 def test_nothing_bound_records_nowhere():
@@ -196,3 +206,52 @@ async def test_a_breaker_refusal_is_not_a_model_call():
         with pytest.raises(CircuitOpenError):
             await _call(_Adapter())
     assert log.calls == []
+
+
+# ── a call's sign of life ────────────────────────────────────────────────────
+
+
+class _SlowAdapter(_Adapter):
+    """Streams its answer in pieces, `gap` seconds apart: a model that is still generating."""
+
+    def __init__(self, gap: float, pieces: int) -> None:
+        super().__init__()
+        self.gap, self.pieces = gap, pieces
+
+    async def stream(self, message: str):
+        for _ in range(self.pieces):
+            await asyncio.sleep(self.gap)
+            yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="x")
+        yield LLMEvent(kind=EVENT_COMPLETE, input_tokens=7, output_tokens=3)
+
+
+@pytest.mark.asyncio
+async def test_every_event_a_provider_sends_is_the_logs_latest_sign_of_life():
+    """What the workflow stall clock reads: a call that is streaming is not silent."""
+    guard = wrap_model_call_guard(
+        _SlowAdapter(0.05, 3), use_case="background", provider_name="p", model="m"
+    )
+    seen: list[float | None] = []
+    with capture_model_calls() as log:
+        assert log.last_activity is None, "nothing has been called yet"
+        async for event in guard.stream("hi"):
+            seen.append(log.last_activity)
+            if event.kind == EVENT_COMPLETE:
+                break
+    assert len(seen) == 4 and None not in seen, seen
+    assert all(later > earlier for earlier, later in zip(seen, seen[1:])), seen
+
+
+@pytest.mark.asyncio
+async def test_a_call_that_sends_nothing_shows_no_sign_of_life_after_it_opened():
+    hold = asyncio.Event()
+    with capture_model_calls() as log:
+        task = asyncio.create_task(_call(_Adapter(hold=hold)))
+        await asyncio.sleep(0.05)
+        opened = log.last_activity
+        assert opened is not None, "opening the call is the first sign of life"
+        await asyncio.sleep(0.1)
+        assert log.last_activity == opened, "silence moved the clock"
+        hold.set()
+        await task
+    assert log.last_activity > opened

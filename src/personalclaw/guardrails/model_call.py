@@ -402,6 +402,10 @@ class ModelCallGuard(ModelProvider):
                         event = await source.__anext__()
                     except StopAsyncIteration:
                         break
+                if call is not None:
+                    # The provider is still talking: the workflow stall clock reads this, so a
+                    # step whose model is generating slowly is not killed as a silent one.
+                    call.last_event_at = time.time()
                 if event.kind == EVENT_COMPLETE and not recorded:
                     # Terminal signal: record success NOW (the consumer may break on
                     # this event without draining), then keep yielding any trailing

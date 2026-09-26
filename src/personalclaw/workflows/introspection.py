@@ -89,7 +89,7 @@ class RunStats:
     runs and needs a number to sort by, which is a real trade and a decided one (#2566). `priced`
     is what makes the trade honest instead of silent: it carries the SAME fact, in the same word,
     as `ledger.reader.run_totals` and `usage_ledger` — False ⇒ this float is a FLOOR because some
-    completed step booked no cost, and a surface must say so rather than render `$0.00`.
+    attempt booked no cost, and a surface must say so rather than render `$0.00`.
 
     `tokens` makes the identical trade and needs the identical disclosure: it stays an `int` the
     strip can sort on, and `tokens_recorded` carries whether that int is a measurement (#3218).
@@ -107,9 +107,9 @@ class RunStats:
     tokens: int = 0
     cached_tokens: int = 0
     cost_usd: float = 0.0
-    #: False when some `step_completed` carried no `cost_usd` key, so `cost_usd` is a FLOOR.
+    #: False when some step row carried no `cost_usd` key, so `cost_usd` is a FLOOR.
     priced: bool = True
-    #: False when some `step_completed` carried no `tokens` key (or an explicit null), so `tokens`
+    #: False when some step row carried no `tokens` key (or an explicit null), so `tokens`
     #: is a FLOOR. Kept SEPARATE from `priced` deliberately: a step can book a cost and report no
     #: token count, and one flag covering both would have to lie to one of its two readers (#2630).
     #: `loop/journal.py::LoopJournal.cycle` writes no `tokens` key, so every loop run lands here.
@@ -117,9 +117,9 @@ class RunStats:
     steps_completed: int = 0
     steps_failed: int = 0
     steps_cached: int = 0
-    #: Model calls a cancel cut off mid-generation (`step_cancelled`). Each spent tokens nobody
-    #: reported, which is why a non-zero count also clears `tokens_recorded` and `priced` — and
-    #: why the cost sentence names it rather than calling the run free.
+    #: Model calls cut off before they finished: by a cancel, a stall kill, the total timeout. Each
+    #: spent tokens nobody reported, which is why a non-zero count also clears `tokens_recorded`
+    #: and `priced` — and why the cost sentence names it rather than calling the run free.
     calls_cut_off: int = 0
     duration_secs: float = 0.0
     first_byte_ms: float | None = None
@@ -219,37 +219,11 @@ def run_stats(run_id: str, events: list[dict[str, Any]], *, elapsed_secs: float)
         ts = _epoch(event.get("ts")) if not event_id or event_id.startswith(own) else None
         if ts is not None:
             first_ts = ts if first_ts is None else min(first_ts, ts)
-        if kind == "step_cancelled":
-            # A step the cancel stopped mid-flight: its open generations spent what nobody
-            # reported, so what its finished calls reported is a floor and so are the totals
-            # (`ledger.reader.run_totals` folds it alike).
-            cut_off = int(event.get("model_calls_open", 0) or 0)
-            stats.calls_cut_off += cut_off
-            if event.get("tokens") is None or cut_off:
-                stats.tokens_recorded = False
-            stats.tokens += int(event.get("tokens") or 0)
-            if event.get("cost_usd") is None or cut_off:
-                stats.priced = False
-            stats.cost_usd += float(event.get("cost_usd") or 0.0)
-            model = str(event.get("model") or "")
-            if model and model not in models:
-                models.append(model)
+        if kind in _ATTEMPT_ENDS:
+            _fold_usage(stats, event, models)
         if kind == "step_completed":
             stats.steps_completed += 1
-            stats.tokens += int(event.get("tokens", 0) or 0)
-            # Same rule as `_carried` and `ledger.reader.run_totals`, applied to the token count as
-            # well as the cost: a step that carries no key (or an explicit null) makes the running
-            # total a FLOOR, not a measurement. `.get()` collapsing absent and null into `None` is
-            # what makes ONE check cover both, which is the same shape `run_totals` uses (#3218).
-            if event.get("tokens") is None:
-                stats.tokens_recorded = False
-            stats.cost_usd += float(event.get("cost_usd", 0.0) or 0.0)
-            if event.get("cost_usd") is None:
-                stats.priced = False
             stats.cached_tokens += int(event.get("cached_tokens", 0) or 0)
-            model = str(event.get("model") or "")
-            if model and model not in models:
-                models.append(model)
             node_id = str(event.get("node_id") or "")
             if node_id:
                 completed_nodes.append(node_id)
@@ -270,6 +244,32 @@ def run_stats(run_id: str, events: list[dict[str, Any]], *, elapsed_secs: float)
     if first_ts is not None and first_output_ts is not None:
         stats.first_byte_ms = max(0.0, (first_output_ts - first_ts) * 1000.0)
     return stats
+
+
+#: The rows that end an attempt at a step. Each carries what the attempt's model calls used
+#: (`workflows.step_usage`), so each is folded by the one rule `ledger.reader.run_totals` applies.
+_ATTEMPT_ENDS = frozenset({"step_completed", "step_failed", "step_cancelled"})
+
+
+def _fold_usage(stats: RunStats, event: dict[str, Any], models: list[str]) -> None:
+    """Add one attempt's usage to the run's.
+
+    Same rule as `_carried` and `ledger.reader.run_totals`: a row that carries no key (or an
+    explicit null) makes the running total a FLOOR, not a measurement, and `.get()` collapsing
+    absent and null into `None` is what makes ONE check cover both (#3218). A call the attempt's
+    end cut off spent what nobody reported, so it makes the totals a floor too.
+    """
+    cut_off = int(event.get("model_calls_open", 0) or 0)
+    stats.calls_cut_off += cut_off
+    if event.get("tokens") is None or cut_off:
+        stats.tokens_recorded = False
+    stats.tokens += int(event.get("tokens") or 0)
+    if event.get("cost_usd") is None or cut_off:
+        stats.priced = False
+    stats.cost_usd += float(event.get("cost_usd") or 0.0)
+    model = str(event.get("model") or "")
+    if model and model not in models:
+        models.append(model)
 
 
 def _epoch(raw: Any) -> float | None:
@@ -1245,6 +1245,7 @@ _FINDING_FIELDS: tuple[tuple[str, type], ...] = (
     ("provider", str),
     ("tokens", int),
     ("cost_usd", float),
+    ("model_calls_open", int),
     ("duration_secs", float),
     ("retries", int),
     ("degraded_reason", str),
@@ -1475,6 +1476,9 @@ def rail_totals(findings: list[dict[str, Any]], verdicts: list[dict[str, Any]]) 
         totals.tokens = sum(carried_tokens)
     if any(row.get("tokens") is None for row in findings):
         totals.tokens_recorded = False
+    # A step that left model calls unfinished carries a floor, whatever else it recorded.
+    if any(row.get("model_calls_open") for row in findings):
+        totals.cost_recorded = totals.tokens_recorded = False
 
     by_word: dict[str, int] = {}
     series: list[float] = []

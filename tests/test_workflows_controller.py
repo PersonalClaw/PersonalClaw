@@ -38,6 +38,7 @@ from personalclaw.workflows.models import (
     RunStatus,
     WorkflowRun,
 )
+from personalclaw.workflows.step_usage import NOTHING_SENT
 from personalclaw.workflows.tick import Limits
 
 pytestmark = pytest.mark.anyio
@@ -255,7 +256,7 @@ class TestResumeCache:
         resume."""
         jr = Journal("r1")
         key = CacheKey(path="root", epoch=0, inputs_hash="h", spec_hash="s")
-        jr.step_failed("root", "n", epoch=0, failure=Failure(cause_plain="x"))
+        jr.step_failed("root", "n", epoch=0, failure=Failure(cause_plain="x"), usage=NOTHING_SENT)
         jr.write(J.STEP_COMPLETED, cache_key=key.to_str(), state=InstanceState.FAILED.value)
         assert Journal("r1").lookup(key) is None
 
@@ -767,6 +768,7 @@ class TestRedaction:
             "n",
             epoch=0,
             failure=Failure(cause_plain=f"auth failed for {secret}"),
+            usage=NOTHING_SENT,
         )
         jr.write("custom", nested={"deep": [secret]})
         for name in (J.JOURNAL_FILE, J.EVENTS_FILE):

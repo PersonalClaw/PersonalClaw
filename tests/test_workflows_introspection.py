@@ -45,6 +45,7 @@ from personalclaw.workflows.introspection import (
     template_card,
 )
 from personalclaw.workflows.models import InstanceState
+from personalclaw.workflows.step_usage import StepUsage
 
 
 @pytest.fixture()
@@ -89,13 +90,23 @@ def test_run_stats_matches_the_engines_OWN_run_totals(journal_home):
                 J.STEP_COMPLETED,
                 {"instance_path": "b", "node_id": "b", "tokens": 250, "cost_usd": 0.02},
             ),
-            (J.STEP_FAILED, {"instance_path": "c", "node_id": "c"}),
+            # A failed attempt spent too, and both aggregates count it.
+            (
+                J.STEP_FAILED,
+                {
+                    "instance_path": "c",
+                    "node_id": "c",
+                    "tokens": 40,
+                    "cost_usd": 0.005,
+                    "model_calls_open": 0,
+                },
+            ),
             (J.STEP_CACHED, {"instance_path": "d", "node_id": "d"}),
         ],
     )
     stats = run_stats("r-agree", events, elapsed_secs=0.0)
     official = J.run_totals("r-agree")
-    assert stats.tokens == official["tokens"]
+    assert stats.tokens == official["tokens"] == 390
     assert round(stats.cost_usd, 6) == official["cost_usd"]
     assert stats.steps_completed == official["steps_completed"]
     assert stats.steps_failed == official["steps_failed"]
@@ -187,7 +198,10 @@ def test_a_cancel_that_cut_generations_off_is_spend_not_nothing(journal_home):
         "a", "a", epoch=0, cache_key="", state=InstanceState.DONE, tokens=40, cost_usd=0.0
     )
     J.Journal("r-cut").step_cancelled(
-        "b", "b", epoch=0, model_calls_open=4, tokens=None, model="gemma3:4b", cost_usd=None
+        "b",
+        "b",
+        epoch=0,
+        usage=StepUsage(tokens=None, cost_usd=None, model="gemma3:4b", calls_cut_off=4),
     )
     events = J.ledger("r-cut")
     stats = run_stats("r-cut", events, elapsed_secs=10.0)
@@ -207,7 +221,10 @@ def test_what_the_finished_calls_reported_is_kept_as_a_floor(journal_home):
     from personalclaw.workflows import journal as J
 
     J.Journal("r-floor").step_cancelled(
-        "b", "b", epoch=0, model_calls_open=1, tokens=500, model="gemma3:4b", cost_usd=0.02
+        "b",
+        "b",
+        epoch=0,
+        usage=StepUsage(tokens=500, cost_usd=0.02, model="gemma3:4b", calls_cut_off=1),
     )
     stats = run_stats("r-floor", J.ledger("r-floor"), elapsed_secs=3.0)
     official = J.run_totals("r-floor")

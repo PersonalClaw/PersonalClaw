@@ -57,6 +57,7 @@ from personalclaw.workflows.judge_contract import (
     parse_judge_json,
     validate_verdict,
 )
+from personalclaw.workflows.liveness import wait_with_progress
 from personalclaw.workflows.models import (
     Failure,
     FailureClass,
@@ -102,10 +103,8 @@ class NodeResult:
     output: Any = None
     failure: Failure | None = None
     degraded_reason: str = ""
+    #: The dispatcher's estimate; what its model calls used is measured at the guard (`step_usage`).
     tokens: int = 0
-    model: str = ""
-    provider: str = ""
-    cost_usd: float = 0.0
     #: Edges this node considered and did NOT take. A `branch` declines every case it
     #: did not route to; the controller marks those targets SKIPPED so a downstream join
     #: sees a terminal predecessor rather than waiting forever (WF2-R18).
@@ -168,26 +167,6 @@ def _fail(cls: FailureClass, cause: str, remediation: str = "", **kw: Any) -> No
         state=InstanceState.FAILED,
         failure=Failure(failure_class=cls, cause_plain=cause, remediation=remediation, **kw),
     )
-
-
-async def _wait_with_progress(controller: Any, timeout: float, on_progress: Any) -> Any:
-    """Wait for a child run, feeding the parent's stall clock while it works.
-
-    The heartbeat is what makes `timeout_stall` mean "silent" rather than "slow": a nested run that
-    legitimately takes ten minutes is progressing, and killing it as wedged would make nesting
-    unusable for exactly the long-horizon work it exists for. The interval is well under any sane
-    stall window, and each tick is one function call — the cost is nothing next to a child run.
-    """
-    if not callable(on_progress):
-        return await controller.wait_for_terminal(timeout=timeout)
-
-    task = asyncio.ensure_future(controller.wait_for_terminal(timeout=timeout))
-    while not task.done():
-        on_progress()
-        # `asyncio.wait` rather than a sleep-then-check: it returns as soon as the child settles, so
-        # a fast child is not padded by the heartbeat interval.
-        await asyncio.wait({task}, timeout=_PROGRESS_HEARTBEAT_SECS)
-    return task.result()
 
 
 def _failed_with(cls: FailureClass, cause: str, remediation: str, output: Any) -> NodeResult:
@@ -889,10 +868,6 @@ async def dispatch_branch(node: Node, ctx: BindingContext) -> NodeResult:
 #: is the realistic way to hit this, and it is always a bug.
 MAX_SUBWORKFLOW_DEPTH = 3
 
-#: How often a long wait feeds the parent's stall clock. Well under any sane `timeout_stall`, so a
-#: working child can never be mistaken for a silent one.
-_PROGRESS_HEARTBEAT_SECS = 0.5
-
 
 async def dispatch_subworkflow(
     node: Node,
@@ -1031,7 +1006,7 @@ async def dispatch_subworkflow(
         # wait is NOT enough — the wait itself spans the window — so the clock is fed on a
         # heartbeat
         # for as long as the child is alive.
-        status = await _wait_with_progress(controller, float(timeout or 0), on_progress)
+        status = await wait_with_progress(controller, float(timeout or 0), on_progress)
     except Exception as exc:
         return _failed_with(
             FailureClass.INTERNAL,
