@@ -51,29 +51,8 @@ async def api_chat_session_fork(request: web.Request) -> web.Response:
             status=429,
         )
 
-    # App ownership check: an app may only fork sessions it owns.
-    if request_app:
-        if not session._app:
-            sel().log_api_access(
-                caller=request_app,
-                operation="chat.session_fork",
-                outcome="denied",
-                source="app_isolation",
-                resources=f"session={name}",
-                error="app cannot fork unscoped sessions",
-            )
-            return web.json_response({"error": "app cannot fork unscoped sessions"}, status=403)
-        if session._app != request_app:
-            sel().log_api_access(
-                caller=request_app,
-                operation="chat.session_fork",
-                outcome="denied",
-                source="app_isolation",
-                resources=f"session={name}",
-                error="app does not own this session",
-            )
-            return web.json_response({"error": "app does not own this session"}, status=403)
-
+    # An app forks only a conversation it started: the permission middleware held the request to
+    # that (`ROUTE_AUTHZ`'s `owns`) before this ran, and the fork below is the app's too.
     if session.memory_mode != "persistent":
         sel().log_api_access(
             caller=request_app or "dashboard",
@@ -146,7 +125,7 @@ async def api_chat_session_fork(request: web.Request) -> web.Response:
         workspace_dir=session.workspace_dir,
         model=session.model,
         mode=fork_mode,
-        app=request_app,
+        created_by_app=request_app,
     )
     new_session.forked_from = _history_key_for(session.key)
     new_session.reasoning_effort = session.reasoning_effort
@@ -265,6 +244,7 @@ async def api_chat_session_fork_rewound(request: web.Request) -> web.Response:
             workspace_dir=session.workspace_dir,
             model=session.model,
             mode=session.mode,
+            created_by_app=request.get("app", ""),
         )
         new_session.forked_from = _history_key_for(session.key)
         new_session.reasoning_effort = session.reasoning_effort

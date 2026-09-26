@@ -447,8 +447,10 @@ async def app_permission_middleware(
     It hands the decision the matched route's canonical template as well as the path,
     because the per-route declarations (``permissions.ROUTE_AUTHZ``) are keyed on it:
     ``POST /api/triggers`` and ``POST /api/triggers/{id}/run`` share a prefix and not a
-    verdict. An allowed app request then runs inside ``scoped_to_app``, so a seam with no
-    request in hand (the file explorer's root list) still knows who is asking."""
+    verdict. A row that carries ``owns`` is then held to the conversations the calling app
+    started (:func:`_conversation_denial`). An allowed app request runs inside
+    ``scoped_to_app``, so a seam with no request in hand (the file explorer's root list) still
+    knows who is asking."""
     from personalclaw.apps.permissions import (
         APP_SCOPED_PREFIXES,
         app_request_denial,
@@ -480,18 +482,65 @@ async def app_permission_middleware(
             )
 
         resource = request.match_info.route.resource
-        reason = app_request_denial(
-            app_name,
-            request.path,
-            method=request.method,
-            route=resource.canonical if resource is not None else "",
-        )
+        route = resource.canonical if resource is not None else ""
+        reason = app_request_denial(app_name, request.path, method=request.method, route=route)
+        if not reason:
+            reason = await _conversation_denial(request, app_name, route)
         if reason:
             return _deny(reason)
     if app_name:
         with scoped_to_app(app_name):
             return await handler(request)  # type: ignore[operator]
     return await handler(request)  # type: ignore[operator]
+
+
+async def _conversation_denial(request: web.Request, app_name: str, route: str) -> str:
+    """Why an app's request names a conversation the app did not start, or ``""``.
+
+    The ``owns`` half of a ``ROUTE_AUTHZ`` row (``permissions.OwnedTarget``): every target the row
+    lists must name a conversation whose creating app is the caller
+    (``DashboardState.session_creating_app``). Decided here, before the handler, for the reason the
+    route table exists at all — the ownership check used to be copied into a dozen handlers, keyed
+    on an origin tag an app could share by its name, and missing from thirty more — and so that a
+    refused request loads nothing: the creator is read without rehydrating the conversation.
+
+    A body target reads the JSON body, which aiohttp keeps, so the handler reads the same bytes
+    after. A body that is not a JSON object names nothing, so an optional target passes and the
+    handler refuses the body itself.
+    """
+    from personalclaw.apps.permissions import ROUTE_AUTHZ, AppMay
+
+    authz = ROUTE_AUTHZ.get(f"{request.method.upper()} {route}") if route else None
+    if not isinstance(authz, AppMay) or not authz.owns:
+        return ""
+    body: dict = {}
+    if any(target.in_body for target in authz.owns):
+        try:
+            parsed = await request.json()
+        except Exception:  # noqa: BLE001 — unparseable names nothing; the handler refuses it
+            parsed = None
+        body = parsed if isinstance(parsed, dict) else {}
+    state = request.app.get("state")
+    for target in authz.owns:
+        named = body.get(target.field) if target.in_body else request.match_info.get(target.field)
+        if named is None or named == "":
+            if target.optional:
+                continue
+            return (
+                f"the request must name a conversation the app started in {target.field!r} — "
+                "without one it reaches every conversation you have"
+            )
+        if (
+            not isinstance(named, str)
+            or state is None
+            or state.session_creating_app(named) != app_name
+        ):
+            shown = named if isinstance(named, str) else f"a {type(named).__name__}"
+            return (
+                f"{shown!r} is not a conversation this app started — an app reaches only the "
+                "conversations it started"
+            )
+    return ""
 
 
 async def start_dashboard(

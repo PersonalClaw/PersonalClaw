@@ -38,40 +38,23 @@ def _redact(text: str) -> str:
     return text
 
 
-def _resolve_owned_session(request: web.Request):
-    """Return ``(state, name, session, err)`` with app-ownership checked.
+def _resolve_session(request: web.Request):
+    """Return ``(state, name, session, err)``: ``err`` is the 404 for an unknown session.
 
-    On success ``session`` is set and ``err`` is None; on failure ``session`` is
-    None and ``err`` is the error Response to return (404 unknown / 403 not owned).
+    An app reaches the side-chat routes only for a conversation it started — the permission
+    middleware holds them to that (``ROUTE_AUTHZ``'s ``owns``) before a handler runs.
     """
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
     session = state._sessions.get(name)
-    request_app = request.get("app", "")
     if not session:
         return state, name, None, web.json_response({"error": "not found"}, status=404)
-    if request_app:
-        if not session._app or session._app != request_app:
-            sel().log_api_access(
-                caller=request_app,
-                operation="chat.side",
-                outcome="denied",
-                source="app_isolation",
-                resources=f"session={name}",
-                error="app does not own this session",
-            )
-            return (
-                state,
-                name,
-                None,
-                web.json_response({"error": "app does not own this session"}, status=403),
-            )
     return state, name, session, None
 
 
 async def api_side_open(request: web.Request) -> web.Response:
     """POST /api/chat/sessions/{session}/side/open — open (or reset) the side buffer."""
-    state, name, session, err = _resolve_owned_session(request)
+    state, name, session, err = _resolve_session(request)
     if err is not None:
         return err
     session._side = SideState(open=True)
@@ -81,7 +64,7 @@ async def api_side_open(request: web.Request) -> web.Response:
 async def api_side_close(request: web.Request) -> web.Response:
     """POST /api/chat/sessions/{session}/side/close — drop the buffer + destroy
     the throwaway side session. Nothing is persisted."""
-    state, name, session, err = _resolve_owned_session(request)
+    state, name, session, err = _resolve_session(request)
     if err is not None:
         return err
     session._side = None
@@ -99,7 +82,7 @@ async def api_side_turn(request: web.Request) -> web.Response:
     immediately with a run_id; deltas stream over the ``chat.side_result`` WS
     event. Non-blocking: the parent session is untouched.
     """
-    state, name, session, err = _resolve_owned_session(request)
+    state, name, session, err = _resolve_session(request)
     if err is not None:
         return err
     try:

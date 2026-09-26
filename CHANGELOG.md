@@ -273,6 +273,39 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **An installed app can no longer post into your chats, rooms or runs, or steer them, and a
+  conversation of its own runs under its own grant.** With an ordinary `api` declaration an app
+  could:
+  1. change one of your chats. Nine of the 41 writes under `/api/chat/sessions/{session}` checked
+     who owned the conversation; the rest did not. So an app could rebind one of your chats to
+     another agent or runtime, change its model or working folder, regenerate or edit-and-resend
+     your turn, approve a plan in it, answer a pending tool approval in it, stop it or retitle
+     it. The nine compared the app's name with an origin tag, so an app installed as `loop` or
+     `slack` passed them for every loop worker (which approves its own tool calls) or every
+     Slack-linked chat;
+  2. claim one of your chats that had not been open since a restart by naming it
+     (`POST /api/chat/sessions {"name": …}`), then send into it, and read its last 200 messages
+     through `POST …/resume`;
+  3. set the task mode of every chat at once (`POST /api/chat/task-mode` with no `session`),
+     relaxing your ask and plan chats to full execution;
+  4. speak in a room as you, answer an agent's question in your inbox (which starts its next
+     turn), approve a proposal (its own included), write an inbox note in your name, post through
+     the schedules' delivery door (`/api/send-message`, which injects into a chat and speaks as
+     your agent in your channel DM), and open any file in your workspace, uploads or outbox with
+     its default app (`/api/reveal`).
+
+  An app token now gets `403` for each of these, with a Security Event Log row naming the app. A
+  conversation records the app whose token started it on its meta line, so a restart keeps it the
+  app's, and an app reaches only the conversations it started. A turn in one needs the app's
+  `agent` permission and runs under that grant, not under your YOLO, Trust, Trust-reads default or
+  an agent's "always allow". The operator ceiling still bounds it. An app answers no approval in a
+  chat, its own included: whether a tool call runs is yours to say. The menu-bar companion still
+  carries your answer from the menu bar through `/api/approvals`, which it declares, and that
+  relay never answers an approval the app's own conversation raised. An app reaches you through a
+  proposal, which the inbox labels with its name, and `/api/reveal` opens only a file in its own
+  data folder. Behaviour change: an app that chatted without the `agent` permission, or in a
+  conversation it did not start, is refused, and a conversation an app started before this change
+  is yours rather than the app's. No bundled or first-party app did any of it.
 - **An installed app can no longer rewrite your agents or install skills, and install consent says
   its code runs as you.** With an ordinary `api` declaration an app could:
   1. rewrite an agent you made through `/api/agents` (its system prompt, tools, skills and model),

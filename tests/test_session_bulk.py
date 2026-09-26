@@ -18,13 +18,13 @@ from personalclaw.dashboard import session_bulk as sb
 
 
 class _Session:
-    def __init__(self, *, app: str = "") -> None:
+    def __init__(self, *, created_by_app: str = "") -> None:
         self.lifecycle = "active"
         self.last_activity_at = 0.0
         self.never_archive = False
         self.tags: list[str] = []
         self.folder_id = ""
-        self._app = app
+        self.created_by_app = created_by_app
         self._dirty = False
 
 
@@ -49,6 +49,10 @@ class _State:
 
     def push_sessions_update(self) -> None:
         self.pushes += 1
+
+    def session_creating_app(self, name: str) -> str:
+        session = self._sessions.get(name)
+        return session.created_by_app if session is not None else ""
 
 
 @pytest.fixture(autouse=True)
@@ -197,14 +201,23 @@ async def test_never_archive_can_be_set_and_cleared():
 
 
 @pytest.mark.asyncio
-async def test_an_app_caller_cannot_touch_the_users_sessions():
+async def test_an_app_caller_cannot_touch_the_users_sessions(monkeypatch):
     """App Kit ownership isolation, mirroring the cleanup endpoint. Without it an
-    installed app could archive the user's conversations."""
-    st = _State({"mine": _Session(app=""), "theirs": _Session(app="some-app")})
+    installed app could archive the user's conversations. Decided on the conversation's
+    creator BEFORE it is resolved, so a key naming one of yours loads nothing."""
+    st = _State({"mine": _Session(), "theirs": _Session(created_by_app="some-app")})
+    resolved: list[str] = []
+
+    def _resolve(state, key):
+        resolved.append(key)
+        return state._sessions.get(key)
+
+    monkeypatch.setattr(sb, "resolve_session", _resolve)
     _, body = await _bulk(st, {"op": "archive", "keys": ["mine", "theirs"]}, app="some-app")
     assert body["changed"] == ["theirs"]
     assert body["missing"] == ["mine"]
     assert st._sessions["mine"].lifecycle == "active"
+    assert resolved == ["theirs"], "the owner's conversation was never loaded for the app"
 
 
 # ── persistence round trip (all three meta sites) ─────────────────────────────

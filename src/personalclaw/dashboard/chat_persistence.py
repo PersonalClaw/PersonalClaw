@@ -17,7 +17,7 @@ from personalclaw.dashboard.chat_utils import (
     persisted_history_key,
     resolve_history_key,
 )
-from personalclaw.dashboard.state import DashboardState, _ChatSession
+from personalclaw.dashboard.state import CREATED_BY_APP_META_KEY, DashboardState, _ChatSession
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.task_modes import VALID_TASK_MODES
 
@@ -205,6 +205,7 @@ _CREATE_TIME_META_KEYS = frozenset(
         "task_mode",
         "tab_id",
         "app",
+        CREATED_BY_APP_META_KEY,
     }
 )
 
@@ -925,6 +926,15 @@ def save_session_to_history(
         _app = getattr(session, "_app", "") or existing_meta.get("app", "")
         if _app:
             meta_line["app"] = _app
+        # The app that started the conversation, which decides what an app may reach and how the
+        # conversation's turns approve. Read back where every restore mints its session
+        # (`DashboardState.get_or_create_session`), so a restart keeps an app's conversation the
+        # app's, and never makes one of yours an app's.
+        _creator = getattr(session, "created_by_app", "") or existing_meta.get(
+            CREATED_BY_APP_META_KEY, ""
+        )
+        if _creator:
+            meta_line[CREATED_BY_APP_META_KEY] = _creator
         # A message-less session is only worth a file if something was written to it AFTER
         # it was created. Every key below is one the CREATE path itself populates, so a
         # meta line carrying nothing else describes a pristine empty tab — and minting a

@@ -488,9 +488,12 @@ class TestTheDedicatedPostureRoutesAreOwnerOnly:
 
 
 def _approve_app(state: Any, app_name: str) -> web.Application:
+    """The chat's approve route behind the REAL permission middleware, which is what refuses an
+    app there (``ROUTE_AUTHZ`` declares the route the owner's)."""
     from personalclaw.dashboard.chat_handlers import api_chat_session_approve
+    from personalclaw.dashboard.server import app_permission_middleware
 
-    app = web.Application(middlewares=[_identity(app_name)])
+    app = web.Application(middlewares=[_identity(app_name), app_permission_middleware])
     app["state"] = state
     app.router.add_post("/api/chat/sessions/{session}/approve", api_chat_session_approve)
     return app
@@ -515,23 +518,32 @@ class _PendingApprovalState:
         self.decisions.append((request_id, action))
 
 
-class TestAnAppAnswersAnApprovalOnlyOnce:
+class TestAnAppAnswersNoApprovalInAChat:
+    """A standing verb raises the approval posture, and even a one-off answer decides whether your
+    agent's tool call runs, so no verb on the chat's approve route is an app's. The menu-bar
+    companion relays your answer through ``/api/approvals`` instead, which it declares
+    (``test_apps_cannot_post_into_your_chats.py`` drives that relay)."""
+
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("verb", ["yolo", "trust", "trust_agent", "trust_reads"])
-    async def test_a_standing_grant_verb_is_refused(self, sel_rows, verb) -> None:
+    @pytest.mark.parametrize(
+        "verb", ["yolo", "trust", "trust_agent", "trust_reads", "approved", "rejected"]
+    )
+    async def test_no_verb_is_decided_for_an_app(self, tmp_path, verb) -> None:
+        from test_apps_cannot_run_code_or_bypass_approvals import _home, _install
+
         state = _PendingApprovalState()
-        async with TestClient(TestServer(_approve_app(state, APP))) as c:
-            resp = await c.post("/api/chat/sessions/s1/approve", json={"action": verb})
-            assert resp.status == 403
+        with _home(tmp_path):
+            _install(tmp_path, APP, {"api": ["/api/chat"]})
+            async with TestClient(TestServer(_approve_app(state, APP))) as c:
+                resp = await c.post("/api/chat/sessions/s1/approve", json={"action": verb})
+                assert resp.status == 403, await resp.text()
         assert state.decisions == [], "nothing may be decided, least of all a standing grant"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("verb", ["approved", "rejected"])
-    async def test_a_one_off_answer_still_works(self, verb) -> None:
-        # The menu-bar companion's whole job is answering approvals away from the dashboard;
-        # a one-off answer is the owner's decision relayed, not a change of posture.
+    async def test_your_answer_is_decided(self, verb) -> None:
         state = _PendingApprovalState()
-        async with TestClient(TestServer(_approve_app(state, APP))) as c:
+        async with TestClient(TestServer(_approve_app(state, ""))) as c:
             resp = await c.post("/api/chat/sessions/s1/approve", json={"action": verb})
             assert resp.status == 200
         assert state.decisions == [("req-1", verb)]

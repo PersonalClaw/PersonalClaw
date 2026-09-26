@@ -164,6 +164,11 @@ SUBAGENT_COMPLETION_PREFIX = "[Subagent completion event]"
 # `prompt_preview` rather than showing a raw tag.
 _OPTIONS_RE = re.compile(r"\[OPTIONS:\s*([^\]]+)\]")
 
+#: The meta-line key a conversation's creating app is persisted under
+#: (``_ChatSession.created_by_app``). Written by ``chat_persistence.save_session_to_history`` and
+#: read back by :meth:`DashboardState.session_creating_app` and the session-creation chokepoint.
+CREATED_BY_APP_META_KEY = "created_by_app"
+
 
 def _redact(text: str) -> str:
     """Sanitise LLM output before surfacing to dashboard."""
@@ -248,6 +253,7 @@ class _ChatSession:
         "_ephemeral",
         "_pending_context",
         "_app",
+        "created_by_app",
         "_last_turn_errored",
         "_followups_task",
         "_pending_variants",
@@ -429,7 +435,15 @@ class _ChatSession:
         self.memory_mode: str = memory_mode
         self._ephemeral: bool = ephemeral  # Incognito mode: no memory writes
         self._pending_context: list[dict[str, Any]] = []
-        self._app: str = ""  # owning app identity (empty = dashboard user)
+        # Where the conversation came from, for display and routing: a hidden worker's tag
+        # ("loop", "loops"), the channel it arrived on ("slack"), or an app's name. It is NOT who
+        # owns it — those tags are ordinary strings an installed app can also be named.
+        self._app: str = ""
+        # The app whose token started this conversation, or "" for yours. Set only from a
+        # VERIFIED app identity (`get_or_create_session(created_by_app=…)`), persisted on the meta
+        # line and restored with the session, and the one thing an app's reach into a conversation
+        # is decided on (`DashboardState.session_creating_app`).
+        self.created_by_app: str = ""
         self._last_turn_errored: bool = False  # set by run_chat on a crashed turn
         # Follow-up chips (CHAT-CRAFT S3): the fire-and-forget background task that
         # suggests next messages after a completed turn; cancelled by the next dispatch.
@@ -1900,8 +1914,17 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         ephemeral: bool | None = None,
         app: str = "",
         project_id: str = "",
+        created_by_app: str = "",
     ) -> _ChatSession:
-        """Return existing session or create a new one."""
+        """Return existing session or create a new one.
+
+        ``app`` is the origin tag (a hidden worker's, a channel's). ``created_by_app`` is the
+        VERIFIED identity of the app whose request starts the conversation, which only a route
+        handler holding an app token passes. A name already persisted keeps the creator its meta
+        line records, whatever the caller passed: every restore path mints its session here, so
+        this is the one place a restore could hand an app's conversation back as yours, or one of
+        yours to an app, and it does neither.
+        """
         if name and name in self._sessions:
             existing = self._sessions[name]
             if memory_mode is not None and memory_mode != existing.memory_mode:
@@ -1926,7 +1949,13 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         )
         session._tab_id = uuid.uuid4().hex[:12]
         session._on_message = self._broadcast_chat_message
-        session._app = app
+        persisted_creator = self._persisted_creating_app(name)
+        session.created_by_app = (
+            persisted_creator if persisted_creator is not None else created_by_app
+        )
+        # An app's conversation is tagged with the app too, which is what keeps it out of your chat
+        # list — after a restart as well as before.
+        session._app = app or session.created_by_app
         if memory_mode and memory_mode != "persistent":
             self._restricted_keys.add(f"dashboard:{name}")
         if ephemeral:
@@ -1979,6 +2008,39 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             return bool(resolve_history_key(self.conversation_log, name))
         except Exception:
             return False
+
+    def session_creating_app(self, name: str) -> str:
+        """The app whose token started the conversation *name*, or ``""``.
+
+        ``""`` answers for a conversation of yours, for one that does not exist, and for one whose
+        record cannot be read — every case in which an app must be refused, which is the point:
+        the permission middleware lets an app reach a conversation only when this names that app,
+        so there is no answer in which an unknown becomes the app's. A resident session answers
+        from memory, and one only on disk from its meta line, read without rehydrating it, so a
+        refused request loads nothing.
+        """
+        session = self._sessions.get(name)
+        if session is not None:
+            return session.created_by_app
+        return self._persisted_creating_app(name) or ""
+
+    def _persisted_creating_app(self, name: str) -> str | None:
+        """The creating app the meta line persisted under *name* records (``""`` for yours), or
+        ``None`` when nothing is persisted under it or its record cannot be read."""
+        log = self.conversation_log
+        if log is None:
+            return None
+        try:
+            from personalclaw.dashboard.chat_utils import resolve_history_key
+
+            key = resolve_history_key(log, name)
+            if not key:
+                return None
+            creator = (log.get_metadata(key) or {}).get(CREATED_BY_APP_META_KEY, "")
+        except Exception:  # noqa: BLE001 — an unreadable record answers "unknown", never an app
+            self._log.warning("creating-app lookup failed for %s", name, exc_info=True)
+            return None
+        return creator if isinstance(creator, str) else ""
 
     def _broadcast_chat_message(self, session_name: str, msg: dict) -> None:
         """Push a chat message to all SSE clients via the global stream."""

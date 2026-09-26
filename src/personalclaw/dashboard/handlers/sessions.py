@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 from aiohttp import web
 
+from personalclaw.dashboard.approval_state import APP_OWN_APPROVAL_REFUSAL
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.history import SEARCH_MIN_CHARS
 from personalclaw.http_errors import json_error
@@ -363,6 +364,23 @@ async def api_approval_resolve(request: web.Request) -> web.Response:
     action = request.match_info["action"]
     if action not in ("approve", "reject"):
         return web.json_response({"error": "invalid action"}, status=400)
+    # The relay a companion runs (it declares `/api/approvals`) carries YOUR decision, so it never
+    # answers an approval the app's own conversation raised. The chat's own approve route is the
+    # owner's outright (`apps/permissions.ROUTE_AUTHZ`).
+    app_name = request.get("app", "")
+    if app_name and state.approval_conversation_app(approval_id) == app_name:
+        try:
+            _sel().log_api_access(
+                caller=f"app:{app_name}",
+                operation="approval_resolve",
+                outcome="denied",
+                source="app_permissions",
+                resources=f"{approval_id}:{action}",
+                error=APP_OWN_APPROVAL_REFUSAL,
+            )
+        except Exception:
+            logger.warning("SEL audit failed for a refused app approval", exc_info=True)
+        return json_error("approval_owner_only", message=APP_OWN_APPROVAL_REFUSAL, status=403)
     # Asked here as well as inside `resolve_approval` only to NAME the refusal: the decision path
     # refuses on its own for every door, and this door is the one that can tell the user why.
     ended = state.refuse_ended_owner(approval_id)
