@@ -13,7 +13,7 @@ from personalclaw.request_validation import require_string
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
 if TYPE_CHECKING:
-    from personalclaw.tool_providers.base import ToolDefinition, ToolProvider
+    from personalclaw.tool_providers.base import ToolProvider
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +249,17 @@ async def api_tools_list(request: web.Request) -> web.Response:
         logger.warning("Failed to list tools from registry", exc_info=True)
         record_failure("tool-registry", str(exc))
 
+    # A tool provider an app registered that serves nothing says why, where its tools would have
+    # been: refused because a name it offers belongs to another provider, or its enable failed.
+    try:
+        from personalclaw.providers.registry import get_provider_registry
+
+        for ext in get_provider_registry().list_by_type("tool"):
+            if ext.error:
+                record_failure(ext.name, ext.error)
+    except Exception:  # noqa: BLE001 — the catalog still lists what does serve
+        logger.warning("Failed to read the tool providers' status", exc_info=True)
+
     # Dict-defined external MCP tools declare no risk_level, so infer a declared risk
     # from the tool name for the Tools-page indicator — matching what the MCP adapter
     # feeds the approval gate. Read tools stay safe.
@@ -357,44 +368,23 @@ def _platform_provider_for_invoke() -> "tuple[ToolProvider | None, str]":
         return None, f"The filesystem and shell tools could not be prepared: {exc}"
 
 
-async def _resolve_tool(
-    surface: "list[ToolProvider]", tool_name: str, prefer: str
-) -> "tuple[ToolProvider, ToolDefinition] | None":
-    """The provider on *surface* that serves *tool_name*, with that tool's definition, or None.
-
-    A provider serves a tool when its ``list_tools()`` advertises the name, which is how an agent
-    turn finds one too. Among several, the one named *prefer* is tried first (the provider the
-    Tools page showed the tool under), then the rest in surface order, platform first. A named
-    provider that serves no such tool is passed over, never handed the call. One that fails to
-    list serves nothing this call, and the next is asked.
-    """
-    for provider in sorted(surface, key=lambda p: p.name != prefer):
-        try:
-            tools = await provider.list_tools()
-        except Exception:  # noqa: BLE001 — a broken provider must not turn into a 500 here
-            logger.debug("tool provider %r failed to list its tools", provider.name, exc_info=True)
-            continue
-        tool = next((t for t in tools if t.name == tool_name), None)
-        if tool is not None:
-            return provider, tool
-    return None
-
-
 async def api_tool_invoke(request: web.Request) -> web.Response:
     """POST /api/tools/invoke — execute one tool through the Tool entity.
 
     Internal-only (loopback + X-Internal-Secret): used by zero-token cron
     scripts so a sandboxed subprocess gets the same MCP+native tool surface
     the agent has, without importing the in-process registry. Body:
-    ``{"tool": str, "arguments": dict, "provider"?: str, "confirm_risk"?: str}``.
+    ``{"tool": str, "arguments": dict, "confirm_risk"?: str}``.
     Returns ``{ok, output, error}``.
 
     "The same surface the agent has" is literal: the tool is resolved by name
-    (``_resolve_tool``) over ``tool_providers.registry.tool_surface``, the list
-    ``provider_bridge`` builds an agent's tools from. ``provider`` only says which provider
-    serving that name to try first. So an external MCP server's tool runs through the provider
-    that puts it on an agent's surface, and is out of reach when an agent could not reach it
-    either. The surface starts with the nine filesystem/shell tools — see
+    (``tool_providers.registry.resolve``) over ``tool_providers.registry.tool_surface``, the list
+    ``provider_bridge`` builds an agent's tools from, to the one provider an agent's index maps the
+    name to. A name has one provider, so there is nothing for a caller to choose: a ``provider``
+    in the body is not read. It used to be tried first, which let a request hand ``bash`` to any
+    registered provider that also advertised it. So an external MCP server's tool runs through the
+    provider that puts it on an agent's surface, and is out of reach when an agent could not reach
+    it either. The surface starts with the nine filesystem/shell tools — see
     ``_platform_provider_for_invoke`` for why that provider is not registered and what #3310
     measured when this route skipped it.
 
@@ -414,7 +404,7 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     itself for why the scope stops exactly there.
     """
     from personalclaw.agents.native.builtin_tools import PLATFORM_TOOL_NAMES
-    from personalclaw.tool_providers.registry import tool_surface
+    from personalclaw.tool_providers.registry import resolve, tool_surface
 
     try:
         body = await request.json()
@@ -458,22 +448,17 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
                 status=403,
             )
 
-    provider_raw = body.get("provider")
-    if provider_raw is not None and not isinstance(provider_raw, str):
-        return web.json_response({"ok": False, "error": "provider must be a string"}, status=400)
-
     # The cwd-coupled platform provider, built for this call — see
     # `_platform_provider_for_invoke` for why it is not in the registry and why this route
     # has to prepend it (#3310). A cheap constructor (no I/O beyond resolving the workspace root).
     platform, platform_refusal = _platform_provider_for_invoke()
 
     # The tool, resolved the way an agent turn resolves it: by NAME, over the agent's own
-    # surface. The named `provider` only says which of the providers serving that name to try
-    # first; it is never a key of its own. It was, and "Try it" failed for every external MCP
-    # tool: the Tools page labels one with its SERVER, which no registry holds, so this answered
-    # `404 unknown tool provider: <server>` while an agent called the same tool through the `mcp`
-    # provider that serves it. It could also hand a call to a provider that serves no such tool.
-    resolved = await _resolve_tool(tool_surface(platform), tool_name, provider_raw or "")
+    # surface, to the one provider serving it. A `provider` in the body is not read. It was a key
+    # once, and "Try it" failed for every external MCP tool (the Tools page labels one with its
+    # SERVER, which no registry holds); then a preference tried first, which handed `bash` to any
+    # registered provider that also advertised it.
+    resolved = await resolve(tool_surface(platform), tool_name)
     if resolved is None:
         # A tool the platform bundle owns is missing because the workspace is: say so.
         if platform_refusal and tool_name in PLATFORM_TOOL_NAMES:

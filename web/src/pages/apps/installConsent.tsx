@@ -928,6 +928,13 @@ function announce(r: AppInstallResult, target: InstallTarget, label: string) {
       hrefLabel: 'Show in Library',
     },
   }))
+  // Installed and on, with a provider of it refused: a tool it offers has a name another provider
+  // holds. Said here, where the install is confirmed, and kept on its card in Settings → Providers.
+  for (const why of r.providerErrors ?? []) {
+    window.dispatchEvent(new CustomEvent('ne:toast', {
+      detail: { level: 'error', message: why, href: '#/settings/providers', hrefLabel: 'Open Providers' },
+    }))
+  }
 }
 
 function announceFailure(r: AppInstallResult, target: InstallTarget, label: string) {

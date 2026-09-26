@@ -68,16 +68,19 @@ def _rebuild_agent_config_safe() -> None:
         logger.warning("rebuild_agent_config failed after instance change", exc_info=True)
 
 
-def _refresh_multi_instance_provider_safe(name: str) -> None:
+async def _refresh_multi_instance_provider_safe(name: str) -> None:
     """Re-register a generic multiInstance TOOL provider after its instance set changed,
     so newly-added/edited/removed instances become live providers without a restart.
     mcp-tools has its own path (live mcp.json registry); this covers the other
     multiInstance tool apps (e.g. openai-tools), whose type handler rebuilds one provider
     per enabled instance. disable→enable re-runs create() against the current on-disk
-    instance set (disk = source of truth). Then the agent config is rebuilt. Best-effort;
-    never raises."""
+    instance set (disk = source of truth). The rebuilt providers' tool names are read before
+    this returns, so an instance refused for a name another provider holds says so on the card
+    the change answers to (``tool_providers.registry``). Then the agent config is rebuilt.
+    Best-effort; never raises."""
     try:
         from personalclaw.providers.registry import get_provider_registry
+        from personalclaw.providers.routes import admit_tool_names
 
         registry = get_provider_registry()
         ext = registry.get(name)
@@ -86,6 +89,7 @@ def _refresh_multi_instance_provider_safe(name: str) -> None:
         if ext.enabled:
             registry.disable(name)
         registry.enable(name)
+        await admit_tool_names()
         _rebuild_agent_config_safe()
     except Exception:
         logger.warning(
@@ -239,7 +243,7 @@ async def handle_create_instance(request: web.Request) -> web.Response:
         return _secret_owned_elsewhere(exc)
     except ValueError as exc:  # a value no credential can hold (a NUL character)
         return _unstorable_secret(exc)
-    _refresh_multi_instance_provider_safe(name)
+    await _refresh_multi_instance_provider_safe(name)
     return web.json_response({"instance": mask_instance(inst, schema)}, status=201)
 
 
@@ -365,7 +369,7 @@ async def handle_update_instance(request: web.Request) -> web.Response:
         return _unstorable_secret(exc)
     if not inst:
         return json_error("not_found", message="No instance exists with that id.", status=404)
-    _refresh_multi_instance_provider_safe(name)
+    await _refresh_multi_instance_provider_safe(name)
     return web.json_response({"instance": mask_instance(inst, schema)})
 
 
@@ -387,7 +391,7 @@ async def handle_delete_instance(request: web.Request) -> web.Response:
     deleted = delete_instance(name, instance_id)
     if not deleted:
         return json_error("not_found", message="No instance exists with that id.", status=404)
-    _refresh_multi_instance_provider_safe(name)
+    await _refresh_multi_instance_provider_safe(name)
     return web.json_response({"ok": True})
 
 

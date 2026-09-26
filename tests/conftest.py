@@ -840,6 +840,28 @@ def _restore_workflow_def_registry() -> object:
 
 
 @pytest.fixture(autouse=True)
+def _restore_tool_provider_registry() -> object:
+    """Snapshot + restore the process-global TOOL-provider registry around every test.
+
+    `tool_providers.registry` holds who serves each tool name as well as which providers are
+    registered: a registered provider CLAIMS its names, and a later one offering a claimed name is
+    refused. So a provider a test leaves registered (the gateway's start-up path registers every
+    bundled one and never unregisters them, by design) would not just linger in the next test's
+    surface, it would hold that test's names and refuse the provider under test. Whole dicts,
+    snapshotted and restored, for the reason the fixture below records.
+    """
+    from personalclaw.tool_providers import registry as _tool_registry
+
+    names = ("_providers", "_provider_app", "_registrations", "_claims")
+    before = {name: dict(getattr(_tool_registry, name)) for name in names}
+    yield
+    for name, saved in before.items():
+        live = getattr(_tool_registry, name)
+        live.clear()
+        live.update(saved)
+
+
+@pytest.fixture(autouse=True)
 def _restore_knowledge_provider_registry() -> object:
     """Snapshot + restore the process-global KNOWLEDGE-SOURCE provider registry around every test.
 

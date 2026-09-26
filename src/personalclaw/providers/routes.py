@@ -268,6 +268,9 @@ async def apply_saved_settings(name: str) -> None:
         registry.rebuild(name)
     elif ext is not None and ext.error and not app_lifecycle_denial(name):
         registry.enable(name)
+    # A rebuilt tool provider offers what its new settings make it offer (a different endpoint
+    # answers a different tool list), so its names are read again before this answers.
+    await admit_tool_names()
     # For a channel, either one changed the transport registry: its receivers are reconciled
     # before this returns, so the response the caller renders already reflects them.
     await settled()
@@ -313,10 +316,35 @@ async def handle_enable(request: web.Request) -> web.Response:
         return web.json_response({"error": f"Extension {name!r} not found"}, status=404)
 
     success = registry.enable(name)
+    if success:
+        # The names its tool providers offer are read now, so one refused for a name another
+        # provider holds fails this enable with the reason, instead of reading "on" until an
+        # agent turn first lists it.
+        await admit_tool_names()
+        success = all(rec.enabled for rec in ext.chain())
     if not success:
-        return web.json_response({"error": f"Failed to enable: {ext.error}"}, status=500)
+        # The records' own sentences: the Settings switch that sent this reports them under
+        # "Couldn't turn … on", so a prefix here would say it twice. 409, not 500: a refused name,
+        # a module that fails to import or a setting naming another owner's key fails the same way
+        # until something changes, so it is the provider's state refusing, not the server failing.
+        errors = " ".join(rec.error for rec in ext.chain() if rec.error)
+        return web.json_response({"error": errors or "It could not be enabled."}, status=409)
 
     return web.json_response({"name": name, "enabled": True})
+
+
+async def admit_tool_names() -> None:
+    """Read the tool names of every tool provider registered since the last read, so a refusal
+    (``tool_providers.registry``: a name has one provider) is on the app's status when the change
+    that registered it answers. Waits a few seconds at most: a provider whose list takes longer (a
+    remote tool server, the MCP servers) is checked when its list arrives."""
+    from personalclaw.tool_providers.registry import admit
+
+    await admit(wait=_ADMISSION_WAIT_SECS)
+
+
+#: How long a registering change waits for the new providers' tool lists before it answers.
+_ADMISSION_WAIT_SECS = 5.0
 
 
 async def handle_disable(request: web.Request) -> web.Response:

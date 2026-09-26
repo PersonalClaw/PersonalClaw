@@ -1786,6 +1786,13 @@ async def start_dashboard(
     from personalclaw.providers.routes import register_routes as register_extension_routes
 
     load_all_extensions()
+    # Every tool provider just registered has its tool names read once, in the background: the
+    # one-name-one-provider rule (`tool_providers.registry`) refuses one offering a name another
+    # provider holds, and that refusal belongs on its status from start-up, not from whenever
+    # an agent turn first lists it. Not awaited: reading the MCP servers' lists connects to them.
+    from personalclaw.tool_providers.registry import admit as _admit_tool_names
+
+    await _admit_tool_names(wait=0)
     # Move any secret an earlier release left inline in a settings file (a provider key or the
     # webhook token in config.json, an app's tokens in its data/config.json, an instance's key,
     # an MCP server's env and headers in mcp.json and the agent config) into the

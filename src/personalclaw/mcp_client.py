@@ -681,10 +681,17 @@ def _personalclaw_mcp_specs() -> dict[str, dict[str, Any]]:
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning("Failed to read %s: %s", path, exc)
         return {}
+    from personalclaw.mcp_discovery import server_name_problem
+
     servers = data.get("mcpServers", {}) if isinstance(data, dict) else {}
     specs: dict[str, dict[str, Any]] = {}
     for name, spec in servers.items() if isinstance(servers, dict) else ():
         if not isinstance(spec, dict):
+            continue
+        problem = server_name_problem(str(name))
+        if problem is not None:
+            # Its tools would be named as another server's (the probe reports it as its error).
+            logger.warning("MCP server %r not started: %s", name, problem)
             continue
         try:
             specs[name] = resolve_mcp_spec(name, spec)

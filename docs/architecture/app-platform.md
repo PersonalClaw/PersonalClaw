@@ -474,6 +474,27 @@ seam before a model request carries it: a schema outside the portable profile is
 left out, with one log line naming the app and the tool — see
 [tool-schema-wire.md](tool-schema-wire.md).
 
+**A tool name has one provider** (`tool_providers/registry.py`). An agent's call goes to the
+provider its name maps to, under the approval card that tool asks with, so no provider may take
+a name another holds:
+
+1. the platform's names (`bash`, `read_file`, … `PLATFORM_TOOL_NAMES`) and its provider name
+   `personalclaw-filesystem` are its own;
+2. a name under `mcp/` is the MCP Tool Servers app's (`mcp/<server>/<tool>`), and a server's
+   name cannot contain `/`, which would make its tools' names another server's
+   (`mcp_discovery.server_name_problem`: import refuses one, and one already in `mcp.json` is not
+   started);
+3. a provider core ships (its own factories, `app-routes`, a `builtin`-tier app, by the tier core
+   recorded, never the manifest's own `native` flag) outranks an installed app's;
+4. otherwise the provider that claimed the name first keeps it. A provider claims its names when
+   the registry reads its tool list: at enable, and on every read after, since a list is live.
+
+A registration that breaks the rule is refused whole: the provider leaves the surface and serves
+nothing, its Settings → Providers card is off with the sentence under it, the change that
+registered it answers with that sentence, and the security log has an `outcome=refused` row. A
+provider name is checked the same way, when it registers. Pick tool names prefixed with your
+app's own (`notes_search`, not `search`).
+
 **Availability is measured out of process.** A provider module may export
 `availability() -> (bool, str)` — "can this provider run on this machine?". The gateway never
 calls it: `providers/availability.py` runs every hook in a child process

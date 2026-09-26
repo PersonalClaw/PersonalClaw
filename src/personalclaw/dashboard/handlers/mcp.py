@@ -1579,6 +1579,21 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
                     resources=name[:64],
                 )
                 continue
+            # Import is the one way in that took a '/' in a server's name, which would make its
+            # tools' names another server's (`mcp_discovery.server_name_problem`).
+            from personalclaw.mcp_discovery import server_name_problem
+
+            problem = server_name_problem(name)
+            if problem is not None:
+                results.append({"error": problem, "name": name})
+                sel().log_api_access(
+                    caller="dashboard",
+                    operation="mcp_apply_rejected_name",
+                    outcome="denied",
+                    resources=name[:64],
+                    error=problem,
+                )
+                continue
 
             if "uninstall" in change:
                 # Removed with the rest of the four delete paths. Refused rather than ignored:
