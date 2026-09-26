@@ -45,10 +45,16 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
     } finally { setMeasuring(false) }
   }
 
+  // Reported, and re-read either way. A refused enable (one of its tools has a name another
+  // provider holds) used to reject unhandled: the switch sprang back and nothing said why. The
+  // server's sentence is the toast, and the re-read puts the same sentence under the card.
   const toggle = async () => {
     setBusy(true)
-    try { ext.enabled ? await api.disableProvider(ext.name) : await api.enableProvider(ext.name); onChanged() }
-    finally { setBusy(false) }
+    try {
+      await reportingWrite(`turn ${who} ${ext.enabled ? 'off' : 'on'}`, () =>
+        ext.enabled ? api.disableProvider(ext.name) : api.enableProvider(ext.name))
+      onChanged()
+    } finally { setBusy(false) }
   }
 
   return (

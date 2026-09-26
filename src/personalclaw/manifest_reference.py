@@ -473,14 +473,13 @@ def _render_providers(providers: dict[str, Any]) -> str:
     if not registered:
         lines.append("_(none registered in this build)_")
     else:
+        # No enabled/error state: that belongs to a running install (``GET /api/manifest``
+        # carries it), and this build-time reference enables nothing.
         for p in registered:
-            state = "enabled" if p.get("enabled") else "disabled"
-            if p.get("error"):
-                state += f", error: {p['error']}"
             caps = ", ".join(p.get("capabilities", [])) or "—"
             lines.append(
-                f"- **{p['app']}** — type `{p['type']}` / `{p['provider_type']}` "
-                f"({state}); capabilities: {caps}"
+                f"- **{p['app']}** — type `{p['type']}` / `{p['provider_type']}`; "
+                f"capabilities: {caps}"
             )
     return "\n".join(lines).rstrip() + "\n"
 
@@ -557,30 +556,59 @@ def _render_index(manifest: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _register_bundled_offline() -> None:
+    """Register every bundled manifest, and build ONLY the tool providers — from no home.
+
+    Registering is all the providers section reads. ENABLING is what builds a provider, and
+    building one reads the app's stored settings from a home; the skills provider then copied
+    the bundled skills into that home and the memory provider created ``memory.db`` there. A
+    generator of checked-in markdown has no home to touch, so nothing is enabled: the tools
+    section needs only the tool providers' tool lists, and each tool provider is built from
+    what a fresh install stores for it — no settings, ``{}``. A multi-instance tool app has no
+    instances on a fresh install, so it builds nothing, exactly as its type handler would.
+    """
+    from personalclaw.apps.manifest import AppManifest
+    from personalclaw.providers import registry as prov_reg
+    from personalclaw.providers.loader import BUNDLED_DIR, load_factory
+    from personalclaw.tool_providers import registry as tool_reg
+
+    reg = prov_reg.get_provider_registry()
+    for d in sorted(BUNDLED_DIR.iterdir()):
+        mf = d / "app.json"
+        if not mf.exists():
+            continue
+        manifest = AppManifest.from_json_file(mf)
+        if not manifest.provider:
+            continue
+        reg.register(manifest)
+        for cfg in manifest.all_providers():
+            if cfg.type != "tool" or cfg.multiInstance:
+                continue
+            ext = prov_reg.RegisteredProvider(
+                name=manifest.name, manifest=manifest, provider_config=cfg
+            )
+            built = load_factory(ext)({})
+            for provider in built if isinstance(built, list) else [built]:
+                if provider is not None:
+                    tool_reg.register_provider(provider, app=manifest.name)
+
+
 def render_reference() -> dict[str, str]:
     """Render the full offline reference as ``{filename: markdown}``.
 
     Deterministic (sorted, no timestamps) so the checked-in copy byte-compares
     against a fresh render in CI. Tools + providers come from the offline registry
-    (native manifests registered straight from ``BUNDLED_DIR``, the drift-test
-    seam); routes from the static AST walk. No running gateway.
+    (native manifests registered straight from ``BUNDLED_DIR``); routes from the
+    static AST walk. No running gateway, and no home — see
+    :func:`_register_bundled_offline`.
     """
-    from personalclaw.apps.manifest import AppManifest
     from personalclaw.providers import registry as prov_reg
-    from personalclaw.providers.loader import BUNDLED_DIR
     from personalclaw.tool_providers import registry as tool_reg
 
     tool_reg._providers.clear()
     prov_reg._registry = None
     try:
-        reg = prov_reg.get_provider_registry()
-        for d in sorted(BUNDLED_DIR.iterdir()):
-            mf = d / "app.json"
-            if not mf.exists():
-                continue
-            manifest = AppManifest.from_json_file(mf)
-            if manifest.provider:
-                reg.register(manifest, enabled=True)
+        _register_bundled_offline()
         doc = asyncio.run(build_manifest(app=None))
     finally:
         tool_reg._providers.clear()

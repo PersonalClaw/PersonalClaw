@@ -433,7 +433,7 @@ class TestSingleton:
 
     def test_sel_accessor(self, sel_dir):
         """The module-level sel() function returns the singleton."""
-        with patch("personalclaw.sel._default_dir", return_value=sel_dir):
+        with patch("personalclaw.config.loader.config_dir", return_value=sel_dir):
             instance = sel()
             assert isinstance(instance, SecurityEventLog)
 

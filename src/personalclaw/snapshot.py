@@ -369,7 +369,7 @@ COMPONENT_HELP = {
 def _pc_dir() -> Path:
     from .config.loader import config_dir
 
-    return Path(os.environ.get("PERSONALCLAW_HOME", config_dir()))
+    return config_dir()
 
 
 def _fsize(p: Path) -> int:

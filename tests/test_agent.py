@@ -53,7 +53,7 @@ def _run_install(tmp_path: Path, cfg_dir: Path, managed_mcps: dict | None = None
             agents_dir=lambda: agents_dir,
             _BUNDLED_CFG_DIR=cfg_dir,
             _PERSONALCLAW_BIN="/usr/bin/personalclaw",
-            _USER_DIR=tmp_path / "personalclaw_home",
+            _user_dir=lambda: tmp_path / "personalclaw_home",
             _MANAGED_MCP_SERVERS=(
                 managed_mcps if managed_mcps is not None else _DEFAULT_MANAGED_MCPS
             ),
@@ -1933,8 +1933,8 @@ class TestDefaultDialectHooksAutoimport:
         # ~/.personalclaw/hooks.  Place an executable script directly at HOME root
         # to prove that home-root scanning would pick it up.
         monkeypatch.setattr(
-            "personalclaw.agent._DEFAULT_HOOKS_DIR",
-            tmp_path / ".personalclaw" / "hooks",
+            "personalclaw.agent._default_hooks_dir",
+            lambda: tmp_path / ".personalclaw" / "hooks",
         )
         evil = tmp_path / "evil.sh"
         evil.write_text("#!/bin/sh\nexit 0\n")
@@ -1984,8 +1984,8 @@ class TestDefaultDialectHooksAutoimport:
         # Also re-route the default hooks dir into the fake HOME so fallback
         # does not hit the caller's real ~/.personalclaw/hooks directory.
         monkeypatch.setattr(
-            "personalclaw.agent._DEFAULT_HOOKS_DIR",
-            fake_home / ".personalclaw" / "hooks",
+            "personalclaw.agent._default_hooks_dir",
+            lambda: fake_home / ".personalclaw" / "hooks",
         )
 
         # This dir is genuinely outside fake_home, since tmp_path itself is
@@ -2205,8 +2205,8 @@ class TestDefaultDialectHooksAutoimport:
 
         # Re-route the default so fallback doesn't touch caller's HOME.
         monkeypatch.setattr(
-            "personalclaw.agent._DEFAULT_HOOKS_DIR",
-            tmp_path / "nonexistent" / "hooks",
+            "personalclaw.agent._default_hooks_dir",
+            lambda: tmp_path / "nonexistent" / "hooks",
         )
 
         config: dict = {"hooks": {}}
@@ -2286,8 +2286,8 @@ class TestDefaultDialectHooksAutoimport:
 
         # Re-route default so fallback is empty (hooks dir doesn't exist).
         monkeypatch.setattr(
-            "personalclaw.agent._DEFAULT_HOOKS_DIR",
-            tmp_path / "nonexistent" / "hooks",
+            "personalclaw.agent._default_hooks_dir",
+            lambda: tmp_path / "nonexistent" / "hooks",
         )
 
         sel_calls: list[tuple[str, str, str]] = []
@@ -2345,8 +2345,8 @@ class TestDefaultDialectHooksAutoimport:
         monkeypatch.setattr(Path, "home", classmethod(lambda cls: symlink_home))
         # Re-route default so fallback doesn't touch caller's real HOME.
         monkeypatch.setattr(
-            "personalclaw.agent._DEFAULT_HOOKS_DIR",
-            symlink_home / ".personalclaw" / "hooks",
+            "personalclaw.agent._default_hooks_dir",
+            lambda: symlink_home / ".personalclaw" / "hooks",
         )
 
         # Plant an executable at the canonical HOME root to prove it
@@ -2505,8 +2505,8 @@ class TestDefaultDialectHooksAutoimport:
 
         # Re-route default so fallback is inert.
         monkeypatch.setattr(
-            "personalclaw.agent._DEFAULT_HOOKS_DIR",
-            tmp_path / "nonexistent" / "hooks",
+            "personalclaw.agent._default_hooks_dir",
+            lambda: tmp_path / "nonexistent" / "hooks",
         )
 
         # Force Path.resolve to raise OSError.  Narrow the patch so only

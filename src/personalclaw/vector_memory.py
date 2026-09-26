@@ -97,18 +97,6 @@ def recall_store(db_path: Path) -> "VectorMemoryStore | None":
     return _RECALL_STORES.get(_db_key(db_path))
 
 
-def _path_home_pclaw():
-    """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
-    try:
-        from personalclaw.config.loader import config_dir as _cd
-
-        return _cd()
-    except Exception:
-        from pathlib import Path as _P
-
-        return _P.home() / ".personalclaw"
-
-
 # ── Constants ──
 
 _DB_FILE = "memory.db"
@@ -3387,11 +3375,11 @@ class VectorMemoryStore(MemoryProvider):
 
     def migrate_from_markdown(self) -> dict[str, int]:
         """Migrate legacy markdown memory files and lessons.jsonl into vector memory."""
-        base = _path_home_pclaw() / "workspace" / "memory"
+        base = config_loader.config_dir() / "workspace" / "memory"
         counts = {"semantic": 0, "episodic": 0, "skipped": 0}
 
         # ── Lessons ──
-        lessons_path = _path_home_pclaw() / "lessons.jsonl"
+        lessons_path = config_loader.config_dir() / "lessons.jsonl"
         if lessons_path.is_file():
             for line in lessons_path.read_text(encoding="utf-8").splitlines():
                 line = line.strip()

@@ -431,23 +431,50 @@ async def run_over_use_case_chain(
 
     An exhausted chain raises ONE ``RuntimeError`` naming the axis, the chain length and
     the last error — one clear error, not N stack traces.
+
+    An entry that serves after the head failed serves IN ITS PLACE, and the provider carries
+    that (``provider_bridge.stamp_substitution``), so the call the guard records says "ran on
+    <entry> instead of <head>". The fallback is the user's own configuration and it still
+    serves; what changed is that a step and Introspect no longer name the entry that answered
+    as if it were the one asked for.
     """
-    from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
+    from personalclaw.llm.base import ModelSubstitution
+    from personalclaw.providers.provider_bridge import (
+        resolve_provider_for_use_case,
+        stamp_substitution,
+        substitution_reason,
+    )
 
     last_exc: Exception | None = None
+    head_failure: tuple[str, str] | None = None  # (why, fix) of the head that did not serve
     for i, ref in enumerate(chain):
         try:
             kw = await entry_kwargs(ref) if entry_kwargs is not None else {}
             provider = resolve_provider_for_use_case(use_case, model_override=ref, **kw)
         except Exception as exc:  # noqa: BLE001 — an unbuildable entry advances
             last_exc = exc
+            if i == 0:
+                head_failure = substitution_reason(exc)
             continue
+        if i > 0 and head_failure is not None:
+            why, fix = head_failure
+            stamp_substitution(
+                provider,
+                ModelSubstitution(
+                    requested=chain[0],
+                    served=str(getattr(provider, "served_ref", "") or ref),
+                    why=why,
+                    fix=fix,
+                ),
+            )
         try:
             return await run(provider)
         except no_advance:
             raise
         except Exception as exc:  # noqa: BLE001 — a failed call advances
             last_exc = exc
+            if i == 0:
+                head_failure = substitution_reason(exc)
             if i + 1 < len(chain):
                 logger.warning(
                     "%s advance: %s entry %d (%s) failed (%s) — trying next",
@@ -681,6 +708,13 @@ async def one_shot_completion(
         logger.debug(
             "one_shot_completion: use-case bridge resolve failed for %r", resolved_uc, exc_info=True
         )
+
+    # A binding exists and the bridge refused it: that refusal names the model the user bound and
+    # how to fix it, and it IS the answer. Building "the first registered provider" instead ran
+    # the call on a model nobody chose — best-of-n on a binding whose app update had failed
+    # reported success with every call served by another provider.
+    if provider is None and _chain and unresolved is not None:
+        raise unresolved
 
     # Last-resort fallback: no active selection AND the bridge couldn't resolve a
     # capable provider — build the first registered provider so a single-provider

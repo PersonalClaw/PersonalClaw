@@ -71,11 +71,21 @@ def migrate_and_arm(base_dir: Path | str | None = None, *, now: float = 0.0) -> 
         logger.warning("trigger store unavailable; skipping cron migration", exc_info=True)
         return {"ok": False, "reason": "store unavailable", "converted": 0, "armed": []}
 
+    # Before the cron import, and independent of it: a home can hold a legacy `event_triggers.json`
+    # with no `crons.json`, and a cron import that fails must not strand the user's event triggers.
+    events_absorbed = absorb_event_triggers(store)
+
     try:
         report = store.migrate_from_crons()
     except Exception:  # noqa: BLE001 - a bad legacy file must not stop the gateway
         logger.warning("cron migration failed; leaving the trigger store as-is", exc_info=True)
-        return {"ok": False, "reason": "migration raised", "converted": 0, "armed": []}
+        return {
+            "ok": False,
+            "reason": "migration raised",
+            "converted": 0,
+            "armed": [],
+            "events_absorbed": events_absorbed,
+        }
 
     armed = arm_unarmed(store, now=now)
     # Before the first tick, so no pre-S116 row meets the fence unfrozen (see the docstring below).
@@ -90,9 +100,117 @@ def migrate_and_arm(base_dir: Path | str | None = None, *, now: float = 0.0) -> 
         "reason": str(report.get("reason", "") or ""),
         "armed": armed,
         "frozen": frozen,
+        "events_absorbed": events_absorbed,
     }
     _log_report(out)
     return out
+
+
+#: The retired data-event store, and what it becomes once absorbed.
+LEGACY_EVENT_FILE = "event_triggers.json"
+
+
+def absorb_event_triggers(store: Any) -> int:
+    """Absorb a legacy `event_triggers.json` into the trigger store, ONCE. Returns rows absorbed.
+
+    🔴 WHY THIS EXISTS. That file was a second trigger store with its own engine, and the one place
+    the Triggers page's Data-event form wrote to. Its engine ran an action and recorded nothing,
+    and nothing else in the substrate — the tick, the run ledger, the doctor, the chat's
+    `automation_*` tools — could see its rows. Event triggers live in `triggers.json` now, so a
+    home that made them before must keep them: same id (namespaced `event:<id>`, the store's
+    `kind:slug` form), pattern, the one matcher the pattern reads, action, budget, debounce, fire
+    count and last-fired stamp, park state. `LEGACY_FIELD_MAP["EventTrigger"]` is the map.
+
+    The WF2AUT-11 autonudge precedent, step for step: absorbed at boot, the legacy file renamed
+    `.migrated` rather than deleted (nothing is lost: renaming it back gives an older build its
+    store again; the durability audit ignores `*.migrated`), and idempotent — a row already in the
+    store is left as it is, so an interrupted absorb finishes on the next boot without clobbering a
+    row that has since fired. A row the entity refuses (a required matcher that was empty, so it
+    could never have fired) is still written, and loads disabled, carrying its error: visible as
+    broken on the page rather than silently absent (the `migrate_from_crons` rule, S110).
+
+    Never raises: an unreadable legacy file is left in place and logged, and boot continues.
+    """
+    import json
+
+    from personalclaw.event_triggers import DEFAULT_DEBOUNCE_SECS, PATTERN_MATCHER, event_spec
+    from personalclaw.triggers import screen
+    from personalclaw.triggers.models import Trigger, TriggerState
+    from personalclaw.triggers.service import to_iso
+
+    legacy = Path(store.base_dir) / LEGACY_EVENT_FILE
+    if not legacy.exists():
+        return 0
+    try:
+        raw = json.loads(legacy.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        logger.warning("%s is unreadable; leaving it in place, nothing absorbed", legacy)
+        return 0
+    rows = (
+        raw if isinstance(raw, list) else (raw.get("triggers", []) if isinstance(raw, dict) else [])
+    )
+
+    absorbed = 0
+    existing = {row.trigger.id for row in store.load()}
+    for item in rows:
+        if not isinstance(item, dict) or not str(item.get("id") or "").strip():
+            continue
+        legacy_id = str(item["id"]).strip()
+        trigger_id = f"event:{legacy_id}"
+        if trigger_id in existing:
+            continue
+        try:
+            pattern = str(item.get("pattern") or "")
+            field = PATTERN_MATCHER.get(pattern)
+            gates: dict[str, Any] = {}
+            if int(item.get("max_fires", 0) or 0) > 0:
+                gates["max_fires"] = int(item["max_fires"])
+            # A row without the key gets the retired engine's own default, which is what it ran
+            # with; one that stored 0 had its burst guard switched off, and keeps it off.
+            debounce = float(item.get("debounce_secs", DEFAULT_DEBOUNCE_SECS) or 0.0)
+            if debounce > 0:
+                gates["debounce_secs"] = debounce
+            state = str(item.get("state") or TriggerState.ACTIVE.value)
+            trigger = Trigger(
+                id=trigger_id,
+                # The legacy row had no name; its id was what every surface displayed.
+                name=legacy_id,
+                kind="event",
+                enabled=bool(item.get("enabled", True)),
+                created_by="user",
+                spec=event_spec(pattern, str(item.get(field) or "") if field else ""),
+                gates=gates,
+                workflow={
+                    "inline": {
+                        "provider": str(item.get("action_provider") or "notify"),
+                        "config": dict(item.get("action_config") or {}),
+                    }
+                },
+                run_count=int(item.get("fire_count", 0) or 0),
+                last_fired_at=to_iso(float(item.get("last_fired_at", 0.0) or 0.0)),
+                state=(
+                    state if state in {s.value for s in TriggerState} else TriggerState.ACTIVE.value
+                ),
+                last_error_summary=str(item.get("park_reason") or ""),
+                park_retry_after=float(item.get("park_retry_after", 0.0) or 0.0),
+            )
+            # Frozen at the moment of absorption, to exactly the action the row already runs — the
+            # `backfill_capabilities` grandfather, never a widening.
+            trigger.capabilities = screen.capabilities_for_action(trigger)
+            store.upsert(trigger)
+            absorbed += 1
+        except Exception:  # noqa: BLE001 - one malformed row must not strand the rest
+            logger.warning("skipping a malformed legacy event trigger: %r", item, exc_info=True)
+    try:
+        legacy.rename(legacy.with_suffix(".json.migrated"))
+    except OSError:
+        logger.warning("could not rename the absorbed %s", legacy, exc_info=True)
+    logger.info(
+        "absorbed %d legacy event trigger(s) from %s into triggers.json",
+        absorbed,
+        LEGACY_EVENT_FILE,
+    )
+    return absorbed
 
 
 def arm_unarmed(store: Any, *, now: float = 0.0) -> list[str]:

@@ -34,7 +34,7 @@ function mockApi(grants: () => Promise<string[]>) {
       toolsIndex: () => Promise.resolve({ tools, load_failures: [] }),
       mcpServers: () => Promise.resolve(servers),
       importableMcp: () => Promise.resolve([]),
-      mcpPoolStats: () => Promise.resolve({ available: false }),
+      mcpPoolStats: () => Promise.resolve({}),
       toolGroups: () => Promise.resolve(null),
       mcpElicitationServers: grants,
       setMcpElicitationServers: (...a: unknown[]) => { setMcpElicitationServers(...a); return Promise.resolve({ ok: true }) },

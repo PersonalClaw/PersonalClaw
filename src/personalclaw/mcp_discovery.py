@@ -72,10 +72,11 @@ def _mcp_json_paths() -> tuple[Path, ...]:
 
 
 def _import_sources() -> tuple[tuple[Path, str], ...]:
-    """External backend MCP configs PersonalClaw can *import from* (but never silently loads),
-    each with the backend label the import suggestions show. Extensible: add further backend
-    config paths here once their formats are confirmed — the discovery + import path is
-    backend-agnostic.
+    """Claude Code global configs PersonalClaw can *import from* (but never silently loads), each
+    with the backend label the import suggestions show. Each is read by
+    :func:`~personalclaw.onboarding_import.sources.claude_code.mcp_servers`, which follows it to
+    all three of Claude Code's scopes: the file's own ``mcpServers`` (user), each project entry's
+    (local), and each project's ``.mcp.json`` (project).
 
     A FUNCTION, like :func:`_mcp_json_paths`: this was ``Path.home() / ".claude.json"`` frozen at
     import, so it ignored ``$CLAUDE_CONFIG_DIR`` while the onboarding importer honoured it. Claude
@@ -84,6 +85,17 @@ def _import_sources() -> tuple[tuple[Path, str], ...]:
     from personalclaw.onboarding_import.sources import claude_code
 
     return ((claude_code.global_config_path(), claude_code.DISPLAY_NAME),)
+
+
+def _importable_entries() -> list[tuple[str, Any]]:
+    """``(backend label, server)`` for every MCP server another tool has configured, every scope."""
+    from personalclaw.onboarding_import.sources import claude_code
+
+    return [
+        (backend, server)
+        for path, backend in _import_sources()
+        for server in claude_code.mcp_servers(config_path=path)
+    ]
 
 
 # ── transports ──────────────────────────────────────────────────────────────
@@ -123,6 +135,83 @@ def mcp_transport(spec: Mapping[str, Any]) -> str:
         name = declared.strip().lower()
         return _TRANSPORT_ALIASES.get(name, name)
     return "sse" if spec.get("url") and not spec.get("command") else "stdio"
+
+
+def server_name_problem(name: str) -> str | None:
+    """Why *name* cannot be an MCP server's name, or ``None`` when it can.
+
+    A server's tools are named ``mcp/<server>/<tool>`` and read back at the first two slashes, so
+    a ``/`` in the server's name makes its tools' names another server's: ``github/admin``'s
+    ``delete_repo`` is ``mcp/github/admin/delete_repo``, which is also the ``github`` server's
+    ``admin/delete_repo``, and a call to either reaches ``github``. One rule for every way a server
+    arrives (an import, an app's own servers) and for one already in ``mcp.json``: it is not
+    started, and this sentence is its status.
+    """
+    if "/" not in name:
+        return None
+    first = name.split("/", 1)[0]
+    return (
+        f"A server's name cannot contain '/': its tools would be named mcp/{name}/<tool>, which "
+        f"reads as the tools of a server named '{first}', and a call to one would go to that "
+        f"server. Rename '{name}' where it is configured, without '/'."
+    )
+
+
+def stdio_spawn_env(server_env: Mapping[str, str]) -> dict[str, str]:
+    """The environment a stdio server is spawned in — by the probe AND by the agent's connection.
+
+    The gateway's environment with its ``PATH`` augmented, so a daemon's thin ``PATH`` still finds
+    ``node``/``npx``/``uvx``, then the server's own variables over it. A server's own ``PATH`` goes
+    IN FRONT of the gateway's instead of replacing it, which is also how ``rebuild_agent_config``
+    resolves the command. One definition because there were two: the probe prepended and the
+    agent's connection replaced, so a server that set ``PATH`` probed "ok" while every call to it
+    failed with the command not found.
+    """
+    env = dict(os.environ)
+    env["PATH"] = augmented_path(env.get("PATH", ""))
+    if "PATH" in server_env:
+        env["PATH"] = server_env["PATH"] + os.pathsep + env["PATH"]
+    env.update({k: v for k, v in server_env.items() if k != "PATH"})
+    return env
+
+
+# ── what an agent can call ────────────────────────────────────────────────────────────────────
+#
+# A server PersonalClaw connects to is not therefore one an agent can use. Every external server's
+# tools reach an agent through ONE registered tool provider
+# (`tool_providers.registry.EXTERNAL_MCP_PROVIDER`, which the MCP Tool Servers app registers), and
+# without it the native loop has none of them. So "ok", which the Tools page draws as a green
+# "ready", is said only while that provider is on an agent's surface. It is applied where a status
+# is SHOWN, not where it is probed: the probe's result is cached, and the provider comes and goes
+# with its app.
+
+#: A server PersonalClaw connected to whose tools no agent can call.
+UNSERVED = "unserved"
+
+#: Why, as the Tools page says it. The app is named here, in copy, and nowhere in the predicate.
+UNSERVED_REASON = (
+    "Connected, but no agent can call its tools yet. They reach an agent through the MCP Tool "
+    "Servers app: install it from the Store, or turn it on if it is installed."
+)
+
+
+def as_agents_see_it(row: dict[str, Any]) -> dict[str, Any]:
+    """*row* (a :meth:`McpServerInfo.to_dict`) with an ``ok`` it has not earned taken back.
+
+    ``ok`` stays ``ok`` only when an agent's surface carries external servers' tools; otherwise
+    it becomes :data:`UNSERVED` with :data:`UNSERVED_REASON`. Every other status is already not a
+    claim that an agent can call the server, and passes through. So does PersonalClaw's own
+    server (:data:`_MANAGED_SERVER_NAMES`): it is not in ``mcp.json`` and reaches no agent through
+    that provider — a native agent has its tools in-process, and an ACP session is handed it in
+    ``session/new`` (``acp.mcp_servers``).
+    """
+    from personalclaw.tool_providers.registry import serves_external_mcp_tools
+
+    if row.get("name") in _MANAGED_SERVER_NAMES:
+        return row
+    if row.get("status") == "ok" and not serves_external_mcp_tools():
+        return {**row, "status": UNSERVED, "error": UNSERVED_REASON}
+    return row
 
 
 @dataclass
@@ -177,7 +266,7 @@ class McpServerInfo:
     cwd: str = ""  # working dir for the spawn (app-shipped servers set this to the app dir)
     url: str = ""
     headers: dict[str, str] = field(default_factory=dict)
-    status: str = "unknown"  # unknown | ok | error | probing | outdated
+    status: str = "unknown"  # unknown | ok | error | probing | outdated (UNSERVED is only shown)
     # Each tool entry is a dict with at least "name"; optionally "description"
     # and "inputSchema" populated by tools/list responses. Plain strings are
     # also accepted on input and normalized to dicts at probe.
@@ -410,7 +499,7 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
     ``tools/list``, so a stateful server read ``ok`` with no tools.
     """
     from personalclaw.config.secret_refs import ForeignSecretReference, resolve_mcp_values
-    from personalclaw.mcp_client import McpServerConn, mcp_sdk_available
+    from personalclaw.mcp_client import McpServerConn
 
     try:
         # The spec holds `{{secret:…}}` references; the header values are resolved here, where the
@@ -426,12 +515,6 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
     if server.transport not in MCP_TRANSPORTS:
         server.status = "error"
         server.error = f"PersonalClaw cannot connect over the {server.transport!r} transport"
-    elif not mcp_sdk_available():
-        server.status = "error"
-        server.error = (
-            "connecting to a server at a URL needs the 'mcp' extra "
-            "(pip install 'personalclaw[mcp]')"
-        )
     else:
         conn = McpServerConn(
             server.name, {"type": server.transport, "url": server.url, "headers": headers}
@@ -486,6 +569,14 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
 
     Updates server.status and server.tools in place and returns it.
     """
+    problem = server_name_problem(server.name)
+    if problem is not None:
+        # Never started, by the native client or here: the sentence is this server's status.
+        server.status = "error"
+        server.error = problem
+        _cache_probe(server)
+        return server
+
     if server.is_remote:
         return await _probe_remote(server)
 
@@ -510,12 +601,7 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
     server.status = "probing"
     proc = None
     try:
-        env = dict(os.environ)
-        env["PATH"] = augmented_path(env.get("PATH", ""))
-        # Merge server-specific env additively
-        if "PATH" in server_env:
-            env["PATH"] = server_env["PATH"] + os.pathsep + env["PATH"]
-        env.update({k: v for k, v in server_env.items() if k != "PATH"})
+        env = stdio_spawn_env(server_env)
 
         # Resolve command to absolute path using the merged env PATH
         resolved = shutil.which(server.command, path=env.get("PATH"))
@@ -755,13 +841,19 @@ def discover_importable_servers() -> list[dict[str, Any]]:
     backed by ``/api/mcp/apply``, which copies the spec into the PClaw scope.
 
     This is the list a browser renders, so each entry carries what the picker shows and no
-    credential: ``{name, backend, transport, command, args, url, env, headers}``. ``command`` is
-    the command's file name, ``args`` the arguments with every credential in them masked
-    (:func:`masked_args`), ``url`` the address with its userinfo, query values and any token-shaped
-    path segment masked (:func:`masked_url`), and ``env``/``headers`` ``[{name, hasValue}]`` —
-    which variables the server sets, never what they hold. The import reads the whole definition
-    from the backend's own file, server-side, and stores its values.
+    credential: ``{id, name, backend, scope, origin, note, transport, command, args, url, env,
+    headers}``. ``id`` names the server in its scope — what the import sends back, so a pick names
+    a listed row and never a file. ``scope`` is Claude Code's (``user``, ``local``, ``project``)
+    and ``origin`` says where, in words; ``note`` is what to know first (a project server nobody
+    approved, a ``${VAR}`` nothing sets). ``command`` is the command's file name, ``args`` the
+    arguments with every credential in them masked (:func:`masked_args`), ``url`` the address
+    with its userinfo, query values and any token-shaped path segment masked
+    (:func:`masked_url`), and ``env``/``headers`` ``[{name, hasValue}]`` — which variables the
+    server sets, never what they hold. The import reads the whole definition from the backend's
+    own files, server-side (:func:`importable_spec`), and stores its values.
     """
+    from personalclaw.onboarding_import.sources.claude_code import mcp_note
+
     # Servers already known to PClaw (mcp.json + the agent config) are not
     # "importable" — they're already first-class.
     known: set[str] = set(_load_mcp_json().keys())
@@ -769,43 +861,48 @@ def discover_importable_servers() -> list[dict[str, Any]]:
 
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for path, backend in _import_sources():
-        if not path.is_file():
+    for backend, server in _importable_entries():
+        spec = server.spec
+        if server.name in known or server.id in seen:
             continue
-        try:
-            data = json.loads(safe_read_file(str(path)))
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Failed to read import source %s: %s", path, exc)
+        # Only surface servers PersonalClaw can run: a stdio command, or a URL over a
+        # transport it has a client for. Skip anything else silently.
+        transport = mcp_transport(spec)
+        remote = transport != "stdio"
+        if transport not in MCP_TRANSPORTS or not spec.get("url" if remote else "command"):
             continue
-        if not isinstance(data, dict):
-            continue
-        servers = data.get("mcpServers", {})
-        if not isinstance(servers, dict):
-            continue
-        for name, spec in servers.items():
-            if not isinstance(spec, dict) or name in known or name in seen:
-                continue
-            # Only surface servers PersonalClaw can run: a stdio command, or a URL over a
-            # transport it has a client for. Skip anything else silently.
-            transport = mcp_transport(spec)
-            remote = transport != "stdio"
-            if transport not in MCP_TRANSPORTS or not spec.get("url" if remote else "command"):
-                continue
-            seen.add(name)
-            args = spec.get("args")
-            out.append(
-                {
-                    "name": name,
-                    "backend": backend,
-                    "transport": transport,
-                    "command": "" if remote else _command_name(str(spec["command"])),
-                    "args": masked_args(args) if not remote and isinstance(args, list) else [],
-                    "url": masked_url(str(spec["url"])) if remote else "",
-                    "env": _names_with_presence(spec.get("env")),
-                    "headers": _names_with_presence(spec.get("headers")),
-                }
-            )
+        seen.add(server.id)
+        args = spec.get("args")
+        out.append(
+            {
+                "id": server.id,
+                "name": server.name,
+                "backend": backend,
+                "scope": server.scope,
+                "origin": server.origin,
+                "note": mcp_note(server),
+                "transport": transport,
+                "command": "" if remote else _command_name(str(spec["command"])),
+                "args": masked_args(args) if not remote and isinstance(args, list) else [],
+                "url": masked_url(str(spec["url"])) if remote else "",
+                "env": _names_with_presence(spec.get("env")),
+                "headers": _names_with_presence(spec.get("headers")),
+            }
+        )
     return out
+
+
+def importable_spec(server_id: str) -> tuple[str, dict[str, Any]] | None:
+    """``(name, definition)`` of the importable server ``server_id`` names, or ``None``.
+
+    Read again from the other tool's own files, the way the list was: the import copies exactly
+    the server the row showed, in the scope it showed it in, and a caller can only ever name a
+    row — never a path, a file or a definition of its own.
+    """
+    for _backend, server in _importable_entries():
+        if server.id == server_id:
+            return server.name, dict(server.spec)
+    return None
 
 
 def _names_with_presence(values: Any) -> list[dict[str, Any]]:

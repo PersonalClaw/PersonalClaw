@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { titleFloor, titleReserveFor, railCeiling } from './HeaderActions'
+import { titleFloor, titleReserveFor, railCeiling, clusterFloor, stackBelowCorners, TITLE_MIN } from './HeaderActions'
 
 // ── An EMPTY title slot is owed nothing ──────────────────────────────────────
 //
@@ -85,5 +85,93 @@ describe('railCeiling', () => {
   it('never returns a negative cap', () => {
     // A very narrow header must clamp at 0 rather than produce a nonsense max-width.
     expect(railCeiling({ inner: 40, dots: 44, title: 53 })).toBe(0)
+  })
+})
+
+// ── A title slot that holds more than a title is owed what it cannot shed ─────────────────────────
+//
+// The floor above was reserved for the WHOLE slot, as if every slot held only a title. The chat's
+// does not: a back button, the title, the regenerate affordance — and until they moved to the
+// context line, a cost chip and a "Branched from" chip that could not shrink. Reserving 96px for a
+// slot that could not get narrower than several hundred let the cluster claim the rest, and the
+// slot painted UNDER it: measured on `0b487d9c7`, the back button under the Task pill at 320/390px
+// and the chat's title at 0px at every width through 1440.
+//
+// The numbers below are the chat header's own, read off the live page after the fix: the slot
+// cannot get narrower than 73px (back 40 + gaps + the title's padding + regenerate) and would like
+// 490 (the title's 420px cap); the cluster's icon tier is 424px and its floor 140px (two 48px mode
+// pills that never overflow, plus the 44px `…`); the band between the shell corners is 85, 155,
+// 265, 465 and 477px at 320, 390, 500, 700 and 1024px.
+
+const CHAT = { hasContent: true, minWidth: 73, naturalWidth: 490 }
+
+describe('titleReserveFor — the slot keeps what it cannot shed', () => {
+  it('gives the NAME its floor on top of the slot\'s own chrome', () => {
+    // 1024px, not stacked: 73 + 96. The old whole-slot floor (96) left the title 23px.
+    expect(titleReserveFor({ ...CHAT, inner: 477, floor: 140 })).toBe(169)
+    expect(titleReserveFor({ ...CHAT, inner: 477 })).toBe(169)
+  })
+
+  it('lets the title yield past its floor so the controls keep theirs', () => {
+    // 320px, stacked (288px row): 288 − 16 − 140 = 132, so the cluster keeps its full 140px floor.
+    expect(titleReserveFor({ ...CHAT, inner: 288, floor: 140 })).toBe(132)
+  })
+
+  it('never yields below what the slot cannot shed', () => {
+    // A row too narrow even for that overlaps whatever the split does; the split must not add a
+    // second overlap by handing the cluster the slot's own chrome.
+    expect(titleReserveFor({ ...CHAT, inner: 200, floor: 140 })).toBe(73)
+  })
+
+  it('still reserves nothing for an empty slot, and never more than a short title needs', () => {
+    expect(titleReserveFor({ hasContent: false, naturalWidth: 49, minWidth: 49, inner: 155, floor: 140 })).toBe(0)
+    expect(titleReserveFor({ hasContent: true, naturalWidth: 51, minWidth: 8, inner: 155, floor: 88 })).toBe(51)
+  })
+})
+
+describe('clusterFloor', () => {
+  it('is the never-overflow controls plus the `…` when anything can fall into it', () => {
+    // The chat: two mode pills (48px each with their gap) + the `…`.
+    expect(clusterFloor({ iconTier: 424, neverOverflow: 96, overflowable: true, dots: 44 })).toBe(140)
+  })
+
+  it('is the icon tier itself when that is narrower', () => {
+    // Two plain controls: the `…` alone (44) is narrower than both icons (88) — so 44.
+    expect(clusterFloor({ iconTier: 88, neverOverflow: 0, overflowable: true, dots: 44 })).toBe(44)
+    // One never-overflow strip and nothing else: no `…` is ever drawn.
+    expect(clusterFloor({ iconTier: 142, neverOverflow: 150, overflowable: false, dots: 44 })).toBe(142)
+  })
+})
+
+describe('stackBelowCorners — when the band between the corners cannot hold the row', () => {
+  const at = (band: number) => stackBelowCorners({ ...CHAT, band, floor: 140 })
+
+  it('stacks the chat header on a phone', () => {
+    // 73 + 48 (a legible title) + 16 + 140 = 277px against bands of 85 and 155.
+    expect(at(85)).toBe(true)
+    expect(at(155)).toBe(true)
+    // 500px: 265 would hold everything with a 36px title, which is not a title anyone can read.
+    expect(at(265)).toBe(true)
+  })
+
+  it('keeps it between the corners once the band holds it', () => {
+    expect(at(465)).toBe(false)
+    expect(at(477)).toBe(false)
+    expect(at(277)).toBe(false)
+    expect(at(276)).toBe(true)
+  })
+
+  it('stacks a title-less header only when its controls alone do not fit', () => {
+    // #/chat before the first message: no title, and the same 140px floor. 390px holds it (as it
+    // did before this change); 320px does not.
+    const bare = (band: number) => stackBelowCorners({ hasContent: false, minWidth: 0, naturalWidth: 0, band, floor: 140 })
+    expect(bare(155)).toBe(false)
+    expect(bare(85)).toBe(true)
+  })
+
+  it('asks a short title for no more than it is', () => {
+    // "Tasks" is 51px: the title term is min(51, 8 + 48) = 51, not the full legible floor.
+    expect(stackBelowCorners({ hasContent: true, minWidth: 8, naturalWidth: 51, band: 51 + 16 + 140, floor: 140 })).toBe(false)
+    expect(TITLE_MIN).toBe(48)
   })
 })

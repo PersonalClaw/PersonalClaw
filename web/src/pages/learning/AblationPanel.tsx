@@ -2,9 +2,10 @@ import { Scissors, ShieldAlert } from 'lucide-react'
 import { LoadError } from '../../ui/ListScaffold'
 import { Table, THead, Th, Td } from '../../ui/Table'
 import { fvs } from '../../design/fontWeight'
-import { hasApiCode, isEvalsOff } from '../../lib/api'
+import { isNotRun, isSwitchedOff } from '../../lib/api'
 import type {
-  AblationArmAggregate, AblationHistoryEntry, AblationRegistryRow, AblationView, EvalsOffView,
+  AblationArmAggregate, AblationHistoryEntry, AblationRegistryRow, AblationView, NotRunView,
+  SwitchedOffView,
 } from '../../lib/api'
 import { EvalsOff } from './EvalsOff'
 
@@ -25,17 +26,17 @@ import { EvalsOff } from './EvalsOff'
  *  rather than `remove`, and drawing 0.000 for it would turn "we never measured this" into
  *  "this scored nothing", which is the strongest possible case for retiring the component. */
 export function AblationPanel({ view, error, onRetry }: {
-  view: AblationView | EvalsOffView | undefined
+  view: AblationView | SwitchedOffView | NotRunView | undefined
   error: unknown
   onRetry: () => void
 }) {
   // THREE states, not two. The backend answers each distinctly on purpose (see
   // `handlers/evals.py:api_evals_ablation`) because they send the reader to three different
-  // places: the switch (a decided `{"enabled": false}`), the registry (`ablation_absent`), and a
-  // bug report. Collapsing any of them into the others makes this panel's empty state a guess —
+  // places: the switch (a decided `{"enabled": false}`), the registry (a decided
+  // `{"ran": false}`), and a bug report. Collapsing any of them into the others makes this panel's empty state a guess —
   // and a failed fetch rendering as "nothing has run yet" is the specific confusion this section
   // is built to refuse.
-  if (isEvalsOff(view)) {
+  if (isSwitchedOff(view)) {
     return (
       <section className="flex flex-col gap-s" aria-labelledby="ablation-heading">
         <Heading />
@@ -43,23 +44,21 @@ export function AblationPanel({ view, error, onRetry }: {
       </section>
     )
   }
-  if (view === undefined && error) {
-    if (hasApiCode(error, 'ablation_absent')) {
-      return (
-        <section className="flex flex-col gap-s" aria-labelledby="ablation-heading">
-          <Heading />
-          <p className="text-on-surface-low text-[0.8125rem]">
-            No ablation has run yet. Register a component in{' '}
-            <code className="text-on-surface-var">evals/ablation_registry.json</code> and run{' '}
-            <code className="text-on-surface-var">personalclaw ablation --force</code>. It is a
-            deliberate command on a monthly cadence, not a background job — one report is a
-            multi-cell matrix, so nothing here spends money on its own.
-          </p>
-        </section>
-      )
-    }
-    return <LoadError what="ablation report" error={error} onRetry={onRetry} />
+  if (isNotRun(view)) {
+    return (
+      <section className="flex flex-col gap-s" aria-labelledby="ablation-heading">
+        <Heading />
+        <p className="text-on-surface-low text-[0.8125rem]">
+          No ablation has run yet. Register a component in{' '}
+          <code className="text-on-surface-var">evals/ablation_registry.json</code> and run{' '}
+          <code className="text-on-surface-var">personalclaw ablation --force</code>. It is a
+          deliberate command on a monthly cadence, not a background job — one report is a
+          multi-cell matrix, so nothing here spends money on its own.
+        </p>
+      </section>
+    )
   }
+  if (view === undefined && error) return <LoadError what="ablation report" error={error} onRetry={onRetry} />
   if (!view) return null
 
   const report = view.report

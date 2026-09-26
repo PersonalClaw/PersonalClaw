@@ -691,6 +691,16 @@ export function appModuleShimUrl(spec: string): string | null {
  *  declare is left OUT of the rewrite set, so its bare import stays bare and fails to
  *  resolve. Omit *app* and only the ungated head resolves — the pre-APE-11 behaviour,
  *  which is the right default for any caller that has no manifest in hand. */
+/** The URL an installed app's UI bundle is served at, versioned by the app's `uiRevision`.
+ *
+ *  ONE builder for the page entry and the components module. An update changes the revision,
+ *  so a tab that already loaded the old bundle loads the new one instead of reusing what it
+ *  has — and the `?v=` keys the browser's copy to the bytes, beside the route's `no-cache`. */
+export function appBundleUrl(name: string, path: string, revision?: string): string {
+  const url = `/apps/${encodeURIComponent(name)}/ui/${path.replace(/^\/+/, '')}`
+  return revision ? `${url}?v=${encodeURIComponent(revision)}` : url
+}
+
 export async function loadContributedModule(
   src: string,
   app?: Pick<AppContext, 'uiCapabilities'>,

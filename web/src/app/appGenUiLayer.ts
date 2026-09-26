@@ -19,15 +19,16 @@
  *  `sdk` is the host's `@personalclaw/app-sdk/genui` module (so the app calls the SAME
  *  gated entry point a bundled page would) and `ctx` is the app identity the gate reads. */
 import { api, type AppSummary } from '../lib/api'
-import { loadContributedModule, registerAppGenUiComponent, unregisterAppGenUiComponents, type AppContext } from './appSdk'
+import { appBundleUrl, loadContributedModule, registerAppGenUiComponent, unregisterAppGenUiComponents, type AppContext } from './appSdk'
 import { LAYER_APP, maxSurfaceLayer } from '../ui/surfaces/layers'
 
 /** The capability that grants component registration. */
 const CAP = 'generative-component'
 
-/** Apps whose module has already been loaded this session, so a re-run (an app was
- *  enabled, the list refetched) does not re-import a module that already registered. */
-const loaded = new Set<string>()
+/** App → the `uiRevision` whose module is loaded this session, so a re-run (an app was
+ *  enabled, the list refetched) does not re-import a module that already registered — and an
+ *  UPDATED app, whose revision moved, has its old components replaced by the new module's. */
+const loaded = new Map<string, string>()
 
 /** What one app's module receives as its `sdk` argument. Narrow on purpose: the L1
  *  loader hands over the registration entry point, not the whole SDK. */
@@ -42,20 +43,22 @@ export function contributesComponents(app: Pick<AppSummary, 'enabled' | 'uiCompo
   return (app.uiCapabilities || []).includes(CAP)
 }
 
-/** The URL an app's components module is served at (the existing app-ui asset route). */
-export function componentsModuleUrl(name: string, module: string): string {
-  const clean = module.replace(/^\/+/, '')
-  return `/apps/${encodeURIComponent(name)}/ui/${clean}`
+/** The URL an app's components module is served at (the app-ui asset route, versioned). */
+export function componentsModuleUrl(name: string, module: string, revision?: string): string {
+  return appBundleUrl(name, module, revision)
 }
 
 /** Load + register one app's components. Returns how many registered, and never throws:
  *  a module that fails, exports nothing usable, or tries to shadow a core name leaves the
- *  registry exactly as it was. */
+ *  registry exactly as it was. An app whose revision changed since its module loaded (it was
+ *  updated) has the old module's components removed first. */
 export async function loadAppComponents(app: AppSummary): Promise<number> {
   if (maxSurfaceLayer() < LAYER_APP) return 0
   if (!contributesComponents(app)) return 0
-  if (loaded.has(app.name)) return 0
-  loaded.add(app.name)
+  const revision = app.uiRevision || ''
+  if (loaded.get(app.name) === revision) return 0
+  if (loaded.has(app.name)) unregisterAppGenUiComponents(app.name)
+  loaded.set(app.name, revision)
   const ctx: AppContext = {
     name: app.name,
     permissions: {},
@@ -63,7 +66,7 @@ export async function loadAppComponents(app: AppSummary): Promise<number> {
   }
   let registered = 0
   try {
-    const mod = await loadContributedModule(componentsModuleUrl(app.name, app.uiComponents || ''), ctx)
+    const mod = await loadContributedModule(componentsModuleUrl(app.name, app.uiComponents || '', revision), ctx)
     const register = mod.register as
       | ((sdk: GenUiRegistrarSdk, ctx: AppContext) => void)
       | undefined
@@ -128,6 +131,6 @@ export async function syncAppGenUiComponents(known?: AppSummary[]): Promise<numb
 
 /** Test seam: forget which modules were loaded. */
 export function resetAppGenUiLayer(): void {
-  for (const name of loaded) unregisterAppGenUiComponents(name)
+  for (const name of loaded.keys()) unregisterAppGenUiComponents(name)
   loaded.clear()
 }

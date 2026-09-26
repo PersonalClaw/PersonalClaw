@@ -23,6 +23,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import re
 import time as _time
 from datetime import datetime
@@ -216,6 +217,33 @@ def model_window(view: list[dict], max_messages: int) -> list[dict]:
 def _safe_key(key: str) -> str:
     """Convert a session key (e.g. a channel thread_ts) to a safe filename."""
     return re.sub(r"[^\w\-.]", "_", key)
+
+
+def session_path(key: str) -> Path:
+    """Where session ``key``'s transcript lives in the active home."""
+    return _sessions_dir() / f"{_safe_key(key)}.jsonl"
+
+
+def import_conversation(
+    key: str, *, metadata: dict, messages: list[dict], modified: float | None = None
+) -> Path:
+    """Create the transcript of a conversation brought over from another tool.
+
+    Written once and whole, in the shape every chat's transcript has — the metadata line, then a
+    line per message — and never over an existing one (``FileExistsError``): an import adds to
+    the history and replaces nothing in it. ``modified`` (seconds since the epoch) dates the file
+    as the conversation was last held, which is where the history lists it.
+    """
+    path = session_path(key)
+    if path.exists():
+        raise FileExistsError(f"a transcript for session {key!r} already exists")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [json.dumps({"_type": "metadata", **metadata})]
+    lines += [json.dumps(message) for message in messages]
+    atomic_write(path, "\n".join(lines) + "\n")
+    if modified is not None:
+        os.utime(path, (modified, modified))
+    return path
 
 
 def _count_message_lines(lines) -> int:

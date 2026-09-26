@@ -340,17 +340,16 @@ class TestStubProvider:
 
 
 @pytest.fixture
-def _openai_image_catalog():
+def _openai_image_catalog(monkeypatch):
     """Contribute OpenAI's image catalog under the ``openai`` provider type (the
     openai-models app does this on load) so the core adapter — now catalog-driven,
     not host-sniffing — can resolve it. Cleaned up after the test."""
-    from personalclaw.media_catalogs import (
-        MediaCatalog,
-        MediaModel,
-        register_media_catalog,
-        unregister_media_catalogs,
-    )
+    from personalclaw import media_catalogs
+    from personalclaw.media_catalogs import MediaCatalog, MediaModel, register_media_catalog
 
+    monkeypatch.setattr(
+        media_catalogs, "_catalogs", {k: dict(v) for k, v in media_catalogs._catalogs.items()}
+    )
     register_media_catalog(
         "image_gen",
         "openai",
@@ -365,8 +364,6 @@ def _openai_image_catalog():
             default_model="gpt-image-1",
         ),
     )
-    yield
-    unregister_media_catalogs("openai")
 
 
 class TestOpenAIImageCatalogByType:

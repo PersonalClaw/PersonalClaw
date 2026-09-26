@@ -25,7 +25,7 @@ RUN mkdir -p src/personalclaw && \
     echo '__version__ = "0.1.0"' > src/personalclaw/__init__.py && \
     /opt/venv/bin/pip install --no-cache-dir \
         --extra-index-url https://download.pytorch.org/whl/cpu \
-        ".[slack,eval,httpx,anthropic,openai,embeddings,stt,tts,mcp]" && \
+        ".[slack,eval,httpx,anthropic,openai,embeddings,stt,tts]" && \
     /opt/venv/bin/pip uninstall -y personalclaw && \
     rm -rf src/ build/ *.egg-info
 

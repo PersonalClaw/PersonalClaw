@@ -236,7 +236,10 @@ def test_registry_declares_the_three_v1_formats_and_is_consumed_by_name():
 
 
 def test_default_dest_dir_is_the_only_home_resolver(monkeypatch, tmp_path):
-    """Home-anchored formats resolve through ``Path.home``; project-relative ones do not."""
+    """Home-anchored formats resolve through ``Path.home``; project-relative ones do not.
+    (Claude Code's own directory follows ``$CLAUDE_CONFIG_DIR`` when that is set, so it is
+    cleared here: this asserts the default.)"""
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     assert default_dest_dir(CLAUDE_CODE_AGENTS) == tmp_path / ".claude" / "agents"
     assert default_dest_dir(CURSOR_RULES) is None

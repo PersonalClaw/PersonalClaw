@@ -3,7 +3,7 @@ import { TextLink } from '../../ui/TextLink'
 /** What every eval panel says when `evals.enabled` is off — said once, so they say it alike.
  *
  *  The six report reads under `/api/evals/` all answer the same `200 {"enabled": false}`
- *  (`isEvalsOff`) from the same `AppConfig.load().evals.enabled` check
+ *  (`isSwitchedOff`) from the same `AppConfig.load().evals.enabled` check
  *  (`dashboard/handlers/evals.py:_enabled`), so this is one fact about one switch. Before this
  *  it had three renderings — a red "Couldn't load your judge benchmark" alert with a dead
  *  Retry, a red one for retrieval, and (in `StudiesPanel`) the "no study has been registered"
@@ -45,7 +45,8 @@ import { TextLink } from '../../ui/TextLink'
  *    FOUR panels render at once on a fresh install is four copies of a choice nobody wants to make.
  *  - The panel's own run command. "Turning on a setting and registering a component send a user
  *    to two different places" is the rule `AblationPanel.test.tsx` already states, and each
- *    panel's `*_absent` state — the very next thing seen once the switch is on — owns its command.
+ *    panel's not-run state (`{"ran": false}`) — the very next thing seen once the switch is on —
+ *    owns its command.
  *  - "It takes effect on the next load; nothing restarts." True, but it is reassurance about a
  *    round trip the user is about to watch happen, and said four times in a column it stopped
  *    being reassurance and became a wall. It lives in this comment instead.

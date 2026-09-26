@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, type BundledPackRec, type InstalledPackRec, type PackProposalRec, type PackRosterDeployRec, type PackTriggersDeployRec, type PackUpdateRec } from '../../lib/api'
+import { api, type BundledPackRec, type InstalledPackRec, type PackProposalRec, type PackRosterDeployRec, type PackTriggersDeployRec, type PackUninstallRec, type PackUpdateRec } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { invalidateKeys, useQuery } from '../../lib/data'
 import { PanelHeader, Section, RowGroup, Row, ToggleRow } from './settingsUI'
 import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
+import { confirmDestructive } from '../../ui/dialog'
 import { FormSkeleton, InlineLoadError, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { BUSY_REASON } from '../../ui/unavailable'
 
@@ -91,8 +92,8 @@ export function PacksPanel() {
           would re-fabricate the empty ledger one layer down and put back both false claims. */}
       <PackStoreSection installed={installed} installedErr={installedErr} onRetryInstalled={onInstalled} onInstalled={onInstalled} />
 
-      <Section title="Installed packs" hint="Each imported pack, its skipped-connector markers, a re-runnable setup interview when it ships one, and an update that never overwrites a component you have edited.">
-        <InstalledPacks packs={installed} error={installedErr} onRetry={onInstalled} />
+      <Section title="Installed packs" hint="Each imported pack, its skipped-connector markers, a re-runnable setup interview when it ships one, and an update or uninstall that never touches a component you have edited.">
+        <InstalledPacks packs={installed} error={installedErr} onRetry={onInstalled} onChanged={onInstalled} />
       </Section>
     </div>
   )
@@ -284,11 +285,11 @@ export function PackStoreSection({ installed, installedErr, onRetryInstalled, on
           <RowGroup key={p.name}>
             <Row label={`${p.displayName} ${p.version}`.trim()} hint={p.description}>
               {have === null
-                ? <Button variant="primary" size="sm" disabled
+                ? <Button variant="primary" size="sm" ariaLabel={`Install ${p.displayName}`} disabled
                   disabledReason="Can't tell whether this is already installed — your installed-pack list didn't load. Retry it above.">Install</Button>
                 : have.has(p.name)
                   ? <span data-type="caption" className="text-on-surface-low">Installed</span>
-                  : <Button variant="primary" size="sm" loading={busy === p.name} onClick={() => install(p.name, p.displayName)}>Install</Button>}
+                  : <Button variant="primary" size="sm" ariaLabel={`Install ${p.displayName}`} loading={busy === p.name} onClick={() => install(p.name, p.displayName)}>Install</Button>}
             </Row>
           </RowGroup>
         ))}
@@ -298,10 +299,12 @@ export function PackStoreSection({ installed, installedErr, onRetryInstalled, on
 }
 
 // ── installed packs + finish-setup chip ──────────────────────────────────────
-function InstalledPacks({ packs, error, onRetry }: {
+function InstalledPacks({ packs, error, onRetry, onChanged }: {
   packs: InstalledPackRec[] | undefined
   error?: unknown
   onRetry: () => void
+  /** Re-read the ledger after a row changed what is installed (an uninstall). */
+  onChanged: () => void
 }) {
   // Error first, then loading, then empty — `packs` is undefined for the first two, so an empty
   // check ahead of them is how "install one from the pack store below" got printed at a user whose
@@ -316,7 +319,7 @@ function InstalledPacks({ packs, error, onRetry }: {
   }
   return (
     <div className="flex flex-col gap-2">
-      {packs.map((p) => <PackRow key={p.name} pack={p} />)}
+      {packs.map((p) => <PackRow key={p.name} pack={p} onChanged={onChanged} />)}
     </div>
   )
 }
@@ -380,9 +383,13 @@ function ConnectorLine({ c }: { c: InstalledPackRec['connectors'][number] }) {
 /** Exported for test: the gate and the per-mode connector rendering are only observable by
  *  rendering the row against a stubbed ledger record — jsdom reports every box as 0, so nothing
  *  about them is measurable from layout. */
-export function PackRow({ pack }: { pack: InstalledPackRec }) {
+export function PackRow({ pack, onChanged }: { pack: InstalledPackRec; onChanged: () => void }) {
   const [busy, setBusy] = useState(false)
   const [update, setUpdate] = useState<PackUpdateRec | null>(null)
+  // What was deployed from the pack and is still live — set when an uninstall has to wait for it.
+  const [inUse, setInUse] = useState<PackUninstallRec['in_use']>([])
+  // The uninstall's own in-flight flag, so its button announces `aria-busy` (the `deploying` pattern).
+  const [uninstalling, setUninstalling] = useState(false)
   const [triggersDeployed, setTriggersDeployed] = useState<PackTriggersDeployRec | null>(null)
   const [deployResult, setDeployResult] = useState<PackRosterDeployRec | null>(null)
   // A NARROW in-flight flag for the deploy button, distinct from the row-wide `busy` gate: the
@@ -413,6 +420,29 @@ export function PackRow({ pack }: { pack: InstalledPackRec }) {
       )
     }).catch((e) => notify(`Couldn't update ${pack.name}: ${String((e as Error)?.message || e)}`, 'error'))
       .finally(() => setBusy(false))
+  }
+  // 🔴 A PACK COULD NOT BE UNINSTALLED — this row had no such control and the backend no route.
+  // Dry run first, like the update: it says what goes, what stays (a component you edited), and
+  // what has to go first (an agent or automation deployed from the pack), and nothing is removed
+  // until the dialog showing that is confirmed.
+  const uninstall = async () => {
+    setBusy(true)
+    setUninstalling(true)
+    setInUse([])
+    try {
+      const { uninstall: plan } = await api.packUninstall(pack.name, false)
+      if (plan.in_use.length) { setInUse(plan.in_use); return }
+      if (!(await confirmDestructive(`Uninstall ${pack.name}?`, <UninstallSummary plan={plan} />, { confirmLabel: 'Uninstall' }))) return
+      const { uninstall: done } = await api.packUninstall(pack.name, true)
+      const kept = done.kept.length
+      notify(`Uninstalled ${pack.name}${kept ? ` — ${kept} component${kept === 1 ? '' : 's'} kept` : ''}.`, 'success')
+      onChanged()
+    } catch (e) {
+      notify(`Couldn't uninstall ${pack.name}: ${String((e as Error)?.message || e)}`, 'error')
+    } finally {
+      setBusy(false)
+      setUninstalling(false)
+    }
   }
   const finishSetup = () => {
     setBusy(true)
@@ -484,23 +514,29 @@ export function PackRow({ pack }: { pack: InstalledPackRec }) {
         hint={connectorWarning(pack.connector_markers)}>
         <div className="flex items-center gap-2">
           {pack.setup_pending && (
-            <Button variant="primary" size="sm" disabled={busy} disabledReason={BUSY_REASON} onClick={finishSetup}>Finish setup</Button>
+            <Button variant="primary" size="sm" ariaLabel={`Finish setup for ${pack.name}`} disabled={busy} disabledReason={BUSY_REASON} onClick={finishSetup}>Finish setup</Button>
           )}
           {/* Only when the pack actually staged triggers. Disabled-on-deploy is the whole point,
               so the label says "Add to Automations", never "Enable" — the user arms them there. */}
           {stagedTriggers > 0 && (
-            <Button variant="ghost" size="sm" loading={busy} loadingLabel="Adding…" onClick={deployTriggers}>
+            <Button variant="ghost" size="sm" ariaLabel={`Add triggers to Automations from ${pack.name}`} loading={busy} loadingLabel="Adding…" onClick={deployTriggers}>
               Add triggers to Automations
             </Button>
           )}
           {roster.length > 0 && (
-            <Button variant="secondary" size="sm" loading={deploying} loadingLabel="Deploying…" disabled={busy} disabledReason={BUSY_REASON} onClick={deployRoster}>Deploy roster</Button>
+            <Button variant="secondary" size="sm" ariaLabel={`Deploy roster for ${pack.name}`} loading={deploying} loadingLabel="Deploying…" disabled={busy} disabledReason={BUSY_REASON} onClick={deployRoster}>Deploy roster</Button>
           )}
-          <Button variant="ghost" size="sm" loading={busy} loadingLabel="Checking…" onClick={checkUpdate}>
+          {/* Every action here is named after its pack: with two packs installed, a screen reader
+              heard "Check for update" twice with nothing saying which pack either one checks. */}
+          <Button variant="ghost" size="sm" ariaLabel={`Check for update to ${pack.name}`} loading={busy} loadingLabel="Checking…" onClick={checkUpdate}>
             Check for update
+          </Button>
+          <Button variant="ghost" size="sm" ariaLabel={`Uninstall ${pack.name}`} loading={uninstalling} disabled={busy} disabledReason={BUSY_REASON} onClick={uninstall}>
+            Uninstall
           </Button>
         </div>
       </Row>
+      {inUse.length > 0 && <UninstallBlocked pack={pack.name} inUse={inUse} />}
       {update && <UpdatePreview update={update} busy={busy} onApply={applyUpdate} />}
       {/* Honest result: the triggers are in Automations but DISABLED — the line names the count
           and points at where to arm them, and never says "enabled". */}
@@ -597,6 +633,67 @@ export function UpdatePreview({ update, busy, onApply }: {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+/** Component kinds in words, singular and plural — a pack's refs are `<kind>:<id>`. */
+const KIND_WORDS: Record<string, [string, string]> = {
+  skill: ['skill', 'skills'],
+  agent: ['agent definition', 'agent definitions'],
+  prompt: ['prompt', 'prompts'],
+  template: ['workflow', 'workflows'],
+  trigger: ['staged automation', 'staged automations'],
+}
+
+function inWords(items: string[]): string {
+  return items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`
+}
+
+/** The uninstall dialog's body: what goes, counted by kind; what stays, each with its reason; and
+ *  the MCP servers you set up for the pack, which stay. Exported for test. */
+export function UninstallSummary({ plan }: { plan: PackUninstallRec }) {
+  const counts = new Map<string, number>()
+  for (const ref of plan.removed) {
+    const kind = ref.split(':', 1)[0]
+    counts.set(kind, (counts.get(kind) ?? 0) + 1)
+  }
+  const removes = [...counts].map(([kind, n]) => {
+    const [one, many] = KIND_WORDS[kind] ?? [kind, `${kind}s`]
+    return `${n} ${n === 1 ? one : many}`
+  })
+  const servers = plan.servers
+  return (
+    <div className="flex flex-col gap-2">
+      <p>{removes.length ? `Removes ${inWords(removes)}.` : 'None of its components are left to remove.'} Its files are deleted, not archived, and its setup answers go with them.</p>
+      {plan.kept.length > 0 && (
+        <ul className="flex flex-col gap-1">
+          {plan.kept.map((k) => <li key={k.ref}><span className="font-mono">{k.ref}</span>: {k.reason}.</li>)}
+        </ul>
+      )}
+      {servers.length > 0 && (
+        <p>
+          The MCP server{servers.length === 1 ? '' : 's'} you set up for it ({servers.join(', ')}) {servers.length === 1 ? 'stays' : 'stay'} — remove {servers.length === 1 ? 'it' : 'them'} under MCP servers if you no longer want {servers.length === 1 ? 'it' : 'them'}.
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** Why an uninstall has to wait: what was deployed from the pack and is still live, each with the
+ *  page it is removed from. Nothing was removed. */
+function UninstallBlocked({ pack, inUse }: { pack: string; inUse: PackUninstallRec['in_use'] }) {
+  return (
+    <div role="alert" data-type="caption" className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2 text-on-surface-low">
+      <span className="text-warn">
+        {pack} is still in use, so nothing was removed. Remove {inUse.length === 1 ? 'this' : 'these'} first, then uninstall:
+      </span>
+      {inUse.map((u) => (
+        <span key={`${u.kind}:${u.id}`}>
+          {u.kind === 'agent' ? 'Agent' : 'Automation'} <span className="font-mono">{u.name}</span>, in{' '}
+          <TextLink href={u.kind === 'agent' ? '#/agents' : '#/triggers'} ink="emphasis">{u.kind === 'agent' ? 'Agents' : 'Automations'}</TextLink>
+        </span>
+      ))}
     </div>
   )
 }

@@ -2050,6 +2050,7 @@
     "params": [],
     "returns": "None"
    },
+   "unsent_options": {"kind": "property", "returns": "dict[str, str]", "settable": false},
    "wait_for_compaction": {
     "kind": "async method",
     "params": [
@@ -2541,6 +2542,14 @@
      {"annotation": "str", "kind": "positional_or_keyword", "name": "key"}
     ],
     "returns": "bool | None"
+   },
+   "mark_agent_stale": {
+    "kind": "method",
+    "params": [
+     {"annotation": "str", "kind": "var_positional", "name": "names"},
+     {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "unnamed"}
+    ],
+    "returns": "list[str]"
    },
    "mark_new": {
     "kind": "method",
@@ -3979,36 +3988,12 @@
   },
   "kind": "class",
   "members": {
-   "has": {
-    "kind": "method",
-    "params": [
-     {"annotation": "str", "kind": "positional_or_keyword", "name": "name"}
-    ],
-    "returns": "bool"
-   },
-   "list": {
-    "kind": "method",
-    "params": [],
-    "returns": "list[Credential]"
-   },
-   "reload": {
-    "kind": "method",
-    "params": [],
-    "returns": "None"
-   },
    "resolve": {
     "kind": "method",
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "name"}
     ],
     "returns": "Credential"
-   },
-   "save": {
-    "kind": "method",
-    "params": [
-     {"annotation": "dict[str, dict[str, object]]", "kind": "positional_or_keyword", "name": "descriptors"}
-    ],
-    "returns": "None"
    }
   }
  },
@@ -5924,7 +5909,7 @@
  "personalclaw.sdk.mcp.get_mcp_client_registry": {
   "kind": "function",
   "params": [],
-  "returns": "McpClientRegistry | None"
+  "returns": "McpClientRegistry"
  },
  "personalclaw.sdk.mcp.infer_risk_from_name": {
   "kind": "function",
@@ -6186,6 +6171,7 @@
     "params": [],
     "returns": "None"
    },
+   "unsent_options": {"kind": "property", "returns": "dict[str, str]", "settable": false},
    "wait_for_compaction": {
     "kind": "async method",
     "params": [
@@ -6557,6 +6543,7 @@
     "params": [],
     "returns": "None"
    },
+   "unsent_options": {"kind": "property", "returns": "dict[str, str]", "settable": false},
    "wait_for_compaction": {
     "kind": "async method",
     "params": [

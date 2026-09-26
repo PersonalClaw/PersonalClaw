@@ -228,6 +228,30 @@ def test_a_webhook_routes_to_webhook():
     assert route("when a webhook posts to me").kind == "webhook"
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "when a session ends",
+        "when a subagent finishes",
+        "whenever an approval is requested",
+        "when the context compacts",
+        "when a hook fires",
+    ],
+)
+def test_a_LIFECYCLE_event_is_refused_with_where_to_make_it(text):
+    """🔴 These routed to `event`, and the only spec that saved (`{source: session, pattern:
+    SessionEnd}`) was a row no event source ever matches — listed, counted and silent. A lifecycle
+    event fires lifecycle triggers, which this tool cannot make, so the route says so and where."""
+    routed = route(text)
+    assert routed.kind == "", f"{text!r} routed to {routed.kind!r}"
+    assert "Lifecycle event" in routed.error and "memory write" in routed.error
+
+
+def test_a_memory_cue_beats_a_lifecycle_word():
+    """A request that names a memory write is one, whatever else it mentions."""
+    assert route("when a memory about this session changes").kind == "event"
+
+
 def test_every_routed_kind_is_a_kind_the_store_accepts():
     """🔴 A route to a kind the entity rejects would create a trigger that loads broken and never
     fires — the same present-and-inert class this program keeps finding."""

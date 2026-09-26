@@ -172,6 +172,32 @@ toast stands down for a note whose `refs` name an approval (it still lands in th
 Home's inbox count and To triage recognise the row as the approval they already list
 (`mirroredApprovalId`).
 
+**No model's verdict can hide one.** `system/agent_request`, the kind the row rides, is a
+*decision* (`NotificationKind.decision`): work is parked on the answer. So are
+`loop/needs_input` (workflow gates, blocked loops, sign-in handoffs, control-bridge
+confirmations), `agent/room_paused` and the `approval/requested` ping. A decision is never
+`verifiable` — `notification_kinds.register` refuses the pair — so the second-opinion pass
+never runs on one: the row is open and its notification fires the moment it is raised, with no
+model call in front of either. `PUT /api/notifications/rules` refuses `verify` for a decision
+and says why, and a `verify` stored against one reads as off. Until this, `system/agent_request`
+was verifiable: with `verify: true`, every approval's registration waited on a model call made
+on the gateway's loop, and a REFUTED filed the row as `filtered` and withheld its notification.
+
+**A proposal's second opinion holds nothing up.** INU-6 still checks a proposal whose rule sets
+`verify`, after its row is listed. `emit_attention_item` publishes the row with
+`refs.verify: checking`, holds its one notification in `refs.verify_withheld`, and returns;
+`notification_verify.verify_in_background` asks the model on a worker thread with its own event
+loop and hands the verdict back to the caller's loop, where `inbox.apply_verdict` lands it. A
+REFUTED claim files a row nobody has touched under Filtered, its notification still withheld
+for Restore. A row the user opened or answered while the model thought stays where they put it:
+the verdict is written on it, the row says so, and it is notified only if it is still open and
+the claim was not refuted. When the gateway attaches its Inbox, `settle_verification_rows`
+delivers a check a restart cut off (as `skipped`) and takes every decision row an earlier
+verify filed as `filtered` back out of Filtered: restored, with its notification, if the
+decision stands (an approval still in the registry, a folder not yet trusted, a one-tap hold),
+handled if not. Before this the emit waited for the model from whatever thread raised the item,
+so on the gateway's loop a one-second model stopped the gateway for a second.
+
 ## Notifications
 
 `DashboardState.notify()` (`dashboard/state.py`) is the **single choke point**
@@ -263,7 +289,14 @@ Unread counts are *derived* from unacked log entries; deletes broadcast
 `notification_removed`. A note that is recorded without being fired (a `badge`, a foreign
 addressee) sends a quiet `notification_logged` frame, so the bell and Home count it at once
 without a toast; the bell, Home and the feed re-read on any `notification*` frame and poll only
-as a once-a-minute safety net. Notification metadata may carry a `channel_link` —
+as a once-a-minute safety net. An app reads back only what it raised (`raised_by_app`, which the proposal
+door `POST /api/inbox/proposals` names through `emit_attention_item`, and which meta cannot
+supply) and what is about a conversation it started: `GET /api/notifications` answers an app with those, and its socket gets
+a `notification*` frame cut to them (`DashboardState.notification_reaches`). The raiser is named
+by the producer, never read off the request: an app's request scope is copied into every task
+the request starts, so a platform worker one of its requests happened to start would raise your
+notes as the app's. A removal is announced before its note leaves the log, because an app's frame
+is decided on the note. Notification metadata may carry a `channel_link` —
 built via `ChannelDelivery.build_thread_link`, never by core string-formatting
 a vendor URL.
 

@@ -807,7 +807,9 @@ const SWALLOW_BUDGET: Record<string, number> = {
   'pages/prompts/promptWidgets.tsx': 1,
   'pages/settings/AgentDefaultsPanel.tsx': 1,
   'pages/settings/AlwaysOnConventions.tsx': 1,
-  'pages/settings/ChatPanel.tsx': 3,
+  // 3 → 1. The dashboard read (it IS the Sessions and Messages sections, so its `null` spun the panel's
+  // skeleton forever) and the starter list (a failed read said "No starters yet") both say so now.
+  'pages/settings/ChatPanel.tsx': 1,
   // The automation list swallow is FIXED (the panel said "You have no automations yet" when it could
   // not read them). The remaining one resets the REPORT, whose failure the panel already announces.
   'pages/settings/DoctorPanel.tsx': 1,
@@ -828,7 +830,10 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // files. See also the FIVE named-list write rails that file supersedes.
   // 8 → 7. The daily-digest read is fixed; it printed "No digests yet" out of a failed fetch. The
   // seven left are stats/lint/observability decorations and a settings read with its own branch.
-  'pages/settings/MemoryPanel.tsx': 7,
+  // 7 → 3. Four of those were not decorations: the settings read (its `null` spun the Settings tab
+  // forever), the lint read (a `null` said "No issues flagged — memory is clean"), the observability
+  // read (its section vanished) and an entity's backlinks (a failure advised removing the entity).
+  'pages/settings/MemoryPanel.tsx': 3,
   'pages/settings/ModelBackends.tsx': 1,
   // 6 → 4. The two that LEFT were the panel's PRIMARY read, and it was the last surface in the
   // first-run defect set with no terminal state: `api.modelsAvailable().catch(() => [])` +
@@ -1298,9 +1303,11 @@ const FETCHER_SWALLOW_BUDGET: Record<string, number> = {
   'pages/knowledge/KnowledgeCreatePage.tsx': 1,
   'pages/knowledge/KnowledgeListPage.tsx': 1,
   'pages/settings/AgentDefaultsPanel.tsx': 1,
-  'pages/settings/ChatPanel.tsx': 1,
+  // 1 → 0: its dashboard read no longer substitutes `null` for a failure.
+  'pages/settings/ChatPanel.tsx': 0,
   'pages/settings/DurabilityPanel.tsx': 1,
-  'pages/settings/MemoryPanel.tsx': 4,
+  // 4 → 1: the settings, lint and observability reads propagate their rejection to `useQuery`.
+  'pages/settings/MemoryPanel.tsx': 1,
   'pages/settings/ModelBackends.tsx': 1,
   'pages/settings/ModelsPanel.tsx': 2,
   'pages/settings/MultiInstanceCard.tsx': 1,
@@ -1363,7 +1370,8 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   'pages/prompts/SyntaxReference.tsx': 1,
   'pages/settings/ChatPanel.tsx': 0,
   'pages/settings/CompanionPanel.tsx': 2,
-  'pages/settings/MemoryPanel.tsx': 8,
+  // 8 → 5: the settings, lint and observability reads bind their `error` and render it.
+  'pages/settings/MemoryPanel.tsx': 5,
   'pages/settings/ModelBackends.tsx': 1,
   'pages/settings/ModelsPanel.tsx': 2,
   'pages/settings/MultiInstanceCard.tsx': 1,

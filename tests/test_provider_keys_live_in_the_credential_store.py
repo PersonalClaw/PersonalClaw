@@ -165,6 +165,44 @@ def test_the_stored_key_authenticates(name, endpoint_accepting):
     assert seen == [f"Bearer {KEY}"]
 
 
+def test_a_new_instance_naming_a_vault_key_authenticates_at_once(
+    name, endpoint_accepting, monkeypatch
+):
+    """Add-instance registered its in-memory entry from the REQUEST's options, so a Secrets-panel
+    reference typed into the key field reached the provider as literal text: Test connection sent
+    ``Bearer {{secret:…}}`` and failed until a restart replayed config.json. The entry is now
+    built from the stored record, resolved against the provider's own credentials."""
+    from personalclaw.config.credentials import save_credential
+    from personalclaw.config.secret_refs import make_ref
+
+    vault_name, vault_value = "FIXTURE_VAULT_NEW_INSTANCE_KEY", "sk-fixture-vault-2b3c4d5e"
+    # A named (vault) credential is mirrored into the process environment by design; this makes
+    # the teardown take it back out, so no later test inherits it.
+    monkeypatch.setenv(vault_name, "")
+    save_credential(vault_name, vault_value)
+    seen = endpoint_accepting(vault_value)
+    _create(name, {"api_key": make_ref(vault_name), "endpoint": FIXTURE_BASE})
+
+    assert get_default_registry().get_entry(name).options["api_key"] == vault_value
+    result = _test_connection(name)
+    assert result["ok"] is True, result
+    assert seen == [f"Bearer {vault_value}"]
+
+
+def test_a_new_instance_is_the_entry_a_restart_would_register(name):
+    """One path from a stored record to an entry: what Add-instance registers is what the boot
+    sync registers from the same file — here, a pasted key the store trims."""
+    from personalclaw.llm.registry import sync_entries_from_config
+
+    _create(name, {"api_key": f"  {KEY}\n", "endpoint": FIXTURE_BASE})
+    created = get_default_registry().get_entry(name)
+    get_default_registry().unregister_entry(name)
+    sync_entries_from_config()
+
+    assert get_default_registry().get_entry(name) == created
+    assert created.options["api_key"] == KEY
+
+
 def test_rotate_clear_and_omit_all_go_through_the_store(_home, name, endpoint_accepting):
     """#3554's three wire meanings, preserved: a value rotates, ``null`` clears, absence keeps."""
     _create(name, {"api_key": KEY, "endpoint": FIXTURE_BASE})

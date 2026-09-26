@@ -26,6 +26,7 @@ from personalclaw.dashboard.chat_utils import _SLASH_COMMAND_HINTS
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import consent_required, json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
+from personalclaw.providers.provider_bridge import agent_model_problem
 from personalclaw.request_validation import json_object_body, string_field
 from personalclaw.safety_flags import confirm_granted
 
@@ -955,6 +956,8 @@ async def api_personalclaw_agents(request: web.Request) -> web.Response:
             **dataclasses.asdict(agent_cfg),
             "reserved": is_reserved_agent(name),
             "editable": not is_reserved_agent(name),
+            # The pin is KEPT; this says it cannot run, where the pin was chosen and the fix is.
+            "model_unavailable": agent_model_problem(agent_cfg, cfg),
         }
         for name, agent_cfg in cfg.agents.items()
     ]
@@ -1363,6 +1366,7 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
             setattr(agent, field_name, value)
             changed.append(field_name)
         cfg.save()
+    _agent_edited(request, name, agent.provider_agent, is_default=name == cfg.default_agent)
     _sel().log_api_access(
         caller=request.get("user", "dashboard"),
         operation="agent.update",
@@ -1371,6 +1375,39 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
         resources=f"{name} ({','.join(changed)})",
     )
     return web.json_response({"ok": True, "name": name})
+
+
+def _agent_edited(
+    request: web.Request, name: str, provider_agent: str, *, is_default: bool
+) -> None:
+    """After an agent is saved or deleted: its open chats and rooms answer as it now reads.
+
+    A chat or room keeps the runtime it built on its first turn, and that runtime copied the
+    agent's model and triggers — so an edit used to reach nothing already open until an idle
+    hour or a restart, while the Agents page and a room's member list showed the new definition.
+    The sessions are marked, not torn down: a turn running now finishes on the definition it
+    started with, and each one's next turn rebuilds (``SessionManager.mark_agent_stale``). A chat
+    on the default agent may record no agent at all, so editing the default marks those too.
+    Best-effort: the save already happened, and a refresh failure must not answer it with a 500.
+    """
+    state = request.app.get("state") if hasattr(request.app, "get") else None
+    if state is None:
+        return
+    try:
+        sessions = getattr(state, "sessions", None)
+        if sessions is not None:
+            marked = sessions.mark_agent_stale(name, provider_agent, unnamed=is_default)
+            if marked:
+                logger.info(
+                    "agent %s edited: %d open session(s) rebuild on their next turn",
+                    name,
+                    len(marked),
+                )
+        state.push_refresh("agents")
+    except Exception:  # noqa: BLE001 — see the docstring
+        logger.warning(
+            "could not refresh open sessions after editing agent %s", name, exc_info=True
+        )
 
 
 async def api_personalclaw_agent_delete(request: web.Request) -> web.Response:
@@ -1393,8 +1430,9 @@ async def api_personalclaw_agent_delete(request: web.Request) -> web.Response:
                 {"error": f"Cannot delete default agent '{name}'. Change default_agent first."},
                 status=409,
             )
-        del cfg.agents[name]
+        removed = cfg.agents.pop(name)
         cfg.save()
+    _agent_edited(request, name, removed.provider_agent, is_default=False)
     _sel().log_api_access(
         caller=request.get("user", "dashboard"),
         operation="agent.delete",

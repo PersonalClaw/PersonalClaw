@@ -45,7 +45,7 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(loader_mod, "config_dir", lambda: tmp_path)
     import personalclaw.skills.marketplace as mp
 
-    monkeypatch.setattr(mp, "SKILL_DISCOVERY_PATHS", [])
+    monkeypatch.setattr(mp, "skill_discovery_paths", lambda: [])
     assert tmp_path in proposals._proposals_dir().parents, "the proposal queue was NOT redirected"
     assert tmp_path in overlays.overlays_dir().parents, "the overlay store was NOT redirected"
     return tmp_path

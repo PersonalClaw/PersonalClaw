@@ -818,6 +818,13 @@ jobs:
       - name: first run is reachable at every viewport (web/e2e/onboardingGeometry.spec.ts)
         working-directory: web
         run: npx playwright test e2e/onboardingGeometry.spec.ts --project=chromium
+      # The chat header's geometry, for the same reason as the step above: jsdom lays nothing out,
+      # and the header overlapped itself at every width from 320 to 1440px while every frontend rail
+      # was green. Seven widths, one browser each, the chat pinned by route stubs; ~20s, no
+      # screenshot, the same harness.
+      - name: the chat header never overlaps itself (web/e2e/chatHeaderGeometry.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/chatHeaderGeometry.spec.ts --project=chromium
       - name: upload the axe reports
         if: always()
         uses: actions/upload-artifact@v7

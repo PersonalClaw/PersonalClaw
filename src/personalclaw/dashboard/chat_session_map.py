@@ -100,6 +100,11 @@ FINISH_REASON_KEY = "finish_reason"
 #: The one value :data:`FINISH_REASON_KEY` carries.
 FINISH_REASON_LENGTH = "length"
 
+#: The ``meta`` key that says the turn's reply came from a model OTHER than the one chosen for it:
+#: the sentence (``ModelSubstitution.sentence``, "Ran on X instead of Researcher's model Y: …"),
+#: on the same last assistant message. Absent = the chosen model answered.
+MODEL_SUBSTITUTION_KEY = "model_substitution"
+
 #: A summary is a RAIL LABEL, deliberately shorter than :data:`PREVIEW_CAP`: it occupies
 #: the same one-line slot the preview would, and a label that spends the whole preview
 #: budget reads as a truncated sentence rather than a title.
@@ -457,6 +462,16 @@ def stamp_finish_reason(session: Any, stop_reason: str) -> bool:
     if not is_length_stop(stop_reason):
         return False
     return _stamp_on_last_assistant(session, FINISH_REASON_KEY, FINISH_REASON_LENGTH)
+
+
+def stamp_model_substitution(session: Any, sentence: str) -> bool:
+    """Mark the turn's reply as answered by a substitute, with the sentence that says so.
+
+    The live notice (an ``activity_event``) is gone after a reload, and a reply that silently
+    reads as the chosen model's is the defect this closes. Same message, same before-the-save
+    constraint as the telemetry.
+    """
+    return _stamp_on_last_assistant(session, MODEL_SUBSTITUTION_KEY, sentence)
 
 
 def stamp_turn_summary(session: Any, summary: str | None) -> bool:

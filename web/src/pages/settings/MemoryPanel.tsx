@@ -22,7 +22,7 @@ import { PanelHeader, Section, Field, Row, Toggle, SavedToast } from './settings
 import { confirm, confirmDelete, confirmDestructive } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
 import { Eyebrow } from '../../ui/Eyebrow'
-import { ListSkeleton, FormSkeleton, LoadError, EmptyState } from '../../ui/ListScaffold'
+import { ListSkeleton, FormSkeleton, InlineLoadError, LoadError, EmptyState } from '../../ui/ListScaffold'
 import { TextInput, Select, ChipInput, NumberField, FieldError } from '../../ui/forms'
 import { Segmented } from '../../ui/Segmented'
 import { SearchField } from '../../ui/SearchField'
@@ -448,9 +448,10 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
       // `vector_memory.delete_semantic` is a TOMBSTONE: `UPDATE semantic_memory SET is_deleted = 1`,
       // the row keeps its `value_json`, and `_log_event("delete", "semantic", key, existing["value_json"]…)`
       // records the prior value as well. So the data survives in two places — and this very panel
-      // ships the undo: the History tab's `canUndo` is
+      // ships the undo: the Audit tab's `canUndo` is
       // `ev.memory_type === 'semantic' && UNDOABLE.has(ev.event_type)`, and `UNDOABLE` contains
-      // `'delete'`.
+      // `'delete'`. The copy names the tab by its label in `TOP_TABS` — it said "the History tab
+      // below" for a tab called Audit, in the strip above.
       //
       // 🪤 OVERSTATING A LOSS IS ITS OWN DEFECT, not a safe error. Warnings work by being scarce; one
       // that cries irreversible over a one-click undo is what teaches people to click through the ones
@@ -458,7 +459,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
       // cannot be undone. That sibling is the discriminator: this is a precise correction, not a
       // blanket softening of danger copy.
       if (!(await confirmDelete('memory', selected.fact.key, {
-        body: 'The agent stops using it right away. This one is reversible — the History tab below has an Undo for it.',
+        body: 'The agent stops using it right away. This one is reversible — the Audit tab has an Undo for it.',
       }))) return
       try { await api.deleteSemantic(selected.fact.key) } catch (e) { return fail('memory', e) }
     } else if (selected.kind === 'episodic' && selected.episodic) {
@@ -473,7 +474,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
       // memory is a sentence rather than a name.
       // 🔑 THIS ONE KEEPS THE DEFAULT "This cannot be undone." AND MUST — it is the discriminator that
       // makes the two corrections above precise rather than a softening of danger copy. Episodic delete
-      // is also a tombstone, but `undo_event` refuses a non-semantic event and the History tab's
+      // is also a tombstone, but `undo_event` refuses a non-semantic event and the Audit tab's
       // `canUndo` gates on `ev.memory_type === 'semantic'`, so there is no route back. Three deletes in
       // one function, two of which were saying the wrong thing; do not "finish the job" on this one.
       if (!(await confirmDelete('episodic memory', rowSubject([selected.episodic.text], 40)))) return
@@ -493,7 +494,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
       // only clears `is_deleted`; it does not restore observations. So undo brings the RULE back at
       // reset confidence, and the copy has to carry that or it trades one lie for another.
       if (!(await confirmDelete('lesson', rowSubject([selected.lesson.rule], 40), {
-        body: 'The agent stops applying it right away. The History tab below can undo this, but the lesson '
+        body: 'The agent stops applying it right away. The Audit tab can undo this, but the lesson '
           + 'comes back with its confidence reset — forgetting one deliberately voids the observations '
           + 'that earned it.',
       }))) return
@@ -1260,8 +1261,12 @@ function RecallTab() {
  *  what auto-purged), the observability dashboard (injection-rejection reasons +
  *  injected-context byte budget), and a manual episodic→durable promote trigger. */
 function HealthTab({ onChanged }: { onChanged: () => void }) {
-  const { data: lint, refresh: refreshLint } = useQuery<MemoryLint | null>('settings:memory-lint', () => api.memoryLint().catch(() => null), { persist: false })
-  const { data: obs, refresh: refreshObs } = useQuery<MemoryObservability | null>('settings:memory-obs', () => api.memoryObservability().catch(() => null), { persist: false })
+  // 🔴 NEITHER READ SWALLOWS ITS FAILURE ANY MORE. Both were `.catch(() => null)`, and a `null` lint
+  // rendered "No issues flagged — memory is clean": the one reassurance a health check exists to
+  // give, given about memory nobody had checked. A `null` observability read hid its section. Each
+  // failure is now said in its own section, with a Retry.
+  const { data: lint, error: lintErr, refresh: refreshLint } = useQuery<MemoryLint>('settings:memory-lint', () => api.memoryLint(), { persist: false })
+  const { data: obs, error: obsErr, refresh: refreshObs } = useQuery<MemoryObservability>('settings:memory-obs', () => api.memoryObservability(), { persist: false })
   const [promoting, setPromoting] = useState(false)
   const [dreamResult, setDreamResult] = useState<string | null>(null)
   const promote = async () => {
@@ -1276,7 +1281,9 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
     invalidateKeys('settings:memory-lint'); invalidateKeys('settings:memory-obs'); refreshLint(); refreshObs(); onChanged()
   }
   const reload = () => { invalidateKeys('settings:memory-lint'); invalidateKeys('settings:memory-obs'); refreshLint(); refreshObs() }
-  if (lint === undefined || obs === undefined) return <ListSkeleton rows={5} />
+  // Both reads failing is one fact about the tab, said once; one failing is said in its own section.
+  if (lint === undefined && lintErr && obs === undefined && obsErr) return <LoadError what="memory health" error={lintErr} onRetry={reload} />
+  if ((lint === undefined && !lintErr) || (obs === undefined && !obsErr)) return <ListSkeleton rows={5} what="memory health" />
   const autoFixed = lint ? Object.entries(lint.auto_fixed).filter(([, n]) => n > 0) : []
   return (
     <div className="flex flex-col gap-l">
@@ -1303,7 +1310,9 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
           <p data-type="caption" className="mt-2 text-ok">Auto-purged: {autoFixed.map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`).join(', ')}.</p>
         )}
         <div className="mt-3 flex flex-col gap-1.5">
-          {!lint || lint.flags.length === 0 ? (
+          {lint === undefined ? (
+            <InlineLoadError what="memory health" error={lintErr} onRetry={reload} />
+          ) : lint.flags.length === 0 ? (
             <p data-type="body-s" className="text-on-surface-low italic">No issues flagged — memory is clean.</p>
           ) : lint.flags.map((f, i) => (
             <div key={i} className="flex items-start gap-2 rounded-lg bg-surface-container px-3 py-2">
@@ -1322,6 +1331,11 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
       <VolunteerPrecisionSection />
 
       {/* observability */}
+      {obs === undefined && (
+        <Section title="Observability" hint="What the memory system is doing under the hood.">
+          <InlineLoadError what="memory observability" error={obsErr} onRetry={reload} />
+        </Section>
+      )}
       {obs && (
         <Section title="Observability" hint="What the memory system is doing under the hood.">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -1538,13 +1552,22 @@ function EntityGraphSection({ onChanged }: { onChanged: () => void }) {
 
 function EntityBacklinks({ entity }: { entity: MemoryEntity }) {
   const [links, setLinks] = useState<MemoryLink[] | null>(null)
+  // 🔴 A failed read used to set `[]`, and the drawer then said "Nothing links here yet — … this
+  // entity may be worth removing": advice to DELETE an entity, given because its links could not be
+  // read. Said, with a Retry, and never as the empty state.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+  const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     let live = true
+    setLoadErr(null)
     api.memoryEntityBacklinks(entity.id)
       .then((r) => { if (live) setLinks(r.links) })
-      .catch(() => { if (live) setLinks([]) })
+      .catch((e) => { if (live) setLoadErr(e) })
     return () => { live = false }
-  }, [entity.id])
+  }, [entity.id, attempt])
+  if (links === null && loadErr) {
+    return <div className="mt-2"><InlineLoadError what="what links here" error={loadErr} onRetry={() => setAttempt((n) => n + 1)} /></div>
+  }
   if (links === null) return <div data-type="caption" className="mt-2 text-on-surface-low">Loading…</div>
   if (links.length === 0) {
     return (
@@ -1928,8 +1951,11 @@ function LearnedPreferencesSection() {
 
 // ── Settings (retention + consolidate) ───────────────────────────────────────
 function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | undefined; onConsolidated: () => void }) {
-  const { data } = useQuery(
-    'settings:memory-settings', () => api.memorySettings().catch(() => null), { persist: true },
+  // 🔴 NO FALLBACK. `.catch(() => null)` resolved a failed read to `null`, the `!s` gate below then
+  // drew its skeleton forever — no message, no Retry — and `persist` kept the `null` for the next
+  // visit to paint the same spinner from cache.
+  const { data, error: loadErr, refresh } = useQuery(
+    'settings:memory-settings', () => api.memorySettings(), { persist: true },
   )
   const [s, setS] = useState<MemorySettings | null>(null)
   const [saved, setSaved] = useState(false)
@@ -1938,12 +1964,19 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
   useEffect(() => { if (data) setS(data) }, [data])
 
   const patch = (p: Partial<MemorySettings>) => {
+    // Optimistic locally, and PUT BACK on a refusal: the toast alone left the control showing the
+    // new value while the server kept the old one. Only the fields this write carried are restored,
+    // so a second write that landed meanwhile is not rolled back with it.
+    const previous = Object.fromEntries(
+      (Object.keys(p) as (keyof MemorySettings)[]).map((k) => [k, s?.[k]]),
+    ) as Partial<MemorySettings>
     setS((prev) => prev && { ...prev, ...p })
-    // Optimistic locally, silent on failure — the switch kept the new value while the server kept the
-    // old one.
     api.saveMemorySettings(p)
       .then(() => { setSaved(true); setTimeout(() => setSaved(false), 1600) })
-      .catch((e) => notify(`Couldn't save your memory settings: ${String((e as Error)?.message || e)}`, 'error'))
+      .catch((e) => {
+        setS((prev) => prev && { ...prev, ...previous })
+        notify(`Couldn't save your memory settings: ${String((e as Error)?.message || e)}`, 'error')
+      })
   }
   /** Write ONE `memory.*` field through the `_EDITABLE_CONFIG` PATCH allowlist.
    *
@@ -1975,7 +2008,8 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
     setConsolidating(false); onConsolidated()
   }
 
-  if (!s) return <FormSkeleton sections={2} />
+  if (!s && loadErr) return <LoadError what="memory settings" error={loadErr} onRetry={refresh} />
+  if (!s) return <FormSkeleton sections={2} what="memory settings" />
   return (
     <div>
       <Section title="Retention" hint="When idle conversations roll up into memory, how sure a learned fact must be to stay, and how long history is kept.">

@@ -195,6 +195,32 @@ async def settled() -> None:
         binding = _binding
 
 
+#: How long a thread may wait for the receivers to settle before going on without them.
+SETTLE_TIMEOUT_SECS = 30.0
+
+
+def settle_from_thread(timeout: float = SETTLE_TIMEOUT_SECS) -> None:
+    """Block until every reconciliation requested so far has run — from a thread off the loop.
+
+    For a caller about to take away what a receiver runs on: an app's unload purges the app's
+    modules, and the receiver it just asked to stop has to be stopped by then, not still running
+    that code on the loop. Returns at once when nothing is bound, and when called on the loop
+    itself, which cannot wait for its own pass.
+    """
+    binding = _binding
+    if binding is None or binding.loop.is_closed():
+        return
+    try:
+        if asyncio.get_running_loop() is binding.loop:
+            return
+    except RuntimeError:
+        pass
+    try:
+        asyncio.run_coroutine_threadsafe(settled(), binding.loop).result(timeout)
+    except Exception:  # noqa: BLE001 - a receiver that will not settle must not hold the caller
+        logger.warning("channel receivers did not settle within %gs", timeout, exc_info=True)
+
+
 async def reconcile_inbound() -> None:
     """THE lifecycle rule for channel receivers — run after anything that can change one.
 

@@ -56,10 +56,8 @@ def home(tmp_path, monkeypatch):
     """An isolated config home with an isolated ``AGENTS_DIR``.
 
     🪤 `agents_dir()` resolves the home per CALL (#3463 — it WAS a module-level constant frozen
-    at import, which is why this fixture stubs the resolver rather than moving
-    `config_dir` does not move it — `mcp_discovery.py:220` already records that trap. The
-    constant itself has to be patched, and so does the local marketplace's base dir, which
-    the registry singleton resolved at import time for the same reason.
+    at import), and so does the local marketplace the registry singleton holds; the resolver
+    is stubbed anyway so a regression that re-freezes it cannot reach the real home.
     """
     d = tmp_path / "home"
     agents = d / "agents"
@@ -67,10 +65,6 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: d)
     monkeypatch.setattr("personalclaw.dashboard.handlers.agents.config_dir", lambda: d)
     monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents)
-
-    from personalclaw.agents.marketplace import get_default_agent_registry
-
-    monkeypatch.setattr(get_default_agent_registry().get("local"), "_base", agents)
     return d
 
 

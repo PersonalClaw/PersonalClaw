@@ -231,7 +231,11 @@ re-invents a shape another touches:
 - **SEL event logging** — every security-relevant action logs via `sel()`
   (`log_tool_invocation` / `log_api_access` / a raw `SecurityEvent`); new
   `event_type`s are lowercase snake. There is one audit log — never a second.
-- **Storage** — everything under `config_dir()` (never hardcode the home);
+- **Storage** — everything under `config_dir()` (never hardcode the home, and
+  never work it out yourself: `config.loader` is the one resolver —
+  `resolve_config_dir()` where creating the home would be wrong,
+  `uses_default_home()` for a "not against the real home" rail — and it is asked
+  when the home is used, never at import);
   writes via `atomic_write`/`atomic_write_bytes`; reads tolerate missing/corrupt;
   secrets `mode=0o600`; append-only JSONL trims at 2× cap; new durable state that
   external tools may read is a stable surface.

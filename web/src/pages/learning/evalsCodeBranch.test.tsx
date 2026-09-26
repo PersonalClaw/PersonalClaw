@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { api, ApiError, hasApiCode, isEvalsOff, type EvalsOffView } from '../../lib/api'
+import { api, ApiError, hasApiCode, isNotRun, isSwitchedOff, type NotRunView, type SwitchedOffView } from '../../lib/api'
 import { errEnvelope, errText } from '../../lib/errText'
 import { JudgeBenchPanel } from './JudgeBenchPanel'
 import { StudiesPanel } from './StudiesPanel'
@@ -27,7 +27,7 @@ import { FieldMetricsPanel } from './FieldMetricsPanel'
 //             Settings → Evaluations." — one link to `#/settings/evals`, no Retry
 //
 //   evals.enabled = true, nothing run yet → 404 `judge_bench_absent` / `retrieval_absent` /
-//   `ablation_absent` (studies answers 200 `{"studies": []}`)
+//   `ablation_absent` (studies answers 200 `{"studies": []}`) (since retired too — see 🔁 below)
 //     BEFORE  3 × the same red "Couldn't load your …" + dead Retry
 //     AFTER   3 × the panel's own run command as guidance
 //
@@ -56,24 +56,43 @@ import { FieldMetricsPanel } from './FieldMetricsPanel'
 // "Failed to load resource: 404" per panel on every visit to `#/learning` (six on a default
 // install, where the switch ships off). They now answer a decided `200 {"enabled": false}`, the
 // same shape the rest of the gateway's switched-off reads use, so the panels branch on the VALUE
-// (`isEvalsOff`) and the "nothing has run yet" 404s below are the only coded non-answers left.
+// (`isSwitchedOff`).
+//
+// 🔁 AND SO IS "NOTHING HAS RUN YET". Judge-bench, ablation, learning-benchmark and retrieval
+// answered it as 404s with a code each, which the panels matched with `hasApiCode` — and which the
+// Models page, reading judge-bench on every visit for its recommended chip, logged as a failed
+// request until someone ran the CLI benchmark. They now answer a decided `200 {"ran": false}`, a
+// different body from "off" because the two send a user to different places (the command, the
+// switch), and the panels branch on that value (`isNotRun`). What is left on the wire with a code
+// is what a code is for: a drill-down, a write, a broken artifact.
 
-/** Verbatim `curl http://127.0.0.1:10784/api/evals/…` bodies. Do not paraphrase these. */
+/** Verbatim bodies of the coded answers the eval routes still send, as the handlers emit them
+ *  (the retrieval card and a study drill-down with evals off / no such study, and an unreadable
+ *  artifact tree). Do not paraphrase these. */
 const WIRE = {
-  judge_absent: '{"error": {"code": "judge_bench_absent", "message": "No judge benchmark has run yet. Run `personalclaw judge-bench` to produce one."}}',
-  retrieval_absent: '{"error": {"code": "retrieval_absent", "message": "No retrieval benchmark has run yet. Run `personalclaw retrieval-eval` to score both stores."}}',
-  ablation_absent: '{"error": {"code": "ablation_absent", "message": "No ablation has run yet. Register a component in `evals/ablation_registry.json` and run `personalclaw ablation --force`."}}',
+  card_off: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to label retrieval qrels."}}',
+  study_absent: '{"error": {"code": "study_absent", "message": "No study \'st-1\' is registered."}}',
+  judge_unreadable: '{"error": {"code": "judge_bench_unreadable", "message": "The benchmark artifacts could not be read."}}',
 } as const
 
-/** Verbatim `curl` of ANY of the six report reads with `evals.enabled` off — a 200, one body. */
+/** Verbatim body of ANY of the six report reads with `evals.enabled` off — a 200, one body. */
 const WIRE_OFF = '{"enabled": false}'
+
+/** Verbatim body of judge-bench, ablation, learning-benchmark or retrieval with evals on and no
+ *  run yet — a 200, one body. */
+const WIRE_NOT_RUN = '{"ran": false}'
 
 const res = (body: string, status = 404) =>
   new Response(body, { status, headers: { 'Content-Type': 'application/json' } })
 
 /** The off view the panel really receives: the wire body, parsed the way the client parses it. */
-async function offView(): Promise<EvalsOffView> {
-  return (await res(WIRE_OFF, 200).json()) as EvalsOffView
+async function offView(): Promise<SwitchedOffView> {
+  return (await res(WIRE_OFF, 200).json()) as SwitchedOffView
+}
+
+/** The not-run view, the same way. */
+async function notRunView(): Promise<NotRunView> {
+  return (await res(WIRE_NOT_RUN, 200).json()) as NotRunView
 }
 
 describe('errEnvelope keeps BOTH halves of the platform envelope', () => {
@@ -125,14 +144,13 @@ describe('the api client hands the code to its callers', () => {
   afterEach(() => { vi.unstubAllGlobals() })
 
   it('populates ApiError.code from the envelope, through the real request helper', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => res(WIRE.judge_absent)))
-    const err = await api.judgeBench().then(() => null, (e: unknown) => e)
+    vi.stubGlobal('fetch', vi.fn(async () => res(WIRE.study_absent)))
+    const err = await api.evalStudy('st-1').then(() => null, (e: unknown) => e)
     expect(err).toBeInstanceOf(ApiError)
-    expect((err as ApiError).code).toBe('judge_bench_absent')
+    expect((err as ApiError).code).toBe('study_absent')
     expect((err as ApiError).status).toBe(404)
     // `.message` is the contract 200+ `catch(e => e.message)` call sites depend on.
-    expect((err as ApiError).message)
-      .toBe('No judge benchmark has run yet. Run `personalclaw judge-bench` to produce one.')
+    expect((err as ApiError).message).toBe("No study 'st-1' is registered.")
   })
 
   it('hands the OFF answer through as a value, never as a rejection', async () => {
@@ -140,18 +158,35 @@ describe('the api client hands the code to its callers', () => {
     // error — by the panels, and by the browser console, once per panel per visit.
     vi.stubGlobal('fetch', vi.fn(async () => res(WIRE_OFF, 200)))
     const got = await api.judgeBench()
-    expect(isEvalsOff(got)).toBe(true)
+    expect(isSwitchedOff(got)).toBe(true)
   })
 
-  it('isEvalsOff recognises only the off body — never a real view or a list', () => {
-    expect(isEvalsOff({ enabled: false })).toBe(true)
+  it('hands the NOT-RUN answer through as a value too, and it is not the off answer', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => res(WIRE_NOT_RUN, 200)))
+    const got = await api.judgeBench()
+    expect(isNotRun(got)).toBe(true)
+    expect(isSwitchedOff(got)).toBe(false)
+  })
+
+  it('isNotRun recognises only the not-run body', () => {
+    expect(isNotRun({ ran: false })).toBe(true)
+    expect(isNotRun({ enabled: false })).toBe(false)
+    expect(isNotRun({ ran: true })).toBe(false)
+    expect(isNotRun({ ran: 'false' })).toBe(false)
+    expect(isNotRun([])).toBe(false)
+    expect(isNotRun(undefined)).toBe(false)
+    expect(isNotRun(null)).toBe(false)
+  })
+
+  it('isSwitchedOff recognises only the off body — never a real view or a list', () => {
+    expect(isSwitchedOff({ enabled: false })).toBe(true)
     // Vacuity controls: a real view, an empty list, and look-alikes must all read as NOT off.
-    expect(isEvalsOff({ studies: [] })).toBe(false)
-    expect(isEvalsOff([])).toBe(false)
-    expect(isEvalsOff({ enabled: true })).toBe(false)
-    expect(isEvalsOff({ enabled: 'false' })).toBe(false)
-    expect(isEvalsOff(undefined)).toBe(false)
-    expect(isEvalsOff(null)).toBe(false)
+    expect(isSwitchedOff({ studies: [] })).toBe(false)
+    expect(isSwitchedOff([])).toBe(false)
+    expect(isSwitchedOff({ enabled: true })).toBe(false)
+    expect(isSwitchedOff({ enabled: 'false' })).toBe(false)
+    expect(isSwitchedOff(undefined)).toBe(false)
+    expect(isSwitchedOff(null)).toBe(false)
   })
 
   it('populates it on the DELETE helper too, which throws its own ApiError', async () => {
@@ -176,12 +211,6 @@ describe('the api client hands the code to its callers', () => {
   })
 })
 
-/** Build the rejection the panel really receives: the wire body, through the real funnel. */
-async function wireError(body: string): Promise<ApiError> {
-  const { message, code } = await errEnvelope(res(body))
-  return new ApiError(message, 404, code)
-}
-
 describe('every eval panel says "the substrate is off" — and says it alike', () => {
   // 🪤 THIS LIST WAS FOUR, AND THE FIFTH PANEL DRIFTED FOR EXACTLY THAT REASON. `BenchmarkPanel`
   // appeared NOWHERE in this file, so when the shared `EvalsOff` sentence was introduced — and its
@@ -190,12 +219,12 @@ describe('every eval panel says "the substrate is off" — and says it alike', (
   // accessible name was just "Settings". An enumerated census cannot catch a member nobody enumerated,
   // so `every panel answering the off view renders EvalsOff` below DERIVES the population from source.
   const CASES = [
-    { name: 'judge tiers', what: 'judge benchmark', el: (v: EvalsOffView) => <JudgeBenchPanel bench={v} error={null} onRetry={() => {}} /> },
-    { name: 'template studies', what: 'study', el: (v: EvalsOffView) => <StudiesPanel studies={v} error={null} onRetry={() => {}} /> },
-    { name: 'retrieval', what: 'retrieval benchmark', el: (v: EvalsOffView) => <RetrievalBenchPanel bench={v} error={null} onRetry={() => {}} /> },
-    { name: 'ablation', what: 'ablation', el: (v: EvalsOffView) => <AblationPanel view={v} error={null} onRetry={() => {}} /> },
-    { name: 'skill-impact benchmark', what: 'benchmark', el: (v: EvalsOffView) => <BenchmarkPanel view={v} error={null} onRetry={() => {}} /> },
-    { name: 'lab vs field', what: 'lab-vs-field table', el: (v: EvalsOffView) => <FieldMetricsPanel rows={v} error={null} onRetry={() => {}} /> },
+    { name: 'judge tiers', what: 'judge benchmark', el: (v: SwitchedOffView) => <JudgeBenchPanel bench={v} error={null} onRetry={() => {}} /> },
+    { name: 'template studies', what: 'study', el: (v: SwitchedOffView) => <StudiesPanel studies={v} error={null} onRetry={() => {}} /> },
+    { name: 'retrieval', what: 'retrieval benchmark', el: (v: SwitchedOffView) => <RetrievalBenchPanel bench={v} error={null} onRetry={() => {}} /> },
+    { name: 'ablation', what: 'ablation', el: (v: SwitchedOffView) => <AblationPanel view={v} error={null} onRetry={() => {}} /> },
+    { name: 'skill-impact benchmark', what: 'benchmark', el: (v: SwitchedOffView) => <BenchmarkPanel view={v} error={null} onRetry={() => {}} /> },
+    { name: 'lab vs field', what: 'lab-vs-field table', el: (v: SwitchedOffView) => <FieldMetricsPanel rows={v} error={null} onRetry={() => {}} /> },
   ] as const
 
   for (const c of CASES) {
@@ -230,7 +259,7 @@ describe('every eval panel says "the substrate is off" — and says it alike', (
       // The off state is a VALUE now, so a panel that still branched on the retired 404 code would
       // be dead code that no longer runs — named as its own offence rather than silently skipped.
       if (/hasApiCode\(error, 'evals_disabled'\)/.test(src)) offenders.push(`${n}: branches on the retired evals_disabled 404`)
-      if (!/\bisEvalsOff\(/.test(src)) continue
+      if (!/\bisSwitchedOff\(/.test(src)) continue
       // LearningPage only routes the value to the panel that renders it; it owns no sentence.
       if (n === 'LearningPage.tsx') continue
       handlers.push(n)
@@ -283,26 +312,42 @@ describe('every eval panel says "the substrate is off" — and says it alike', (
   })
 })
 
-describe('and the "nothing has run yet" branches, which were inert for the same reason', () => {
+describe('and the "nothing has run yet" branches, which read the not-run VALUE now', () => {
   it('judge tiers names its run command', async () => {
-    render(<JudgeBenchPanel bench={undefined} error={await wireError(WIRE.judge_absent)} onRetry={() => {}} />)
+    render(<JudgeBenchPanel bench={await notRunView()} error={null} onRetry={() => {}} />)
     expect(screen.getByText('personalclaw judge-bench')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('retrieval names its run command AND still offers the label card', async () => {
-    render(<RetrievalBenchPanel bench={undefined} error={await wireError(WIRE.retrieval_absent)} onRetry={() => {}} />)
+    render(<RetrievalBenchPanel bench={await notRunView()} error={null} onRetry={() => {}} />)
     expect(screen.getByText('personalclaw retrieval-eval')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull()
   })
 
   it('ablation points at the registry — the place the OFF state must not mention', async () => {
-    render(<AblationPanel view={undefined} error={await wireError(WIRE.ablation_absent)} onRetry={() => {}} />)
+    render(<AblationPanel view={await notRunView()} error={null} onRetry={() => {}} />)
     expect(screen.getByText('evals/ablation_registry.json')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull()
   })
 
-  it('the OFF state does not leak any of those three next steps', async () => {
+  it('the skill-impact benchmark names its preflight', async () => {
+    render(<BenchmarkPanel view={await notRunView()} error={null} onRetry={() => {}} />)
+    expect(screen.getByText('python scripts/learning_benchmark.py --preflight')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull()
+  })
+
+  it('and a retired absent code arriving as an error is a failure, not guidance', async () => {
+    // Nothing sends these any more; a panel that still matched one would be dead code, and a
+    // rejection that did arrive is a failure to say, not a run command to offer.
+    const retired = new ApiError('No judge benchmark has run yet.', 404, 'judge_bench_absent')
+    render(<JudgeBenchPanel bench={undefined} error={retired} onRetry={() => {}} />)
+    expect(screen.getByRole('alert')).toBeTruthy()
+    expect(screen.queryByText('personalclaw judge-bench')).toBeNull()
+  })
+
+  it('the OFF state does not leak any of those next steps', async () => {
     const { unmount } = render(<AblationPanel view={await offView()} error={null} onRetry={() => {}} />)
     expect(screen.queryByText(/ablation_registry/)).toBeNull()
     unmount()

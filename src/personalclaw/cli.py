@@ -139,24 +139,27 @@ def _resolve_gateway_args(args: argparse.Namespace) -> dict:
             port = str(port_int)
 
     if approval == "yolo":
-        home_env = os.environ.get("PERSONALCLAW_HOME", "")
-        if not home_env:
+        from personalclaw.config.loader import default_config_dir, home_override, uses_default_home
+
+        if home_override() is None:
             print(
                 "--approval yolo refused: PERSONALCLAW_HOME must be explicitly set "
                 "to an isolated path (not the default ~/.personalclaw).",
                 file=sys.stderr,
             )
             sys.exit(2)
+        # Asked of the resolver, not of the variable: an override it refuses (a system
+        # directory) runs the gateway on the main home, whatever the variable says.
         try:
-            home_resolved = Path(home_env).expanduser().resolve()
-            main_home = (Path.home() / ".personalclaw").resolve()
+            on_main_home = uses_default_home()
+            main_home = default_config_dir().resolve()
         except OSError as exc:
             print(
                 f"--approval yolo refused: failed to resolve PERSONALCLAW_HOME: {exc}",
                 file=sys.stderr,
             )
             sys.exit(2)
-        if home_resolved == main_home:
+        if on_main_home:
             print(
                 "--approval yolo refused: PERSONALCLAW_HOME resolves to the main "
                 f"gateway home ({main_home}). Set PERSONALCLAW_HOME to an isolated "
@@ -543,7 +546,11 @@ The posture is announced on stderr, so stdout stays pipeable.
         "--credential",
         default="",
         metavar="NAME[=VALUE]",
-        help="Store a named credential (value from arg or env var)",
+        help=(
+            "Save a secret under NAME in the credential store Settings → Secrets lists, for "
+            "{{secret:NAME}} and a provider's credential to read (the value after =, else "
+            "from the environment variable NAME)"
+        ),
     )
     setup_parser.add_argument(
         "--app",

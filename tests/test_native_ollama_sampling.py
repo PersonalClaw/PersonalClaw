@@ -66,3 +66,20 @@ def test_no_per_call_temperature_sends_none_and_adds_nothing(module):
 
 def test_a_bool_is_not_a_temperature(module):
     assert module._factory(entry=_entry(), temperature=True).sampling_temperature is None
+
+
+def test_the_output_budget_lands_in_num_predict(module):
+    """The ``max_tokens`` build kwarg (#3595's per-call budget) was dropped here, so a one-shot
+    call generated until the model stopped. ollama reads a cap from ``options.num_predict``."""
+    provider = module._factory(entry=_entry(), max_tokens=256, temperature=0.7)
+    assert provider._extra_options == {"options": {"temperature": 0.7, "num_predict": 256}}
+
+
+def test_an_entry_that_sets_num_predict_keeps_it(module):
+    provider = module._factory(entry=_entry(options={"num_predict": -1}), max_tokens=256)
+    assert provider._extra_options == {"options": {"num_predict": -1}}
+
+
+def test_a_top_level_max_tokens_option_is_the_entrys_cap(module):
+    provider = module._factory(entry=_entry(max_tokens=512), max_tokens=256)
+    assert provider._extra_options == {"options": {"num_predict": 512}}

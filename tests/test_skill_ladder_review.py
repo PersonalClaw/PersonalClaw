@@ -22,7 +22,7 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(loader_mod, "config_dir", lambda: tmp_path)
     import personalclaw.skills.marketplace as mp
 
-    monkeypatch.setattr(mp, "SKILL_DISCOVERY_PATHS", [])
+    monkeypatch.setattr(mp, "skill_discovery_paths", lambda: [])
     return tmp_path
 
 

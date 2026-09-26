@@ -21,7 +21,6 @@ Two rules are load-bearing:
 from __future__ import annotations
 
 import logging
-import os
 import re
 import time
 from pathlib import Path
@@ -67,8 +66,7 @@ _fts_unavailable_logged: bool = False
 def db_path() -> Path:
     from personalclaw.config.loader import config_dir
 
-    home = Path(os.environ.get("PERSONALCLAW_HOME", config_dir()))
-    return home / _DB_FILE
+    return config_dir() / _DB_FILE
 
 
 def _connect() -> "sqlite3.Connection | None":

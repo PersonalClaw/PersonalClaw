@@ -240,17 +240,19 @@ class TestASecretThatIsNotSet:
         assert failure.failure_class is FailureClass.USER
         assert "'NOT_ADDED_YET'" in failure.remediation
 
-    def test_the_run_start_refusal_sends_no_one_to_a_page_that_cannot_clear_it(self) -> None:
-        """Run start refuses a missing secret before the step can, and said "add it in Settings →
-        Providers". This check reads `credentials.json`, which that page never writes: a
-        provider's key is stored under a name of its own, so the save cannot clear the refusal."""
+    def test_the_run_start_refusal_sends_the_user_to_the_page_that_clears_it(self) -> None:
+        """Run start refuses a missing secret before the step can. It once said "add it in
+        Settings → Providers", a page whose save never sets the credential this check reads.
+        The check reads the store Settings → Secrets writes, so that is the page it names
+        (`test_one_credential_store` proves a save there clears it)."""
         from personalclaw.workflows import preflight as PF
 
         spec = _action_spec("uses-a-secret", {"provider": "notify", "with": {"t": "{{secret:K1}}"}})
         result = PF.preflight(spec, credential_resolver=lambda k: False)
         (finding,) = [f for f in result.errors if f.code == "WF_PRE_CREDENTIAL_MISSING"]
         assert "'K1'" in finding.remediation
-        assert "Settings" not in finding.remediation, finding.remediation
+        assert "Settings → Secrets" in finding.remediation, finding.remediation
+        assert "Settings → Providers" not in finding.remediation
 
 
 class TestABindingSaysWhatToChange:

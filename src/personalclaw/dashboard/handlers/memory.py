@@ -4,12 +4,12 @@ import asyncio
 import functools
 import json
 import logging
-from pathlib import Path
 from typing import Any
 
 from aiohttp import web
 
 from personalclaw.atomic_write import atomic_write
+from personalclaw.config import loader as config_loader
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_download import attachment_disposition
 from personalclaw.request_validation import json_object_body, require_string
@@ -26,16 +26,6 @@ def _sel():
     import personalclaw.dashboard.handlers as _pkg  # noqa: F811
 
     return _pkg.sel()
-
-
-def _path_home_pclaw() -> Path:
-    """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
-    try:
-        from personalclaw.config.loader import config_dir as _cd
-
-        return _cd()
-    except Exception:
-        return Path.home() / ".personalclaw"
 
 
 def _ranking_payload(capable: Any) -> dict[str, Any]:
@@ -786,7 +776,7 @@ async def api_memory_stats(request: web.Request) -> web.Response:
     if not has_legacy and (md / "history").is_dir():
         has_legacy = any((md / "history").glob("*.md"))
     # Also check lessons.jsonl
-    lessons_path = _path_home_pclaw() / "lessons.jsonl"
+    lessons_path = config_loader.config_dir() / "lessons.jsonl"
     if not has_legacy and lessons_path.is_file() and lessons_path.stat().st_size > 5:
         has_legacy = True
     stats["has_legacy_memory"] = has_legacy

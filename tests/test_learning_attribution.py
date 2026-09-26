@@ -28,6 +28,7 @@ from personalclaw.learning import proposals as P
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import store as store_mod
 from personalclaw.workflows.models import Failure, FailureClass, RunStatus, WorkflowRun
+from personalclaw.workflows.step_usage import NOTHING_SENT
 
 
 @pytest.fixture
@@ -58,6 +59,7 @@ def _fail(run: WorkflowRun, node: str, text: str, *, exhausted: bool = True) -> 
         node,
         epoch=1,
         failure=Failure(failure_class=FailureClass.INTERNAL, cause_plain=text),
+        usage=NOTHING_SENT,
         attempt=1,
         retries_exhausted=exhausted,
     )

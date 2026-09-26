@@ -47,14 +47,14 @@ async def _tools_section() -> list[dict[str, Any]]:
     *registered* tool. The Tools page enumerates it separately; the manifest
     describes the stable registered surface.
     """
-    from personalclaw.tool_providers.registry import list_all_tools
+    from personalclaw.tool_providers.registry import EXTERNAL_MCP_PROVIDER, list_all_tools
 
     tools = await list_all_tools()
     out: list[dict[str, Any]] = []
     for t in tools:
-        # The generic external-MCP fan-in ("mcp" provider) is per-install and not
-        # part of the stable self-description — it varies by the user's mcp.json.
-        if t.provider == "mcp":
+        # The generic external-MCP fan-in is per-install and not part of the stable
+        # self-description — it varies by the user's mcp.json.
+        if t.provider == EXTERNAL_MCP_PROVIDER:
             continue
         meta = TOOL_META.get(t.name, {})
         out.append(
@@ -154,17 +154,20 @@ async def build_manifest(app: "web.Application | None" = None) -> dict[str, Any]
     registry that owns it — the only hand-maintained inputs are :data:`TOOL_META`
     and :data:`MANIFEST_EXCLUDE`, exactly what the drift test audits.
     """
-    return {
+    manifest: dict[str, Any] = {
         "apiVersion": API_VERSION,
         "tools": await _tools_section(),
         "routes": _routes_section(app),
+    }
+    if app is not None:
         # app_surfaces[] — every enabled app's declared route table + the generated
         # tool name for each agent-callable route. Same source the
         # AppRoutesToolProvider generates tools from, so the manifest and the live
-        # tool surface can't drift from each other.
-        "app_surfaces": _app_surfaces_section(),
-        "providers": _providers_section(),
-    }
+        # tool surface can't drift from each other. Only for a running install: it is
+        # the apps installed in ITS home, which a tool/provider-only rendering has none of.
+        manifest["app_surfaces"] = _app_surfaces_section()
+    manifest["providers"] = _providers_section()
+    return manifest
 
 
 def _app_surfaces_section() -> list[dict[str, Any]]:

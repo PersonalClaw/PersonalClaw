@@ -41,16 +41,13 @@ def home(tmp_path, monkeypatch) -> Path:
 
     This fixture creates a database, so an unpatched run would create it in the real
     ``~/.personalclaw``. Both bindings are patched — ``config/__init__.py`` binds the name at
-    import time, so patching only ``config.loader`` leaves a live alias — and
-    ``staging._default_home`` is patched too because that is the function the store actually
-    calls. The assertion at the end is the point: a redirect nobody checks is a redirect that
-    silently stops working.
+    import time, so patching only ``config.loader`` leaves a live alias. The assertion at the
+    end is the point: a redirect nobody checks is a redirect that silently stops working.
     """
     target = tmp_path / "home"
     target.mkdir()
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: target)
     monkeypatch.setattr("personalclaw.config.config_dir", lambda: target)
-    monkeypatch.setattr("personalclaw.learning.staging._default_home", lambda: target)
 
     probe = SurfacingEventStore()
     try:

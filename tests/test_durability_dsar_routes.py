@@ -20,9 +20,8 @@ from aiohttp.test_utils import TestClient, TestServer
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
-    """An isolated home. Set on the environment because `portability._pc_dir()` reads
-    `PERSONALCLAW_HOME` FIRST — patching only `config_dir` would let these tests walk the
-    developer's real home."""
+    """An isolated home, set on the environment: the isolation the product ships, which every
+    reader of the home — `portability._pc_dir()` included — follows."""
     h = tmp_path / "home"
     h.mkdir()
     (h / "config.json").write_text(json.dumps({"theme": "dark"}))

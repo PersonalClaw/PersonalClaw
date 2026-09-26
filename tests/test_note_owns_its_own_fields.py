@@ -202,7 +202,7 @@ def test_every_field_notify_sets_is_protected_one_way_or_the_other():
     src = (
         Path(__file__).resolve().parents[1] / "src" / "personalclaw" / "dashboard" / "state.py"
     ).read_text()
-    body = src[src.index("    def notify(self, kind: str") : src.index("    #: Meta keys that can")]
+    body = src[src.index("    def notify(\n") : src.index("    #: Meta keys that can")]
 
     # The unconditional assignment block is the structural protection.
     structural = set(re.findall(r'^\s+"(\w+)": ', body, re.M))
@@ -231,7 +231,7 @@ def test_meta_is_merged_before_the_platform_fields_not_after():
     src = (
         Path(__file__).resolve().parents[1] / "src" / "personalclaw" / "dashboard" / "state.py"
     ).read_text()
-    body = src[src.index("    def notify(self, kind: str") : src.index("    #: Meta keys that can")]
+    body = src[src.index("    def notify(\n") : src.index("    #: Meta keys that can")]
     # 🪤 Comments stripped first. The fix's own comment QUOTES the old `note.update(meta)` line to
     # explain what changed, so a prose match reported the bug as still present — this rail failed on
     # its first run for exactly that reason. A rail that reads documentation instead of code is

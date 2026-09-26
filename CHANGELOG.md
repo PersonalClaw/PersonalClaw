@@ -19,12 +19,41 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **`credentials.json` is gone: the gateway moves what it held into the credential store at its first start.**
+
 - **The Session Map is a map of your messages: one marker for each message you sent, all one length, with colour showing which are on screen.**
 
 ### Fixed
 
+- **A model you chose is the model that answers, or PersonalClaw says it is not: an agent's missing model is no longer swapped in silence.**
+- **A browse task that stops at a sign-in page says why on its needs-input card.**
+
+- **A default install can call MCP tools, and a server reads "ready" only when an agent can call it.**
+- **`personalclaw footprint --reclaim` and the daily reclaim say when compacting made your stores bigger, instead of calling it space freed.**
+- **Onboarding's app step says what you can do when it has nothing to list, instead of describing PersonalClaw's source tree.**
+- **Bringing your setup over from Claude Code reads the files Claude Code writes, and says what stays behind.**
+
+- **An app update runs the new version at once, or says a restart is needed, and why.**
+- **A proposal's second opinion no longer stops the gateway, and no decision stays hidden in Filtered.**
+- **An event trigger fires: a memory write, an inbox message or an app event runs its action once, and the run shows in the trigger's history.**
+
+- **A workflow step whose model is still generating is no longer stopped as stalled, and every step records what its model calls used, the failed ones included.**
+- **The chat header fits at every width, and a chat an app started says so under its title.**
+
+- **A secret saved in Settings → Secrets reaches everything that names it, and `personalclaw setup --credential` saves where Settings → Secrets lists it.**
+
+- **"Try it" runs a tool from an external MCP server, stdio or remote, and so does an agent.**
+
+- **An app update installs exactly the Python package versions its new manifest pins, older or newer.**
+
+- **A feature that is switched off says so, with the way to turn it on, and a page that could not load says that instead of waiting forever.**
+
 - **A channel starts and stops receiving the moment you enable, change or remove it.**
 - **A failed workflow step says whether a Retry can help, and the run page offers Retry only when it can.**
+
+- **Every model call carries the model it is bound to, the sampling its model accepts, and its output budget.**
+
+- **Settings forms and controls do what they show.**
 
 - **Typing fast in the chat composer no longer trips React's "Maximum update depth exceeded" (#185), and five search boxes with the same defect are fixed with it.**
 
@@ -91,6 +120,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A failed chat turn says what failed and lands where you can see it, and editing an earlier message no longer deletes the turns after it without a trace.**
 
 ### Security
+
+- **A provider cannot take over another provider's tool.**
+
+- **An app reads only the notifications it raised, and its socket no longer says whether your tool calls run without asking.**
+
+- **An app can no longer read another owner's key by naming it.**
+
+- **Every part of PersonalClaw asks one resolver where your home is, so a rail that refuses your real home refuses it however it is named, and importing PersonalClaw creates and opens nothing.**
+
+- **No model's verdict can hide or hold up a pending approval, or any other decision you owe.**
+
+- **An app can no longer change what you dictate, and packs are uninstalled only by you.**
+
+- **A tool you switch off is off for every agent, and a tool call that failed no longer shows a green check.**
 
 - **A secret reference resolves only against its own owner's credentials.**
 

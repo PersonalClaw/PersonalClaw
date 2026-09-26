@@ -593,6 +593,7 @@ function AppInner() {
         // TopBar's padding (which reads these with a non-zero fallback) must
         // collapse to avoid dead space on both sides of the page header.
         '--shell-corner-l': '0px',
+        '--shell-corner-lh': '0px',
         '--shell-corner-r': '0px',
         '--shell-corner-rh': '0px',
       } as React.CSSProperties}>

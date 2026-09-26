@@ -93,15 +93,13 @@ async def api_ws(request: web.Request) -> web.WebSocketResponse:
     state.register_ws(ws, app=request.get("app", ""))
 
     # Push current sessions immediately so sidebar populates without waiting.
-    # Through `send_ws_event`, NOT `ws.send_json`: this frame carries the session keys,
-    # titles and the yolo flag, and as a direct write it was the first frame of every
-    # connection — including an app-scoped one that declared no `sessions` event
-    # (issue 2963). The owner's envelope is unchanged.
+    # Through `send_ws_event`, NOT `ws.send_json`: this frame carries the session keys
+    # and titles, and as a direct write it was the first frame of every connection —
+    # including an app-scoped one that declared no `sessions` event (issue 2963). It
+    # carries no `yolo` either: that flag told every app socket your approval posture.
     try:
         sessions_data = [s.to_dict() for s in state._sessions.values()]
-        await state.send_ws_event(
-            ws, "sessions", sessions_data, extra={"yolo": state.is_yolo_active()}
-        )
+        await state.send_ws_event(ws, "sessions", sessions_data)
     except Exception:  # noqa: BLE001 — a snapshot that won't serialize must not kill the socket
         logger.debug("ws: initial sessions push failed", exc_info=True)
 

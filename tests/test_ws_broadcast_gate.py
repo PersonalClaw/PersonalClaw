@@ -18,6 +18,7 @@ still arrive, or "filter everything" would pass every test above it.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -51,6 +52,11 @@ def state(monkeypatch, tmp_path):
     st._ws_clients = []
     st._ws_app = {}
     st._notification_log = []
+    # What `session_creating_app` reads: a frame about a conversation reaches an app's socket only
+    # when the app started it (#3632), so the gate asks who started it. Nothing resident, nothing
+    # persisted: every conversation here is yours unless a test says otherwise.
+    st._sessions = {}
+    st.conversation_log = None
     # `_schedule_ws_send` normally hops onto the captured loop; here the coroutine is consumed
     # inline so the assertion reads frames that were really handed to the socket.
     monkeypatch.setattr(
@@ -91,6 +97,8 @@ def test_an_always_on_frame_is_now_gated_for_an_app_socket(state, monkeypatch):
 def test_a_DECLARED_event_still_arrives(state, monkeypatch):
     """Vacuity. A gate that drops everything would satisfy every other test here."""
     ws = _app_socket(state, "an-app", ["chat_message"], monkeypatch)
+    # A conversation the app started. One of yours would be withheld however the app declared.
+    state._sessions["s1"] = SimpleNamespace(created_by_app="an-app")
 
     state._broadcast(
         {"_type": "chat_message", "session": "s1", "role": "assistant", "content": "hi"}
@@ -139,34 +147,21 @@ def test_a_notification_note_still_rides_the_wire(state):
     assert json.loads(owner.sent[0])["data"]["title"] == "Build finished"
 
 
-def test_the_sessions_envelope_keys_survive_the_refactor(state):
-    """`yolo`/`channelTrusted` are top-level envelope keys; a permissions fix must not eat them."""
+def test_the_sessions_frame_carries_the_rows_and_nothing_beside_them(state):
+    """The envelope is `type` and `data`, on the owner's socket too.
+
+    It carried `yolo` and `channelTrusted` beside the rows, so an app's socket that declared
+    `sessions` read whether your tool calls run without asking. No client read either key (the web
+    reads YOLO from `GET /api/status`, and no producer ever set `channelTrusted`), so they are gone
+    rather than withheld, and `broadcast_ws` has no `extra` left for a caller to put them back with
+    (or to relabel a frame with, which is what the test this replaces guarded).
+    """
     owner = _FakeWS()
     state._ws_clients.append(owner)
 
-    state._broadcast(
-        {"_type": "sessions", "sessions": json.dumps([]), "_yolo": True, "channelTrusted": True}
-    )
+    state._broadcast({"_type": "sessions", "sessions": json.dumps([{"key": "s1"}])})
 
-    body = json.loads(owner.sent[0])
-    assert body["yolo"] is True and body["channelTrusted"] is True, body
-
-
-def test_extra_cannot_relabel_the_frame_a_client_receives(state, monkeypatch):
-    """`extra` merges envelope keys only — `type` stays owned by the producer.
-
-    Written the way it is because the obvious version was VACUOUS: the permission check reads the
-    `msg_type` ARGUMENT, so an undeclared event is dropped whatever `extra` says, and the test
-    passed with the guard removed. The real property is what the client is TOLD a delivered frame
-    is: a socket must never receive a `sessions` payload labelled `chat_message`, or every
-    consumer that branches on `type` is reading a lie.
-    """
-    ws = _app_socket(state, "an-app", ["sessions"], monkeypatch)
-
-    state.broadcast_ws("sessions", [{"key": "s1"}], extra={"type": "chat_message", "yolo": True})
-
-    assert ws.types() == ["sessions"], f"`extra` relabelled a delivered frame: {ws.types()}"
-    assert json.loads(ws.sent[0])["yolo"] is True, "a legitimate envelope key was dropped"
+    assert [json.loads(m) for m in owner.sent] == [{"type": "sessions", "data": [{"key": "s1"}]}]
 
 
 def test_every_note_type_in_the_tree_is_mapped():

@@ -5,7 +5,7 @@ import { Button } from '../../ui/Button'
 import { Checkbox } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { fvs } from '../../design/fontWeight'
-import { api, hasApiCode, isEvalsOff, type EvalsOffView, type RetrievalArmContribution, type RetrievalBenchView, type RetrievalLabelCard, type RetrievalMaskRow, type RetrievalStoreReport } from '../../lib/api'
+import { api, isNotRun, isSwitchedOff, type NotRunView, type SwitchedOffView, type RetrievalArmContribution, type RetrievalBenchView, type RetrievalLabelCard, type RetrievalMaskRow, type RetrievalStoreReport } from '../../lib/api'
 import { EvalsOff } from './EvalsOff'
 import { BUSY_REASON } from '../../ui/unavailable'
 
@@ -25,15 +25,15 @@ import { BUSY_REASON } from '../../ui/unavailable'
  *  is "there was nothing to be precise about". The `no candidates` column is how many
  *  queries that was, so the absence is legible rather than merely missing. */
 export function RetrievalBenchPanel({ bench, error, onRetry }: {
-  bench: RetrievalBenchView | EvalsOffView | undefined
+  bench: RetrievalBenchView | SwitchedOffView | NotRunView | undefined
   error: unknown
   onRetry: () => void
 }) {
-  // The ordinary states — the substrate is off (a decided 200), or no benchmark has run (a 404
-  // with its own code) — both render as guidance rather than as a failure. Only the second offers
+  // The ordinary states — the substrate is off, or no benchmark has run, each a decided 200 —
+  // both render as guidance rather than as a failure. Only the second offers
   // the labelling card: hand labels are read BY a run, so collecting them while the substrate is
   // off would bank work for a machine that has been told not to start.
-  if (isEvalsOff(bench)) {
+  if (isSwitchedOff(bench)) {
     return (
       <section className="flex flex-col gap-s" aria-labelledby="retrieval-bench-heading">
         <Heading />
@@ -41,23 +41,21 @@ export function RetrievalBenchPanel({ bench, error, onRetry }: {
       </section>
     )
   }
-  if (bench === undefined && error) {
-    if (hasApiCode(error, 'retrieval_absent')) {
-      return (
-        <section className="flex flex-col gap-s" aria-labelledby="retrieval-bench-heading">
-          <Heading />
-          <p className="text-on-surface-low text-[0.8125rem]">
-            No retrieval benchmark has run yet. Run{' '}
-            <code className="text-on-surface-var">personalclaw retrieval-eval</code> to score
-            both stores. It reads knowledge.db and memory.db and writes to neither — a run
-            that touched either one refuses to report.
-          </p>
-          <LabelCards stores={['knowledge', 'memory']} />
-        </section>
-      )
-    }
-    return <LoadError what="retrieval benchmark" error={error} onRetry={onRetry} />
+  if (isNotRun(bench)) {
+    return (
+      <section className="flex flex-col gap-s" aria-labelledby="retrieval-bench-heading">
+        <Heading />
+        <p className="text-on-surface-low text-[0.8125rem]">
+          No retrieval benchmark has run yet. Run{' '}
+          <code className="text-on-surface-var">personalclaw retrieval-eval</code> to score
+          both stores. It reads knowledge.db and memory.db and writes to neither — a run
+          that touched either one refuses to report.
+        </p>
+        <LabelCards stores={['knowledge', 'memory']} />
+      </section>
+    )
   }
+  if (bench === undefined && error) return <LoadError what="retrieval benchmark" error={error} onRetry={onRetry} />
   if (!bench) return null
 
   const stores = Object.keys(bench.stores)

@@ -288,7 +288,7 @@ def test_an_explicit_base_dir_bypasses_the_process_global(tmp_path):
 
 
 def test_the_cached_store_is_shared(tmp_path, monkeypatch):
-    monkeypatch.setattr(staging, "_default_home", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
     staging.reset_store()
     try:
         assert staging.get_store() is staging.get_store()

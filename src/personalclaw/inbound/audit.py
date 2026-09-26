@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -29,8 +28,7 @@ _MAX_LINES = 5_000
 def _audit_path() -> Path:
     from personalclaw.config.loader import config_dir
 
-    home = Path(os.environ.get("PERSONALCLAW_HOME", config_dir()))
-    return home / _FILE
+    return config_dir() / _FILE
 
 
 def audit(

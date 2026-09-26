@@ -57,6 +57,15 @@ MAX_CHOICES = 5
 #: transcript pushes the decision below the fold, which is the one thing it exists to show.
 MAX_EVIDENCE_CHARS = 600
 
+#: What an attempt record with no `outcome` reads as. Deliberately NOT "unknown": that word is a
+#: claim ABOUT the attempt — "we tried and could not tell how it went" — and a record that simply
+#: does not carry the field has made no such claim. Borrowing it was silent degradation, and it is
+#: what hid a real defect: `request_login` spelled its attempt key `summary`, nothing read it, and
+#: the card rendered a plausible-looking "unknown" instead of the blocker wording it had already
+#: composed. This phrase reads as a gap in the RECORD, so the next reader goes looking for the
+#: producer instead of believing the run could not tell.
+OUTCOME_ABSENT = "outcome not recorded"
+
 
 class BlockKind(str, Enum):
     """Why the run stopped. Four kinds, because they need four different user actions.
@@ -278,13 +287,19 @@ def summarize_attempts(attempts: list[dict[str, Any]] | None) -> list[str]:
     and as a considered next step with it. Failures are kept — an attempt log that showed only
     successes would make a five-attempt struggle look like a first-try block, and the user would
     wonder why the system gave up so fast.
+
+    Reads the ATTEMPT LEDGER's key names (`attempt`/`outcome`/`note`, the ones
+    `publish.ledger_row` mints), and only those. Teaching this function a second spelling for
+    `note` per producer is the shim that turns one contract into four synonyms, so a producer
+    that disagrees is the side that changes. A record missing `outcome` reads as
+    :data:`OUTCOME_ABSENT` rather than a word that means something else — see its note.
     """
     lines: list[str] = []
     for attempt in attempts or []:
         if not isinstance(attempt, dict):
             continue
         number = attempt.get("attempt")
-        outcome = str(attempt.get("outcome") or "").strip() or "unknown"
+        outcome = str(attempt.get("outcome") or "").strip() or OUTCOME_ABSENT
         note = str(attempt.get("note") or attempt.get("cause_plain") or "").strip()
         label = f"attempt {number}: {outcome}" if number is not None else outcome
         lines.append(f"{label} — {note}" if note else label)

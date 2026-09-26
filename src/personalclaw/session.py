@@ -275,6 +275,11 @@ class _Session:
     prev_turn_cancelled: bool = False
     # Set of msg_ts values cancelled (message deleted while processing)
     cancelled: set[str] = field(default_factory=set)
+    # The agent this session runs was edited after its runtime was built (model, triggers,
+    # system prompt). The runtime is rebuilt at the next acquire — after a turn already running
+    # finishes, never under it — so an open chat or room answers its next turn as the agent
+    # now reads. See ``SessionManager.mark_agent_stale``.
+    definition_stale: bool = False
 
 
 class SessionManager:
@@ -1092,7 +1097,26 @@ class SessionManager:
         if reuse is not None:
             provider, was_new, sess = reuse
             await sess.semaphore.acquire()
-            return provider, was_new, False
+            if not sess.definition_stale:
+                return provider, was_new, False
+            # The agent was edited while this runtime was cached. Checked AFTER the permit is
+            # held, so a turn that was running when the edit landed finished on the definition it
+            # started with, and this one — the first to start after — gets a runtime built from
+            # the definition as it now reads. The session map is kept, as for a dead provider,
+            # so an ACP runtime resumes its conversation; a native chat restores its own.
+            sess.semaphore.release()
+            await self._drop_session(key, sess)
+            logger.info("Session %s: its agent was edited — rebuilding its runtime", key)
+            return await self.get_or_create(
+                key,
+                agent=agent,
+                channel_id=channel_id,
+                approval_policy=approval_policy,
+                model=model,
+                cwd=cwd,
+                extra_env=extra_env,
+                **extra_factory_kwargs,
+            )
 
         # ── Unattended adapter-verification gate ──
         # Past this line the call CREATES a runner — it claims a warm/pooled process,
@@ -1455,6 +1479,51 @@ class SessionManager:
             logger.exception("Session recycle failed for %s", key)
         finally:
             self._compacting.discard(key)
+
+    def mark_agent_stale(self, *names: str, unnamed: bool = False) -> list[str]:
+        """Mark every live session running one of ``names`` to rebuild its runtime at its next turn.
+
+        Called after an agent is edited or deleted. A runtime copies the agent's model and its
+        triggers when it is built, and an open chat or room kept that runtime until it sat idle
+        past ``session.timeout_secs`` (an hour by default) or the gateway restarted — so it
+        answered with the old definition while the Agents page and the room's member list showed
+        the new one. Marking rather than tearing
+        down: a turn running right now finishes on the definition it started with, and the next
+        acquire (``get_or_create``) builds a fresh runtime. Returns the keys marked.
+
+        ``names`` are the values a session records as its agent: the profile name (chat and rooms
+        pass it), and for an ACP agent its ``provider_agent``. ``unnamed`` also marks the sessions
+        that record NO agent — a chat on the default agent — for an edit of the default agent.
+        """
+        wanted = {n for n in names if n}
+        if unnamed:
+            wanted.add("")
+        if not wanted:
+            return []
+        cache = getattr(SessionManager, "_agent_model_cache", None)
+        if isinstance(cache, dict):
+            for name in wanted:
+                cache.pop(name, None)
+        marked: list[str] = []
+        for key, sess in list(self._sessions.items()):
+            if sess.agent in wanted:
+                sess.definition_stale = True
+                marked.append(key)
+        return marked
+
+    async def _drop_session(self, key: str, sess: "_Session") -> None:
+        """Retire ``sess`` from ``key`` so the next acquire builds a fresh runtime; keeps the map.
+
+        No session-end hooks: the conversation continues on the rebuilt runtime, exactly as it
+        does after a dead provider is replaced.
+        """
+        async with self._lock:
+            if self._sessions.get(key) is sess:
+                del self._sessions[key]
+        try:
+            await sess.provider.shutdown()
+        except Exception:
+            logger.warning("Failed to shut down the replaced runtime for %s", key, exc_info=True)
 
     async def remove(self, key: str) -> None:
         """Shut down a session but preserve session_map for future resume.

@@ -261,6 +261,23 @@ _BLOCKED_SLASH_COMMANDS = frozenset(
 #: text inline, so this needs no frontend counterpart, only a truthful sentence.
 SLASH_FALLBACK_ACTIVITY_KIND = "slash_fallback"
 
+#: The kind stamped on the notice that a turn runs on another model than the one chosen for it
+#: (the agent's pin or the chat's own pick cannot run). Same channel, same inline rendering.
+MODEL_SUBSTITUTION_ACTIVITY_KIND = "model_substitution"
+
+
+def model_substitution_notice(client: object) -> str:
+    """The chat's sentence for a runtime serving in place of the chosen model, else "".
+
+    Read off the runtime (``NativeAgentRuntime.model_substitution``), which the builder stamped
+    with the model that actually answers — so the sentence cannot name a model the turn did not
+    run on.
+    """
+    from personalclaw.llm.base import ModelSubstitution
+
+    substitution = getattr(client, "model_substitution", None)
+    return substitution.notice() if isinstance(substitution, ModelSubstitution) else ""
+
 
 async def stream_slash_command(
     client, command: str, *, prompt: str, notify

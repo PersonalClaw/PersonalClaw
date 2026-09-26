@@ -52,7 +52,13 @@ from personalclaw.guardrails.failure import (
 )
 from personalclaw.guardrails.scan import scan_outbound
 from personalclaw.guardrails.wire import record_outbound
-from personalclaw.llm.base import EVENT_COMPLETE, CancelOutcome, LLMEvent, ModelProvider
+from personalclaw.llm.base import (
+    EVENT_COMPLETE,
+    CancelOutcome,
+    LLMEvent,
+    ModelProvider,
+    ModelSubstitution,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +172,11 @@ class ModelCallGuard(ModelProvider):
         # ref ORDER was chosen, so it is a property of this resolved provider, not of the prompt.
         self._routed = bool(routed)
         self._routed_fallback = bool(routed_fallback)
+        # Set when this provider serves IN PLACE OF the model that was asked for — a later chain
+        # entry after the head could not serve (``provider_bridge.stamp_substitution``). Stamped
+        # after the wrap, by whichever walk knew the head failed, and copied onto every call this
+        # guard records, so a step and Introspect say "ran on X instead of Y", not X alone.
+        self.substituted_for: ModelSubstitution | None = None
 
     # ── The intercepted generation paths ────────────────────────────────
 
@@ -226,6 +237,11 @@ class ModelCallGuard(ModelProvider):
         """Explicit pass-through for the same reason as ``supports_native_commands``: the ABC's
         ``None`` default would otherwise answer for every guarded provider."""
         return getattr(self._inner, "sampling_temperature", None)
+
+    @property
+    def unsent_options(self) -> dict[str, str]:
+        """Explicit pass-through, for the same reason as ``sampling_temperature``."""
+        return dict(getattr(self._inner, "unsent_options", None) or {})
 
     async def served_context_window(self) -> int | None:
         """Explicit pass-through: the ABC's ``None`` would hide the inner provider's served
@@ -375,7 +391,17 @@ class ModelCallGuard(ModelProvider):
         # The call is published to whoever bound a `guardrails.calls` log — the workflow step
         # that is making it, a best-of-N candidate — only now, past every refusal above: a
         # breaker or budget refusal sent nothing to a provider and is not a model call.
-        call = open_call(self._provider_name, self._model, temperature=self.sampling_temperature)
+        # Read at call time, not wrap time: a chain walk stamps the substitution on the provider
+        # it resolved AFTER the resolution seam wrapped it, because only the walk knows the entry
+        # before it could not serve.
+        substituted = self.substituted_for
+        call = open_call(
+            self._provider_name,
+            self._model,
+            temperature=self.sampling_temperature,
+            unsent=self.unsent_options,
+            substitution=substituted.sentence() if substituted is not None else "",
+        )
 
         try:
             while True:
@@ -392,6 +418,10 @@ class ModelCallGuard(ModelProvider):
                         event = await source.__anext__()
                     except StopAsyncIteration:
                         break
+                if call is not None:
+                    # The provider is still talking: the workflow stall clock reads this, so a
+                    # step whose model is generating slowly is not killed as a silent one.
+                    call.last_event_at = time.time()
                 if event.kind == EVENT_COMPLETE and not recorded:
                     # Terminal signal: record success NOW (the consumer may break on
                     # this event without draining), then keep yielding any trailing

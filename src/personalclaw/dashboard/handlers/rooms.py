@@ -202,7 +202,10 @@ def _member_bindings(room: store.Room) -> list[dict]:
     domain reads, the same reasoning that keeps ``session_export.render`` on this side of the
     line.
     """
-    agents = config_loader.AppConfig.load().agents
+    from personalclaw.providers.provider_bridge import agent_model_problem
+
+    cfg = config_loader.AppConfig.load()
+    agents = cfg.agents
     out: list[dict] = []
     for member in room.members:
         profile = agents.get(member.name)
@@ -219,17 +222,25 @@ def _member_bindings(room: store.Room) -> list[dict]:
                 "model": profile.model,
                 "provider": profile.provider,
                 "description": profile.description,
+                # The model above cannot run, and the member answers on the chat model: the panel
+                # shows the pin, so it has to say so too. The transcript says it on every turn.
+                "model_unavailable": agent_model_problem(profile, cfg),
             }
         )
     return out
 
 
 async def api_rooms_list(request: web.Request) -> web.Response:
-    """GET /api/rooms — every room, newest first. ``?archived=1`` includes archived ones."""
-    try:
-        _require_enabled()
-    except store.RoomError as exc:
-        return _refusal(exc)
+    """GET /api/rooms — every room, newest first. ``?archived=1`` includes archived ones.
+
+    While rooms are off (the shipped default) this answers ``200 {"enabled": false}``, the decided
+    answer every switched-off read gives (``docs/reference/api-overview.md``), and lists nothing.
+    It used to 403 ``rooms_disabled``, which the chat sidebar asks for on every visit, so every
+    chat logged a failed request on a default install. Every other room route, reads included,
+    still refuses with ``rooms_disabled``: each addresses a room, and there are none while off.
+    """
+    if not store.rooms_enabled():
+        return web.json_response({"enabled": False})
     include_archived = request.query.get("archived", "") in ("1", "true", "yes")
     rooms = store.list_rooms(include_archived=include_archived)
     return web.json_response({"rooms": [_room_payload(r, _gateway_state(request)) for r in rooms]})

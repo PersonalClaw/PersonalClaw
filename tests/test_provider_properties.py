@@ -1,12 +1,8 @@
-"""Hypothesis property tests for the provider registry, credentials, and lazy imports.
+"""Hypothesis property tests for the provider registry and lazy imports.
 
 - Registry closure: every entry's declared capabilities are a subset of its type's.
-- Credential non-leakage: CredentialStore.list() never returns secret values.
 - Lazy SDK imports: importing the providers package pulls in no vendor SDK.
 """
-
-import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -107,39 +103,6 @@ def test_registry_closure(entries):
         assert e.declared_capabilities.issubset(
             type_caps
         ), f"closure violated for {e.name}: {e.declared_capabilities} ⊄ {type_caps}"
-
-
-# ── Credential non-leakage ────────────────────────────────────────────────
-
-
-def _make_store_with_secret(tmp_dir: str, name: str, value: str):
-    from personalclaw.llm.credentials import CredentialStore
-
-    store = CredentialStore(Path(tmp_dir) / "creds.json")
-    store.save({name: {"value": value}})
-    store.reload()
-    return store
-
-
-def test_credential_list_strips_secrets():
-    """CredentialStore.list() returns entries with secret=None."""
-    with tempfile.TemporaryDirectory() as tmp:
-        store = _make_store_with_secret(tmp, "my-key", "super-secret-value")
-        entries = store.list()
-        for cred in entries:
-            assert (
-                cred.secret is None
-            ), f"credential '{cred.name}' leaked a non-None secret in list()"
-
-
-@given(secret=st.text(min_size=1, max_size=64))
-@settings(max_examples=30)
-def test_list_never_leaks_secret(secret):
-    """No matter what secret is stored, list() never returns it."""
-    with tempfile.TemporaryDirectory() as tmp:
-        store = _make_store_with_secret(tmp, "k", secret)
-        for cred in store.list():
-            assert cred.secret is None
 
 
 # ── Lazy SDK imports ─────────────────────────────────────────────────────

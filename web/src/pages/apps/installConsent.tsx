@@ -917,17 +917,29 @@ export function useAppInstall({ onInstalled }: { onInstalled: (result: AppInstal
 }
 
 /** The visible confirmation of a successful install — a card that just vanished from the
- *  Store, followed by "No matching apps" on a search for it, is how the old flow ended. */
+ *  Store, followed by "No matching apps" on a search for it, is how the old flow ended.
+ *
+ *  The new version is already running when this fires. What the gateway could not take out
+ *  of its process says so, with the server's reason — as `info`, not `success`: the old
+ *  version is still partly there until a restart. */
 function announce(r: AppInstallResult, target: InstallTarget, label: string) {
   const done = target.update ? `Updated ${label}` : `Installed ${label}`
+  const reason = (r.restart_reason || '').trim()
   window.dispatchEvent(new CustomEvent('ne:toast', {
     detail: {
-      level: 'success',
-      message: r.restart_required ? `${done} — restart the gateway for it to fully take effect.` : `${done}.`,
+      level: reason ? 'info' : 'success',
+      message: reason ? `${done}. Restart the gateway to finish: ${reason}.` : `${done}.`,
       href: `#/apps?view=library&open=${encodeURIComponent(r.name)}`,
       hrefLabel: 'Show in Library',
     },
   }))
+  // Installed and on, with a provider of it refused: a tool it offers has a name another provider
+  // holds. Said here, where the install is confirmed, and kept on its card in Settings → Providers.
+  for (const why of r.providerErrors ?? []) {
+    window.dispatchEvent(new CustomEvent('ne:toast', {
+      detail: { level: 'error', message: why, href: '#/settings/providers', hrefLabel: 'Open Providers' },
+    }))
+  }
 }
 
 function announceFailure(r: AppInstallResult, target: InstallTarget, label: string) {

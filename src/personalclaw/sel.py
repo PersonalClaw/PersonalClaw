@@ -11,7 +11,7 @@ Records structured JSON events for every tool/MCP action with:
 - Downstream service (MCP server name if applicable)
 - HMAC-SHA256 integrity chain (each entry signs over previous hash)
 
-Storage: ``~/.personalclaw/security_events.jsonl`` (append-only JSONL)
+Storage: ``<home>/security_events.jsonl`` (append-only JSONL), the home ``config_dir()`` names
 Retention: configurable, default 365 days.
 """
 
@@ -33,21 +33,6 @@ from typing import TypedDict
 from personalclaw.atomic_write import atomic_write, atomic_write_bytes
 
 logger = logging.getLogger(__name__)
-
-
-def _default_dir() -> Path:
-    """Resolve the SEL log directory at instantiation time.
-
-    Honors ``PERSONALCLAW_HOME`` so containerized deployments writing to
-    ``/data`` see their logs persisted to the mounted volume rather than
-    the entrypoint-seeded ``/home/personalclaw/.personalclaw`` directory.
-    """
-    override = os.environ.get("PERSONALCLAW_HOME")
-    if override:
-        p = Path(override).expanduser().resolve()
-        if p != Path("/") and p.parts[:2] not in (("/", "usr"), ("/", "System"), ("/", "etc")):
-            return p
-    return Path.home() / ".personalclaw"
 
 
 _SEL_FILE = "security_events.jsonl"
@@ -430,7 +415,11 @@ class SecurityEventLog:
     def __init__(self, base_dir: Path | None = None) -> None:
         if self._initialized:
             return
-        self._dir = base_dir or _default_dir()
+        # The home, from the one resolver — so the log moves wherever the home is moved: a
+        # container's mounted `PERSONALCLAW_HOME`, a dev home, a test's `config_dir` isolation.
+        from personalclaw.config.loader import config_dir
+
+        self._dir = base_dir or config_dir()
         self._path = self._dir / _SEL_FILE
         self._archive_dir = self._dir / _ARCHIVE_DIR
         self._lock = threading.Lock()

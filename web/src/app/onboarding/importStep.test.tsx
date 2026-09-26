@@ -47,6 +47,7 @@ const CATEGORIES = ['instructions', 'memories', 'mcp_servers', 'skills', 'settin
 function item(fingerprint: string, category: string, key: string, extra: Partial<OnboardingImportItem> = {}): OnboardingImportItem {
   return {
     fingerprint, source: 'claude_code', category, key, title: key,
+    origin: '', note: '', preselected: true,
     state: 'new', destination: `dest/${key}`, detail: '', secrets_skipped: 0, redactions: 0,
     ...extra,
   }
@@ -71,12 +72,13 @@ function scan(items: OnboardingImportItem[] = ITEMS(), overrides: Partial<Onboar
         items,
         secrets_skipped: 2, redactions: 1,
         notes: ['2 credential values or files were skipped and not imported.'],
+        not_imported: [],
         ...overrides,
       },
       {
         source: 'codex', display_name: 'Codex', root: '/home/ada/.codex',
         present: false, detected: false, counts: { ...ZERO }, items: [],
-        secrets_skipped: 0, redactions: 0, notes: [],
+        secrets_skipped: 0, redactions: 0, notes: [], not_imported: [],
       },
     ],
   }
@@ -601,5 +603,93 @@ describe('summaryOfReport names every non-zero outcome, the choice included', ()
       ],
       missing: ['gone'],
     }))).toBe('1 imported · 2 left out · 2 already here · 2 to review · 1 refused · 1 no longer found')
+  })
+})
+
+// ── what Claude Code actually keeps: scopes, notes, kinds left behind (F-01…F-04) ─────────────
+
+describe('everything Claude Code keeps is shown, with where it came from', () => {
+  const SCOPED = () => [
+    item('m1', 'mcp_servers', 'github', { origin: 'User scope' }),
+    item('m2', 'mcp_servers', 'local:/Users/noor/work/api:grafana', {
+      title: 'grafana', origin: 'Local scope · /Users/noor/work/api',
+    }),
+    item('m3', 'mcp_servers', 'project:/Users/noor/src/demo:demo-tools', {
+      title: 'demo-tools', origin: 'Project · ~/src/demo/.mcp.json', preselected: false,
+      note: 'It came with the project, and it was never approved in Claude Code.',
+    }),
+    item('a1', 'agents', 'agents/code-reviewer.md', {
+      title: 'code-reviewer', note: 'Its Claude Code tools list (Read, Grep) and model (opus) are not carried over.',
+    }),
+    item('p1', 'prompts', 'commands/standup.md', { title: '/standup' }),
+    item('c1', 'conversations', 'projects/-Users-noor/abc.jsonl', {
+      title: 'Postgres.app won\'t start', origin: 'Project · ~', note: '4 messages. Tool calls come over by name; their output does not.',
+    }),
+  ]
+  const SCOPED_SCAN = () => scan(SCOPED(), {
+    counts: { ...ZERO, mcp_servers: 3 },
+    not_imported: [{
+      what: 'Prompt history', count: 30,
+      why: 'PersonalClaw keeps no separate list of past prompts. The prompts in your conversations come over with them.',
+    }],
+  })
+
+  it('names the new kinds and where each lands', async () => {
+    onboardingImportScan.mockResolvedValue({ ...SCOPED_SCAN(), categories: [...CATEGORIES, 'agents', 'prompts', 'conversations'] })
+    await mounted()
+    for (const label of ['Agents', 'Prompts', 'Conversations']) expect(groupBox(label).checked).toBe(true)
+    expect(screen.getByText('Subagents, added to your Agents page.')).toBeTruthy()
+    expect(screen.getByText('Slash commands and saved prompts, run in chat as @name.')).toBeTruthy()
+    expect(screen.getByText('Past conversations, listed in Chat under the dates they happened.')).toBeTruthy()
+  })
+
+  it('a project server nobody approved starts unticked, and says why', async () => {
+    onboardingImportScan.mockResolvedValue(SCOPED_SCAN())
+    await mounted()
+    const servers = groupBox('MCP servers')
+    expect(servers.indeterminate, 'two of three servers are ticked').toBe(true)
+    expect(rowText('MCP servers')).toContain('2 of 3')
+    expect(screen.getByText(/Everything is ticked, except 1 item the other tool never let run;/)).toBeTruthy()
+    fireEvent.click(disclosure('MCP servers'))
+    expect(box('demo-tools').checked).toBe(false)
+    expect(box('demo-tools').getAttribute('aria-label')).toBe('demo-tools, Project · ~/src/demo/.mcp.json')
+    expect(box('grafana').checked).toBe(true)
+    expect(screen.getByText('Local scope · /Users/noor/work/api')).toBeTruthy()
+    expect(screen.getByText('It came with the project, and it was never approved in Claude Code.')).toBeTruthy()
+    importNow()
+    await waitFor(() => expect(runOnboardingImport).toHaveBeenCalled())
+    expect(runOnboardingImport.mock.calls[0][0].fingerprints).not.toContain('m3')
+  })
+
+  it('says what an item leaves behind, beside the item', async () => {
+    onboardingImportScan.mockResolvedValue({ ...SCOPED_SCAN(), categories: [...CATEGORIES, 'agents', 'conversations'] })
+    await mounted()
+    fireEvent.click(disclosure('Agents'))
+    expect(screen.getByText('Its Claude Code tools list (Read, Grep) and model (opus) are not carried over.')).toBeTruthy()
+    fireEvent.click(disclosure('Conversations'))
+    expect(screen.getByText('4 messages. Tool calls come over by name; their output does not.')).toBeTruthy()
+  })
+
+  it('lists what the tool keeps that does not come over, with how many and why', async () => {
+    onboardingImportScan.mockResolvedValue(SCOPED_SCAN())
+    await mounted()
+    const list = screen.getByRole('group', { name: 'Not brought over from Claude Code' })
+    expect(list.textContent).toContain('Prompt history')
+    expect(list.textContent).toContain('30')
+    expect(list.textContent).toContain('PersonalClaw keeps no separate list of past prompts.')
+  })
+
+  it('names a report row the way the list did — its title and scope, not its key', async () => {
+    onboardingImportScan.mockResolvedValue(SCOPED_SCAN())
+    runOnboardingImport.mockResolvedValue(report([{
+      fingerprint: 'm2', source: 'claude_code', category: 'mcp_servers', key: 'local:/Users/noor/work/api:grafana',
+      outcome: 'conflict', destination: 'mcp.json#mcpServers.grafana',
+      detail: 'an MCP server of this name is already configured differently, and it is kept',
+    }]))
+    await mounted()
+    importNow()
+    const kept = await screen.findByRole('group', { name: 'Kept what you already had' })
+    expect(kept.textContent).toContain('MCP servers · grafana · Local scope · /Users/noor/work/api')
+    expect(kept.textContent).not.toContain('local:/Users')
   })
 })

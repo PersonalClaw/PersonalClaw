@@ -22,11 +22,6 @@ import pytest
 import real_home_guard
 from real_home_guard import Guard, RealHomeAccessError
 
-# Imported at MODULE level on purpose: that is collection time, the window in which these
-# modules freeze a home into a constant. See test_no_import_time_constant_holds_the_real_home.
-import personalclaw.agent as _agent
-import personalclaw.dashboard.handlers.hooks as _hooks_handlers
-
 _TESTS_DIR = Path(__file__).resolve().parent
 
 
@@ -377,22 +372,6 @@ def test_the_suite_runs_under_the_guard(pytestconfig) -> None:
     assert real_home_guard.GUARD.root == Path(os.path.normpath(real_home_guard.REAL_HOME))
     assert real_home_guard.GUARD._installed, "conftest must install the guard before any test"
     assert pytestconfig.pluginmanager.get_plugin("real-home-guard") is not None
-
-
-def test_no_import_time_constant_holds_the_real_home() -> None:
-    """Five modules freeze a home into a constant at import — collection time, before any
-    fixture — and this module imports two of them at ITS import. Measured before the import
-    window in conftest: every one of these was the developer's real home, and 150+ tests read
-    the owner's skills, agent hooks and mcp.json through them. (A third, the MCP handlers'
-    ``_GLOBAL_MCP_JSON``, was deleted: it resolves per call now.)"""
-    real = str(real_home_guard.REAL_HOME)
-    frozen = {
-        "agent._USER_DIR": _agent._USER_DIR,
-        "agent._DEFAULT_HOOKS_DIR": _agent._DEFAULT_HOOKS_DIR,
-        "dashboard.handlers.hooks._HOOK_STORE_PATH": _hooks_handlers._HOOK_STORE_PATH,
-    }
-    leaked = {name: str(path) for name, path in frozen.items() if str(path).startswith(real)}
-    assert not leaked, f"frozen at import to the real home: {leaked}"
 
 
 # ── End to end: a real pytest session, a fake $HOME ──────────────────────────────────────

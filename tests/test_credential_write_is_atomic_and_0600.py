@@ -1,8 +1,8 @@
 """The dotenv credential write has no creation window and no truncation window.
 
-`_dotenv_save_credential` used to do `ep.write_text(...)` and then `ep.chmod(0o600)`. Two defects
-in that pair, and the final mode is identical either way — which is why a mode-only assertion
-cannot tell the fixed code from the broken code:
+The `.env` writer (now `_dotenv_save_credentials`) used to do `ep.write_text(...)` and then
+`ep.chmod(0o600)`. Two defects in that pair, and the final mode is identical either way — which
+is why a mode-only assertion cannot tell the fixed code from the broken code:
 
 * **A CREATION WINDOW.** `write_text` creates the file at the umask default (0644 under the common
   022) and the `chmod` narrowed it only *after* the secret was already on disk. On first creation
@@ -36,9 +36,9 @@ def home(tmp_path, monkeypatch):
 def test_a_freshly_created_credential_file_is_0600(home, monkeypatch):
     """End-to-end, under a deliberately loose umask so a umask-inherited mode would show."""
     monkeypatch.setattr(os, "umask", lambda _mask: 0o022, raising=False)
-    from personalclaw.config.credentials import _dotenv_save_credential
+    from personalclaw.config.credentials import _dotenv_save_credentials
 
-    _dotenv_save_credential("OPENAI_API_KEY", "sk-secret-1")
+    _dotenv_save_credentials({"OPENAI_API_KEY": "sk-secret-1"})
     ep = home / ".env"
     assert ep.exists(), "the credential file was not written"
     assert (
@@ -62,9 +62,9 @@ def test_the_write_asks_for_0600_UP_FRONT_and_fsyncs(home, monkeypatch):
         return real(path, content, **kw)
 
     monkeypatch.setattr(aw, "atomic_write", spy)
-    from personalclaw.config.credentials import _dotenv_save_credential
+    from personalclaw.config.credentials import _dotenv_save_credentials
 
-    _dotenv_save_credential("KEY_A", "v1")
+    _dotenv_save_credentials({"KEY_A": "v1"})
     assert seen, "the credential write did not go through atomic_write at all"
     assert seen["mode"] == 0o600, f"atomic_write was asked for {seen['mode']!r}, not 0o600"
     assert seen["fsync"] is True, "a credential write that is not fsynced can vanish on a crash"
@@ -72,9 +72,9 @@ def test_the_write_asks_for_0600_UP_FRONT_and_fsyncs(home, monkeypatch):
 
 def test_a_failed_write_leaves_THE_PREVIOUS_credentials_intact(home, monkeypatch):
     """The truncation half. In-place rewriting loses every other key on a mid-write failure."""
-    from personalclaw.config.credentials import _dotenv_save_credential
+    from personalclaw.config.credentials import _dotenv_save_credentials
 
-    _dotenv_save_credential("KEEP_ME", "original")
+    _dotenv_save_credentials({"KEEP_ME": "original"})
     ep = home / ".env"
     before = ep.read_text(encoding="utf-8")
     assert "KEEP_ME=original" in before
@@ -87,7 +87,7 @@ def test_a_failed_write_leaves_THE_PREVIOUS_credentials_intact(home, monkeypatch
         aw.os, "replace", lambda *a, **k: (_ for _ in ()).throw(OSError("no space left on device"))
     )
     with pytest.raises(OSError):
-        _dotenv_save_credential("NEW_KEY", "v2")
+        _dotenv_save_credentials({"NEW_KEY": "v2"})
 
     after = ep.read_text(encoding="utf-8")
     assert after == before, f"a failed write damaged the credential file:\n{after!r}"
@@ -98,9 +98,9 @@ def test_an_upsert_preserves_other_keys_and_comments(home):
     """The behaviour the function exists for, pinned so the rewrite cannot have changed it."""
     ep = home / ".env"
     ep.write_text("# a comment\nOTHER=untouched\nTARGET=old\n", encoding="utf-8")
-    from personalclaw.config.credentials import _dotenv_save_credential
+    from personalclaw.config.credentials import _dotenv_save_credentials
 
-    _dotenv_save_credential("TARGET", "new")
+    _dotenv_save_credentials({"TARGET": "new"})
     text = ep.read_text(encoding="utf-8")
     assert "# a comment" in text and "OTHER=untouched" in text
     assert "TARGET=new" in text and "TARGET=old" not in text

@@ -123,7 +123,26 @@ def test_the_refusal_NAMES_the_key():
     with pytest.raises(S.UnresolvedSecret) as ei:
         S.resolve("{{secret:STRIPE_KEY}}", resolver=_resolver)
     assert "STRIPE_KEY" in str(ei.value)
-    assert "personalclaw auth" in str(ei.value), "and says how to fix it"
+    # …and says how to fix it, on the page that does: `personalclaw auth`, which this used to
+    # name, manages the owner's login and stores no credential.
+    assert "Settings → Secrets" in str(ei.value)
+    assert "personalclaw auth" not in str(ei.value)
+
+
+def test_an_owned_key_is_refused_before_the_resolver_reads_it():
+    """A provider's or an app's own ``PCSECRET_…`` key is read only through its setting. The key
+    IS set, so the refusal says why the action cannot read it instead of calling it missing."""
+    owned = "PCSECRET_PROVIDER_X_1234ABCD__API_KEY"
+
+    def reading(key: str) -> str:
+        raise AssertionError(f"the resolver read {key}")
+
+    with pytest.raises(S.UnresolvedSecret) as ei:
+        S.resolve({"k": f"{{{{secret:{owned}}}}}"}, resolver=reading)
+
+    assert ei.value.refused is not None
+    assert owned in str(ei.value) and "Settings → Secrets" in str(ei.value)
+    assert "does not hold" not in str(ei.value)
 
 
 def test_one_missing_key_refuses_the_WHOLE_config():

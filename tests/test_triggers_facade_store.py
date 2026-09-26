@@ -55,7 +55,6 @@ def state(home):
 def _patch_legacy(monkeypatch):
     # Silence the legacy backends so the list contains only what we put in the store.
     monkeypatch.setattr(T, "_hook_store", lambda s: _EmptyStore())
-    monkeypatch.setattr(T, "_event_store", lambda: _EmptyStore())
     monkeypatch.setattr(T, "_used_by_index", lambda: {})
 
 
@@ -898,8 +897,8 @@ def test_every_store_row_is_listed_exactly_once(home, state):
 
     🔴 `event` and `manual` store rows were listed nowhere: `automation_create` routes "when I …"
     to `event` and takes an explicit `manual`, and both kinds were left out of the store group
-    on the theory that "`event` is the event-trigger store's". That store is `event_triggers.json`,
-    a different record; nothing migrates it into `triggers.json`. So a chat-made automation of
+    on the theory that "`event` is the event-trigger store's". That store was `event_triggers.json`,
+    a different record (absorbed into `triggers.json` at boot since). So a chat-made automation of
     either kind existed and could not be seen, paused or deleted on its own page, while the tool
     that made it told the user "it is active now and visible on the Automations page".
     """
@@ -908,7 +907,7 @@ def test_every_store_row_is_listed_exactly_once(home, state):
     store = _store(home)
     specs = {
         "clock": {"kind": "interval", "every_secs": 3600},
-        "event": {"source": "session", "pattern": "SessionEnd"},
+        "event": {"pattern": "MemoryKeyPattern", "key_glob": "project.*"},
         "file": {"paths": ["~/notes"]},
         "web_watch": {"url": "https://example.com"},
         "idle": {},

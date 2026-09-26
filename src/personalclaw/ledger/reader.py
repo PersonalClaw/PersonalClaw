@@ -99,6 +99,12 @@ def run_totals(store: LedgerStore, run_id: str) -> dict[str, Any]:
     the state, ``None`` is the value when that state is false, and a genuine recorded ``0`` stays
     zero. One absent or explicit-null constituent makes the aggregate unrecorded; an empty ledger
     remains recorded-zero because no completed step claimed an unknown count.
+
+    Every row that ends an attempt is folded, by one rule: `step_completed`, `step_failed` (a
+    retried attempt, a final one, a stall kill) and `step_cancelled` all carry what the attempt's
+    model calls used (``workflows.step_usage``). A failed attempt is not free, and a crash loop's
+    failed attempts are exactly the spend the resume pre-charge exists to carry. A row with calls
+    cut off before they finished (``model_calls_open``) is a floor.
     """
     tokens = 0
     tokens_recorded = True
@@ -109,35 +115,25 @@ def run_totals(store: LedgerStore, run_id: str) -> dict[str, Any]:
     priced = True
     for rec in store.read_jsonl(run_id, EVENTS_FILE):
         kind = rec.get("kind")
+        if kind == STEP_CACHED:
+            cached += 1
+            continue
         if kind == STEP_COMPLETED:
             steps += 1
-            recorded_tokens = rec.get("tokens")
-            if recorded_tokens is None:
-                tokens_recorded = False
-            else:
-                tokens += int(recorded_tokens or 0)
-            cost += float(rec.get("cost_usd", 0.0) or 0.0)
-            # Absent AND explicit null both read unpriced — the same rule `introspection._carried`
-            # applies, because "the key is missing" and "the key is there holding nothing" are the
-            # same fact about the money: nobody recorded what this step cost.
-            if rec.get("cost_usd") is None:
-                priced = False
         elif kind == STEP_FAILED:
             failures += 1
-        elif kind == STEP_CACHED:
-            cached += 1
-        elif kind == STEP_CANCELLED:
-            # A step the cancel stopped mid-flight spent what its model calls used: measured for
-            # the calls that finished, UNKNOWN for a generation it cut off — so any cut-off call
-            # makes the row a floor. Otherwise folded by the same absent/null rule as a completed
-            # step, so a cancelled run cannot report itself free.
-            cut_off = int(rec.get("model_calls_open") or 0) > 0
-            if rec.get("tokens") is None or cut_off:
-                tokens_recorded = False
-            tokens += int(rec.get("tokens") or 0)
-            if rec.get("cost_usd") is None or cut_off:
-                priced = False
-            cost += float(rec.get("cost_usd") or 0.0)
+        elif kind != STEP_CANCELLED:
+            continue
+        # Absent AND explicit null both read unrecorded — the same rule `introspection._carried`
+        # applies, because "the key is missing" and "the key is there holding nothing" are the same
+        # fact: nobody recorded what this attempt spent.
+        cut_off = int(rec.get("model_calls_open") or 0) > 0
+        if rec.get("tokens") is None or cut_off:
+            tokens_recorded = False
+        tokens += int(rec.get("tokens") or 0)
+        if rec.get("cost_usd") is None or cut_off:
+            priced = False
+        cost += float(rec.get("cost_usd") or 0.0)
     return {
         "tokens": tokens if tokens_recorded else None,
         "tokens_recorded": tokens_recorded,

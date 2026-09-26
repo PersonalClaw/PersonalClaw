@@ -342,16 +342,29 @@ def get_format(name: str) -> ExternalFormat:
         ) from None
 
 
+#: A destination under Claude Code's own config directory. Claude Code reads that directory from
+#: ``$CLAUDE_CONFIG_DIR`` when it is set, so ``~/.claude`` spelled out would be a directory it
+#: never reads.
+_CLAUDE_CONFIG_PREFIX = "~/.claude/"
+
+
 def default_dest_dir(fmt: ExternalFormat) -> Path | None:
     """The canonical destination directory a UI may PREFILL, or ``None``.
 
-    Home-anchored formats resolve against ``Path.home()``; project-relative ones (Cursor
-    rules, a skills plugin dir) have no machine-independent default, so they return
-    ``None`` and the caller must supply a directory. This is the single resolver a test
-    monkeypatches — nothing else in this module reads ``Path.home()``, so a test can never
-    reach a real ``~/.claude``. Suggesting a directory is NOT confirming it:
+    Home-anchored formats resolve against ``Path.home()`` — except a destination in Claude Code's
+    config directory, which resolves where Claude Code itself looks: ``$CLAUDE_CONFIG_DIR``, else
+    ``~/.claude`` (``onboarding_import.sources.claude_code.resolve_root``, the reader the importer
+    uses). Project-relative ones (Cursor rules, a skills plugin dir) have no machine-independent
+    default, so they return ``None`` and the caller must supply a directory. This is the single
+    resolver a test monkeypatches — nothing else in this module reads ``Path.home()``, so a test
+    can never reach a real ``~/.claude``. Suggesting a directory is NOT confirming it:
     :func:`export_entities` still demands ``confirm_dest=True``.
     """
+    if fmt.dest.startswith(_CLAUDE_CONFIG_PREFIX):
+        from personalclaw.onboarding_import.sources import claude_code
+
+        rest = PurePosixPath(fmt.dest[len(_CLAUDE_CONFIG_PREFIX) :]).parent
+        return claude_code.resolve_root() / rest
     if not fmt.dest.startswith("~/"):
         return None
     return Path.home() / PurePosixPath(fmt.dest[2:]).parent

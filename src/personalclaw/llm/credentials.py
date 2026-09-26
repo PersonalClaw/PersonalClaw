@@ -1,287 +1,310 @@
-"""Credential store: source of truth for resolving named secrets.
+"""Read a credential by NAME from the one credential store.
 
-The store reads two files under ``<PERSONALCLAW_HOME>``:
+A secret stored under a name (in Settings → Secrets, with ``personalclaw setup --credential``, by
+a connector pack) is read here by everything that names it: a provider entry's ``credential``
+(through the ``credential_store`` build kwarg every model factory receives), ``{{secret:NAME}}``
+in a workflow step or a trigger action, a knowledge connector pack, and an app through
+``personalclaw.sdk.credentials``. The store is :mod:`personalclaw.config.credentials` (the OS
+keychain when it is on, else ``<home>/.env`` at 0600), the one Settings → Secrets writes. This
+module reads nothing else.
 
-* ``credentials.json`` — descriptor map keyed by credential name. Each
-  descriptor declares a ``type`` (``api_key`` / ``static_token`` /
-  ``oauth2`` / ``none``) and the resolution hint(s) appropriate for
-  that kind.
-* ``.env`` — legacy ``KEY=VALUE`` fallback. Same parser semantics as
-  :func:`personalclaw.config.loader.AppConfigLoader.load_credentials`.
+🔴 **Until this release there was a second store.** Every reader above read
+``<home>/credentials.json``: a map of descriptors, each with an inline ``value`` or a
+``value_env`` naming an environment variable. It fell back to ``.env`` only for a name it held a
+descriptor for, and never to the keychain. Settings → Secrets never wrote it, so a secret saved
+there never reached a workflow step, a trigger or a provider's ``credential``. And
+``setup --credential`` wrote only the file, so Settings → Secrets never listed what the CLI
+stored. And any code could write a descriptor (``CredentialStore.save`` was published on the
+SDK), so an app could name another owner's key and read it out of ``.env``.
+:func:`move_credentials_file` moves what the file held into the store at the first start, and
+deletes the file once every value reads back from there.
 
-Resolution order for ``api_key`` / ``static_token`` / ``oauth2`` kinds
-(Requirement R4.1) is:
+**Resolving a name:** the process environment (a container passes a secret that way, and the
+store mirrors every named secret into it), then the keychain, then ``<home>/.env``. An OWNED key
+(``PCSECRET_…``, :func:`personalclaw.config.credentials.is_owned_key`) is refused with
+:class:`OwnedCredentialRefused`: it belongs to the settings record that references it, and that
+reference (``config.secret_refs``, owner-checked since #3626) is the only way it is read.
 
-1. Environment variable named in ``descriptor.value_env``.
-2. Inline ``descriptor.value`` in ``credentials.json``.
-3. ``<PERSONALCLAW_HOME>/.env`` keyed by the credential name.
-4. Otherwise ``secret=None``, ``source="none"``.
-
-For ``none`` kind, no secret exists; ``source="none"``.
-
-Property 5 (Credential Non-Leakage) requires that :meth:`CredentialStore.list`
-NEVER returns a populated ``secret``. The dashboard ``/api/credentials``
-endpoint relies on this — it reads ``configured`` and ``source`` from the
-returned :class:`Credential` instances and never touches a secret value.
-
-Property 11 (Provider SDK Lazy Import) requires this module to import
-only stdlib symbols; no ``httpx``, ``anthropic``, or ``openai`` imports
-here.
+Property 11 (Provider SDK Lazy Import): stdlib and ``personalclaw.config`` imports only, so no
+provider SDK is pulled in through here.
 """
+
+from __future__ import annotations
 
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
 
 CredentialKind = Literal["none", "api_key", "static_token", "oauth2"]
-"""Supported credential kinds. The store treats unknown kinds as opaque
-descriptors and returns ``secret=None`` / ``source="none"`` from
-:meth:`CredentialStore.resolve`; the caller can still inspect the raw
-descriptor through :meth:`CredentialStore.list`."""
+"""What a credential is. Everything :meth:`CredentialStore.resolve` returns is an ``api_key``;
+a provider that builds a :class:`Credential` itself (an inline key, a subscription token) says
+which kind it holds."""
 
-CredentialSource = Literal["env", "file", "none"]
-"""Where a resolved secret came from. Surfaced through the dashboard
-``/api/credentials`` endpoint per R4.5; never exposes the secret value
-itself."""
-
-
-_SECRET_BEARING_KINDS: frozenset[str] = frozenset({"api_key", "static_token", "oauth2"})
+CredentialSource = Literal["env", "keychain", "file", "none"]
+"""Where a resolved secret came from: the process environment, the OS keychain, or ``.env``
+(``file``). ``none`` is for a credential built with no secret. Never the value itself."""
 
 
 @dataclass(frozen=True)
 class Credential:
-    """Resolved credential descriptor.
-
-    ``secret`` is populated only by :meth:`CredentialStore.resolve` for
-    secret-bearing kinds when a value was found. :meth:`CredentialStore.list`
-    NEVER populates ``secret`` (Requirement R4.4 / Property 5).
-
-    ``source`` reflects which step of the resolution chain produced the
-    value:
-
-    * ``"env"`` — the env var named in ``descriptor.value_env`` was set.
-    * ``"file"`` — the value came from inline ``descriptor.value`` or
-      ``<PERSONALCLAW_HOME>/.env``.
-    * ``"none"`` — no value found / kind has no secret.
-    """
+    """A secret and where it came from. ``secret`` is ``None`` for a credential with none."""
 
     name: str
-    kind: "CredentialKind"
+    kind: CredentialKind
     secret: str | None = None
-    source: "CredentialSource" = "none"
+    source: CredentialSource = "none"
+
+
+class OwnedCredentialRefused(KeyError):
+    """*name* is an owned key (``PCSECRET_…``), which nothing reads by name.
+
+    A :class:`KeyError`, so every caller that already treats an unknown name as "not configured"
+    refuses this one too, with no value read. ``str()`` is the sentence a user reads, and it
+    names the key, never its value.
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.name = name
+        #: Why it is refused, and what to do instead: the two halves a failure record keeps.
+        self.cause = (
+            f"{name} is where a provider's or an app's own setting keeps its secret, and only "
+            "that setting can read it"
+        )
+        self.remedy = (
+            "store the secret under a name of your own in Settings → Secrets and refer to that "
+            "name"
+        )
+
+    def __str__(self) -> str:
+        return f"{self.cause}. To use a secret here, {self.remedy}."
 
 
 class CredentialStore:
-    """Source of truth for credential lookup.
+    """Read a credential by name from the credential store of *home*.
 
-    The store is read-only with respect to descriptors loaded from disk;
-    callers mutate state through :meth:`save`, which writes the file
-    atomically with mode ``0o600`` (Requirement R4.6) and refreshes the
-    in-memory descriptor map.
-
-    Construction reads ``<home>/credentials.json`` and ``<home>/.env``
-    if either exists, tightening their permissions to ``0o600`` on read
-    when they are looser than ``0o600`` (mirrors the existing pattern in
-    :mod:`personalclaw.config.loader`). Missing files are treated as empty.
+    The ``.env`` half is ``<home>/.env``; the OS keychain has one namespace for every home. Each
+    :meth:`resolve` reads the store as it is now, so a secret saved or deleted in Settings →
+    Secrets takes effect on the next read.
     """
-
-    CREDENTIALS_FILE = "credentials.json"
-    ENV_FILE = ".env"
-    FILE_MODE = 0o600
 
     def __init__(self, home: Path) -> None:
         self._home = Path(home)
-        self._credentials_path = self._home / self.CREDENTIALS_FILE
-        self._env_path = self._home / self.ENV_FILE
-        self._descriptors: dict[str, dict[str, object]] = {}
-        self._env: dict[str, str] = {}
-        self.reload()
-
-    # ── Public API ────────────────────────────────────────────────────
-
-    def reload(self) -> None:
-        """Re-read ``credentials.json`` and ``.env`` from disk."""
-        self._descriptors = self._load_descriptors()
-        self._env = self._load_env_file()
-
-    def has(self, name: str) -> bool:
-        """Return True iff ``name`` appears in ``credentials.json``."""
-        return name in self._descriptors
-
-    def list(self) -> list[Credential]:
-        """Return one :class:`Credential` per configured descriptor.
-
-        Secrets are stripped (R4.4 / Property 5): ``secret is None`` for
-        every returned entry. ``source`` reflects whether a secret would
-        be available if resolved (``"env"``, ``"file"``, or ``"none"``)
-        so the dashboard can surface a configured/source summary without
-        exposing values.
-        """
-        out: list[Credential] = []
-        for name in self._descriptors:
-            resolved = self.resolve(name)
-            # Defensive: strip secret regardless of resolve()'s return.
-            out.append(
-                Credential(
-                    name=resolved.name,
-                    kind=resolved.kind,
-                    secret=None,
-                    source=resolved.source,
-                )
-            )
-        return out
 
     def resolve(self, name: str) -> Credential:
-        """Resolve ``name`` to a :class:`Credential`.
+        """*name*'s value, from the environment, the keychain or ``.env``, in that order.
 
-        Raises :class:`KeyError` if ``name`` is not in ``credentials.json``
-        (Requirement R4.2). The returned ``Credential`` may have
-        ``secret=None`` / ``source="none"`` if a secret-bearing
-        descriptor has no value configured anywhere in the chain — this
-        is not an error condition; the provider factory will surface it
-        via :class:`personalclaw.providers.registry.CredentialMissing` when
-        it actually needs the value.
+        Raises :class:`KeyError` when no credential of that name is stored, and
+        :class:`OwnedCredentialRefused` (a ``KeyError``) for an owned key, before any value is
+        read.
         """
-        try:
-            desc = self._descriptors[name]
-        except KeyError as exc:
-            raise KeyError(name) from exc
+        from personalclaw.config.credentials import find_credential, is_owned_key
 
-        kind = str(desc.get("type", "none"))
+        if is_owned_key(name):
+            raise OwnedCredentialRefused(name)
+        value = os.environ.get(name, "")
+        if value:
+            return Credential(name=name, kind="api_key", secret=value, source="env")
+        value, where = find_credential(name, home=self._home)
+        if not value:
+            raise KeyError(name)
+        source: CredentialSource = "keychain" if where == "keychain" else "file"
+        return Credential(name=name, kind="api_key", secret=value, source=source)
 
-        if kind == "none":
-            return Credential(name=name, kind="none", secret=None, source="none")
 
-        if kind not in _SECRET_BEARING_KINDS:
-            # Unknown kind — surface no secret, leave kind as configured
-            # so callers can still introspect via list().
-            logger.warning("credential %r has unknown kind %r; treating as no secret", name, kind)
-            return Credential(name=name, kind=kind, secret=None, source="none")  # type: ignore[arg-type]  # noqa: E501
+# ── the one-time move of credentials.json (gateway boot) ────────────────────────────
 
-        # Secret-bearing kind — walk the resolution chain.
-        # Step 1: env var named in value_env (R4.3 — env beats inline).
-        env_var = desc.get("value_env")
-        if isinstance(env_var, str) and env_var:
-            env_val = os.environ.get(env_var)
-            if env_val:
-                return Credential(
-                    name=name,
-                    kind=kind,  # type: ignore[arg-type]
-                    secret=env_val,
-                    source="env",
+#: The descriptor file this module read until this release. Nothing writes it any more; it
+#: exists on a home only until :func:`move_credentials_file` has moved what it held.
+CREDENTIALS_FILE = "credentials.json"
+
+
+@dataclass(frozen=True)
+class Leftover:
+    """A name in ``credentials.json`` the move could not settle, and what to do about it.
+
+    ``reason`` is a sentence for the user. It names the credential and never its value.
+    """
+
+    name: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class CredentialsFileMove:
+    """What :func:`move_credentials_file` did: the names it stored, the ones it could not
+    settle, and whether it deleted the file."""
+
+    stored: list[str] = field(default_factory=list)
+    leftovers: list[Leftover] = field(default_factory=list)
+    removed: bool = False
+
+
+def _config_dir() -> Path:
+    from personalclaw.config.loader import config_dir
+
+    return config_dir()
+
+
+def _read_descriptors(path: Path) -> dict[str, Any] | None:
+    """The file's descriptor map, or ``None`` when it is not a JSON object."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def _target(name: str) -> str:
+    """The store key a descriptor's value moves to. The web push key pair becomes core-owned
+    keys (``push.MOVED_FROM_CREDENTIALS_FILE``); every other name keeps its own."""
+    from personalclaw.push import MOVED_FROM_CREDENTIALS_FILE
+
+    return MOVED_FROM_CREDENTIALS_FILE.get(name, name)
+
+
+def _inline_value(descriptor: Any) -> str:
+    value = descriptor.get("value") if isinstance(descriptor, dict) else None
+    return value if isinstance(value, str) else ""
+
+
+def _movable(name: str, descriptor: Any) -> bool:
+    """Whether *descriptor* holds a value the move may store: an inline value under a name that
+    is not an owned key. An owned name in this file is one anything could have written there, so
+    it is never stored over the settings record that owns it."""
+    from personalclaw.config.credentials import is_owned_key
+
+    return bool(_inline_value(descriptor)) and not is_owned_key(name)
+
+
+def _leftovers(descriptors: dict[str, Any], home: Path) -> list[Leftover]:
+    """Every name in *descriptors* the credential store does not settle, with why."""
+    from personalclaw.config.credentials import find_credential, is_owned_key
+
+    out: list[Leftover] = []
+    for name, descriptor in descriptors.items():
+        inline = _inline_value(descriptor)
+        if inline and is_owned_key(name):
+            out.append(
+                Leftover(
+                    name,
+                    "this name is reserved for a provider's or an app's own setting, so its "
+                    "value was not moved. Remove the entry from credentials.json.",
                 )
-
-        # Step 2: inline value in credentials.json.
-        inline = desc.get("value")
-        if isinstance(inline, str) and inline:
-            return Credential(
-                name=name,
-                kind=kind,  # type: ignore[arg-type]
-                secret=inline,
-                source="file",
             )
-
-        # Step 3: <PERSONALCLAW_HOME>/.env keyed by the credential name.
-        env_file_val = self._env.get(name)
-        if env_file_val:
-            return Credential(
-                name=name,
-                kind=kind,  # type: ignore[arg-type]
-                secret=env_file_val,
-                source="file",
-            )
-
-        # Step 4: nothing configured.
-        return Credential(name=name, kind=kind, secret=None, source="none")  # type: ignore[arg-type]  # noqa: E501
-
-    def save(self, descriptors: dict[str, dict[str, object]]) -> None:
-        """Atomically write ``descriptors`` to ``credentials.json`` at mode ``0o600``.
-
-        Through ``atomic_write``, whose temp file is 0600 from creation: the previous
-        write-then-chmod of a fixed ``.tmp`` name held the descriptors — inline values
-        included — at the umask mode until the chmod ran, and two concurrent saves shared
-        one temp path. Updates the in-memory descriptor map on success (R4.6).
-        """
-        from personalclaw.atomic_write import atomic_write
-
-        payload = json.dumps(descriptors, indent=2, sort_keys=True) + "\n"
-        atomic_write(self._credentials_path, payload, mode=self.FILE_MODE, fsync=True)
-
-        # Take a defensive copy so callers can keep mutating their dict.
-        self._descriptors = {k: dict(v) for k, v in descriptors.items()}
-
-    # ── Internal helpers ──────────────────────────────────────────────
-
-    def _load_descriptors(self) -> dict[str, dict[str, object]]:
-        """Read ``credentials.json``, tightening permissions on read.
-
-        Returns an empty dict if the file is missing or unreadable.
-        Mirrors the permission-tightening behavior in
-        :meth:`personalclaw.config.loader.AppConfigLoader.load_credentials`.
-        """
-        path = self._credentials_path
-        if not path.is_file():
-            return {}
-        self._enforce_perms(path)
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Cannot read %s: %s", path, exc)
-            return {}
-        if not isinstance(raw, dict):
-            logger.warning("%s is not a JSON object; ignoring", path)
-            return {}
-        out: dict[str, dict[str, object]] = {}
-        for name, desc in raw.items():
-            if isinstance(desc, dict):
-                out[str(name)] = dict(desc)
+        elif inline:
+            held = find_credential(_target(name), home=home)[0]
+            if held == inline:
+                continue
+            if held:
+                reason = (
+                    "Settings → Secrets already holds a different value under this name, and "
+                    "that one is used everywhere now. If the value in credentials.json is the "
+                    "one you want, save it in Settings → Secrets; if not, remove the entry "
+                    "from credentials.json."
+                )
             else:
-                logger.warning("descriptor for %r is not an object; ignoring", name)
-        return out
+                reason = (
+                    "its value could not be stored in the credential store. Restart to try "
+                    "again, or save it in Settings → Secrets under this name."
+                )
+            out.append(Leftover(name, reason))
+        else:
+            other = descriptor.get("value_env") if isinstance(descriptor, dict) else None
+            if not isinstance(other, str) or not other or other == name:
+                continue  # nothing to move: no secret, or read from the variable of its own name
+            if os.environ.get(name) or find_credential(name, home=home)[0]:
+                continue  # stored under its own name since
+            out.append(
+                Leftover(
+                    name,
+                    f"it read its value from the environment variable {other}, which is no "
+                    f"longer read for it. Save the value in Settings → Secrets under {name}.",
+                )
+            )
+    return out
 
-    def _load_env_file(self) -> dict[str, str]:
-        """Read ``<home>/.env``, tightening permissions on read.
 
-        Parser semantics mirror
-        :meth:`personalclaw.config.loader.AppConfigLoader.load_credentials`:
-        ``KEY=VALUE`` per line, blanks and ``#`` comments ignored, no
-        quote stripping. The store does NOT export values into
-        :data:`os.environ` — that remains the legacy loader's job.
-        """
-        path = self._env_path
-        if not path.is_file():
-            return {}
-        self._enforce_perms(path)
-        out: dict[str, str] = {}
+def credentials_file_leftovers(home: Path | None = None) -> list[Leftover]:
+    """What ``<home>/credentials.json`` still holds that the credential store does not: ``[]``
+    when there is no such file. Read-only, and it reads no value into a result: the Doctor's
+    ``security.credentials_file`` check lists these."""
+    path = (Path(home) if home is not None else _config_dir()) / CREDENTIALS_FILE
+    if not path.is_file():
+        return []
+    descriptors = _read_descriptors(path)
+    if descriptors is None:
+        return [
+            Leftover(
+                CREDENTIALS_FILE,
+                "the file is not a JSON object, so nothing in it could be moved. Save each "
+                "credential it held in Settings → Secrets, then delete the file.",
+            )
+        ]
+    return _leftovers(descriptors, path.parent)
+
+
+def move_credentials_file() -> CredentialsFileMove:
+    """Move the active home's ``credentials.json`` into the credential store, then delete it.
+
+    Called once at gateway boot. Every inline value is stored under its own name (the web push
+    pair under core-owned keys), then read back from the store. The file is deleted only when
+    every name in it is settled: its value reads back unchanged, it held no value, or it read
+    from the variable of its own name. Anything else is a :class:`Leftover`, and then the file
+    is kept exactly as it was, the names (never the values) are logged, and the Doctor lists
+    them with what to do.
+
+    Idempotent: a value already in the store is not written again, and without a file this does
+    nothing. On the ``.env`` backend every value goes in one atomic write and the file is
+    deleted after it, so a crash leaves either the old state or the new one. With the keychain
+    on, each value is its own entry, so a crash can store some of them; the file is still there
+    and the next start finishes the move.
+    """
+    from personalclaw.config.credentials import find_credential, save_credentials
+
+    home = _config_dir()
+    path = home / CREDENTIALS_FILE
+    if not path.is_file():
+        return CredentialsFileMove()
+    descriptors = _read_descriptors(path)
+    if descriptors is None:
+        leftovers = credentials_file_leftovers(home)
+        logger.warning("%s is not a JSON object; nothing in it was moved", path)
+        return CredentialsFileMove(leftovers=leftovers)
+
+    pending = {
+        _target(name): _inline_value(descriptor)
+        for name, descriptor in descriptors.items()
+        if _movable(name, descriptor) and not find_credential(_target(name), home=home)[0]
+    }
+    if pending:
         try:
-            text = path.read_text(encoding="utf-8")
-        except OSError as exc:
-            logger.warning("Cannot read %s: %s", path, exc)
-            return {}
-        for line in text.splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            if "=" not in stripped:
-                continue
-            k, v = stripped.split("=", 1)
-            out[k.strip()] = v.strip()
-        return out
-
-    def _enforce_perms(self, path: Path) -> None:
-        """If ``path`` is loose (group/world bits set), chmod it to ``0o600``."""
-        try:
-            mode = path.stat().st_mode
+            save_credentials(pending)
         except OSError:
-            return
-        if mode & 0o077:
-            try:
-                os.chmod(path, self.FILE_MODE)
-            except OSError:
-                logger.warning("Cannot enforce 0o600 permissions on %s", path)
+            logger.warning(
+                "could not store %s from %s in the credential store",
+                ", ".join(sorted(pending)),
+                path,
+                exc_info=True,
+            )
+    leftovers = _leftovers(descriptors, home)
+    if leftovers:
+        logger.warning(
+            "kept %s: what it holds for %s is not in the credential store; the Doctor says why",
+            path,
+            ", ".join(leftover.name for leftover in leftovers),
+        )
+        return CredentialsFileMove(stored=sorted(pending), leftovers=leftovers)
+    path.unlink()
+    logger.info(
+        "moved %s into the credential store and deleted it; stored: %s",
+        path,
+        ", ".join(sorted(pending)) or "nothing new",
+    )
+    return CredentialsFileMove(stored=sorted(pending), removed=True)

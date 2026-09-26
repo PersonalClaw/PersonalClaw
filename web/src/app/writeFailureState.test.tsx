@@ -390,14 +390,6 @@ const SILENT_WRITE_BUDGET: Record<string, number> = {
   // `dreamResult` while its failure sets nothing — "surfaced by no change" is the defect's own
   // description, and it is `refusedWriteVisible`'s exact shape.
   'pages/settings/MemoryPanel.tsx': 2,
-  // (a) ×4 — one uniform family: a provider/binding toggle or save as `try { …write… } finally
-  // { setBusy(false) }` with NO catch, so the rejection is unhandled and the spinner stopping is what
-  // success looks like too. This is verbatim what `reportingWrite`'s docstring was extracted for; the
-  // fix is mechanical and they are held together so the four land as one legible change.
-  'pages/settings/MultiInstanceCard.tsx': 1,
-  'pages/settings/PromptsPanel.tsx': 1,
-  'pages/settings/ProviderCard.tsx': 1,
-  'pages/settings/SearchPanel.tsx': 1,
   // (a) ×5: the voice-loop config patch's silent rollback, and four lexicon writes (add term, add
   // correction, rebuild, toggle auto-apply) in the same no-catch family as the four above. Note
   // `settingsWriteReported` already covers this panel's `saveUseCaseSettings` — a DIFFERENT write, so
@@ -590,7 +582,7 @@ describe('§B no write path discards its own failure, tree-wide and by COUNT', (
     expect(W.size, 'no write methods parsed out of lib/api.ts').toBeGreaterThan(300)
     const c = census()
     expect(c.size, 'the write-failure scanner found no file at all').toBeGreaterThanOrEqual(30)
-    expect([...c.values()].reduce((n, v) => n + v.length, 0)).toBeGreaterThanOrEqual(55)
+    expect([...c.values()].reduce((n, v) => n + v.length, 0)).toBeGreaterThanOrEqual(52)
 
     const kinds = (src: string) => silentSites(src, W).map((s) => s.split(':')[0])
     const n = (src: string) => kinds(src).length

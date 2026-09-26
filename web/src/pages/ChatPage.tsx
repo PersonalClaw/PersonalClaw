@@ -16,7 +16,7 @@ const DEFAULT_EXIT_PHRASES = ['cancel', 'never mind', 'forget it']
 import { fvs, withWeight } from '../design/fontWeight'
 import { playCue } from '../design/soundCues'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, Coins, ListTree, Scissors } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowLeft, ArrowRight, ArrowUp, GripVertical, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, ListTree, Scissors, Shuffle } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -40,11 +40,11 @@ import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { deliverableToOpenSession } from './chat/sessionDelivery'
 import { sessionRowMeta } from './chat/sessionRowMeta'
 import { AppPermissionNotice, StartedByApp, startedByName } from './chat/StartedByApp'
+import { chatContextChips } from './chat/ChatContextLine'
 import { snapshotPredatesSend, streamingAtMount } from './chat/liveRun'
 import { OrganizeChip } from './chat/OrganizeChip'
 import { ContextLedger } from './chat/ContextLedger'
 import { chatFindPath, searchSourceLabel } from './chat/searchDeepLink'
-import { ScreenShareChip } from '../ui/ScreenShareChip'
 import { useScreenShare } from '../ui/composer/useScreenShare'
 import { DotGlow } from '../ui/DotGlow'
 import { EmptyState, ListSkeleton, LoadError, Skeleton, LoadingStatus } from '../ui/ListScaffold'
@@ -88,7 +88,7 @@ import { SnipOverlay } from '../ui/SnipOverlay'
 import { chooseCaptureProvider, cropToPngFile, displayCaptureSupported, grabOneFrame, type SnipRect } from '../ui/composer/displayCapture'
 import { notify } from '../app/appSdk'
 import { spring, stagger, listItemEnter, expr } from '../design/motion'
-import { api, ApiError, hasApiCode, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type RewindFileWire } from '../lib/api'
+import { api, ApiError, hasApiCode, isSwitchedOff, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type RewindFileWire } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useStreamCoalescer } from './chat/useStreamCoalescer'
 import { FindBar } from '../ui/FindBar'
@@ -219,14 +219,6 @@ function greeting(name: string): string {
   const h = new Date().getHours()
   const part = h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening'
   return `Good ${part}, ${firstNameOf(name)}`
-}
-
-/** Compact token count for the session cost chip: 940 → "940", 46_000 → "46k",
- *  1_200_000 → "1.2M". Keeps the header chip short (the plan's "$0.19 · 46k tokens"). */
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
-  if (n >= 1_000) return `${Math.round(n / 1_000)}k`
-  return String(n)
 }
 
 /** Contextual prompt-starter chips on the empty-chat hero. Sourced from the
@@ -978,7 +970,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const [title, setTitle] = useState(seededDetail?.title || '')
   const [renaming, setRenaming] = useState(false)
   const [renameVal, setRenameVal] = useState('')
-  const [linkCopied, setLinkCopied] = useState(false)
   const [regenningTitle, setRegenningTitle] = useState(false)
   // P15 rAF stream coalescer: chat_chunk pushes into this; it flushes ONE growing
   // reveal per animation frame (instead of a setTurns per chunk) via onFlush, which
@@ -1503,10 +1494,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           // snapshot's LAST assistant message may speak for the trailing just-streamed turn.
           const cutByTs = new Set<string>()
           let lastIsCut = false
+          // "Ran on X instead of Y" is stamped the same way, for the same one turn.
+          const subByTs = new Map<string, string>()
+          let lastSub = ''
           for (const m of d.messages || []) {
             if (m.role !== 'assistant') continue
             lastIsCut = m.meta?.finish_reason === 'length'
             if (lastIsCut && m.ts) cutByTs.add(m.ts)
+            lastSub = m.meta?.model_substitution || ''
+            if (lastSub && m.ts) subByTs.set(m.ts, lastSub)
             const c = m.meta?.memory_citations
             if (Array.isArray(c) && c.length) {
               lastCites = c
@@ -1518,7 +1514,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               if (m.ts) skillsByTs.set(m.ts, sk2)
             }
           }
-          if (byTs.size || lastCites || skillsByTs.size || lastSkills || cutByTs.size || lastIsCut) setTurns((prev) => {
+          if (byTs.size || lastCites || skillsByTs.size || lastSkills || cutByTs.size || lastIsCut || subByTs.size || lastSub) setTurns((prev) => {
             const lastIdx = prev.map((t) => t.role).lastIndexOf('assistant')
             return prev.map((t, i) => {
               if (t.role !== 'assistant') return t
@@ -1534,6 +1530,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               }
               if (!t.cutOff && ((t.ts && cutByTs.has(t.ts)) || (i === lastIdx && !t.ts && lastIsCut))) {
                 patch.cutOff = true
+              }
+              if (!t.modelSubstitution) {
+                if (t.ts && subByTs.has(t.ts)) patch.modelSubstitution = subByTs.get(t.ts)
+                else if (i === lastIdx && !t.ts && lastSub) patch.modelSubstitution = lastSub
               }
               return Object.keys(patch).length ? { ...t, ...patch } : t
             })
@@ -2961,8 +2961,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // Gated, because it was NOT: the catch swallowed the failure and "Copied" was set anyway, so
     // a blocked write left the button claiming a link the clipboard did not hold.
     if (!(await copyText(url, 'the chat link'))) return
-    setLinkCopied(true)
-    window.setTimeout(() => setLinkCopied(false), 1600)
+    // A toast, like this header's other actions ("Save as starter", a branch): the control can be
+    // a row of the `…` menu, which has closed by the time the copy lands, so a confirmation drawn
+    // on the control itself would say nothing there.
+    notify('Chat link copied.', 'success')
   }
   // Silently prime the next turn with background context — no visible message, no
   // turn triggered; consumed + prepended on the next user send.
@@ -3334,6 +3336,25 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     </div>
   )
 
+  // The header's context line: what this conversation IS, under its title (`ChatContextLine`).
+  const contextChips = started ? chatContextChips({
+    screenShare: screenShare.sharing ? { onStop: screenShare.toggle } : null,
+    startedBy: startedBy?.name,
+    project: projectName ? { name: projectName, open: () => navigate(`projects/${projectId}`) } : null,
+    branchedFrom: branchedFrom
+      ? { title: branchedFrom.title, open: () => navigate(`chat/${branchedFrom.key}`) }
+      : null,
+    investigate: investigateOrigin?.title
+      ? {
+          title: investigateOrigin.title,
+          open: investigateOrigin.back_link
+            ? () => navigate((investigateOrigin.back_link as string).replace(/^#\//, ''))
+            : undefined,
+        }
+      : null,
+    cost: sessionCost,
+  }) : []
+
   if (missing) return <MissingChat draft={input} navigate={navigate} />
   // A failed read with nothing painted: say it failed, and let the user retry. (A transcript
   // painted from the fresh cache stays on screen — a failed REVALIDATION of it is not news.)
@@ -3358,11 +3379,17 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           undefined
         ) : (
           renaming ? (
+            // `min-w-0 w-full`: an input's intrinsic width is ~20ch and a flex item will not shrink
+            // below it, so a fixed 200px floor here overran a phone's whole row.
             <input autoFocus aria-label="Rename this chat" value={renameVal} onChange={(e) => setRenameVal(e.target.value)}
               onBlur={commitRename}
               onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); else if (e.key === 'Escape') setRenaming(false) }}
-              className="h-8 min-w-[200px] max-w-[420px] rounded-md bg-surface-high px-2 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+              className="h-8 w-full min-w-0 max-w-[420px] rounded-md bg-surface-high px-2 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           ) : (
+            // The title's row holds only what names the chat: the way back, the title, and its
+            // regenerate affordance. Everything ABOUT the chat is on the context line under it
+            // (`below`), and "Copy chat link" is a control in the cluster — see `ChatContextLine`
+            // for what sharing this row cost the title.
             <div className="flex items-center gap-1.5 min-w-0">
               {/* Back to the chat history list — replaces the separate right-side
                   "Chat history" button (it sits left of the title, its natural home). */}
@@ -3379,69 +3406,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                   loading={regenningTitle} disabled={regenningTitle} size={20} iconSize={12}
                   className="shrink-0 -ml-0.5 self-start text-on-surface-low hover:text-primary" />
               )}
-              {/* Screen sharing. Deliberately in the header rather than the
-                  composer: it must stay visible while the user scrolls the transcript,
-                  because an indicator you can scroll away from is not an indicator.
-                  Mounted off the LIVE stream state, so the browser's own stop button
-                  clears it too. */}
-              {screenShare.sharing && <ScreenShareChip onStop={screenShare.toggle} />}
-              {/* Project binding stays visible once started — the chat is scoped to this
-                  project's workspace + context; click to open the project. */}
-              {projectName && (
-                <button type="button" onClick={() => navigate(`projects/${projectId}`)}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-[0.75rem] text-on-surface-var hover:text-on-surface" title={`Scoped to project: ${projectName}`}>
-                  <FolderKanban size={12} className="text-primary" /> {projectName}
-                </button>
-              )}
-              {/* Session cost: what this conversation cost, read from the
-                  usage ledger scoped to the session key. "~" prefix + "unpriced"
-                  when the total mixes a model with no price row (honest, never a
-                  confidently-complete $0.00). */}
-              {sessionCost && (
-                <span
-                  className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-[0.75rem] text-on-surface-var"
-                  title={sessionCost.priced ? 'What this conversation has cost so far' : 'Cost so far — includes a model with no price row, so this is a partial total'}>
-                  <Coins size={12} className="text-primary" />
-                  {sessionCost.priced ? `$${sessionCost.cost.toFixed(sessionCost.cost < 1 ? 4 : 2)}` : 'unpriced'}
-                  {' · '}{fmtTokens(sessionCost.tokens)} tokens
-                </span>
-              )}
-              {/* "Branched from" breadcrumb: this session's origin, read from the
-                  PERSISTED forked_from via session detail — so it is still here after a
-                  reload, and it names the parent's CURRENT title (renaming the parent
-                  updates the breadcrumb; it is a read, not a copy).
-                  When the origin has been deleted there is nothing to open, so it
-                  degrades to a plain label instead of a link into nothing. */}
-              {branchedFrom && (
-                branchedFrom.title ? (
-                  <Button size="xs" variant="secondary"
-                    onClick={() => navigate(`chat/${branchedFrom.key}`)}
-                    title={`Branched from "${branchedFrom.title}" — open the original`}>
-                    <GitBranch size={12} className="text-primary" /> Branched from {branchedFrom.title}
-                  </Button>
-                ) : (
-                  <span className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-[0.75rem] text-on-surface-var"
-                    title="This chat was branched from a conversation that no longer exists">
-                    <GitBranch size={12} className="text-on-surface-low" /> Branched from a deleted chat
-                  </span>
-                )
-              )}
-              {/* Investigate origin: the entity this chat was opened to
-                  investigate; click deep-links back to the source surface. */}
-              {investigateOrigin?.title && (
-                <Button size="xs" variant="secondary"
-                  onClick={() => { if (investigateOrigin.back_link) navigate(investigateOrigin.back_link.replace(/^#\//, '')) }}
-                  title={`Investigating: ${investigateOrigin.title} — open the source`}>
-                  <MessageCircleQuestion size={12} className="text-primary" /> {investigateOrigin.title}
-                </Button>
-              )}
-              {/* copy chat link — lives next to the title (its subject). */}
-              {sessionRef.current && (
-                <IconButton icon={linkCopied ? Check : Link2} label={linkCopied ? 'Link copied' : 'Copy chat link'} size={40} onClick={copyLink} />
-              )}
             </div>
           )
         )}
+        below={contextChips.length > 0 ? contextChips : undefined}
         right={
           // Two live mode selectors (Task, Permission) + New chat / Regen / Activity.
           // Task + Permission are hover-expand mode pills (WidthPill idiom): each shows
@@ -3462,6 +3430,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               disabled={!!startedBy}
               disabledReason={startedBy ? `${startedBy.name}'s permissions decide this chat, not yours` : undefined}
               options={APPROVAL_SLIDER} onChange={(v) => applySelection({ approval: v as ApprovalMode })} />
+            {/* A control like its neighbours, so it takes the cluster's ladder — icon when the row
+                is tight, a row of the `…` menu when tighter. Beside the title it was 40px nothing
+                else could use, and past the viewport's edge at 1024px and below. */}
+            {started && sessionRef.current && (
+              <HeaderControl icon={Link2} label="Copy chat link" priority="low" onClick={copyLink} />
+            )}
             {started && sessionRef.current && (
               <HeaderControl icon={NotebookPen} label="Brief the agent" priority="low" onClick={briefAgent} />
             )}
@@ -3617,7 +3591,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                               onSwitchVariant={isLast ? switchVariant : undefined}
                               speaking={speakingTurn === i} onSpeak={() => speak(turnText(turn), i)} />
                           )}>
-                            <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} onSetupModel={() => navigate(MODELS_PATH)} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} cutOff={turn.cutOff} />
+                            <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} onSetupModel={() => navigate(MODELS_PATH)} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} cutOff={turn.cutOff} modelSubstitution={turn.modelSubstitution} />
                           </MessageAssistant>
                         )}
                         {/* Follow-up chips under the last assistant turn only,
@@ -4385,7 +4359,7 @@ function SelectionQuote({ scrollRef, onQuote, attributionFor }: {
  *  historical messages get stripped from the prose (they are never rendered as
  *  buttons — follow-up chips are the single suggestion surface) and referenced
  *  file paths surface as clickable chips below the prose. */
-function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, onSetupModel, chatSessionKey, citations, skillsUsed, cutOff }: {
+function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, onSetupModel, chatSessionKey, citations, skillsUsed, cutOff, modelSubstitution }: {
   segments: Segment[]; isLast: boolean
   messageTs?: string
   streaming?: boolean
@@ -4399,6 +4373,8 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
   skillsUsed?: SkillUsed[]
   /** The reply stopped at the model's output cap (`meta.finish_reason === 'length'`). */
   cutOff?: boolean
+  /** "Ran on X instead of Y: …" — another model answered than the one chosen for this chat. */
+  modelSubstitution?: string
 }) {
   const fullText = segments.filter((s) => s.kind === 'text').map((s) => (s as { text: string }).text).join('\n')
   // A restricted-mode turn may OFFER a one-click escalation to Agent (TM8).
@@ -4512,6 +4488,7 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
       {sdlcNodes.length > 0 && <div className="flex flex-col gap-1">{sdlcNodes}</div>}
       {finalNodes}
       {cutOff && !streaming && <ReplyCutNote />}
+      {modelSubstitution && !streaming && <ModelSubstitutionNote text={modelSubstitution} />}
 
       {/* What CAPABILITY fed the turn — a peer of the ledger's "what context fed it",
           kept as its own always-visible chip rather than a collapsed ledger row: the count is
@@ -4601,6 +4578,20 @@ function ReplyCutNote() {
   )
 }
 
+/** The reply came from another model than the one chosen for it, said under the reply.
+ *
+ *  An agent's pinned model — or the chat's own pick — could not run, and the chat model answered.
+ *  The live line said so before the reply streamed; this is the half that survives a reload, so
+ *  an old reply never reads as the chosen model's. The sentence is the server's, word for word. */
+function ModelSubstitutionNote({ text }: { text: string }) {
+  return (
+    <div data-testid="model-substitution-note" className="mt-1.5 mb-1 flex items-start gap-1.5 text-[0.75rem]" style={{ color: 'var(--color-warning)' }}>
+      <Shuffle size={11} className="mt-0.5 shrink-0 opacity-80" aria-hidden />
+      <span>{text}</span>
+    </div>
+  )
+}
+
 /** "used N skills" — the per-turn skill-allocation chip.
  *
  *  Hover carries the skill NAMES in the allocator's own order via `title` — the same
@@ -4676,11 +4667,13 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   // them. `persist: false` for the same reason.
   //
   // Not swallowed, and the distinction matters more here than elsewhere: rooms ship DISABLED, so
-  // the common failure is a deliberate 403 `rooms_disabled` rather than a broken read, and
-  // `RoomsScope` renders those as two different things. A `.catch(() => [])` would have told a
-  // user with the feature switched off that they have no rooms.
+  // the common answer is a decided `{"enabled": false}` rather than a list, and `RoomsScope`
+  // renders "off", "none" and "could not read" as three different things. A `.catch(() => [])`
+  // would have told a user with the feature switched off that they have no rooms. The off answer
+  // used to be a 403 `rooms_disabled`, so every chat visit on a default install logged a failed
+  // request.
   const { data: roomsData, error: roomsError, refresh: refreshRooms } = useQuery(
-    'rooms:list', () => api.rooms().then((d) => d.rooms), { persist: false },
+    'rooms:list', () => api.rooms().then((d) => (isSwitchedOff(d) ? d : d.rooms)), { persist: false },
   )
   const folders = foldersData ?? []
   const tags = tagsData ?? []
@@ -4894,8 +4887,8 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   // "every chat", and a room is not a chat. A room's count of 0 with the feature ON is still a
   // reason to show the tab — otherwise the only way to reach the "New room" action would be to
   // already have a room, which is the discoverability dead end this scope exists to avoid.
-  const roomCount = roomsData?.length ?? 0
-  const roomsAvailable = roomsData !== undefined
+  const roomCount = Array.isArray(roomsData) ? roomsData.length : 0
+  const roomsAvailable = Array.isArray(roomsData)
 
   async function del(s: ChatSessionSummary) {
     if (!(await confirm({

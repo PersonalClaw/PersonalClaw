@@ -670,11 +670,58 @@ describe('a failed catalog fetch says so', () => {
     expect(screen.getByRole('button', { name: /Retry|Try again/i })).toBeTruthy()
   })
 
-  it('names the first-party source mechanism when a lane is genuinely empty', async () => {
-    appCatalog.mockResolvedValue({ bundled: [], gitSources: [], localApps: [OPENAI], remoteApps: [], gitApps: [] })
+  // An empty lane and a dead catalog are read by someone who has never seen this repository, so
+  // they say what that person can DO, in the words the rest of the step uses ("app sources"), and
+  // name none of the machinery behind the listing.
+  const INTERNALS = /first-party source|dev tree|workspace apps directory|published apps repository/
+  const EMPTY = { bundled: [], gitSources: [], localApps: [], remoteApps: [], gitApps: [] }
+
+  it('an empty optional lane says what you can do, in product language', async () => {
+    appCatalog.mockResolvedValue({ ...EMPTY, localApps: [OPENAI] })
     renderStep()
-    expect(await screen.findByText(/No web search app is available/)).toBeTruthy()
-    expect(screen.getAllByText(/first-party source/)[0]).toBeTruthy()
+    const emptySearch = await screen.findByText(/No web search app is available/)
+    expect(emptySearch.textContent).toMatch(/from your app sources/)
+    expect(emptySearch.textContent).toMatch(/Add an app source in the Store/)
+    expect(document.body.textContent).not.toMatch(INTERNALS)
+  })
+
+  it('an empty model lane points at what sits above it, and at skipping the step', async () => {
+    appCatalog.mockResolvedValue(EMPTY)
+    renderStep()
+    const emptyModel = await screen.findByText(/No model provider app is available/)
+    expect(emptyModel.textContent).toMatch(/Connect a local model above/)
+    expect(emptyModel.textContent).toMatch(/add an app source in the Store/)
+    expect(emptyModel.textContent).toMatch(/skip this step and set one up later in Settings/)
+    // Nothing to download on this machine, so the lane shows no offline model and the sentence
+    // must not send anyone looking for one.
+    expect(screen.queryByTestId('onboarding-model-offer')).toBeNull()
+    expect(emptyModel.textContent).not.toMatch(/offline model/)
+    expect(document.body.textContent).not.toMatch(INTERNALS)
+  })
+
+  it('an empty model lane names the offline model while one is offered above it', async () => {
+    const offer = {
+      provider: 'bundled-chat', model: 'SmolLM2-135M-Instruct-Q8_0', label: 'SmolLM2-135M-Instruct',
+      bytes: 144811072, licence: 'Apache-2.0', description: 'a small chat model',
+    }
+    onboarding.mockResolvedValue({ ...FRESH, chat_model_refs: [], chat_download_offer: offer })
+    appCatalog.mockResolvedValue(EMPTY)
+    renderStep({ readiness: { ...FRESH, chat_download_offer: offer } })
+    const emptyModel = await screen.findByText(/No model provider app is available/)
+    expect(await screen.findByTestId('onboarding-model-offer')).toBeTruthy()
+    expect(emptyModel.textContent).toMatch(/Download the small offline model or connect a local model above/)
+  })
+
+  it('a dead catalog says how to go on without it', async () => {
+    appCatalog.mockRejectedValue(new Error('gateway unreachable'))
+    renderStep()
+    await screen.findByRole('alert')
+    // "Set up later" moves on to the next step; it does not finish onboarding.
+    const next = screen.getByText(/skip this step/)
+    expect(next.textContent).toMatch(/model provider later in Settings/)
+    expect(next.textContent).toMatch(/Store/)
+    expect(document.body.textContent).not.toMatch(/finish onboarding/i)
+    expect(document.body.textContent).not.toMatch(INTERNALS)
   })
 
   // A REQUEST that failed is covered above. This is the other half and it is the one that

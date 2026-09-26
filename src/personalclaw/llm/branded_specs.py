@@ -18,11 +18,13 @@ made a subscription provider 401 at first use.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from personalclaw.llm.build_kwargs import output_cap, per_call_temperature
 from personalclaw.llm.capabilities import Capability
-from personalclaw.llm.credentials import Credential
+from personalclaw.llm.credentials import Credential, OwnedCredentialRefused
 from personalclaw.llm.prompt_cache import PromptCache
 from personalclaw.llm.registry import CredentialMissing, ProviderEntry
 from personalclaw.llm.subscription_credentials import resolve_subscription_credential
@@ -124,6 +126,7 @@ def build_protocol_provider(
     credential: Credential,
     base_url: str,
     extra_options: dict[str, object] | None = None,
+    build_kwargs: Mapping[str, object] | None = None,
 ) -> "ModelProvider":
     """Construct the protocol client for ``spec`` with a resolved credential + base_url.
 
@@ -133,24 +136,52 @@ def build_protocol_provider(
     binding, which runs in a throwaway home where no app is installed). A private second
     copy in the evals package would be a second answer to "which wire client does this
     protocol name mean".
+
+    ``model`` is the calling factory's CONFIGURED choice. ``build_kwargs`` is what
+    ``ProviderRegistry.build`` handed that factory — the requests core makes of the model it is
+    building — and they are applied here, once, for both callers:
+
+    * ``model`` — the model the caller BOUND (a use-case binding, a pinned judge). It wins over
+      the configured choice. Both factories used to build from their configured choice alone, so
+      best-of-N on a branded app sent ``"model": ""``: nine of the ten branded apps declare no
+      default model, and the Add-instance form creates an instance with ``model: ""``.
+    * ``temperature`` — a per-call sampling temperature (best-of-N's ladder), over the entry's.
+    * ``max_tokens`` — the output budget core derived for this call. The entry's own configured
+      ``max_tokens`` wins over it, and ``spec.max_tokens`` is the default under both.
+    * ``embedding_model`` — the embedding binding, which ``embed()`` reads from the options.
+
+    Each used to be read (or not) by each factory; the eval cell's read none of them.
     """
     from personalclaw.llm.anthropic import AnthropicProvider
     from personalclaw.llm.openai import OpenAIProvider
+
+    requested = build_kwargs or {}
+    options = dict(extra_options or {})
+    bound = requested.get("model")
+    if isinstance(bound, str) and bound.strip():
+        model = bound.strip()
+    temperature = per_call_temperature(requested)
+    if temperature is not None:
+        options["temperature"] = temperature
+    embedding_model = requested.get("embedding_model")
+    if embedding_model:
+        options["embedding_model"] = str(embedding_model)
+    cap = output_cap(options.pop("max_tokens", None), requested.get("max_tokens"), spec.max_tokens)
 
     if spec.protocol == "anthropic":
         return AnthropicProvider(
             model=model,
             credential=credential,
             base_url=base_url or None,
-            max_tokens=spec.max_tokens if spec.max_tokens is not None else 4096,
-            extra_options=extra_options,
+            max_tokens=cap if cap is not None else 4096,
+            extra_options=options,
         )
     return OpenAIProvider(
         model=model,
         credential=credential,
         base_url=base_url or None,
-        max_tokens=spec.max_tokens,
-        extra_options=extra_options,
+        max_tokens=cap,
+        extra_options=options,
     )
 
 
@@ -166,9 +197,17 @@ def resolve_credential(entry: ProviderEntry, kwargs: dict, *, label: str) -> Cre
             f"{label} provider entry {entry.name!r} declares credential "
             f"{entry.credential!r} but no credential_store was passed to build()"
         )
-    cred = store.resolve(entry.credential)  # type: ignore[attr-defined]
+    try:
+        cred = store.resolve(entry.credential)  # type: ignore[attr-defined]
+    except OwnedCredentialRefused as refused:
+        raise CredentialMissing(f"{label}: {refused}") from None
+    except KeyError:
+        cred = None
     if cred is None or cred.secret is None:
-        raise CredentialMissing(f"{label} credential {entry.credential!r} is not configured")
+        raise CredentialMissing(
+            f"{label} credential {entry.credential!r} is not configured: store it in "
+            "Settings → Secrets under that name"
+        )
     return cred
 
 
@@ -202,7 +241,7 @@ def resolve_spec_secret(
     declares a subscription source that is NOT usable ("" otherwise), so a caller can say
     "sign in with `x login` first" instead of naming an env var the app doesn't have.
 
-    ``entry.credential`` (the explicit credential-store descriptor) outranks everything here
+    ``entry.credential`` (a credential named in the store) outranks everything here
     but is registry-only, so it is resolved by :func:`resolve_credential` BEFORE this is
     consulted: five hops on the registry path, four on the config path, identical tail.
     """

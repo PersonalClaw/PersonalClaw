@@ -148,7 +148,7 @@ SUPPORTED_MANIFEST_VERSIONS = (1, 2, 3)
 
 
 def _pc_dir() -> Path:
-    return Path(os.environ.get("PERSONALCLAW_HOME", config_dir()))
+    return config_dir()
 
 
 def _excluded_entry_paths() -> frozenset[str]:

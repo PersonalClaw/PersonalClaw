@@ -149,12 +149,28 @@ dependencies = [
     # missing (a signature that cannot be checked is refused, not accepted).
     "cryptography>=42",
     # Config validation. HARD dependency, deliberately, for the same reason as
-    # `cryptography` above: it arrived only transitively through the OPTIONAL [mcp] extra, so
-    # `pip install personalclaw` had NO enum validation, NO type validation, no unknown-key
-    # warning and no pruning of retired fields — `_validate_config_data` returned at its first
-    # line. `agent.approval_mode = "NOT_A_MODE"` entered the running config. CI could
-    # not see it because [dev] pulls [mcp].
+    # `cryptography` above: it arrived only transitively through what was then the OPTIONAL
+    # [mcp] extra, so `pip install personalclaw` had NO enum validation, NO type validation, no
+    # unknown-key warning and no pruning of retired fields — `_validate_config_data` returned at
+    # its first line. `agent.approval_mode = "NOT_A_MODE"` entered the running config.
+    # CI could not see it because [dev] pulled [mcp].
     "jsonschema>=4",
+    # The MCP client SDK: every external MCP server an agent calls, stdio or at a URL
+    # (mcp_client.py). CORE, not an extra, and for the reason code_map is: a server that only
+    # some installs can call is a feature nobody can rely on. As an extra it was missing from
+    # the public installer (`uv tool install personalclaw`), from `pip install personalclaw`
+    # and from the desktop bundle (release.yml installs `.[anthropic,openai,slack]`), so on
+    # all three the agent's MCP registry was empty while the Tools page probed each stdio
+    # server "ok". Measured against uv.lock on macOS arm64 / CPython 3.13: 13 more packages
+    # (pydantic and pydantic-core, starlette, uvicorn, …), +3.1 MB to download (+4.4% over
+    # the 70.9 MB core closure) and +9.7 MB installed (+5.9% over 164 MB), all prebuilt
+    # wheels. The import is still deferred to the first connection: it costs ~0.22 s.
+    # The upper bound is load-bearing: mcp 2.0.0 renamed
+    # `mcp.client.streamable_http.streamablehttp_client`, which mcp_client.py imports, so an
+    # unbounded spec makes a FRESH install resolve 2.0.0 and break the streamable-HTTP
+    # transport. CI installs from the lockfile and cannot see that. Supporting 2.x is a
+    # migration, not a widened bound (tests/test_dependency_bounds.py).
+    "mcp>=1.2,<2",
 ]
 
 # Project URLs — surfaced by `pip show personalclaw` and the PyPI project page.
@@ -190,13 +206,6 @@ stt   = ["faster-whisper>=1.0"]    # substrate for apps/faster-whisper (in-proce
 tts   = ["huggingface-hub>=0.23", "piper-tts>=1.2"]  # substrate for apps/piper-tts: voice downloads (ONNX from rhasspy/piper-voices) + the piper synthesis runtime (provides the `piper` binary)
 eval  = ["jinja2>=3.0"]
 embeddings = ["sentence-transformers>=3.0", "faiss-cpu>=1.7"]  # substrate for apps/sentence-transformers (local embeddings). numpy is core (native-vector-memory); faiss stays here — excluded from the desktop bundle, degrades to SQLite-only.
-mcp   = ["mcp>=1.2,<2"]            # external MCP servers in the native agent loop (stdio + SSE/HTTP).
-                                   # Upper bound is load-bearing: mcp 2.0.0 renamed
-                                   # `mcp.client.streamable_http.streamablehttp_client`, which
-                                   # mcp_client.py imports, so an unbounded spec makes a FRESH
-                                   # install resolve 2.0.0 and break the streamable-HTTP transport.
-                                   # CI installs from the lockfile and cannot see that. Supporting
-                                   # 2.x is a migration, not a widened bound.
 js-render = ["playwright>=1.40"]   # web_fetch render=True path for client-rendered (JS) pages (a headless browser; run `playwright install chromium` after install)
 
 # OS keychain credential backend. Deliberately OPTIONAL and
@@ -218,7 +227,6 @@ models = ["personalclaw[embeddings]", "personalclaw[stt]", "personalclaw[tts]"]
 dev = [
     "personalclaw[test]",
     "personalclaw[models]",
-    "personalclaw[mcp]",
     "personalclaw[bedrock]",
     # The `openai` SDK is a TEST-ENVIRONMENT dependency, not a core one. Two suites are
     # `pytest.importorskip("openai")`-gated and were therefore SILENTLY UNVERIFIED in CI

@@ -39,7 +39,7 @@ def test_jsonschema_is_a_declared_core_dependency():
     assert core, "pyproject has no [project] dependencies array"
     assert "jsonschema" in core.group(1), (
         "jsonschema is not a hard dependency — config validation silently no-ops on a normal "
-        "install, and only the optional [mcp] extra would drag it in"
+        "install unless some other dependency happens to drag it in"
     )
 
 

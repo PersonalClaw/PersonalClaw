@@ -45,18 +45,25 @@ SECRET_REF_RE = re.compile(r"\{\{\s*secret:([A-Za-z0-9_.\-]+)\s*\}\}")
 
 
 class UnresolvedSecret(Exception):
-    """A trigger's action references a credential that is not configured.
+    """A trigger's action references a credential that is not configured, or one it may not read.
 
     Carries the KEY, because "a secret is missing" without the name leaves the user checking every
-    credential they have.
+    credential they have. ``refused`` is the store's refusal of an OWNED key
+    (``llm.credentials.OwnedCredentialRefused``): that key is set, so the sentence says why no
+    action can read it instead of calling it missing.
     """
 
-    def __init__(self, key: str) -> None:
+    def __init__(self, key: str, *, refused: Exception | None = None) -> None:
         self.key = key
-        super().__init__(
-            f"the action references {{{{secret:{key}}}}}, which is not in the credential store — "
-            f"add it with `personalclaw auth` or remove the reference"
-        )
+        self.refused = refused
+        if refused is not None:
+            message = f"the action references {{{{secret:{key}}}}}, but {refused}"
+        else:
+            message = (
+                f"the action references {{{{secret:{key}}}}}, which the credential store does "
+                "not hold. Store it in Settings → Secrets, or remove the reference."
+            )
+        super().__init__(message)
 
 
 def references(value: Any) -> list[str]:
@@ -85,7 +92,7 @@ def references(value: Any) -> list[str]:
 
 
 def default_resolver(key: str) -> str:
-    """Resolve one key against the shipped `CredentialStore`. Returns "" when unset.
+    """Resolve one key from the credential store Settings → Secrets writes. "" when unset.
 
     Mirrors `workflows.controller._secret_resolver` deliberately — the same store, the same
     empty-on-missing contract — so a key resolves identically whether a workflow or a trigger asks.
@@ -121,9 +128,16 @@ def resolve(config: Any, *, resolver: Callable[[str], str] | None = None) -> Any
     if not keys:
         return config
 
+    from personalclaw.config.credentials import is_owned_key
+    from personalclaw.llm.credentials import OwnedCredentialRefused
+
     fn = resolver or default_resolver
     values: dict[str, str] = {}
     for key in keys:
+        if is_owned_key(key):
+            # Refused before any resolver reads it: an owned key is read only through the
+            # settings record that references it, never by name from an action.
+            raise UnresolvedSecret(key, refused=OwnedCredentialRefused(key))
         value = fn(key)
         if not value:
             # 🔴 REFUSE, do not substitute "". An empty Authorization header produces a remote 401

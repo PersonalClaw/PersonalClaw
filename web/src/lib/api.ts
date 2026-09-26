@@ -803,6 +803,10 @@ export interface AppSummary {
   // not only inside that app's own page.
   uiComponents?: string
   uiCapabilities?: string[]
+  /** A digest of the UI bundles the installed app serves. Every bundle URL carries it
+   *  (`?v=`), so a page that already imported an app's module imports the NEW one after an
+   *  update instead of getting the old module back. `""` for an app with no UI. */
+  uiRevision?: string
   isProvider: boolean; providerType: string; hasConfig: boolean
   /** The provider's DECLARED capabilities — the same field a catalog entry carries, because
    *  `providerType` alone cannot tell a chat model from a speech one (faster-whisper is `model` +
@@ -815,6 +819,9 @@ export interface AppSummary {
   tags: string[]
   installedAt?: string; updatedAt?: string
   backendRunning: boolean; backendPort: number | null
+  /** Why the gateway must restart before only the installed version of this app runs (what an
+   *  update or reinstall could not take out of the process); `""` when nothing is left over. */
+  restartReason?: string
   // App category is the SINGLE `native` flag: true = a native app (always-on,
   // locked, can't be uninstalled — filesystem/tool providers + seeded natives);
   // false = a first-party or third-party app the user installs/uninstalls. Whether
@@ -824,6 +831,8 @@ export interface AppSummary {
   // on the /api/apps read path (no polling); `latestVersion` is that newer version.
   updateAvailable?: boolean
   latestVersion?: string
+  /** Where the gateway found that newer version — the Update dialog starts from it. */
+  latestSource?: string
   // The app's declared quality bar. `{}`/absent = declared nothing → no badges.
   quality?: AppQualityWire
 }
@@ -834,6 +843,9 @@ export interface AppDetail {
   config: Record<string, unknown>
   configSchema: Record<string, unknown>
   backendRunning: boolean; backendPort: number | null
+  /** The same digest `AppSummary.uiRevision` carries: the app page versions its bundle URL. */
+  uiRevision?: string
+  restartReason?: string
 }
 // P29: a manifest cron's install-consent summary — name + cadence + WHAT it runs
 // (an agent + its prompt; a manifest cron has no action/command). Cadence is either
@@ -1039,15 +1051,21 @@ export interface AppInstallResult {
   // install it, so it hands back a copy-paste one-liner to run in a terminal.
   needs_client_install?: boolean
   client_install?: { shell?: string; postInstall?: string } | null
-  // The install pulled a new python dependency (or registered pieces that only
-  // load at boot) — the gateway must restart before the app fully takes effect.
+  // The new version is already running, except for what could not be taken out of the
+  // gateway's process: `restart_reason` says what that is (a Python package the gateway had
+  // loaded was replaced, a thread the previous version started is still running…), and
+  // `restart_required` is whether there is any. Only a restart finishes it.
   restart_required?: boolean
+  restart_reason?: string
   // APE-8 "Fix with AI": on a failed install with captured subprocess output,
   // `fix_prompt` is a ready-to-send chat seed that embeds `log_excerpt` wrapped in
   // the backend's untrusted-content fence. The FE hands it straight to launchChat;
   // it is empty on success or when there was no log to show.
   log_excerpt?: string
   fix_prompt?: string
+  /** On success: why a provider the app registered serves nothing, one sentence each — a tool it
+   *  offers has a name another provider holds. The app is installed and on; that provider is not. */
+  providerErrors?: string[]
 }
 export interface SkillInstallResult {
   ok?: boolean; path?: string; error?: string
@@ -1230,6 +1248,8 @@ export interface RoomMemberBinding {
   model: string
   provider: string
   description?: string
+  /** Set when `model` cannot run — the member answers on the chat model, and its turns say so. */
+  model_unavailable?: { why: string; fix: string } | null
 }
 
 /** One transcript line. `speaker` is the member name, `''` for the human. A line whose
@@ -1410,7 +1430,7 @@ export interface ChatHistoryMsg {
   // `[]`, when the turn loaded none, and never listing a REFUSED skill (named to the agent
   // but never loaded). `finish_reason: 'length'` marks a reply cut at the model's output cap —
   // absent when the reply finished on its own.
-  meta?: { tool_call_id?: string; input?: string; purpose?: string; output?: string; done?: boolean; tool?: string; memory_citations?: { n: number; id: string | null; preview?: string }[]; skills_used?: { name: string; state: string; loaded_tokens: number }[]; finish_reason?: string }
+  meta?: { tool_call_id?: string; input?: string; purpose?: string; output?: string; done?: boolean; tool?: string; memory_citations?: { n: number; id: string | null; preview?: string }[]; skills_used?: { name: string; state: string; loaded_tokens: number }[]; finish_reason?: string; model_substitution?: string }
 }
 
 // ── workspace / build entity types ──
@@ -1784,6 +1804,10 @@ export interface WorkflowNodeState {
   // failed — so this is the only thing on the row that says the `done` was reached without the
   // declared shape. Absent (not "") when there was nothing to report, like `cached`.
   schema_shortfall?: string
+  // "ran on X instead of Y: why" for each call a fallback in the user's model chain served
+  // because the model this step asked for could not. The row's `done` is true, and so is the
+  // model it names — this says it is not the model that was asked for. Absent when there is none.
+  model_substituted?: string[]
 }
 export interface WorkflowRunSummary {
   id: string; workflow_name: string; status: WorkflowRunStatus; spec_version: number
@@ -1967,6 +1991,10 @@ export interface WorkflowRunStats {
   // when no step produced output, which is not "0 ms". Whole-second resolution (journal stamps).
   first_byte_ms: number | null
   models: string[]
+  // "ran on X instead of Y: why", distinct, for every call a fallback in the user's model chain
+  // served because the model a step asked for could not. `models` names who answered; this says
+  // who did not. Empty on a run whose steps got what they asked for.
+  substitutions: string[]
   unverified_steps: number
   verification_debt: number
   cache_hit_rate: number
@@ -2367,7 +2395,12 @@ export interface SkillMarketplaceDetail { id: string; name: string; audit_status
  *  through the supply-chain gate and so has no tier to claim). Rendered through
  *  `lib/trustTier` — the ONE map both the Tools badge and the install dialog read, after
  *  #2627 found them describing the same bundle differently. */
-export interface ToolItem { name: string; description: string; provider: string; parameters?: Record<string, unknown>; requires_approval?: boolean; risk_level?: 'safe' | 'caution' | 'destructive'; disabled?: boolean; locked?: boolean; providerDisabled?: boolean; group?: string; tier?: string }
+export interface ToolItem {
+  name: string; description: string; provider: string; parameters?: Record<string, unknown>; requires_approval?: boolean; risk_level?: 'safe' | 'caution' | 'destructive'; disabled?: boolean; locked?: boolean; providerDisabled?: boolean; group?: string; tier?: string
+  /** An external MCP server's tool, as the SERVER names it (`hello`, where `name` is
+   *  `mcp/<server>/hello`): what its switch sends to `toggleMcpTool`. Only on those rows. */
+  serverTool?: string
+}
 export interface ToolLoadFailure { provider: string; error: string }
 // The generated self-description document served at GET /api/manifest — the same
 // shape an agent driving this instance reads (personalclaw/manifest.py).
@@ -2413,7 +2446,9 @@ export interface AlwaysOnResponse {
 export type McpTransport = 'stdio' | 'http' | 'sse'
 /** A configured MCP server as `GET /api/mcp` lists it: its state and how it is reached, never its
  *  definition — arguments and a URL can carry a token, and this list is kept in session storage.
- *  The edit form reads one server's definition from `GET /api/mcp/servers/{name}`. */
+ *  The edit form reads one server's definition from `GET /api/mcp/servers/{name}`.
+ *  `status` is `ok` only when an agent can call the server's tools; a server PersonalClaw
+ *  connected to that no agent can reach reads `unserved`, with the reason in `error`. */
 export interface McpServer {
   name: string; transport?: McpTransport; status: string; tools: Array<string | { name: string; description?: string }>
   error?: string; source?: string; enabled?: boolean
@@ -2438,10 +2473,8 @@ export type McpServerDefinition =
 export type McpServerSave =
   | { transport?: 'stdio'; command: string; args?: string[]; env?: Record<string, string>; plainEnv?: string[]; keepEnv?: string[] }
   | { transport: 'http' | 'sse'; url: string; headers?: Record<string, string>; keepHeaders?: string[] }
-/** P23d: the in-process MCP connection-pool observability snapshot (GET /api/mcp/pool-stats).
- *  `available:false` when the mcp SDK extra isn't installed (no pool exists). */
+/** P23d: the in-process MCP connection-pool observability snapshot (GET /api/mcp/pool-stats). */
 export interface McpPoolStats {
-  available: boolean
   live_connections?: number; shared_conns?: number; session_conns?: number
   configured_servers?: number; spawns?: number; reaps?: number; served?: number
   evicted?: number; reused?: number
@@ -2451,8 +2484,13 @@ export interface McpPoolStats {
  *  What the row shows and no credential: `command` is the program's name, and every credential in
  *  `args` and `url` (a flag's value, a header, a URL's userinfo, query values and token-shaped path
  *  segments) arrives as the mask. The import reads the whole definition server-side. */
+/** An MCP server another tool has configured and PersonalClaw has not. `id` names it in its scope —
+ *  what an import sends back, never a path. `scope` is Claude Code's (`user`, `local`, `project`),
+ *  `origin` says where in words, and `note` is what to know first (a project server nobody
+ *  approved, a `${VAR}` nothing sets); `''` when there is nothing to say. */
 export interface ImportableMcpServer {
-  name: string; backend: string; transport: McpTransport; command: string; args: string[]; url: string
+  id: string; name: string; backend: string; scope: 'user' | 'local' | 'project'; origin: string; note: string
+  transport: McpTransport; command: string; args: string[]; url: string
   env?: McpValuePresence[]; headers?: McpValuePresence[]
 }
 export interface ToolInvokeResult { ok: boolean; output?: string; error?: string }
@@ -2480,18 +2518,16 @@ export type EventPattern =
 // helpers project it onto ScheduleJob; the lifecycle helpers onto HookItem.
 export interface TriggerAction { provider: string; config: Record<string, unknown> }
 export interface Trigger {
-  // `GET /api/triggers` serves FOUR kinds (handlers/triggers.py `api_triggers_list`); `event` was
-  // missing from this union while `_serialize_event` was already emitting it, so a data-event row
-  // was untypeable on the wire and the list page fetched only three of the four sources.
-  kind: 'schedule' | 'lifecycle' | 'event' | 'store'; id: string; raw_id: string; name: string; enabled: boolean
+  // `GET /api/triggers` serves THREE namespaces (handlers/triggers.py `api_triggers`). A data-event
+  // trigger is a row in the one trigger store, so it arrives as `store` with `store_kind: 'event'`
+  // and its pattern + matcher in `spec` — the separate `event` namespace went with the second store.
+  kind: 'schedule' | 'lifecycle' | 'store'; id: string; raw_id: string; name: string; enabled: boolean
   action: TriggerAction
-  // event fields (kind=event) — the data-event trigger's pattern + the ONE matcher its pattern
-  // reads (`eventPatternMeta().matcher` names which), plus its fire budget.
-  pattern?: string; sender_glob?: string; address_glob?: string; key_glob?: string; content_re?: string
-  event_glob?: string; fire_count?: number; max_fires?: number
   // store fields (kind=store) — the unified TriggerStore kinds with no legacy backend
-  // (file/web_watch/idle/run_completed/view/webhook). Created via the automation_* chat tools.
-  store_kind?: string; created_by?: string; spec?: Record<string, unknown>
+  // (file/web_watch/idle/run_completed/view/webhook/event/manual). A store row also carries
+  // `last_run_ts` (declared with the schedule fields below) and `last_run_status`, its newest run
+  // record's status — a manual run is recorded there without touching `run_count`.
+  store_kind?: string; created_by?: string; spec?: Record<string, unknown>; last_run_status?: string | null
   // `state` is the LIFECYCLE (`active | paused | autopaused | parked | quarantined | retired`);
   // `health` is the rollup (`ok | degraded | parked | failing`). Two vocabularies, both needed:
   // an autopaused trigger is `health: failing`, and "failing" does not say it has STOPPED.
@@ -2593,7 +2629,8 @@ export interface LifecycleEventInfo { event: string; label: string; desc: string
 // against; the UI never re-derives that prefix, or it would drift from `trigger_sources.namespace`.
 export interface AppSourceEvent { event: string; source_event: string }
 export interface AppSourceInfo { app: string; label: string; events: AppSourceEvent[] }
-export interface TriggerVariables { schedule: string[]; lifecycle: LifecycleEventInfo[]; app_sources: AppSourceInfo[] }
+// `event` is the `$variables` a data-event trigger's action can use (`event_triggers.EVENT_VARS`).
+export interface TriggerVariables { schedule: string[]; lifecycle: LifecycleEventInfo[]; app_sources: AppSourceInfo[]; event: string[] }
 // One manual store/schedule-trigger fire (POST /api/triggers/{schedule|store}:{id}/run).
 // `ok` is whether the action ACTUALLY RAN — not whether the request was understood. A trigger whose
 // action cannot be resolved answers 200 with `ok: false` and the reason in `result`, because a
@@ -2774,16 +2811,31 @@ export interface AttentionScope {
   trend: '' | 'rising' | 'falling' | 'flat'
 }
 
-/** What every eval REPORT read answers while `evals.enabled` is off (`handlers/evals.py:_off`):
- *  a decided state the panel renders, not an error. These reads used to 404 `evals_disabled`,
- *  which logged one console error per panel on every visit to `#/learning` for a feature a
- *  default install has merely not turned on. No eval view carries a top-level `enabled`, so the
- *  flag alone tells the two apart. */
-export interface EvalsOffView { enabled: false }
+/** What a read a page loads to render answers while its feature's switch is off: the decided
+ *  `200 {"enabled": false}` (`docs/reference/api-overview.md`, "A switched-off feature"). The
+ *  evals reports, the feedback producers and a thumbs pair's verdict, the Doctor's report, fixes
+ *  and remediation, the Learning page's five reads and the rooms list all answer it. They used to
+ *  answer 404 or 403, so a page logged one failed request per read for a feature that was merely
+ *  off. A panel renders it as its off state, with the way to turn the feature on; it is not an
+ *  error. No view these routes publish carries a top-level `enabled`, so the flag alone tells the
+ *  two apart. */
+export interface SwitchedOffView { enabled: false }
 
-export function isEvalsOff(v: unknown): v is EvalsOffView {
+export function isSwitchedOff(v: unknown): v is SwitchedOffView {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
     && (v as { enabled?: unknown }).enabled === false
+}
+
+/** What an eval report read answers while evals are on and the command that produces its report
+ *  has not run: the decided `200 {"ran": false}` (`handlers/evals.py:_not_run`). Judge-bench,
+ *  ablation, learning-benchmark and retrieval answer it. They used to 404 with a code per route, so
+ *  the Models page (which reads judge-bench for its recommended chip) and the Learning page logged
+ *  failed requests until a CLI run happened, which for most installs is never. */
+export interface NotRunView { ran: false }
+
+export function isNotRun(v: unknown): v is NotRunView {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+    && (v as { ran?: unknown }).ran === false
 }
 
 export interface JudgeBenchView {
@@ -3361,15 +3413,6 @@ export interface WeekProjection {
   truncated: string[]
 }
 
-// One manual event-trigger fire (POST /api/triggers/event:{id}/run|test). `ran` and `success` are
-// deliberately separate: `ran` is whether the trigger reached its action provider at all (false for
-// incident mode, an unregistered provider, or a denylist block — `reason` says which), while
-// `success` is that provider's own verdict. Collapsing them would report a misconfigured action as
-// "never fired", which points the user at the wrong thing entirely.
-export interface EventFireResult {
-  ok: boolean
-  result: { ran: boolean; reason: string; success?: boolean; exit_code?: number; stdout?: string; stderr?: string; error?: string; duration_ms?: number }
-}
 // Knowledge = a library of TYPED items (note/bookmark/media/docs) with extracted
 // content + AI insights. The typed-format enum, media/file fields, structured
 // insights, and provider attribution mirror the target vision (OpenForge-style);
@@ -5063,12 +5106,19 @@ export type OnboardingImportItemState = 'new' | 'existing' | 'conflict' | 'rejec
  *  reproduced by every re-scan, and the ONLY thing a pick sends back. `secrets_skipped` and
  *  `redactions` are COUNTS of what was left out of THIS item; the values never leave the
  *  scanner. `detail` says why a non-`new` item will not be written, in words true both
- *  before and after an import. */
+ *  before and after an import. `origin` is where in the tool it was found ("Local scope ·
+ *  /Users/you/api", "Project · ~/src/app"), `note` what the import leaves out of it or changes,
+ *  and `preselected` false for an item the other tool itself never let run — a project's MCP
+ *  server nobody approved — so the step starts with it unticked. */
 export interface OnboardingImportItem {
   fingerprint: string; source: string; category: string; key: string; title: string
+  origin: string; note: string; preselected: boolean
   state: OnboardingImportItemState; destination: string; detail: string
   secrets_skipped: number; redactions: number
 }
+/** A kind of thing a source holds that is not brought over, with how many and why — so a
+ *  tool whose prompt history stays behind reads as having one, not as never having had it. */
+export interface OnboardingImportNotImported { what: string; count: number; why: string }
 /** What one source's scanner found. `detected` is computed server-side (present on
  *  this machine AND holding something), so "did we find it" is decided once. */
 export interface OnboardingImportSource {
@@ -5077,6 +5127,7 @@ export interface OnboardingImportSource {
   items: OnboardingImportItem[]
   secrets_skipped: number; redactions: number
   notes: string[]
+  not_imported: OnboardingImportNotImported[]
 }
 /** `GET /api/onboarding/import` — every registered source (found or not) plus the
  *  closed category vocabulary, in the writers' declaration order. */
@@ -5116,6 +5167,10 @@ export interface SavedAgent {
   // Agent routing — suggest-first specialist routing metadata.
   specialty?: string; route_hints?: string
   reserved?: boolean; editable?: boolean
+  /** Set when the pinned `model` cannot run — `why` it cannot, and the `fix` for the model itself
+   *  ("add it in Settings → Models"). The pin is kept; the agent answers on the chat model until
+   *  it is changed, and each reply says so. `null` when the pin can run or there is none. */
+  model_unavailable?: { why: string; fix: string } | null
 }
 
 
@@ -6003,6 +6058,21 @@ export interface PackUpdateRec {
   skipped: string[]
 }
 
+// A pack uninstall (`packs/uninstall.py`). Every component ref lands in exactly one of `removed`,
+// `kept` (with the reason — you edited it, or its recorded location is not where it installs) and
+// `missing`. `in_use` is what was deployed from the pack and must go first; `servers` are the MCP
+// servers its connectors configured, which stay.
+export interface PackUninstallRec {
+  pack: string
+  version: string
+  applied: boolean
+  removed: string[]
+  kept: Array<{ ref: string; reason: string }>
+  missing: string[]
+  in_use: Array<{ kind: 'agent' | 'automation'; id: string; name: string }>
+  servers: string[]
+}
+
 // /rewind-to-turn. `action` is a closed set — "not_captured" is
 // the honest case: the file was deliberately never backed up (credential-shaped, or over
 // the per-file cap), so the rewind will NOT restore it and the UI must say so rather than
@@ -6267,6 +6337,8 @@ export const api = {
   // list — which of your edited copies the update would leave alone — so the UI shows that
   // before `confirm` applies anything.
   packUpdate: (name: string, confirm = false) => post<{ ok: boolean; update: PackUpdateRec }>(`/api/packs/${encodeURIComponent(name)}/update`, { confirm }),
+  // Dry run by default, like the update: the interesting output is what stays and what must go first.
+  packUninstall: (name: string, confirm = false) => post<{ ok: boolean; uninstall: PackUninstallRec }>(`/api/packs/${encodeURIComponent(name)}/uninstall`, { confirm }),
 
   // ── Owner login (REMOTE-USER-AUTH C3/C5) ──
   // The credential itself is never READ back — `authSession` reports only whether one is
@@ -6361,7 +6433,7 @@ export const api = {
   // ── Doctor: tiered read-only health probes ──
   /** `fresh` re-probes past the server's 30s cache — for the Doctor page's own Re-run and the
    *  re-read after a Fix, where a cached report would show the verdict from before the repair. */
-  doctor: (fresh = false) => get<DoctorReport>(fresh ? '/api/doctor?fresh=1' : '/api/doctor'),
+  doctor: (fresh = false) => get<DoctorReport | SwitchedOffView>(fresh ? '/api/doctor?fresh=1' : '/api/doctor'),
   doctorCapability: (capability: string) =>
     get<{ capability: string; ok: boolean; probes: DoctorProbe[]; unknown?: boolean }>(
       `/api/doctor/${encodeURIComponent(capability)}`,
@@ -6452,7 +6524,7 @@ export const api = {
       `/api/durability/conflicts/${encodeURIComponent(id)}/resolve`, { choice, confirm: true },
     ),
   // ── Confirm-gated fixes + surfacing simulator ──
-  doctorFixes: () => get<{ fixes: DoctorFix[] }>('/api/doctor/fixes'),
+  doctorFixes: () => get<{ fixes: DoctorFix[] } | SwitchedOffView>('/api/doctor/fixes'),
   doctorFixApply: (fixId: string) =>
     post<{ ok: boolean; fix_id: string; result?: string; error?: string }>(
       `/api/doctor/fix/${encodeURIComponent(fixId)}`, { confirm: true },
@@ -6468,7 +6540,7 @@ export const api = {
   doctorCrash: (filename: string) =>
     get<Record<string, unknown>>(`/api/doctor/crash/${encodeURIComponent(filename)}`),
   // ── Remediation engine ──
-  doctorRemediation: () => get<RemediationSnapshot>('/api/doctor/remediation'),
+  doctorRemediation: () => get<RemediationSnapshot | SwitchedOffView>('/api/doctor/remediation'),
   doctorRemediationRun: () =>
     post<{ score_before: number; score_after: number; jobs: RemediationJobRow[]; stopped_reason: string }>(
       '/api/doctor/remediation/run', { confirm: true },
@@ -6806,7 +6878,9 @@ export const api = {
     get<{ models: LocalModel[] }>(`/api/models/local/${encodeURIComponent(provider)}/search?q=${encodeURIComponent(q)}`).then((d) => d.models ?? []),
   // dashboard config (server-persisted prefs incl. the operator name)
   dashboardConfig: () => get<DashboardConfig>('/api/dashboard/config'),
-  saveDashboardConfig: (body: Partial<DashboardConfig>) => put<{ ok: boolean }>('/api/dashboard/config', body),
+  /** Answers the settings AS STORED, so a caller shows what the server kept (it slugifies
+   *  `username` and trims `user_name`) without a second read. */
+  saveDashboardConfig: (body: Partial<DashboardConfig>) => put<{ ok: boolean } & DashboardConfig>('/api/dashboard/config', body),
 
   // Screen context. `screenShareState` says whether the control
   // should be offered and — when the bound model can read a frame in no form —
@@ -6865,13 +6939,13 @@ export const api = {
   pinChatSession: (session: string, pinned: boolean) => patch(`/api/chat/sessions/${encodeURIComponent(session)}/pin`, { pinned }),
 
   // ── Agent Rooms ──
-  // Every route refuses with `rooms_disabled` (403) while `rooms.enabled` is off, INCLUDING
-  // the reads — so a caller learns the feature is off from the same envelope it would learn
-  // anything else, and `hasApiCode(err, 'rooms_disabled')` is how the UI tells "off" from
-  // "broken". A room id is a strict slug, so it needs no escaping; a MEMBER name is an
-  // agent-binding key and is encoded.
+  // While `rooms.enabled` is off (the shipped default) the LIST answers `SwitchedOffView`, the
+  // decided answer every switched-off read gives, because the chat page asks for it on every
+  // visit. Every other route, one room's read included, refuses with `rooms_disabled` (403): each
+  // addresses a room, and there are none while off. A room id is a strict slug, so it needs no
+  // escaping; a MEMBER name is an agent-binding key and is encoded.
   rooms: (archived = false) =>
-    get<{ rooms: RoomRecord[] }>(`/api/rooms${archived ? '?archived=1' : ''}`),
+    get<{ rooms: RoomRecord[] } | SwitchedOffView>(`/api/rooms${archived ? '?archived=1' : ''}`),
   room: (id: string) => get<RoomDetail>(`/api/rooms/${encodeURIComponent(id)}`),
   createRoom: (title: string) => post<{ room: RoomRecord }>('/api/rooms', { title }),
   archiveRoom: (id: string) => post<{ room: RoomRecord }>(`/api/rooms/${encodeURIComponent(id)}/archive`),
@@ -7266,7 +7340,7 @@ export const api = {
   // Triggers — the unified surface (schedule + lifecycle). The schedule helpers
   // below speak the schedule wire shape the shared Schedule* components already
   // use; the api layer namespaces the id (schedule:<id>) and routes to /api/triggers.
-  triggers: (type?: 'schedule' | 'lifecycle' | 'event') =>
+  triggers: (type?: 'schedule' | 'lifecycle' | 'store') =>
     get<{ triggers: Trigger[]; server_tz: string; owner?: string }>(
       `/api/triggers${type ? `?type=${type}` : ''}`,
     ),
@@ -7282,38 +7356,20 @@ export const api = {
     if (until) qs.set('until', until)
     return get<WeekProjection>(`/api/triggers/week?${qs.toString()}`)
   },
-  // ── event-kind (data-event) triggers: the parity surface ──
-  // The backend handled `event` in list/create/DELETE only; toggle/run/test/PUT fell through to the
-  // schedule branch and answered 404, so the UI had no way to reach them and no client methods
-  // existed. `ran` is whether the trigger REACHED its provider; `success` is the provider's own
-  // verdict — a misconfigured action reports ran:true / success:false, which is a different problem
-  // from "it never fired" and must stay distinguishable.
-  eventTriggers: () => get<{ triggers: Trigger[] }>('/api/triggers?type=event').then((d) => d.triggers),
-  // Create a data-event trigger. The backend DERIVES `source` from `pattern`
-  // (PATTERN_SOURCE) — never taken from the wire — so the body carries only the pattern, its
-  // one wired matcher field, the action, and an optional max_fires. A 201 body may carry a
-  // `warning` (a catastrophic content_re warns rather than refuses, §7/R4 rule d).
+  // Create a data-event trigger: a `kind: "event"` row in the one trigger store, which then
+  // lists, runs, toggles and deletes through the `store:` helpers like every other store trigger.
+  // The backend DERIVES `source` from `pattern` (PATTERN_SOURCE) — never taken from the wire — so
+  // the body carries only the pattern, its one matcher field, the action and the optional budget.
+  // A 201 may carry a `warning` (a catastrophic content_re warns rather than refuses, §7/R4 rule d).
   createEvent: (body: {
     name?: string; pattern: EventPattern
     sender_glob?: string; address_glob?: string; key_glob?: string; content_re?: string
     // AppEvent's matcher (AUTO-A4): a glob on the NAMESPACED event name (`app:<app>:<event>`).
     // Empty matches every app event — the catch-all, which is why AppEvent needs no second pattern.
     event_glob?: string
-    max_fires?: number; action: { provider: string; config: Record<string, unknown> }
-  }) => withSecurityConsent((c) => post<Trigger & { warning?: string }>('/api/triggers',
+    max_fires?: number; debounce_secs?: number; action: { provider: string; config: Record<string, unknown> }
+  }) => withSecurityConsent((c) => post<{ ok: boolean; trigger: Trigger; warning?: string }>('/api/triggers',
     { trigger_type: 'event', ...body, ...(c ? { confirm: true } : {}) })),
-  updateEventTrigger: (id: string, body: Record<string, unknown>) =>
-    withSecurityConsent((c) => put<{ ok: boolean; trigger: Trigger }>(
-      `/api/triggers/event:${encodeURIComponent(id)}`, c ? { ...body, confirm: true } : body)),
-  deleteEventTrigger: (id: string) => del(`/api/triggers/event:${encodeURIComponent(id)}`),
-  toggleEventTrigger: (id: string, enabled?: boolean) =>
-    post<{ ok: boolean; trigger: Trigger }>(`/api/triggers/event:${encodeURIComponent(id)}/toggle`, enabled === undefined ? {} : { enabled }),
-  runEventTrigger: (id: string, body?: { key?: string; value?: string; event_type?: string }) =>
-    post<EventFireResult>(`/api/triggers/event:${encodeURIComponent(id)}/run`, body ?? {}),
-  testEventTrigger: (id: string, body?: { key?: string; value?: string; event_type?: string }) =>
-    post<EventFireResult>(`/api/triggers/event:${encodeURIComponent(id)}/test`, { ...(body ?? {}), test: true }),
-  eventTriggerHistory: (id: string) =>
-    get<{ runs: never[]; total: number; supported: boolean; reason: string; fire_count: number; last_fired_at: number }>(`/api/triggers/event:${encodeURIComponent(id)}/history`),
   // schedule trigger helpers (id is the bare schedule raw id — the shared
   // Schedule* components mutate by bare id, which the helpers re-namespace).
   schedules: () => get<{ triggers: Trigger[]; server_tz: string }>('/api/triggers?type=schedule')
@@ -7453,7 +7509,7 @@ export const api = {
     if (opts?.tier) q.set('tier', opts.tier)
     if (opts?.flagged) q.set('flagged', '1')
     const qs = q.toString()
-    return get<LearningInbox>(`/api/learning/proposals${qs ? `?${qs}` : ''}`)
+    return get<LearningInbox | SwitchedOffView>(`/api/learning/proposals${qs ? `?${qs}` : ''}`)
   },
   learningProposal: (id: string) =>
     get<Record<string, unknown>>(`/api/learning/proposals/${encodeURIComponent(id)}`),
@@ -7464,9 +7520,9 @@ export const api = {
   rejectLearningProposal: (id: string) =>
     del(`/api/learning/proposals/${encodeURIComponent(id)}`),
   learningStagingWeek: (days = 7) =>
-    get<StagingWeek>(`/api/learning/staging/week?days=${days}`),
+    get<StagingWeek | SwitchedOffView>(`/api/learning/staging/week?days=${days}`),
   learningHealth: (days = 7) =>
-    get<LearningHealth>(`/api/learning/health?days=${days}`),
+    get<LearningHealth | SwitchedOffView>(`/api/learning/health?days=${days}`),
   /** The identity report, DETERMINISTIC. No model call — a panel mounting must not
    *  spend one, so the narrative is only composed by the POST below.
    *
@@ -7474,7 +7530,7 @@ export const api = {
    *  It used to default to 30 here, which made a weekly install's panel say "last 30 days" about
    *  a document its own cron writes over 7 — the FE quietly overriding a setting it also renders. */
   identityReport: (days?: number) =>
-    get<IdentityReportView>(`/api/learning/identity-report${days === undefined ? '' : `?days=${days}`}`),
+    get<IdentityReportView | SwitchedOffView>(`/api/learning/identity-report${days === undefined ? '' : `?days=${days}`}`),
   /** Compose, narrate, persist the versioned artifact and raise ONE inbox item. Separate from
    *  the GET because it spends a model call and writes two durable things; the scheduled job
    *  calls the same backend function, so there is one owner, not two. `days` is omitted by
@@ -7486,16 +7542,16 @@ export const api = {
     ),
   /** The judge tier-recommendation table. Read-only: the RUN is
    *  `personalclaw judge-bench`, because the full matrix is 540 judge calls and a click
-   *  must not start one. "Evals off" is a 200 `EvalsOffView`; "no benchmark yet" is a 404
-   *  with its own code. */
-  judgeBench: () => get<JudgeBenchView | EvalsOffView>('/api/evals/judge-bench'),
+   *  must not start one. "Evals off" is a 200 `SwitchedOffView`; "no benchmark yet" is a 200
+   *  `NotRunView`. */
+  judgeBench: () => get<JudgeBenchView | SwitchedOffView | NotRunView>('/api/evals/judge-bench'),
   /** The newest keep/remove/lighten ablation report. Read-only for the bench's
    *  reason: a POST would hold a request open for a multi-cell matrix and spend real money on
    *  a click. The RUN is `personalclaw ablation` or the monthly cadence. THREE distinct
-   *  non-reports — a 200 `EvalsOffView`, a 404 `ablation_absent`, and a 500 `ablation_unreadable`
+   *  non-reports — a 200 `SwitchedOffView`, a 200 `NotRunView`, and a 500 `ablation_unreadable`
    *  — because they send a user to three different places (the switch, the registry, a bug), and
    *  one state for all of them would make the panel's empty state a guess. */
-  ablation: () => get<AblationView | EvalsOffView>('/api/evals/ablation'),
+  ablation: () => get<AblationView | SwitchedOffView | NotRunView>('/api/evals/ablation'),
   /** The skill-impact benchmark: does an approved skill make the next run better?
    *
    *  Read-only, and for the sharpest reason on this route family: §3 pairs k=5 trials per arm
@@ -7506,9 +7562,9 @@ export const api = {
    *  The verdict is computed by the runner (its thresholds live in `harness/fanout_measure.py`,
    *  outside the wheel) and written into the report. Neither the gateway nor this page can
    *  synthesise one — which is exactly why an unmeasured task arrives as `verdict: null` and
-   *  renders as "not measured" instead of as a zero. "Evals off" is a 200 `EvalsOffView`;
-   *  "no benchmark yet" is a 404 with its own code. */
-  learningBenchmark: () => get<BenchmarkView | EvalsOffView>('/api/evals/learning-benchmark'),
+   *  renders as "not measured" instead of as a zero. "Evals off" is a 200 `SwitchedOffView`;
+   *  "no benchmark yet" is a 200 `NotRunView`. */
+  learningBenchmark: () => get<BenchmarkView | SwitchedOffView | NotRunView>('/api/evals/learning-benchmark'),
   /** Pre-registered template A/B studies. Read-only for the same reason as the
    *  bench: a k=5 paired study is ten template runs plus six judge calls per pair. §2.1 is
    *  also explicit that the human REGISTERS and the substrate RUNS, so there is deliberately
@@ -7517,9 +7573,9 @@ export const api = {
    *  reason than the bench's: retrieval costs no model calls, but §5.1 forbids the harness
    *  writing to knowledge.db or memory.db at all, and the cheapest way to keep that promise
    *  on a web surface is to have no run trigger on it. The RUN is `personalclaw
-   *  retrieval-eval`. "Evals off" is a 200 `EvalsOffView`; "no run yet" is a 404 with its own
-   *  code. */
-  retrievalBench: () => get<RetrievalBenchView | EvalsOffView>('/api/evals/retrieval'),
+   *  retrieval-eval`. "Evals off" is a 200 `SwitchedOffView`; "no run yet" is a 200
+   *  `NotRunView`. */
+  retrievalBench: () => get<RetrievalBenchView | SwitchedOffView | NotRunView>('/api/evals/retrieval'),
   /** The hand-label card for one store. `store` is REQUIRED — the two stores never share
    *  a corpus, so a card built for the wrong one would collect labels against ids the other
    *  has never heard of, and the backend refuses a missing one rather than defaulting. */
@@ -7531,12 +7587,12 @@ export const api = {
   saveRetrievalLabels: (store: string, labels: Record<string, string[]>) =>
     post<{ ok: boolean; store: string; queries: number; hand_labelled: number }>(
       '/api/evals/retrieval/labels', { store, labels }),
-  evalStudies: () => get<{ studies: StudyRow[] } | EvalsOffView>('/api/evals/studies'),
+  evalStudies: () => get<{ studies: StudyRow[] } | SwitchedOffView>('/api/evals/studies'),
   evalStudy: (studyId: string) =>
     get<StudyView>(`/api/evals/studies/${encodeURIComponent(studyId)}`),
   /** The lab-vs-field table — one row per subject, divergence verdicts decided
    *  server-side. Read-only: the demotion the flag feeds is the gateway sweep's. */
-  evalFieldMetrics: () => get<{ subjects: FieldMetricsRow[] } | EvalsOffView>('/api/evals/field-metrics'),
+  evalFieldMetrics: () => get<{ subjects: FieldMetricsRow[] } | SwitchedOffView>('/api/evals/field-metrics'),
   /** The proposals queue AND the ladder's last pass, from one read. Returns the whole
    *  feed rather than unwrapping to the array: `lastReview` is what makes an empty
    *  `proposals` falsifiable, and a second accessor over the same route would be two
@@ -7552,7 +7608,7 @@ export const api = {
   /** The learning summary block. 404s when `learning.enabled` is off — the
    *  caller must let the block be ABSENT in that case rather than render zeros, which
    *  would claim nothing was learned when the truthful answer is "not being tracked". */
-  learningSummary: (days?: number) => get<LearningSummary>(`/api/learning/summary${days ? `?days=${days}` : ''}`),
+  learningSummary: (days?: number) => get<LearningSummary | SwitchedOffView>(`/api/learning/summary${days ? `?days=${days}` : ''}`),
   // Ephemeral session-skill drafts (skill-ephemeral-promotion).
   ephemeralSkills: (session: string) =>
     get<{ drafts: EphemeralDraft[] }>(`/api/skills/ephemeral/${encodeURIComponent(session)}`).then((d) => d.drafts),
@@ -7640,9 +7696,13 @@ export const api = {
   // own file, values included (stored in the credential store), and leaves that file as it is. The
   // route answers 200 for a batch, so a change that did not land carries an `error` — thrown here, so
   // `reportingWrite` reports both failure shapes.
-  importMcpServer: async (name: string) => {
+  /** Import one listed server: the row's `id` names it in its scope, and the gateway reads its
+   *  definition again from the other tool's own files. Claude Code's file is left as it is — the
+   *  import used to send `ccGlobal: true`, which copied a local- or project-scope server into
+   *  Claude Code's USER scope as a side effect. */
+  importMcpServer: async (server: Pick<ImportableMcpServer, 'id' | 'name'>) => {
     const r = await post<{ results?: Array<{ name?: string; error?: string }> }>(
-      '/api/mcp/apply', { changes: [{ name, personalclaw: true, ccGlobal: true }] })
+      '/api/mcp/apply', { changes: [{ name: server.name, personalclaw: true, from: server.id }] })
     const failed = r.results?.find((c) => c.error)
     if (failed?.error) throw new Error(failed.error)
     return r
@@ -7734,6 +7794,7 @@ export const api = {
     post<{ ok: boolean }>('/api/lexicon/corrections', { heard, meant, always }),
   lexiconSetCorrectionAuto: (id: string, auto_apply: boolean) =>
     patch<{ ok: boolean }>(`/api/lexicon/corrections/${encodeURIComponent(id)}`, { auto_apply }),
+  lexiconDeleteCorrection: (id: string) => del(`/api/lexicon/corrections/${encodeURIComponent(id)}`),
   lexiconReset: () => post<{ ok: boolean }>('/api/lexicon/reset'),
 
   knowledgeItem: (id: string) => get<KnowledgeItem>(`/api/knowledge/items/${encodeURIComponent(id)}`),
@@ -8252,9 +8313,9 @@ export const api = {
   // Feedback Signal: 👍/👎 on AI judgment outputs + per-producer accuracy.
   recordFeedback: (body: FeedbackRecordBody) => post<{ ok: boolean; id: string; verdict: string }>('/api/feedback', body),
   feedbackTarget: (kind: FeedbackTargetKind, id: string) =>
-    get<{ verdict: 'up' | 'down' | null; reason?: string }>(`/api/feedback/target/${kind}/${encodeURIComponent(id)}`),
+    get<{ verdict: 'up' | 'down' | null; reason?: string } | SwitchedOffView>(`/api/feedback/target/${kind}/${encodeURIComponent(id)}`),
   feedbackProducers: (windowDays?: number) =>
-    get<FeedbackProducersResponse>(`/api/feedback/producers${windowDays ? `?window_days=${windowDays}` : ''}`),
+    get<FeedbackProducersResponse | SwitchedOffView>(`/api/feedback/producers${windowDays ? `?window_days=${windowDays}` : ''}`),
   feedbackSnooze: (producer: FeedbackProducer) => post<{ ok: boolean }>('/api/feedback/producers/snooze', producer),
   feedbackClear: (producer: FeedbackProducer) => post<{ ok: boolean }>('/api/feedback/producers/clear', producer),
   // Investigate Anywhere: server-composed context envelope + staged session.
@@ -8717,7 +8778,7 @@ export const api = {
   installApp: (source: string, consent: string) => _installReq('/api/apps', { source, consent }),
   updateApp: (name: string, source: string, consent: string) =>
     _installReq(`/api/apps/${encodeURIComponent(name)}/update`, { source, consent }),
-  enableApp: (name: string) => post<{ ok: boolean }>(`/api/apps/${encodeURIComponent(name)}/enable`),
+  enableApp: (name: string) => post<{ ok: boolean; providerErrors?: string[] }>(`/api/apps/${encodeURIComponent(name)}/enable`),
   disableApp: (name: string) => post<{ ok: boolean }>(`/api/apps/${encodeURIComponent(name)}/disable`),
   // The three removal rungs (issue #2541), each a different promise about `data/`:
   //   uninstallApp(name)        → deactivate. Nothing leaves disk.

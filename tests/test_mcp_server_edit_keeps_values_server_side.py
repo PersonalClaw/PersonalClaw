@@ -36,8 +36,6 @@ SETTING = "fixture-region-eu-west-9"
 def home(monkeypatch):
     monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     home = config_loader.config_dir()
-    # `rebuild_agent_config` reads `agent._USER_DIR / "mcp.json"`, frozen at import.
-    monkeypatch.setattr("personalclaw.agent._USER_DIR", home)
     agents = home / "agents"
     agents.mkdir(parents=True, exist_ok=True)
     (agents / "personalclaw.json").write_text(

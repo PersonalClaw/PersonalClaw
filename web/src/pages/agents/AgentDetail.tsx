@@ -14,6 +14,7 @@ import { api, type SavedAgent, type DiscoveredAgent, type McpActiveServer, type 
 import { useActiveChatModelOptions, canonicalAgentKey } from '../../lib/agents'
 import { providerMeta, isReservedAgent, isBuiltinDefaultAgent } from './agentMeta'
 import { AgentForm, toDraft, draftToPayload, type AgentDraft } from './AgentForm'
+import { ModelUnavailableNote, unavailableModelOption } from './agentModelStatus'
 import { accentChip, toneChipSkin } from '../../design/accent'
 import { repoDocUrl } from '../../lib/repoDocs'
 
@@ -66,7 +67,8 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
   if (editing) {
     return (
       <div className="flex flex-col gap-l">
-        <AgentForm draft={draft} onChange={setDraft} nameLocked compact />
+        <AgentForm draft={draft} onChange={setDraft} nameLocked compact
+          unavailable={agent.model_unavailable && agent.model ? { model: agent.model, reason: agent.model_unavailable } : undefined} />
         <FormFooter error={err}>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(agent)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} loading={saving}><Check size={15} /> Save</Button>
@@ -107,9 +109,18 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
             strictly true: empty means *inherit the global* `agent.provider`, which the frontend has no
             way to resolve here. Naming that honestly needs the global on the wire; out of scope. */}
         <span className="inline-flex items-center gap-1 rounded-pill px-m h-7" style={accentChip}>{reserved && <ShieldCheck size={12} />}{reserved ? 'Built-in' : providerMeta(agent.provider).label}</span>
-        {!reserved && agent.model && <span className="rounded-pill bg-surface-high px-m h-7 inline-flex items-center font-mono text-on-surface-var text-[0.75rem]">{agent.model}</span>}
+        {!reserved && agent.model && (
+          <span className="rounded-pill bg-surface-high px-m h-7 inline-flex items-center gap-1 font-mono text-on-surface-var text-[0.75rem]">
+            {agent.model}
+            {agent.model_unavailable && <span className="font-sans text-[0.6875rem]" style={{ color: 'var(--color-warning)' }}>· unavailable</span>}
+          </span>
+        )}
         {agent.approval_mode && <span className="rounded-pill bg-surface-high px-m h-7 inline-flex items-center text-on-surface-var">{agent.approval_mode}</span>}
       </div>
+
+      {agent.model_unavailable && agent.model && (
+        <ModelUnavailableNote model={agent.model} unavailable={agent.model_unavailable} fixHere={reserved ? 'above' : 'with Edit'} />
+      )}
 
       {agent.description && <p className="text-on-surface text-[0.9375rem] leading-relaxed">{agent.description}</p>}
 
@@ -322,11 +333,15 @@ function ReservedModelEditor({ agent, onSaved }: { agent: SavedAgent; onSaved: (
   // `catalogErr` is bound so an unreachable active-model list cannot render as "No active chat
   // models" — on a box with three bound models that sentence is a false claim about a setting, and
   // it is the one fact this editor exists to show.
-  const { options, error: catalogErr } = useActiveChatModelOptions()
+  const { options, loading, error: catalogErr } = useActiveChatModelOptions()
   const [model, setModel] = useState(agent.model ?? '')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
-  const opts = useMemo(() => [{ value: '', label: 'Auto — use chat binding' }, ...options], [options])
+  // A saved pin the list does not offer is listed as unavailable, never shown as "Auto".
+  const opts = useMemo(
+    () => [{ value: '', label: 'Auto — use chat binding' }, ...options, ...(loading || catalogErr ? [] : unavailableModelOption(agent.model ?? '', options))],
+    [options, loading, catalogErr, agent.model],
+  )
   useEffect(() => { setModel(agent.model ?? '') }, [agent.name])
 
   const dirty = model !== (agent.model ?? '')

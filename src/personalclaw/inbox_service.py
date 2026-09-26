@@ -328,9 +328,9 @@ class InboxService:
             count += 1
             # Inbox→event bridge (EIAT-1 C2). Emitted here, past every acceptance filter
             # (dedup/mute/self), so an accepted item raises EXACTLY ONE event and a filtered
-            # message raises none. The value is the RAW message text — fencing happens at PROMPT
-            # time (in `execute_event_action`), never here, so it is never double-fenced. `meta`
-            # carries the source-specific fields the inbox patterns match: `sender`/`address`.
+            # message raises none. The value is the RAW message text — it is fenced once, when a
+            # trigger fires on it (`event_triggers.fire_payload`), never here, so it is never
+            # double-fenced. `meta` carries the fields the inbox patterns match: `sender`/`address`.
             try:
                 from personalclaw.event_triggers import SOURCE_INBOX, emit_event
 

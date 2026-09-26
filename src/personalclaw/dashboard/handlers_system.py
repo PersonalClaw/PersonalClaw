@@ -14,6 +14,7 @@ from pathlib import Path
 from aiohttp import web
 
 import personalclaw
+from personalclaw.config import loader as config_loader
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.stats import Stats
 
@@ -37,7 +38,7 @@ _IN_MEMORY_SALT: bytes = secrets.token_bytes(32)
 def _get_telemetry_salt() -> bytes:
     """Return a per-install random salt, generating one on first run."""
     try:
-        salt_file = _path_home_pclaw() / "telemetry_salt"
+        salt_file = config_loader.config_dir() / "telemetry_salt"
         if salt_file.exists():
             data = salt_file.read_bytes()
             if len(data) == 32:
@@ -132,9 +133,9 @@ async def api_healthz(request: web.Request) -> web.Response:
     """
     root = _serving_root()
     try:
-        # This module's own resolver, so the fingerprint is of the home the rest of the
-        # process actually uses — a second reimplementation here could drift from it.
-        home_id = home_fingerprint(_path_home_pclaw())
+        # The one resolver, so the fingerprint is of the home the rest of the process actually
+        # uses — a second reimplementation here could drift from it.
+        home_id = home_fingerprint(config_loader.config_dir())
     except (OSError, RuntimeError):  # pragma: no cover — an unresolvable home must not 500 here
         home_id = None
     return web.json_response(
@@ -310,18 +311,6 @@ def _get_owner_hash(state: DashboardState) -> str:
     h = hmac.new(_get_telemetry_salt(), raw_owner.encode(), hashlib.sha256).hexdigest()
     state._owner_hash = h
     return h
-
-
-def _path_home_pclaw():
-    """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
-    try:
-        from personalclaw.config.loader import config_dir as _cd
-
-        return _cd()
-    except Exception:
-        from pathlib import Path as _P
-
-        return _P.home() / ".personalclaw"
 
 
 #: Timeout for the live GPU telemetry read. A wedged `nvidia-smi` must degrade the widget,

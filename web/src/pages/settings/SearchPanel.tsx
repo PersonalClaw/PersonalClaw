@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Check, Globe, Newspaper, LineChart, FileText, Zap, type LucideIcon } from 'lucide-react'
 import { api, type SearchProviderInfo, type ToolItem } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
+import { reportingWrite } from '../../app/reportingWrite'
 import { PanelHeader, Section } from './settingsUI'
 import { ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { DisclosureCard } from '../../ui/DisclosureCard'
@@ -172,10 +173,13 @@ function UseCaseRow({ useCase, activeProviders, providers, onChanged }: {
   const bindable = rows.filter((r) => r.kind === 'registered').length
   const staleActive = activeProviders.filter((n) => !providers.some((p) => p.name === n))
 
+  // Reported, and the re-read gated on the answer — the same no-catch shape as the provider cards'
+  // switches: a refused change rejected unhandled and the row simply did not move.
   const setActive = async (names: string[]) => {
     setSaving(true)
-    try { await api.setActiveSearchProvider(useCase, names); onChanged() }
-    finally { setSaving(false) }
+    try {
+      if (await reportingWrite(`set the ${meta.label} provider`, () => api.setActiveSearchProvider(useCase, names))) onChanged()
+    } finally { setSaving(false) }
   }
   // Single-select: clicking the active provider clears it; clicking another swaps.
   const toggle = (name: string) => setActive(activeProviders.includes(name) ? [] : [name])

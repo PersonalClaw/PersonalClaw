@@ -498,6 +498,16 @@ READ_METHODS: frozenset[str] = frozenset({"GET", "HEAD"})
 #: and what it did with your tools, so the conversation families declare their READS as well
 #: (:data:`READ_DECLARED_FAMILIES`), and your notifications — what reaches you, and how loudly —
 #: are a family whose writes are declared like the rest.
+#:
+#: **So is what you dictate.** The mic and knowledge audio run every transcript through the lexicon
+#: before your agent reads it (``LexiconService.correct``, called by the speech route in
+#: ``dashboard/handlers/core.py`` and the knowledge ``lexicon_correction`` node). A correction
+#: that applies automatically replaces its word with its own text every time you say it, and a
+#: term steers the decoder and replaces a word it was unsure of with the term's text — so writing
+#: either is writing into what you say. Every lexicon write is the owner's except the resync,
+#: which re-derives the graph's terms from your knowledge graph and carries no text of its own.
+#: Its reads stay with the manifest allowlist, not :data:`READ_DECLARED_FAMILIES`: they return
+#: the words you taught, not anything you said.
 SECURITY_ROUTE_FAMILIES: dict[str, str] = {
     "/api/mcp": "MCP servers — commands the gateway launches",
     "/api/apps": "installing and switching on app code",
@@ -530,17 +540,27 @@ SECURITY_ROUTE_FAMILIES: dict[str, str] = {
     "/api/inbox": "your inbox — what reaches you, and your answers to it",
     "/api/reveal": "revealing and opening files on your desktop",
     "/api/notifications": "your notifications — what reaches you, and how loudly",
+    "/api/lexicon": "your vocabulary, and the corrections that rewrite what you dictate",
 }
 
 #: The families whose READS are declared route by route as well as their writes — your
-#: conversations. A read here answers with a transcript, or with a list of whose conversations
-#: exist, so it is refused to every app until :data:`ROUTE_AUTHZ` declares it
-#: (:func:`undeclared_security_route`): default-deny, where a read anywhere else is the ordinary
-#: allowlist's business. A read that names one conversation carries ``owns`` and reaches only a
-#: conversation the calling app started; a list is ``AppMay`` because its handler answers an app
-#: with the app's own conversations and nothing else; the rest are the owner's.
+#: conversations, and what reached you. A read here answers with a transcript, a list of whose
+#: conversations exist, or the notifications that reached you, so it is refused to every app until
+#: :data:`ROUTE_AUTHZ` declares it (:func:`undeclared_security_route`): default-deny, where a read
+#: anywhere else is the ordinary allowlist's business. A read that names one conversation carries
+#: ``owns`` and reaches only a conversation the calling app started; a list is ``AppMay`` because
+#: its handler answers an app with the app's own conversations (or notifications) and nothing
+#: else; the rest are the owner's.
 READ_DECLARED_FAMILIES: frozenset[str] = frozenset(
-    {"/api/chat", "/api/sessions", "/api/session", "/api/rooms", "/api/inbox", "/api/reveal"}
+    {
+        "/api/chat",
+        "/api/sessions",
+        "/api/session",
+        "/api/rooms",
+        "/api/inbox",
+        "/api/reveal",
+        "/api/notifications",
+    }
 )
 
 _INSTALLS_APP = "installing an app — its backend, MCP servers and setup hooks run as you"
@@ -648,6 +668,16 @@ _ARCHIVED_TRANSCRIPTS = "the transcript batches older versions archived out of y
 _HIDES_NOTIFICATIONS = (
     "clearing your notifications or marking them read — what reached you, taken out of view"
 )
+_WRITES_TERM = (
+    "adding a vocabulary term — it steers the transcriber, and replaces a word it was unsure of "
+    "with the term's text in everything you dictate"
+)
+#: `LexiconStore.upsert_correction` turns automatic application on at the second report of the same
+#: fix, so recording one is arming it.
+_TEACHES_CORRECTION = (
+    "teaching a correction — one that applies automatically replaces its word with its text "
+    "every time you dictate, and teaching the same one twice turns that on"
+)
 
 #: Per-route authorization for the WRITE routes in :data:`SECURITY_ROUTE_FAMILIES`, and the READ
 #: routes in :data:`READ_DECLARED_FAMILIES`, that no :data:`OWNER_ONLY_API_PATHS` subtree covers
@@ -703,6 +733,26 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     ),
     "POST /api/packs/{name}/finish-setup": AppMay(
         "returns a pack's setup interview to open in chat; it runs nothing"
+    ),
+    "POST /api/packs/{name}/uninstall": OwnerOnly(
+        "uninstalling your packs — their skills, agents and automations go with them"
+    ),
+    # ── lexicon (what you dictate) ──
+    "POST /api/lexicon/terms": OwnerOnly(_WRITES_TERM),
+    "PATCH /api/lexicon/terms/{id}": OwnerOnly("switching your vocabulary terms on and off"),
+    "DELETE /api/lexicon/terms/{id}": OwnerOnly("deleting your vocabulary terms"),
+    "POST /api/lexicon/corrections": OwnerOnly(_TEACHES_CORRECTION),
+    "PATCH /api/lexicon/corrections/{id}": OwnerOnly(
+        "whether a correction rewrites what you dictate automatically"
+    ),
+    "DELETE /api/lexicon/corrections/{id}": OwnerOnly("forgetting the corrections you taught"),
+    "POST /api/lexicon/reset": OwnerOnly(
+        "wiping your vocabulary and every correction you taught — no rebuild brings the "
+        "corrections back"
+    ),
+    "POST /api/lexicon/rebuild": AppMay(
+        "resyncs the terms derived from your knowledge graph; the request carries no text of its "
+        "own, and the terms you added or switched off are untouched"
     ),
     # ── triggers ──
     "POST /api/triggers": OwnerOnly(_DEFINES_AUTOMATION),
@@ -1131,6 +1181,19 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "GET /api/inbox/settings": OwnerOnly(_YOUR_INBOX),
     "GET /api/inbox/status": OwnerOnly(_YOUR_INBOX),
     # ── notifications ──
+    # The log is what reached you from everything that can reach you. The handler answers an app
+    # with what the app raised and what is about a conversation it started
+    # (`DashboardState.notification_reaches`); your mute, quiet hours and rules are yours.
+    "GET /api/notifications": AppMay(
+        "lists only the notifications the app raised and those about a conversation it started "
+        "— the handler leaves out every other"
+    ),
+    "GET /api/notifications/settings": OwnerOnly(
+        "your notification settings — whether they are muted, and when they stay quiet"
+    ),
+    "GET /api/notifications/rules": OwnerOnly(
+        "your notification rules — which notifications reach you, and how loudly"
+    ),
     "DELETE /api/notifications": OwnerOnly(_HIDES_NOTIFICATIONS),
     "POST /api/notifications/clear": OwnerOnly(_HIDES_NOTIFICATIONS),
     "POST /api/notifications/ack": OwnerOnly(_HIDES_NOTIFICATIONS),

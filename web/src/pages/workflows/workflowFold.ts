@@ -45,6 +45,8 @@ export interface WorkflowEventEnvelope {
   /** What a step's declared `schema` asked for that its output did not carry (#3545), on the
    *  `node_done` that settled it. */
   schema_shortfall?: string
+  /** "ran on X instead of Y: why" for the step's calls a chain fallback served, on its `node_done`. */
+  model_substituted?: string[]
   /** Per-item foreach context, present only on an iterated node's events. */
   item_index?: number
   item_total?: number
@@ -298,6 +300,8 @@ function patchNode(
     // reason `cached` is: only the settle knows it, and a re-run after a rewind that now honours
     // the schema must clear the notice rather than inherit yesterday's.
     schema_shortfall: (env.schema_shortfall as string) || '',
+    // From THIS event as well: a re-run that got the model it asked for must drop the line.
+    model_substituted: Array.isArray(env.model_substituted) ? (env.model_substituted as string[]) : undefined,
     failure: existing?.failure ?? null,
     // Per-item context arrives on `node_started` and is NOT re-sent on `node_done` — so it is
     // carried forward rather than overwritten, or a finished item would lose the label that

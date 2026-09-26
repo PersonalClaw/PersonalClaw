@@ -17,6 +17,7 @@ from personalclaw.inbox import (
     ItemStatus,
     owner_view,
     redact_item,
+    restore_filtered,
     set_item_status,
     validate_updatable_fields,
 )
@@ -574,32 +575,7 @@ async def api_inbox_restore(request: web.Request) -> web.Response:
     if item.status != ItemStatus.FILTERED.value:
         return web.json_response({"error": "item is not filtered"}, status=409)
 
-    withheld = item.refs.get("verify_withheld") if isinstance(item.refs, dict) else None
-    item.refs["verify"] = "restored"
-    # Drop the replay payload the instant it is consumed — the FILTERED guard above already
-    # prevents a second fire, and leaving it invites a future re-fire path.
-    item.refs.pop("verify_withheld", None)
-    set_item_status(state, inbox, [item], ItemStatus.PENDING)
-
-    if state is not None and isinstance(withheld, dict):
-        try:
-            passthrough = {
-                k: v
-                for k, v in item.refs.items()
-                if k not in ("verify", "verify_withheld", "dedup_key")
-            }
-            state.notify(
-                str(withheld.get("kind") or ""),
-                str(withheld.get("title") or ""),
-                str(withheld.get("body") or ""),
-                meta={
-                    "inbox_item": item.id,
-                    "item_kind": withheld.get("item_kind") or item.item_kind,
-                    **passthrough,
-                },
-            )
-        except Exception:
-            logger.warning("inbox restore: notify failed", exc_info=True)
+    restore_filtered(state, inbox, [item])
 
     try:
         sel().log_tool_invocation(
@@ -1156,6 +1132,7 @@ async def api_inbox_proposal_create(request: web.Request) -> web.Response:
         refs={pc.REFS_KEY: proposal.to_dict(), "app": app_name},
         store=inbox,
         dedup_key=str(body.get("dedup_key") or ""),
+        raised_by_app=app_name,
     )
     _sel_proposal_emission(app_name, pc.app_kind(kind_suffix), "granted")
     return web.json_response({"ok": True, "id": item_id}, status=201)

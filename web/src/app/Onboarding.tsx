@@ -632,7 +632,7 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
                   installed here, and because none of what it writes (memories, MCP entries,
                   skills) needs a model provider to land. */}
               <StepRow ref={rowRefs.import} index={ORDER.indexOf('import')} total={ORDER.length} icon={FolderInput} title={TITLES.import}
-                subtitle="Already use another local agent tool? Bring its instructions, MCP servers and skills across."
+                subtitle="Already use another local agent tool? Bring its instructions, memories, MCP servers, skills, agents, prompts and conversations across."
                 state={stateOf('import')} doneSummary={records.import?.summary}
                 onActivate={activate('import')}>
                 <ImportStep onDone={(s) => leave('import', 'done', s)} onSkip={() => leave('import', 'skipped', 'Skipped')} />

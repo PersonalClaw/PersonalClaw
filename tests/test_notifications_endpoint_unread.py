@@ -24,8 +24,13 @@ from personalclaw.dashboard.handlers.messaging import api_notifications
 
 
 def _req(state):
+    """The owner's request: the token middleware stored no ``app`` on it.
+
+    A bare ``MagicMock`` answers every ``request.get(...)`` with another mock, which the handler
+    reads as a calling app and answers with that app's notifications only (none of these)."""
     r = MagicMock()
     r.app = {"state": state}
+    r.get = lambda key, default=None: default
     return r
 
 

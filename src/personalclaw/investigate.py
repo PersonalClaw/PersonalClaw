@@ -443,15 +443,16 @@ async def _resolve_schedule_run(entity_id: str, state) -> InvestigateContext | N
     )
 
 
-def _resolve_trigger_run(entity_id: str, state) -> InvestigateContext | None:
+async def _resolve_trigger_run(entity_id: str, state) -> InvestigateContext | None:
     """A trigger's run history, addressed ``<kind>:<id>`` (``lifecycle:`` /
     ``event:``; a bare or ``schedule:`` id is delegated to ``schedule_run``).
 
-    HONEST SCOPE: only SCHEDULE triggers keep per-run rows. Lifecycle hooks and
-    event triggers persist aggregate counters only (last run + status + count) —
-    the API's own history endpoint returns empty for them — so for those kinds
-    this resolves the trigger's LAST-RUN SUMMARY rather than inventing a per-run
-    entity that doesn't exist."""
+    HONEST SCOPE: lifecycle hooks persist aggregate counters only (last run + status +
+    count) — the API's own history endpoint returns empty for them — so for that kind
+    this resolves the hook's LAST-RUN SUMMARY rather than inventing a per-run entity
+    that doesn't exist. A data-event trigger is a row in the one trigger store and
+    records every fire in the run ledger, so its id (``event:<slug>``, the store id)
+    resolves the row plus its most recent run."""
     kind, _, raw = entity_id.partition(":")
     if not raw:  # bare id → the schedule convention
         kind, raw = "schedule", entity_id
@@ -501,38 +502,64 @@ def _resolve_trigger_run(entity_id: str, state) -> InvestigateContext | None:
             ),
         )
     if kind == "event":
-        try:
-            from personalclaw.config.loader import config_dir
-            from personalclaw.event_triggers import EventTriggerStore
-
-            store = EventTriggerStore(config_dir() / "event_triggers.json")
-            trig = next((t for t in store.load() if t.id == raw), None)
-        except Exception:  # noqa: BLE001
-            trig = None
-        if trig is None:
-            return None
-        lines = [
-            f"Event trigger {trig.id}",
-            f"Pattern: {trig.pattern}",
-            f"Key glob: {trig.key_glob or '(none)'}",
-            f"Content regex: {trig.content_re or '(none)'}",
-            f"Action: {trig.action_provider}",
-            f"Enabled: {trig.enabled}",
-            f"Fires: {trig.fire_count}" + (f" of max {trig.max_fires}" if trig.max_fires else ""),
-            f"Last fired at: {trig.last_fired_at or 'never'}",
-            "",
-            "NOTE: event triggers record aggregate counters only — individual fires "
-            "are not persisted.",
-        ]
-        return InvestigateContext(
-            kind="trigger_run",
-            id=entity_id,
-            title="Event trigger",
-            snapshot="\n".join(lines),
-            back_link=f"#/triggers?open=event:{raw}",
-            opening_prompt="Explain what this trigger watches for and whether it's working.",
-        )
+        return await _resolve_event_trigger(entity_id)
     return None
+
+
+async def _resolve_event_trigger(trigger_id: str) -> InvestigateContext | None:
+    """A data-event trigger: its store row and the most recent run the ledger holds for it."""
+    from personalclaw.config.loader import config_dir
+    from personalclaw.event_triggers import PATTERN_MATCHER
+    from personalclaw.schedule_history import ScheduleRunStore
+    from personalclaw.triggers import schedule_view as _sv
+    from personalclaw.triggers.store import TriggerStore
+
+    try:
+        row = TriggerStore(base_dir=config_dir()).get(trigger_id)
+    except Exception:  # noqa: BLE001 - an unreadable store is an entity miss
+        row = None
+    if row is None or row.trigger.kind != "event":
+        return None
+    trig = row.trigger
+    spec = dict(trig.spec or {})
+    pattern = str(spec.get("pattern") or "?")
+    field = PATTERN_MATCHER.get(pattern)
+    matcher = f"{field} = {spec.get(field)!r}" if field and spec.get(field) else "(every event)"
+    max_fires = int((trig.gates or {}).get("max_fires") or 0)
+    try:
+        runs, total = await ScheduleRunStore(config_dir()).list_for_job(trig.id, offset=0, limit=1)
+    except Exception:  # noqa: BLE001 - the row still has something true to say
+        logger.debug("event-trigger run read failed for %s", trig.id, exc_info=True)
+        runs, total = [], 0
+    last = runs[0] if runs else None
+    lines = [
+        f"Event trigger {trig.id}: {trig.name}",
+        f"Listens to: {spec.get('source') or '?'} events, pattern {pattern}, matching {matcher}",
+        f"Action: {_sv._inline_action(trig).get('provider') or '(none)'}",
+        f"Enabled: {trig.enabled} (state: {trig.state})",
+        f"Fires: {trig.run_count}" + (f" of max {max_fires}" if max_fires else ""),
+        f"Last fired at: {trig.last_fired_at or 'never'}",
+        f"Recorded runs: {total}",
+    ]
+    if last is not None:
+        lines.append(
+            f"Most recent run: {last.get('status') or '?'}"
+            + (f" — {last.get('error')}" if last.get("error") else "")
+        )
+    if row.errors:
+        lines.append(f"Parse error: {row.errors[0].message}")
+    return InvestigateContext(
+        kind="trigger_run",
+        id=trig.id,
+        title=f"Event trigger: {trig.name}",
+        snapshot="\n".join(lines),
+        back_link=f"#/triggers?open={trig.id}",
+        opening_prompt=(
+            "Why is this trigger not working?"
+            if row.errors or (last is not None and last.get("status") == "failure")
+            else "Explain what this trigger watches for and whether it's working."
+        ),
+    )
 
 
 # ── Autonomous runs: one cycle ───────────────────────────────────────────────

@@ -455,6 +455,10 @@ WF_ERROR_CODES: dict[str, str] = {
     # `_UNCHECKED` admits preflight could not establish the fact at all. Collapsing them
     # would let "we did not look" read as "we looked and it was fine".
     "WF_PRE_CREDENTIAL_MISSING": "A credential the spec requires is not set.",
+    "WF_PRE_CREDENTIAL_REFUSED": (
+        "The spec names a key a provider's or an app's own setting keeps its secret under, which "
+        "no workflow can read by name."
+    ),
     "WF_PRE_CREDENTIALS_UNVERIFIABLE": (
         "Preflight could not check the required credentials because the credential store is "
         "unavailable — not a claim that they are absent."

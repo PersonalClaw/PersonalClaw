@@ -17,8 +17,8 @@ system, crons, and the MCP bridge. Paths are relative to
 
 The gateway loads **installed copies** at `~/.personalclaw/apps/<name>/`.
 Editing the repo `apps/` tree does nothing to a running gateway until you push
-via `POST /api/apps/{name}/update` (plus a restart for already-imported
-modules). App sources for the Store are managed at
+it via `POST /api/apps/{name}/update`, which runs the new code at once (see
+[Unload and load](#unload-and-load-appsapp_runtimepy)). App sources for the Store are managed at
 `/api/apps/sources` (`dashboard/handlers/apps.py`).
 
 ## Install lifecycle (`apps/app_manager.py`)
@@ -83,6 +83,53 @@ backend**.
 - **Removal** distinguishes deactivate (providers deregistered, files kept)
   from force-uninstall.
 
+## Unload and load (`apps/app_runtime.py`)
+
+Every lifecycle step that starts or stops an app goes through one pair, so an update, an
+uninstall and a reinstall all leave exactly the version on disk running:
+
+- **`load(manifest)`** — install, enable, and the end of an update: register the providers
+  (which imports the app's code from its files now), seed its prompts and skills, write its MCP
+  servers, register its proposal kinds, start its backend and its background worker.
+- **`unload(name, manifest)`** — disable, the three uninstall rungs, and the start of an update:
+  stop and hold the backend and the worker (neither watchdog starts a held app, so no process
+  comes back from the old files before the swap), drop the MCP servers and close the processes
+  they spawned, disable the providers (a channel's receiver stops with them, and the unload waits
+  for it), take back what the app's code registered, remove its prompts, skills and proposal
+  kinds, and forget its availability answers.
+
+**Taking the code back** (`personalclaw/app_code.py`). The loader claims an app's directory
+before it runs any of its code. Each registry app code can write to through the SDK — model types
+and catalogs, media catalogs and scanners, subscription sources, `acp:` runtime entries, sidecar
+runners, trust-mode callbacks — records how to take an entry back, and an entry is the app's when
+the app's code made the call; a core module that registers its own type while the app's import
+pulls it in stays core's. `release(name)` runs those take-backs, removes every module loaded from
+the app's directory from `sys.modules` (and its cached bytecode, since the next version's file
+reuses the path), and reports what Python cannot take back:
+
+| Left in the process | Why it stays | What the owner sees |
+|---|---|---|
+| a compiled extension module the app loaded | Python cannot unload one | a restart reason naming it |
+| a thread still running the app's code | nothing can stop an arbitrary thread | a restart reason naming it |
+| a task suspended in the app's code | it would resume the old code | a restart reason naming it |
+| a package in `app-python` the gateway had loaded, replaced by the update | an interpreter keeps the version it imported first | a restart reason naming the packages |
+
+A restart reason is the update's `restart_reason` (with `restart_required`), the toast that
+reports the update, and the app panel's "Restart the gateway to finish" notice
+(`GET /api/apps` → `restartReason`) — kept in memory only, since a restart is what clears it. The
+Library re-reads the list when its socket reopens, so the notice goes when the restart is done. A
+chat turn already in flight finishes on the provider instance it started with; the next one
+builds from the new code.
+
+**The restart itself** re-executes the gateway in place (`os.execve`, same PID), so before it
+does, `stop_processes()` stops every app backend and worker (watchdogs first). A process left
+running would stay a child of the new image, which neither supervises it nor reaps it at boot
+(only a process whose parent died counts as an orphan there).
+
+**UI bundles** are served with `Cache-Control: no-cache`, and every bundle URL carries the app's
+`uiRevision` (a digest of the bundles its manifest declares), so a tab that already imported the
+old module imports the new one.
+
 ## Permissions (`apps/permissions.py`)
 
 The manifest's `permissions` block is enforced, with one documented exception
@@ -90,9 +137,9 @@ The manifest's `permissions` block is enforced, with one documented exception
 
 | Permission | Enforcement |
 |---|---|
-| `api` | prefix-allowlist middleware over gateway API paths — pathname only, query string stripped (server and SDK agree on this). Two halves no declaration widens: the owner-only registry (`OWNER_ONLY_API_PATHS`, whole subtrees such as `/api/mcp` and `/api/terminal`), and `ROUTE_AUTHZ`, which declares each write route in a security family (`SECURITY_ROUTE_FAMILIES`: automations, apps, packs, agents and agent definitions, skills, prompts and snippets, the orchestrator's routing notes, config, devices, channels…) `OwnerOnly` or `AppMay` with a reason. Every write to an agent, a skill or a prompt is `OwnerOnly` — they are the instructions your agents carry out with your tools — so an app ships skills in its manifest's `skills` and runs agent work through its `agent` grant. Your conversations are families too (chat, sessions, rooms, inbox, reveal): an `AppMay` row that carries `owns` names where the route addresses a conversation, and the middleware refuses one the calling app did not start (`_ChatSession.created_by_app`); a row marked `agent_work` (a turn) also needs the `agent` grant. Those families declare their READS route by route too (`READ_DECLARED_FAMILIES`): a read of one conversation carries `owns`, a list or a search answers an app with its own conversations only, and rooms and the inbox are the owner's. A write route in any family, or a read in a conversation family, that has no declaration is refused to every app (`undeclared_security_route`); `HEAD` answers from the `GET` row |
+| `api` | prefix-allowlist middleware over gateway API paths — pathname only, query string stripped (server and SDK agree on this). Two halves no declaration widens: the owner-only registry (`OWNER_ONLY_API_PATHS`, whole subtrees such as `/api/mcp` and `/api/terminal`), and `ROUTE_AUTHZ`, which declares each write route in a security family (`SECURITY_ROUTE_FAMILIES`: automations, apps, packs, agents and agent definitions, skills, prompts and snippets, the orchestrator's routing notes, config, devices, channels…) `OwnerOnly` or `AppMay` with a reason. Every write to an agent, a skill or a prompt is `OwnerOnly` — they are the instructions your agents carry out with your tools — so an app ships skills in its manifest's `skills` and runs agent work through its `agent` grant. Your conversations are families too (chat, sessions, rooms, inbox, reveal): an `AppMay` row that carries `owns` names where the route addresses a conversation, and the middleware refuses one the calling app did not start (`_ChatSession.created_by_app`); a row marked `agent_work` (a turn) also needs the `agent` grant. Those families declare their READS route by route too (`READ_DECLARED_FAMILIES`): a read of one conversation carries `owns`, a list or a search answers an app with its own conversations only, and rooms and the inbox are the owner's. Your notification log is declared the same way: `GET /api/notifications` answers an app with the notifications it raised and those about a conversation it started (`DashboardState.notification_reaches`), and your notification settings and rules are the owner's. What you dictate is a family too (`/api/lexicon`): every write but the graph resync is `OwnerOnly`, because a term or a correction rewrites your transcripts, and its reads stay the allowlist's. A write route in any family, or a read in a declared-read family, that has no declaration is refused to every app (`undeclared_security_route`); `HEAD` answers from the `GET` row |
 | `config` | the exact settings (`voice.echo_filter_enabled`) `/api/config` reaches for this app. A second declaration on top of `api`, which must still name `/api/config` for the route. `GET /api/config/personalclaw` returns these fields and nothing else, and a write to any other answers `403 config_field_not_declared`. Deny by default. Naming a security setting is an install error (`manifest._config_permission_errors`) |
-| `events` | WebSocket fan-out filter — an app's socket only receives event types it declared, a frame about a conversation only when the app started that conversation, and an inbox item only when the app raised it (`dashboard/ws_state.py::frame_subject`); its session list holds its own rows. An app that may read `/api/approvals` (the approval relay) also hears the approval frames for yours |
+| `events` | WebSocket fan-out filter — an app's socket only receives event types it declared, a frame about a conversation only when the app started that conversation, and an inbox item only when the app raised it (`dashboard/ws_state.py::frame_subject`); its session list holds its own rows, and a notification frame (the note, or `notification_logged`/`_removed`/`_ack`/`_unack` naming notes by `ts`) reaches it only about a notification it raised or one about a conversation it started. The envelope is `type` and `data`, so nothing on it says whether your tool calls run without asking. An app that may read `/api/approvals` (the approval relay) also hears the approval frames for yours |
 | `eventSubscriptions` | which **platform** events (`apps/app_events.py`: `session.created`, `knowledge.ingested`, `task.completed`) are delivered to the app. A DIFFERENT axis from `events` above, deliberately: `events` is the WS type allowlist, these are core-emitted facts, and holding one grants nothing about the other. `app_events.emit` is the only delivery path and is the whole gate — deny by default and **exact name only** (no prefix, no `*`), so a typo denies rather than widens. Delivered into the app's broker-owned inbox (the `appMessaging` queue, sender `@platform`, which no app can be named), drained over `GET /api/apps/message`. Payloads carry identifiers only, never prose: a subscription grants timing, not content an app's `api` scope may not cover. |
 | `mcpTools` | which MCP tools the app may invoke |
 | `memory` | one boolean grant on `/api/memory/*` and `/api/lessons` (`permissions.MEMORY_API_PATHS` — a lesson is a memory record every agent is handed as a rule), refused unless declared. NOT a tier: this was `"app-scoped"`/`"shared"` until #3501 and `app-scoped` granted nothing on any path — the checker only answered True for it when asked about the app-scoped scope, and the gateway's single call site asked about `"shared"`. Deleted rather than implemented: core has no per-app memory partition (`memory_record.MemoryScope` is `session\|workspace\|agent\|global`), so the schema was offering a choice that did nothing on a *permission* the user approves at install. A leftover string value is an install error, never reinterpreted. |
@@ -342,7 +389,9 @@ imported as a dotted package path. The namespacing is load-bearing — two apps 
 ship the same bare `provider.py`, and a plain `import provider` would let the first one
 win while the second silently mis-loaded. It is cached, so the availability probe and the
 factory never re-execute app code (a re-exec would mint a second class for one provider,
-breaking `isinstance` across two reads). A changed module needs a gateway restart.
+breaking `isinstance` across two reads). The cache is for one version: a step that changes the
+app's files unloads it first ([Unload and load](#unload-and-load-appsapp_runtimepy)), so the
+next load runs what is on disk.
 
 **Enforcement.** `native_contract.contract_violations` is the lint;
 `tests/test_native_capability_contract.py` runs it over every bundled module and carries
@@ -402,7 +451,9 @@ advisory and converged to true. See
 An app may ship its **own MCP server(s)** under `manifest.mcpServers`
 (distinct from MCP servers it merely depends on). `apps/mcp_bridge.py` writes
 them into the live MCP store (`~/.personalclaw/mcp.json`) on enable/install
-and removes them on disable/uninstall. Entries are namespaced
+and removes them on disable/uninstall, closing their live connections too: an update keeps the
+same command and arguments, so a connection left open would keep the old server process
+answering. Entries are namespaced
 `{app}:{server}` so apps can't collide on a server key and deregistration
 removes exactly this app's servers. App-shipped stdio servers run with
 `cwd=<app dir>` (`mcp_client.py` / `mcp_discovery.py`).
@@ -473,6 +524,28 @@ A tool provider is registered under its app's name, and every tool it lists pass
 seam before a model request carries it: a schema outside the portable profile is repaired or
 left out, with one log line naming the app and the tool — see
 [tool-schema-wire.md](tool-schema-wire.md).
+
+**A tool name has one provider** (`tool_providers/registry.py`). An agent's call goes to the
+provider its name maps to, under the approval card that tool asks with, so no provider may take
+a name another holds:
+
+1. the platform's names (`bash`, `read_file`, … `PLATFORM_TOOL_NAMES`) and its provider name
+   `personalclaw-filesystem` are its own;
+2. a name under `mcp/` is the MCP Tool Servers app's (`mcp/<server>/<tool>`), and a server's
+   name cannot contain `/`, which would make its tools' names another server's
+   (`mcp_discovery.server_name_problem`: import refuses one, and one already in `mcp.json` is not
+   started);
+3. a provider core ships (its own factories, `app-routes`, a `builtin`-tier app, by the tier core
+   recorded, never the manifest's own `native` flag) outranks an installed app's;
+4. otherwise the provider that claimed the name first keeps it. A provider claims its names when
+   the registry reads its tool list: at enable, and on every read after, since a list is live.
+
+A registration that breaks the rule is refused whole: the provider leaves the surface and serves
+nothing, its Settings → Providers card is off with the sentence under it, the change that
+registered it answers with that sentence, and the security log has an `outcome=refused` row. A
+provider name is checked the same way, when it registers. An app that registers its provider
+again (a re-enable, an update's new code) replaces its own, and its new list is the one read.
+Pick tool names prefixed with your app's own (`notes_search`, not `search`).
 
 **Availability is measured out of process.** A provider module may export
 `availability() -> (bool, str)` — "can this provider run on this machine?". The gateway never

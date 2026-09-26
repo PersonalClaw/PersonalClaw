@@ -32,12 +32,23 @@ function ResetButton({ onReset, label }: { onReset: () => void; label: string })
   )
 }
 
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/
+
 /** A single color token row: swatch + hex for the CURRENT mode (dark/light),
- *  plus a reset. Editing applies live. */
+ *  plus a reset. Editing applies live.
+ *
+ *  🔴 THE HEX FIELD IGNORED TYPING. It was controlled by the APPLIED color and only wrote when the
+ *  whole value was already a valid `#rrggbb`, so every keystroke in between — deleting one digit
+ *  to replace it — was refused and React put the old value straight back. The field could be
+ *  pasted into and nothing else. It now keeps its own draft while you type: a complete hex applies
+ *  live as before, and leaving the field shows the color in effect again, so a half-typed value is
+ *  never left looking applied. */
 export function ColorControl({ token }: { token: ColorToken }) {
   const { colorValue, setColor, resetToken } = useAppearance()
   const { mode } = useMode()
   const val = colorValue(token, mode)
+  const [draft, setDraft] = useState<string | null>(null)
+  const typed = draft ?? val
   return (
     <div className="flex items-center gap-m py-2">
       <label className="flex items-center gap-s cursor-pointer">
@@ -55,9 +66,14 @@ export function ColorControl({ token }: { token: ColorToken }) {
         </span>
       </label>
       <span data-type="body-s" className="flex-1 text-on-surface">{token.label}</span>
+      {/* 🔴 No name, ×28: the swatch beside it says "<token> color" and this field said nothing, so
+          a screen reader announced twenty-eight bare "edit text" fields in the color editor. */}
       <input
-        value={val}
-        onChange={(e) => { const v = e.target.value; if (/^#[0-9a-fA-F]{6}$/.test(v)) setColor(token.varName, mode, v) }}
+        value={typed}
+        onChange={(e) => { const v = e.target.value; setDraft(v); if (HEX_COLOR.test(v)) setColor(token.varName, mode, v) }}
+        onBlur={() => setDraft(null)}
+        aria-label={`${token.label} hex value`}
+        aria-invalid={draft !== null && !HEX_COLOR.test(draft)}
         data-type="body-s"
         className="w-[88px] bg-surface-high rounded-md px-s py-1 text-on-surface-var font-mono outline-none focus:ring-1 focus:ring-primary"
         spellCheck={false}

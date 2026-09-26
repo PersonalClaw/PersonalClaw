@@ -35,10 +35,11 @@ export function ProjectionRulesPanel() {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
-  const save = async (next: ProjectionRule[]) => {
+  /** Resolves whether the server took the list, so a form can tell a saved rule from a refused one. */
+  const save = async (next: ProjectionRule[]): Promise<boolean> => {
     setBusy(true); setErr('')
-    try { await api.setProjectionRules(next); refresh() }
-    catch (e) { setErr(e instanceof Error ? e.message : 'Failed to save') }
+    try { await api.setProjectionRules(next); refresh(); return true }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Failed to save'); return false }
     finally { setBusy(false) }
   }
 
@@ -80,7 +81,9 @@ export function ProjectionRulesPanel() {
               and the server replaces it), so while `rules` is unread — loading, or failed behind the
               Retry above — `list` is a fabricated `[]` and one added rule deleted every stored one. */}
           {rules !== undefined && <AddRule disabled={busy} onAdd={(r) => save([...list, r])} />}
-          {err && <div data-type="body-s" className="flex items-center gap-1.5 text-danger"><AlertTriangle size={13} /> {err}</div>}
+          {/* `role="alert"`: a refusal arrives after the click, so it is announced rather than left
+              to be found. It carries the server's reason — an invalid regex names the pattern. */}
+          {err && <div role="alert" data-type="body-s" className="flex items-center gap-1.5 text-danger"><AlertTriangle size={13} /> {err}</div>}
         </div>
       </Section>
     </div>
@@ -251,14 +254,20 @@ function RuleRow({ rule, disabled, onChange, onRemove }: {
   )
 }
 
-function AddRule({ disabled, onAdd }: { disabled?: boolean; onAdd: (r: ProjectionRule) => void }) {
+function AddRule({ disabled, onAdd }: { disabled?: boolean; onAdd: (r: ProjectionRule) => Promise<boolean> }) {
   const [name, setName] = useState('')
   const [rx, setRx] = useState('')
   const [strat, setStrat] = useState<ProjectionStrategy>('log')
-  const add = () => {
+  // 🔴 CLEARED ONLY ONCE THE SERVER HAS TAKEN IT. The form used to empty itself the moment Add was
+  // pressed, before the save answered — so a rule the server refused (a regex that does not
+  // compile) took the typed name, pattern and strategy with it, and the reason appeared under an
+  // empty form. The existing-rule rows already keep their draft through a failed save; this is the
+  // same promise for the new one.
+  const add = async () => {
     if (!rx.trim()) return
-    onAdd({ name: name.trim(), match_regex: rx.trim(), strategy: strat })
-    setName(''); setRx(''); setStrat('log')
+    if (await onAdd({ name: name.trim(), match_regex: rx.trim(), strategy: strat })) {
+      setName(''); setRx(''); setStrat('log')
+    }
   }
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-dashed border-outline-variant/50 px-3 py-2.5">

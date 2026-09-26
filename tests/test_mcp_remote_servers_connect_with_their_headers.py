@@ -40,9 +40,7 @@ from aiohttp.test_utils import make_mocked_request
 from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import credential_names, get_credential
 from personalclaw.config.secret_refs import mcp_server_prefix, ref_key, write_mcp_document
-from personalclaw.mcp_client import McpClientRegistry, _personalclaw_mcp_specs, mcp_sdk_available
-
-pytestmark = pytest.mark.skipif(not mcp_sdk_available(), reason="requires the 'mcp' SDK extra")
+from personalclaw.mcp_client import McpClientRegistry, _personalclaw_mcp_specs
 
 NAME = "remote-fixture"
 AUTH = "Bearer fixture-remote-auth-0f1e2d3c4b5a69788796a5b4"
@@ -165,8 +163,6 @@ def home(monkeypatch, tmp_path):
     # Claude Code's own file is never the real one, whatever a code path under test reads.
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config"))
     home = config_loader.config_dir()
-    # `rebuild_agent_config` reads `agent._USER_DIR / "mcp.json"`, frozen at import.
-    monkeypatch.setattr("personalclaw.agent._USER_DIR", home)
     agents = home / "agents"
     agents.mkdir(parents=True, exist_ok=True)
     (agents / "personalclaw.json").write_text(

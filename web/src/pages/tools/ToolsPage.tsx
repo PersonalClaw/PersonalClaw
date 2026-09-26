@@ -13,6 +13,7 @@ import { Segmented } from '../../ui/Segmented'
 import { Field, TextArea, TextInput } from '../../ui/forms'
 import { Markdown } from '../../ui/Markdown'
 import { SquareIconButton } from '../../ui/SquareIconButton'
+import { TextLink } from '../../ui/TextLink'
 import { Toggle as SharedToggle } from '../../ui/Toggle'
 import { confirm } from '../../ui/dialog'
 import { reportingWrite } from '../../app/reportingWrite'
@@ -52,10 +53,19 @@ interface Group {
   tier?: string
 }
 
-function serverHealth(s: McpServer): { state: string; tone: string; detail?: string } {
+/** The app that carries every external MCP server's tools to an agent — named in COPY and in a Store
+ *  deep link only. Whether an agent can call a server is the gateway's answer (`status: 'unserved'`
+ *  when nothing serves those tools), never a check of this name; an unknown `open=` degrades to the
+ *  plain Store grid, so a renamed bundle cannot strand anyone. */
+const MCP_TOOLS_APP = { name: 'mcp-tools', label: 'MCP Tool Servers' }
+const MCP_TOOLS_APP_HREF = `#/apps?view=store&open=${MCP_TOOLS_APP.name}`
+
+/** Exported for test: which words a server's state comes out as is only observable by rendering. */
+export function serverHealth(s: McpServer): { state: string; tone: string; detail?: string } {
   if (!s.enabled) return { state: 'disabled', tone: 'var(--color-on-surface-low)' }
   if (s.status === 'ready' || s.status === 'ok' || s.status === 'connected') return { state: 'ready', tone: 'var(--color-ok)' }
   if (s.status === 'error') return { state: 'error', tone: 'var(--color-danger)', detail: s.error }
+  if (s.status === 'unserved') return { state: "agents can't call it", tone: 'var(--color-warn)', detail: s.error }
   return { state: s.status || 'unknown', tone: 'var(--color-warn)', detail: s.error }
 }
 
@@ -64,7 +74,8 @@ interface ToolsIndexData {
   loadFailures: ToolLoadFailure[]
   servers: McpServer[]
   importable: ImportableMcpServer[]
-  poolStats: McpPoolStats
+  /** `null` when the pool could not be read: the tile is then not drawn at all. */
+  poolStats: McpPoolStats | null
   groups: ToolGroupsData | null
   // The names of servers granted `elicitation/create` — the per-server right to
   // interrupt a tool call and ask the user a question. Empty on a fresh install; `null` when
@@ -84,7 +95,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
       api.toolsIndex(),
       api.mcpServers().catch(() => [] as McpServer[]),
       api.importableMcp().catch(() => [] as ImportableMcpServer[]),
-      api.mcpPoolStats().catch(() => ({ available: false } as McpPoolStats)),
+      api.mcpPoolStats().catch(() => null),
       api.toolGroups().catch(() => null),
       // Tolerated like the four above — an unreadable config must not hide the tool list — but
       // with `null`, never `[]`. `[]` was defended here as the fail-closed answer, and for the
@@ -208,13 +219,15 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     setTimeout(load, 400)
   }
 
-  // Per-tool enable/disable. MCP tools write mcp.json (disabledTools); native
+  // Per-tool enable/disable. An MCP server's tool writes that server's `disabledTools` in
+  // mcp.json, under the name the SERVER gives it (`serverTool`): that list is what an ACP agent
+  // and the gateway's own check read, and `mcp/<server>/<tool>` in it matches nothing. Native
   // tools write tool_prefs.json. Locked tools never reach here (switch disabled).
   async function toggleTool(g: Group, t: ToolItem) {
     const enabled = t.disabled === true  // flipping → if currently disabled, enable
     const what = `${enabled ? 'enable' : 'disable'} "${t.name}"`
-    const ok = g.kind === 'mcp' && g.server
-      ? await reportingWrite(what, () => api.toggleMcpTool(g.server!.name, t.name, enabled))
+    const ok = g.kind === 'mcp' && g.server && t.serverTool
+      ? await reportingWrite(what, () => api.toggleMcpTool(g.server!.name, t.serverTool!, enabled))
       : await reportingWrite(what, () => api.toggleTool(t.provider, t.name, enabled))
     if (ok) setTimeout(load, 300)
   }
@@ -371,8 +384,8 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
 
 /** P23d: the MCP connection-pool observability tile — surfaces the live pool snapshot
  *  (shared vs per-session connections) + lifetime spawn/reuse counters so the user can
- *  see pooling working. Hidden when the mcp SDK extra is absent or nothing has connected
- *  yet (no pool activity → no tile clutter). */
+ *  see pooling working. Hidden when the pool could not be read or knows no server yet
+ *  (no pool activity → no tile clutter). */
 /** Exported for test: the gate (which pool states render at all) and the conditional Evicted cell
  *  are only observable by rendering the tile against a stubbed stats object — jsdom reports every
  *  box as 0, so nothing about them is measurable from layout. */
@@ -381,7 +394,7 @@ export function McpPoolTile({ stats }: { stats: McpPoolStats | null }) {
   // pool with servers CONFIGURED but none spawned yet rendered nothing — exactly the state where
   // "the pool knows about N servers and has opened none" is the useful fact. A configured pool with
   // no activity is a real answer; an empty pool is the only thing worth hiding.
-  if (!stats || !stats.available) return null
+  if (!stats) return null
   if (!(stats.live_connections || stats.spawns || stats.configured_servers)) return null
   const cells: Array<{ label: string; value: number | undefined; hint: string }> = [
     // Configured leads: it is the denominator the other numbers are read against — 0 live out of 1
@@ -543,6 +556,17 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
           <span data-type="caption" className="ml-auto text-on-surface-low" title="Required by platform features — can't be disabled">required</span>
         )}
       </div>
+      {/* The header's state is a caption with its reason in a `title`, which a touch screen never
+          shows. "Why can't an agent use this, and what do I do" is the one state whose answer is
+          an action, so it is said in the page, with the way to take it. */}
+      {g.server?.enabled && g.server.status === 'unserved' && (
+        <div data-type="body-s" className="mb-s rounded-lg bg-surface-container px-m py-3 text-on-surface-low flex items-center gap-s">
+          <Plug size={14} className="shrink-0" />
+          <span>
+            No agent can call these tools yet. They reach an agent through the <span className="text-on-surface">{MCP_TOOLS_APP.label}</span> app — <TextLink href={MCP_TOOLS_APP_HREF} ink="emphasis" className="underline">install it from the Store</TextLink>, or turn it on if it is installed.
+          </span>
+        </div>
+      )}
       {/* 🔴 TWO COLUMNS WITH NO BREAKPOINT MADE THE TOOL NAME INVISIBLE ON A PHONE. The grid in the
           else-branch below holds, per cell, a wrench, the name, an approval shield, a risk badge and
           sometimes a "Disabled" pill — so at 390px a ~172px half-width cell leaves the name nothing.
@@ -721,18 +745,20 @@ function importedValues(s: ImportableMcpServer): string {
 }
 
 /** Collapsed "Discovered in <backend>" list — MCP servers configured in an
- *  external backend (Claude Code) but not yet in PersonalClaw. Importing one
- *  copies its spec into ~/.personalclaw/mcp.json so the native loop can run it. */
+ *  external backend (Claude Code) but not yet in PersonalClaw, from every scope it keeps them in:
+ *  yours everywhere, yours in one project, and a project's own `.mcp.json`. Importing one
+ *  copies its spec into ~/.personalclaw/mcp.json so the native loop can run it. A row is keyed and
+ *  imported by its `id`, because two scopes can hold a server of the same name. */
 function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServer[]; onImported: () => void }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
 
   const importOne = async (s: ImportableMcpServer) => {
-    setBusy(s.name)
+    setBusy(s.id)
     // Reported, not swallowed: an import that did not land (a refusal, or a 200 whose change carries
     // an `error`, which `importMcpServer` throws) used to leave the row sitting here with no word.
     try {
-      if (await reportingWrite(`import "${s.name}"`, () => api.importMcpServer(s.name))) onImported()
+      if (await reportingWrite(`import "${s.name}"`, () => api.importMcpServer(s))) onImported()
     } finally { setBusy(null) }
   }
 
@@ -752,7 +778,7 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
           </p>
           <div className="flex flex-col gap-2">
             {servers.map((s) => (
-              <div key={s.name} className="flex items-center gap-3 rounded-lg bg-surface-container px-m py-2.5">
+              <div key={s.id} className="flex items-center gap-3 rounded-lg bg-surface-container px-m py-2.5">
                 <Server size={15} className="shrink-0 text-on-surface-low" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -760,6 +786,9 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
                     <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{s.backend}</span>
                     <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low" title={TRANSPORT_HINT}>{transportLabel(s.transport)}</span>
                   </div>
+                  {/* Which of the backend's scopes it is in: yours everywhere, yours in one project,
+                      or a project's own file. Two rows of one name differ only here. */}
+                  <p data-type="caption" className="mt-0.5 truncate text-on-surface-low" title={s.origin}>{s.origin}</p>
                   {/* The server line is a URL or a command line — the most tail-heavy string on the
                       surface, and the half that says WHICH server this is. It did not clip with this
                       seed's data, but it truncates by the same rule and a `title` costs nothing; the
@@ -770,8 +799,11 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
                   {importedValues(s) && (
                     <p data-type="caption" className="mt-0.5 truncate text-on-surface-low" title={importedValues(s)}>{importedValues(s)}</p>
                   )}
+                  {/* What to know before importing: a project's server nobody approved, a variable
+                      nothing sets. Wrapped, not truncated — it is a sentence to read. */}
+                  {s.note && <p data-type="caption" className="mt-0.5 text-on-surface-var">{s.note}</p>}
                 </div>
-                <Button variant="secondary" size="sm" onClick={() => importOne(s)} loading={busy === s.name}><Download size={13} /> Import
+                <Button variant="secondary" size="sm" onClick={() => importOne(s)} loading={busy === s.id}><Download size={13} /> Import
                 </Button>
               </div>
             ))}

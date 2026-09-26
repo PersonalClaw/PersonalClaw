@@ -1730,7 +1730,7 @@ async def start_dashboard(
     # Only expose the simulation endpoint in dev/debug environments
     _truthy = {"1", "true", "yes", "on"}
     if (
-        os.environ.get("PERSONALCLAW_HOME", "").endswith("-dev")
+        config_dir().name.endswith("-dev")
         or os.environ.get("PERSONALCLAW_DEV_MODE", "").lower() in _truthy
     ):
         app.router.add_post("/api/update/simulate", handlers.api_update_simulate)
@@ -1786,6 +1786,13 @@ async def start_dashboard(
     from personalclaw.providers.routes import register_routes as register_extension_routes
 
     load_all_extensions()
+    # Every tool provider just registered has its tool names read once, in the background: the
+    # one-name-one-provider rule (`tool_providers.registry`) refuses one offering a name another
+    # provider holds, and that refusal belongs on its status from start-up, not from whenever
+    # an agent turn first lists it. Not awaited: reading the MCP servers' lists connects to them.
+    from personalclaw.tool_providers.registry import admit as _admit_tool_names
+
+    await _admit_tool_names(wait=0)
     # Move any secret an earlier release left inline in a settings file (a provider key or the
     # webhook token in config.json, an app's tokens in its data/config.json, an instance's key,
     # an MCP server's env and headers in mcp.json and the agent config) into the
@@ -1798,6 +1805,15 @@ async def start_dashboard(
         migrate_plaintext_secrets()
     except Exception:  # noqa: BLE001 — never block boot; the next start retries
         logger.warning("moving plaintext secrets into the credential store failed", exc_info=True)
+    # And `credentials.json`, the second store an earlier release kept, before the registry
+    # sync below resolves a provider entry's `credential` by name. Deleted only once every value
+    # in it reads back from the store; what it cannot settle, the Doctor lists.
+    from personalclaw.llm.credentials import move_credentials_file
+
+    try:
+        move_credentials_file()
+    except Exception:  # noqa: BLE001 — never block boot; the next start retries
+        logger.warning("moving credentials.json into the credential store failed", exc_info=True)
     # Sync config.json provider entries into the LLM registry IMMEDIATELY after
     # extensions load (types are now registered). Must happen BEFORE any handler
     # resolves a provider (e.g. embedding/knowledge auto-embed at boot).
@@ -2202,37 +2218,32 @@ async def start_dashboard(
         try:
             from personalclaw.mcp_client import get_mcp_client_registry
 
-            reg = get_mcp_client_registry()
-            if reg is not None:
-                await reg.shutdown_all()
+            await get_mcp_client_registry().shutdown_all()
         except Exception:
             logger.debug("MCP client shutdown failed", exc_info=True)
 
     app.on_cleanup.append(_mcp_client_shutdown)
 
-    async def _app_backends_shutdown(app_: web.Application) -> None:
-        """Terminate every app-backend subprocess on gateway stop. Without this the
+    async def _app_processes_shutdown(app_: web.Application) -> None:
+        """Terminate every app backend and worker on gateway stop. Without this the
         backends (snippet-lab/standup-notes/… server.py) were spawned on enable but
         never reaped on shutdown — so each gateway restart ORPHANED another set
-        (reparented to init), leaking dozens of processes over a dev session.
+        (reparented to init), leaking dozens of processes over a dev session. The
+        workers were never stopped here at all: each kept running, re-parented to init,
+        until the next boot reaped it.
 
-        The watchdogs boot started go FIRST: left running, the backend one revived every
-        backend terminated here 30s later, and all three outlived the gateway that started
-        them — each boot in one process adding three sweepers that never ended."""
+        The watchdogs boot started go FIRST (``app_runtime.stop_processes`` does both, in
+        that order): left running, the backend one revived every backend terminated here
+        30s later, and all three outlived the gateway that started them — each boot in one
+        process adding three sweepers that never ended."""
         try:
-            from personalclaw.providers.loader import stop_extension_watchdogs
+            from personalclaw.apps.app_runtime import stop_processes
 
-            stop_extension_watchdogs()
+            stop_processes()
         except Exception:
-            logger.debug("watchdog shutdown failed", exc_info=True)
-        try:
-            from personalclaw.apps.backend_runtime import get_backend_supervisor
+            logger.debug("app process shutdown failed", exc_info=True)
 
-            get_backend_supervisor().stop_all()
-        except Exception:
-            logger.debug("app-backend shutdown failed", exc_info=True)
-
-    app.on_cleanup.append(_app_backends_shutdown)
+    app.on_cleanup.append(_app_processes_shutdown)
 
     async def _discovery_shutdown(app_: web.Application) -> None:
         """Send the mDNS goodbye and release the socket on gateway stop (COMPANION-APPS C3).
@@ -2551,9 +2562,7 @@ async def start_dashboard(
     try:
         from personalclaw.mcp_client import get_mcp_client_registry
 
-        _mcp_reg = get_mcp_client_registry()
-        if _mcp_reg is not None:
-            _mcp_reg.start_sweeper()
+        get_mcp_client_registry().start_sweeper()
     except Exception:
         logger.debug("MCP idle sweeper start skipped", exc_info=True)
 

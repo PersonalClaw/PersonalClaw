@@ -8,7 +8,7 @@ const docs: UiDoc[] = [
     name: 'HeaderActions',
     keywords: ['header', 'actions', 'toolbar', 'overflow', 'responsive', 'topbar', 'controls', 'cluster'],
     description:
-      'The one responsive header-controls cluster. Its children degrade together on a single 4-tier ladder (FULL: icon+label → TEXT: label only → ICON: icon only → OVERFLOW: a … menu) as horizontal space shrinks, measured via offscreen probes and a ResizeObserver. In OVERFLOW it keeps the highest-priority controls visible and pushes the rest into an auto-built … menu — no page hand-rolls a header overflow menu.',
+      'The one responsive header-controls cluster. Its children degrade together on a single 4-tier ladder (FULL: icon+label → TEXT: label only → ICON: icon only → OVERFLOW: a … menu) as horizontal space shrinks, measured via offscreen probes and a ResizeObserver. In OVERFLOW it keeps the highest-priority controls visible and pushes the rest into an auto-built … menu — no page hand-rolls a header overflow menu. It leaves the title slot what that slot cannot shed (every shrink-0 control and gap beside the title) plus a floor for the title itself, and when the band between the shell corners cannot hold that beside the narrowest the cluster can get (its never-overflow controls plus the …), it asks its TopBar to lay the row out below the corners across the full width.',
     props: [
       { name: 'children', description: 'The header controls (HeaderControl / HeaderSegmented / HeaderModePill / Button), rendered left→right in DOM order.' },
       { name: 'className', description: 'Extra classes on the cluster container (tokens only).' },
@@ -18,6 +18,7 @@ const docs: UiDoc[] = [
       { guidance: true, description: 'ORDERING TENET: a destructive control (Delete) sits LEFTMOST of the right-edge group. Canonical shape: [Delete] … [other controls] … [open-side-panel].' },
       { guidance: true, description: "Keep the Delete and panel-opener controls priority='low' even though their positions are fixed — priority governs OVERFLOW shedding independently of visual order." },
       { guidance: false, description: 'Do not build a header overflow menu by hand — it falls out of the same child list automatically in the OVERFLOW tier.' },
+      { guidance: false, description: 'Do not put chips or other facts about the page beside the title: they cannot shrink, so they either overlap the cluster or starve the title. Put them in TopBar `below`, which wraps; put an action (copy link) in the cluster as a HeaderControl, which sheds into the … menu.' },
     ],
     anatomy: ['outer measured container', 'offscreen aria-hidden probe rows (one per tier)', 'visible control row', 'auto … overflow menu (Popover)'],
   },

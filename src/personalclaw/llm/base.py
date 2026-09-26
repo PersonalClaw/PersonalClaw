@@ -17,6 +17,7 @@ also an ``AgentProvider``, not a stateless completion adapter.
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -50,6 +51,52 @@ def wire_temperature(value: object) -> float | None:
 
 
 CancelOutcome = Literal["acked", "timeout", "no_turn", "error"]
+
+
+@dataclass(frozen=True)
+class ModelSubstitution:
+    """A model someone NAMED could not serve, and another one did.
+
+    Named means chosen: an agent's pinned model, a chat's own pick, a use case's binding in
+    Settings → Models. The resolution seam (``providers.provider_bridge``) produces this only where
+    a substitute is allowed to serve: a later entry of a chain the user built, or the chat binding
+    when an agent's own model cannot run. Anywhere else a named model that cannot serve is a
+    refusal that names it, never a quiet swap.
+
+    ``who`` says whose choice it was ("Researcher's model", "this chat's model"), so the one
+    sentence reads correctly on every surface that shows it: the chat, a room, a workflow step
+    and Introspect.
+    """
+
+    requested: str
+    served: str
+    why: str
+    fix: str = ""
+    who: str = ""
+
+    def sentence(self) -> str:
+        """``ran on <served> instead of <who> <requested>: <why>. <fix>`` — the one wording."""
+        whose = f"{self.who} " if self.who else ""
+        text = f"ran on {self.served} instead of {whose}{self.requested}: {self.why}"
+        return f"{text}. {_capitalized(self.fix)}" if self.fix else text
+
+    def notice(self) -> str:
+        """The sentence as a line of its own — capitalized and closed — for a chat or a room."""
+        return f"{_capitalized(self.sentence())}."
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "requested": self.requested,
+            "served": self.served,
+            "why": self.why,
+            "fix": self.fix,
+            "who": self.who,
+            "sentence": self.sentence(),
+        }
+
+
+def _capitalized(text: str) -> str:
+    return text[:1].upper() + text[1:]
 
 
 class ModelProvider(ABC):
@@ -188,6 +235,18 @@ class ModelProvider(ABC):
         which no client can observe — a zero spread across a slate is then the visible sign.
         """
         return None
+
+    @property
+    def unsent_options(self) -> dict[str, str]:
+        """Request options this instance was given and leaves off the request, each with why.
+
+        ``{}`` by default. An adapter that omits an option it was handed — a sampling parameter
+        its model refuses (``llm.catalog.refused_sampling``) — names it here with a sentence a
+        user may be shown. The guard records it on the call (:mod:`personalclaw.guardrails.calls`)
+        next to :attr:`sampling_temperature`, so a caller that asked for a temperature can say
+        why none was sent instead of only that none was.
+        """
+        return {}
 
     @property
     def keeps_cancelled_turns(self) -> bool:

@@ -236,10 +236,10 @@ def _ensure_dir(p: Path) -> Path:
 
     The home holds the credential store and every settings file, so a new one is 0700 like
     ``~/.ssh``. An EXISTING home is never re-moded here: this runs whenever the home is
-    RESOLVED, including from module constants at import time, so a chmod here would change
-    whatever home an import happened to resolve — the developer's real one during test
-    collection. A loose home from an earlier release is tightened on the WRITE path instead,
-    the first time a file is written into it (:func:`personalclaw.atomic_write.ensure_private_dir`).
+    RESOLVED by :func:`config_dir`, for reads as well as writes, so a chmod here would change
+    whatever home a read happened to resolve. A loose home from an earlier release is tightened
+    on the WRITE path instead, the first time a file is written into it
+    (:func:`personalclaw.atomic_write.ensure_private_dir`).
     """
     key = str(p)
     if key not in _ensured_dirs:
@@ -248,17 +248,67 @@ def _ensure_dir(p: Path) -> Path:
     return p
 
 
-def config_dir() -> Path:
-    override = os.environ.get("PERSONALCLAW_HOME")
-    if override:
-        p = Path(override).expanduser().resolve()
-        # Refuse root or system directories as config home
-        if p == Path("/") or p.parts[:2] in (("/", "usr"), ("/", "System"), ("/", "etc")):
+# ── The home: ONE resolver ────────────────────────────────────────────────────
+#
+# Everything that needs the PersonalClaw home asks this section. A module that reads
+# `PERSONALCLAW_HOME` or builds `~/.personalclaw` itself is a second answer, and every one found
+# disagreed with this one somewhere — about `~`, about a refused system directory, or about a
+# test's `config_dir` isolation (`tests/test_active_home_is_the_only_home.py` fails on a new one).
+# None of these is ever called at import time: a module constant built from the home freezes
+# whatever the home was when the module happened to be imported
+# (`tests/test_importing_personalclaw_touches_no_home.py`).
+
+#: What ``PERSONALCLAW_HOME`` may not be: the filesystem root, and the system trees under it.
+_SYSTEM_DIRS = (("/", "usr"), ("/", "System"), ("/", "etc"))
+
+
+def default_config_dir() -> Path:
+    """``~/.personalclaw`` — the home when ``PERSONALCLAW_HOME`` names none, or names one this
+    module refuses. The rails that protect the owner's real home compare against this."""
+    return Path.home() / CONFIG_DIR_NAME
+
+
+def home_override() -> Path | None:
+    """``PERSONALCLAW_HOME`` as it was written — ``~`` expanded, symlinks NOT resolved — or
+    ``None`` when it is unset or empty.
+
+    Not where the home is: an override this module refuses is still returned here. It is for the
+    rails that must see what was NAMED — ``seed`` refuses to replace a home reached through a
+    symlink, which the resolved path can no longer show. Where the home IS is
+    :func:`resolve_config_dir`."""
+    raw = os.environ.get("PERSONALCLAW_HOME")
+    return Path(raw).expanduser() if raw else None
+
+
+def resolve_config_dir() -> Path:
+    """Where the home is, WITHOUT creating it — the one resolution rule.
+
+    ``PERSONALCLAW_HOME``, expanded and resolved, unless it is the filesystem root or a system
+    directory — then :func:`default_config_dir`, with a warning. For callers that must not create
+    the home they ask about: a read-only predicate, or a rail refusing to run against it."""
+    override = home_override()
+    if override is not None:
+        resolved = override.resolve()
+        if resolved == Path("/") or resolved.parts[:2] in _SYSTEM_DIRS:
             logger.warning("PERSONALCLAW_HOME=%s is a system directory, ignoring", override)
         else:
-            return _ensure_dir(p)
-    d = Path.home() / CONFIG_DIR_NAME
-    return _ensure_dir(d)
+            return resolved
+    return default_config_dir()
+
+
+def uses_default_home() -> bool:
+    """Whether the home in use is the default one — ``PERSONALCLAW_HOME`` unset, refused, or
+    pointed at ``~/.personalclaw`` (a symlink to it included).
+
+    The one question every "not against the real home" rail asks (``--approval yolo``, ``--seed``,
+    an eval cell, the scripted test model). Raises ``OSError`` when a path cannot be resolved; a
+    rail refuses on that too."""
+    return resolve_config_dir().resolve() == default_config_dir().resolve()
+
+
+def config_dir() -> Path:
+    """The home, created (0700) the first time this process asks for it."""
+    return _ensure_dir(resolve_config_dir())
 
 
 def config_path() -> Path:

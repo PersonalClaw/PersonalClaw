@@ -32,6 +32,7 @@ from personalclaw.vector_memory import VectorMemoryStore
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import store as store_mod
 from personalclaw.workflows.models import Failure, FailureClass, RunStatus, WorkflowRun
+from personalclaw.workflows.step_usage import NOTHING_SENT
 
 
 @pytest.fixture
@@ -77,6 +78,7 @@ def _fail(
         node,
         epoch=1,
         failure=Failure(failure_class=fc, cause_plain=text),
+        usage=NOTHING_SENT,
         attempt=attempt,
         retries_exhausted=exhausted,
     )

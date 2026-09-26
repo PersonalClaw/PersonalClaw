@@ -375,6 +375,11 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
    *  a required step whose Continue is disabled. */
   const unreadable = catalog?.unavailableSources ?? []
   const noGit = unreadable.some((u) => u.reason === 'no-git')
+  /** Whether the model lane is offering the small offline model above its list. `readiness` is
+   *  the `GET /api/onboarding` answer `BundledModelOffer` also renders from, and the lane stops
+   *  rendering that offer once this session's download finished — so an empty lane names the
+   *  offline model only while there is one on screen to pick. */
+  const offeredOffline = !!readiness?.chat_download_offer && !downloaded
 
   /* Gated on the VERIFIED lane, not on a written binding: Continue is the flow's claim that the
    * required rail is satisfied, so it may not turn on before the backend has built what chat
@@ -414,8 +419,8 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
         <div className="flex flex-col gap-m">
           <LoadError what="app catalog" error={catalogError} onRetry={refresh} />
           <p className="text-on-surface-low text-[0.8125rem]">
-            Apps are listed from the first-party source — the workspace apps directory in a dev
-            tree, otherwise the published apps repository. You can set this up later in the Store.
+            You can also skip this step, then add a model provider later in Settings and other
+            apps from the Store.
           </p>
         </div>
         {actions}
@@ -553,9 +558,10 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
               </p>
             ) : items.length === 0 && have.length === 0 ? (
               <p className="text-on-surface-low text-[0.8125rem]">
-                No {lane.title.toLowerCase()} app is available from the first-party source
-                (the workspace apps directory in a dev tree, otherwise the published apps
-                repository). Add a source in the Store later.
+                No {lane.title.toLowerCase()} app is available from your app sources.{' '}
+                {isModel
+                  ? `${offeredOffline ? 'Download the small offline model or connect a local model above' : 'Connect a local model above'}, add an app source in the Store, or skip this step and set one up later in Settings.`
+                  : 'Add an app source in the Store, or set this up later when you need it.'}
               </p>
             ) : (
               <motion.div className="flex flex-col gap-1.5" initial="initial" animate="animate"

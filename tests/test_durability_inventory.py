@@ -390,7 +390,8 @@ class TestTheGuardMeetsARealHome:
 
 
 class TestProviderCredentialsStayOnThisMachine:
-    """`credentials.json` — the provider credential descriptors `CredentialStore` writes 0600.
+    """`credentials.json` — the credential descriptors an older release kept, which the gateway
+    moves into the credential store at boot and keeps only while a value in it cannot be moved.
 
     Issue 2217 declared it (it was neither claimed nor ignored, so `audit_home()` flagged it) and
     made snapshots CARRY it, so a restore returned every provider key. That second half is

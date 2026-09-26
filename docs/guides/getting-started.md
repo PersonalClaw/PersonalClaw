@@ -99,7 +99,6 @@ dependency; extras are the plain-pip path):
 | `openai` | `pip install 'personalclaw[openai]'` | the OpenAI SDK (chat/embeddings/STT/TTS) | small |
 | `anthropic` | `pip install 'personalclaw[anthropic]'` | the Anthropic SDK | small |
 | `bedrock` | `pip install 'personalclaw[bedrock]'` | AWS Bedrock (`boto3`) | medium |
-| `mcp` | `pip install 'personalclaw[mcp]'` | Model Context Protocol servers/tools | small |
 | `js-render` | `pip install 'personalclaw[js-render]'` | JS-rendered web fetch (Playwright) | large (browser) |
 | `models` | `pip install 'personalclaw[models]'` | local inference: embeddings + STT + TTS | large (ML) |
 
@@ -182,10 +181,10 @@ Model providers are installable apps — nothing is hardwired to a vendor.
    The same panel binds models for background work, embeddings, ingestion,
    speech, and more — they can all be different providers.
 
-Prefer the terminal? Once a provider app is installed,
-`personalclaw setup --provider NAME --credential NAME=VALUE` stores the
-credential without the dashboard, and `personalclaw doctor` verifies the result
-end to end.
+Prefer the terminal? `personalclaw setup --credential NAME=VALUE` saves a
+secret in the same credential store Settings → Secrets uses, where a workflow's
+`{{secret:NAME}}` and a provider entry whose `credential` is `NAME` read it.
+`personalclaw doctor` verifies the result end to end.
 
 ## 4. First chat
 

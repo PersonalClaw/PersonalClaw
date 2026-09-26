@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { RefreshCw, ChevronRight, CheckCircle2, AlertTriangle, XCircle, Wrench, FlaskConical } from 'lucide-react'
 import {
-  api, type DoctorReport, type DoctorCapability, type DoctorProbe, type DoctorFix,
+  api, isSwitchedOff, type DoctorReport, type DoctorCapability, type DoctorProbe, type DoctorFix,
   type RemediationSnapshot, type SurfacingCandidate, type AutomationWouldExecute, type Trigger,
+  type SwitchedOffView,
 } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { confirm } from '../../ui/dialog'
@@ -39,8 +40,12 @@ function capLabel(key: string): string {
  *  sessions") was the same claim one layer up, still describing a panel that shipped two sessions
  *  ago. */
 export function DoctorPanel() {
-  const [report, setReport] = useState<DoctorReport | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [report, setReport] = useState<DoctorReport | SwitchedOffView | null>(null)
+  // `true` from the start: the mount effect below starts the first read. It was `false`, so the first
+  // frame drew the whole panel — and mounted Simulators and Maintenance, which fire their own reads —
+  // before the skeleton replaced it. With the Doctor switched off that was two requests whose answer
+  // the report was about to give.
+  const [busy, setBusy] = useState(true)
   // Bumped when a Fix lands, so Maintenance re-reads the score the Fix just changed — the two
   // sections read one health, and a Fix that turned a card green under a stale score would be
   // the page disagreeing with itself.
@@ -56,6 +61,11 @@ export function DoctorPanel() {
   const onFixed = useCallback(() => { refresh(true); setRev((n) => n + 1) }, [refresh])
 
   if (report === null && busy) return <FormSkeleton sections={2} />
+  // `resilience.doctor_enabled` off: the report read answers `{"enabled": false}` (it used to 404,
+  // which this page drew as "Couldn't load the doctor report"). Probes, simulators and maintenance
+  // all address a surface that is off, so none of them is drawn — or asked for — and the page
+  // offers the one thing that is possible: turning it back on.
+  if (isSwitchedOff(report)) return <DoctorOff onTurnedOn={() => refresh(true)} />
 
   const caps = report ? Object.entries(report.capabilities) : []
   // Show a failed capability before the healthy ones (attention first).
@@ -120,6 +130,38 @@ export function DoctorPanel() {
 
       <SimulatorsSection />
       <RemediationSection rev={rev} onRan={() => refresh(true)} />
+    </div>
+  )
+}
+
+/** The Doctor page while `resilience.doctor_enabled` is off.
+ *
+ *  🔑 THE BUTTON IS THE WAY BACK ON, AND IT DID NOT EXIST. The switch is in the config allowlist
+ *  but had no control anywhere in `web/`, so a Doctor switched off in `config.json` could only be
+ *  switched back on there. The Doctor itself is the natural home for it: this page is where a user
+ *  lands looking for health, and it is the page that has nothing else to show. No Retry beside it
+ *  — a switch that is off does not flip when the read is repeated — and no `role="alert"`, because
+ *  a decided answer is not unrequested bad news. */
+function DoctorOff({ onTurnedOn }: { onTurnedOn: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const turnOn = () => {
+    setBusy(true)
+    api.patchConfig('resilience.doctor_enabled', true)
+      .then(onTurnedOn)
+      .catch((e) => notify(`Couldn't turn the Doctor on: ${String((e as Error)?.message || e)}`, 'error'))
+      .finally(() => setBusy(false))
+  }
+  return (
+    <div>
+      <PanelHeader title="Doctor" hint="Health probes across every subsystem — memory, channels, local models, app backends, the SPA symlink, and model-provider breakers." />
+      <Section title="The Doctor is off">
+        <p data-type="body-s" className="text-on-surface-low">
+          Nothing is probing health, so no failed check is shown and no repair is offered. Turning it on runs the probes once now.
+        </p>
+        <div className="mt-m">
+          <Button size="sm" onClick={turnOn} loading={busy} loadingLabel="Turning the Doctor on…">Turn the Doctor on</Button>
+        </div>
+      </Section>
     </div>
   )
 }
@@ -408,6 +450,9 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
  *  other re-reading would leave one page showing two healths. */
 export function RemediationSection({ rev = 0, onRan }: { rev?: number; onRan?: () => void } = {}) {
   const [snap, setSnap] = useState<RemediationSnapshot | null>(null)
+  // The Doctor switched off between this read and the page's: the page above says so, and this
+  // section has nothing to add to it.
+  const [off, setOff] = useState(false)
   const [busy, setBusy] = useState(false)
   // 🔴 `setSnap(null)` on failure left this section rendering **"Loading…" forever** while **Run now
   // stayed enabled** — measured with `/api/doctor/remediation` at 500: no error text anywhere on the page
@@ -415,7 +460,9 @@ export function RemediationSection({ rev = 0, onRan }: { rev?: number; onRan?: (
   // dead end that looks like a slow network) and an action offered against state nobody could read.
   const [loadErr, setLoadErr] = useState<unknown>(null)
   const load = useCallback(() => {
-    api.doctorRemediation().then((v) => { setSnap(v); setLoadErr(null) }).catch(setLoadErr)
+    api.doctorRemediation().then((v) => {
+      setOff(isSwitchedOff(v)); setSnap(isSwitchedOff(v) ? null : v); setLoadErr(null)
+    }).catch(setLoadErr)
   }, [])
   useEffect(() => { load() }, [load, rev])
 
@@ -468,6 +515,7 @@ export function RemediationSection({ rev = 0, onRan }: { rev?: number; onRan?: (
     } finally { setBusy(false) }
   }
 
+  if (off) return null
   return (
     <Section title="Maintenance" hint="A health-scored engine keeps the stores tidy (embedding re-index, orphan prune, skill aging) on an adaptive schedule. Run it on demand here.">
       <div className="rounded-lg bg-surface-container px-4 py-3">
@@ -664,8 +712,9 @@ function FixButton({ fixId, onFixed }: { fixId: string; onFixed: () => void }) {
     let fix: DoctorFix | undefined
     let unread = ''
     try {
-      fix = (await api.doctorFixes()).fixes.find((f) => f.id === fixId)
-      if (!fix) unread = 'the server does not list it'
+      const catalog = await api.doctorFixes()
+      fix = isSwitchedOff(catalog) ? undefined : catalog.fixes.find((f) => f.id === fixId)
+      if (!fix) unread = isSwitchedOff(catalog) ? 'the Doctor has been switched off' : 'the server does not list it'
     } catch (e) { unread = e instanceof Error ? e.message : 'the request failed' }
     if (!(await confirm({
       title: fix ? `${fix.title}?` : 'Apply this fix?',

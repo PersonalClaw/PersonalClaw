@@ -28,35 +28,35 @@ The extension-provider taxonomy (the capability types an app can contribute) and
 
 ## Registered providers
 
-- **bash-action** — type `action` / `` (enabled); capabilities: execute, blocking
-- **browse-action** — type `action` / `` (enabled); capabilities: execute
-- **create-task-action** — type `action` / `` (enabled); capabilities: execute
-- **inbox-op-action** — type `action` / `` (enabled); capabilities: execute, reverse
-- **invoke-agent-action** — type `action` / `` (enabled); capabilities: execute
-- **notify-action** — type `action` / `` (enabled); capabilities: execute
-- **run-prompt-action** — type `action` / `` (enabled); capabilities: execute
-- **run-script-action** — type `action` / `` (enabled); capabilities: execute
-- **send-message-action** — type `action` / `` (enabled); capabilities: execute
-- **native-agents** — type `agent` / `` (enabled); capabilities: crud, acp
-- **filesystem-inbox** — type `inbox` / `` (enabled); capabilities: approvals, inputs
-- **native-knowledge** — type `knowledge` / `` (enabled); capabilities: bookmarks, documents, search
-- **native-vector-memory** — type `memory` / `` (enabled); capabilities: semantic_search, episodic, preferences
-- **bundled-chat** — type `model` / `bundled-chat` (enabled); capabilities: chat
-- **ollama-models** — type `model` / `` (enabled); capabilities: chat, embedding
-- **native-prompts** — type `prompt` / `` (enabled); capabilities: list, read, write, render
-- **native-skills** — type `skills` / `` (enabled); capabilities: crud, triggers, auto_generation
-- **native-tasks** — type `task` / `` (enabled); capabilities: crud, comments, labels, dependencies
-- **personalclaw-artifacts** — type `tool` / `` (enabled); capabilities: artifacts
-- **personalclaw-automation-tools** — type `tool` / `` (enabled); capabilities: automation_management
-- **personalclaw-code-map** — type `tool` / `` (enabled); capabilities: code_map
-- **personalclaw-computer-use-tools** — type `tool` / `` (enabled); capabilities: desktop_automation
-- **personalclaw-inbox-tools** — type `tool` / `` (enabled); capabilities: inbox
-- **personalclaw-knowledge-tools** — type `tool` / `` (enabled); capabilities: knowledge
-- **personalclaw-memory** — type `tool` / `` (enabled); capabilities: memory
-- **personalclaw-project-tools** — type `tool` / `` (enabled); capabilities: projects
-- **personalclaw-prompts** — type `tool` / `` (enabled); capabilities: prompts
-- **personalclaw-subagents** — type `tool` / `` (enabled); capabilities: subagents
-- **personalclaw-tasks-tools** — type `tool` / `` (enabled); capabilities: task
-- **personalclaw-tools** — type `tool` / `` (enabled); capabilities: skills, notification, system
-- **personalclaw-ui-docs** — type `tool` / `` (enabled); capabilities: ui_docs
-- **personalclaw-workflows** — type `tool` / `` (enabled); capabilities: workflows
+- **bash-action** — type `action` / ``; capabilities: execute, blocking
+- **browse-action** — type `action` / ``; capabilities: execute
+- **create-task-action** — type `action` / ``; capabilities: execute
+- **inbox-op-action** — type `action` / ``; capabilities: execute, reverse
+- **invoke-agent-action** — type `action` / ``; capabilities: execute
+- **notify-action** — type `action` / ``; capabilities: execute
+- **run-prompt-action** — type `action` / ``; capabilities: execute
+- **run-script-action** — type `action` / ``; capabilities: execute
+- **send-message-action** — type `action` / ``; capabilities: execute
+- **native-agents** — type `agent` / ``; capabilities: crud, acp
+- **filesystem-inbox** — type `inbox` / ``; capabilities: approvals, inputs
+- **native-knowledge** — type `knowledge` / ``; capabilities: bookmarks, documents, search
+- **native-vector-memory** — type `memory` / ``; capabilities: semantic_search, episodic, preferences
+- **bundled-chat** — type `model` / `bundled-chat`; capabilities: chat
+- **ollama-models** — type `model` / ``; capabilities: chat, embedding
+- **native-prompts** — type `prompt` / ``; capabilities: list, read, write, render
+- **native-skills** — type `skills` / ``; capabilities: crud, triggers, auto_generation
+- **native-tasks** — type `task` / ``; capabilities: crud, comments, labels, dependencies
+- **personalclaw-artifacts** — type `tool` / ``; capabilities: artifacts
+- **personalclaw-automation-tools** — type `tool` / ``; capabilities: automation_management
+- **personalclaw-code-map** — type `tool` / ``; capabilities: code_map
+- **personalclaw-computer-use-tools** — type `tool` / ``; capabilities: desktop_automation
+- **personalclaw-inbox-tools** — type `tool` / ``; capabilities: inbox
+- **personalclaw-knowledge-tools** — type `tool` / ``; capabilities: knowledge
+- **personalclaw-memory** — type `tool` / ``; capabilities: memory
+- **personalclaw-project-tools** — type `tool` / ``; capabilities: projects
+- **personalclaw-prompts** — type `tool` / ``; capabilities: prompts
+- **personalclaw-subagents** — type `tool` / ``; capabilities: subagents
+- **personalclaw-tasks-tools** — type `tool` / ``; capabilities: task
+- **personalclaw-tools** — type `tool` / ``; capabilities: skills, notification, system
+- **personalclaw-ui-docs** — type `tool` / ``; capabilities: ui_docs
+- **personalclaw-workflows** — type `tool` / ``; capabilities: workflows

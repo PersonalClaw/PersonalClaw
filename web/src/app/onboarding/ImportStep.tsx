@@ -66,15 +66,21 @@ const CATEGORY_LABEL: Record<string, string> = {
   memories: 'Memories',
   mcp_servers: 'MCP servers',
   skills: 'Skills',
+  agents: 'Agents',
+  prompts: 'Prompts',
+  conversations: 'Conversations',
   settings: 'Settings',
 }
 /** Where each category lands here — the destination in plain words, so ticking a box
  *  is an informed choice rather than a guess at a noun. */
 const CATEGORY_BLURB: Record<string, string> = {
-  instructions: 'Your CLAUDE.md / AGENTS.md conventions, saved as memories.',
+  instructions: 'Your CLAUDE.md / AGENTS.md, rules and project instructions, saved as memories.',
   memories: 'Notes the other tool was already remembering for you.',
   mcp_servers: 'MCP server definitions, added to your MCP config.',
   skills: 'Skills, copied in and re-scanned like a Store install.',
+  agents: 'Subagents, added to your Agents page.',
+  prompts: 'Slash commands and saved prompts, run in chat as @name.',
+  conversations: 'Past conversations, listed in Chat under the dates they happened.',
   settings: 'Staged for you to review — never merged into live config.',
 }
 
@@ -104,6 +110,9 @@ export function labelOfCategory(category: string): string {
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+
+/** Whether an item begins ticked: every `new` one, bar what the other tool never let run. */
+const startsTicked = (i: OnboardingImportItem) => i.state === 'new' && i.preselected !== false
 
 /** What was left out of ONE item, value-free. The skipped count covers dropped secret
  *  keys and credential files inside a skill; a redaction is a credential-shaped string
@@ -193,9 +202,11 @@ export function ImportStep({ onDone, onSkip }: {
     api.onboardingImportScan().then((s) => {
       setScan(s)
       // Everything that CAN come over starts ticked: the user came here to bring their
-      // setup over, and un-ticking is a smaller act than hunting for what to tick.
+      // setup over, and un-ticking is a smaller act than hunting for what to tick. The one
+      // exception is an item the other tool itself never let run (`preselected: false` — a
+      // project's MCP server nobody approved there): bringing that over is the user's call.
       setPicked(new Set(s.sources.filter((x) => x.detected)
-        .flatMap((x) => x.items.filter((i) => i.state === 'new').map((i) => i.fingerprint))))
+        .flatMap((x) => x.items.filter(startsTicked).map((i) => i.fingerprint))))
       setOpen(new Set())
     }).catch(setScanError)
   }, [])
@@ -292,6 +303,8 @@ export function ImportStep({ onDone, onSkip }: {
    *  tool" read as one tool on a machine that has two, and "its setup" could only mean one. */
   const found = detected.map((s) => s.display_name).join(' and ')
   const one = detected.length === 1
+  /** New items the step leaves unticked, so "everything is ticked" stays true. */
+  const unticked = choosable.filter((i) => !startsTicked(i)).length
 
   return (
     <div className="flex flex-col gap-l">
@@ -306,7 +319,7 @@ export function ImportStep({ onDone, onSkip }: {
               <p data-type="body-s" className="text-on-surface-var">
                 {nothingNew
                   ? `Everything we found in ${found} is already here, or differs from what you have — nothing new to bring over.`
-                  : `We found ${found} on this machine. Bring ${one ? 'its' : 'their'} setup over — ${one ? 'it is' : 'they are'} only read, nothing in ${one ? 'it' : 'them'} is changed, and credentials are never imported. Everything is ticked; choose item by item inside any group.`}
+                  : `We found ${found} on this machine. Bring ${one ? 'its' : 'their'} setup over — ${one ? 'it is' : 'they are'} only read, nothing in ${one ? 'it' : 'them'} is changed, and credentials are never imported. Everything is ticked${unticked ? `, except ${plural(unticked, 'item', 'items')} the other tool never let run` : ''}; choose item by item inside any group.`}
               </p>
 
               <motion.div className="flex flex-col gap-s" initial="initial" animate="animate"
@@ -403,7 +416,30 @@ function SourceCard({ source, groups, picked, onPick, open, onToggle }: {
             open={open.has(group.key)} onToggle={() => onToggle(group.key)} />
         ))}
       </div>
+      <NotImportedList source={source} />
     </motion.section>
+  )
+}
+
+/** What the tool holds that does not come over, with how many and why. Listed on the card, beside
+ *  what does, because a kind left out without a word reads as a kind the tool never had. */
+function NotImportedList({ source }: { source: OnboardingImportSource }) {
+  const entries = source.not_imported ?? []
+  if (entries.length === 0) return null
+  return (
+    <section role="group" aria-label={`Not brought over from ${source.display_name}`}
+      className="flex flex-col gap-xs">
+      <span data-type="label-s" className="text-on-surface">Not brought over</span>
+      <ul className="flex flex-col gap-xs">
+        {entries.map((entry) => (
+          <li key={entry.what} data-type="caption" className="text-on-surface-var">
+            <span className="text-on-surface">{entry.what}</span>
+            <span className="text-on-surface-low tabular-nums"> · {entry.count}</span>
+            <span className="text-on-surface-low"> — {entry.why}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 
@@ -556,15 +592,22 @@ function ItemRow({ item, picked, onPick }: {
     <li tabIndex={choosable ? undefined : -1} className="flex items-start gap-s py-xs">
       {choosable
         ? <Checkbox checked={picked} onChange={(on) => onPick([item.fingerprint], on)} className="mt-0.5"
-            ariaLabel={withheld ? `${item.title}, ${withheld}` : item.title} />
+            ariaLabel={[item.title, item.origin, withheld].filter(Boolean).join(', ')} />
         : <span aria-hidden="true" className="size-4 shrink-0" />}
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-s">
           <span data-type="body-s" className="min-w-0 flex-1 break-words text-on-surface">{item.title}</span>
           <span data-type="caption" className={`shrink-0 ${STATE_TONE[item.state]}`}>{STATE_LABEL[item.state]}</span>
         </div>
+        {/* Where in the tool it was found — two scopes can hold a server of one name. */}
+        {item.origin && (
+          <p data-type="caption" className="break-words text-on-surface-low">{item.origin}</p>
+        )}
         {!choosable && item.detail && (
           <p data-type="caption" className="text-on-surface-low">{asSentence(item.detail)}</p>
+        )}
+        {item.note && (
+          <p data-type="caption" className="text-on-surface-var">{item.note}</p>
         )}
         {withheld && (
           <p data-type="caption" className="flex items-start gap-xs text-on-surface-var">
@@ -613,6 +656,12 @@ function Report({ report, scan, onContinue }: {
   const leftOut = report.unselected.filter((u) => u.state === 'new')
   const scanned = new Map(scan.sources.flatMap((s) => s.items.map((i) => [i.fingerprint, i] as const)))
   const gone = report.missing.map((fp) => scanned.get(fp)?.title ?? fp)
+  /** A row by the name the list showed it under — its title and where it was found — rather than
+   *  its key, which for a scoped server or a project file is the importer's own bookkeeping. */
+  const named = (r: ReportRow) => {
+    const item = scanned.get(r.fingerprint)
+    return item ? [item.title, item.origin].filter(Boolean).join(' · ') : r.key
+  }
   return (
     <div className="flex flex-col gap-l">
       <p data-type="body-m" className="flex items-center gap-xs" style={{ color: 'var(--color-success)' }}>
@@ -620,10 +669,10 @@ function Report({ report, scan, onContinue }: {
       </p>
 
       {conflicts.length > 0 && (
-        <OutcomeList title="Kept what you already had" tone="text-warn" rows={conflicts} />
+        <OutcomeList title="Kept what you already had" tone="text-warn" rows={conflicts} name={named} />
       )}
       {rejected.length > 0 && (
-        <OutcomeList title="Refused for safety" tone="text-danger" rows={rejected} />
+        <OutcomeList title="Refused for safety" tone="text-danger" rows={rejected} name={named} />
       )}
       {gone.length > 0 && (
         <section role="group" aria-label="No longer there" className="flex flex-col gap-s">
@@ -642,7 +691,7 @@ function Report({ report, scan, onContinue }: {
           <ul className="flex flex-col gap-xs">
             {leftOut.slice(0, 8).map((u) => (
               <li key={u.fingerprint} data-type="caption" className="text-on-surface-var">
-                {labelOfCategory(u.category)} · {u.title}
+                {labelOfCategory(u.category)} · {named(u)}
               </li>
             ))}
           </ul>
@@ -672,7 +721,7 @@ function Report({ report, scan, onContinue }: {
                 <div key={r.fingerprint} data-type="caption" className="flex gap-s">
                   <dt className="w-[7rem] shrink-0 text-on-surface-low">{labelOfCategory(r.category)}</dt>
                   <dd className="min-w-0 flex-1 break-words text-on-surface-var">
-                    {r.key}{r.destination ? ` → ${r.destination}` : ''}
+                    {named(r)}{r.destination ? ` → ${r.destination}` : ''}
                   </dd>
                 </div>
               ))}
@@ -704,10 +753,12 @@ function Report({ report, scan, onContinue }: {
  *  catches, and `group` — not the `region` landmark — is the right role for a labelled
  *  set of related rows inside a step body (the shape the essentials step's lanes use).
  *  Without the role the label is discarded and "which list am I in" is unanswerable. */
-function OutcomeList({ title, tone, rows }: {
+function OutcomeList({ title, tone, rows, name }: {
   title: string
   tone: string
   rows: ReportRow[]
+  /** How a row is named: the title (and where it was found) the list showed it under. */
+  name: (row: ReportRow) => string
 }) {
   return (
     <section role="group" className="flex flex-col gap-s" aria-label={title}>
@@ -717,7 +768,7 @@ function OutcomeList({ title, tone, rows }: {
       <ul className="flex flex-col gap-xs">
         {rows.map((r) => (
           <li key={r.fingerprint} data-type="caption">
-            <span className="text-on-surface">{labelOfCategory(r.category)} · {r.key}</span>
+            <span className="text-on-surface">{labelOfCategory(r.category)} · {name(r)}</span>
             {r.detail && <span className="text-on-surface-low"> — {r.detail}</span>}
           </li>
         ))}

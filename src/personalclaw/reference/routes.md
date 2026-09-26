@@ -418,6 +418,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/lessons` — add a lesson to memory.db ``lesson.*``.
 - `GET /api/lexicon/corrections` — list learned corrections (most-corrected first).
 - `POST /api/lexicon/corrections` — {heard, meant, always?} — record a learned fix
+- `DELETE /api/lexicon/corrections/{id}` — forget one learned correction.
 - `PATCH /api/lexicon/corrections/{id}` — {auto_apply} — toggle 'always fix this'.
 - `POST /api/lexicon/rebuild` — resync graph-sourced terms from knowledge entities
 - `POST /api/lexicon/reset` — drop all terms + corrections (rebuild repopulates graph).
@@ -594,6 +595,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/packs/{name}/finish-setup` — Return a pack's re-runnable setup interview (the "Finish setup" chip).
 - `POST /api/packs/{name}/roster/deploy` — One-click team deploy: promote a pack's ``always`` roster tier (§4.2).
 - `POST /api/packs/{name}/triggers/deploy` — Add a pack's staged triggers to Automations — DISABLED (§3.1/§4, AP-7).
+- `POST /api/packs/{name}/uninstall` — Uninstall a pack, never a copy you edited. DRY-RUN unless ``confirm`` is true.
 - `POST /api/packs/{name}/update` — The §1 ``pack_owned`` update flow. DRY-RUN unless ``confirm`` is true.
 - `GET /api/proactive/digest` — §5.1's card, assembled from the last digest run.
 - `POST /api/proactive/digest/reply` — one tap or one typed reply. Body ``{run_id, text}``.
@@ -763,10 +765,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/tools/provider-toggle` — enable/disable a whole NATIVE tool provider.
 - `GET /api/tools/savings` — the TokenJuice savings (counterfactual) summary.
 - `POST /api/tools/toggle` — enable/disable a native-provider tool.
-- `GET /api/triggers` — every trigger, both kinds.
-- `POST /api/triggers` — create a schedule or lifecycle trigger.
+- `GET /api/triggers` — every trigger.
+- `POST /api/triggers` — create a schedule, lifecycle or data-event trigger.
 - `GET /api/triggers/doctor` — structural problems across every trigger (§7 criterion 12).
-- `GET /api/triggers/history` — the run feed across ALL THREE kinds (AUTO crit 4).
+- `GET /api/triggers/history` — the run feed across every kind (AUTO crit 4).
 - `GET /api/triggers/variables` — the ``$variables`` each trigger kind exposes.
 - `POST /api/triggers/view/render` — the `view` kind's production render caller (WF2AUT-6).
 - `GET /api/triggers/week` — the week-grid projection, from `?start=` (AUTO-A1 — S70).
@@ -776,7 +778,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/triggers/{id}/history` — run records; other kinds answer `supported: false`.
 - `GET /api/triggers/{id}/history/{run_id}` — one full run record.
 - `POST /api/triggers/{id}/run` — fire now.
-- `POST /api/triggers/{id}/test` — execute a lifecycle or event trigger's action once.
+- `POST /api/triggers/{id}/test` — execute a lifecycle trigger's action once.
 - `POST /api/triggers/{id}/to-chat` — open a schedule trigger as a chat session.
 - `POST /api/triggers/{id}/toggle` — enable/disable.
 - `POST /api/update` — advance the checkout to its release, rebuild, restart.

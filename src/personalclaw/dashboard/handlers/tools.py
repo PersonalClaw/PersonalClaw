@@ -115,6 +115,7 @@ async def api_tools_list(request: web.Request) -> web.Response:
     sources are already disjoint by construction).
     """
     from personalclaw.tool_providers.registry import (
+        EXTERNAL_MCP_PROVIDER,
         clear_load_failures,
         get_load_failures,
         list_all_tools,
@@ -154,6 +155,7 @@ async def api_tools_list(request: web.Request) -> web.Response:
         risk_level: object = "safe",
         *,
         default_tier: str = "builtin",
+        server_tool: str = "",
     ) -> None:
         key = (provider, name)
         if key in seen or not name:
@@ -163,6 +165,10 @@ async def api_tools_list(request: web.Request) -> web.Response:
         prov_off = provider in disabled_provs
         tools_out.append(
             {
+                # An external MCP server's tool, as the SERVER names it: what its switch writes
+                # to that server's `disabledTools` (`POST /api/mcp/toggle-tool`). Only on those
+                # rows; `name` is how an agent sees it (`mcp/<server>/<tool>`).
+                **({"serverTool": server_tool} if server_tool else {}),
                 "name": name,
                 "description": description,
                 "provider": provider,
@@ -179,8 +185,10 @@ async def api_tools_list(request: web.Request) -> web.Response:
                 # so the UI can show "off because the provider is off".
                 "locked": locked,
                 "providerDisabled": prov_off,
-                "disabled": (not locked)
-                and (prov_off or tool_prefs.key_for(provider, name) in disabled_keys),
+                # The one check the runtime and `POST /api/tools/invoke` make, so the switch
+                # reads off exactly when an agent cannot call the tool. That includes an MCP
+                # server's tool switched off in its `disabledTools`, which this used to miss.
+                "disabled": tool_prefs.is_disabled(provider, name, disabled_keys, disabled_provs),
                 # Which activation GROUP this tool belongs to
                 # (derived from its provider; core-locked names are always "core").
                 # Read-only here — activation is per-session runtime state, not a pref.
@@ -228,14 +236,13 @@ async def api_tools_list(request: web.Request) -> web.Response:
     # This already includes personalclaw-core (registered via
     # their bundled app.json as InProcessMcpToolProvider, which applies the same
     # infer_risk_from_name classification) plus the entity categories, so there is no
-    # separate hardcoded core/schedule enumeration. Skip the generic "mcp" provider —
-    # Source 3 emits external MCP tools labeled per-server; re-adding them here under
-    # provider="mcp" would produce a phantom duplicate group (the _add dedup keys on
-    # provider).
+    # separate hardcoded core/schedule enumeration. Skip the provider that serves external
+    # MCP servers — Source 3 emits their tools labeled per-server; re-adding them here under
+    # its name would produce a phantom duplicate group (the _add dedup keys on provider).
     try:
         registry_tools = await list_all_tools()
         for t in registry_tools:
-            if t.provider == "mcp":
+            if t.provider == EXTERNAL_MCP_PROVIDER:
                 continue
             _add(
                 t.name,
@@ -249,14 +256,27 @@ async def api_tools_list(request: web.Request) -> web.Response:
         logger.warning("Failed to list tools from registry", exc_info=True)
         record_failure("tool-registry", str(exc))
 
+    # A tool provider an app registered that serves nothing says why, where its tools would have
+    # been: refused because a name it offers belongs to another provider, or its enable failed.
+    try:
+        from personalclaw.providers.registry import get_provider_registry
+
+        for ext in get_provider_registry().list_by_type("tool"):
+            if ext.error:
+                record_failure(ext.name, ext.error)
+    except Exception:  # noqa: BLE001 — the catalog still lists what does serve
+        logger.warning("Failed to read the tool providers' status", exc_info=True)
+
     # Dict-defined external MCP tools declare no risk_level, so infer a declared risk
     # from the tool name for the Tools-page indicator — matching what the MCP adapter
     # feeds the approval gate. Read tools stay safe.
     from personalclaw.task_modes import infer_risk_from_name
 
-    # Source 3: External MCP servers from the LIVE in-process client registry —
-    # exactly the tools the native loop can actually call (no catalog/loop
-    # divergence). Empty when the optional 'mcp' SDK isn't installed.
+    # Source 3: External MCP servers from the LIVE in-process client registry — the tools
+    # each connected server offers, over the connection an agent's call uses. An agent
+    # reaches them only through the provider Source 2 skips; while none is registered the
+    # server's own status says so (`mcp_discovery.as_agents_see_it`), so the page can show
+    # what a server offers without claiming an agent can call it.
     #
     # Servers are probed CONCURRENTLY with a short per-server timeout: one slow
     # or unreachable server must not stall the whole catalog (and with it the
@@ -264,37 +284,34 @@ async def api_tools_list(request: web.Request) -> web.Response:
     try:
         from personalclaw.mcp_client import get_mcp_client_registry
 
-        registry = get_mcp_client_registry()
-        if registry is not None:
-            conns = list(registry.items())
+        conns = list(get_mcp_client_registry().items())
 
-            async def _list_one(name: str, conn) -> tuple[str, list]:
-                try:
-                    tools = await asyncio.wait_for(
-                        conn.list_tools(), timeout=_MCP_LIST_TIMEOUT_SECS
-                    )
-                    return name, list(tools)
-                except (asyncio.TimeoutError, Exception):  # noqa: BLE001
-                    logger.debug(
-                        "MCP server '%s' tool listing skipped (slow/unreachable)",
-                        name,
-                        exc_info=True,
-                    )
-                    return name, []
+        async def _list_one(name: str, conn) -> tuple[str, list]:
+            try:
+                tools = await asyncio.wait_for(conn.list_tools(), timeout=_MCP_LIST_TIMEOUT_SECS)
+                return name, list(tools)
+            except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+                logger.debug(
+                    "MCP server '%s' tool listing skipped (slow/unreachable)",
+                    name,
+                    exc_info=True,
+                )
+                return name, []
 
-            results = await asyncio.gather(*(_list_one(n, c) for n, c in conns))
-            for server_name, tools in results:
-                for tool in tools:
-                    _add(
-                        f"mcp/{server_name}/{tool.name}",
-                        tool.description,
-                        server_name,
-                        tool.input_schema,
-                        risk_level=infer_risk_from_name(tool.name),
-                        # An external MCP server has no supply-chain tier — see the `tier`
-                        # note in `_add`. "" is the honest answer, `builtin` would be a lie.
-                        default_tier="",
-                    )
+        results = await asyncio.gather(*(_list_one(n, c) for n, c in conns))
+        for server_name, tools in results:
+            for tool in tools:
+                _add(
+                    f"mcp/{server_name}/{tool.name}",
+                    tool.description,
+                    server_name,
+                    tool.input_schema,
+                    risk_level=infer_risk_from_name(tool.name),
+                    # An external MCP server has no supply-chain tier — see the `tier`
+                    # note in `_add`. "" is the honest answer, `builtin` would be a lie.
+                    default_tier="",
+                    server_tool=tool.name,
+                )
     except Exception as exc:
         logger.warning("Failed to list tools from MCP client registry", exc_info=True)
         record_failure("mcp", str(exc))
@@ -363,18 +380,28 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     Internal-only (loopback + X-Internal-Secret): used by zero-token cron
     scripts so a sandboxed subprocess gets the same MCP+native tool surface
     the agent has, without importing the in-process registry. Body:
-    ``{"tool": str, "arguments": dict, "provider"?: str, "confirm_risk"?: str}``.
+    ``{"tool": str, "arguments": dict, "confirm_risk"?: str}``.
     Returns ``{ok, output, error}``.
 
-    "The same surface the agent has" starts with the nine filesystem/shell tools, which is
-    why the resolver PREPENDS the cwd-coupled platform provider rather than reading the
-    registry alone — see ``_platform_provider_for_invoke`` for why it is not registered and
-    what #3310 measured when this route was the one consumer that skipped it.
+    "The same surface the agent has" is literal: the tool is resolved by name
+    (``tool_providers.registry.resolve``) over ``tool_providers.registry.tool_surface``, the list
+    ``provider_bridge`` builds an agent's tools from, to the one provider an agent's index maps the
+    name to. A name has one provider, so there is nothing for a caller to choose: a ``provider``
+    in the body is not read. It used to be tried first, which let a request hand ``bash`` to any
+    registered provider that also advertised it. So an external MCP server's tool runs through the
+    provider that puts it on an agent's surface, and is out of reach when an agent could not reach
+    it either. The surface starts with the nine filesystem/shell tools — see
+    ``_platform_provider_for_invoke`` for why that provider is not registered and what #3310
+    measured when this route skipped it.
 
     "The same surface the agent has" includes the user's tool preferences: a tool disabled
     on the Tools page is refused here with ``403 tool_disabled``, exactly as the runtime
     drops it at schema assembly. Core-locked tools and the locked platform provider are
     exempt (``tool_prefs.is_disabled`` handles that), so the primitives stay reachable.
+
+    It includes the agent's hard deny-list: a tool name ``security.is_denied`` refuses is
+    refused here with ``403 tool_denied_by_policy``, as the runtime refuses it before asking
+    for any approval.
 
     It also includes the risk tier (#506). A call whose EFFECTIVE risk resolves as
     ``destructive`` is refused with ``403 risk_confirmation_required`` unless the body
@@ -383,7 +410,7 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     itself for why the scope stops exactly there.
     """
     from personalclaw.agents.native.builtin_tools import PLATFORM_TOOL_NAMES
-    from personalclaw.tool_providers.registry import get_provider, list_providers
+    from personalclaw.tool_providers.registry import resolve, tool_surface
 
     try:
         body = await request.json()
@@ -427,64 +454,23 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
                 status=403,
             )
 
-    provider_raw = body.get("provider")
-    if provider_raw is not None and not isinstance(provider_raw, str):
-        return web.json_response({"ok": False, "error": "provider must be a string"}, status=400)
-    provider_name = provider_raw or ""
-
     # The cwd-coupled platform provider, built for this call — see
     # `_platform_provider_for_invoke` for why it is not in the registry and why this route
-    # has to prepend it (#3310). Built once here: both resolver arms need it, and it is a
-    # cheap constructor (no I/O beyond resolving the workspace root).
+    # has to prepend it (#3310). A cheap constructor (no I/O beyond resolving the workspace root).
     platform, platform_refusal = _platform_provider_for_invoke()
 
-    # Resolve the provider: explicit name, else the first provider advertising the tool.
-    provider = None
-    if provider_name:
-        # REGISTRY FIRST, platform as the fallback for its own name. The two namespaces are
-        # disjoint in production — `tool_prefs.LOCKED_PROVIDERS` reserves
-        # `personalclaw-filesystem` for the platform bundle and nothing registers it — so
-        # this order changes no existing by-name resolution; it only adds the one name the
-        # registry can never answer for.
-        provider = get_provider(provider_name)
-        if provider is None and platform is not None and platform.name == provider_name:
-            provider = platform
-        if provider is None:
-            # A request that named the platform provider while the workspace is unresolved
-            # gets the refusal that explains itself, not "unknown provider" — the provider
-            # exists; the folder it would run in does not.
-            if platform_refusal and provider_name == "personalclaw-filesystem":
-                return json_error("workspace_unresolved", message=platform_refusal, status=503)
-            return web.json_response(
-                {"ok": False, "error": f"unknown tool provider: {provider_name}"}, status=404
-            )
-    else:
-        # PLATFORM FIRST, matching `provider_bridge`'s own `[platform, *list_providers()]`:
-        # the nine platform tools are the primitives, and a later-registered provider
-        # reusing one of their names must not capture a call the agent would have served
-        # from the bundle.
-        for p in ([platform] if platform is not None else []) + list_providers():
-            try:
-                if any(t.name == tool_name for t in await p.list_tools()):
-                    provider = p
-                    break
-            except Exception:
-                continue
-    if provider is None:
-        # Same distinction as above for the no-provider arm: if the tool we could not find
-        # is one the platform bundle owns, the workspace is why — say so.
+    # The tool, resolved the way an agent turn resolves it: by NAME, over the agent's own
+    # surface, to the one provider serving it. A `provider` in the body is not read. It was a key
+    # once, and "Try it" failed for every external MCP tool (the Tools page labels one with its
+    # SERVER, which no registry holds); then a preference tried first, which handed `bash` to any
+    # registered provider that also advertised it.
+    resolved = await resolve(tool_surface(platform), tool_name)
+    if resolved is None:
+        # A tool the platform bundle owns is missing because the workspace is: say so.
         if platform_refusal and tool_name in PLATFORM_TOOL_NAMES:
             return json_error("workspace_unresolved", message=platform_refusal, status=503)
         return web.json_response({"ok": False, "error": f"tool not found: {tool_name}"}, status=404)
-
-    # Resolve the tool's own definition once: both the user-disabled gate below and the
-    # declared risk after it need it, and a second `list_tools()` per request is a
-    # per-provider round trip (an MCP server, for the bridged providers).
-    _tool_def = None
-    try:
-        _tool_def = next((t for t in await provider.list_tools() if t.name == tool_name), None)
-    except Exception:  # noqa: BLE001 — a broken provider must not turn into a 500 here
-        _tool_def = None
+    provider, _tool_def = resolved
 
     # The user-disabled gate. This route executes a tool, so the Tools page toggle has to
     # reach it: the toggle presents itself as "this tool is off", and it was honored only
@@ -525,13 +511,39 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
             status=403,
         )
 
+    # The agent's hard deny-list, by tool NAME, the check `NativeAgentRuntime._guard_and_invoke`
+    # makes before any approval is asked for. It was never made here, and external MCP servers
+    # are where its names live: a cron script (or "Try it", once it could reach them) ran an
+    # `mcp/<server>/delete_stack` that no agent can run, whatever it is approved for.
+    from personalclaw import security
+
+    denied = security.is_denied(tool_name)
+    if denied:
+        try:
+            _sel().log_tool_invocation(
+                session_key=request.headers.get("X-Session-Key", "") or "internal",
+                agent="",
+                source="tool_invoke",
+                tool_name=tool_name,
+                tool_kind=provider.name,
+                outcome="denied",
+                error=denied,
+            )
+        except Exception:  # noqa: BLE001 — an unaudited refusal is still a refusal
+            pass
+        return json_error(
+            "tool_denied_by_policy",
+            message=f"{denied}. No agent may run {tool_name!r}, and neither may this request.",
+            status=403,
+        )
+
     # Effective risk of this direct invocation, for the SEL — so this path (cron
     # scripts + the inspector "Try it") is as auditable as the chat gate ("what
     # destructive tool ran"). Resolve the declared risk from the provider's tool
     # def, then downgrade per-invocation (a read-only bash call is safe).
     from personalclaw.task_modes import resolve_effective_risk
 
-    _declared = getattr(_tool_def, "risk_level", "") if _tool_def is not None else ""
+    _declared = getattr(_tool_def, "risk_level", "")
     _risk = resolve_effective_risk(_declared, tool_name, "", arguments)
 
     caller = request.headers.get("X-Session-Key", "") or "internal"
@@ -633,8 +645,9 @@ async def api_tools_toggle(request: web.Request) -> web.Response:
     used to promise only the first, accurately — and the toggle's UI presented itself as
     the tool's on/off switch while a second path executed it anyway (#437).
 
-    Core-locked tools are rejected (4xx). MCP tools use ``/api/mcp/toggle-tool`` (which
-    writes mcp.json) — the page routes by provider.
+    Core-locked tools are refused with 409. So is an MCP server's tool (``mcp/<server>/<tool>``),
+    with the route that does switch it: ``POST /api/mcp/toggle-tool``, which writes that server's
+    ``disabledTools`` in mcp.json, the one list an ACP agent and this gateway both read.
     """
     from personalclaw.tool_providers import tool_prefs
     from personalclaw.tool_providers.registry import list_all_tools
@@ -665,8 +678,10 @@ async def api_tools_toggle(request: web.Request) -> web.Response:
         result.get("error", ""),
     )
     if not result.get("ok"):
-        # locked-tool rejection → 409 Conflict (a real, expected denial, not a bug).
-        return web.json_response(result, status=409 if result.get("locked") else 400)
+        # A locked tool, or an MCP server's tool (switched on its server's own list) → 409
+        # Conflict: a real, expected denial, not a bug.
+        conflict = result.get("locked") or result.get("elsewhere")
+        return web.json_response(result, status=409 if conflict else 400)
     return web.json_response(result)
 
 
@@ -735,11 +750,11 @@ async def api_tool_groups(request: web.Request) -> web.Response:
     (``tools.group_defaults``), both via the config API.
     """
     from personalclaw.tool_providers import groups as groups_mod
-    from personalclaw.tool_providers.registry import list_all_tools
+    from personalclaw.tool_providers.registry import EXTERNAL_MCP_PROVIDER, list_all_tools
 
     defs: list = []
     try:
-        defs = [t for t in await list_all_tools() if t.provider != "mcp"]
+        defs = [t for t in await list_all_tools() if t.provider != EXTERNAL_MCP_PROVIDER]
     except Exception:
         logger.warning("Failed to list tools for the group partition", exc_info=True)
     # The cwd-coupled platform provider isn't in the registry (same reason the

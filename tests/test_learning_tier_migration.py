@@ -38,6 +38,7 @@ from personalclaw.workflows.models import (
     RunStatus,
     WorkflowRun,
 )
+from personalclaw.workflows.step_usage import NOTHING_SENT
 
 
 @pytest.fixture
@@ -103,6 +104,7 @@ def _fail(run: WorkflowRun, node: str) -> None:
         node,
         epoch=1,
         failure=Failure(failure_class=FailureClass.INTERNAL, cause_plain="boom"),
+        usage=NOTHING_SENT,
         attempt=1,
         retries_exhausted=True,
     )

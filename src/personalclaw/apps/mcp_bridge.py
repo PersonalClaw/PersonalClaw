@@ -96,9 +96,16 @@ def register_app_mcp_servers(manifest: AppManifest) -> list[str]:
         base = app_dir(manifest.name)
     except Exception:
         base = None
+    from personalclaw.mcp_discovery import server_name_problem
+
     registered: list[str] = []
     for name, spec in servers.items():
         if not isinstance(spec, dict):
+            continue
+        problem = server_name_problem(_ns(manifest.name, str(name)))
+        if problem is not None:
+            # Its tools would be named as another of the app's servers'.
+            logger.warning("app %s: MCP server %r not registered: %s", manifest.name, name, problem)
             continue
         spec = dict(spec)  # don't mutate the manifest's object
         if base is not None and spec.get("command") and "url" not in spec and not spec.get("cwd"):
@@ -114,16 +121,23 @@ def register_app_mcp_servers(manifest: AppManifest) -> list[str]:
 
 def deregister_app_mcp_servers(app_name: str) -> int:
     """Remove every ``{app_name}:*`` MCP server from the live config AND the installed agent
-    config, with the values it owns. Returns how many servers were removed.
+    config, with the values it owns, and close their live connections. Returns how many
+    servers were removed.
 
     The agent config (``personalclaw.json``) also carries the server spec under
     ``mcpServers`` plus ``@{app}:{server}`` refs in ``tools``/``allowedTools`` —
     discovery reads it as a ``source="agent"`` server, so a deregister that only
     cleaned mcp.json left the server visible + uncallable forever (the bug behind
     'the provider didn't delete'). The names are collected from both files, refs included,
-    and removed through ``secret_refs.remove_mcp_servers``, the one delete every surface uses."""
-    from personalclaw.config.secret_refs import mcp_documents, remove_mcp_servers
+    and removed through ``secret_refs.remove_mcp_servers``, the one delete every surface uses.
 
+    The connections close here too, not on the MCP client's next read: a server whose spec is
+    unchanged by an update (the same command, the same args) would otherwise keep the process
+    it spawned, and that process runs the app's previous code."""
+    from personalclaw.config.secret_refs import mcp_documents, remove_mcp_servers
+    from personalclaw.mcp_client import close_servers
+
+    close_servers(lambda key: server_app(key) == app_name)
     prefix = f"{app_name}{_NS_SEP}"
     names: set[str] = set()
     for path in mcp_documents():

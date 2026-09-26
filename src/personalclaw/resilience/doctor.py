@@ -1478,6 +1478,39 @@ async def _probe_credential_backend(_ctx: DoctorContext) -> ProbeResult:
     )
 
 
+async def _probe_credentials_file(ctx: DoctorContext) -> ProbeResult:
+    """security — does ``credentials.json`` still hold a credential the store does not?
+
+    ``credentials.json`` was a second credential store until this release; the gateway moves it
+    into the credential store at boot and deletes it once every value reads back
+    (``llm.credentials.move_credentials_file``). What it could not settle is listed here by
+    NAME, with what to do for each, because nothing reads that file any more: a value left in it
+    is a credential no workflow, trigger or provider can use. Never reads a value into a result.
+    """
+    from personalclaw.llm.credentials import CREDENTIALS_FILE, credentials_file_leftovers
+
+    leftovers = await asyncio.to_thread(credentials_file_leftovers, ctx.home)
+    if not leftovers:
+        return ProbeResult(
+            ok=True, detail=f"no credential is waiting in {CREDENTIALS_FILE} to be moved"
+        )
+    count = len(leftovers)
+    return ProbeResult(
+        ok=False,
+        detail=(
+            f"{CREDENTIALS_FILE} holds {count} credential{'s' if count != 1 else ''} "
+            "PersonalClaw no longer reads: "
+            + " ".join(f"{leftover.name}: {leftover.reason}" for leftover in leftovers)
+        ),
+        evidence={"names": [leftover.name for leftover in leftovers]},
+        remedy=(
+            "No automatic fix, because each value is yours to place: for every name listed, do "
+            "what it says, and the next start deletes the file. Settings → Secrets is where a "
+            "credential is stored now."
+        ),
+    )
+
+
 async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
     """knowledge — which ingested items can search NOT fully reach? (RET-2, RET-4)
 
@@ -2068,6 +2101,15 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_credential_backend,
             "Active credential backend (keychain / .env 0600)",
+        )
+    )
+    register_probe(
+        Probe(
+            "security.credentials_file",
+            "security",
+            Tier.CAPABILITY,
+            _probe_credentials_file,
+            "credentials.json moved into the credential store",
         )
     )
     register_probe(

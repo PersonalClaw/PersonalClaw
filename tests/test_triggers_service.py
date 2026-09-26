@@ -897,7 +897,7 @@ def homes(tmp_path, monkeypatch):
 
 
 def test_a_SUPPRESSED_row_lands_in_the_TICKS_home_not_the_AMBIENT_one(homes):
-    """🔴 THE DEFECT. `_persist_suppression` built its `ScheduleRunStore` from `config_dir()` while
+    """🔴 THE DEFECT. `persist_suppression` built its `ScheduleRunStore` from `config_dir()` while
     the tick around it ran under `base_dir`, so a tick driven against an isolated home appended its
     suppression rows to whatever home the environment happened to name — in practice the operator's
     real `~/.personalclaw/cron-history/`. `tick`'s own docstring had already ruled on this for the

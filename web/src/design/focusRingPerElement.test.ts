@@ -68,7 +68,7 @@ const INVENTORY: { file: string; anchor: string; ring: RegExp; what: string }[] 
   // ── the control IS the box ──
   {
     file: 'pages/ChatPage.tsx',
-    anchor: 'h-8 min-w-[200px] max-w-[420px] rounded-md bg-surface-high',
+    anchor: 'h-8 w-full min-w-0 max-w-[420px] rounded-md bg-surface-high',
     ring: ELEMENT_RING,
     what: 'rename-this-chat input',
   },

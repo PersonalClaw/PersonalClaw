@@ -64,6 +64,10 @@ def importer_home(tmp_path, monkeypatch):
     home = tmp_path / "importer"
     home.mkdir()
     monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    # A stored credential is mirrored into os.environ; registering the name makes teardown
+    # remove it again.
+    monkeypatch.setenv("SEARCH_API_KEY", "x")
+    monkeypatch.delenv("SEARCH_API_KEY")
     return home
 
 
@@ -137,12 +141,12 @@ def test_configure_saves_credential_and_writes_server(importer_home):
     mcp = json.loads((importer_home / "mcp.json").read_text())
     assert "web-search" in mcp["mcpServers"]
 
-    # The credential is resolvable from the store — and reads back the real value there.
+    # The credential is in the store Settings → Secrets lists, under the name the pack gave it.
+    from personalclaw.config.credentials import credential_names
     from personalclaw.llm.credentials import CredentialStore
 
-    store = CredentialStore(importer_home)
-    assert store.has("SEARCH_API_KEY")
-    assert store.resolve("SEARCH_API_KEY").secret == "sk-secret-123"
+    assert "SEARCH_API_KEY" in credential_names()
+    assert CredentialStore(importer_home).resolve("SEARCH_API_KEY").secret == "sk-secret-123"
 
 
 def test_configure_refuses_without_credential_value(importer_home):
@@ -171,10 +175,8 @@ def test_credential_never_lands_in_config_or_pack(importer_home):
         assert "sk-canary-XYZ" not in cfg.read_text()
     # …NOT in the mcp.json server spec (only an env-var REFERENCE rides there)…
     assert "sk-canary-XYZ" not in (importer_home / "mcp.json").read_text()
-    # …NOT in the descriptor map (credentials.json carries a value_env pointer, no value)…
-    creds_json = importer_home / "credentials.json"
-    assert creds_json.is_file()
-    assert "sk-canary-XYZ" not in creds_json.read_text()
+    # …no second store is written for it…
+    assert not (importer_home / "credentials.json").exists()
     # …it lives ONLY in the 0o600 credential-store .env sink.
     env = importer_home / ".env"
     assert "sk-canary-XYZ" in env.read_text()

@@ -67,7 +67,8 @@ def foreign(tmp_path: Path) -> Path:
         f"# House rules\n\n- Always run the linter.\n- The key is {SECRET}.\n",
         encoding="utf-8",
     )
-    (root / ".mcp.json").write_text(
+    # Claude Code's user-scope servers, in `.claude.json` — inside `$CLAUDE_CONFIG_DIR` when set.
+    (root / ".claude.json").write_text(
         json.dumps(
             {
                 "mcpServers": {

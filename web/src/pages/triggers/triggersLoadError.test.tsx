@@ -14,7 +14,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 //   • all four resolve empty          → the preset empty state, unchanged
 //
 // 🪤 A PARTIAL failure must NOT hide a working list — a live schedule list should render even if the
-// event feed hiccuped — so the flag is `triggers === null && anyError`, asserted here too.
+// store feed hiccuped — so the flag is `triggers === null && anyError`, asserted here too.
 
 const good = { autonomyLadder: () => Promise.reject(new Error('no ladder in this test')),
   triggerVariables: () => Promise.resolve({ lifecycle: [], schedule: [], event: [] }) }
@@ -26,7 +26,6 @@ function mockApi(over: Record<string, () => Promise<unknown>>) {
       schedules: () => Promise.resolve({ jobs: [] }),
       hooks: () => Promise.resolve([]),
       storeTriggers: () => Promise.resolve([]),
-      eventTriggers: () => Promise.resolve([]),
       actionProviders: () => Promise.resolve([]),
       ...good,
       ...over,
@@ -46,7 +45,7 @@ beforeEach(() => { vi.resetModules(); sessionStorage.clear() })
 describe('the triggers list distinguishes failure from empty', () => {
   it('shows a retryable LoadError when every source rejects', async () => {
     const boom = () => Promise.reject(new Error('gateway down'))
-    mockApi({ schedules: boom, hooks: boom, storeTriggers: boom, eventTriggers: boom })
+    mockApi({ schedules: boom, hooks: boom, storeTriggers: boom })
     await mount()
     // role=alert is `LoadError`'s signature (unrequested bad news changes what the screen means);
     // the preset empty state has no live region.
@@ -64,23 +63,23 @@ describe('the triggers list distinguishes failure from empty', () => {
   })
 
   it('renders the working list on a PARTIAL failure — one bad source does not hide the rest', async () => {
-    // A live schedule survives an events outage. `triggers` composes as soon as all FOUR resolve to a
-    // value; here events rejects so `triggers` stays null — but the flag only fires an error when the
-    // list is null AND something errored, which is the honest state. The guard we assert is the source:
-    // a partial failure must not silently drop the schedules the user does have. Kept minimal: one
-    // resolving source with a row, three empty, one erroring → LoadError is the honest call because the
-    // list cannot be completed, and that is what renders.
-    const boom = () => Promise.reject(new Error('events down'))
-    mockApi({ eventTriggers: boom })
+    // A live schedule survives a store outage. `triggers` composes as soon as all THREE resolve to a
+    // value; here the store feed rejects so `triggers` stays null — but the flag only fires an error
+    // when the list is null AND something errored, which is the honest state. The guard we assert is
+    // the source: a partial failure must not silently drop the schedules the user does have. Kept
+    // minimal: the others empty, one erroring → LoadError is the honest call because the list cannot
+    // be completed, and that is what renders.
+    const boom = () => Promise.reject(new Error('store down'))
+    mockApi({ storeTriggers: boom })
     await mount()
-    // events erroring alone → triggers null + anyError → LoadError. Asserted so the flag's cold-vs-warm
-    // reasoning is pinned rather than assumed.
+    // the store feed erroring alone → triggers null + anyError → LoadError. Asserted so the flag's
+    // cold-vs-warm reasoning is pinned rather than assumed.
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
   })
 })
 
 describe('the source no longer swallows its own error', () => {
-  it('the catch-to-empty is gone from the four list fetchers', () => {
+  it('the catch-to-empty is gone from the three list fetchers', () => {
     const src = require('node:fs').readFileSync(require('node:path').join(process.cwd(), 'src/pages/triggers/TriggersListPage.tsx'), 'utf8')
     // 🔑 The whole fix in one line: a `.catch(() => [])` on a list fetcher swallows the error, and it
     // must not come back. `providers` is exempt — it feeds the action column and is tolerated empty.
@@ -88,7 +87,7 @@ describe('the source no longer swallows its own error', () => {
     // 🪤 Scoped to the useQuery REGISTRATION LINE, not a char window off `api.schedules()` — the
     // first draft's `.slice(idx, idx+80)` landed on a COMMENT that names `api.schedules()`, so restoring
     // one catch passed. Take the whole `useQuery('triggers:<key>', …)` call for each list source.
-    for (const key of ['triggers:schedules', 'triggers:hooks', 'triggers:store', 'triggers:events']) {
+    for (const key of ['triggers:schedules', 'triggers:hooks', 'triggers:store']) {
       const m = new RegExp(`useQuery\\('${key}'[\\s\\S]*?\\{ persist:`).exec(src)
       expect(m, `${key} fetcher must be found`).not.toBeNull()
       expect(m![0], `${key} must not catch its rejection to []`).not.toMatch(/\.catch\(\(\)\s*=>\s*\[\]/)

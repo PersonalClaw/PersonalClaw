@@ -31,8 +31,6 @@ from pathlib import Path
 
 import pytest
 
-from personalclaw.mcp_client import mcp_sdk_available
-
 NAME = "cc-echo"
 REMOTE = "cc-remote"
 TOKEN = "ghp_fixtureClaudeCodeImportToken0123456789"
@@ -43,8 +41,6 @@ PEM = (
     "-----BEGIN PRIVATE KEY-----\nMIIfixtureLineOne0123\nMIIfixtureLineTwo4567\n"
     "-----END PRIVATE KEY-----"
 )
-
-pytestmark = pytest.mark.skipif(not mcp_sdk_available(), reason="requires the 'mcp' SDK extra")
 
 # A stdio MCP server whose one tool reports a variable of the environment it was started with.
 _ECHO_SERVER = textwrap.dedent("""

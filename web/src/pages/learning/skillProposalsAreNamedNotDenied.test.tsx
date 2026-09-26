@@ -29,7 +29,7 @@ const EMPTY_INBOX: LearningInbox = {
 const learningProposals = vi.fn<() => Promise<LearningInbox>>()
 
 // PARTIAL mock via `importOriginal`, for the reason `weekNeverRan.test.tsx` records: the side
-// panels branch on the REAL `hasApiCode`, so a factory returning only `api` throws from inside the
+// panels branch on the REAL `isSwitchedOff`/`isNotRun`, so a factory returning only `api` throws from inside the
 // render and every assertion below would die before it ran.
 vi.mock('../../lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/api')>()
@@ -42,17 +42,15 @@ vi.mock('../../lib/api', async (importOriginal) => {
       learningHealth: () => Promise.reject(new Error('not under test')),
       acceptLearningProposal: () => Promise.resolve({ ok: true }),
       rejectLearningProposal: () => Promise.resolve(undefined),
-      judgeBench: () => Promise.reject(new ApiError('No judge benchmark has run yet.', 404, 'judge_bench_absent')),
+      judgeBench: () => Promise.resolve({ ran: false }),
       evalStudies: () => Promise.reject(new ApiError('No study is registered under that id.', 404, 'study_absent')),
-      retrievalBench: () => Promise.reject(new ApiError('No retrieval benchmark has run yet.', 404, 'retrieval_absent')),
-      ablation: () => Promise.reject(new ApiError('No ablation has run yet.', 404, 'ablation_absent')),
+      retrievalBench: () => Promise.resolve({ ran: false }),
+      ablation: () => Promise.resolve({ ran: false }),
       identityReport: () => Promise.reject(new Error('not under test')),
       // FieldMetricsPanel fetches on mount, so an absent stub throws from inside the render and
       // kills every assertion below — the same reason the seven sibling suites stub it too.
       evalFieldMetrics: () => Promise.resolve({ subjects: [] }),
-      learningBenchmark: () => Promise.reject(
-        new ApiError('No skill-impact benchmark has run yet.', 404, 'learning_benchmark_absent'),
-      ),
+      learningBenchmark: () => Promise.resolve({ ran: false }),
     },
   }
 })

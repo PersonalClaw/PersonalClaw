@@ -104,13 +104,23 @@ const tools = [
   { name: 'gh_search', provider: 'gh', description: 'search', parameters: {}, requires_approval: false, risk_level: 'safe' },
 ]
 const importable = [{
-  name: 'cc-notion', backend: 'Claude Code', transport: 'stdio', command: 'npx', args: ['-y', 'notion-mcp', '--api-key', STORED_VALUE_MASK], url: '',
+  id: 'a1b2c3d4e5f60718', name: 'cc-notion', backend: 'Claude Code', scope: 'user', origin: 'User scope', note: '',
+  transport: 'stdio', command: 'npx', args: ['-y', 'notion-mcp', '--api-key', STORED_VALUE_MASK], url: '',
   env: [{ name: 'NOTION_TOKEN', hasValue: true }], headers: [],
 }, {
   // What the gateway sends for a remote server: its URL with every credential in it already masked.
-  name: 'cc-hosted', backend: 'Claude Code', transport: 'http', command: '', args: [],
+  id: '0f1e2d3c4b5a6978', name: 'cc-hosted', backend: 'Claude Code', scope: 'local',
+  origin: 'Local scope · /Users/ada/work/api', note: '',
+  transport: 'http', command: '', args: [],
   url: `https://mcp.example.com/mcp?token=${STORED_VALUE_MASK}`,
   env: [], headers: [{ name: 'Authorization', hasValue: true }],
+}, {
+  // A project's own `.mcp.json` server, never approved there: listed, with why.
+  id: '9a8b7c6d5e4f3021', name: 'cc-notion', backend: 'Claude Code', scope: 'project',
+  origin: 'Project · ~/src/demo/.mcp.json',
+  note: 'It came with the project, and it was never approved in Claude Code.',
+  transport: 'stdio', command: 'npx', args: ['-y', 'notion-mcp'], url: '',
+  env: [], headers: [],
 }]
 
 function mockApi(definition: unknown) {
@@ -124,7 +134,7 @@ function mockApi(definition: unknown) {
       toolsIndex: () => Promise.resolve({ tools, load_failures: [] }),
       mcpServers: () => Promise.resolve(servers),
       importableMcp: () => Promise.resolve(importable),
-      mcpPoolStats: () => Promise.resolve({ available: false }),
+      mcpPoolStats: () => Promise.resolve({}),
       toolGroups: () => Promise.resolve(null),
       mcpElicitationServers: () => Promise.resolve([]),
       mcpServerDefinition: () => Promise.resolve(definition),
@@ -248,7 +258,7 @@ describe('Import from another tool', () => {
     await mount()
     fireEvent.click(screen.getByRole('button', { name: /Discovered in other tools/ }))
     const hosted = (await screen.findByText('cc-hosted')).closest('div.rounded-lg') as HTMLElement
-    const notion = screen.getByText('cc-notion').closest('div.rounded-lg') as HTMLElement
+    const notion = screen.getAllByText('cc-notion')[0].closest('div.rounded-lg') as HTMLElement
     expect(within(hosted).getByText('HTTP')).toBeInTheDocument()
     expect(within(hosted).getByText(`https://mcp.example.com/mcp?token=${STORED_VALUE_MASK}`)).toBeInTheDocument()
     expect(within(hosted).getByText('Sends the Authorization header')).toBeInTheDocument()
@@ -262,12 +272,30 @@ describe('Import from another tool', () => {
     await mount()
     fireEvent.click(screen.getByRole('button', { name: /Discovered in other tools/ }))
     expect(await screen.findByText('Sets NOTION_TOKEN')).toBeInTheDocument()
-    const row = screen.getByText('cc-notion').closest('div.rounded-lg') as HTMLElement
+    const row = screen.getAllByText('cc-notion')[0].closest('div.rounded-lg') as HTMLElement
     fireEvent.click(within(row).getByRole('button', { name: /Import/ }))
     await settle()
-    expect(importMcpServer).toHaveBeenCalledWith('cc-notion')
+    expect(importMcpServer).toHaveBeenCalledWith(expect.objectContaining({ id: 'a1b2c3d4e5f60718', name: 'cc-notion' }))
     expect(notify).toHaveBeenCalledWith(
       "Couldn't import \"cc-notion\": No MCP server named 'cc-notion' was found to add.", 'error')
+  })
+})
+
+describe('Import lists every scope Claude Code keeps servers in', () => {
+  it('says where each row was found, and what to know before importing it', async () => {
+    mockApi({ name: 'gh', editable: false, reason: '-' })
+    await mount()
+    fireEvent.click(screen.getByRole('button', { name: /Discovered in other tools \(3\)/ }))
+    const [user, project] = (await screen.findAllByText('cc-notion')).map((n) => n.closest('div.rounded-lg') as HTMLElement)
+    expect(within(user).getByText('User scope')).toBeInTheDocument()
+    expect(within(project).getByText('Project · ~/src/demo/.mcp.json')).toBeInTheDocument()
+    expect(within(project).getByText('It came with the project, and it was never approved in Claude Code.')).toBeInTheDocument()
+    const hosted = screen.getByText('cc-hosted').closest('div.rounded-lg') as HTMLElement
+    expect(within(hosted).getByText('Local scope · /Users/ada/work/api')).toBeInTheDocument()
+    // Two rows of one name import two different definitions: each by its own id.
+    fireEvent.click(within(project).getByRole('button', { name: /Import/ }))
+    await settle()
+    expect(importMcpServer).toHaveBeenCalledWith(expect.objectContaining({ id: '9a8b7c6d5e4f3021' }))
   })
 })
 
@@ -284,17 +312,19 @@ describe('api.importMcpServer', () => {
     const fetchMock = answer({ ok: true, results: [{ name: 'cc-notion', actions: { personalclaw: 'added', ccGlobal: 'noop' } }] })
     vi.stubGlobal('fetch', fetchMock)
     const { api } = await import('../../lib/api')
-    await api.importMcpServer('cc-notion')
+    await api.importMcpServer({ id: 'a1b2c3d4e5f60718', name: 'cc-notion' })
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
     expect(url).toBe('/api/mcp/apply')
+    // The row's id, so the gateway copies the definition that row showed — and no `ccGlobal`, which
+    // used to copy a local- or project-scope server into Claude Code's user scope on the way.
     expect(JSON.parse(String(init.body))).toEqual({
-      changes: [{ name: 'cc-notion', personalclaw: true, ccGlobal: true }],
+      changes: [{ name: 'cc-notion', personalclaw: true, from: 'a1b2c3d4e5f60718' }],
     })
   })
 
   it('throws the change’s own sentence when the 200 says it did not land', async () => {
     vi.stubGlobal('fetch', answer({ ok: true, results: [{ name: 'x', error: "No MCP server named 'x' was found to add." }] }))
     const { api } = await import('../../lib/api')
-    await expect(api.importMcpServer('x')).rejects.toThrow("No MCP server named 'x' was found to add.")
+    await expect(api.importMcpServer({ id: '0000000000000000', name: 'x' })).rejects.toThrow("No MCP server named 'x' was found to add.")
   })
 })

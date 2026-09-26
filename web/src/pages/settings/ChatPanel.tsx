@@ -18,7 +18,7 @@ import { TextLink } from '../../ui/TextLink'
 import { IconButton } from '../../ui/IconButton'
 import { confirmDelete } from '../../ui/dialog'
 import { Trash2, VolumeX } from 'lucide-react'
-import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
+import { FormSkeleton, InlineLoadError, LoadError } from '../../ui/ListScaffold'
 
 const RESTORE_WINDOWS = [
   { key: '15', label: '15 min' }, { key: '30', label: '30 min' },
@@ -44,9 +44,12 @@ export function ChatPanel() {
   // editable form state below is seeded/rehydrated from this read-only `data`.
   const { data, error: loadErr, refresh } = useQuery('settings:chat', async () => {
     const [dash, plaw] = await Promise.all([
-      // The dashboard read KEEPS its fallback: it only feeds the starter list further down, and a
-      // missing starter list degrades one section rather than fabricating your chat settings.
-      api.dashboardConfig().catch(() => null),
+      // 🔴 NO FALLBACK ON THIS ONE EITHER. It kept `.catch(() => null)` on the belief that it only
+      // fed the starter list — but it is `cfg`, the Sessions and Messages sections' whole state, and
+      // the gate below waits for `cfg`. So a failed read resolved the query with `cfg: null`, the
+      // LoadError branch never fired (`data` was defined), and the panel spun its skeleton forever.
+      // The starter list has its own read and its own failure (`StartersSection`).
+      api.dashboardConfig(),
       // 🔴 NOT `.catch(() => ({}))`. This read IS the panel: session, routing and resilience all come
       // from it, so an empty object rendered every control at its fallback — indistinguishable from
       // "this is what you saved". Measured on `#/settings/chat` with `/api/config/personalclaw` at 500:
@@ -103,14 +106,19 @@ export function ChatPanel() {
  *  a picker fills up with stale entries nobody can clear. */
 function StartersSection() {
   const [items, setItems] = useState<SessionTemplate[] | null>(null)
+  // 🔴 A failed read used to set `[]`, and the section said "No starters yet" — with instructions
+  // for making one — to a user whose starters simply could not be read. Said, with a Retry.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     let live = true
+    setLoadErr(null)
     api.sessionTemplates()
       .then((t) => { if (live) setItems(t) })
-      .catch(() => { if (live) setItems([]) })
+      .catch((e) => { if (live) setLoadErr(e) })
     return () => { live = false }
-  }, [])
+  }, [attempt])
 
   async function remove(t: SessionTemplate) {
     if (!(await confirmDelete('starter', t.name))) return
@@ -129,7 +137,9 @@ function StartersSection() {
   return (
     <Section title="Chat starters" hint="Reusable setups — agent, model and reasoning effort. Save one from a chat's header; they appear on the new-chat screen.">
       <RowGroup>
-        {items === null ? (
+        {items === null && loadErr ? (
+          <div className="py-m"><InlineLoadError what="chat starters" error={loadErr} onRetry={() => setAttempt((n) => n + 1)} /></div>
+        ) : items === null ? (
           <p data-type="body-s" className="py-m text-on-surface-low">Loading…</p>
         ) : items.length === 0 ? (
           <p data-type="body-s" className="py-m text-on-surface-low">
@@ -222,7 +232,7 @@ function RoomsSection({ rooms, setRooms }: {
     <Section title="Agent Rooms" hint="A standing conversation where several of your agents deliberate with you refereeing — each with its own role, its own provider session and its own tool reach.">
       <RowGroup>
         <ToggleRow label="Agent Rooms" cfg={rooms} field="enabled" patch={patch}
-          hint="Off by default. While off, every room route refuses — including reading a room you already made, which stays on disk untouched." />
+          hint="Off by default. While off, no room can be opened or started — including one you already made, which stays on disk untouched." />
         {/* The two numbers only mean anything once the feature is on, so they appear with it
             rather than sitting greyed out. A disabled stepper for a feature you have not enabled
             is a control that owes an explanation nobody reads. */}

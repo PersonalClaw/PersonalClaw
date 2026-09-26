@@ -10,7 +10,7 @@ import { InlineLoadError } from '../../ui/ListScaffold'
 import { TextArea, Segmented, FieldError } from '../../ui/forms'
 import { api, ApiError, type InboxItem, type InboxClassification, type SkillProposalDetail } from '../../lib/api'
 import { acceptedLabel } from '../skills/skillMeta'
-import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, CLASSIFICATIONS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
+import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, CLASSIFICATIONS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel, verifyNote } from './inboxMeta'
 import { InboxMessageBody } from './ForeignContent'
 import { WorkflowGateActions } from './WorkflowGateActions'
 import { invalidateKeys } from '../../lib/data'
@@ -235,6 +235,11 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
           <Button size="sm" variant="secondary" className="ml-auto" onClick={restore} loading={busy === 'restore'} disabled={!!busy}><RotateCcw size={14} /> Restore
           </Button>
         </div>
+      )}
+      {verifyNote(item) && (
+        <p data-type="caption" className="flex items-center gap-1.5 text-on-surface-low">
+          <Filter size={12} aria-hidden style={{ color: 'var(--color-warn)' }} />{verifyNote(item)}
+        </p>
       )}
 
       {/* triage actions */}

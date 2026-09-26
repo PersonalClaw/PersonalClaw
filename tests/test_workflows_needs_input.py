@@ -22,6 +22,7 @@ from personalclaw.workflows.needs_input import (
     MAX_CHOICES,
     MAX_EVIDENCE_CHARS,
     MAX_RENOTIFICATIONS,
+    OUTCOME_ABSENT,
     RENOTIFY_AFTER_HOURS,
     USER_ACTIONABLE,
     BlockKind,
@@ -212,6 +213,43 @@ def test_no_attempts_yields_an_empty_list_not_a_placeholder():
     from the
     ledger not being available."""
     assert summarize_attempts(None) == []
+
+
+def test_an_attempt_with_no_outcome_says_so_INSTEAD_of_borrowing_the_word_unknown():
+    """`absent-is-not-zero`, on the field a stuck user reads first.
+
+    "unknown" is a claim ABOUT the attempt — we tried and could not tell — and a record that
+    does not carry `outcome` has made no such claim. The distinction is not pedantry: it is the
+    whole reason `request_login`'s blocker table stayed invisible for a change. Its attempts
+    carried a key nothing read, so every card rendered a plausible "unknown" and no reader had
+    any reason to suspect a defect. A phrase that names the RECORD as the gap sends the next
+    reader to the producer.
+    """
+    assert summarize_attempts([{"note": "the site refused"}]) == [
+        f"{OUTCOME_ABSENT} — the site refused"
+    ]
+    assert summarize_attempts([{"attempt": 2}]) == [f"attempt 2: {OUTCOME_ABSENT}"]
+    assert "unknown" not in OUTCOME_ABSENT
+
+
+def test_summarize_attempts_reads_the_LEDGER_ROW_key_names_and_only_those():
+    """One spelling per field. `publish.ledger_row` is the tree's attempt-record shape, so what
+    it mints must render, and a synonym must NOT quietly work.
+
+    The second half is the load-bearing one. A summarizer that also accepted `summary`,
+    `detail`, `text`, … would let every new producer invent its own key and still look correct,
+    which is a dual path wearing a tolerance costume. Rendering a stranger key as
+    `OUTCOME_ABSENT` is the visible failure that makes the mismatch findable.
+    """
+    from personalclaw.workflows.publish import ledger_row
+
+    row = ledger_row(1, outcome="failed", note="source unreachable")
+    assert summarize_attempts([row]) == ["attempt 1: failed — source unreachable"]
+
+    for stranger in ("summary", "detail", "text", "description"):
+        assert summarize_attempts([{stranger: "real wording that would be thrown away"}]) == [
+            OUTCOME_ABSENT
+        ], f"{stranger!r} must not be a second spelling for a ledger-row field"
 
 
 def test_evidence_is_TRIMMED():

@@ -5,7 +5,6 @@ import importlib
 import os
 import shutil
 import sys
-import tempfile
 from pathlib import Path
 
 import native_omp_guard
@@ -64,52 +63,11 @@ def _caller_chose_a_home() -> bool:
     )
 
 
-# ── Import-window home (the half no fixture can reach) ──────────────────
-# `_isolate_real_home_writers` redirects an unchosen home for each TEST. Five modules resolve the
-# home at IMPORT, during collection, before any fixture exists: `agent` (`_USER_DIR` and the
-# prompt/overrides/`_DEFAULT_HOOKS_DIR` paths built from it), `agents.marketplace` (its local
-# registry), `dashboard.handlers.hooks` (`_HOOK_STORE_PATH`), and both skill roots
-# (`skills.marketplace`, `skills.native`). (`dashboard.handlers.mcp` was the sixth, until its
-# `_GLOBAL_MCP_JSON` was deleted.) Measured under the guard above on a full run: every worker
-# mkdir'd the real `~/.personalclaw` at import (so a fresh machine or CI runner has one created
-# just by collecting), and 150+ tests read the owner's real skills, agent hooks and `mcp.json`
-# through those frozen paths. Converting the rest is a product change with ~17 test sites that
-# patch the constants
-# (`test_agent_paths_resolve_at_call_time.py` records the debt); this closes the suite's exposure
-# without it: until collection finishes, an unchosen home is ONE per-process scratch directory.
-# After that the per-test redirect takes over — and a resolution that happens outside every test
-# (an orphaned thread, a late first import between tests) reaches the real home, where the guard
-# refuses it and names who did it. That is deliberate: a quarantine for those would hide them.
-_config_loader = importlib.import_module("personalclaw.config.loader")
-_IMPORT_WINDOW: dict[str, object] = {"open": True, "home": None}
-_config_dir_after_the_window = _config_loader.config_dir
-
-
-def _import_window_config_dir() -> Path:
-    if _IMPORT_WINDOW["open"] and not _caller_chose_a_home():
-        if _IMPORT_WINDOW["home"] is None:
-            _IMPORT_WINDOW["home"] = Path(tempfile.mkdtemp(prefix="pclaw-import-home-"))
-        return _IMPORT_WINDOW["home"]  # type: ignore[return-value]
-    return _config_dir_after_the_window()
-
-
-_config_loader.config_dir = _import_window_config_dir
-for _module in list(sys.modules.values()):
-    if getattr(_module, "config_dir", None) is _config_dir_after_the_window and getattr(
-        _module, "__name__", ""
-    ).startswith("personalclaw"):
-        _module.config_dir = _import_window_config_dir
-
-
-def pytest_collection_finish(session):
-    """Close the import window: from the first test on, homes resolve per test."""
-    _IMPORT_WINDOW["open"] = False
-
-
-def pytest_unconfigure(config):
-    home = _IMPORT_WINDOW["home"]
-    if home is not None:
-        shutil.rmtree(home, ignore_errors=True)  # type: ignore[arg-type]
+# No module resolves the home at IMPORT (`tests/test_importing_personalclaw_touches_no_home.py`
+# holds that line), so collection needs no home of its own: `_isolate_real_home_writers` below
+# redirects an unchosen home for each TEST, and a resolution that happens outside every test (an
+# orphaned thread, a first import between tests) reaches the real home, where the guard refuses
+# it and names who did it. That is deliberate: a quarantine for those would hide them.
 
 
 def pytest_configure(config):
@@ -192,11 +150,12 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
     (`tasks/*.json`, `codegraph/*.db`, `workspace/_ext/*/memory/*.md`, `prompts/`,
     `prompt_snippets/`, `learning.db`, `session_search.db`, `tokenjuice_savings.json`, …).
     Thirteen distinct writer families, and every one of them reached the real home through
-    the same two seams: ``config.loader.config_dir()`` (153 call sites) and SEL's own
-    ``sel._default_dir()``. Patching thirteen subsystems one at a time would have been
-    thirteen fixtures guarding one seam, and the fourteenth subsystem would leak again.
+    ``config.loader.config_dir()`` (153 call sites) — or through SEL's own resolver, a second
+    seam this fixture had to patch too until SEL was made to ask ``config_dir()`` like
+    everything else. Patching thirteen subsystems one at a time would have been thirteen
+    fixtures guarding one seam, and the fourteenth subsystem would leak again.
 
-    So this redirects those two seams, and ONLY when the caller expressed no preference:
+    So this redirects that seam, and ONLY when the caller expressed no preference:
 
     * ``$PERSONALCLAW_HOME`` set (to anything, **including the real home**) → pass through
       untouched. Several rails deliberately point it at the real home and assert a refusal
@@ -217,21 +176,18 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
     What a fixture CANNOT reach: a home resolved into a module-level constant at import time.
     The real-home rail this suite used to run caught 147 real-home entries still landing in
     ``subagents/`` after this fixture was in place, because ``subagent_persistence`` froze
-    ``config_dir() / "subagents"`` at first import — before any fixture exists. Three such
-    constants were converted to call-time resolvers (``subagent_persistence._subagents_dir``,
-    ``session_map._sessions_dir``, and a dead ``schedule._DEFAULT_DIR`` whose import-time
-    ``config_dir()`` mkdir'd the real home merely by importing the module); the ones still
-    frozen resolve inside the import window at the top of this file instead. A thread that
+    ``config_dir() / "subagents"`` at first import — before any fixture exists. Every such
+    constant is now a call-time resolver, and
+    ``tests/test_importing_personalclaw_touches_no_home.py`` fails on a new one. A thread that
     outlives its test is the other shape this fixture cannot reach, because the patch is undone
     under it — ``tests/real_home_guard.py`` names the test that started it.
 
     Ordering matters: this fixture is declared BEFORE ``_reset_sel_singleton`` so it is set
     up first and torn down LAST. The singleton is cleared around every test, so the next
     ``sel()`` call constructs a fresh ``SecurityEventLog`` — and that construction must
-    still find the redirected ``_default_dir``, or the leak comes straight back.
+    still find the redirected ``config_dir``, or the leak comes straight back.
     """
     import personalclaw.config.loader as config_loader
-    import personalclaw.sel as sel_mod
 
     holder: list[Path] = []
 
@@ -243,7 +199,6 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
         return holder[0]
 
     original_config_dir = config_loader.config_dir
-    original_sel_dir = sel_mod._default_dir
 
     def guarded_config_dir() -> Path:
         if _caller_chose_a_home():
@@ -253,13 +208,7 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
         # none before we could redirect it.
         return tmp_home()
 
-    def guarded_sel_dir() -> Path:
-        if _caller_chose_a_home():
-            return original_sel_dir()
-        return tmp_home()
-
     monkeypatch.setattr(config_loader, "config_dir", guarded_config_dir)
-    monkeypatch.setattr(sel_mod, "_default_dir", guarded_sel_dir)
     # `from ... import config_dir` at module scope binds the function object into the
     # importing module, where patching the loader can never reach it (58 such modules).
     # Re-point every binding of THIS function object — identity-matched, so nothing else
@@ -799,6 +748,25 @@ def _reset_channel_delivery_registry() -> object:
 
 
 @pytest.fixture(autouse=True)
+def _reset_app_restart_reasons() -> object:
+    """Forget every app's restart reason a test left behind.
+
+    ``app_runtime`` keeps why an app needs a gateway restart (a package it replaced while loaded,
+    a thread its previous version left running) in memory on purpose: in the product, a restart
+    is the one thing that clears it. Across tests the app NAMES repeat (``demo-app``) while each
+    test has its own home, so a reason one test earned would make the next test's clean update
+    report ``restart_required``. ``app_code``'s record of what an app's code registered is left
+    alone: a later unload of the same name taking back what an earlier test left is the isolation
+    the registries it covers otherwise lack.
+    """
+    from personalclaw.apps import app_runtime
+
+    app_runtime._restart.clear()
+    yield
+    app_runtime._restart.clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_provider_measurement_boards() -> object:
     """Forget every provider availability and connection answer a test measured.
 
@@ -837,6 +805,28 @@ def _restore_workflow_def_registry() -> object:
     yield
     for name in set(_defs.list_providers()) - before:
         _defs.unregister_provider(name)
+
+
+@pytest.fixture(autouse=True)
+def _restore_tool_provider_registry() -> object:
+    """Snapshot + restore the process-global TOOL-provider registry around every test.
+
+    `tool_providers.registry` holds who serves each tool name as well as which providers are
+    registered: a registered provider CLAIMS its names, and a later one offering a claimed name is
+    refused. So a provider a test leaves registered (the gateway's start-up path registers every
+    bundled one and never unregisters them, by design) would not just linger in the next test's
+    surface, it would hold that test's names and refuse the provider under test. Whole dicts,
+    snapshotted and restored, for the reason the fixture below records.
+    """
+    from personalclaw.tool_providers import registry as _tool_registry
+
+    names = ("_providers", "_provider_app", "_registrations", "_claims")
+    before = {name: dict(getattr(_tool_registry, name)) for name in names}
+    yield
+    for name, saved in before.items():
+        live = getattr(_tool_registry, name)
+        live.clear()
+        live.update(saved)
 
 
 @pytest.fixture(autouse=True)

@@ -48,6 +48,8 @@ import sys
 from pathlib import Path
 from typing import Any, Iterator
 
+from personalclaw import app_code
+
 # The bundled-app root. ``providers/loader.py`` exposes the same directory as
 # ``BUNDLED_DIR``; this module is the lower layer (``apps/`` knows nothing about
 # ``providers/``), so the constant lives here and the loader keeps its alias.
@@ -113,7 +115,7 @@ def namespaced_module_name(app_name: str, module_path: str) -> str:
 
 
 @contextlib.contextmanager
-def app_dir_on_path(ext_dir: Path | None) -> Iterator[None]:
+def app_dir_on_path(app: str, ext_dir: Path | None) -> Iterator[None]:
     """Hold an app's own directory on ``sys.path`` for the block, so its own imports resolve.
 
     An app's modules import each other as top-level names (``from telegram_runtime.settings
@@ -124,8 +126,12 @@ def app_dir_on_path(ext_dir: Path | None) -> Iterator[None]:
     ONE definition for every place core runs an app's code by path: the provider loader, a
     bundle module's import, and ``personalclaw setup`` / ``doctor`` (``app_cli``). The CLI
     runner held none until #124 found ten setup/doctor steps across five apps that read
-    "setup step unavailable — No module named '<app>_runtime'".
+    "setup step unavailable — No module named '<app>_runtime'". Which is also why it is where
+    the directory is claimed as *app*'s code (:func:`personalclaw.app_code.claim`): what that
+    code registers, and the modules it loads, leave with the app when it is unloaded.
     """
+    if ext_dir is not None:
+        app_code.claim(app, ext_dir)
     entry = str(ext_dir) if ext_dir is not None else ""
     added = bool(entry) and entry not in sys.path
     if added:
@@ -143,10 +149,12 @@ def load_bundle_module(ext_dir: Path, app_name: str, module_path: str) -> Any:
     Cached by that name: ``load_factory`` and ``load_availability`` both resolve the same
     module, and an app read (the extension-list API calls the availability probe) must not
     re-execute app code — re-exec would also give two distinct classes for one provider,
-    so an ``isinstance`` across two reads would start failing. A changed module needs a
-    gateway restart, which is what the install/update docs already promise. The cache holds
-    for the FILE it was loaded from: the same name loaded from another directory (another
-    home, a reinstall elsewhere) is that directory's module, not the cached one.
+    so an ``isinstance`` across two reads would start failing. The cache is for ONE version
+    of the app: every lifecycle step that changes its files (an update, a reinstall) unloads
+    the app first (``apps/app_runtime.unload``), which takes this module and every sibling it
+    imported out of ``sys.modules``, so the next load runs the files on disk. The same name
+    loaded from another directory (another home) is that directory's module, not the cached
+    one.
     """
     unique_name = namespaced_module_name(app_name, module_path)
     file_path = bundle_module_file(ext_dir, module_path)
@@ -161,7 +169,7 @@ def load_bundle_module(ext_dir: Path, app_name: str, module_path: str) -> Any:
     module = importlib.util.module_from_spec(spec)
     sys.modules[unique_name] = module
     try:
-        with app_dir_on_path(ext_dir):
+        with app_dir_on_path(app_name, ext_dir):
             spec.loader.exec_module(module)
     except BaseException:
         # A half-executed module must not stay cached, or the next read gets a shell.

@@ -8,6 +8,7 @@ import { spring } from '../design/motion'
 import { fvs, withWeight } from '../design/fontWeight'
 import { Popover, MenuRow } from './Popover'
 import { Segmented, type SegOption } from './Segmented'
+import { TOP_BAR_BAND, useStackBelowCorners } from './TopBar'
 
 /** Responsive header controls — the ONE 4-tier cluster (`responsive-header-controls.md`).
  *  The row of controls degrades TOGETHER (whole-cluster) as horizontal space
@@ -112,8 +113,16 @@ const TIER_ORDER: Tier[] = ['full', 'text', 'icon', 'overflow']
 export const titleFloor = (inner: number): number =>
   Math.round(Math.min(96, Math.max(48, inner * 0.34)))
 
-/** What the title is ACTUALLY owed: nothing when the slot holds no visible content, otherwise
- *  `min(its natural width, titleFloor)`.
+/** The gap the width split keeps between the title slot and the cluster. */
+export const GAP_TO_TITLE = 16
+
+/** The narrowest a title may get and still be read — `titleFloor`'s own lower clamp. */
+export const TITLE_MIN = 48
+
+/** What the title slot is ACTUALLY owed: nothing when it holds no visible content; otherwise
+ *  what it cannot shed (`minWidth`) plus the title's floor, never more than its natural width —
+ *  and when the cluster's own floor (`floor`) would not fit beside that, the title yields
+ *  (truncates further) so the controls stay usable, down to what the slot cannot shed.
  *
  *  Exported and pure so the arithmetic can be tested. It cannot be exercised through a render:
  *  jsdom reports every box as 0, so the whole width computation collapses to zeros there and a
@@ -124,12 +133,73 @@ export const titleFloor = (inner: number): number =>
  *  on a new chat is one), and an empty flex slot still reports a non-zero `scrollWidth` from
  *  its own padding/gap — so keying on width alone would keep reserving for a title that does
  *  not exist. Measured cost of that phantom reserve at 390px: the rail capped at 58px for 88px
- *  of mode pills, and the permission-mode pill collided with the `…` and became unclickable. */
+ *  of mode pills, and the permission-mode pill collided with the `…` and became unclickable.
+ *
+ *  🔴 `minWidth` IS THE OTHER HALF, AND ITS ABSENCE WAS THE CHAT HEADER'S OVERLAP. The floor used
+ *  to be reserved for the WHOLE slot, as if it held only a title. The chat's slot also holds a back
+ *  button, the regenerate affordance and — until they moved to `TopBar.below` — its chips, none of
+ *  which can shrink. Reserving 96px for a slot that cannot get narrower than 97px let the cluster
+ *  claim the rest, and the slot painted under it: measured on `0b487d9c7`, the back button under
+ *  the Task pill at 320/390px and the title squeezed to 0px at every width up to 1440. */
 export function titleReserveFor(
-  { hasContent, naturalWidth, inner }: { hasContent: boolean; naturalWidth: number; inner: number },
+  { hasContent, naturalWidth, inner, minWidth = 0, floor = 0 }: {
+    hasContent: boolean; naturalWidth: number; inner: number
+    /** The slot's width with everything shrinkable shrunk: what it cannot shed. */
+    minWidth?: number
+    /** The cluster's narrowest usable width (see `clusterFloor`). */
+    floor?: number
+  },
 ): number {
   if (!hasContent) return 0
-  return Math.min(naturalWidth, titleFloor(inner))
+  const owed = Math.min(naturalWidth, minWidth + titleFloor(inner))
+  return Math.max(Math.min(owed, inner - GAP_TO_TITLE - floor), Math.min(naturalWidth, minWidth))
+}
+
+/** The narrowest the cluster can get and keep every control reachable: its never-overflow
+ *  controls icon-only, plus the `…` when anything else can fall into it — or the whole ICON tier,
+ *  when that is narrower (a cluster of two needs no `…`). */
+export function clusterFloor(
+  { iconTier, neverOverflow, overflowable, dots }: { iconTier: number; neverOverflow: number; overflowable: boolean; dots: number },
+): number {
+  return Math.min(iconTier, neverOverflow + (overflowable ? dots : 0))
+}
+
+/** Whether the header's row has to move BELOW the shell corners: the band between them cannot
+ *  hold, side by side, what the title slot cannot shed plus a legible title, and the cluster's
+ *  floor. At 320px that band is 85px and at 390px 155px, and the chat's floor alone is 140px. */
+export function stackBelowCorners(
+  { band, hasContent, minWidth, naturalWidth, floor }: {
+    band: number; hasContent: boolean; minWidth: number; naturalWidth: number; floor: number
+  },
+): boolean {
+  const title = hasContent ? Math.min(naturalWidth, minWidth + TITLE_MIN) + GAP_TO_TITLE : 0
+  return title + floor > band
+}
+
+/** A slot's narrowest and natural widths, read without either state ever painting.
+ *
+ *  Forced to zero width, its `scrollWidth` is what it cannot shed — every `shrink-0` control and
+ *  gap, a truncating title's own padding — while a group that clips (the knowledge breadcrumb's
+ *  `overflow-hidden` trail) counts as the zero it degrades to. At `max-content` it is what the slot
+ *  would like, and a child with a box says whether it holds anything at all. Both reads happen in
+ *  one synchronous block and the inline style is put back before the browser can render, so
+ *  neither state is ever seen, and the ResizeObserver never observes a size it did not end on. */
+export function slotWidths(slot: HTMLElement): { min: number; natural: number; hasContent: boolean } {
+  const { width, flex, maxWidth } = slot.style
+  slot.style.flex = '0 0 auto'
+  slot.style.maxWidth = 'none'
+  slot.style.width = '0px'
+  const min = slot.scrollWidth
+  slot.style.width = 'max-content'
+  const natural = slot.scrollWidth
+  const hasContent = Array.from(slot.children).some((c) => {
+    const r = c.getBoundingClientRect()
+    return r.width > 2 && r.height > 2
+  })
+  slot.style.width = width
+  slot.style.flex = flex
+  slot.style.maxWidth = maxWidth
+  return { min, natural, hasContent }
 }
 
 /** The rail's hard ceiling: the inner box minus the `…` slot minus whatever the title is owed.
@@ -178,6 +248,12 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
 
   const tierRef = useRef<Tier>(tier)
   tierRef.current = tier
+  // The bar's "put your row below the corners" switch (`TopBar`) — null outside a TopBar.
+  const stackBelow = useStackBelowCorners()
+  const stackRef = useRef(stackBelow)
+  stackRef.current = stackBelow
+  // A cluster that leaves takes its reason to stack with it.
+  useEffect(() => () => stackRef.current?.(false), [])
 
   useLayoutEffect(() => {
     const outer = outerRef.current
@@ -187,7 +263,8 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
     // flop every RO tick. Only applied when moving up (down-steps are immediate to
     // avoid clipping).
     const HYST = 8
-    const GAP_TO_TITLE = 16
+    const DOTS = 44 // `…` trigger (40px) + gap
+    const GAP = 8
 
     // Available width = the header's inner CONTENT box (its width minus the shell-corner
     // padding it reserves on both ends) MINUS the title's reserve — NOT the cluster's own
@@ -196,46 +273,63 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
     // The header's inner CONTENT box — its width minus the padding it reserves to clear
     // the floating shell corners. This is the hard ceiling for anything in the row: grow
     // past it and you are under the corner chrome, which swallows clicks.
-    const innerBox = (): number => {
-      const header = outer.closest('header')
-      if (!header) return outer.clientWidth
+    const innerBox = (header: HTMLElement): number => {
       const cs = getComputedStyle(header)
       return header.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
     }
-    // Read the live title measurements and hand them to the pure `titleReserveFor` above,
-    // which both this and the rail's ceiling use — so the two cannot disagree about what the
-    // title is owed. (They did: the ceiling subtracted a blanket floor even for an EMPTY slot.)
-    const titleReserve = (inner: number): number => {
-      const header = outer.closest('header')
-      const left = header?.querySelector<HTMLElement>('[data-header-left]')
-      if (!left) return 0
-      // An empty flex slot still reports a non-zero `scrollWidth` from its own padding/gap, so
-      // measure the CONTENT: no visible child means there is no title to protect.
-      const hasContent = Array.from(left.children).some((c) => {
-        const r = (c as HTMLElement).getBoundingClientRect()
-        return r.width > 2 && r.height > 2
-      })
-      return titleReserveFor({
-        hasContent,
-        naturalWidth: Math.min(left.scrollWidth, left.clientWidth || left.scrollWidth),
-        inner,
-      })
-    }
-    const availableWidth = (): number => {
-      const header = outer.closest('header')
-      if (!header) return outer.clientWidth
-      const inner = innerBox()
-      // The title needs its reserve; give the cluster the rest. On narrow headers the floor
-      // shrinks so the cluster keeps usable width.
-      return Math.max(0, inner - titleReserve(inner) - GAP_TO_TITLE)
+    // The band BETWEEN the corners, from the bar's probe — the row's width when it is not
+    // stacked, whether or not it is right now, so the stacking decision never reads its own
+    // result. A header that is not a TopBar has no band and never stacks.
+    const bandBox = (header: HTMLElement): number | null => {
+      const band = header.querySelector<HTMLElement>(TOP_BAR_BAND)
+      if (!band) return null
+      const cs = getComputedStyle(band)
+      return band.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
     }
 
     const measure = () => {
-      const avail = availableWidth()
+      const header = outer.closest('header')
       const wFull = probeFull.current?.scrollWidth ?? 0
       const wText = probeText.current?.scrollWidth ?? 0
       const wIcon = probeIcon.current?.scrollWidth ?? 0
       const cur = tierRef.current
+
+      // Per-child icon width: measure from the icon probe's children in DOM order.
+      const iconEls = probeIcon.current ? Array.from(probeIcon.current.children) as HTMLElement[] : []
+      const domIds = [...regs.current.keys()]
+      const iconW = (id: number) => {
+        const i = domIds.indexOf(id)
+        return (iconEls[i]?.offsetWidth ?? 40) + GAP
+      }
+      // `neverOverflow` children (e.g. a Segmented mode-slider) can't live in the `…` menu, so
+      // their icon-only width is the rail's FLOOR (see the cap below) — and, with the `…`, the
+      // narrowest this cluster can ever get.
+      let floorW = 0
+      let overflowable = false
+      for (const r of regs.current.values()) {
+        if (r.neverOverflow) floorW += iconW(r.id)
+        else overflowable = true
+      }
+      const floor = clusterFloor({ iconTier: wIcon, neverOverflow: floorW, overflowable, dots: DOTS })
+
+      // The title slot: what it cannot shed, what it would like, and whether it holds anything
+      // (an empty slot still reports its own padding) — the one reading both halves of the width
+      // split below use, so they cannot disagree about what the title is owed.
+      const left = header?.querySelector<HTMLElement>('[data-header-left]')
+      const slot = left ? slotWidths(left) : { min: 0, natural: 0, hasContent: false }
+      const band = header ? bandBox(header) : null
+      if (band !== null) {
+        stackRef.current?.(stackBelowCorners({
+          band, hasContent: slot.hasContent, minWidth: slot.min, naturalWidth: slot.natural, floor,
+        }))
+      }
+      const inner = header ? innerBox(header) : outer.clientWidth
+      const reserve = header
+        ? titleReserveFor({ hasContent: slot.hasContent, naturalWidth: slot.natural, minWidth: slot.min, inner, floor })
+        : 0
+      // The title needs its reserve; give the cluster the rest. On narrow headers the floor
+      // shrinks so the cluster keeps usable width.
+      const avail = header ? Math.max(0, inner - reserve - GAP_TO_TITLE) : outer.clientWidth
 
       // Pick the richest tier that fits. Down-steps fire as soon as the current tier
       // no longer fits; up-steps need HYST slack so we don't oscillate at the edge.
@@ -262,26 +356,15 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
       // OVERFLOW: greedy fill by priority. Reserve a slot for the `…` trigger, then
       // walk children (primary → default → low; ties keep DOM order) adding each
       // one's icon width until the next won't fit. The rest become menu rows.
-      const DOTS = 44 // `…` trigger (40px) + gap
-      const GAP = 8
       const ordered = [...regs.current.values()]
         .map((r, domOrder) => ({ r, domOrder }))
         .sort((a, b) => PRIORITY_RANK[a.r.priority] - PRIORITY_RANK[b.r.priority] || a.domOrder - b.domOrder)
-      // Per-child icon width: measure from the icon probe's children in DOM order.
-      const iconEls = probeIcon.current ? Array.from(probeIcon.current.children) as HTMLElement[] : []
-      const domIds = [...regs.current.keys()]
-      const iconW = (id: number) => {
-        const i = domIds.indexOf(id)
-        return (iconEls[i]?.offsetWidth ?? 40) + GAP
-      }
       const keep = new Set<number>()
-      let used = DOTS
-      // `neverOverflow` children (e.g. a Segmented mode-slider) can't live in the `…`
-      // menu — reserve their icon-only width up front so they always stay visible.
-      // Total that reservation separately: it is the rail's FLOOR (see the cap below).
-      let floorW = 0
+      // `neverOverflow` children always stay visible: their icon-only width (`floorW`,
+      // totalled above) is reserved up front.
+      let used = DOTS + floorW
       for (const r of regs.current.values()) {
-        if (r.neverOverflow) { keep.add(r.id); used += iconW(r.id); floorW += iconW(r.id) }
+        if (r.neverOverflow) keep.add(r.id)
       }
       for (const { r } of ordered) {
         if (keep.has(r.id)) continue
@@ -324,10 +407,9 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
       // new chat renders `left={undefined}`), and 53px was exactly what its two 40px mode
       // pills were short of: the rail capped at 58px for 88px of content, so the
       // permission-mode pill painted out to x=181 and collided with the `…` at x=159 — the
-      // `…` is a later sibling, so it won and the pill became unclickable. `titleReserve()`
-      // returns 0 when there is no title, which lets the pills have the room.
-      const inner = innerBox()
-      const ceiling = railCeiling({ inner, dots: DOTS, title: titleReserve(inner) })
+      // `…` is a later sibling, so it won and the pill became unclickable. The reserve is 0
+      // when there is no title, which lets the pills have the room.
+      const ceiling = railCeiling({ inner, dots: DOTS, title: reserve })
       const cap = used > avail
         ? Math.min(Math.max(floorW, Math.round(avail - DOTS)), ceiling)
         : null

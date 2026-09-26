@@ -1479,8 +1479,9 @@ def available_bundled() -> list[CatalogEntry]:
 _APP_UPDATES_ENTITY = "app_updates"
 
 
-def _latest_local_versions() -> dict[str, str]:
-    """``{app_name: highest version}`` discoverable across the configured LOCAL sources.
+def _latest_local_versions() -> dict[str, tuple[str, str]]:
+    """``{app_name: (highest version, the directory it is in)}`` across the configured LOCAL
+    sources.
 
     Unlike ``_scan_local_sources`` (which OMITS installed apps, since it feeds the Store's
     "available to install" list), this includes every app a local source declares — because
@@ -1488,7 +1489,7 @@ def _latest_local_versions() -> dict[str, str]:
     carries. On-disk manifest reads only; a bad manifest is skipped, never fatal."""
     from pathlib import Path
 
-    latest: dict[str, str] = {}
+    latest: dict[str, tuple[str, str]] = {}
     for root in list_local_sources():
         base = Path(root).expanduser()
         if not base.is_dir():
@@ -1505,8 +1506,8 @@ def _latest_local_versions() -> dict[str, str]:
             if not m.name or not m.version:
                 continue
             current = latest.get(m.name)
-            if current is None or version_tuple(m.version) > version_tuple(current):
-                latest[m.name] = m.version
+            if current is None or version_tuple(m.version) > version_tuple(current[0]):
+                latest[m.name] = (m.version, str(entry))
     return latest
 
 
@@ -1517,7 +1518,10 @@ def updates_available() -> list[dict[str, Any]]:
     local sources declare for that app, using the single app-version comparator
     (``manifest.version_tuple``). Returns one entry per out-of-date app::
 
-        {"name", "displayName", "installedVersion", "latestVersion", "source"}
+        {"name", "displayName", "installedVersion", "latestVersion", "latestSource"}
+
+    ``latestSource`` is the directory the newer version was found in — what the Update dialog
+    starts from, so the owner does not have to type where the gateway just looked.
 
     Pure + cheap (on-disk reads, no network, no side effects) — safe to call on the
     ``/api/apps`` read path. An app with no newer version, or with no source-side manifest,
@@ -1529,9 +1533,10 @@ def updates_available() -> list[dict[str, Any]]:
     for app in list_apps():
         name = app.get("name", "")
         installed_version = str(app.get("version", ""))
-        latest_version = latest.get(name)
-        if not name or not latest_version:
+        found = latest.get(name)
+        if not name or not found:
             continue
+        latest_version, latest_source = found
         if version_tuple(latest_version) > version_tuple(installed_version):
             manifest = app.get("manifest") or {}
             out.append(
@@ -1540,7 +1545,7 @@ def updates_available() -> list[dict[str, Any]]:
                     "displayName": manifest.get("displayName") or name,
                     "installedVersion": installed_version,
                     "latestVersion": latest_version,
-                    "source": app.get("source", ""),
+                    "latestSource": latest_source,
                 }
             )
     return out

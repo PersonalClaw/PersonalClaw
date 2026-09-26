@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -79,14 +78,14 @@ class JobResult:
 
 
 def active_home() -> Path:
-    """The home this process operates on — ``PERSONALCLAW_HOME`` first, else the config dir.
+    """The home this process operates on: :func:`~personalclaw.config.loader.config_dir`.
 
     Public because the dashboard's conflict-review routes (DAS-10) must read the queue from
     the SAME home the sync cycle writes it to; resolving it a second way in the handler is
     how a review surface ends up reading an empty queue in an isolated dev home."""
     from personalclaw.config.loader import config_dir
 
-    return Path(os.environ.get("PERSONALCLAW_HOME", config_dir()))
+    return config_dir()
 
 
 def _state_path() -> Path:
@@ -756,11 +755,18 @@ async def _tick_footprint_maintenance() -> None:
                 None, lambda: footprint.reclaim(home)
             )
         footprint.stamp_reclaim(home)
-        if result.freed_bytes:
+        if result.freed_bytes > 0:
             logger.info(
                 "footprint reclaim freed %s across %d store(s)",
                 footprint.human_bytes(result.freed_bytes),
                 result.stores,
+            )
+        elif result.growth_bytes > 0:
+            logger.info(
+                "footprint reclaim completed across %d store(s); no disk space freed "
+                "(measured footprint grew %s during compaction)",
+                result.stores,
+                footprint.human_bytes(result.growth_bytes),
             )
         for store_id, reason in result.skipped.items():
             logger.debug("footprint reclaim skipped %s: %s", store_id, reason)

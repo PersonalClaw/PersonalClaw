@@ -234,8 +234,8 @@ def _setup_noninteractive(
     ``--mode none`` skips all deployment hints.
     ``--provider <name>`` wires a registry entry as the default chat provider
     in config.json (the entry must already be declared in the config).
-    ``--credential <name=value>`` stores a named credential via the
-    credential store.
+    ``--credential <name=value>`` saves a secret under that name in the credential
+    store Settings → Secrets lists (:func:`_store_named_credential`).
     """
     if mode == "docker":
         print(
@@ -266,25 +266,42 @@ def _setup_noninteractive(
             print(f"  ❌ Could not set provider: {exc}")
 
     if credential:
-        # Expect name=value or name format (value from env fallback)
-        if "=" in credential:
-            cred_name, _, cred_val = credential.partition("=")
-        else:
-            cred_name = credential
-            cred_val = os.environ.get(cred_name, "")
-        if cred_name and cred_val:
-            try:
-                from personalclaw.llm.credentials import CredentialStore
+        _store_named_credential(credential)
 
-                store = CredentialStore(config_dir())
-                descriptors = {k: dict(v) for k, v in store._descriptors.items()}
-                descriptors[cred_name] = {"type": "api_key", "value": cred_val}
-                store.save(descriptors)
-                print(f"  ✅ Credential stored: {cred_name}")
-            except Exception as exc:
-                print(f"  ❌ Could not store credential {cred_name!r}: {exc}")
-        elif cred_name:
-            print(f"  ⚠️  --credential {cred_name!r}: no value provided and env var not set")
+
+def _store_named_credential(credential: str) -> None:
+    """``--credential NAME=VALUE`` (or ``NAME``, the value read from the environment variable
+    of that name): save the secret under NAME in the credential store, the one Settings →
+    Secrets lists and every ``{{secret:NAME}}`` and provider ``credential`` reads."""
+    from personalclaw.config.credentials import save_credential
+    from personalclaw.secrets_vault import is_reserved_key, valid_key_name
+
+    if "=" in credential:
+        cred_name, _, cred_val = credential.partition("=")
+    else:
+        cred_name, cred_val = credential, os.environ.get(credential, "")
+    cred_name = cred_name.strip()
+    if not valid_key_name(cred_name):
+        print(
+            f"  ❌ --credential {cred_name!r}: a credential name is letters, digits and "
+            "underscores, and does not start with a digit"
+        )
+        return
+    if is_reserved_key(cred_name):
+        print(
+            f"  ❌ --credential {cred_name!r}: that name is reserved for a key PersonalClaw "
+            "manages itself; choose another"
+        )
+        return
+    if not cred_val:
+        print(f"  ⚠️  --credential {cred_name!r}: no value given and ${cred_name} is not set")
+        return
+    try:
+        save_credential(cred_name, cred_val)
+    except OSError as exc:
+        print(f"  ❌ Could not store credential {cred_name!r}: {exc}")
+        return
+    print(f"  ✅ Stored {cred_name} in the credential store (listed in Settings → Secrets)")
 
 
 def _setup_workspace_dir() -> None:

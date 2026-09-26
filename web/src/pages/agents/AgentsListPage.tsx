@@ -277,7 +277,13 @@ function NativeRow({ agent, index, isDefault, onClick }: { agent: SavedAgent; in
           {isReservedAgent(agent) && <span className="shrink-0 inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]"><Lock size={10} /> built-in</span>}
         </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
-          {agent.model && <span className="font-mono text-[0.75rem]">{agent.model}</span>}
+          {agent.model && (
+            <span className="font-mono text-[0.75rem]" title={agent.model_unavailable ? `Unavailable: ${agent.model_unavailable.why}` : undefined}>
+              {agent.model}
+              {/* The pin is kept and cannot run: said on the row, where the list is scanned. */}
+              {agent.model_unavailable && <span className="font-sans" style={{ color: 'var(--color-warning)' }}> · unavailable</span>}
+            </span>
+          )}
           {/* The `·` separates the model from the description, so it may only render when the model
               did. It was hard-coded onto the description, and the model is optional — every built-in
               inherits its model from Settings → Models — so all 8 native rows read "· Built-in worker

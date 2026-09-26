@@ -97,12 +97,12 @@ def test_register_and_deregister_normalize_a_list(_cfg_home, monkeypatch):
     apps: list[str] = []
     monkeypatch.setattr(
         "personalclaw.tool_providers.registry.register_provider",
-        lambda p, app="": (registered.append(p.name), apps.append(app)),
+        lambda p, app="", **_standing: (registered.append(p.name), apps.append(app)),
     )
-    unregistered: list[str] = []
+    unregistered: list[object] = []
     monkeypatch.setattr(
         "personalclaw.tool_providers.registry.unregister_provider",
-        lambda n: unregistered.append(n),
+        lambda p: unregistered.append(p),
     )
     handler = ToolTypeHandler()
     p1, p2 = _FakeToolProvider({"endpoint": "https://a/1"}), _FakeToolProvider(
@@ -114,7 +114,9 @@ def test_register_and_deregister_normalize_a_list(_cfg_home, monkeypatch):
     # when one of its tools has a schema no model request can carry.
     assert apps == ["openai-tools", "openai-tools"]
     handler.deregister(_Ext("openai-tools"), [p1, p2])
-    assert unregistered == [p1.name, p2.name]
+    # By object: a provider refused at registration never held its name, so removing "whatever is
+    # registered under it" would take the provider that does.
+    assert unregistered == [p1, p2]
 
 
 def test_single_instance_tool_path_unchanged(_cfg_home, monkeypatch):
@@ -179,13 +181,11 @@ async def _model_provider_client(tmp_path):
     from personalclaw.dashboard.handlers import providers as model_providers
     from personalclaw.providers import instance_routes
 
-    # 🪤 `config_dir` is NOT the only home seam these routes reach: a tool-instance
-    # mutation runs `_rebuild_agent_config_safe()`, which writes through `agent.agents_dir()`
-    # and reads `agent._USER_DIR`. Redirect them too, so nothing here can reach the real home.
+    # 🪤 A tool-instance mutation runs `_rebuild_agent_config_safe()`, which writes through
+    # `agent.agents_dir()` — redirected too, so nothing here can reach the real home.
     with (
         patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
         patch("personalclaw.agent.agents_dir", lambda: tmp_path / "agents"),
-        patch("personalclaw.agent._USER_DIR", tmp_path),
         # The typed media registries are process-wide; a config write re-reads them.
         patch.object(model_providers, "_refresh_media_registries", lambda: None),
     ):

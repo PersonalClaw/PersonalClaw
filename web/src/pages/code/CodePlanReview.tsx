@@ -8,6 +8,7 @@ import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { CapRow, CapabilityPeekModal } from '../../ui/CapabilityPicker'
 import { Markdown } from '../../ui/Markdown'
+import { LoadError } from '../../ui/ListScaffold'
 import { spring } from '../../design/motion'
 import { api, SDLC_STAGES, sdlcStageLabel, type Loop, type CodeStage, type PlanStep, type SkillItem, type SkillSearchResult, type WorkflowDefStub } from '../../lib/api'
 import type { CodeDraft } from './codeDraft'
@@ -32,6 +33,11 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
   const [stages, setStages] = useState<CodeStage[]>([])
   const [launching, setLaunching] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 🔴 THE LOAD'S FAILURE WENT TO `error`, WHICH IS ONLY DRAWN INSIDE THE LOADED BRANCH. So a
+  // failed read set "Could not load the project." where nothing could show it, and `!project`
+  // kept the spinner up forever. A load failure is its own state, drawn in place of the spinner.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+  const [attempt, setAttempt] = useState(0)
   // A brownfield project needs a bound workspace before it can start — Launch calls
   // uLoopAction('start') directly, which the backend rejects without one. This surface
   // is reachable for such a project (resume of a `review` project, or a walkthrough that
@@ -83,13 +89,14 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
   }
 
   useEffect(() => {
+    setLoadErr(null)
     api.uLoop(draft.projectId).then((p) => {
       setProject(p)
       setStages(((p.plan ?? []) as unknown as CodeStage[]).map((s) => ({ ...s, exit_criteria: [...(s.exit_criteria ?? [])] })))
       setAutopilot(p.autopilot !== false)
       setSkillIds(new Set(p.skill_ids ?? []))
       setWorkflowIds(new Set(p.workflow_ids ?? []))
-    }).catch(() => setError('Could not load the project.'))
+    }).catch(setLoadErr)
     api.skills().then(setInstalledSkills).catch(() => {})
     // No workflow catalog until WORKFLOWS-V2 Slice 0 lands the def store. The
     // picker below is length-guarded, so an empty list renders no section; the
@@ -97,7 +104,7 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
     api.uLoopPlanSession(draft.projectId).then((s) => {
       if (s) setArtifacts(s.steps.filter((st) => st.kind !== 'decomposition' && st.artifact && Object.keys(st.artifact).length > 0))
     }).catch(() => {})
-  }, [draft.projectId])
+  }, [draft.projectId, attempt])
 
   // Effective stage keys that appear more than once — the backend dedupes these on
   // launch (task_list_ids/stage_status key on `stage || title`), so a repeat is
@@ -183,7 +190,9 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
 
       <div className="min-h-0 flex-1 overflow-y-auto px-l py-l">
         <div className="mx-auto flex w-full flex-col gap-4" style={{ maxWidth: 'var(--content-width)' }}>
-          {!project ? (
+          {!project && loadErr ? (
+            <LoadError what="project" error={loadErr} onRetry={() => setAttempt((n) => n + 1)} />
+          ) : !project ? (
             <div className="flex h-40 items-center justify-center"><Loader2 size={22} className="animate-spin text-on-surface-low" /></div>
           ) : (
             <>

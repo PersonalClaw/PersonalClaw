@@ -278,9 +278,16 @@ async def api_notifications(request: web.Request) -> web.Response:
     authoritative to anyone integrating against the endpoint (a mobile client, the MCP surface).
     Corrected rather than deleted: three surfaces already agree on what the number means, and now
     the payload says the same thing they do.
+
+    An app is answered with its own notifications only — the ones it raised and the ones about a
+    conversation it started (``DashboardState.notification_reaches``) — and ``unread`` counts
+    those. It used to be answered with your whole log.
     """
     state: DashboardState = request.app["state"]
     log = state._notification_log
+    app = request.get("app", "")
+    if app:
+        log = [n for n in log if state.notification_reaches(app, n)]
     return web.json_response(
         {"notifications": log, "unread": sum(1 for n in log if not n.get("acked"))}
     )

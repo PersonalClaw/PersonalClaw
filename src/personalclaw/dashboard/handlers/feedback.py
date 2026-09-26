@@ -6,8 +6,13 @@ GET  /api/feedback/producers            per-producer accuracy (min-N filtered)
 POST /api/feedback/producers/snooze     30-day snooze for one producer
 POST /api/feedback/producers/clear      un-suppress after the user edits the artifact
 
-The ``feedback.enabled`` kill-switch 404s every route (thumbs never render when
-off — the FE hides on config, this is the backend rail). An app-scoped token's
+The ``feedback.enabled`` kill-switch answers the two READS a page makes to render —
+the producers table and a thumbs pair's verdict — with ``200 {"enabled": false}``,
+the decided answer every switched-off read gives (``docs/reference/api-overview.md``).
+They used to 404, so with feedback off every Settings page (the hub's AI feedback card
+reads the producers) and every card that carries thumbs logged a failed request for a
+switch that was merely off. The three WRITES still refuse with 404 ``disabled``: a
+verdict, a snooze or a clear must not land on a switched-off surface. An app-scoped token's
 records get ``source_app`` stamped server-side from ``request["app"]``; the
 app-boundary that identity implies — producer namespaced to
 ``("app", "<app>:<producer>")`` and the target forced to ``app_judgment`` — is
@@ -37,10 +42,18 @@ def _enabled() -> bool:
 
 
 def _disabled_response() -> web.Response:
+    """A WRITE while the switch is off."""
     return web.json_response(
         {"error": {"code": "disabled", "message": "feedback is disabled in Settings"}},
         status=404,
     )
+
+
+def _off() -> web.Response:
+    """A READ while the switch is off — the flag alone, and no empty collection beside it: an
+    empty ``producers`` list would tell a client that ignores ``enabled`` "nothing was rated",
+    which is a different fact from "feedback is off"."""
+    return web.json_response({"enabled": False})
 
 
 async def api_feedback_record(request: web.Request) -> web.Response:
@@ -110,7 +123,7 @@ async def api_feedback_record(request: web.Request) -> web.Response:
 async def api_feedback_target(request: web.Request) -> web.Response:
     """GET /api/feedback/target/{kind}/{id} — the current verdict for hydration."""
     if not _enabled():
-        return _disabled_response()
+        return _off()
     kind = request.match_info.get("kind", "")
     target_id = request.match_info.get("id", "")
     if kind not in fb.TARGET_KINDS:
@@ -131,7 +144,7 @@ async def api_feedback_producers(request: web.Request) -> web.Response:
     honest-counts rule: nothing is shown before the sample is meaningful).
     """
     if not _enabled():
-        return _disabled_response()
+        return _off()
     try:
         window_days = int(request.query.get("window_days", 0)) or None
     except ValueError:

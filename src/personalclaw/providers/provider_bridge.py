@@ -21,7 +21,7 @@ from collections.abc import Callable
 from typing import Any
 
 from personalclaw.errors import AgentError
-from personalclaw.llm.base import ModelProvider
+from personalclaw.llm.base import ModelProvider, ModelSubstitution
 
 logger = logging.getLogger(__name__)
 
@@ -262,12 +262,13 @@ def _fallback_chat_model(provider_hint: str | None = None, *, use_case: str = "c
 
         cfg = AppConfig.load()
         prof = (cfg.agents or {}).get(default_agent_name(cfg))
-        # Reconcile first: a default-agent pin naming an uninstalled provider
-        # (e.g. a stale "Bedrock:…" after the provider was removed) must NOT be
-        # returned — it would be handed to whatever provider actually resolves
-        # (→ wrong-provider 404). Reconcile drops it to "" so we fall through to
-        # the active chat selection below.
-        raw = _reconcile_agent_model(getattr(prof, "model", "") or "") if prof else ""
+        # A default-agent pin that cannot serve (a stale "Bedrock:…" after the provider was
+        # removed) must NOT be returned — it would be handed to whatever provider actually
+        # resolves (→ wrong-provider 404). The one availability rule decides, and a pin it
+        # refuses falls through to the active chat selection below. Nothing is substituted for
+        # a choice here: this picks a model for an agent that named NONE.
+        pin = str(getattr(prof, "model", "") or "") if prof else ""
+        raw = pin if pin and named_model_problem(pin) is None else ""
         if raw:
             parsed = split_ref(str(raw))
             ref_provider = parsed[0] if parsed else ""
@@ -350,22 +351,188 @@ def _strip_provider_prefix(model: str) -> str:
     return model
 
 
-def _reconcile_agent_model(model: str) -> str:
-    """Heal a stale agent model pin.
+def named_model_problem(ref: str, *, use_case: str = "chat") -> tuple[str, str] | None:
+    """Why the model ``ref`` names cannot serve ``use_case`` now, as ``(why, fix)``; else ``None``.
 
-    An agent may pin an explicit model that the user later removes from the
-    active set (Settings → Models). Rather than hand that dead id to the client
-    (→ 400 / unresolved provider), treat it as unset so the caller falls back to
-    the chat-use-case binding. Empty (inherit) and still-active pins pass through.
+    THE rule for a model someone chose by name — an agent's pin, a chat's own pick. It replaces a
+    heal that turned such a pin into "" with a log line, so the chat binding answered while every
+    surface went on showing the model the user chose. Two questions, the second allowed to assume
+    the first:
+
+    1. Is it one of the chat models set up in Settings → Models — the list the Agents page and the
+       composer offer? A pin outside it names a model the user removed or renamed, or never had,
+       and handing it to a provider is the 400/404 the heal existed to avoid. Not asked while no
+       chat model is set up: there is no list to be outside of.
+    2. Can its provider serve it now? The entry exists, its type is registered, it declares the
+       capability, its readiness probe agrees and its credential has a secret: the questions the
+       resolver asks before it builds, answered in ``_diagnose_unbuildable_ref``'s words, so this
+       answer and a refusal at resolution time cannot disagree.
+
+    ``fix`` is about the model, not about whoever pinned it; callers add their own "pick another
+    model on the Agents page".
     """
-    if not model:
-        return ""
+    if not ref:
+        return None
     active = _active_chat_model_ids()
-    # No active chat models configured yet → don't second-guess the pin.
-    if not active or model in active:
-        return model
-    logger.info("Agent model %r no longer active; falling back to chat binding", model)
-    return ""
+    if active and ref not in active:
+        return (
+            "it is not one of the chat models set up in Settings → Models",
+            "add it in Settings → Models",
+        )
+    qualified = _qualified_chat_ref(ref)
+    parsed = qualified.split(":", 1) if ":" in qualified else None
+    if not parsed:
+        return None
+    provider_name, model_id = parsed
+    from personalclaw.providers.use_cases import parent_capability
+
+    capability = parent_capability(use_case)
+    can_serve = _named_entry_can_serve(provider_name, capability)
+    # No entry by that name is only innocent for a string that is not a ref at all (a bare id
+    # holding a colon, while nothing is set up to qualify it). A chat chain entry IS a ref, so its
+    # provider being gone is the reason it cannot serve.
+    if can_serve is True or (can_serve is None and qualified not in active):
+        return None
+    return _diagnose_unbuildable_ref(provider_name, model_id, use_case, capability)
+
+
+def agent_model_problem(profile: Any, cfg: Any) -> dict[str, str] | None:
+    """``{why, fix}`` when the agent ``profile``'s pinned model cannot run, else ``None``.
+
+    For the surfaces that show an agent's pin — the Agents page and a room's members panel — so
+    they can say it cannot run where the pin is shown. The same rule the runtime applies
+    (:func:`named_model_problem`), so a surface and a turn cannot disagree about one pin. An ACP
+    agent's model is its CLI's own id and outside this rule; no pin, no problem.
+    """
+    pin = str(getattr(profile, "model", "") or "")
+    runtime = str(
+        getattr(profile, "provider", "")
+        or getattr(getattr(cfg, "agent", None), "provider", "")
+        or ""
+    )
+    if not pin or runtime.startswith("acp"):
+        return None
+    try:
+        problem = named_model_problem(pin)
+    except Exception:  # noqa: BLE001 — a read surface must not fail over one agent's diagnosis
+        logger.debug("could not check agent model %r", pin, exc_info=True)
+        return None
+    if problem is None:
+        return None
+    why, fix = problem
+    return {"why": why, "fix": fix}
+
+
+def _qualified_chat_ref(ref: str) -> str:
+    """``ref`` as the ``"<entry>:<model>"`` ref of the chat chain entry it names.
+
+    A pin written before refs were qualified is a bare model id; the chain entry carrying that id
+    says which provider it belongs to, and without it the id would be sent to whichever provider
+    heads the chain. A ref that is already qualified, or that no chain entry carries, is returned
+    as it is.
+    """
+    try:
+        from personalclaw.llm.registry import get_default_registry
+        from personalclaw.providers.use_cases import active_model_refs, split_ref
+
+        if ":" in ref and any(
+            e.name == ref.split(":", 1)[0] for e in get_default_registry().list_entries()
+        ):
+            return ref
+        for chain_ref in active_model_refs("chat"):
+            parsed = split_ref(chain_ref)
+            if parsed and parsed[1] == ref:
+                return chain_ref
+    except Exception:  # noqa: BLE001 — an unreadable chain leaves the ref as written
+        logger.debug("could not qualify model ref %r", ref, exc_info=True)
+    return ref
+
+
+def _named_entry_can_serve(
+    provider_name: str, capability: str, *, model_axis_only: bool = False
+) -> bool | None:
+    """Can the registry entry ``provider_name`` serve ``capability`` now, WITHOUT building it?
+
+    ``None`` when no entry has that name: then ``provider_name`` is not a provider at all, and a
+    ``"<x>:<y>"`` string is a bare model id that happens to hold a colon (``gpt-oss:20b``). The
+    conditions are ``_resolve_from_config_registry``'s own for a named candidate, plus the
+    credential, so a caller asking here and a resolution that builds agree about the same entry.
+    """
+    try:
+        from personalclaw.llm.registry import get_default_registry
+
+        registry = get_default_registry()
+        entry = next((e for e in registry.list_entries() if e.name == provider_name), None)
+    except Exception:  # noqa: BLE001 — an unreadable registry cannot name a provider
+        logger.debug("registry unreadable while checking %r", provider_name, exc_info=True)
+        return None
+    if entry is None:
+        return None
+    target_cap = _capability_enum(capability)
+    return (
+        target_cap is not None
+        and not (model_axis_only and entry.type == "acp_agent")
+        and target_cap in _entry_capabilities(registry, entry)
+        and registry.not_ready(entry, implicit=False) is None
+        and not (entry.credential and _credential_is_missing(str(entry.credential)))
+    )
+
+
+def _named_override_refusal(
+    model_override: str, use_case: str, capability: str
+) -> "ProviderResolutionError | None":
+    """The refusal for a provider-qualified ``model_override`` its named provider cannot serve.
+
+    A caller that NAMES a model gets that model or a refusal that names it. Resolution used to
+    fall through to the use case's chain instead, so a pinned judge ran on the head of the chain —
+    the family its isolation excluded — and each entry of a chain walk that could not be built was
+    silently re-served by the chain from its head. ``None`` when the prefix names no provider
+    entry: then the override is a bare model id containing ``:`` or ``/``, and resolving it
+    through the chain is what it has always meant.
+    """
+    for sep in (":", "/"):
+        if sep not in model_override:
+            continue
+        provider_name, model_id = model_override.split(sep, 1)
+        if _named_entry_can_serve(provider_name, capability) is None:
+            continue
+        why, fix = _diagnose_unbuildable_ref(provider_name, model_id, use_case, capability)
+        return ProviderResolutionError(
+            f"The model {model_override!r} isn't available. {fix}.",
+            AgentError(
+                code="ERR_MODEL_UNRESOLVED",
+                what=f"the model {model_override!r} was asked for by name and cannot be built",
+                why=why,
+                fix=fix,
+            ),
+        )
+    return None
+
+
+def substitution_reason(exc: BaseException) -> tuple[str, str]:
+    """``(why, fix)`` for a named model that failed to serve, from the failure itself."""
+    agent_error = getattr(exc, "agent_error", None)
+    why = str(getattr(agent_error, "why", "") or "")
+    if why:
+        return why, str(getattr(agent_error, "fix", "") or "")
+    text = str(exc).strip() or type(exc).__name__
+    return f"it failed ({type(exc).__name__}: {text})"[:300], ""
+
+
+def stamp_substitution(provider: object, substitution: ModelSubstitution | None) -> None:
+    """Stamp ``substituted_for`` on a provider serving in a named model's place.
+
+    A plain attribute, like ``served_ref``'s stamp, and NOT a field of the SDK's ``ModelProvider``:
+    the guard declares it (``ModelCallGuard.substituted_for``) and copies it onto every call it
+    records, and the native runtime reads it off its inner provider. An object that refuses the
+    attribute keeps no stamp, and its calls simply name the model that served.
+    """
+    if substitution is None:
+        return
+    try:
+        provider.substituted_for = substitution  # type: ignore[attr-defined]
+    except (AttributeError, TypeError):
+        logger.debug("%s does not accept a substitution stamp", type(provider).__name__)
 
 
 def _build_native_runtime(
@@ -399,18 +566,56 @@ def _build_native_runtime(
 
     from personalclaw.agents.native.builtin_tools import (
         PLATFORM_CATEGORIES,
+        PLATFORM_DISPLAY_NAME,
+        PLATFORM_PROVIDER_NAME,
         NativeBuiltinToolProvider,
     )
     from personalclaw.agents.native.runtime import NativeAgentRuntime
     from personalclaw.agents.provider import AgentRuntimeDefinition
 
-    # Heal a stale per-turn override BEFORE it threads into the inner provider
-    # resolution. A chat session persists its model as a "<provider>:model" ref;
-    # after that provider is uninstalled the ref is dead. If we passed it through,
-    # the inner resolver would override the active binding's model id with the dead
-    # one — sending e.g. "Bedrock:…claude-opus-4-8" to the OpenAI provider → 404.
-    # Reconcile it to "" so the active chat binding fully governs the model.
-    model_override = _reconcile_agent_model(model_override or "") or None
+    name = agent or "PersonalClaw"
+    # The agent's profile, read ONCE: its pin decides which provider is resolved below, and its
+    # tools, skills and triggers ride the definition. Its PROMPT is not read here: the system
+    # prompt reaches the model through the turn's assembled context
+    # (``ContextBuilder.build_message``), the one place it is resolved.
+    prof = None
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        prof = (AppConfig.load().agents or {}).get(agent) if agent else None
+    except Exception:  # noqa: BLE001 — an unreadable config leaves the agent unpinned
+        logger.debug("agent profile unreadable for %r", agent, exc_info=True)
+
+    # The model this runtime was ASKED for, in precedence order: the chat's own pick, then the
+    # agent's pin. The first that can serve is the one it runs on, provider included: a pin naming
+    # the SECOND provider of the chat chain used to be served by the chain's head with the pin's
+    # model id borrowed, a model that provider does not offer. A choice that cannot serve is SAID,
+    # never healed away: an agent has no strict setting, so the turn runs on the chat binding and
+    # the runtime carries the substitution for the chat, the room and the Agents page to show.
+    choices: list[tuple[str, str, str]] = []
+    if model_override:
+        choices.append(
+            (
+                model_override,
+                "this chat's model",
+                "pick another model for this chat in the composer",
+            )
+        )
+    pin = str(getattr(prof, "model", "") or "") if prof is not None else ""
+    if pin:
+        choices.append(
+            (pin, f"{name}'s model", f"pick another model for {name} on the Agents page")
+        )
+    chosen = ""
+    missed: tuple[str, str, str, str] | None = None  # (requested, who, why, fix)
+    for ref, who, pick_fix in choices:
+        problem = named_model_problem(ref)
+        if problem is None:
+            chosen = _qualified_chat_ref(ref)
+            break
+        if missed is None:
+            why, fix = problem
+            missed = (ref, who, why, f"{pick_fix}, or {fix}")
 
     # The inner ModelProvider — resolve the governing axis's chain WITHOUT
     # recursing into the native branch (pass a sentinel kwarg the factory honors).
@@ -426,17 +631,32 @@ def _build_native_runtime(
     from personalclaw.providers.use_cases import CHAT_SUBCATEGORIES
 
     inner_axis = model_axis if model_axis in CHAT_SUBCATEGORIES else "chat"
-    model_provider = resolve_provider_for_use_case(
-        inner_axis,
-        session_key=session_key,
-        agent=agent,
-        model_override=model_override,
-        cwd=cwd,
-        _force_model_axis=True,
-        _model_axis_only=True,
-        **kwargs,
-    )
-    name = agent or "PersonalClaw"
+
+    def _resolve(override: str | None) -> ModelProvider:
+        return resolve_provider_for_use_case(
+            inner_axis,
+            session_key=session_key,
+            agent=agent,
+            model_override=override,
+            cwd=cwd,
+            _force_model_axis=True,
+            _model_axis_only=True,
+            **kwargs,
+        )
+
+    try:
+        model_provider = _resolve(chosen or None)
+    except ProviderResolutionError as exc:
+        if not chosen:
+            raise
+        # The chosen model passed every question that can be asked without building it, and the
+        # build still refused. Said the same way, and served by the chat binding.
+        why, fix = substitution_reason(exc)
+        who, pick_fix = next((w, f) for r, w, f in choices if _qualified_chat_ref(r) == chosen)
+        if missed is None:
+            missed = (chosen, who, why, f"{pick_fix}, or {fix}" if fix else pick_fix)
+        chosen = ""
+        model_provider = _resolve(None)
     if not hasattr(model_provider, "complete"):
         raise ProviderResolutionError(
             f"Native agent {name!r} resolved its inference model to "
@@ -445,42 +665,13 @@ def _build_native_runtime(
             f"(Settings → Models), not an ACP agent runtime."
         )
 
-    # Pull the agent's model/tools/skills from its profile when present. Its PROMPT is
-    # not read here: the system prompt reaches the model through the turn's assembled
-    # context (``ContextBuilder.build_message``), the one place it is resolved.
-    # Strip any "<provider>:" prefix so the bare model id reaches complete()
-    # (the inner ModelProvider is resolved above; this is the id label the SDK
-    # call uses — a "Bedrock:…" ref here means an invalid AWS model identifier).
-    # Reconcile the per-turn override too (not just the profile pin): a chat
-    # session persists its model as a "<provider>:model" ref, and after a
-    # provider is uninstalled that ref is stale. Healing it to "" lets the
-    # chat-binding fallback pick a live model, instead of stripping the prefix
-    # and handing a dead model id to whatever provider resolution lands on
-    # (the "sent Bedrock:… to OpenAI → 404" bug).
-    model = _strip_provider_prefix(_reconcile_agent_model(model_override or ""))
-    tools: list[str] = []
-    skills: list[str] = []
-    hook_ids: list[str] = []
-    try:
-        from personalclaw.config.loader import AppConfig
-
-        cfg = AppConfig.load()
-        prof = (cfg.agents or {}).get(agent) if agent else None
-        if prof is not None:
-            # Heal a stale pin: an explicit agent model (or per-turn override)
-            # that's no longer active reconciles to "" → the chat-binding
-            # fallback below. Both the override and the profile pin may be the
-            # "<provider>:model" ref a chat session stores; reconcile BOTH so a
-            # ref naming an uninstalled provider doesn't slip through as a bare
-            # (dead) model id.
-            model = _strip_provider_prefix(
-                _reconcile_agent_model(model_override or "")
-            ) or _strip_provider_prefix(_reconcile_agent_model(getattr(prof, "model", "") or ""))
-            tools = list(getattr(prof, "tools", []) or [])
-            skills = list(getattr(prof, "skills", []) or [])
-            hook_ids = list(getattr(prof, "triggers", []) or [])
-    except Exception:
-        pass
+    # The id ``complete()`` is sent: the chosen ref without its "<provider>:" prefix (a
+    # "Bedrock:…" ref here is an invalid AWS model identifier), the provider above being the one
+    # that ref names.
+    model = _strip_provider_prefix(chosen) if chosen else ""
+    tools: list[str] = list(getattr(prof, "tools", []) or []) if prof is not None else []
+    skills: list[str] = list(getattr(prof, "skills", []) or []) if prof is not None else []
+    hook_ids: list[str] = list(getattr(prof, "triggers", []) or []) if prof is not None else []
 
     # An agent with no model of its own (the hidden ``personalclaw-lite``
     # background agent, the goal loop worker's "inherit chat" default, or any
@@ -555,7 +746,7 @@ def _build_native_runtime(
     # because it's cwd-coupled (workspace path confinement); the session-coupled app
     # providers are registry singletons that resolve this turn via contextvars
     # (runtime._invoke binds them).
-    from personalclaw.tool_providers.registry import list_providers as _list_tool_providers
+    from personalclaw.tool_providers.registry import tool_surface
 
     platform = NativeBuiltinToolProvider(
         cwd=_cwd,
@@ -563,12 +754,12 @@ def _build_native_runtime(
         session_key=session_key or "",
         extra_roots=[Path(r) for r in (extra_tool_roots or [])],
         categories=PLATFORM_CATEGORIES,
-        provider_name="personalclaw-filesystem",
-        display="Filesystem & Shell Tools",
+        provider_name=PLATFORM_PROVIDER_NAME,
+        display=PLATFORM_DISPLAY_NAME,
     )
-    tool_providers = [platform, *_list_tool_providers()]
+    tool_providers = tool_surface(platform)
 
-    return NativeAgentRuntime(  # type: ignore[return-value]  # CI-2
+    runtime = NativeAgentRuntime(
         definition=definition,
         model_provider=model_provider,  # type: ignore[arg-type]
         tool_providers=tool_providers,
@@ -588,6 +779,24 @@ def _build_native_runtime(
         tool_groups=list(tool_groups) if tool_groups is not None else None,
         surface=inner_axis,
     )
+    # What serves in place of a choice, named with the ref that actually answers — the runtime's
+    # own ``served_model_ref``, so the sentence cannot name a model the turn did not run on. With
+    # no choice missed, a chain entry serving in place of the chain's head (stamped on the inner
+    # provider by the chain walk) is carried instead: it is the user's configured fallback, and
+    # it is said the same way.
+    if missed is not None:
+        requested, who, why, fix = missed
+        runtime.model_substitution = ModelSubstitution(
+            requested=requested,
+            served=runtime.served_model_ref or "the chat binding",
+            why=why,
+            fix=fix,
+            who=who,
+        )
+    else:
+        stamped = getattr(model_provider, "substituted_for", None)
+        runtime.model_substitution = stamped if isinstance(stamped, ModelSubstitution) else None
+    return runtime  # type: ignore[return-value]  # CI-2
 
 
 def _native_session_cwd(cwd: str | None) -> str:
@@ -654,16 +863,16 @@ def _model_app_for_provider_type(provider_type: str) -> tuple[str, bool] | None:
 
 def _credential_is_missing(name: str) -> bool:
     """Whether ``name`` names a credential the store cannot produce a secret for."""
-    try:
-        from personalclaw.config.loader import config_dir
-        from personalclaw.llm.credentials import CredentialStore
+    from personalclaw.config.loader import config_dir
+    from personalclaw.llm.credentials import CredentialStore
 
-        store = CredentialStore(config_dir())
-        if not store.has(name):
-            return True
-        return str(getattr(store.resolve(name), "source", "") or "none") == "none"
+    try:
+        CredentialStore(config_dir()).resolve(name)
+    except KeyError:  # not stored, or an owned key nothing reads by name
+        return True
     except Exception:  # noqa: BLE001 — an unreadable store is not evidence of a missing key
         return False
+    return False
 
 
 def _diagnose_unbuildable_ref(
@@ -787,7 +996,7 @@ def _diagnose_unbuildable_ref(
         return (
             f"provider {provider_name!r} needs credential {credential!r}, which has no "
             f"secret in the credential store",
-            f"set {credential!r} in Settings → Providers, or {rebind}",
+            f"store {credential!r} in Settings → Secrets, or {rebind}",
         )
 
     return (
@@ -1003,6 +1212,12 @@ def resolve_provider_for_use_case(
         )
         if direct is not None:
             return direct
+        # None with a prefix that DOES name a provider entry: that provider cannot serve the model
+        # the caller named. Refused by name — falling through would serve the chain's head instead,
+        # which is how a pinned judge ran on the model its isolation excluded.
+        refusal = _named_override_refusal(model_override, use_case, capability)
+        if refusal is not None:
+            raise refusal
 
     # The active selection (Settings → Models) is an ordered fallback CHAIN
     # (MODEL-USE-CASES-V2): position 0 is the default, 1..n are the user's
@@ -1016,6 +1231,7 @@ def resolve_provider_for_use_case(
     # sub-category with no chain of its own borrows the parent ``chat`` chain
     # (active_model_refs handles that).
     _refs = list(active_model_refs(use_case))
+    _bound_head = _refs[0] if _refs else ""
     # ── Step (2) routing seam ──
     # ONE call, ONE site, immediately before the active-ref loop: route_refs is a PURE REORDER of
     # the refs the user bound — it never invents, adds, or drops a candidate, so everything
@@ -1040,6 +1256,13 @@ def resolve_provider_for_use_case(
         logger.debug("routing seam skipped for %s", use_case, exc_info=True)
         _routed = False
     _last_dead: tuple[str, str] | None = None  # (ref, provider_name) of a dead entry
+    # The chain HEAD the user bound, before any routing reorder, and why it was skipped when it
+    # was. A later entry that serves after the head was skipped serves in its place, and says so
+    # ("ran on <entry> instead of <head>"): the user configured that fallback, and the step and
+    # Introspect otherwise named only the entry that answered. A reorder the ROUTER chose is not a
+    # substitution — the head served nothing because it was never tried first.
+    _head = _bound_head
+    _head_skipped: tuple[str, str] | None = None  # (why, fix)
     for i, ref in enumerate(_refs):
         parsed = split_ref(ref)
         if not parsed:
@@ -1056,6 +1279,11 @@ def resolve_provider_for_use_case(
                     "chain skip: %s entry %d (%s) — provider breaker OPEN", use_case, i, ref
                 )
                 _log_chain_skip(use_case, ref, "breaker_open")
+                if ref == _head:
+                    _head_skipped = (
+                        f"calls to {provider_name!r} kept failing, so its circuit breaker is open",
+                        "it is tried again automatically once the breaker recovers",
+                    )
                 continue
         except Exception:  # noqa: BLE001 — breaker introspection must never break resolution
             pass
@@ -1082,6 +1310,17 @@ def resolve_provider_for_use_case(
             **_rk,
         )
         if pinned is not None:
+            if _head_skipped is not None and ref != _head:
+                why, fix = _head_skipped
+                stamp_substitution(
+                    pinned,
+                    ModelSubstitution(
+                        requested=_head,
+                        served=str(getattr(pinned, "served_ref", "") or ref),
+                        why=why,
+                        fix=fix,
+                    ),
+                )
             return pinned
         # This entry names a provider the config registry can't build — its app
         # isn't installed / configured. With a later entry declared, skip it
@@ -1093,6 +1332,10 @@ def resolve_provider_for_use_case(
                 "chain skip: %s entry %d (%s) — provider not buildable", use_case, i, ref
             )
             _log_chain_skip(use_case, ref, "unbuildable")
+            if ref == _head:
+                _head_skipped = _diagnose_unbuildable_ref(
+                    provider_name, model_id, use_case, capability
+                )
             continue
     if _last_dead is not None:
         # The chain exhausted with at least one unbuildable entry. Per the
@@ -1516,7 +1759,7 @@ def _resolve_from_config_registry(
             pass
     # When options carry an inline api_key (set by the "Add instance" UI form)
     # but no credential is linked, synthesize a Credential so the factory gets
-    # it without requiring a credentials.json entry.
+    # it without a named credential in the store.
     if "credential_store" not in build_kwargs and not candidate.credential:
         inline_key = (candidate.options or {}).get("api_key")
         if inline_key and isinstance(inline_key, str):

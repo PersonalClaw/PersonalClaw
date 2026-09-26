@@ -67,6 +67,7 @@ from urllib.parse import urlparse
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
+from personalclaw.config.credentials import OWNED_KEY_PREFIX
 
 
 def config_dir() -> Path:
@@ -80,9 +81,19 @@ def config_dir() -> Path:
 
 logger = logging.getLogger(__name__)
 
-#: Credential-store names for the VAPID keypair (plan C3 names these exactly).
-VAPID_PUBLIC_CRED = "PERSONALCLAW_VAPID_PUBLIC"
-VAPID_PRIVATE_CRED = "PERSONALCLAW_VAPID_PRIVATE"
+#: Credential-store keys for the VAPID keypair. Core-OWNED keys (``PCSECRET_…``): the pair is
+#: this install's own key material, not a secret the user manages, so Settings → Secrets does not
+#: list it (deleting it there would silently stop every phone from ringing) and it is not mirrored
+#: into the environment every child process inherits.
+VAPID_PUBLIC_KEY = f"{OWNED_KEY_PREFIX}CORE_WEBPUSH__VAPID_PUBLIC"
+VAPID_PRIVATE_KEY = f"{OWNED_KEY_PREFIX}CORE_WEBPUSH__VAPID_PRIVATE"
+
+#: The names the pair had in ``credentials.json``, the store it lived in until this release, and
+#: the keys ``llm.credentials.move_credentials_file`` moves them to.
+MOVED_FROM_CREDENTIALS_FILE: dict[str, str] = {
+    "PERSONALCLAW_VAPID_PUBLIC": VAPID_PUBLIC_KEY,
+    "PERSONALCLAW_VAPID_PRIVATE": VAPID_PRIVATE_KEY,
+}
 
 #: The ONLY keys a push payload may carry. Asserted, not documented.
 PAYLOAD_KEYS: frozenset[str] = frozenset({"kind", "item_id"})
@@ -205,36 +216,20 @@ def push_init(*, force: bool = False) -> tuple[str, str]:
 
 
 def _store_vapid(public_key: str, private_key: str) -> None:
-    """Write the pair into ``credentials.json`` as ``static_token`` descriptors.
+    """Keep the pair in the credential store under :data:`VAPID_PUBLIC_KEY` and
+    :data:`VAPID_PRIVATE_KEY`, both in one write."""
+    from personalclaw.config.credentials import save_credentials
 
-    ``static_token`` (not ``api_key``) because that is the kind whose whole meaning is "an
-    opaque secret this install owns", and it keeps the pair visible in
-    ``/api/credentials`` as *configured* without ever exposing the value (the store
-    strips secrets from :meth:`CredentialStore.list`).
-
-    The merge-then-save shape is the house pattern (``cli_setup.py:254``): ``save()``
-    REPLACES the file, so writing only our two names would delete every provider
-    credential the user has.
-    """
-    from personalclaw.llm.credentials import CredentialStore
-
-    store = CredentialStore(config_dir())
-    descriptors: dict[str, dict[str, object]] = {
-        name: dict(desc) for name, desc in store._descriptors.items()
-    }
-    descriptors[VAPID_PUBLIC_CRED] = {"type": "static_token", "value": public_key}
-    descriptors[VAPID_PRIVATE_CRED] = {"type": "static_token", "value": private_key}
-    store.save(descriptors)
+    save_credentials({VAPID_PUBLIC_KEY: public_key, VAPID_PRIVATE_KEY: private_key})
 
 
 def vapid_keys() -> tuple[str, str] | None:
     """The stored ``(public, private)`` VAPID pair, or None when uninitialised."""
     try:
-        from personalclaw.llm.credentials import CredentialStore
+        from personalclaw.config.credentials import get_credential
 
-        store = CredentialStore(config_dir())
-        pub = store.resolve(VAPID_PUBLIC_CRED).secret
-        priv = store.resolve(VAPID_PRIVATE_CRED).secret
+        pub = get_credential(VAPID_PUBLIC_KEY)
+        priv = get_credential(VAPID_PRIVATE_KEY)
     except Exception:
         logger.debug("VAPID key read failed", exc_info=True)
         return None
@@ -712,8 +707,7 @@ def push_cmd(args: Any) -> int:
             print("VAPID keypair ROTATED — every existing subscription is now invalid.")
             print("Re-subscribe each device from Settings → Companion apps.")
         else:
-            print("VAPID keypair generated and stored in the credential store as")
-            print(f"  {VAPID_PUBLIC_CRED} / {VAPID_PRIVATE_CRED}")
+            print("VAPID keypair generated and stored in the credential store.")
         print(f"\nPublic key: {public_key}")
         return 0
 

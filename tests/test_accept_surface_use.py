@@ -60,7 +60,7 @@ def home(tmp_path, monkeypatch):
     from personalclaw.skills import marketplace as mp
 
     monkeypatch.setattr(loader_mod, "config_dir", lambda: tmp_path)
-    monkeypatch.setattr(mp, "SKILL_DISCOVERY_PATHS", [])
+    monkeypatch.setattr(mp, "skill_discovery_paths", lambda: [])
     # No model calls: force the no-embedder branch of the semantic ∪ keyword union.
     monkeypatch.setattr(surfacing_mod, "_active_embedder", lambda: (None, ""))
     return tmp_path

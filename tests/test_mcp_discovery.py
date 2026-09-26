@@ -981,7 +981,7 @@ class TestRebuildAgentConfigRemote:
         # Single user MCP source: ~/.personalclaw/mcp.json (none here).
         user_dir = tmp_path / ".personalclaw"
         monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
-        monkeypatch.setattr("personalclaw.agent._USER_DIR", user_dir)
+        monkeypatch.setattr("personalclaw.agent._user_dir", lambda: user_dir)
         monkeypatch.setattr("personalclaw.agent._PERSONALCLAW_BIN", "/usr/bin/personalclaw")
         monkeypatch.setattr("shutil.which", lambda cmd, path=None: None)
 
@@ -1012,7 +1012,7 @@ class TestRebuildAgentConfigRemote:
         )
 
         monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
-        monkeypatch.setattr("personalclaw.agent._USER_DIR", user_dir)
+        monkeypatch.setattr("personalclaw.agent._user_dir", lambda: user_dir)
         monkeypatch.setattr("personalclaw.agent._PERSONALCLAW_BIN", "/usr/bin/personalclaw")
         monkeypatch.setattr("shutil.which", lambda cmd, path=None: None)
 
@@ -1117,11 +1117,8 @@ class TestProbeRemoteTimeout:
     @pytest.mark.asyncio
     async def test_probe_remote_timeout_uses_config(self) -> None:
         """A server that never answers reads ``timeout`` after ``_get_probe_timeout()``."""
-        from personalclaw.mcp_client import mcp_sdk_available
         from personalclaw.mcp_discovery import _probe_remote
 
-        if not mcp_sdk_available():
-            pytest.skip("requires the 'mcp' SDK extra")
         server = McpServerInfo(name="remote", url="https://example.com/mcp", transport="http")
 
         async def never_answers(self):
@@ -1252,7 +1249,7 @@ class TestSharedServerToolsRegistration:
         )
 
         monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
-        monkeypatch.setattr("personalclaw.agent._USER_DIR", user_dir)
+        monkeypatch.setattr("personalclaw.agent._user_dir", lambda: user_dir)
         monkeypatch.setattr("personalclaw.agent._PERSONALCLAW_BIN", "/usr/bin/personalclaw")
         monkeypatch.setattr("shutil.which", lambda cmd, path=None: "/usr/bin/srv")
 
@@ -1297,7 +1294,7 @@ class TestSharedServerToolsRegistration:
         )
 
         monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
-        monkeypatch.setattr("personalclaw.agent._USER_DIR", user_dir)
+        monkeypatch.setattr("personalclaw.agent._user_dir", lambda: user_dir)
         monkeypatch.setattr("personalclaw.agent._PERSONALCLAW_BIN", "/usr/bin/personalclaw")
         monkeypatch.setattr("shutil.which", lambda cmd, path=None: "/usr/bin/srv")
 
@@ -1341,7 +1338,7 @@ class TestSharedServerToolsRegistration:
         )
 
         monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
-        monkeypatch.setattr("personalclaw.agent._USER_DIR", user_dir)
+        monkeypatch.setattr("personalclaw.agent._user_dir", lambda: user_dir)
         monkeypatch.setattr("personalclaw.agent._PERSONALCLAW_BIN", "/usr/bin/personalclaw")
         monkeypatch.setattr("shutil.which", lambda cmd, path=None: "/usr/bin/srv")
 
@@ -1377,7 +1374,7 @@ class TestSharedServerToolsRegistration:
         )
 
         monkeypatch.setattr("personalclaw.agent.agents_dir", lambda: agents_dir)
-        monkeypatch.setattr("personalclaw.agent._USER_DIR", user_dir)
+        monkeypatch.setattr("personalclaw.agent._user_dir", lambda: user_dir)
         monkeypatch.setattr("personalclaw.agent._PERSONALCLAW_BIN", "/usr/bin/personalclaw")
         monkeypatch.setattr("shutil.which", lambda cmd, path=None: None)
 

@@ -8,14 +8,14 @@ const docs: UiDoc[] = [
     name: 'ShellCornerLeft',
     keywords: ['shell', 'corner', 'nav', 'collapse', 'toggle', 'sidebar', 'chrome', 'pull-tab'],
     description:
-      "The app shell's LEFT corner — a pull-tab hugging the nav rail's top-right edge that carries the nav collapse/expand toggle, floating above page content. Publishes its measured width to the CSS var `--shell-corner-l` so page TopBars pad to clear it.",
+      "The app shell's LEFT corner — a pull-tab hugging the nav rail's top-right edge that carries the nav collapse/expand toggle, floating above page content. Publishes its measured width to the CSS var `--shell-corner-l` so page TopBars pad to clear it, and its height to `--shell-corner-lh`, which a TopBar whose row has moved below the corners clears instead.",
     props: [
       { name: 'collapsed', description: 'Current rail collapsed state — chooses the glyph (PanelLeftOpen vs PanelLeftClose) and the aria/title copy.' },
       { name: 'onToggle', description: 'Fires to flip the rail between collapsed and expanded.' },
     ],
     bestPractices: [
       { guidance: true, description: "This is the single home for the nav collapse toggle — NavRail is collapse-CONTROLLED, so drive NavRail's `collapsed` from the same state you pass here." },
-      { guidance: false, description: 'Do not drop or hardcode the `--shell-corner-l` width it publishes — page TopBars reserve exactly that much left padding via that var to avoid sliding under the tab.' },
+      { guidance: false, description: 'Do not drop or hardcode the `--shell-corner-l` width or `--shell-corner-lh` height it publishes — page TopBars reserve exactly that much left padding (or, stacked below the corners, top padding) via those vars to avoid sliding under the tab.' },
     ],
     anatomy: ['absolutely-positioned pull-tab (flush left, rounded right edge, attached to the rail)', 'toggle button', 'AnimatePresence glyph morph (PanelLeftClose / PanelLeftOpen)'],
   },

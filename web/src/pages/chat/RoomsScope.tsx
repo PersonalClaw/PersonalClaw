@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { MessagesSquare, Plus, Users } from 'lucide-react'
-import { api, hasApiCode, type RoomRecord } from '../../lib/api'
+import { api, isSwitchedOff, type RoomRecord, type SwitchedOffView } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { Button } from '../../ui/Button'
 import { Eyebrow } from '../../ui/Eyebrow'
@@ -31,7 +31,7 @@ import {
  *  this scope reads `/api/rooms`, and the scope's count comes from that read.
  */
 export function RoomsScope({ rooms, error, loading, onRefresh, navigate }: {
-  rooms: RoomRecord[] | undefined
+  rooms: RoomRecord[] | SwitchedOffView | undefined
   error: unknown
   loading: boolean
   onRefresh: () => void
@@ -58,10 +58,13 @@ export function RoomsScope({ rooms, error, loading, onRefresh, navigate }: {
     }
   }, [title, busy, onRefresh, navigate])
 
-  // `rooms_disabled` is the feature being OFF, not a read that failed — and the backend refuses
-  // the reads too, deliberately, so a 403 here is the only signal there is. Rendering it as a
-  // LoadError would tell the user their rooms are broken when they are switched off.
-  if (rooms === undefined && error && hasApiCode(error, 'rooms_disabled')) {
+  // `{"enabled": false}` is the feature being OFF, not a read that failed. Rendering it as a
+  // LoadError would tell the user their rooms are broken when they are switched off. It used to
+  // arrive as a 403 `rooms_disabled`, matched here by code, which made every chat visit on a
+  // default install log a failed request. It counts only while it is the list's latest word: a
+  // refetch that fails keeps the old value, and "off" must not outlive the switch being turned on.
+  const list = isSwitchedOff(rooms) ? undefined : rooms
+  if (isSwitchedOff(rooms) && !error) {
     return (
       <EmptyState
         icon={ROOM_ICON}
@@ -70,12 +73,12 @@ export function RoomsScope({ rooms, error, loading, onRefresh, navigate }: {
         action={{ label: 'Turn it on in chat settings', onClick: () => navigate('settings/chat') }} />
     )
   }
-  if (rooms === undefined && error) return <LoadError what="rooms" error={error} onRetry={onRefresh} />
-  if (rooms === undefined || loading) return <ListSkeleton rows={3} what="rooms" />
+  if (list === undefined && error) return <LoadError what="rooms" error={error} onRetry={onRefresh} />
+  if (list === undefined || loading) return <ListSkeleton rows={3} what="rooms" />
 
   return (
     <div className="flex flex-col gap-l">
-      {rooms.length === 0 && !creating ? (
+      {list.length === 0 && !creating ? (
         <EmptyState
           icon={ROOM_ICON}
           title="No rooms yet"
@@ -85,7 +88,7 @@ export function RoomsScope({ rooms, error, loading, onRefresh, navigate }: {
         <>
           <div className="flex items-center justify-between gap-s">
             <Eyebrow as="h2" id="rooms-heading">
-              {rooms.length} room{rooms.length === 1 ? '' : 's'}
+              {list.length} room{list.length === 1 ? '' : 's'}
             </Eyebrow>
             {!creating && (
               <Button size="sm" variant="secondary" onClick={() => setCreating(true)}>
@@ -93,9 +96,9 @@ export function RoomsScope({ rooms, error, loading, onRefresh, navigate }: {
               </Button>
             )}
           </div>
-          {rooms.length > 0 && (
+          {list.length > 0 && (
             <ul aria-labelledby="rooms-heading" className="flex flex-col gap-s">
-              {rooms.map((room) => (
+              {list.map((room) => (
                 <RoomRow key={room.id} room={room} onOpen={() => navigate(`chat/room/${encodeURIComponent(room.id)}`)} />
               ))}
             </ul>

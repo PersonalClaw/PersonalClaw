@@ -689,6 +689,21 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                           {n.schema_shortfall}
                         </div>
                       )}
+                      {/* A fallback in the user's model chain served this step because the model
+                          it asked for could not. The row's `done` and the model it names are both
+                          true, which is why this line exists: without it the step read as the model
+                          it asked for. `text-warning` for the reason the schema line is. */}
+                      {(n.model_substituted ?? []).map((line) => (
+                        <div
+                          key={line}
+                          data-type="caption"
+                          data-testid="node-model-substituted"
+                          className="truncate text-warning"
+                          title={line}
+                        >
+                          {line}
+                        </div>
+                      ))}
                     </div>
                     {/* Cache-origin (WF2-A1), at a glance on the ROW rather than only inside the
                         per-node drawer. "Did my edit actually re-run anything?" is a question about

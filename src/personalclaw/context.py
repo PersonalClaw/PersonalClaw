@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from personalclaw.agent import _shipped_prompt
 from personalclaw.agents.defaults import is_default_agent
+from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig, _compose_voice, memory_dir_for_cwd
 from personalclaw.context_headroom import Component, Window
 from personalclaw.hooks import (
@@ -29,18 +30,6 @@ if TYPE_CHECKING:
     from personalclaw.history import ConversationLog
     from personalclaw.session import SessionManager
     from personalclaw.skills.allocation import SkillDecision
-
-
-def _path_home_pclaw():
-    """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
-    try:
-        from personalclaw.config.loader import config_dir as _cd
-
-        return _cd()
-    except Exception:
-        from pathlib import Path as _P
-
-        return _P.home() / ".personalclaw"
 
 
 logger = logging.getLogger(__name__)
@@ -1153,7 +1142,7 @@ class ContextBuilder:
     @staticmethod
     def _load_agent_prompt(agent: str) -> str:
         """Read the prompt from a custom agent's config file."""
-        agents_dir = _path_home_pclaw() / "agents"
+        agents_dir = config_loader.config_dir() / "agents"
         for f in agents_dir.glob("*.json"):
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))

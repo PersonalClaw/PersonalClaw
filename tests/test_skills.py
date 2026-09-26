@@ -8,10 +8,10 @@ from personalclaw.skills import SkillsLoader
 @pytest.fixture(autouse=True)
 def _isolate_discovery_paths(monkeypatch):
     """Make the loader hermetic: SkillsLoader always merges in the global
-    SKILL_DISCOVERY_PATHS (~/.agents/skills, ~/.personalclaw/skills), which on
+    skill_discovery_paths() (~/.agents/skills, <home>/skills), which on
     a developer machine contains real user-installed skills. Empty them so
     tests see only the skills they create under tmp_path."""
-    monkeypatch.setattr("personalclaw.skills.marketplace.SKILL_DISCOVERY_PATHS", [])
+    monkeypatch.setattr("personalclaw.skills.marketplace.skill_discovery_paths", lambda: [])
 
 
 def _create_skill(skills_dir, name, content):

@@ -27,6 +27,7 @@ import pytest
 
 import personalclaw.dashboard.handlers.tools as tools_mod
 from personalclaw.apps.manager import InstalledApp, app_dir
+from personalclaw.mcp_client import McpClientRegistry
 
 
 class _DummyRequest:
@@ -234,7 +235,7 @@ async def test_a_broken_registry_read_degrades_to_builtin_not_to_a_blank_page(mo
     monkeypatch.setattr(reg, "_providers", {core.name: core})
     monkeypatch.setattr("personalclaw.apps.manager.list_apps", _boom, raising=False)
     monkeypatch.setattr(
-        "personalclaw.mcp_client.get_mcp_client_registry", lambda: None, raising=False
+        "personalclaw.mcp_client.get_mcp_client_registry", McpClientRegistry, raising=False
     )
     resp = await tools_mod.api_tools_list(_DummyRequest())
     payload = json.loads(resp.body.decode())

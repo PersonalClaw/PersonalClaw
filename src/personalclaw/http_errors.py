@@ -561,6 +561,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The call resolves as destructive and did not acknowledge that. Fix: re-send with "
         '"confirm_risk": "destructive".'
     ),
+    # The agent's hard deny-list (`security.is_denied`), by tool NAME: a call no agent may make
+    # whatever it is approved for, refused here before any confirmation is asked. Its own code
+    # because no retry satisfies it: not `tool_disabled` (nothing can re-enable it) and not
+    # `risk_confirmation_required` (confirming does not unlock it).
+    "tool_denied_by_policy": (
+        "The tool's name is on the security policy's deny-list, so it is never run, and no "
+        "confirmation changes that."
+    ),
     # 503, and NOT the `tool not found` 404 this used to fall through to (#3310). The nine
     # filesystem/shell tools are confined to the workspace root, so with no usable root there
     # is nowhere to run them — a configuration-absent answer about the HOST, like

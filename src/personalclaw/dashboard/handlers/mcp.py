@@ -324,7 +324,7 @@ async def api_mcp_servers(request: web.Request) -> web.Response:
     Agent-level ``mcpServers`` and ``includeMcpJson`` are merged at runtime.
     """
     global _mcp_probe_in_progress
-    from personalclaw.mcp_discovery import list_servers  # circular import
+    from personalclaw.mcp_discovery import as_agents_see_it, list_servers  # circular import
 
     # Kick off a background re-probe if the handler cache is stale,
     # so the next request gets fresh results.
@@ -371,6 +371,7 @@ async def api_mcp_servers(request: web.Request) -> web.Response:
         d["enabled"] = not is_disabled
         if is_disabled:
             d["status"] = "disabled"
+        d = as_agents_see_it(d)
         err = d.get("error")
         if err:
             err, _ = redact_credentials(err)
@@ -448,7 +449,7 @@ async def api_mcp_probe(request: web.Request) -> web.Response:
     probe results don't reset user's previous enable/disable choices.
     """
     global _mcp_probe_ts
-    from personalclaw.mcp_discovery import probe_all  # noqa: F811
+    from personalclaw.mcp_discovery import as_agents_see_it, probe_all  # noqa: F811
 
     servers = await probe_all()
     # mcp.json holds the enabled/disabledTools state
@@ -461,9 +462,11 @@ async def api_mcp_probe(request: web.Request) -> web.Response:
         if isinstance(spec, dict) and spec.get("disabledTools"):
             d["disabledTools"] = spec["disabledTools"]
         result.append(d)
+    # The cache keeps what the probe found; whether an agent can call a server is decided
+    # when it is shown, because the provider that serves it can arrive after the probe.
     _mcp_probe_cache[:] = result
     _mcp_probe_ts = time.time()
-    return web.json_response(result)
+    return web.json_response([as_agents_see_it(d) for d in result])
 
 
 async def api_mcp_probe_one(request: web.Request) -> web.Response:
@@ -477,7 +480,7 @@ async def api_mcp_probe_one(request: web.Request) -> web.Response:
     name = request.match_info["name"].strip()
     if not name:
         return web.json_response({"error": "server name is required"}, status=400)
-    from personalclaw.mcp_discovery import probe_one  # noqa: F811
+    from personalclaw.mcp_discovery import as_agents_see_it, probe_one  # noqa: F811
 
     info = await probe_one(name)
     if info is None:
@@ -498,12 +501,14 @@ async def api_mcp_probe_one(request: web.Request) -> web.Response:
     if not replaced:
         _mcp_probe_cache.append(d)
     _mcp_probe_ts = time.time()
-    return web.json_response(d)
+    return web.json_response(as_agents_see_it(d))
 
 
 async def api_mcp_probe_cached(request: web.Request) -> web.Response:
     """GET /api/mcp/probe — return cached probe results (non-blocking)."""
     global _mcp_probe_in_progress
+    from personalclaw.mcp_discovery import as_agents_see_it
+
     now = time.time()
     if now - _mcp_probe_ts > _MCP_PROBE_CACHE_SECS and not _mcp_probe_in_progress:
         _mcp_probe_in_progress = True
@@ -511,20 +516,16 @@ async def api_mcp_probe_cached(request: web.Request) -> web.Response:
         task = asyncio.create_task(_bg_mcp_probe())
         state._background_tasks.add(task)
         task.add_done_callback(state._background_tasks.discard)
-    return web.json_response(_mcp_probe_cache)
+    return web.json_response([as_agents_see_it(d) for d in _mcp_probe_cache])
 
 
 async def api_mcp_pool_stats(request: web.Request) -> web.Response:
     """GET /api/mcp/pool-stats — the in-process MCP connection-pool observability tile
     (P23d): live/shared/session connection counts + lifetime spawn/reap/served/reuse
-    counters. Returns ``{available:false}`` when the ``mcp`` SDK extra is absent (no
-    pool exists) so the FE can show a graceful 'MCP not installed' state."""
+    counters."""
     from personalclaw.mcp_client import get_mcp_client_registry
 
-    reg = get_mcp_client_registry()
-    if reg is None:
-        return web.json_response({"available": False})
-    return web.json_response({"available": True, **reg.pool_stats()})
+    return web.json_response(get_mcp_client_registry().pool_stats())
 
 
 async def api_mcp_importable(request: web.Request) -> web.Response:
@@ -658,7 +659,11 @@ async def api_mcp_toggle(request: web.Request) -> web.Response:
 async def api_mcp_toggle_tool(request: web.Request) -> web.Response:
     """POST /api/mcp/toggle-tool — enable or disable a specific tool in an MCP server.
 
-    Updates ``disabledTools`` in ``~/.personalclaw/mcp.json``.
+    Updates ``disabledTools`` in ``~/.personalclaw/mcp.json``, the one switch for the tool: an ACP
+    agent reads the list, and so does ``tool_prefs.is_disabled``, the check the native runtime,
+    ``POST /api/tools/invoke`` and ``GET /api/tools`` make. ``tool`` is the name the server gives
+    it (``hello``, the ``serverTool`` of its ``GET /api/tools`` row). ``mcp/<server>/<tool>`` is
+    refused: in the list it would match nothing, so the switch would read off and switch nothing.
     """
     try:
         body = await request.json()
@@ -671,6 +676,14 @@ async def api_mcp_toggle_tool(request: web.Request) -> web.Response:
     enabled = body.get("enabled", True)
     if not server or not tool:
         return web.json_response({"error": "server and tool are required"}, status=400)
+    if tool.startswith(f"mcp/{server}/"):
+        return web.json_response(
+            {
+                "error": f"name the tool as the server does ({tool[len(f'mcp/{server}/'):]!r}), "
+                f"not as an agent sees it ({tool!r})"
+            },
+            status=400,
+        )
 
     async with _get_mcp_lock():
         try:
@@ -720,6 +733,15 @@ async def api_mcp_toggle_tool(request: web.Request) -> web.Response:
             # Raw text is diagnostics for the log; the wire speaks guidance (failure_copy).
             logger.warning("mcp: failed to write mcp.json", exc_info=True)
             return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
+    # It changes what an agent can call, the security-relevant change its native sibling
+    # (`POST /api/tools/toggle`, #45) already logs.
+    sel().log_api_access(
+        caller=request.get("user", "dashboard"),
+        operation="mcp.toggle_tool",
+        outcome="enabled" if enabled else "disabled",
+        source="tools",
+        resources=f"{server}:{tool}",
+    )
     return web.json_response({"ok": True, "server": server, "tool": tool, "enabled": enabled})
 
 
@@ -1527,6 +1549,7 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
             {
               "name": "my-mcp-server",
               "personalclaw": true,     // desired presence in ~/.personalclaw/mcp.json
+              "from": "3f2a…",          // optional: the Import list row being imported
               "ccGlobal": true,         // optional: desired presence in ~/.claude.json
               "toolOverrides": {        // optional: per-tool enable/disable
                 "SkillsTool": false,
@@ -1545,10 +1568,17 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
 
     Removing a server is ``DELETE /api/mcp/servers/{name}``, not a change here.
 
+    An import from the Tools page's list carries ``"from": <the row's id>``: the server is then
+    copied exactly as that row showed it, from whichever of Claude Code's scopes it came from —
+    user, local or a project's ``.mcp.json`` (``mcp_discovery.importable_spec``).
+
     After all changes are written, ``rebuild_agent_config`` is called once so the agent config
     (``~/.personalclaw/agents/personalclaw.json``) reflects the new merged state. Returns a
     summary with per-change outcomes.
     """
+    from personalclaw.mcp_discovery import importable_spec
+    from personalclaw.onboarding_import.model import FINGERPRINT_RE
+
     try:
         body = await request.json()
     except Exception:
@@ -1579,6 +1609,21 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
                     resources=name[:64],
                 )
                 continue
+            # Import is the one way in that took a '/' in a server's name, which would make its
+            # tools' names another server's (`mcp_discovery.server_name_problem`).
+            from personalclaw.mcp_discovery import server_name_problem
+
+            problem = server_name_problem(name)
+            if problem is not None:
+                results.append({"error": problem, "name": name})
+                sel().log_api_access(
+                    caller="dashboard",
+                    operation="mcp_apply_rejected_name",
+                    outcome="denied",
+                    resources=name[:64],
+                    error=problem,
+                )
+                continue
 
             if "uninstall" in change:
                 # Removed with the rest of the four delete paths. Refused rather than ignored:
@@ -1606,9 +1651,35 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
             # serves the Tools-page "Import from Claude Code" action. Without this,
             # importing a Claude-Code-only server would be a no-op (nothing to
             # enable in the PClaw scope).
+            #
+            # `from` is the Import list's id for one server in one of Claude Code's scopes: a
+            # local- or project-scope server is found by nothing that searches by name, and two
+            # scopes can hold one name. The definition is read again from Claude Code's own
+            # files (`importable_spec`), so the request names a row and never a path or a spec.
             preserved_spec: dict | None = None
+            listed = change.get("from")
+            if listed is not None and not (
+                isinstance(listed, str) and FINGERPRINT_RE.fullmatch(listed)
+            ):
+                results.append(
+                    {"name": name, "error": "'from' must be an id from the Import list."}
+                )
+                continue
             if desired_mc and not _scope_has_entry(name, _canonical_mcp_json()):
-                preserved_spec = _find_server_spec_anywhere(name)
+                if listed is None:
+                    preserved_spec = _find_server_spec_anywhere(name)
+                else:
+                    found = importable_spec(listed)
+                    if found is None or found[0] != name:
+                        results.append(
+                            {
+                                "name": name,
+                                "error": f"Claude Code no longer has the '{name}' server this "
+                                "list showed. Reload the list to see what it has now.",
+                            }
+                        )
+                        continue
+                    preserved_spec = found[1]
 
             # Flipping PersonalClaw on needs the entry to exist or the disabled override
             # removed. Flipping it off writes disabled:true, keeping the config for later.

@@ -1,7 +1,7 @@
 import { Sparkles, RefreshCw, Lightbulb, Brain } from 'lucide-react'
 import { Surface } from '../../ui/Surface'
 import { useQuery } from '../../lib/data'
-import { api, type LearningSummary, type LearningSummaryGroup } from '../../lib/api'
+import { api, isSwitchedOff, type LearningSummary, type LearningSummaryGroup, type SwitchedOffView } from '../../lib/api'
 import { fvs } from '../../design/fontWeight'
 
 /** One row of the block: icon, exact count, and the names behind it.
@@ -42,8 +42,10 @@ function SummaryRow({ icon, label, group }: { icon: React.ReactNode; label: stri
  *  digest builder consumes it rather than growing a second implementation.
  *
  *  Absent, never zeroed. Two cases collapse to "render nothing":
- *  - `learning.enabled` is off, so the route 404s. Rendering "0 new, 0 refined" there
- *    would claim nothing was learned when the truthful answer is "not being tracked".
+ *  - `learning.enabled` is off, so the route answers `{"enabled": false}` (it used to 404, one
+ *    failed request per Skills visit). Rendering "0 new, 0 refined" there would claim nothing
+ *    was learned when the truthful answer is "not being tracked", and the Learning page is
+ *    where learning being off is said, with the way back on.
  *  - nothing was learned inside the window. A block asserting four zeros is noise on
  *    every fresh install, and the page's own empty state already says the useful thing.
  *
@@ -54,8 +56,8 @@ export function LearningSummaryBlock() {
   // Key named after the COLLECTION it reads (`learning:`, already a declared namespace),
   // not after the skills page that renders it — a `skills:`-prefixed key would be missed by
   // `invalidateKeys('learning:', true)` when a proposal is accepted elsewhere.
-  const { data } = useQuery<LearningSummary | null>('learning:summary', () => api.learningSummary().catch(() => null))
-  if (!data || data.total <= 0) return null
+  const { data } = useQuery<LearningSummary | SwitchedOffView | null>('learning:summary', () => api.learningSummary().catch(() => null))
+  if (!data || isSwitchedOff(data) || data.total <= 0) return null
   return (
     <Surface tone="low" radius="lg" className="mb-l px-m py-s">
       {/* `role="region"` is written out rather than left implicit. A named `<section>` already

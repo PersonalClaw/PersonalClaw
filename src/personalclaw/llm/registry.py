@@ -25,7 +25,9 @@ import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
+from personalclaw import app_code
 from personalclaw.llm.base import ModelProvider
 from personalclaw.llm.capabilities import Capability, ProviderCapability
 from personalclaw.llm.catalog import ModelCatalog
@@ -157,7 +159,9 @@ class ProviderRegistry:
 
         Raises :class:`ProviderResolutionError` if the type is already
         registered; silent overwrite would mask accidental double
-        registration during package import.
+        registration during package import. A type an app's code registered is taken back
+        when the app is unloaded (:mod:`personalclaw.app_code`), so its next version
+        registers it afresh.
         """
         type_ = cap.type
         if type_ in self._factories:
@@ -166,11 +170,19 @@ class ProviderRegistry:
         self._capabilities[type_] = cap
         if readiness is not None:
             self._readiness[type_] = readiness
+        app_code.keep(lambda: self._forget_type(type_, factory))
         logger.debug(
             "registered provider type %r with capabilities %s",
             type_,
             sorted(c.value for c in cap.capabilities),
         )
+
+    def _forget_type(self, type_: str, factory: ProviderFactory) -> None:
+        """Drop ``type_`` if ``factory`` is still what builds it."""
+        if self._factories.get(type_) is factory:
+            del self._factories[type_]
+            self._capabilities.pop(type_, None)
+            self._readiness.pop(type_, None)
 
     def register_catalog(self, type_: str, factory: "CatalogFactory") -> None:
         """Register a provider type's optional CATALOG factory (discovery/management).
@@ -182,7 +194,12 @@ class ProviderRegistry:
         tests (or re-enabling an app) re-registers cleanly.
         """
         self._catalog_factories[type_] = factory
+        app_code.keep(lambda: self._forget_catalog(type_, factory))
         logger.debug("registered catalog factory for provider type %r", type_)
+
+    def _forget_catalog(self, type_: str, factory: "CatalogFactory") -> None:
+        if self._catalog_factories.get(type_) is factory:
+            del self._catalog_factories[type_]
 
     def catalog_of(self, type_: str) -> "CatalogFactory | None":
         """Return the catalog factory registered for ``type_``, or ``None``.
@@ -343,10 +360,31 @@ class ProviderRegistry:
         if factory is None:
             return None
         try:
-            return factory(dict(entry.options or {}), model=entry.model)
+            return factory(_catalog_options(entry), model=entry.model)
         except Exception:  # noqa: BLE001 — a catalog build never breaks a hot GET
             logger.debug("catalog factory for type %r failed", entry.type, exc_info=True)
             return None
+
+
+def _catalog_options(entry: ProviderEntry) -> dict[str, object]:
+    """The options a catalog is built from: the entry's, plus the key its ``credential`` names.
+
+    A catalog factory takes options, not the entry, so an entry that authenticates with a
+    credential stored by name (``credential``, from Settings → Secrets) reached Test connection
+    and model discovery with no key at all, while a chat turn built through :meth:`build` had it.
+    The named key is handed over as ``api_key``, the option every catalog reads its key from; an
+    ``api_key`` the entry holds itself wins, as it does in the factories.
+    """
+    options = dict(entry.options or {})
+    if entry.credential and not options.get("api_key"):
+        from personalclaw.config.loader import config_dir
+        from personalclaw.llm.credentials import CredentialStore
+
+        try:
+            options["api_key"] = CredentialStore(config_dir()).resolve(entry.credential).secret
+        except KeyError:
+            pass  # not stored (or an owned key): the catalog reports the missing key, truly
+    return options
 
 
 # ── Module-level default registry singleton ──────────────────────────────
@@ -606,60 +644,75 @@ def sync_entries_from_config() -> int:
     if not isinstance(providers, list):
         return count
 
-    registry = get_default_registry()
     for p in providers:
-        if not isinstance(p, dict):
-            continue
-        name = str(p.get("name") or "").strip()
-        ptype = str(p.get("type") or "").strip()
-        if not name or not ptype or name in registry._entries:  # noqa: SLF001 - same module
-            continue
-        registry_type = canonical_provider_type(ptype)
-        try:
-            cap = registry.capability_of(registry_type)
-        except Exception:
-            # Type not yet registered (app loads after sync on some boot paths).
-            # Still register the entry with an empty capability set — the entry
-            # becomes resolvable by name (chat resolution uses it), and the type
-            # will be available by the time inference runs.
-            cap = None
-            logger.debug(
-                "sync_entries_from_config: type %r not registered yet for %r; registering entry anyway",  # noqa: E501
-                ptype,
-                name,
-            )
-        # LOGICAL options: a secret field on disk is a `{{secret:…}}` reference into the
-        # credential store, and the provider factory reads the value, not the pointer — the
-        # value of a key this record's owner holds, and no other (`secret_refs.resolve`).
-        from personalclaw.config.secret_refs import (
-            ForeignSecretReference,
-            provider_owner,
-        )
-        from personalclaw.config.secret_refs import resolve as _resolve_secrets
-
-        try:
-            options = _resolve_secrets(p.get("options") or {}, owner=provider_owner(name))
-        except ForeignSecretReference as exc:
-            logger.warning("sync_entries_from_config: provider %r not registered: %s", name, exc)
-            continue
-        if ptype != registry_type:
-            options["_original_type"] = ptype
-        try:
-            registry.register_entry(
-                ProviderEntry(
-                    name=name,
-                    type=registry_type,
-                    model=str(p.get("model") or ""),
-                    options=options,
-                    credential=p.get("credential"),
-                    declared_capabilities=cap.capabilities if cap else frozenset(),
-                )
-            )
+        if isinstance(p, dict) and register_config_record(p):
             count += 1
-        except ProviderResolutionError:
-            logger.debug("sync_entries_from_config: skip %r (already/invalid)", name)
     if count:
         logger.info(
             "Registered %d provider entr%s from config", count, "y" if count == 1 else "ies"
         )
     return count
+
+
+def register_config_record(record: dict[str, Any]) -> bool:
+    """Register ONE ``config.json`` ``providers[]`` record, as stored, into the default registry.
+
+    The one way a stored record becomes an entry: the boot sync walks every record through it,
+    and the Add-instance handler hands it the record it has just written. That handler used to
+    build its entry from the REQUEST's options instead, so a ``{{secret:…}}`` reference typed into
+    a new provider was registered as literal text — "Test connection" sent it as the key — and a
+    pasted key kept the whitespace the store strips, until the next restart replayed the file.
+
+    Returns whether an entry was registered. A record with no name or type, a name already
+    registered, or options that name another owner's credential register nothing.
+    """
+    registry = get_default_registry()
+    name = str(record.get("name") or "").strip()
+    ptype = str(record.get("type") or "").strip()
+    if not name or not ptype or name in registry._entries:  # noqa: SLF001 - same module
+        return False
+    registry_type = canonical_provider_type(ptype)
+    try:
+        cap = registry.capability_of(registry_type)
+    except Exception:
+        # Type not yet registered (app loads after sync on some boot paths).
+        # Still register the entry with an empty capability set — the entry
+        # becomes resolvable by name (chat resolution uses it), and the type
+        # will be available by the time inference runs.
+        cap = None
+        logger.debug(
+            "register_config_record: type %r not registered yet for %r; registering entry anyway",
+            ptype,
+            name,
+        )
+    # LOGICAL options: a secret field on disk is a `{{secret:…}}` reference into the
+    # credential store, and the provider factory reads the value, not the pointer — the
+    # value of a key this record's owner holds, and no other (`secret_refs.resolve`).
+    from personalclaw.config.secret_refs import (
+        ForeignSecretReference,
+        provider_owner,
+    )
+    from personalclaw.config.secret_refs import resolve as _resolve_secrets
+
+    try:
+        options = _resolve_secrets(record.get("options") or {}, owner=provider_owner(name))
+    except ForeignSecretReference as exc:
+        logger.warning("register_config_record: provider %r not registered: %s", name, exc)
+        return False
+    if ptype != registry_type:
+        options["_original_type"] = ptype
+    try:
+        registry.register_entry(
+            ProviderEntry(
+                name=name,
+                type=registry_type,
+                model=str(record.get("model") or ""),
+                options=options,
+                credential=record.get("credential"),
+                declared_capabilities=cap.capabilities if cap else frozenset(),
+            )
+        )
+    except ProviderResolutionError:
+        logger.debug("register_config_record: skip %r (already/invalid)", name)
+        return False
+    return True

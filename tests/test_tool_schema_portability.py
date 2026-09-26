@@ -565,7 +565,7 @@ class TestTheSeam:
             assert "not offered to models" in failure["error"] and "app_broken" in failure["error"]
             assert registry.app_of("demo-catalog") == "demo-app"
         finally:
-            registry.unregister_provider("demo-catalog")
+            registry.unregister_provider(provider)
             registry.clear_load_failures()
         assert registry.app_of("demo-catalog") == ""
 

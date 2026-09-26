@@ -70,7 +70,7 @@ function fmtRate(kbs: number | undefined): string {
  *  live rates come from /api/system (P27 — already computed server-side, surfaced
  *  here) with a rolling CPU sparkline; an inline Update action + a YOLO indicator. */
 export function SystemHealth({ navigate }: RouteProps) {
-  const { status, system, doctor, doctorErr } = useDashboardLive()
+  const { status, system, doctor, doctorErr, doctorOff } = useDashboardLive()
   // Client-side rolling buffer of CPU% samples for the sparkline (the backend
   // computes the instantaneous rate; history is cheap to keep here).
   const cpuHist = useRef<number[]>([])
@@ -163,6 +163,15 @@ export function SystemHealth({ navigate }: RouteProps) {
           <RowAction tone="default" onClick={() => navigate('settings/doctor')}
             title="The health probe could not be read — open Doctor to re-run it">
             <Stethoscope size={14} /> Health unknown
+          </RowAction>
+        )}
+        {/* Switched off is the third state, and quiet would read as healthy here too. Neutral, like
+            "Health unknown" — nothing is known to be wrong — and it opens the page that turns the
+            Doctor back on. */}
+        {doctorOff && !doctorErr && (
+          <RowAction tone="default" onClick={() => navigate('settings/doctor')}
+            title="The Doctor is switched off, so nothing is probing health — open it to turn it on">
+            <Stethoscope size={14} /> Doctor off
           </RowAction>
         )}
         {doctor && !doctor.ok && (

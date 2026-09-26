@@ -8,9 +8,18 @@ register this fake instead of importing the ollama app's module.
 The same rule applies to the TASK provider seam: a test that wants to prove what the
 aggregator does with a provider registers ``FakeTaskProvider`` rather than patching the
 aggregator, which is where the filters, the sort and the paging it means to check live.
+
+And to the EVENT BUS: a test that wants an event to fire a trigger drives it through the gateway's
+real router with ``with_event_router`` rather than calling a matcher or a dispatch by hand, so the
+event takes the production path — match, the gate walk, the one store dispatch.
 """
 
 from __future__ import annotations
+
+import asyncio
+import inspect
+from dataclasses import dataclass
+from typing import Any, Callable
 
 from personalclaw.llm.capabilities import Capability, ProviderCapability
 from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
@@ -173,3 +182,111 @@ def only_task_provider(monkeypatch, provider: TaskProvider) -> None:
 
     monkeypatch.setattr(task_registry, "_providers", {provider.name: provider})
     monkeypatch.setattr(task_registry, "_ensure_native", lambda: None)
+
+
+# ── the gateway half of the event bus ──
+
+
+class QuietDashboardState:
+    """A dashboard state that accepts every notification and refresh — for a test asserting
+    elsewhere."""
+
+    def notify(self, *args: object, **kwargs: object) -> bool:
+        return True
+
+    def push_refresh(self, *kinds: str) -> None:
+        return None
+
+
+async def with_event_router(act: Callable[[], Any], *, dashboard_state: Any = None) -> None:
+    """Run ``act()`` with the gateway's real event router attached, then wait out every fire.
+
+    A bare ``GatewayOrchestrator`` (no subsystems) whose router dispatches through the real
+    ``_fire_store_trigger``, attached and detached exactly as the gateway's boot and shutdown do.
+    ``act`` may return an awaitable (an engine's ``tick()``); it is awaited before the router
+    settles, so every fire the act caused has finished — and recorded its run — when this returns.
+    """
+    from personalclaw.gateway import GatewayOrchestrator
+
+    orch = object.__new__(GatewayOrchestrator)
+    orch.dashboard_state = dashboard_state if dashboard_state is not None else QuietDashboardState()
+    orch._start_event_triggers()
+    try:
+        result = act()
+        if inspect.isawaitable(result):
+            await result
+        await orch._event_router.settle()
+    finally:
+        orch._stop_event_triggers()
+
+
+def fire_through_the_gateway(act: Callable[[], Any], *, dashboard_state: Any = None) -> None:
+    """``with_event_router`` for a synchronous test: its own event loop, run to completion."""
+    asyncio.run(with_event_router(act, dashboard_state=dashboard_state))
+
+
+@dataclass(frozen=True)
+class EventFire:
+    """What one real event fire did, read off the run row it left in the ledger."""
+
+    ran: bool
+    status: str
+    reason: str
+
+
+def fire_memory_event_trigger(
+    provider_name: str,
+    *,
+    config: dict | None = None,
+    trigger_id: str = "t-acme",
+    key: str = "project.acme.status",
+    value: str = "green",
+    dashboard_state: Any = None,
+) -> EventFire:
+    """Fire a stored memory `event` trigger whose action is ``provider_name``, the real way.
+
+    The trigger is written once (with its capability set frozen, as every real writer freezes
+    it) and a memory write is put on the bus; the gateway's router matches it, the gate walk
+    admits it, and the one store dispatch — screen, fence, denylist, rung ladder, the run
+    record — decides. The caller's home isolation decides where all of that lands.
+    """
+    import time
+
+    from personalclaw.config.loader import config_dir
+    from personalclaw.event_triggers import MEMORY_UPDATE, SOURCE_MEMORY, emit_event, event_spec
+    from personalclaw.schedule_history import ScheduleRunStore
+    from personalclaw.triggers import screen
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    home = config_dir()
+    store = TriggerStore(base_dir=home)
+    if store.get(trigger_id) is None:
+        trigger = Trigger(
+            id=trigger_id,
+            name=trigger_id,
+            kind="event",
+            enabled=True,
+            spec=event_spec(MEMORY_UPDATE),
+            workflow={"inline": {"provider": provider_name, "config": dict(config or {})}},
+        )
+        trigger.capabilities = screen.capabilities_for_action(trigger)
+        store.upsert(trigger)
+
+    async def _fire() -> dict:
+        ledger = ScheduleRunStore(home)
+        _before, recorded = await ledger.list_for_job(trigger_id, 0, 1)
+        await with_event_router(
+            lambda: emit_event(
+                source=SOURCE_MEMORY, event_type="update", key=key, value=value, now=time.time()
+            ),
+            dashboard_state=dashboard_state,
+        )
+        runs, total = await ledger.list_for_job(trigger_id, 0, 1)
+        # Only a row THIS fire wrote answers for it. A refusal that records nothing (the incident
+        # gate's `refused` is not a suppression row) must not borrow the previous fire's row.
+        return runs[0] if total > recorded else {}
+
+    row = asyncio.run(_fire())
+    status = str(row.get("status") or "")
+    return EventFire(ran=status == "success", status=status, reason=str(row.get("error") or ""))

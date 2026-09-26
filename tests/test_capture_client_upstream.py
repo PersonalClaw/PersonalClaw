@@ -111,13 +111,13 @@ def _register_provider(base_url: str, *, name: str = _PROVIDER_NAME) -> None:
     ``options["api_key"]``: the explicit-key rung is gated behind a registered branded
     spec, and no provider module has imported one in a bare test process.
     """
-    from personalclaw.config import config_dir
-    from personalclaw.llm.credentials import CredentialStore
+    from personalclaw.config.credentials import save_credential
     from personalclaw.llm.registry import ProviderEntry, get_default_registry
 
-    CredentialStore(config_dir()).save(
-        {_CREDENTIAL_NAME: {"type": "api_key", "value": _PROVIDER_SECRET}}
-    )
+    save_credential(_CREDENTIAL_NAME, _PROVIDER_SECRET)
+    # Read from the store, not from the environment the save mirrors it into (and nothing
+    # leaks into the next test's process environment).
+    os.environ.pop(_CREDENTIAL_NAME, None)
     get_default_registry().register_entry(
         ProviderEntry(
             name=name,

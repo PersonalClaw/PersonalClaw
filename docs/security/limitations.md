@@ -73,7 +73,8 @@ and your own access: the MCP servers the gateway launches (`/api/mcp`, reads inc
 since a remote server's headers hold its bearer token), your backups (export, import and
 restore), who may message your agent from a chat channel, taking back an autonomy grant or
 undoing what an automation did, and bringing your setup over from other agent tools
-(`/api/onboarding/import`, which copies their MCP servers, skills and instructions in).
+(`/api/onboarding/import`, which copies their MCP servers, skills, agents, prompts,
+instructions, memories and conversations in).
 Holding any of those would make every other
 line in a manifest moot, so there is nothing to scope — and before the registry existed,
 an app declaring `/api/ws` (the event socket) prefix-matched `/api/ws/terminal/{id}` and
@@ -131,8 +132,14 @@ one exception there too: it hears your approvals, which it already reads through
 `/api/approvals`. An app also may not clear your notifications, mark
 them read or change what reaches you.
 
-Every write route in these families, and every read in your conversation families, has to
-be declared one way or the other: one that is not is refused to every app until someone
+What reached you is yours the same way. An app reads the notifications it raised and the
+ones about a conversation it started, in `GET /api/notifications` and on its websocket, and
+nothing else in your log: not what your automations, loops, inbox, channels or other apps
+raised, and not your notification settings or rules. Its session list says nothing about
+whether your tool calls run without asking.
+
+Every write route in these families, and every read in your conversation families and your
+notification log, has to be declared one way or the other: one that is not is refused to every app until someone
 declares it, and `tests/test_security_posture_rail.py` fails the build on it.
 
 The security settings that live in `config.json` are refused field by field instead,
@@ -180,6 +187,11 @@ gateway uses.
   package two apps share is one both accept — or the install is refused, naming the
   conflict. One interpreter can hold only one version of a module, so this is the
   honest form of isolation between apps, not a weaker one.
+- An update installs exactly the versions its new manifest pins, older or newer. pip
+  runs from the gateway's environment and will not uninstall anything outside it, so it
+  writes the new version over the old copy in `app-python`. The installer then removes
+  the old copy itself, by that copy's own file list, deleting nothing outside
+  `app-python` and no file the new version lists.
 
 Before pip runs, `app_manager._reject_core_dependency_conflicts` also refuses any
 declared requirement that names a core-declared dependency unless the version already

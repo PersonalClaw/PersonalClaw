@@ -36,12 +36,12 @@ def test_manifest_parses_and_roundtrips_python_deps():
 
 
 def test_no_deps_is_noop_no_restart():
-    assert app_manager._install_python_deps(_manifest([])) is False
+    assert app_manager._install_python_deps(_manifest([])) == []
 
 
 def test_already_satisfied_dep_needs_no_restart():
     # pytest itself is installed in the test venv → already satisfied → no restart.
-    assert app_manager._install_python_deps(_manifest(["pytest"])) is False
+    assert app_manager._install_python_deps(_manifest(["pytest"])) == []
 
 
 def test_pip_failure_raises_lifecycle_error(monkeypatch):

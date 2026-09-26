@@ -616,6 +616,37 @@ class DashboardApprovalState:
         }
         return sum(resolve_attention_items(self, {"approval": aid}) for aid in sorted(orphaned))
 
+    def settle_verification_rows(self) -> int:
+        """Settle what the second opinion left on the previous run's Inbox. Returns the count.
+
+        A check the restart cut off is delivered, and a decision row an earlier verify filed as
+        ``filtered`` leaves Filtered: restored if the decision still stands, handled if not
+        (``inbox.settle_verification_rows``). Run when the gateway attaches its Inbox, before
+        :meth:`close_orphaned_approval_rows`.
+        """
+        from personalclaw.inbox import live_store, settle_verification_rows
+
+        store = live_store(self)
+        if store is None:
+            return 0
+        return len(settle_verification_rows(self, store, decision_pending=self._decision_stands))
+
+    def _decision_stands(self, row: Any) -> bool:
+        """Whether the decision a filtered row asks for is still open.
+
+        Three emitters raise decision rows on `system/agent_request`. An approval row stands
+        while its approval is in the registry, which no restart survives. A project-trust prompt
+        stands until its folder is trusted. A one-tap hold is its own record, so it stands.
+        """
+        approval = row.refs.get("approval")
+        if approval:
+            return str(approval) in self._pending_approvals
+        if row.refs.get("guardrail") == "project_trust":
+            from personalclaw.guardrails.project_trust import DECISION_TRUSTED, project_decision
+
+            return project_decision(str(row.refs.get("dir") or "")) != DECISION_TRUSTED
+        return True
+
     def _push_approval(self, approval_id: str) -> None:
         """Wake the phone for a pending approval — MOBILE-COMPANION `MC-5`'s milestone.
 

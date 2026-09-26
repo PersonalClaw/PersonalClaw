@@ -388,16 +388,14 @@ def test_a_token_cap_can_actually_fire_on_a_stage_run(wired):
 # ── the failed child ────────────────────────────────────────────────────────
 
 
-def test_a_reaped_stage_records_its_spend_on_the_INSTANCE(wired):
-    """A reaped child burned its whole deadline, so a node record claiming it spent nothing is
-    the most misleading row in the ledger. `_apply` sets `inst.tokens` for every terminal state
-    (``:3248``, outside its success gate) and this path now matches it.
+def test_a_reaped_stage_records_its_spend_on_the_instance_the_row_and_the_run(wired):
+    """A reaped child burned its whole deadline, so a record claiming it spent nothing is the
+    most misleading row in the ledger.
 
-    The RUN total deliberately does NOT move: `ledger/reader.py:106` sums `tokens` from
-    STEP_COMPLETED rows alone and `_apply` books the run only under `SUCCESS_STATES`, so
-    charging a failure here would give one run row two accounting rules. That asymmetry is
-    pre-existing and shared by both settle paths — it is a question about failed-spend
-    accounting, not about this seam.
+    A failed attempt charges the run and journals its usage on BOTH settle paths, the same way
+    `_apply` does for an awaited dispatch: a failed attempt is not free, and a token cap that only
+    saw successes could be walked past by a step that keeps failing. `run_totals` folds the
+    `step_failed` row, so the ledger and the run row agree.
     """
     controller, fake = wired(error="Reaped after 900s (exceeded 900s deadline) [stage]")
     _drive(controller)
@@ -407,10 +405,11 @@ def test_a_reaped_stage_records_its_spend_on_the_INSTANCE(wired):
     assert (
         inst.tokens == TOTAL_TOKENS
     ), f"a reaped subagent that spent {TOTAL_TOKENS} tokens left {inst.tokens} on its node"
-    assert controller.run.total_tokens == 0, (
-        "a failed node charged the run total — that is not the contract `_apply` applies, and "
-        "changing it here would make the two settle paths disagree"
-    )
+    assert controller.run.total_tokens == TOTAL_TOKENS
+
+    (row,) = journal_mod.ledger(controller.run.id, kinds={journal_mod.STEP_FAILED})
+    assert (row["tokens"], row["model"], row["cost_usd"]) == (TOTAL_TOKENS, MODEL, COST_USD)
+    assert journal_mod.run_totals(controller.run.id)["tokens"] == TOTAL_TOKENS
 
 
 def test_a_manager_that_reports_no_usage_reads_as_zero_and_does_not_crash(wired):

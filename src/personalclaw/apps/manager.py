@@ -9,6 +9,7 @@ discover installed extensions.
 """
 
 import errno
+import hashlib
 import json
 import logging
 import os
@@ -112,6 +113,51 @@ def shared_dir_env_name(app_name: str) -> str:
     (``sdk.util.shared_app_data_dir``) applies the SAME transform, so writer and reader
     agree on the name."""
     return SHARED_DIR_ENV_PREFIX + app_name.upper().replace("-", "_")
+
+
+#: A UI bundle's path → ``(size, mtime_ns, sha256)`` of the bytes last read from it, so a listing
+#: reads each bundle once per change rather than on every request.
+_bundle_digests: dict[str, tuple[int, int, str]] = {}
+
+
+def ui_revision(name: str, ui: dict[str, Any]) -> str:
+    """A short digest of the UI bundles an installed app serves — what the SPA versions URLs with.
+
+    The dashboard imports an app's page and components module by URL, and a page that already
+    imported a URL gets the same module back; an update that kept the URL could go on showing
+    the old version. So every URL carries this, and it changes exactly when a bundle's bytes do:
+    an update, a reinstall, a rebuild by the app's own setup hook. Only the declared entry files
+    are read (an app's ``ui/`` may also hold its build tree, ``node_modules`` and all), and only
+    inside ``ui/``, the containment the asset route applies. ``""`` for an app with no UI.
+    """
+    declared = {
+        str(p.get("entryPoint") or "") for p in ui.get("pages") or [] if isinstance(p, dict)
+    }
+    declared |= {str(ui.get("components") or ""), str(ui.get("entry") or "")}
+    entries = sorted(e for e in declared if e)
+    if not entries:
+        return ""
+    root = (app_dir(name) / "ui").resolve()
+    digest = hashlib.sha256()
+    for rel in entries:
+        digest.update(f"{rel}\0{_bundle_digest(root, rel)}\0".encode())
+    return digest.hexdigest()[:12]
+
+
+def _bundle_digest(root: Path, rel: str) -> str:
+    target = (root / rel).resolve()
+    if not target.is_relative_to(root):
+        return "outside"
+    try:
+        st = target.stat()
+        known = _bundle_digests.get(str(target))
+        if known is not None and known[:2] == (st.st_size, st.st_mtime_ns):
+            return known[2]
+        value = hashlib.sha256(target.read_bytes()).hexdigest()
+    except OSError:
+        return "missing"
+    _bundle_digests[str(target)] = (st.st_size, st.st_mtime_ns, value)
+    return value
 
 
 def app_data_dir(name: str) -> Path:

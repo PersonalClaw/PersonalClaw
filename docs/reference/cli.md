@@ -157,7 +157,7 @@ Install agent config and configure credentials (interactive wizard).
 | `--clean` | Fresh install — don't merge MCP servers/tools from existing config. |
 | `--mode {docker,service,none}` | Deployment mode: Docker Compose, system service (systemd/launchd), or none. |
 | `--provider NAME` | Set the default chat provider by registry entry name. |
-| `--credential NAME[=VALUE]` | Store a named credential (value from the argument or an env var). |
+| `--credential NAME[=VALUE]` | Save a secret under `NAME` in the credential store Settings → Secrets lists, where `{{secret:NAME}}` and a provider's `credential` read it. The value comes after `=`, else from the environment variable `NAME`. |
 
 ## `personalclaw doctor`
 
@@ -317,7 +317,7 @@ Security audit and deny list.
 
 | Command | What it does |
 |---|---|
-| `personalclaw footprint [--json] [--reclaim]` | Per-store **bytes on disk** for every store in the state manifest, plus a **growth rate** and the store that is growing fastest. `--reclaim` compacts every database now (FTS5 merge → `PRAGMA optimize` → `VACUUM`) and reports the bytes actually freed. |
+| `personalclaw footprint [--json] [--reclaim]` | Per-store **bytes on disk** for every store in the state manifest, plus a **growth rate** and the store that is growing fastest. `--reclaim` compacts every database now (FTS5 merge → `PRAGMA optimize` → `VACUUM`) and reports the measured change: the bytes freed, or how much the stores grew when compacting left them larger (a database the running gateway holds open can keep the rewritten pages in its `-wal` file). With `--json`, `reclaim.net_change_bytes` is signed and `freed_bytes`/`growth_bytes` are never negative. |
 
 Each run records one sample, so **a rate appears from the second run onward** — a
 single reading cannot tell "not growing" from "measured once", and the report says

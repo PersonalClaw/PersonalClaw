@@ -7,12 +7,12 @@ see `providers/connection.py`, and no longer inferred from a credential's presen
 Co-located with issue 2217's census work: the census resolves `credentials.json` from
 `dashboard/handlers/providers.py`, and reading that one write path is what surfaced this.
 
-`CredentialStore.__init__` takes a **home directory** and derives `<home>/credentials.json`
-and `<home>/.env` from it — its own docstring says so ("Construction reads
-``<home>/credentials.json``"). Measured on the tree: eleven call sites construct one, and ten
-pass a home. This one passed `config_dir() / "credentials.json"`, so the store looked for
-`credentials.json/credentials.json`, loaded no descriptors, and `resolve()` raised `KeyError`
-for every name — swallowed by the handler's `except Exception` into `"missing"`.
+`CredentialStore.__init__` takes a **home directory**; it then read `<home>/credentials.json`
+and `<home>/.env`, and now reads `<home>/.env` and the OS keychain, the store Settings → Secrets
+writes. Measured on the tree: eleven call sites constructed one, and ten passed a home. This one
+passed `config_dir() / "credentials.json"`, so the store looked beneath a file, found nothing,
+and `resolve()` raised `KeyError` for every name — swallowed by the handler's
+`except Exception` into `"missing"`.
 
 So a correctly configured provider rendered as having no credential, on the surface whose
 whole job is to report whether the credential is there.
@@ -68,33 +68,32 @@ async def _statuses(monkeypatch, home, entries) -> dict[str, bool]:
 
 @pytest.mark.asyncio
 async def test_a_configured_credential_reports_ok_not_missing(monkeypatch, tmp_path):
-    """The defect, at the endpoint. `sk-configured` is right there in `credentials.json`."""
-    (tmp_path / "credentials.json").write_text(
-        json.dumps({"my-key": {"type": "api_key", "value": "sk-configured"}}),
-        encoding="utf-8",
-    )
-    entries = [_Entry("openrouter", "openai_compatible", "gpt-4o", "my-key")]
+    """The defect, at the endpoint. `sk-configured` is right there in the home's store."""
+    (tmp_path / ".env").write_text("MY_KEY=sk-configured\n", encoding="utf-8")
+    entries = [_Entry("openrouter", "openai_compatible", "gpt-4o", "MY_KEY")]
 
     assert await _statuses(monkeypatch, tmp_path, entries) == {"openrouter": True}
 
 
 @pytest.mark.asyncio
-async def test_a_genuinely_absent_credential_still_reports_missing(monkeypatch, tmp_path):
-    """The pair: "always there" would satisfy the test above and be just as wrong."""
+async def test_a_value_left_in_the_retired_credentials_file_reports_missing(monkeypatch, tmp_path):
+    """The pair: "always there" would satisfy the test above and be just as wrong. A value in
+    `credentials.json`, which nothing reads any more, is not a stored credential."""
     (tmp_path / "credentials.json").write_text(
-        json.dumps({"my-key": {"type": "api_key"}}), encoding="utf-8"
+        json.dumps({"MY_KEY": {"type": "api_key", "value": "sk-in-the-old-file"}}),
+        encoding="utf-8",
     )
-    entries = [_Entry("openrouter", "openai_compatible", "gpt-4o", "my-key")]
+    entries = [_Entry("openrouter", "openai_compatible", "gpt-4o", "MY_KEY")]
 
     assert await _statuses(monkeypatch, tmp_path, entries) == {"openrouter": False}
 
 
 @pytest.mark.asyncio
-async def test_an_undeclared_credential_name_still_reports_missing(monkeypatch, tmp_path):
+async def test_an_unstored_credential_name_still_reports_missing(monkeypatch, tmp_path):
     """The `KeyError` branch, kept reachable for the reason it exists rather than as a
     side-effect of pointing the store at a path that cannot hold anything."""
-    (tmp_path / "credentials.json").write_text(json.dumps({"other": {}}), encoding="utf-8")
-    entries = [_Entry("openrouter", "openai_compatible", "gpt-4o", "absent-key")]
+    (tmp_path / ".env").write_text("OTHER=v\n", encoding="utf-8")
+    entries = [_Entry("openrouter", "openai_compatible", "gpt-4o", "ABSENT_KEY")]
 
     assert await _statuses(monkeypatch, tmp_path, entries) == {"openrouter": False}
 
@@ -123,9 +122,8 @@ def test_no_call_site_passes_the_credentials_file_as_the_home():
             if pattern.search(line):
                 offenders.append(f"{path.relative_to(_SRC)}:{num}: {line.strip()}")
     assert not offenders, (
-        "CredentialStore takes the HOME and derives `<home>/credentials.json` itself; these "
-        "pass the file, so the store reads `credentials.json/credentials.json`:\n"
-        + "\n".join(offenders)
+        "CredentialStore takes the HOME and reads `<home>/.env` itself; these pass a file, "
+        "so the store reads beneath it and finds nothing:\n" + "\n".join(offenders)
     )
 
 

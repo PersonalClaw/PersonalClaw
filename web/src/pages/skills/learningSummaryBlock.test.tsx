@@ -115,16 +115,27 @@ describe('#/skills renders the learning summary block with real counts and names
     expect(screen.getByText('cut a release'), 'the page itself is unaffected').toBeInTheDocument()
   })
 
-  it('is ABSENT when the route 404s (learning disabled), and the list still renders', async () => {
-    // `learning.enabled` off ⇒ the route 404s. Rendering "0 new, 0 refined" there would assert
-    // that nothing was learned; the truthful answer is that nothing is being tracked. The skills
-    // list keeps its own hard error surface, which is why swallowing HERE is not a swallow.
-    mockApi({ learningSummary: () => Promise.reject(new Error('404 learning is disabled')) })
+  it('is ABSENT when learning is off, and the list still renders', async () => {
+    // `learning.enabled` off ⇒ the route answers the decided `{"enabled": false}` (it used to 404,
+    // one failed request per Skills visit). Rendering "0 new, 0 refined" there would assert that
+    // nothing was learned; the truthful answer is that nothing is being tracked, and the Learning
+    // page is where that is said, with the way back on.
+    mockApi({ learningSummary: () => Promise.resolve({ enabled: false }) })
     await mountSkillsPage()
 
     expect(region()).toBeNull()
     expect(screen.getByText('cut a release')).toBeInTheDocument()
     expect(screen.queryByRole('alert'), 'and not an error banner over a supplementary block').toBeNull()
+  })
+
+  it('is ABSENT when the read fails, and the list still renders', async () => {
+    // The skills list keeps its own hard error surface, which is why swallowing HERE is not a
+    // swallow: this block is a supplementary summary above the list, not the list itself.
+    mockApi({ learningSummary: () => Promise.reject(new TypeError('Failed to fetch')) })
+    await mountSkillsPage()
+
+    expect(region()).toBeNull()
+    expect(screen.getByText('cut a release')).toBeInTheDocument()
   })
 })
 

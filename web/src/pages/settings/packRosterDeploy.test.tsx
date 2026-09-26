@@ -63,7 +63,7 @@ async function mountRow(
   const { PackRow } = await import('./PacksPanel')
   let r!: ReturnType<typeof render>
   await act(async () => {
-    r = render(<PackRow pack={pack} />)
+    r = render(<PackRow pack={pack} onChanged={() => {}} />)
     await new Promise((res) => setTimeout(res, 0))
   })
   return { r, calls, notified, body: () => r.container.textContent ?? '' }
@@ -167,7 +167,7 @@ describe('the in-flight state announces itself (aria-busy), not just visually', 
     }))
     const { PackRow } = await import('./PacksPanel')
     let r!: ReturnType<typeof render>
-    await act(async () => { r = render(<PackRow pack={staged} />); await Promise.resolve() })
+    await act(async () => { r = render(<PackRow pack={staged} onChanged={() => {}} />); await Promise.resolve() })
     const btn = () => within(r.container).getByRole('button', { name: /deploy roster/i })
     expect(btn().getAttribute('aria-busy')).not.toBe('true')
     await act(async () => { fireEvent.click(btn()); await Promise.resolve() })

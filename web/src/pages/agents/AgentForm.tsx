@@ -9,6 +9,7 @@ import { Field, TextInput, TextArea, Segmented, FieldError } from '../../ui/form
 import { Toggle } from '../../ui/Toggle'
 import { confirm } from '../../ui/dialog'
 import { APPROVAL_MODES, isBuiltinDefaultAgent } from './agentMeta'
+import { ModelUnavailableNote, unavailableModelOption, type ModelUnavailable } from './agentModelStatus'
 
 export interface AgentDraft {
   name: string; description: string; model: string; system_prompt: string; voice: string
@@ -100,11 +101,15 @@ export function draftToPayload(d: AgentDraft): Record<string, unknown> {
  *
  *  NB: workflows are NOT bound from here — a workflow scopes itself to an agent
  *  at the workflow's own creation, so the agent side has no workflow picker. */
-export function AgentForm({ draft, onChange, nameLocked, compact }: { draft: AgentDraft; onChange: (d: AgentDraft) => void; nameLocked?: boolean; compact?: boolean }) {
+export function AgentForm({ draft, onChange, nameLocked, compact, unavailable }: {
+  draft: AgentDraft; onChange: (d: AgentDraft) => void; nameLocked?: boolean; compact?: boolean
+  /** The saved pin that cannot run, and why — so the editor names it instead of showing "Auto". */
+  unavailable?: { model: string; reason: ModelUnavailable }
+}) {
   const set = <K extends keyof AgentDraft>(k: K, v: AgentDraft[K]) => onChange({ ...draft, [k]: v })
   // Constrain to ACTIVE chat models so an agent can't pin a model that isn't
   // bound (which would go stale when the active set changes). 'Auto' = inherit.
-  const { options: modelOptions, error: modelErr } = useActiveChatModelOptions()
+  const { options: modelOptions, loading: modelsLoading, error: modelErr } = useActiveChatModelOptions()
 
   // capability catalogs
   const [skills, setSkills] = useState<CheckOption[]>([])
@@ -116,7 +121,16 @@ export function AgentForm({ draft, onChange, nameLocked, compact }: { draft: Age
     api.hooks().then((h) => setLifecycleTriggers(h.map((x) => ({ value: x.id, label: x.name, hint: x.event })))).catch(() => {})
   }, [])
 
-  const modelOpts = useMemo(() => [{ value: '', label: 'Auto — provider default' }, ...modelOptions], [modelOptions])
+  // A pin the list does not offer is listed as unavailable: without it the Combobox showed its
+  // placeholder and the editor read "Auto" for an agent pinned to a model that cannot run.
+  const modelOpts = useMemo(
+    () => [
+      { value: '', label: 'Auto — provider default' },
+      ...modelOptions,
+      ...(modelsLoading || modelErr ? [] : unavailableModelOption(draft.model, modelOptions)),
+    ],
+    [modelOptions, modelsLoading, modelErr, draft.model],
+  )
 
   return (
     <div className={`flex flex-col ${compact ? 'gap-l' : 'gap-xl'}`}>
@@ -137,6 +151,9 @@ export function AgentForm({ draft, onChange, nameLocked, compact }: { draft: Age
       <Field label="Model" hint="The model this agent runs on. Auto uses the provider default.">
         <Combobox options={modelOpts} value={draft.model} onChange={(v) => set('model', v)} placeholder="Auto — provider default" emptyText="No models" />
         {modelErr ? <FieldError className="mt-1">Couldn't load your active chat models — {(modelErr as Error)?.message || 'the server did not respond'}. Only Auto is safe to pick until this loads.</FieldError> : null}
+        {unavailable && draft.model === unavailable.model && (
+          <div className="mt-1.5"><ModelUnavailableNote model={unavailable.model} unavailable={unavailable.reason} fixHere="above" /></div>
+        )}
       </Field>
 
       <Field label="System prompt" hint={isBuiltinDefaultAgent(draft)

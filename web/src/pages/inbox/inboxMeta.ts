@@ -48,6 +48,18 @@ export function statusMeta(s?: string): StatusMeta {
   return STATUSES.find((x) => x.key === s) ?? STATUSES[0]
 }
 
+/** What the second opinion says about a row that is not filtered, or '' for nothing.
+ *  The check runs after the row is listed (`refs.verify` reads `checking` until it answers),
+ *  and a verdict that lands on a row you had already opened or answered is written on the row
+ *  instead of moving it. A filtered row explains itself with its Restore banner. */
+export function verifyNote(item: Pick<InboxItem, 'status' | 'refs'>): string {
+  if (item.status === 'filtered') return ''
+  const verdict = item.refs?.verify
+  if (verdict === 'checking') return 'A second opinion is checking this claim. Its notification waits for the answer.'
+  if (verdict === 'refuted') return 'A second-opinion check flagged this claim.'
+  return ''
+}
+
 /** Statuses that still want the user: unresolved, whether or not already glanced at.
  *
  *  RE-EXPORTED, not defined here. `lib/attentionLanes` owns the exhaustive

@@ -12,7 +12,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from personalclaw import notification_addressing, notification_kinds
 from personalclaw.atomic_write import atomic_write
@@ -110,7 +110,8 @@ class ItemStatus(str, Enum):
     FILTERED (INU-6) is a fifth terminal-until-restored state: a verifiable kind whose rule
     opted into verification was REFUTED by the second-opinion pass, so its row was persisted
     but its notification withheld. Restore flips it back to PENDING and fires the withheld
-    notification once — so a false positive is recoverable, never a silent drop.
+    notification once — so a false positive is recoverable, never a silent drop. A decision
+    (``NotificationKind.decision``) is never verifiable, so it is never FILTERED.
     """
 
     PENDING = "pending"
@@ -787,6 +788,7 @@ def emit_attention_item(
     item_kind: str = "",
     store: "InboxStore | None" = None,
     dedup_key: str = "",
+    raised_by_app: str = "",
 ) -> str:
     """Raise a standing attention item AND deliver one notification for it.
 
@@ -804,10 +806,17 @@ def emit_attention_item(
     same key is returned untouched and **no second notification fires** — the user was
     already told.
 
+    ``raised_by_app`` names the app the item is raised for (its proposal), which the
+    notification carries so that app may read it back (``DashboardState.notification_reaches``).
+    Only the door an app raises an item through passes it.
+
     Returns the inbox item id ("" only if the store could not be reached, which is logged;
     a failure to persist must not also lose the notification, so delivery still happens).
     """
     resolved_kind = item_kind or kind
+    # Handed to `notify` only for an app's item. `state` is any object with a `notify` (the
+    # channel conformance kit's `CapturingState` is one), and only DashboardState's takes it.
+    raiser: dict[str, str] = {"raised_by_app": raised_by_app} if raised_by_app else {}
     target = store or live_store(state)
     if target is None:
         target = InboxStore()
@@ -849,26 +858,26 @@ def emit_attention_item(
     if dedup_key:
         item.refs["dedup_key"] = dedup_key
 
+    # The row's one notification, named once: fired below, or held back for the second opinion.
+    note = {
+        "kind": notification_kinds.kind_for_legacy_pair(source, kind),
+        "title": title,
+        "body": body,
+        "item_kind": resolved_kind,
+        **raiser,
+    }
     # INU-6 second-opinion gate. Runs ONLY for a verifiable kind whose rule opted into
-    # verify — every other emit is byte-for-byte unchanged and makes NO model call. A clear
-    # REFUTED verdict files the row as FILTERED and withholds its notification (recorded in
-    # refs so Restore can replay it exactly, once); every other verdict, and every failure
-    # path, delivers normally carrying refs["verify"].
-    withheld = False
-    if _verification_opted_in(source, kind):
-        from personalclaw.notification_verify import REFUTED, run_verification_sync
-
-        verdict = run_verification_sync(title, body)
-        item.refs["verify"] = verdict
-        if verdict == REFUTED:
-            item.status = ItemStatus.FILTERED.value
-            item.refs["verify_withheld"] = {
-                "kind": notification_kinds.kind_for_legacy_pair(source, kind),
-                "title": title,
-                "body": body,
-                "item_kind": resolved_kind,
-            }
-            withheld = True
+    # verify — every other emit is byte-for-byte unchanged and makes NO model call. The row is
+    # published now, marked `checking`, and its notification waits in `verify_withheld` for the
+    # verdict, which a worker fetches (`notification_verify.verify_in_background`) and
+    # :func:`apply_verdict` lands. Nothing waits on the model: not this caller, not the loop it
+    # runs on. A DECISION (an approval, a gate, a trust prompt, a paused room) never reaches it:
+    # a decision kind is never verifiable (`notification_kinds.register` refuses the pair), so
+    # its row is open and its notification fires the moment it is raised.
+    checking = _verification_opted_in(source, kind)
+    if checking:
+        item.refs["verify"] = VERIFY_CHECKING
+        item.refs["verify_withheld"] = note
 
     item_id = ""
     try:
@@ -884,37 +893,180 @@ def emit_attention_item(
     if state is not None and item_id:
         _announce(state, "inbox_new_item", item)
 
-    if state is not None and not withheld:
-        try:
-            state.notify(
-                notification_kinds.kind_for_legacy_pair(source, kind),
-                title,
-                body,
-                meta={
-                    "inbox_item": item_id,
-                    "item_kind": resolved_kind,
-                    # WHO the notification is for: the item's OWN owner, read back
-                    # off the row `target.add` just stamped. The notification is a *view* of
-                    # the item (see this function's docstring), so it is addressed to whoever
-                    # the item is — anything else would make the view disagree with the thing
-                    # it views. This is the whole production path: the shared inbox
-                    # renders a teammate's item, and before this the toast for it landed on
-                    # the local owner's screen because `notify` had no way to be told.
-                    #
-                    # Read from `item`, not `_local_username()`: on a locally-created item the
-                    # two are equal and the note is addressed here as it always was, while a
-                    # shared source's item carries the teammate it actually belongs to.
-                    notification_addressing.ADDRESSEE_KEY: item.owner_username,
-                    **dict(refs or {}),
-                },
-            )
-        except Exception:
-            logger.warning("attention item: notify failed", exc_info=True)
+    if checking:
+        from personalclaw.notification_verify import verify_in_background
+
+        verify_in_background(
+            title, body, lambda verdict: apply_verdict(state, target, item, verdict)
+        )
+    elif state is not None:
+        _notify_view(state, item, item_id, note)
     return item_id
+
+
+#: ``refs["verify"]`` while the second opinion is out: the row is listed, its notification held.
+VERIFY_CHECKING = "checking"
+#: ``refs["verify"]`` on a row taken back out of Filtered, by Restore or by the restart sweep.
+VERIFY_RESTORED = "restored"
+#: The refs this module writes on a row, as opposed to the ones its emitter passed.
+_OWN_REFS = frozenset({"dedup_key", "verify", "verify_withheld"})
+
+
+def _notify_view(state: Any, item: "InboxItem", inbox_item: str, note: dict) -> None:
+    """Fire *item*'s one notification, *note* (``kind``, ``title``, ``body``, ``item_kind`` and
+    an app's ``raised_by_app``: the shape verification holds it back in). ``inbox_item`` is ""
+    when the row could not be written, and delivery still happens."""
+    raiser = str(note.get("raised_by_app") or "")
+    try:
+        state.notify(
+            str(note.get("kind") or ""),
+            str(note.get("title") or ""),
+            str(note.get("body") or ""),
+            meta={
+                "inbox_item": inbox_item,
+                "item_kind": note.get("item_kind") or item.item_kind,
+                # WHO the notification is for: the item's OWN owner, read back off
+                # the row `InboxStore.add` stamped. The notification is a *view* of the item
+                # (see `emit_attention_item`), so it is addressed to whoever the item is —
+                # anything else would make the view disagree with the thing it views. This is
+                # the whole production path: the shared inbox renders a teammate's item,
+                # and before this the toast for it landed on the local owner's screen because
+                # `notify` had no way to be told.
+                #
+                # Read from `item`, not `_local_username()`: on a locally-created item the two
+                # are equal and the note is addressed here as it always was, while a shared
+                # source's item carries the teammate it actually belongs to.
+                notification_addressing.ADDRESSEE_KEY: item.owner_username,
+                **{k: v for k, v in item.refs.items() if k not in _OWN_REFS},
+            },
+            **({"raised_by_app": raiser} if raiser else {}),
+        )
+    except Exception:
+        logger.warning("attention item: notify failed", exc_info=True)
+
+
+def _holder_of(
+    state: Any, store: "InboxStore", item: "InboxItem"
+) -> "tuple[InboxStore, InboxItem]":
+    """The store holding *item* now, and its row there: the live one first, since an Inbox
+    restart swaps the service's store; the one it was written to next; else the unsaved row."""
+    live = live_store(state) if state is not None else None
+    for candidate in (live, store):
+        if candidate is not None and item.id in candidate.items:
+            return candidate, candidate.items[item.id]
+    return store, item
+
+
+def apply_verdict(state: Any, store: "InboxStore", item: "InboxItem", verdict: str) -> None:
+    """Land a second opinion on a row :func:`emit_attention_item` already published.
+
+    The row was listed when it was raised and its one notification held in
+    ``refs["verify_withheld"]``. A REFUTED claim files a row nobody has touched (still PENDING)
+    under Filtered, and its notification stays withheld for Restore: what the check always did,
+    only later. A row the user already opened or answered while the model thought stays where
+    they put it: the verdict is written on it and moves nothing, and it is notified only if it
+    is still open and the claim was not refuted. A row whose check is already settled is left
+    alone, so a late or repeated verdict cannot fire a second notification.
+    """
+    from personalclaw.notification_verify import REFUTED
+
+    target, row = _holder_of(state, store, item)
+    if row.refs.get("verify") != VERIFY_CHECKING:
+        return
+    row.refs["verify"] = verdict
+    if verdict == REFUTED and row.status == ItemStatus.PENDING.value:
+        set_item_status(state, target, [row], ItemStatus.FILTERED)
+        return
+    note = row.refs.pop("verify_withheld", None)
+    target.save()
+    if state is None:
+        return
+    _announce(state, "inbox_item_updated", row)
+    if verdict != REFUTED and row.status in OPEN_STATUSES and isinstance(note, dict):
+        _notify_view(state, row, row.id if row.id in target.items else "", note)
+
+
+def restore_filtered(
+    state: Any, store: "InboxStore", rows: "Iterable[InboxItem]"
+) -> "list[InboxItem]":
+    """Take *rows* out of Filtered: open again, and the notification verification withheld from
+    each fired once. Returns the rows it restored. A row not ``filtered`` is skipped, which is
+    what keeps a repeat from notifying twice."""
+    restored = [row for row in rows if row.status == ItemStatus.FILTERED.value]
+    notes = []
+    for row in restored:
+        row.refs["verify"] = VERIFY_RESTORED
+        # Dropped the moment it is consumed: leaving it would invite a second replay.
+        notes.append(row.refs.pop("verify_withheld", None))
+    set_item_status(state, store, restored, ItemStatus.PENDING)
+    if state is not None:
+        for row, note in zip(restored, notes):
+            if isinstance(note, dict):
+                _notify_view(state, row, row.id, note)
+    return restored
+
+
+def _is_decision(row: "InboxItem") -> bool:
+    """Whether *row* rides a decision kind, which no verdict may keep filtered. Matched on the
+    wire kind its held notification names, since that is the pair it was raised as."""
+    note = row.refs.get("verify_withheld")
+    wire = str(note.get("kind") or "") if isinstance(note, dict) else ""
+    return any(
+        k.decision
+        and k.source == row.source
+        and wire == notification_kinds.kind_for_legacy_pair(k.source, k.kind)
+        for k in notification_kinds.all_kinds()
+    )
+
+
+def settle_verification_rows(
+    state: Any, store: "InboxStore", *, decision_pending: "Callable[[InboxItem], bool]"
+) -> "list[InboxItem]":
+    """Settle what verification left on a previous run's rows. Returns the rows it changed.
+
+    For when the gateway attaches its Inbox, when no check can be running:
+
+    1. A row still ``checking`` lost its check to the restart. A claim nobody could check is
+       delivered, as after every other check that fails: it reads ``skipped`` and, if it is
+       still open, its notification fires.
+    2. A decision row a verify filed as ``filtered`` before decisions stopped being verifiable
+       (#3633) is off the Open list and every count, and resolving never reaches it because it
+       is not open. It is restored, its withheld notification fired once, when
+       *decision_pending* says the decision still stands, and handled otherwise.
+
+    Idempotent: a second pass finds nothing to do.
+    """
+    from personalclaw.notification_verify import SKIPPED
+
+    interrupted: list[tuple[InboxItem, Any]] = []
+    stands: list[InboxItem] = []
+    over: list[InboxItem] = []
+    for row in list(store.items.values()):
+        if row.refs.get("verify") == VERIFY_CHECKING:
+            row.refs["verify"] = SKIPPED
+            interrupted.append((row, row.refs.pop("verify_withheld", None)))
+        elif row.status == ItemStatus.FILTERED.value and _is_decision(row):
+            (stands if decision_pending(row) else over).append(row)
+    for row in over:
+        row.refs.pop("verify_withheld", None)
+    if interrupted:
+        store.save()
+    restored = restore_filtered(state, store, stands)
+    set_item_status(state, store, over, ItemStatus.HANDLED)
+    if state is not None:
+        for row, note in interrupted:
+            _announce(state, "inbox_item_updated", row)
+            if row.status in OPEN_STATUSES and isinstance(note, dict):
+                _notify_view(state, row, row.id, note)
+    return [row for row, _ in interrupted] + restored + over
 
 
 def _verification_opted_in(source: str, kind: str) -> bool:
     """True only when *kind* is a verifiable registration AND its rule set ``verify:true``.
+
+    This is where a decision is kept out of the model's reach: a decision kind is never
+    verifiable, so a ``verify:true`` stored against one (a rule written while
+    ``system/agent_request`` still accepted it, or a hand edit) cannot reach the verdict.
 
     Fail-CLOSED to False (deliver without verifying) on any error: a broken policy read must
     never *start* filtering notifications that would otherwise be delivered. The registry

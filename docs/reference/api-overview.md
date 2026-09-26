@@ -52,6 +52,15 @@ one outright. A route that refuses an app token says so in its handler docstring
   predate that convention and return their own shapes; the honest rule is to branch on
   `code` where it is present and on the HTTP status otherwise, and not to assume a single
   envelope across the whole surface.
+- **A switched-off feature is an answer, not an error.** While a feature's switch is off,
+  the reads a page loads to render it answer `200 {"enabled": false}`: the flag alone, with
+  no empty collection beside it that a client could misread as "none". That covers the eval
+  reports, the feedback producers and a thumbs pair's verdict, the Doctor's report, fix
+  catalog and remediation snapshot, the Learning page's five reads, and the rooms list. An
+  eval report whose command has not run yet answers `200 {"ran": false}` the same way
+  (judge bench, ablation, learning benchmark, retrieval). A drill-down, an action or a write
+  on a switched-off feature still refuses with its code (`evals_disabled`,
+  `doctor_disabled`, `rooms_disabled`, …): it addresses something of a surface that is off.
 - **Read back after a write.** The API does not promise that a mutating response body is
   the full post-write state. After a `POST`/`PUT`/`PATCH`/`DELETE`, `GET` the entity to
   confirm the change took. This is the single most useful habit when driving the gateway
@@ -82,7 +91,19 @@ has cost someone a debugging session.
   the tier in `confirm_risk`. Read-only invocations downgrade to `safe`, so a plain
   `bash "ls"` needs nothing. The nine filesystem/shell tools are confined to the
   configured workspace root; an unresolved root refuses with `503 workspace_unresolved`
-  rather than running them in the gateway's own directory.
+  rather than running them in the gateway's own directory. The tool is resolved by its
+  name over the same providers an agent turn has, to the one provider serving that name,
+  so a `provider` in the body is not read, and an external MCP server's tool
+  (`mcp/<server>/<tool>`) runs through the provider that serves it to agents. A name the
+  agent's hard deny-list refuses is refused here too, with `403 tool_denied_by_policy`.
+- **A tool name has one provider.** `bash`, `read_file` and the other platform tools are
+  the platform's, names under `mcp/` are the MCP Tool Servers app's, a provider core ships
+  outranks an installed app's, and otherwise the provider that claimed a name first keeps
+  it. A provider offering a name someone else holds is refused whole, when its names are
+  read (at enable, and on every read after): `POST /api/providers/{name}/enable` answers
+  `409` with the reason, `POST /api/apps/{name}/enable`, install and update answer `ok`
+  with the reason in `providerErrors`, the provider's row in `GET /api/providers` is off
+  with the same sentence in `error`, and the security log has an `outcome=refused` row.
 - **`POST /api/durability/import` validates when you omit `mode`.** Omitting it changes
   nothing at all; `?mode=merge` applies copy-if-missing; `?mode=replace&confirm=true`
   overwrites. `POST /api/durability/archive/{id}/restore` is the same shape — no `mode`
@@ -108,6 +129,14 @@ has cost someone a debugging session.
   rejects an `author` in the body; the configured username wins.
 - **Locked dashboard presets refuse mutation.** `PUT`/`DELETE` on a locked
   `/api/dashboard/views/{id}` answers `403` by design.
+- **An MCP server's tool has one switch: its server's `disabledTools` in `mcp.json`.**
+  `POST /api/mcp/toggle-tool {server, tool, enabled}` takes the name the server gives the
+  tool (`hello`), which is the `serverTool` of its row in `GET /api/tools`. The
+  `mcp/<server>/<tool>` form is refused with `400`, because in that list it matches
+  nothing. `POST /api/tools/toggle` switches a native provider's tool in `tool_prefs.json`
+  and refuses an MCP server's tool with `409`. A tool switched off either way is left out
+  of a native agent's tools, answers `403 tool_disabled` from `POST /api/tools/invoke` and
+  reads `disabled: true` in `GET /api/tools`. An ACP agent reads the same `disabledTools`.
 
 ## The same surface, three ways
 

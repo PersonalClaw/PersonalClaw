@@ -786,7 +786,7 @@ def resolve_expr(expr: str, ctx: BindingContext) -> Any:
             raise BindingError(
                 f"secret {key!r} is not set",
                 expr,
-                f"set a value for the secret {key!r}, then fork this run to try again",
+                f"store {key!r} in Settings → Secrets, then fork this run to try again",
                 caller_supplied=True,
             )
     else:

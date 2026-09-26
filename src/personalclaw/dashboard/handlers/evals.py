@@ -26,9 +26,12 @@ one store's label card) and the one write still refuse with 404 ``evals_disabled
 address an artifact of a switched-off surface, and the page never asks for one while the
 report read says off.
 
-"Nothing has run yet" is a 404 with its own code per route: "no benchmark yet" and "the
-feature is off" send a user to two different places, and one answer for both would make the
-panel's empty state a guess.
+"Nothing has run yet" is a decided answer too: ``200 {"ran": false}`` from the four report reads
+that publish a run (judge-bench, ablation, learning-benchmark, retrieval). It stays distinct from
+``{"enabled": false}`` — "no benchmark yet" and "the feature is off" send a user to two different
+places, the command and the switch — and each panel says which command produces its report. These
+used to 404 with a code per route, and the Models page reads judge-bench on every visit for its
+"recommended" chip, so with evals on and no CLI run yet every Models load logged a failed request.
 """
 
 from __future__ import annotations
@@ -68,6 +71,12 @@ def _off() -> web.Response:
     return web.json_response({"enabled": False})
 
 
+def _not_run() -> web.Response:
+    """What a report read answers when the switch is on and its run has not happened yet — see the
+    module docstring. The flag alone, for the reason ``_off`` gives."""
+    return web.json_response({"ran": False})
+
+
 async def api_evals_judge_bench(request: web.Request) -> web.Response:
     """GET /api/evals/judge-bench — the newest tier-recommendation table.
 
@@ -90,12 +99,7 @@ async def api_evals_judge_bench(request: web.Request) -> web.Response:
             status=500,
         )
     if view is None:
-        return json_error(
-            "judge_bench_absent",
-            message="No judge benchmark has run yet. Run `personalclaw judge-bench` "
-            "to produce one.",
-            status=404,
-        )
+        return _not_run()
     _audit(request, "evals_judge_bench", "read", f"bench_id={view.get('bench_id')}")
     return web.json_response(view)
 
@@ -206,15 +210,9 @@ async def api_evals_ablation(request: web.Request) -> web.Response:
             status=500,
         )
     if view is None:
-        # A distinct code from "evals disabled" and from "nothing registered": those send a
-        # user to three different places (the switch, the registry, and waiting for the
-        # cadence), and one code for all of them would make the panel's empty state a guess.
-        return json_error(
-            "ablation_absent",
-            message="No ablation has run yet. Register a component in "
-            "`evals/ablation_registry.json` and run `personalclaw ablation --force`.",
-            status=404,
-        )
+        # Distinct from "evals disabled": that sends a user to the switch, this to the registry
+        # and the command, which the panel names.
+        return _not_run()
     _audit(request, "evals_ablation", "read", f"matrix_id={view['report'].get('matrix_id')}")
     return web.json_response(view)
 
@@ -251,12 +249,7 @@ async def api_evals_learning_benchmark(request: web.Request) -> web.Response:
             status=500,
         )
     if report is None:
-        return json_error(
-            "learning_benchmark_absent",
-            message="No skill-impact benchmark has run yet. Run "
-            "`python scripts/learning_benchmark.py --preflight` and then `--run`.",
-            status=404,
-        )
+        return _not_run()
     _audit(request, "evals_learning_benchmark", "read", f"run_id={report.get('run_id')}")
     return web.json_response(
         {
@@ -303,14 +296,8 @@ async def api_evals_retrieval(request: web.Request) -> web.Response:
         )
     runs = {kind: data.get("run") or "" for kind, data in (view.get("stores") or {}).items()}
     if not any(runs.values()):
-        # Distinct from "evals disabled": that sends a user to the switch, this sends them to
-        # the command. One code for both would make the panel's empty state a guess.
-        return json_error(
-            "retrieval_absent",
-            message="No retrieval benchmark has run yet. Run "
-            "`personalclaw retrieval-eval` to score both stores.",
-            status=404,
-        )
+        # Distinct from "evals disabled": that sends a user to the switch, this to the command.
+        return _not_run()
     _audit(request, "evals_retrieval", "read", f"runs={runs}")
     return web.json_response(view)
 

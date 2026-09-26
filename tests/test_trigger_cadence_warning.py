@@ -77,7 +77,6 @@ def state(home):
 @pytest.fixture(autouse=True)
 def _patch_legacy(monkeypatch):
     monkeypatch.setattr(T, "_hook_store", lambda s: _EmptyStore())
-    monkeypatch.setattr(T, "_event_store", lambda: _EmptyStore())
     monkeypatch.setattr(T, "_used_by_index", lambda: {})
 
 

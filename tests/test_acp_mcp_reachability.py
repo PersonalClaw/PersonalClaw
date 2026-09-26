@@ -357,7 +357,6 @@ def test_generated_hook_writes_into_the_active_home(home, monkeypatch):
     """
     import personalclaw.agent as agent_mod
 
-    monkeypatch.setattr(agent_mod, "_USER_PROMPT", home / "nope.md", raising=False)
     cfg = agent_mod.build_agent_config()
     commands = [e["command"] for e in cfg["hooks"]["postToolUse"]]
     assert commands, "the bundled bash-audit hook disappeared"

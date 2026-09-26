@@ -99,7 +99,7 @@ def _load_ext_module(ext: "RegisteredProvider", module_path: str) -> Any:
         return load_bundle_module(ext_dir, ext.name, module_path)
     # Not a file in the app's dir → a dotted package path, or a package DIRECTORY module
     # reached through the app dir on sys.path.
-    with app_dir_on_path(ext_dir):
+    with app_dir_on_path(ext.name, ext_dir):
         return importlib.import_module(module_path)
 
 

@@ -236,15 +236,11 @@ def _engaged_automation(state: Any) -> bool:
     trigger at every boot, so counting every row made this true before the user's first
     interaction — the automation tip was unreachable on 100% of installs. Agent-created
     triggers still count: an agent writes one inside a user conversation, which is the
-    user automating. Event triggers carry no creator field because nothing system-writes
-    them; they count as-is.
+    user automating. A data-event trigger is a row in the same store, so it counts the same way.
     """
     from personalclaw.config.loader import config_dir
-    from personalclaw.event_triggers import EventTriggerStore
     from personalclaw.triggers.store import TriggerStore
 
-    if EventTriggerStore(config_dir() / "event_triggers.json").load():
-        return True
     try:
         rows = TriggerStore(base_dir=config_dir()).load()
         return any(lt.trigger.created_by != "system" for lt in rows)

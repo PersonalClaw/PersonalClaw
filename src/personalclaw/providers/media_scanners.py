@@ -23,6 +23,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
+from personalclaw import app_code
+
 logger = logging.getLogger(__name__)
 
 # capability → list of scanner callables. A scanner: (entries) -> [provider, …]
@@ -33,12 +35,18 @@ def register_scanner(capability: str, scanner: Callable[[list[dict[str, Any]]], 
     """Register a config scanner for a media ``capability``.
 
     Idempotent per (capability, scanner identity): re-registering the same
-    function object is a no-op, so an app module re-imported in tests doesn't
-    stack duplicate scanners.
+    function object is a no-op. A scanner an app registered is taken back when the app is
+    unloaded, so its next version's import registers its own instead of a second one.
     """
     lst = _scanners.setdefault(capability, [])
     if scanner not in lst:
         lst.append(scanner)
+
+        def _forget() -> None:
+            if scanner in lst:
+                lst.remove(scanner)
+
+        app_code.keep(_forget)
 
 
 def scan(capability: str) -> list[Any]:

@@ -531,9 +531,9 @@ def test_traversal_is_still_refused(tmp_path):
 def test_the_real_home_is_never_touched(seeded_home, tmp_path):
     """A guard on the SUITE, not the feature: an export must read only the patched home.
 
-    `portability._pc_dir()` reads `PERSONALCLAW_HOME` first, so a test that patched only
-    `config_dir` would silently walk the developer's real home. Asserting the resolved
-    directory is the cheap way to keep that impossible.
+    `portability._pc_dir()` is the home an export walks. Asserting it is the patched one,
+    before and after the export, is the cheap way to keep walking the developer's real home
+    impossible.
     """
     assert port._pc_dir() == seeded_home
     assert str(Path.home() / ".personalclaw") not in str(port._pc_dir())

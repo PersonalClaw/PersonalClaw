@@ -867,8 +867,9 @@ def backup_cmd(args) -> int:
     reporting success over a corrupt export.
     """
     from personalclaw.concurrency import single_flight
+    from personalclaw.config.loader import config_dir
 
-    home = _home()
+    home = config_dir()
     command = getattr(args, "backup_command", None)
 
     if command == "export":
@@ -924,9 +925,3 @@ def backup_cmd(args) -> int:
 
     print("Usage: personalclaw backup {export|validate}")
     return 2
-
-
-def _home() -> Path:
-    from personalclaw.config.loader import config_dir
-
-    return Path(os.environ.get("PERSONALCLAW_HOME", config_dir()))

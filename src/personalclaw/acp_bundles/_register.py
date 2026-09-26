@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 
+from personalclaw import app_code
 from personalclaw.llm.acp_agent import ACP_AGENT_CAPABILITY
 from personalclaw.llm.registry import ProviderEntry, get_default_registry
 
@@ -195,9 +196,18 @@ def register_acp_cli_entry(
     except Exception:  # noqa: BLE001 - never let a bundle break startup
         logger.warning("acp:%s bundle: failed to register provider entry", cli, exc_info=True)
         return None
+    # The runtime leaves with the app that registered it: disabled, removed or updated, its
+    # `acp:<cli>` entry must not keep resolving to the command the old version computed.
+    app_code.keep(lambda: _forget(entry))
     logger.info("acp:%s bundle: registered AgentProvider (dialect=%s)", cli, dialect)
 
     return entry
+
+
+def _forget(entry: ProviderEntry) -> None:
+    registry = get_default_registry()
+    if registry._entries.get(entry.name) is entry:  # noqa: SLF001 — take back only this one
+        registry.unregister_entry(entry.name)
 
 
 def unregister_acp_cli_entry(cli: str) -> None:

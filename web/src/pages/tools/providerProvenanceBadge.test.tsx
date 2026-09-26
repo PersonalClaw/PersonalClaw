@@ -49,7 +49,7 @@ function mockApi(tools: unknown[]) {
       toolsIndex: () => Promise.resolve({ tools, load_failures: [] }),
       mcpServers: () => Promise.resolve([]),
       importableMcp: () => Promise.resolve([]),
-      mcpPoolStats: () => Promise.resolve({ available: false }),
+      mcpPoolStats: () => Promise.resolve({}),
       toolGroups: () => Promise.resolve(null),
       // The page's sixth read (the per-server elicitation grant). This mock replaces
       // `api` wholesale, so an omitted member is `undefined` and throws before its own

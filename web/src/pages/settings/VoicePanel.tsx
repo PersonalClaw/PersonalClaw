@@ -11,6 +11,7 @@ import { ChipInput, TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { TextLink } from '../../ui/TextLink'
+import { confirmDelete } from '../../ui/dialog'
 import { fvs } from '../../design/fontWeight'
 import { bindChord, chordFromEvent, formatChord, DEFAULT_PUSH_TO_TALK_CHORD } from '../../lib/pushToTalk'
 import { desktopBridge } from '../../lib/desktopBridge'
@@ -605,6 +606,9 @@ function TermRow({ term, onChanged }: { term: LexiconTerm; onChanged: () => void
   const badge = SOURCE_BADGE[term.source] ?? SOURCE_BADGE.graph
   const [busy, setBusy] = useState(false)
   const act = async (fn: () => Promise<unknown>) => { setBusy(true); try { await fn(); onChanged() } finally { setBusy(false) } }
+  // Both icon buttons are named after the term. They were "Disable (prune)" and "Delete" on every row
+  // — one name per row of a list that runs to hundreds — so nothing said which term they act on.
+  const toggleLabel = `${term.enabled ? 'Disable (prune)' : 'Enable'} ${term.canonical}`
   return (
     <div className={`flex items-center gap-2 py-2 ${term.enabled ? '' : 'opacity-50'}`}>
       <span data-type="body-s" className="flex-1 truncate">
@@ -612,7 +616,7 @@ function TermRow({ term, onChanged }: { term: LexiconTerm; onChanged: () => void
         {term.aliases.length > 0 && <span data-type="caption" className="ml-1.5 text-on-surface-low">({term.aliases.join(', ')})</span>}
       </span>
       <span data-type="caption" className={`rounded px-1.5 py-0.5 ${badge.cls}`}>{badge.label}</span>
-      <button type="button" disabled={busy} title={term.enabled ? 'Disable (prune)' : 'Enable'}
+      <button type="button" disabled={busy} title={toggleLabel} aria-label={toggleLabel}
         onClick={() => act(() => api.lexiconSetTermEnabled(term.id, !term.enabled))}
         className="inline-flex h-7 w-7 items-center justify-center rounded text-on-surface-low hover:text-on-surface disabled:opacity-40">
         {term.enabled ? <X size={14} /> : <Check size={14} />}
@@ -622,7 +626,7 @@ function TermRow({ term, onChanged }: { term: LexiconTerm; onChanged: () => void
           primitive-adoption pass rather than being smuggled in here.
           🪤 And that sentence may not name the raw element it is about: `primitiveAdoption` counts
           the tag TEXT, comments included, so writing the literal reds the ratchet at +1.) */}
-      <SquareIconButton icon={Trash2} tone="danger" label="Delete" loading={busy}
+      <SquareIconButton icon={Trash2} tone="danger" label={`Delete term ${term.canonical}`} loading={busy}
         onClick={() => act(() => api.lexiconDeleteTerm(term.id))} />
     </div>
   )
@@ -631,6 +635,19 @@ function TermRow({ term, onChanged }: { term: LexiconTerm; onChanged: () => void
 function CorrectionRow({ corr, onChanged }: { corr: LexiconCorrection; onChanged: () => void }) {
   const [busy, setBusy] = useState(false)
   const toggle = async () => { setBusy(true); try { await api.lexiconSetCorrectionAuto(corr.id, !corr.auto_apply); onChanged() } finally { setBusy(false) } }
+  const pair = `${corr.heard} → ${corr.meant}`
+  // 🔴 A LEARNED CORRECTION COULD NOT BE REMOVED. The row had its Always/Suggest toggle and nothing
+  // else, and there was no route to call: one wrong fix set to Always rewrote that word in every
+  // dictation, and the only way out was Reset, which throws away every term and every correction.
+  // Asked first, like the other hand-taught things in Settings — someone typed this one in, and
+  // deleting it is not undoable. A failure is said, not swallowed: the row stays to retry from.
+  const forget = async () => {
+    if (!(await confirmDelete('correction', pair))) return
+    setBusy(true)
+    try { await api.lexiconDeleteCorrection(corr.id); onChanged() }
+    catch (e) { notify(`Couldn't delete the correction ${pair}: ${String((e as Error)?.message || e)}`, 'error') }
+    finally { setBusy(false) }
+  }
   return (
     <div data-type="body-s" className="flex items-center gap-2 py-2">
       <span className="flex-1 truncate">
@@ -645,6 +662,8 @@ function CorrectionRow({ corr, onChanged }: { corr: LexiconCorrection; onChanged
           corr.auto_apply ? 'bg-ok/15' : 'border border-outline-variant/50 text-on-surface-low hover:text-on-surface'}`}>
         <Wand2 size={12} /> {corr.auto_apply ? 'Always' : 'Suggest'}
       </button>
+      <SquareIconButton icon={Trash2} tone="danger" label={`Delete correction ${pair}`} loading={busy}
+        onClick={forget} />
     </div>
   )
 }

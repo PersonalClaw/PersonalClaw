@@ -43,6 +43,7 @@ from personalclaw.workflows.models import (
     InstanceState,
     WorkflowRun,
 )
+from personalclaw.workflows.step_usage import NOTHING_SENT
 
 # The five-step task every resume test interrupts. Steps 1-3 finished, step 4 FAILED, step 5 was
 # never reached — so the only correct place for a resumed turn to continue is step 4.
@@ -72,6 +73,7 @@ def _record_interrupted_run() -> str:
             failure_class=FailureClass.NETWORK,
             cause_plain="the endpoint returned 503",
         ),
+        usage=NOTHING_SENT,
         attempt=1,
         retries_exhausted=True,
     )
@@ -224,6 +226,7 @@ def test_a_retry_that_succeeded_reads_as_done_but_still_says_it_was_retried():
         "flaky",
         epoch=1,
         failure=Failure(failure_class=FailureClass.TIMEOUT, cause_plain="timed out"),
+        usage=NOTHING_SENT,
         attempt=1,
     )
     j.step_completed(

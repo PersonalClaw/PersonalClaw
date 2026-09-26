@@ -159,11 +159,10 @@ def _key_in_store(entry: Any) -> bool:
         from personalclaw.config.loader import config_dir
         from personalclaw.llm.credentials import CredentialStore
 
-        # The HOME, not the file: `CredentialStore.__init__` takes a home and derives
-        # `<home>/credentials.json` + `<home>/.env` itself. Passing the file made it read
-        # `credentials.json/credentials.json`, load no descriptors, and raise `KeyError`
-        # from `resolve` for every name — swallowed below, so every correctly configured
-        # provider reported its credential as absent (#2217).
+        # The HOME, not a file: `CredentialStore` reads `<home>/.env` (and the keychain).
+        # Passing a file path made it read nothing and raise `KeyError` from `resolve` for
+        # every name — swallowed below, so every correctly configured provider reported its
+        # credential as absent (#2217).
         return bool(CredentialStore(config_dir()).resolve(entry.credential).secret)
     except Exception:
         return False
@@ -999,33 +998,11 @@ async def api_provider_create(request: web.Request) -> web.Response:
             secret_refs.purge([secret_refs.provider_owner(name).prefix])
             raise
 
-    from personalclaw.llm.registry import (
-        ProviderEntry,
-        canonical_provider_type,
-        get_default_registry,
-    )
+    # The entry is built from the record as STORED — a secret field a `{{secret:…}}` reference —
+    # resolved against this provider's own credentials, exactly as the boot sync builds it.
+    from personalclaw.llm.registry import register_config_record
 
-    registry = get_default_registry()
-    try:
-        # Single source of truth for the branded-alias → base-type collapse (shared
-        # with the config sync + discovery handlers). Phase B replaces the branded
-        # aliases with dedicated apps, shrinking this to the two protocol types.
-        registry_type = canonical_provider_type(ptype)
-        cap = registry.capability_of(registry_type)
-        entry_options = dict(options or {})
-        if ptype != registry_type:
-            entry_options["_original_type"] = ptype
-        new_entry = ProviderEntry(
-            name=name,
-            type=registry_type,
-            model=model,
-            options=entry_options,
-            credential=None,
-            declared_capabilities=cap.capabilities,
-        )
-        registry.register_entry(new_entry)
-    except Exception:
-        pass
+    register_config_record(entry)
 
     from personalclaw.providers.connection import get_connection_board
 
@@ -1305,7 +1282,13 @@ async def api_provider_test(request: web.Request) -> web.Response:
             # ``_original_type`` preserves the branded config type; the registry type
             # (openai/anthropic/…) is what a catalog is keyed on.
             ptype = options.get("_original_type") or p.get("type", "")
-            entry = ProviderEntry(name=name, type=ptype, model=p.get("model", ""), options=options)
+            entry = ProviderEntry(
+                name=name,
+                type=ptype,
+                model=p.get("model", ""),
+                options=options,
+                credential=p.get("credential") or None,
+            )
         except Exception:
             return web.json_response({"error": "not found"}, status=404)
 

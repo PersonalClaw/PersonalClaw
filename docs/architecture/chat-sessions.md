@@ -124,9 +124,24 @@ chat, channel thread, loop worker, webhook, subagent).
    The agent's voice and the task-mode posture (`system_prompt_suffix`) are layered
    ON TOP of whichever prompt resolved — never a replacement (see `build_message`).
 4. **Model resolution** — the `chat` use-case binding from
-   `active_models.json`, unless the agent pins a model or the composer
-   overrides per-session (the `model` kwarg threads through
-   `llm/registry.py` `registry.build`; every factory honors it).
+   `active_models.json`, unless the composer picked a model for the session or
+   the agent pins one (in that order; the `model` kwarg threads through
+   `llm/registry.py` `registry.build`; every factory honors it). A chosen
+   model runs on ITS provider, not on the chain head with a borrowed model id.
+   One rule decides whether a chosen model can run
+   (`providers/provider_bridge.named_model_problem`): it must be one of the
+   chat models set up in Settings → Models, and its provider must be able to
+   serve it. A choice that cannot run is kept, never rewritten; the turn runs on
+   the chat binding and says so (`ModelSubstitution`: "Ran on X instead of
+   Researcher's model Y: …") — live as an `activity_event` of kind
+   `model_substitution`, and on the reply's `meta.model_substitution`, so a
+   reload says it too. A room member's turn says it as a room note, and the
+   Agents page and a room's members panel show the pin as unavailable
+   (`GET /api/agents` → `model_unavailable`). There is no strict setting that
+   would refuse the turn instead. Editing or deleting an agent marks its open
+   sessions (`SessionManager.mark_agent_stale`): a turn already running finishes
+   as it started, and each session's next turn rebuilds its runtime from the
+   agent as it now reads.
 5. **Streaming + persistence** — chunks stream over the dashboard WebSocket;
    the finished turn is saved by rewriting the session JSONL from the buffer.
    Every exit from a turn, an error included, first settles the answer

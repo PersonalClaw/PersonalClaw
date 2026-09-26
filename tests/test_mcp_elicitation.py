@@ -34,11 +34,7 @@ from pathlib import Path
 
 import pytest
 
-from personalclaw.mcp_client import McpClientRegistry, mcp_sdk_available
-
-pytestmark = pytest.mark.skipif(
-    not mcp_sdk_available(), reason="requires the optional 'mcp' SDK extra"
-)
+from personalclaw.mcp_client import McpClientRegistry
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

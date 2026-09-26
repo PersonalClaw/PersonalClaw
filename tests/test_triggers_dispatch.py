@@ -4,7 +4,8 @@
 `event_triggers._schedule_fire` records the fire, then asks for a running loop and `return`s when
 there is none. Driven against a real store in a sync context: `fire_count` becomes 1 and the action
 is **dropped with nothing recording that it did not run**. That is the silent drop §1.3 bans, in
-shipped code, and the reproduction is pinned below so the spool cannot be removed without a failure.
+shipped code. That engine is retired — an event trigger is a row in the one store, and a process
+without the gateway's router parks the event in this spool — so the pin below now asserts the fix.
 
 The rest of this file is the delivery contract, and every rule names the failure it prevents —
 peek-then-ack (crash mid-handling loses the event), the consumed-only
@@ -51,39 +52,36 @@ def _env(seq: int = 1, **over) -> Envelope:
 # ── the shipped bug, pinned ──
 
 
-def test_the_SHIPPED_sync_context_drop_is_REAL(tmp_path, monkeypatch):
-    """Measured, not inferred. `_schedule_fire` records the fire and
-    returns when there is no running
-    loop, so a sync CLI memory write counts a fire whose action never ran
-    — and nothing anywhere says
-    so. This test documents the defect the spool exists to fix; if `event_triggers` is ever fixed
-    directly, this is where that shows up."""
+def test_the_SHIPPED_sync_context_drop_is_FIXED(tmp_path, monkeypatch):
+    """The shipped bug, and where it went. The retired engine recorded the fire and returned when
+    there was no running loop, so a sync CLI memory write counted a fire whose action never ran —
+    and nothing anywhere said so. Now a process with no gateway router parks the EVENT in the spool,
+    and nothing is counted until the gateway admits the fire it causes."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    from personalclaw.event_triggers import (
-        SOURCE_MEMORY,
-        EventTrigger,
-        EventTriggerEngine,
-        EventTriggerStore,
-    )
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    from personalclaw.event_triggers import MEMORY_UPDATE, SOURCE_MEMORY, emit_event, event_spec
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
 
-    store = EventTriggerStore(tmp_path / "event_triggers.json")
+    store = TriggerStore(base_dir=tmp_path)
     store.upsert(
-        EventTrigger(
+        Trigger(
             id="e1",
-            pattern="MemoryUpdate",
-            action_provider="bash",
-            action_config={"command": "true"},
+            name="e1",
+            kind="event",
             enabled=True,
+            spec=event_spec(MEMORY_UPDATE),
+            workflow={"inline": {"provider": "notify", "config": {}}},
         )
     )
-    engine = EventTriggerEngine()
-    monkeypatch.setattr(engine, "_get_store", lambda: store)
-    # No running loop — exactly a sync CLI write.
-    engine.on_event(
-        source=SOURCE_MEMORY, event_type="MemoryUpdate", key="k", value="v", now=time.time()
+    # No gateway router in this process — exactly a sync CLI write.
+    emit_event(
+        source=SOURCE_MEMORY, event_type="MemoryUpdate", key="project.k", value="v", now=time.time()
     )
-    assert store.load()[0].fire_count == 1, "the fire was counted"
-    # …and the action went nowhere. That is the whole point.
+    assert store.get("e1").trigger.run_count == 0, "nothing ran, so nothing was counted"
+    drained, bad = drain_spool(path=spool_path())
+    assert bad == 0
+    assert [e.payload["key"] for e in drained] == ["project.k"], "the event must not be lost"
 
 
 def test_the_spool_gives_a_sync_context_fire_SOMEWHERE_TO_GO(tmp_path):

@@ -8,7 +8,8 @@ one people remember) unproven.
 singleton whose ``__init__`` no-ops once ``_initialized``, so constructing one with a tmp
 ``base_dir`` can silently hand back a pre-existing instance bound to somebody else's
 directory. ``conftest``'s autouse ``_reset_sel_singleton`` clears the class state around every
-test and its home guard redirects ``sel._default_dir``, which keeps the real home safe — but
+test and its home guard redirects ``config_dir``, where the SEL lives, which keeps the real
+home safe — but
 neither makes the *written rows* readable without touching disk. So these tests replace
 ``gate.SecurityEventLog`` in the module under test, which is why
 :mod:`personalclaw.computer_use.gate` imports the class at module level rather than lazily:

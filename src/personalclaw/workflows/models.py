@@ -1313,6 +1313,10 @@ class NodeInstance:
     #: is the silence #3545 is about, reintroduced one layer down. Cleared at every dispatch
     #: (`RunController._launch`), like `cached`, so it always describes the current attempt.
     schema_shortfall: str = ""
+    #: "ran on X instead of Y: why" for each model call of the current attempt that a later entry
+    #: of the user's chain served because the model the step asked for could not. Persisted and
+    #: cleared at every dispatch for the reasons `schema_shortfall` is.
+    model_substituted: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1335,6 +1339,7 @@ class NodeInstance:
             "claim_holder": self.claim_holder,
             "cached": self.cached,
             "schema_shortfall": self.schema_shortfall,
+            "model_substituted": list(self.model_substituted),
         }
 
     @classmethod
@@ -1365,4 +1370,5 @@ class NodeInstance:
             claim_holder=str(d.get("claim_holder", "") or ""),
             cached=bool(d.get("cached", False)),
             schema_shortfall=str(d.get("schema_shortfall", "") or ""),
+            model_substituted=[str(s) for s in (d.get("model_substituted") or []) if s],
         )

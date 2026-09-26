@@ -32,7 +32,7 @@ function mockApi(over: Record<string, unknown>) {
       toolsIndex: () => Promise.resolve(idx),
       mcpServers: () => Promise.resolve([]),
       importableMcp: () => Promise.resolve([]),
-      mcpPoolStats: () => Promise.resolve({ available: false }),
+      mcpPoolStats: () => Promise.resolve({}),
       toolGroups: () => Promise.resolve(null),
       // The per-server elicitation grant is the sixth read. Stubbed here rather than
       // left off: this mock REPLACES `api` wholesale, so an absent member is `undefined`

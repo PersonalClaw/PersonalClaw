@@ -36,7 +36,7 @@ const deployRec = (over: Partial<PackTriggersDeployRec> = {}): PackTriggersDeplo
   ok: true, pack: 'cfo-pack', deployed: ['cfo-spending-digest', 'cfo-month-end'], skipped: [], ...over,
 })
 
-const addButton = () => screen.queryByRole('button', { name: 'Add triggers to Automations' })
+const addButton = () => screen.queryByRole('button', { name: /^Add triggers to Automations from / })
 
 describe('the "Add triggers to Automations" control', () => {
   beforeEach(() => {
@@ -45,20 +45,20 @@ describe('the "Add triggers to Automations" control', () => {
   })
 
   it('shows only when the pack staged triggers', () => {
-    render(<PackRow pack={base} />)
+    render(<PackRow pack={base} onChanged={() => {}} />)
     expect(addButton()).toBeTruthy()
   })
 
   it('is absent when the pack staged none — and when the field is missing entirely', () => {
-    const { rerender } = render(<PackRow pack={{ ...base, staged_triggers: [] }} />)
+    const { rerender } = render(<PackRow pack={{ ...base, staged_triggers: [] }} onChanged={() => {}} />)
     expect(addButton()).toBeNull()
     // A ledger row written before the field existed is a real case, not an error.
-    rerender(<PackRow pack={{ ...base, staged_triggers: undefined }} />)
+    rerender(<PackRow pack={{ ...base, staged_triggers: undefined }} onChanged={() => {}} />)
     expect(addButton()).toBeNull()
   })
 
   it('never labels the action "Enable" — the deploy lands them disabled', () => {
-    render(<PackRow pack={base} />)
+    render(<PackRow pack={base} onChanged={() => {}} />)
     expect(screen.queryByRole('button', { name: /enable/i })).toBeNull()
   })
 })
@@ -70,13 +70,13 @@ describe('deploying the staged triggers', () => {
   })
 
   it('calls packTriggersDeploy with the pack name on click', async () => {
-    render(<PackRow pack={base} />)
+    render(<PackRow pack={base} onChanged={() => {}} />)
     fireEvent.click(addButton()!)
     await waitFor(() => expect(packTriggersDeploy).toHaveBeenCalledWith('cfo-pack'))
   })
 
   it('reports the count HONESTLY as disabled, and links to Automations to arm them', async () => {
-    const { container } = render(<PackRow pack={base} />)
+    const { container } = render(<PackRow pack={base} onChanged={() => {}} />)
     fireEvent.click(addButton()!)
     await waitFor(() => expect(container.textContent).toContain('Added 2 triggers to'))
     const text = container.textContent ?? ''
@@ -89,7 +89,7 @@ describe('deploying the staged triggers', () => {
 
   it('pluralises a single deployed trigger correctly', async () => {
     packTriggersDeploy.mockResolvedValue(deployRec({ deployed: ['cfo-spending-digest'] }))
-    const { container } = render(<PackRow pack={base} />)
+    const { container } = render(<PackRow pack={base} onChanged={() => {}} />)
     fireEvent.click(addButton()!)
     await waitFor(() => expect(container.textContent).toContain('Added 1 trigger to'))
     expect(container.textContent).not.toContain('Added 1 triggers')
@@ -97,7 +97,7 @@ describe('deploying the staged triggers', () => {
 
   it('surfaces staged files too broken to add, rather than hiding them', async () => {
     packTriggersDeploy.mockResolvedValue(deployRec({ deployed: ['cfo-spending-digest'], skipped: ['cfo-month-end'] }))
-    const { container } = render(<PackRow pack={base} />)
+    const { container } = render(<PackRow pack={base} onChanged={() => {}} />)
     fireEvent.click(addButton()!)
     await waitFor(() => expect(container.textContent).toContain('too broken to add'))
     expect(container.textContent).toContain('cfo-month-end')

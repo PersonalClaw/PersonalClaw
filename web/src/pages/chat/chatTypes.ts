@@ -229,6 +229,10 @@ export interface ChatTurn {
   // message's `meta.finish_reason === 'length'`. Absent (never `false`-by-default noise) on
   // the turns that finished on their own, which is nearly all of them.
   cutOff?: boolean
+  // The reply came from ANOTHER model than the one chosen for it — the agent's pinned model or
+  // the chat's own pick could not run. The sentence, "Ran on X instead of Y: …", from the assistant
+  // message's `meta.model_substitution`. Absent when the chosen model answered.
+  modelSubstitution?: string
   // paste blocks referenced by `[Paste #N]` markers in this turn's text, kept so
   // the bubble can render the markers as inspectable chips after send.
   pastes?: { seq: number; lines: number; content: string }[]
@@ -371,7 +375,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; is_read_only?: string; grant_agent?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; is_read_only?: string; grant_agent?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string } }
 
 /** Re-collapse a persisted user message: the stored content has paste markers
  *  expanded to full text (the model saw that), but meta.pastes lets us swap each
@@ -492,6 +496,9 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // last one winning — so the mark is re-decided per message, not latched by an earlier one.
       if (m.meta?.finish_reason === 'length') at.cutOff = true
       else delete at.cutOff
+      // Re-decided per message for the same reason: it describes the turn that message ends.
+      if (m.meta?.model_substitution) at.modelSubstitution = m.meta.model_substitution
+      else delete at.modelSubstitution
       // Regenerated answers persist as ONE assistant message carrying every version
       // in `variants` (the active one's content == m.content). Carry the count + index
       // onto the turn so the ‹n/N› switcher rehydrates on reload.
