@@ -22,10 +22,17 @@ The load-bearing tests, one per clause the atom names:
 * ``test_a_write_failure_is_reported_with_the_secret_redacted`` — a writer that raises is
   a 500 carrying the failure's own (screened) sentence, never a cheerful empty 200. A
   swallowed write is the defect class this endpoint exists to make impossible.
-* ``test_an_unknown_source_is_refused_before_anything_is_read`` /
-  ``test_an_empty_selection_is_refused_rather_than_importing_nothing`` — the selection
-  axes are validated against the closed registries, and "import nothing" is a refusal
-  rather than a success with a zero in it.
+* ``test_the_scan_names_every_item_by_a_fingerprint_the_server_derives`` /
+  ``test_a_pick_imports_exactly_those_items`` — the pick is item by item, by an id the scan
+  mints and a re-scan reproduces, and the import writes exactly what was picked.
+* ``test_a_pick_the_rescan_no_longer_finds_is_reported_not_dropped`` /
+  ``test_content_in_the_request_is_ignored`` — ids travel, content never does: the import
+  keeps only fingerprints its OWN re-scan found, reports the rest, and a body, path or
+  payload riding along in the request changes nothing that lands.
+* ``test_a_malformed_fingerprint_is_refused_before_anything_is_read`` /
+  ``test_an_absent_or_empty_pick_is_refused_rather_than_importing_nothing`` — the pick is
+  validated by shape before a scan runs, and "import nothing" is a refusal rather than a
+  success with a zero in it.
 """
 
 from __future__ import annotations
@@ -41,7 +48,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from personalclaw.dashboard.handlers.onboarding_import import (
     register_onboarding_import_routes,
 )
-from personalclaw.onboarding_import import ImportCategory
+from personalclaw.onboarding_import import ImportCategory, fingerprint_of
 
 #: The planted credential. If this string reaches the wire or any byte under the home,
 #: a test fails. Shaped like a real key so the redactors engage.
@@ -134,12 +141,24 @@ def _bytes_under(root: Path) -> bytes:
 # ── 1. the scan ───────────────────────────────────────────────────────────────
 
 
+async def _scan(client) -> dict:
+    resp = await client.get("/api/onboarding/import")
+    assert resp.status == 200
+    return await resp.json()
+
+
+def _items(body: dict, source: str = "claude_code") -> list[dict]:
+    return next(s for s in body["sources"] if s["source"] == source)["items"]
+
+
+def _fingerprint(body: dict, category: str) -> str:
+    return next(i["fingerprint"] for i in _items(body) if i["category"] == category)
+
+
 @pytest.mark.asyncio
 async def test_fresh_home_scan_shows_the_source_with_nothing_already_imported(make_client, home):
     async with make_client() as client:
-        resp = await client.get("/api/onboarding/import")
-        assert resp.status == 200
-        body = await resp.json()
+        body = await _scan(client)
 
     by_name = {s["source"]: s for s in body["sources"]}
     claude = by_name["claude_code"]
@@ -147,14 +166,62 @@ async def test_fresh_home_scan_shows_the_source_with_nothing_already_imported(ma
     assert claude["present"] is True
     assert claude["counts"]["instructions"] >= 1
     assert claude["counts"]["mcp_servers"] >= 1
-    # A fresh home has imported nothing, so every item is on offer, none marked existing.
+    # A fresh home has imported nothing, so every item is on offer as new — with the place it
+    # would land, which is what the step shows beside a conflict later.
     assert claude["items"], "the step would have nothing to render"
-    assert [i["existing"] for i in claude["items"]] == [False] * len(claude["items"])
+    assert [i["state"] for i in claude["items"]] == ["new"] * len(claude["items"])
+    assert all(i["destination"] for i in claude["items"])
     # "not installed" is its own answer, not an error and not an empty detected source.
     assert by_name["codex"]["present"] is False
     assert by_name["codex"]["detected"] is False
-    # The checkbox vocabulary comes from the enum, so it cannot drift from the writers.
+    # The group vocabulary comes from the enum, so it cannot drift from the writers.
     assert body["categories"] == [c.value for c in ImportCategory]
+
+
+@pytest.mark.asyncio
+async def test_the_scan_names_every_item_by_a_fingerprint_the_server_derives(make_client):
+    """The id a pick sends back is minted HERE, from source + category + key, and a second
+    scan mints the same one — so an id taken from one scan still names the item in the next."""
+    async with make_client() as client:
+        first = await _scan(client)
+        second = await _scan(client)
+
+    items = _items(first)
+    assert [i["fingerprint"] for i in items] == [i["fingerprint"] for i in _items(second)]
+    for item in items:
+        assert item["fingerprint"] == fingerprint_of(item["source"], item["category"], item["key"])
+    assert len({i["fingerprint"] for i in items}) == len(items)
+
+
+@pytest.mark.asyncio
+async def test_each_item_says_what_was_withheld_from_it(make_client):
+    """The MCP server loses its API key on the way over; the user sees it on THAT row, so they
+    know which server needs its key entered again."""
+    async with make_client() as client:
+        body = await _scan(client)
+
+    by_key = {i["key"]: i for i in _items(body)}
+    assert by_key["weather"]["secrets_skipped"] == 1
+    assert by_key["CLAUDE.md"]["redactions"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_the_scan_shows_a_conflict_before_anything_is_imported(make_client, home):
+    """The step must be able to say "you already have a different one" BEFORE the user picks,
+    so the scan reads the destination — through the planner the writer uses — and writes
+    nothing while doing it."""
+    (home / "mcp.json").write_text(
+        json.dumps({"mcpServers": {"weather": {"command": "mine"}}}), encoding="utf-8"
+    )
+    before = (home / "mcp.json").read_bytes()
+    async with make_client() as client:
+        body = await _scan(client)
+
+    weather = next(i for i in _items(body) if i["key"] == "weather")
+    assert weather["state"] == "conflict"
+    assert "kept" in weather["detail"]
+    assert weather["destination"] == "mcp.json#mcpServers.weather"
+    assert (home / "mcp.json").read_bytes() == before
 
 
 @pytest.mark.asyncio
@@ -184,24 +251,104 @@ async def _import(client, **body):
 
 
 @pytest.mark.asyncio
-async def test_import_writes_the_picked_categories_and_reports_every_outcome(make_client, home):
+async def test_a_pick_imports_exactly_those_items(make_client, home):
     async with make_client() as client:
-        status, report = await _import(
-            client, sources=["claude_code"], categories=["instructions", "mcp_servers"]
-        )
+        scan = await _scan(client)
+        weather = _fingerprint(scan, "mcp_servers")
+        status, report = await _import(client, fingerprints=[weather])
     assert status == 200
-    assert report["counts"]["imported"] >= 2, report
-    # The MCP entry really landed in the user-owned override file.
+    assert [(r["fingerprint"], r["outcome"]) for r in report["results"]] == [(weather, "imported")]
+    # The MCP entry really landed in the user-owned override file…
     mcp = json.loads((home / "mcp.json").read_text(encoding="utf-8"))
     assert "weather" in mcp["mcpServers"]
-    # Every row names its destination, so the step can say where a thing went.
-    assert all(r["destination"] for r in report["results"] if r["outcome"] == "imported")
+    assert report["results"][0]["destination"]
+    # …and the instructions the user left out did not, and the report says they were left out.
+    assert not (home / "workspace" / "memory" / "imported").exists()
+    left_out = {row["fingerprint"]: row["state"] for row in report["unselected"]}
+    assert left_out == {_fingerprint(scan, "instructions"): "new"}
+    assert report["missing"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_pick_the_rescan_no_longer_finds_is_reported_not_dropped(
+    make_client, home, foreign
+):
+    """The item was on the screen when the user picked it, and gone from the other tool by the
+    time they pressed Import. The re-scan is the truth: nothing is imported for it, and the
+    report NAMES it, so the step can say so instead of showing one success fewer."""
+    async with make_client() as client:
+        scan = await _scan(client)
+        instructions, weather = _fingerprint(scan, "instructions"), _fingerprint(
+            scan, "mcp_servers"
+        )
+        (foreign / "CLAUDE.md").unlink()
+        status, report = await _import(client, fingerprints=[instructions, weather])
+
+    assert status == 200
+    assert [r["fingerprint"] for r in report["results"]] == [weather]
+    assert report["missing"] == [instructions]
+    assert not (home / "workspace" / "memory" / "imported").exists()
+
+
+@pytest.mark.asyncio
+async def test_a_well_formed_fingerprint_no_scan_ever_minted_imports_nothing(make_client, home):
+    """Shape-valid but unknown: allowed past validation, refused by the allowlist — the re-scan
+    — and reported, with a 200, because the request was well-formed and the answer is real."""
+    stranger = "0123456789abcdef"
+    async with make_client() as client:
+        status, report = await _import(client, fingerprints=[stranger])
+    assert status == 200
+    assert report["results"] == []
+    assert report["missing"] == [stranger]
+    assert not (home / "mcp.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_content_in_the_request_is_ignored(make_client, home, tmp_path):
+    """The attack the id-only wire exists to defeat, attempted: the request carries the chosen
+    fingerprint AND an item-shaped object naming another directory, a body and a payload, plus
+    the old selection axes. None of it may reach the home — what lands is the server's OWN
+    re-scan of the foreign root, byte for byte."""
+    elsewhere = tmp_path / "not-a-source"
+    elsewhere.mkdir()
+    (elsewhere / "SKILL.md").write_text("---\nname: smuggled\n---\nEVIL-BODY\n", encoding="utf-8")
+    async with make_client() as client:
+        scan = await _scan(client)
+        weather = _fingerprint(scan, "mcp_servers")
+        status, report = await _import(
+            client,
+            fingerprints=[weather],
+            items=[
+                {
+                    "fingerprint": weather,
+                    "category": "skills",
+                    "key": "smuggled",
+                    "path": str(elsewhere),
+                    "text": "EVIL-BODY",
+                    "payload": {"command": "evil-command"},
+                }
+            ],
+            sources=["codex"],
+            categories=["skills"],
+            payload={"command": "evil-command"},
+        )
+
+    assert status == 200
+    assert [(r["key"], r["outcome"]) for r in report["results"]] == [("weather", "imported")]
+    mcp = json.loads((home / "mcp.json").read_text(encoding="utf-8"))
+    assert mcp["mcpServers"]["weather"]["command"] == "npx"
+    blob = _bytes_under(home)
+    assert b"EVIL-BODY" not in blob and b"evil-command" not in blob and b"smuggled" not in blob
+    assert not (home / "skills").exists()
 
 
 @pytest.mark.asyncio
 async def test_planted_secret_never_reaches_the_home_through_the_route(make_client, home):
     async with make_client() as client:
-        status, report = await _import(client)  # no axes = everything
+        scan = await _scan(client)
+        status, report = await _import(
+            client, fingerprints=[i["fingerprint"] for i in _items(scan)]
+        )
     assert status == 200
     assert report["counts"]["imported"] >= 1
     assert SECRET.encode() not in _bytes_under(home)
@@ -214,23 +361,43 @@ async def test_planted_secret_never_reaches_the_home_through_the_route(make_clie
 async def test_reentry_marks_already_imported_items_existing(make_client):
     """The atom's re-entry clause, over the wire: import, then scan again."""
     async with make_client() as client:
-        status, _ = await _import(client, sources=["claude_code"], categories=["mcp_servers"])
+        scan = await _scan(client)
+        status, _ = await _import(client, fingerprints=[_fingerprint(scan, "mcp_servers")])
         assert status == 200
-        again = await (await client.get("/api/onboarding/import")).json()
+        again = await _scan(client)
 
-    claude = next(s for s in again["sources"] if s["source"] == "claude_code")
-    mcp_items = [i for i in claude["items"] if i["category"] == "mcp_servers"]
-    other = [i for i in claude["items"] if i["category"] != "mcp_servers"]
-    assert mcp_items and all(i["existing"] for i in mcp_items)
+    mcp_items = [i for i in _items(again) if i["category"] == "mcp_servers"]
+    other = [i for i in _items(again) if i["category"] != "mcp_servers"]
+    assert mcp_items and all(i["state"] == "existing" for i in mcp_items)
     # Only what was imported is marked: a blanket "existing" would be just as wrong.
-    assert other and not any(i["existing"] for i in other)
+    assert other and all(i["state"] == "new" for i in other)
+
+
+@pytest.mark.asyncio
+async def test_an_imported_item_the_user_since_deleted_is_offered_again(make_client, home):
+    """The state is read off the DESTINATION, not the import ledger. The ledger still remembers
+    writing the server after the user removed it from `mcp.json`, so a ledger-derived flag called
+    it "already imported" while importing it would in fact bring it back."""
+    async with make_client() as client:
+        pick = [_fingerprint(await _scan(client), "mcp_servers")]
+        assert (await _import(client, fingerprints=pick))[0] == 200
+        (home / "mcp.json").write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+        again = await _scan(client)
+        status, report = await _import(client, fingerprints=pick)
+
+    weather = next(i for i in _items(again) if i["category"] == "mcp_servers")
+    assert weather["state"] == "new"
+    assert (
+        status == 200 and report["counts"]["imported"] == 1
+    ), "and importing it does bring it back"
 
 
 @pytest.mark.asyncio
 async def test_reimport_reports_existing_and_imports_nothing(make_client):
     async with make_client() as client:
-        first = (await _import(client, sources=["claude_code"], categories=["mcp_servers"]))[1]
-        second = (await _import(client, sources=["claude_code"], categories=["mcp_servers"]))[1]
+        pick = [_fingerprint(await _scan(client), "mcp_servers")]
+        first = (await _import(client, fingerprints=pick))[1]
+        second = (await _import(client, fingerprints=pick))[1]
     assert first["counts"]["imported"] >= 1
     assert second["counts"]["imported"] == 0
     assert second["counts"]["existing"] == first["counts"]["imported"]
@@ -253,7 +420,8 @@ async def test_a_write_failure_is_reported_with_the_secret_redacted(make_client,
 
     monkeypatch.setattr("personalclaw.onboarding_import.run_import", boom)
     async with make_client() as client:
-        resp = await client.post("/api/onboarding/import", json={})
+        pick = [_fingerprint(await _scan(client), "mcp_servers")]
+        resp = await client.post("/api/onboarding/import", json={"fingerprints": pick})
         assert resp.status == 500
         raw = await resp.text()
         body = json.loads(raw)
@@ -281,46 +449,84 @@ async def test_a_scan_failure_is_reported_rather_than_rendering_an_empty_step(
     assert "unreadable" in body["error"]["message"]
 
 
-# ── 4. the selection axes are validated, not trusted ──────────────────────────
+# ── 4. the pick is validated, not trusted ─────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_an_unknown_source_is_refused_before_anything_is_read(make_client, home):
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "../../../../etc/passwd",
+        "/Users/someone/.ssh",
+        "ABCDEF0123456789",  # the right length, the wrong alphabet
+        "0123456789abcde",  # one short
+        "0123456789abcdef0",  # one long
+        "0123456789abcdef\n",
+    ],
+)
+async def test_a_malformed_fingerprint_is_refused_before_anything_is_read(
+    make_client, home, monkeypatch, bad
+):
+    """Refused by SHAPE, before a scan runs — the scan is not even called — and the refusal
+    does not echo the caller's string back: a count, the expected shape, nothing else."""
+
+    def must_not_scan(*_a, **_kw):
+        raise AssertionError("a malformed pick reached the scanner")
+
+    monkeypatch.setattr("personalclaw.onboarding_import.scan_all", must_not_scan)
     async with make_client() as client:
-        resp = await client.post("/api/onboarding/import", json={"sources": ["nope"]})
+        resp = await client.post(
+            "/api/onboarding/import", json={"fingerprints": ["0123456789abcdef", bad]}
+        )
         body = await resp.json()
     assert resp.status == 400
-    assert "nope" in body["error"]["message"]
-    # It names what it DOES know, so the caller can correct itself.
-    assert "claude_code" in body["error"]["message"]
+    assert body["error"]["code"] == "bad_request"
+    assert "1 of the 2 entries" in body["error"]["message"]
+    assert bad.strip() not in body["error"]["message"]
     assert not (home / "mcp.json").exists(), "a refused request must write nothing"
 
 
 @pytest.mark.asyncio
-async def test_an_unknown_category_is_refused(make_client):
-    async with make_client() as client:
-        resp = await client.post("/api/onboarding/import", json={"categories": ["passwords"]})
-        body = await resp.json()
-    assert resp.status == 400
-    assert "passwords" in body["error"]["message"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("body", [{"sources": []}, {"categories": []}])
-async def test_an_empty_selection_is_refused_rather_than_importing_nothing(make_client, body):
-    """An empty list is a request for no work; answering `0 imported` would look like
-    a successful import that simply found nothing."""
+@pytest.mark.parametrize(
+    "body",
+    [{}, {"fingerprints": []}, {"sources": ["claude_code"], "categories": ["mcp_servers"]}],
+)
+async def test_an_absent_or_empty_pick_is_refused_rather_than_importing_nothing(make_client, body):
+    """An empty or absent pick is a request for no work; answering `0 imported` would look like
+    a successful import that simply found nothing. The retired two-axis body is one of these:
+    it names no item, so it is refused rather than read as "everything"."""
     async with make_client() as client:
         resp = await client.post("/api/onboarding/import", json=body)
         payload = await resp.json()
     assert resp.status == 400
     assert payload["error"]["code"] == "invalid_request"
+    assert "fingerprints" in payload["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_a_pick_larger_than_any_real_setup_is_refused(make_client, monkeypatch):
+    def must_not_scan(*_a, **_kw):
+        raise AssertionError("an oversized pick reached the scanner")
+
+    monkeypatch.setattr("personalclaw.onboarding_import.scan_all", must_not_scan)
+    pick = [f"{n:016x}" for n in range(10_001)]
+    async with make_client() as client:
+        resp = await client.post("/api/onboarding/import", json={"fingerprints": pick})
+        payload = await resp.json()
+    assert resp.status == 400
+    assert payload["error"]["code"] == "invalid_request"
+    assert "10,000" in payload["error"]["message"]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "body,code",
-    [({"sources": "claude_code"}, "bad_request"), ([], "invalid_body")],
+    [
+        ({"fingerprints": "0123456789abcdef"}, "bad_request"),
+        ({"fingerprints": [1234567890123456]}, "bad_request"),
+        ({"fingerprints": {"0123456789abcdef": {"text": "x"}}}, "bad_request"),
+        ([], "invalid_body"),
+    ],
 )
 async def test_a_malformed_body_is_a_400_not_a_500(make_client, body, code):
     async with make_client() as client:

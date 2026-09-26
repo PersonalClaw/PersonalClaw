@@ -11,6 +11,8 @@ the user is told how much was withheld, never what it was:
    rules.
 2. :func:`strip_secrets` — a secret-NAMED key inside a config we DO read is dropped
    before the value is ever copied into an :class:`~.model.ImportItem`.
+   :func:`split_tables` is the same walk with each count kept beside the entry it came
+   from, so an item can say how many credentials were left out of IT.
 3. :func:`safe_text` — free text keeps its body but loses embedded credentials and
    exfiltration URLs (``redact_credentials`` / ``redact_exfiltration_urls``).
 
@@ -24,6 +26,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +88,99 @@ def strip_secrets(value: Any) -> tuple[Any, int]:
             dropped += sub_dropped
         return out, dropped
     return value, 0
+
+
+@dataclass(frozen=True)
+class SplitDocument:
+    """A parsed config document through floor 2, with each withheld credential attributed.
+
+    ``strip_secrets`` answers ONE total for a whole document, but the step lists items, and
+    an item is one ENTRY of one table (an MCP server under ``mcpServers``) or the document's
+    remainder (a settings item). So the count is kept with the thing it was taken from — the
+    user can see WHICH server comes over without its key — while :attr:`total` is exactly what
+    ``strip_secrets`` would have counted over the whole document.
+    """
+
+    #: ``(name, clean_entry, withheld_from_it)`` for every dict entry of the split tables, in
+    #: table order and then name order. A name seen in an earlier table wins: one name is one
+    #: destination, so a second definition could only ever be a conflict with the first.
+    entries: list[tuple[str, dict, int]] = field(default_factory=list)
+    #: The rest of the document, secret-free (``None`` when the file was refused or unreadable).
+    remainder: Any = None
+    remainder_withheld: int = 0
+    #: Withheld, but belonging to no item: a refused file, an entry whose NAME is secret-shaped
+    #: (dropped whole, exactly as ``strip_secrets`` drops it), and anything inside an entry that
+    #: never becomes an item.
+    unattributed: int = 0
+
+    @property
+    def total(self) -> int:
+        return (
+            sum(withheld for _name, _entry, withheld in self.entries)
+            + self.remainder_withheld
+            + self.unattributed
+        )
+
+
+def split_tables(raw: Any, tables: tuple[str, ...]) -> SplitDocument:
+    """Floor 2 over a parsed document whose named ``tables`` hold one item per entry.
+
+    The walk is the one ``strip_secrets`` makes — a secret-named key is dropped whole and
+    counted once, every other value is stripped recursively — so the entries, the remainder
+    and :attr:`SplitDocument.total` together are the whole document's strip, just not summed
+    into one number. The table keys are the caller's own constants (``mcpServers``,
+    ``mcp_servers``), never secret-shaped, so lifting them out first changes nothing else.
+
+    Nothing unstripped leaves this function: every value it returns has been through floor 2.
+    """
+    if not isinstance(raw, dict):
+        clean, dropped = strip_secrets(raw)
+        return SplitDocument(remainder=clean, remainder_withheld=dropped)
+    rest = dict(raw)
+    entries: list[tuple[str, dict, int]] = []
+    seen: set[str] = set()
+    unattributed = 0
+    for table_key in tables:
+        if table_key not in rest:
+            continue
+        table = rest.pop(table_key)
+        if not isinstance(table, dict):
+            unattributed += strip_secrets(table)[1]
+            continue
+        for name, entry in sorted(table.items(), key=lambda pair: str(pair[0])):
+            if isinstance(name, str) and _SECRET_KEY_RE.search(name):
+                unattributed += 1
+                continue
+            clean, dropped = strip_secrets(entry)
+            key = str(name)
+            if not isinstance(clean, dict) or not key.strip() or key in seen:
+                unattributed += dropped
+                continue
+            seen.add(key)
+            entries.append((key, clean, dropped))
+    remainder, remainder_withheld = strip_secrets(rest)
+    return SplitDocument(
+        entries=entries,
+        remainder=remainder,
+        remainder_withheld=remainder_withheld,
+        unattributed=unattributed,
+    )
+
+
+def read_json_tables_safely(path: Path, tables: tuple[str, ...]) -> SplitDocument:
+    """Read a JSON config through floors 1 and 2, attributing credentials per entry.
+
+    The per-entry form of :func:`read_json_safely`: a refused path is counted and never
+    opened, malformed JSON is nothing to import, and everything else is
+    :func:`split_tables`.
+    """
+    if refuses(path):
+        return SplitDocument(unattributed=1)
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return SplitDocument()
+    return split_tables(parsed, tables)
 
 
 def safe_text(text: str) -> tuple[str, int]:

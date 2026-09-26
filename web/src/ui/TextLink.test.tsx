@@ -80,4 +80,19 @@ describe('TextLink', () => {
     expect(have).toContain('ml-auto')
     expect(have).toContain('text-primary')
   })
+
+  it('as a disclosure, names the region it opens as well as whether it is open — on both elements', () => {
+    // `aria-expanded` alone says "this expands" without saying WHAT; `aria-controls` is the other
+    // half of the pairing, and it must survive whichever element the link renders as.
+    const { getByRole, getByText } = render(
+      <>
+        <TextLink aria-expanded={false} aria-controls="skills-list">Choose</TextLink>
+        <TextLink href="#/x" aria-expanded aria-controls="other-list">Open</TextLink>
+      </>,
+    )
+    const button = getByRole('button', { name: 'Choose' })
+    expect(button).toHaveAttribute('aria-expanded', 'false')
+    expect(button).toHaveAttribute('aria-controls', 'skills-list')
+    expect(getByText('Open').closest('a')).toHaveAttribute('aria-controls', 'other-list')
+  })
 })

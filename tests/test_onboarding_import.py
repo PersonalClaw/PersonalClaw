@@ -17,6 +17,16 @@ The load-bearing tests, one per property the atom names:
   destination fails on the count/bytes, not on an exception.
 * ``test_conflicting_*`` — the three destinations where a foreign item can collide with
   the user's own state each report ``conflict`` and leave the existing thing byte-identical.
+* ``test_a_pick_imports_exactly_the_chosen_items`` /
+  ``test_a_chosen_fingerprint_the_scan_lacks_is_reported_missing`` — the pick is a set of
+  fingerprints and the scan passed in is its allowlist: exactly the chosen items are written,
+  and a fingerprint the scan does not contain imports nothing and is REPORTED.
+* ``test_the_plan_says_before_the_import_what_the_import_then_does`` — the state a scan shows
+  beside an item is the outcome its import reports, for every state, because the writer
+  consults the planner rather than re-deciding.
+* ``test_each_item_carries_its_own_withheld_count`` /
+  ``test_split_tables_is_strip_secrets_with_the_count_kept_per_entry`` — a user can see WHICH
+  item comes over without a credential, and the per-entry split cannot change a total.
 """
 
 from __future__ import annotations
@@ -24,21 +34,30 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import shutil
 from pathlib import Path
 
 import pytest
 
 from personalclaw.onboarding_import import (
     ImportCategory,
+    ItemState,
     WriteOutcome,
     fingerprint_of,
     get_source,
     list_sources,
+    plans,
     run_import,
     scan_source,
 )
+from personalclaw.onboarding_import.floors import split_tables, strip_secrets
 from personalclaw.onboarding_import.sources import claude_code, codex
-from personalclaw.onboarding_import.writers import _WRITERS, mcp_config_path, staged_settings_path
+from personalclaw.onboarding_import.writers import (
+    _PLANNERS,
+    _WRITERS,
+    mcp_config_path,
+    staged_settings_path,
+)
 
 #: The planted credential. If this string reaches ANY output — an item, a note, a log, a
 #: file under the home — a test fails. Shaped like a real key so the redactors engage.
@@ -123,6 +142,16 @@ def _tree(root: Path) -> dict[str, str]:
 def _all_bytes(root: Path) -> bytes:
     chunks = [p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()]
     return b"".join(chunks)
+
+
+def _picks(results, *categories: ImportCategory) -> list[str]:
+    """The fingerprints of every scanned item in ``categories`` — how a pick names a group."""
+    return [
+        item.fingerprint
+        for result in results
+        for item in result.items
+        if item.category in categories
+    ]
 
 
 # ── scan ──────────────────────────────────────────────────────────────────────
@@ -317,13 +346,110 @@ def test_reimport_reports_existing_and_writes_nothing_new(claude_root: Path, hom
     assert changed == set()
 
 
-def test_selecting_one_category_imports_only_that_category(claude_root: Path, home: Path) -> None:
-    report = run_import(
-        [scan_source("claude_code", claude_root)], categories=[ImportCategory.MCP_SERVERS]
+def test_a_pick_imports_exactly_the_chosen_items(claude_root: Path, home: Path) -> None:
+    """The pick is item by item: two of five chosen, two written, three reported as left out."""
+    results = [scan_source("claude_code", claude_root)]
+    memory, weather = (
+        _picks(results, ImportCategory.MEMORIES)[0],
+        _picks(results, ImportCategory.MCP_SERVERS)[0],
     )
-    assert [r.category for r in report.results] == [ImportCategory.MCP_SERVERS]
+
+    report = run_import(results, fingerprints=[memory, weather])
+
+    assert sorted(r.fingerprint for r in report.results) == sorted([memory, weather])
+    assert {r.outcome for r in report.results} == {WriteOutcome.IMPORTED}
     assert mcp_config_path().is_file()
+    # Everything NOT chosen was left alone — and is accounted for, not silently absent.
     assert not (home / "skills" / "imported").exists()
+    assert not staged_settings_path("claude_code", "settings.json").exists()
+    doc = home / "workspace" / "memory" / "imported" / "claude_code" / "CLAUDE.md"
+    assert not doc.exists()
+    left_out = {item.fingerprint: plan.state for item, plan in report.unselected}
+    assert set(left_out) == {i.fingerprint for i in results[0].items} - {memory, weather}
+    assert set(left_out.values()) == {ItemState.NEW}
+    assert report.missing == []
+
+
+def test_a_chosen_fingerprint_the_scan_lacks_is_reported_missing(
+    claude_root: Path, home: Path
+) -> None:
+    """The scan handed in is the allowlist: an id it does not contain imports NOTHING and is
+    named in the report, rather than disappearing between the pick and the result."""
+    results = [scan_source("claude_code", claude_root)]
+    weather = _picks(results, ImportCategory.MCP_SERVERS)[0]
+    stranger = fingerprint_of("claude_code", ImportCategory.SKILLS, "not-on-this-machine")
+
+    report = run_import(results, fingerprints=[stranger, weather, stranger])
+
+    assert [r.fingerprint for r in report.results] == [weather]
+    assert report.missing == [stranger], "reported once, not once per mention"
+    assert not (home / "skills" / "imported").exists()
+
+
+def test_the_plan_says_before_the_import_what_the_import_then_does(
+    claude_root: Path, home: Path
+) -> None:
+    """Every state the scan can show, set up for real, then imported: the plan beside each
+    item is the outcome its row reports. One reading of the destination, not two."""
+    # conflict: a differently-configured server of the same name the user already had.
+    mcp_config_path().parent.mkdir(parents=True, exist_ok=True)
+    mcp_config_path().write_text(
+        json.dumps({"mcpServers": {"weather": {"command": "mine"}}}), encoding="utf-8"
+    )
+    # existing: the settings were already staged, byte-identically, by an earlier import.
+    first = [scan_source("claude_code", claude_root)]
+    run_import(first, fingerprints=_picks(first, ImportCategory.SETTINGS))
+    # rejected: the skill's source directory vanished between the scan and the import.
+    results = [scan_source("claude_code", claude_root)]
+    skill = next(i for i in results[0].items if i.category is ImportCategory.SKILLS)
+    shutil.rmtree(skill.path)
+
+    before = plans(results)
+    by_state = {plan.state for plan in before.values()}
+    assert by_state == {ItemState.NEW, ItemState.CONFLICT, ItemState.EXISTING, ItemState.REJECTED}
+
+    report = run_import(results)
+
+    new_as_imported = {ItemState.NEW.value: WriteOutcome.IMPORTED.value}
+    for row in report.results:
+        planned = before[row.fingerprint]
+        expected = new_as_imported.get(planned.state.value, planned.state.value)
+        assert row.outcome.value == expected, row
+        assert row.destination == planned.destination
+        if planned.state is not ItemState.NEW:
+            assert row.detail == planned.detail, "the scan and the report say the same sentence"
+
+
+def test_planning_writes_nothing_to_the_home(claude_root: Path, home: Path) -> None:
+    """A scan asks every item's plan; asking must not create a directory, a file or an audit
+    row — the step opens this BEFORE the user has agreed to anything."""
+    results = [scan_source("claude_code", claude_root)]
+    before = sorted(str(p.relative_to(home)) for p in home.rglob("*"))
+    assert len(plans(results)) == len(results[0].items) == 5
+    assert sorted(str(p.relative_to(home)) for p in home.rglob("*")) == before
+
+
+def test_unselected_items_carry_the_plan_they_had_before_the_writes(
+    claude_root: Path, tmp_path: Path, home: Path
+) -> None:
+    """Two tools define an MCP server of one name. Importing Claude Code's changes what Codex's
+    WOULD do — but the user left Codex's out while it read `new`, and that is the state that
+    explains the choice. Planned after the writes, the report would call it a conflict."""
+    codex_root = tmp_path / ".codex"
+    codex_root.mkdir()
+    (codex_root / "config.toml").write_text(
+        '[mcp_servers.weather]\ncommand = "codex-weather"\n', encoding="utf-8"
+    )
+    results = [scan_source("claude_code", claude_root), scan_source("codex", codex_root)]
+    claude_weather, codex_weather = _picks(results, ImportCategory.MCP_SERVERS)
+
+    report = run_import(results, fingerprints=[claude_weather])
+
+    assert [r.outcome for r in report.results] == [WriteOutcome.IMPORTED]
+    left_out = {item.fingerprint: plan.state for item, plan in report.unselected}
+    assert left_out[codex_weather] is ItemState.NEW
+    # …and a scan made AFTER the import tells the truth about it from then on.
+    assert plans(results)[codex_weather].state is ItemState.CONFLICT
 
 
 # ── never clobber ─────────────────────────────────────────────────────────────
@@ -337,9 +463,8 @@ def test_conflicting_mcp_server_reports_conflict_and_keeps_existing(
     mcp_config_path().write_text(json.dumps(mine, indent=2), encoding="utf-8")
     before = mcp_config_path().read_bytes()
 
-    report = run_import(
-        [scan_source("claude_code", claude_root)], categories=[ImportCategory.MCP_SERVERS]
-    )
+    results = [scan_source("claude_code", claude_root)]
+    report = run_import(results, fingerprints=_picks(results, ImportCategory.MCP_SERVERS))
 
     assert [r.outcome for r in report.results] == [WriteOutcome.CONFLICT]
     assert report.conflicts()[0].key == "weather"
@@ -356,9 +481,8 @@ def test_conflicting_skill_reports_conflict_and_keeps_existing(
     )
     before = _tree(mine)
 
-    report = run_import(
-        [scan_source("claude_code", claude_root)], categories=[ImportCategory.SKILLS]
-    )
+    results = [scan_source("claude_code", claude_root)]
+    report = run_import(results, fingerprints=_picks(results, ImportCategory.SKILLS))
 
     assert [r.outcome for r in report.results] == [WriteOutcome.CONFLICT]
     assert _tree(mine) == before
@@ -372,12 +496,39 @@ def test_conflicting_instruction_doc_reports_conflict_and_keeps_existing(
     doc.parent.mkdir(parents=True)
     doc.write_text("my own notes\n", encoding="utf-8")
 
-    report = run_import(
-        [scan_source("claude_code", claude_root)], categories=[ImportCategory.INSTRUCTIONS]
-    )
+    results = [scan_source("claude_code", claude_root)]
+    report = run_import(results, fingerprints=_picks(results, ImportCategory.INSTRUCTIONS))
 
     assert [r.outcome for r in report.results] == [WriteOutcome.CONFLICT]
     assert doc.read_text(encoding="utf-8") == "my own notes\n"
+
+
+def test_a_server_that_appears_after_the_plan_is_kept_not_overwritten(
+    claude_root: Path, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`mcp.json` is the one destination several writers read-modify-write, so the writer
+    re-asks the plan of its OWN read. A server the user adds between the plan and the write
+    (simulated: the planner reads an empty file) is kept, never clobbered."""
+    from personalclaw.onboarding_import import writers
+
+    results = [scan_source("claude_code", claude_root)]
+    weather = _picks(results, ImportCategory.MCP_SERVERS)
+    stale = writers._PLANNERS[ImportCategory.MCP_SERVERS]
+
+    def plan_then_the_user_edits(item):
+        plan = stale(item)
+        mcp_config_path().write_text(
+            json.dumps({"mcpServers": {"weather": {"command": "added-meanwhile"}}}),
+            encoding="utf-8",
+        )
+        return plan
+
+    monkeypatch.setitem(writers._PLANNERS, ImportCategory.MCP_SERVERS, plan_then_the_user_edits)
+    report = run_import(results, fingerprints=weather)
+
+    assert [r.outcome for r in report.results] == [WriteOutcome.CONFLICT]
+    kept = json.loads(mcp_config_path().read_text(encoding="utf-8"))
+    assert kept["mcpServers"]["weather"] == {"command": "added-meanwhile"}
 
 
 def test_conflict_detail_never_carries_a_value(claude_root: Path, home: Path) -> None:
@@ -386,10 +537,92 @@ def test_conflict_detail_never_carries_a_value(claude_root: Path, home: Path) ->
         json.dumps({"mcpServers": {"weather": {"command": "other", "env": {"K": SECRET}}}}),
         encoding="utf-8",
     )
-    report = run_import(
-        [scan_source("claude_code", claude_root)], categories=[ImportCategory.MCP_SERVERS]
-    )
+    results = [scan_source("claude_code", claude_root)]
+    report = run_import(results, fingerprints=_picks(results, ImportCategory.MCP_SERVERS))
     assert SECRET not in json.dumps(report.to_dict())
+    assert SECRET not in json.dumps([plan.detail for plan in plans(results).values()])
+
+
+# ── each item says what was withheld from IT ─────────────────────────────────
+
+
+def test_each_item_carries_its_own_withheld_count(claude_root: Path) -> None:
+    """The fixture plants one credential in each of four places. Each item that lost one says
+    so on its own row, and the one that belongs to no item (the root credential file) is what
+    the source total holds beyond them — so the numbers a user reads reconcile."""
+    result = scan_source("claude_code", claude_root)
+    by_key = {item.key: item for item in result.items}
+
+    assert by_key["weather"].secrets_skipped == 1  # WEATHER_API_KEY, dropped from its env
+    assert by_key["tidy-notes"].secrets_skipped == 1  # the .env inside the skill
+    assert by_key["settings.json"].secrets_skipped == 1  # apiKeyHelper
+    assert by_key["CLAUDE.md"].redactions >= 1  # the key in the prose, redacted
+    assert by_key["memories/prefs.md"].secrets_skipped == 0
+    assert result.secrets_skipped == 4
+    assert result.secrets_outside_items() == 1  # .credentials.json, never opened
+    # A count, never the value — on the wire as in memory.
+    wire = json.dumps(result.to_dict())
+    assert SECRET not in wire and SECRET2 not in wire
+    assert '"secrets_skipped": 1' in wire
+
+
+def test_the_reported_withheld_count_follows_the_choice(claude_root: Path, home: Path) -> None:
+    """Importing only the instructions must not claim the MCP server's key and the skill's
+    `.env` were withheld FROM THIS IMPORT — the user never picked them. What belongs to no
+    item (the root credential file) is left behind whatever is picked, so it stays."""
+    results = [scan_source("claude_code", claude_root)]
+    only_claude_md = run_import(results, fingerprints=_picks(results, ImportCategory.INSTRUCTIONS))
+    assert only_claude_md.secrets_skipped == 1
+    assert only_claude_md.redactions >= 1
+
+    everything = run_import([scan_source("claude_code", claude_root)])
+    assert everything.secrets_skipped == 4
+
+
+def test_codex_attributes_each_server_and_the_settings_remainder(tmp_path: Path) -> None:
+    root = tmp_path / ".codex"
+    root.mkdir()
+    (root / "config.toml").write_text(
+        f'model = "gpt-5"\napi_key = "{SECRET}"\n\n'
+        '[mcp_servers.docs]\ncommand = "docs-mcp"\n'
+        f'[mcp_servers.docs.env]\nAPI_KEY = "{SECRET}"\nTOKEN = "{SECRET2}"\n'
+        '[mcp_servers.plain]\ncommand = "plain-mcp"\n',
+        encoding="utf-8",
+    )
+    result = codex.scan(root)
+    by_key = {item.key: item for item in result.items}
+
+    assert by_key["docs"].secrets_skipped == 2
+    assert by_key["plain"].secrets_skipped == 0
+    assert by_key["config.toml"].secrets_skipped == 1  # api_key, from the settings remainder
+    assert by_key["config.toml"].payload == {"model": "gpt-5"}
+    assert result.secrets_skipped == 3
+    assert result.secrets_outside_items() == 0
+
+
+@pytest.mark.parametrize(
+    "doc",
+    [
+        {"mcpServers": {"a": {"env": {"API_KEY": "x", "K": "v"}}, "b": {"command": "c"}}},
+        {"mcpServers": {"auth-proxy": {"command": "c"}, "ok": {"token": "t"}}, "secret": 1},
+        {"mcpServers": {"a": "not-a-dict", "b": {"args": [{"password": "p"}]}}, "top": [1]},
+        {"mcpServers": ["not", "a", "table"], "access_key": "k"},
+        {"mcp_servers": {"a": {"k": 1}}, "mcpServers": {"a": {"api_key": "z"}}},
+        ["not", "a", "document"],
+    ],
+)
+def test_split_tables_is_strip_secrets_with_the_count_kept_per_entry(doc) -> None:
+    """The per-entry walk may not change a TOTAL: whatever the document's shape — secret-named
+    servers, junk entries, a table that is not one, a name defined in two tables — the split's
+    total is the whole-document strip's count, and every value it returns is stripped."""
+    tables = ("mcp_servers", "mcpServers")
+    split = split_tables(doc, tables)
+    assert split.total == strip_secrets(doc)[1]
+    for _name, entry, withheld in split.entries:
+        assert strip_secrets(entry) == (entry, 0), "an entry left the floor unstripped"
+        assert withheld >= 0
+    assert strip_secrets(split.remainder)[1] == 0
+    assert len({name for name, _e, _w in split.entries}) == len(split.entries)
 
 
 # ── dispatch is exhaustive ────────────────────────────────────────────────────
@@ -397,6 +630,7 @@ def test_conflict_detail_never_carries_a_value(claude_root: Path, home: Path) ->
 
 def test_a_writer_exists_for_every_category() -> None:
     assert set(_WRITERS) == set(ImportCategory)
+    assert set(_PLANNERS) == set(ImportCategory)
 
 
 # ── The withheld-credential notes have ONE composer, and it agrees with its own counts ────────────
