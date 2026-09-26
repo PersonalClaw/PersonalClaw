@@ -23,6 +23,7 @@ from typing import Any
 from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
 
 from personalclaw.apps.secret_fields import SECRET_MASK, is_credential_field_name
+from personalclaw.atomic_write import atomic_json_write
 from personalclaw.env import augmented_path
 from personalclaw.hooks import safe_read_file
 
@@ -1148,10 +1149,6 @@ def register_servers_for_cc(
 
     if changed:
         mcp_json_path.parent.mkdir(parents=True, exist_ok=True)
-        from personalclaw.agent import (
-            _atomic_json_write,  # circular import: agent imports mcp_discovery
-        )
-
-        _atomic_json_write(mcp_json_path, existing)
+        atomic_json_write(mcp_json_path, existing)
 
     return changed

@@ -11,7 +11,7 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw.atomic_write import atomic_write
+from personalclaw.atomic_write import atomic_json_write, atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.edit_spec import (
     ConfigValueError,
@@ -569,7 +569,7 @@ async def api_agent_detail(request: web.Request) -> web.Response:
         # and it type-checked nothing: `{"description": 12345}` persisted an int where a
         # string is declared, `{"tools": [{"a": 1}, 5]}` persisted objects into a list of
         # server names, and a 2000-deep value was a raw `RecursionError` 500 out of
-        # `_atomic_json_write`'s `json.dumps`. Same defect class as #349's create/update half,
+        # the writer's `json.dumps`. Same defect class as #349's create/update half,
         # one function away from the guard that fixed the list fields for #427.
         #
         # Before the file loop, so a malformed body is refused whether or not the agent
@@ -658,12 +658,10 @@ async def api_agent_detail(request: web.Request) -> web.Response:
                                 # defect rather than a convention. Clearing a list stays
                                 # expressible,
                                 # by sending `[]`.
-                        # Atomic, via the SAME writer `agent.py` and `apps/mcp_bridge.py` use for
-                        # this exact file. A bare `write_text` truncates the live runtime config if
-                        # the process dies mid-write, and this is the file the agent reads at boot.
-                        from personalclaw.agent import _atomic_json_write
-
-                        _atomic_json_write(f, data)
+                        # Atomic, through the one JSON writer. A bare `write_text` truncates the
+                        # live runtime config if the process dies mid-write, and this is the file
+                        # the agent reads at boot.
+                        atomic_json_write(f, data)
                     state = request.app["state"]
                     state.push_refresh("agents")
                     _sel().log_api_access(

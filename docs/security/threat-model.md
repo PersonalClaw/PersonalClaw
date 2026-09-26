@@ -286,7 +286,7 @@ Data leaving the running system:
   (`ForeignSecretReference`, and a `denied` security-log row naming the app and the key) and
   where it is saved (400). There is no grant: an app that needs a key has it stored under itself.
 - **Private home** (`atomic_write.py`): a file the atomic writers put under the home —
-  `atomic_write`, and `agent._atomic_json_write` for `mcp.json` and the agent config — is 0600
+  `atomic_write`, and `atomic_json_write` for `mcp.json` and the agent config — is 0600
   in a 0700 directory, and a wider mode is refused. `config.json`, an app's `data/config.json`,
   provider instance records, `mcp.json`, the agent config, `.env` and `auth/` are all written
   that way; `.local_secret`, `telemetry_salt` and `.app_secret` have writers of their own that

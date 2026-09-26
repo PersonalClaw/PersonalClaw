@@ -832,7 +832,7 @@ def write_mcp_document(path: Path, data: dict[str, Any]) -> None:
     still references it: both files hold the same server under the same owned keys, and a
     removal lands in one of them first.
     """
-    from personalclaw.agent import _atomic_json_write
+    from personalclaw.atomic_write import atomic_json_write
 
     previous = _read_json(path)
     servers = data.get("mcpServers")
@@ -841,7 +841,7 @@ def write_mcp_document(path: Path, data: dict[str, Any]) -> None:
             if isinstance(spec, dict):
                 servers[name] = store_mcp_spec(str(name), spec, strict=False)
     path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_json_write(path, data)
+    atomic_json_write(path, data)
     doomed = _mcp_refs(previous) - _mcp_refs(data)
     for other in mcp_documents():
         if doomed and other != path:

@@ -368,44 +368,6 @@ class TestInstallAgent:
             _run_install(tmp_path, cfg_dir)
 
 
-class TestAtomicJsonWrite:
-    """Test 1.3: _atomic_json_write preserves permissions and handles new files."""
-
-    def test_preserves_existing_permissions(self, tmp_path: Path):
-        from personalclaw.agent import _atomic_json_write
-
-        target = tmp_path / "test.json"
-        target.write_text("{}")
-        target.chmod(0o664)
-
-        _atomic_json_write(target, {"key": "value"})
-
-        import stat
-
-        assert stat.S_IMODE(target.stat().st_mode) == 0o664
-        assert json.loads(target.read_text()) == {"key": "value"}
-
-    def test_new_file_gets_0o644(self, tmp_path: Path):
-        from personalclaw.agent import _atomic_json_write
-
-        target = tmp_path / "new.json"
-        _atomic_json_write(target, {"new": True})
-
-        import stat
-
-        assert stat.S_IMODE(target.stat().st_mode) == 0o644
-        assert json.loads(target.read_text()) == {"new": True}
-
-    def test_no_temp_file_left_on_success(self, tmp_path: Path):
-        from personalclaw.agent import _atomic_json_write
-
-        target = tmp_path / "clean.json"
-        _atomic_json_write(target, {"a": 1})
-
-        tmp_files = [f for f in tmp_path.iterdir() if f.suffix == ".tmp"]
-        assert tmp_files == []
-
-
 class TestResolvePersonalclawBin:
     """Tests for lazy personalclaw binary resolution."""
 

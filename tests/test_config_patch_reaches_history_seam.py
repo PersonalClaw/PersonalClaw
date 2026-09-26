@@ -6,11 +6,13 @@ tmp+rename is invisible to history: the file lands, and the root it belongs to n
 commit.
 
 `PATCH /api/config/personalclaw` is the primary writer of `config.json` — every toggle in
-Settings goes through it — and it used `agent._atomic_json_write`, which does exactly that own
+Settings goes through it — and it used `agent._atomic_json_write`, which did exactly that own
 mkstemp+rename. Found by driving a live gateway: three real PATCHes left the `config`
 state-history root at `exists=False, commits=0`, while the same write issued through
 `atomic_write` produced a `config.git` with a real commit at the debounce boundary. After the
-fix the identical drive yields `exists=True, commits=1`.
+fix the identical drive yields `exists=True, commits=1`. That writer is gone now: the one JSON
+writer, `atomic_write.atomic_json_write`, is built on `_atomic_write` and reaches the seam
+(`tests/test_atomic_json_write.py`).
 
 These tests assert the CALL SITE, not the seam. `atomic_write` has its own tests; what was
 broken here was that this handler did not use it, and only a test that drives the handler and
@@ -172,23 +174,3 @@ async def test_a_rejected_patch_notifies_nothing(tmp_config, seen_writes) -> Non
         assert resp.status == 400
 
     assert seen_writes == [], f"a refused PATCH still notified the seam: {seen_writes}"
-
-
-def test_the_handler_does_not_use_a_seam_bypassing_writer() -> None:
-    """A source rail on the specific regression, so a future edit cannot reintroduce it quietly.
-
-    `agent._atomic_json_write` is a legitimate helper for the ACP agent-config files it was
-    written for; what is not legitimate is this handler using it for `config.json`, whose root
-    time-travel is supposed to cover. Named rather than pattern-matched, because the failure
-    mode is this exact substitution.
-    """
-    src = Path(__file__).resolve().parents[1] / "src" / "personalclaw" / "dashboard"
-    text = (src / "handlers" / "core.py").read_text(encoding="utf-8")
-    # Strip comments so the explanatory note naming the bypass does not read as a use of it.
-    code = "\n".join(ln.split("#", 1)[0] for ln in text.splitlines())
-    assert "_atomic_json_write" not in code, (
-        "handlers/core.py calls the seam-bypassing writer again; config writes must go through "
-        "atomic_write or time-travel silently stops recording settings changes"
-    )
-    # Vacuity floor: the file really does write config through the seam.
-    assert "atomic_write(" in code
