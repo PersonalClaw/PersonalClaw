@@ -1,0 +1,158 @@
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
+import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
+
+// ── An attached image says how it reaches the model (F-36) ────────────────────────────────────
+//
+// An image goes to a model that takes images AS the image, and to any other model as the text
+// read from it. The chip above the composer says which, before sending — from the same record
+// the turn decides by (`GET /api/chat/image-input`), with the server's sentence for why. The chip
+// on a sent turn says what happened, from the user message's `meta.image_delivery`.
+
+const h = vi.hoisted(() => ({
+  imageInput: vi.fn(),
+  attachmentExtract: vi.fn(),
+}))
+
+vi.mock('../../lib/api', async (orig) => {
+  const real = await orig<typeof import('../../lib/api')>()
+  return {
+    ...real,
+    api: new Proxy(real.api, {
+      get: (target, key) => {
+        if (key === 'chatImageInput') return h.imageInput
+        if (key === 'attachmentExtract') return h.attachmentExtract
+        return (target as Record<string | symbol, unknown>)[key]
+      },
+    }),
+  }
+})
+
+import { AttachmentChips, TurnAttachments } from './AttachmentChips'
+import { hydrateTurns, type HistMsg } from './chatTypes'
+import { isImagePath, imagesAsTextNote } from './imageAttachments'
+
+const IMG = '/home/uploads/' + 'a'.repeat(32) + '_shot.png'
+const DOC = '/home/uploads/' + 'b'.repeat(32) + '_notes.md'
+
+function chips(session = 's1', key = Math.random().toString(36)) {
+  return render(
+    <AttachmentChips paths={[DOC, IMG]} images={[IMG]} session={session} agent={key} model="" runtime=""
+      onRemove={() => {}} onOpen={() => {}} />,
+  )
+}
+
+beforeEach(() => { h.imageInput.mockReset(); h.attachmentExtract.mockReset() })
+afterEach(() => cleanup())
+
+describe('the composer chip for an attached image', () => {
+  it('says the image goes as text, and why, when the model takes no images', async () => {
+    h.imageInput.mockResolvedValue({ accepted: false, reason: "gemma3:1b can't take images.", model: 'gemma3:1b' })
+    h.attachmentExtract.mockResolvedValue({ name: 'shot.png', text: 'INVOICE 42', read: true })
+    chips()
+    await waitFor(() => expect(screen.getByRole('note').textContent).toBe("gemma3:1b can't take images. It gets the text read from the image instead."))
+    expect(screen.getByText('as text')).toBeTruthy()
+    expect(h.attachmentExtract).toHaveBeenCalledWith(IMG)
+    expect(h.imageInput).toHaveBeenCalledWith('s1', expect.objectContaining({ model: '' }))
+  })
+
+  it("says only the size and format go when nothing could read the image — never 'text read from'", async () => {
+    h.imageInput.mockResolvedValue({ accepted: false, reason: "gemma3:1b can't take images.", model: 'gemma3:1b' })
+    h.attachmentExtract.mockResolvedValue({ name: 'shot.png', text: 'Image: shot.png (240×160, PNG, 1 KB) — no extractable text content.', read: false })
+    chips()
+    await waitFor(() => expect(screen.getByRole('note').textContent).toContain("gets only the image's size and format"))
+    const note = screen.getByRole('note').textContent ?? ''
+    expect(note).toContain('Settings → Models')
+    expect(note).not.toContain('text read from')
+  })
+
+  it('claims only the reason while the image is still being read', async () => {
+    h.imageInput.mockResolvedValue({ accepted: false, reason: "gemma3:1b can't take images.", model: 'gemma3:1b' })
+    h.attachmentExtract.mockReturnValue(new Promise(() => {}))
+    chips()
+    await waitFor(() => expect(screen.getByRole('note').textContent).toBe("gemma3:1b can't take images."))
+  })
+
+  it('makes no claim when the model takes images', async () => {
+    h.imageInput.mockResolvedValue({ accepted: true, reason: '', model: 'gemma4:12b' })
+    chips()
+    await waitFor(() => expect(h.imageInput).toHaveBeenCalled())
+    expect(screen.queryByRole('note')).toBeNull()
+    expect(screen.queryByText('as text')).toBeNull()
+    expect(h.attachmentExtract, 'an image shown as pixels needs no text read from it').not.toHaveBeenCalled()
+  })
+
+  it('says so when the question itself fails, rather than making a claim', async () => {
+    h.imageInput.mockRejectedValue(new Error('gateway unreachable'))
+    chips()
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toBe("Couldn't check how images reach this chat's model — gateway unreachable")
+    expect(screen.queryByText('as text')).toBeNull()
+  })
+
+  it('asks nothing when no image is attached', () => {
+    render(<AttachmentChips paths={[DOC]} images={[]} session="s1" agent="" model="" runtime="" onRemove={() => {}} onOpen={() => {}} />)
+    expect(h.imageInput).not.toHaveBeenCalled()
+  })
+
+  it('asks about the ACP runtime a picked agent runs on', async () => {
+    h.imageInput.mockResolvedValue({ accepted: false, reason: "claude-code can't be handed an image.", model: '' })
+    h.attachmentExtract.mockResolvedValue({ name: 'shot.png', text: 'x', read: true })
+    render(<AttachmentChips paths={[IMG]} images={[IMG]} session="" agent="Claude" model="" runtime="acp:claude-code" onRemove={() => {}} onOpen={() => {}} />)
+    await screen.findByRole('note')
+    expect(h.imageInput).toHaveBeenCalledWith('', { runtime: 'acp:claude-code', agent: 'Claude' })
+  })
+})
+
+describe('the chip on a sent turn', () => {
+  it('says an image went as text, and the preview says why', async () => {
+    h.attachmentExtract.mockResolvedValue({ name: 'shot.png', text: 'TEXT READ FROM IT', read: true })
+    render(<TurnAttachments paths={[IMG]} delivery={{ byPath: { [IMG]: 'text' }, reason: "gemma3:1b can't take images." }} onOpenFile={() => {}} />)
+    const chip = screen.getByRole('button', { name: /shot\.png/ })
+    expect(chip.textContent).toContain('sent as text')
+    fireEvent.click(chip)
+    expect(await screen.findByText("gemma3:1b can't take images. The text read from the image was sent instead.")).toBeTruthy()
+    expect(await screen.findByText('TEXT READ FROM IT')).toBeTruthy()
+  })
+
+  it('says a failed read failed, not that the file has no text', async () => {
+    h.attachmentExtract.mockRejectedValue(new Error('upload is gone'))
+    render(<TurnAttachments paths={[DOC]} onOpenFile={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /notes\.md/ }))
+    expect((await screen.findByRole('alert')).textContent).toBe("Couldn't read this file's text — upload is gone")
+    expect(screen.queryByText(/No extractable text content/)).toBeNull()
+  })
+
+  it('does not present extracted text as what the model saw when it was shown the image', async () => {
+    render(<TurnAttachments paths={[IMG]} delivery={{ byPath: { [IMG]: 'image' } }} onOpenFile={() => {}} />)
+    const chip = screen.getByRole('button', { name: /shot\.png/ })
+    expect(chip.textContent).not.toContain('sent as text')
+    fireEvent.click(chip)
+    expect(await screen.findByText('The model was shown this image itself.')).toBeTruthy()
+    expect(screen.queryByText(/what the agent saw/)).toBeNull()
+    expect(h.attachmentExtract).not.toHaveBeenCalled()
+  })
+
+  it('reads the delivery back from the persisted user message on reload', () => {
+    const msgs: HistMsg[] = [
+      { role: 'user', content: 'what is this?', ts: 't1', meta: { files: [IMG], image_delivery: { [IMG]: 'text' }, image_delivery_reason: "gemma3:1b can't take images." } },
+      { role: 'assistant', content: 'a chart', ts: 't2' },
+    ]
+    const [user] = hydrateTurns(msgs, false)
+    expect(user.imageDelivery).toEqual({ byPath: { [IMG]: 'text' }, reason: "gemma3:1b can't take images." })
+  })
+})
+
+describe('the image helpers', () => {
+  it('sorts on the server allowlist of image extensions', () => {
+    expect(isImagePath('/x/' + 'a'.repeat(32) + '_Shot.PNG')).toBe(true)
+    expect(isImagePath('/x/photo.webp')).toBe(true)
+    expect(isImagePath('/x/diagram.svg')).toBe(false)
+    expect(isImagePath('/x/notes.md')).toBe(false)
+  })
+
+  it('names the images in the plural', () => {
+    expect(imagesAsTextNote({ accepted: false, reason: "m can't take images.", model: 'm' }, 2, true))
+      .toBe("m can't take images. It gets the text read from the images instead.")
+    expect(imagesAsTextNote(undefined, 1, true)).toBeNull()
+  })
+})

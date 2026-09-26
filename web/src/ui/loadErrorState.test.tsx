@@ -719,18 +719,21 @@ const SWALLOW_BUDGET: Record<string, number> = {
   'app/Onboarding.tsx': 0,
   'app/usePlatform.ts': 1,
   'lib/agents.ts': 1,
-  // The sixth is the RECORDS veto's blind edge, not a swallow: `setResultBody({ content: "(couldn't
-  // load the full result: …)" })` puts the failure in the copy the user reads. The veto matches SETTER
-  // names (`setSearchErr`), and this records into a FIELD — so widen the veto and it starts exempting
-  // any `setX({ error })` that never renders; leave it, and one honest site sits here with a reason.
+  // One site in this count is the RECORDS veto's blind edge, not a swallow: `setResultBody({ content:
+  // "(couldn't load the full result: …)" })` puts the failure in the copy the user reads. The veto
+  // matches SETTER names (`setSearchErr`), and this records into a FIELD — so widen the veto and it
+  // starts exempting any `setX({ error })` that never renders; leave it, and one honest site sits
+  // here with a reason.
   // Two sites that WERE in this count are fixed. The autonudge read `setEnabled(false)` and the panel
   // then named an environment variable ("Disabled on this server (PERSONALCLAW_AUTONUDGE=0)") as the
   // cause of a failed read. The history hydration's `setLoadingHistory(false)` ended the skeleton
   // without recording why — and it was worse than the "benign cousin" this comment once called it:
   // measured, a link to a chat that does not exist rendered as a normal empty chat whose composer
   // took a message the server refused and did not save. It now records a 404 as "This chat doesn't
-  // exist" and anything else as a load failure with a retry.
-  'pages/ChatPage.tsx': 6,
+  // exist" and anything else as a load failure with a retry. A third, the attachment preview's
+  // read, moved with the attachment chips into `pages/chat/AttachmentChips.tsx` and now records the
+  // failure instead of reading as "no extractable text".
+  'pages/ChatPage.tsx': 5,
   'pages/agents/AgentDetail.tsx': 3,
   'pages/artifacts/ArtifactCard.tsx': 1,
   'pages/chat/OrganizeChip.tsx': 1,

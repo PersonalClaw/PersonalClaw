@@ -131,6 +131,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/folders` — create a project folder.
 - `DELETE /api/chat/folders/{id}` — delete a folder, ungroup its sessions.
 - `PATCH /api/chat/folders/{id}` — rename or reorder a folder.
+- `GET /api/chat/image-input` — whether an attached image reaches the model as one.
 - `POST /api/chat/mode` — set the tool APPROVAL mode (whether tools auto-approve).
 - `POST /api/chat/nav/resolve-links` — batch-summarize bare links.
 - `GET /api/chat/screen-frame` — can this session share its screen?

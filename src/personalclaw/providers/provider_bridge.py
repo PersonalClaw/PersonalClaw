@@ -1613,6 +1613,31 @@ def serving_entry(use_case: str) -> Any:
     return candidates[0] if candidates else None
 
 
+def expected_served_ref(model: str) -> str:
+    """The ``"<entry>:<model>"`` a native chat turn would be served by, WITHOUT building it.
+
+    For a surface that must answer before a runtime exists (the attachment chip on a new
+    chat). ``model`` is the session's selection: a ``"<entry>:<model>"`` ref naming a
+    registered entry stands as given; a bare id is served by the entry the ``chat`` binding
+    resolves to (:func:`serving_entry`); ``""``/``"auto"`` takes that entry's model the way a
+    runtime picks it (:func:`_fallback_chat_model`). ``""`` when nothing would serve chat.
+    """
+    from personalclaw.llm.registry import get_default_registry
+    from personalclaw.providers.use_cases import split_ref
+
+    chosen = (model or "").strip()
+    parsed = split_ref(chosen)
+    if parsed and parsed[0] in {e.name for e in get_default_registry().list_entries()}:
+        return chosen
+    entry = serving_entry("chat")
+    if entry is None:
+        return ""
+    if chosen and chosen.lower() != "auto":
+        return f"{entry.name}:{chosen}"
+    picked = _fallback_chat_model(entry.name) or entry.model
+    return f"{entry.name}:{picked}" if picked else ""
+
+
 def _resolve_from_config_registry(
     use_case: str,
     *,

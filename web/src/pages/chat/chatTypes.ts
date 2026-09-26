@@ -7,6 +7,7 @@
 // compile time, so this value import creates no runtime cycle.
 import { readOnlyCommandOf } from './approvalMeta'
 import { turnErrorText } from './turnError'
+import type { ImageDelivery } from './imageAttachments'
 
 export interface TextSegment { kind: 'text'; text: string }
 
@@ -239,6 +240,10 @@ export interface ChatTurn {
   // attachment file paths (uploads + @-mentions) sent WITH this turn, so the
   // sent user bubble shows them as chips the user can open/preview after send.
   files?: string[]
+  // How this turn's attached IMAGES reached the model — as an image, or as the text read from
+  // it — from the user message's `meta.image_delivery`. Absent on turns with no image, and on
+  // the just-sent turn until the server has decided (`chat_done` grafts it on).
+  imageDelivery?: ImageDelivery
   // When the prompt was optimized before sending (via /optimize or the optimize
   // control), this holds the OPTIMIZED text the model actually received; the
   // turn's text segment keeps the ORIGINAL the user typed. The bubble shows the
@@ -289,6 +294,13 @@ export interface ChatTurn {
  */
 export function markCoordOf(turn: Pick<ChatTurn, 'visibleIndex'>, arrayIndex: number): number {
   return turn.visibleIndex ?? arrayIndex
+}
+
+/** A user message's persisted image delivery (`meta.image_delivery`), or undefined. */
+export function imageDeliveryOf(meta: HistMsg['meta'] | undefined): ImageDelivery | undefined {
+  const byPath = meta?.image_delivery
+  if (!byPath || typeof byPath !== 'object' || !Object.keys(byPath).length) return undefined
+  return { byPath, reason: meta?.image_delivery_reason || undefined }
 }
 
 /** Convenience: a user turn from plain text. `optimized` records the optimized
@@ -375,7 +387,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; is_read_only?: string; grant_agent?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; is_read_only?: string; grant_agent?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string } }
 
 /** Re-collapse a persisted user message: the stored content has paste markers
  *  expanded to full text (the model saw that), but meta.pastes lets us swap each
@@ -467,6 +479,8 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // Rewind tails retained on this user turn (CHAT-CRAFT S1) → drive the divider
       // chip + read-only disclosure. Tolerant: absent on pre-rewind sessions.
       if (Array.isArray(m.rewound) && m.rewound.length) ut.rewound = m.rewound
+      const delivery = imageDeliveryOf(m.meta)
+      if (delivery) ut.imageDelivery = delivery
       ut.visibleIndex = visible
       turns.push(ut)
       lastUserText = text; assistantTextSinceUser = false

@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **865 registrations** over **699 distinct paths** — 858 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **866 registrations** over **700 distinct paths** — 859 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -24,7 +24,7 @@ The 127 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
-| `/api/chat` | 78 | 66 |
+| `/api/chat` | 79 | 67 |
 | `/api/knowledge` | 72 | 59 |
 | `/api/memory` | 49 | 41 |
 | `/api/workflows` | 45 | 40 |
@@ -154,7 +154,7 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 858 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 859 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -283,6 +283,7 @@ The 858 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/chat/folders` | create a project folder. |
 | `DELETE` | `/api/chat/folders/{id}` | delete a folder, ungroup its sessions. |
 | `PATCH` | `/api/chat/folders/{id}` | rename or reorder a folder. |
+| `GET` | `/api/chat/image-input` | whether an attached image reaches the model as one. |
 | `POST` | `/api/chat/mode` | set the tool APPROVAL mode (whether tools auto-approve). |
 | `POST` | `/api/chat/nav/resolve-links` | batch-summarize bare links. |
 | `GET` | `/api/chat/screen-frame` | can this session share its screen? |

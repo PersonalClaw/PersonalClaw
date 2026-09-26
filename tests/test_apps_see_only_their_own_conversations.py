@@ -343,6 +343,7 @@ OWNER_ONLY_READS: list[tuple[str, str]] = [
     ("GET", "/api/chat/tags"),
     ("GET", "/api/chat/tag-columns"),
     ("GET", "/api/chat/screen-frame"),
+    ("GET", "/api/chat/image-input"),
     ("GET", "/api/sessions/context"),
     ("GET", "/api/sessions/health"),
     ("GET", "/api/sessions/retag-all"),

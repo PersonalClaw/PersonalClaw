@@ -7,7 +7,7 @@ const doc: UiDoc = {
   name: 'Composer',
   keywords: ['composer', 'input', 'chat', 'prompt', 'editor', 'send', 'mic', 'attach', 'markdown', 'textarea'],
   description:
-    'The one configurable message composer — used by Chat and the goal composer. A surface sheet wrapping a live-markdown editor (CodeMirror, not a <textarea>) that auto-grows to a user-resizable max, an inline pill cluster ([+] · agent · model · approval · reasoning), and a right-hand action cluster (optimize · mic · send/stop/steer/queue). The `controls` prop is the single seam that picks which pills and "+"-menu items appear; drag-and-drop file attach, focus/drag-over motion, and ↑/↓ history recall come built in.',
+    'The one configurable message composer — used by Chat and the goal composer. A surface sheet wrapping a live-markdown editor (CodeMirror, not a <textarea>) that auto-grows to a user-resizable max, an inline pill cluster ([+] · agent · model · approval · reasoning), and a right-hand action cluster (optimize · mic · send/stop/steer/queue). The `controls` prop is the single seam that picks which pills and "+"-menu items appear; drag-and-drop file attach, a pasted screenshot as an attachment, focus/drag-over motion, and ↑/↓ history recall come built in.',
   props: [
     { name: 'value', description: 'The current draft text (controlled).' },
     { name: 'onChange', description: 'Fires with the new draft on every edit.' },
@@ -20,7 +20,7 @@ const doc: UiDoc = {
     { name: 'data', description: 'Real agent/model/provider option sets feeding the agent + model pills.' },
     { name: 'selection', description: 'Current selections (agent/model/approval/reasoning) the pills reflect — wired to the session by the host.' },
     { name: 'onSelect', description: 'Fires with a partial selection patch when a pill changes agent/model/approval/reasoning.' },
-    { name: 'onAttach', description: 'Receives picked/dropped files — required (with controls.attach) to enable the "+" attach button and drag-and-drop.' },
+    { name: 'onAttach', description: 'Receives picked, dropped or pasted files — required (with controls.attach) to enable the "+" attach button, drag-and-drop, and pasting a screenshot.' },
     { name: 'onOpenPrompts', description: 'Opens the saved-prompt palette; when set, the "+" menu offers "Saved prompts".' },
     { name: 'plusMenuExtra', description: 'Host-owned extra items at the bottom of the "+" menu (e.g. Auto-nudge); receives `close` to dismiss the menu on action.' },
     { name: 'onFocusChange', description: 'Notified when the editor gains/loses focus (drives the host layout + focus lift).' },

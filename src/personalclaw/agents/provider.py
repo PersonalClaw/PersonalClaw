@@ -182,6 +182,17 @@ class AgentProvider(ABC):
         async for ev in self.stream(command):
             yield ev
 
+    def stage_image_part(self, data_url: str) -> bool:
+        """Put *data_url* (``data:<media-type>;base64,…``) on the NEXT turn as an image part.
+
+        Returns True only when the image WILL ride that turn. False by default, and the
+        default is the safety property: a runtime that takes no image parts (an ACP CLI owns
+        its own wire) never has an image silently dropped, because the caller reads the False
+        and sends the image's extracted text instead. Whether the MODEL can read pixels is a
+        separate question the caller answers first (``providers.image_input``).
+        """
+        return False
+
     # ── permissions ──
     @abstractmethod
     async def approve_tool(self, request_id: str | int) -> None: ...

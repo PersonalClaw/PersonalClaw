@@ -18,18 +18,34 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
 
-async def extract_file_content(file_path: str, mime: str | None = None) -> str:
-    """Run the knowledge EXTRACTION graph for *file_path* and return the
-    consolidated extracted text. Never raises — returns "" if extraction yields
-    nothing (caller decides how to surface that). Pure extraction: no store, no
-    insights/entities/embeddings/tags/title.
+@dataclass(frozen=True)
+class Extracted:
+    """What extraction got from a file.
+
+    ``text`` is what a consumer may show or send. ``read`` says what that text IS: True when it
+    was read from the file's content (its text, OCR, a vision description, a transcript), False
+    when it is only the structural descriptor ("Image: x.png (800×600, PNG) — no extractable text
+    content") or nothing at all. A surface that tells a user what a model will be given reads
+    ``read``, so "the text read from the image" is never said of a descriptor.
+    """
+
+    text: str
+    read: bool
+
+
+async def extract_file(file_path: str, mime: str | None = None) -> Extracted:
+    """Run the knowledge EXTRACTION graph for *file_path* and return what it got.
+
+    Never raises — an empty, unread result if extraction yields nothing (caller decides how to
+    surface that). Pure extraction: no store, no insights/entities/embeddings/tags/title.
     """
     if not file_path or not os.path.isfile(file_path):
-        return ""
+        return Extracted("", False)
 
     from personalclaw.knowledge import media
     from personalclaw.knowledge.pipeline import (
@@ -49,7 +65,7 @@ async def extract_file_content(file_path: str, mime: str | None = None) -> str:
         graph = graph_for(item_type)
     except Exception:
         logger.warning("extract: graph build failed for type=%s", item_type, exc_info=True)
-        return ""
+        return Extracted("", False)
 
     ctx = NodeContext(
         item_id=f"attachment:{os.path.basename(file_path)}",
@@ -62,7 +78,7 @@ async def extract_file_content(file_path: str, mime: str | None = None) -> str:
         result = await PipelineExecutor(graph).run(ctx)
     except Exception:
         logger.warning("extract: graph run failed for %s", file_path, exc_info=True)
-        return ""
+        return Extracted("", False)
 
     # Consolidated text = the 'consolidate' node's merged bundle when present,
     # else the first pooled text. (Mirrors runner.ingest_item's consolidation.)
@@ -73,14 +89,14 @@ async def extract_file_content(file_path: str, mime: str | None = None) -> str:
         text = pooled[0].text if pooled else ""
     text = text.strip()
     if text:
-        return text
+        return Extracted(text, True)
 
     # No extractable text (e.g. an image with no OCR/vision model configured, or a
     # text-free media file). Fall back to a structural descriptor from the exif/
     # media metadata so the agent at least knows WHAT was attached (format, size,
     # dimensions, duration) rather than a content-less blank — mirrors the
     # graceful-degradation in runner._structural_descriptor.
-    return _structural_descriptor(file_path, item_type, result)
+    return Extracted(_structural_descriptor(file_path, item_type, result), False)
 
 
 def _structural_descriptor(file_path: str, item_type: str, result) -> str:

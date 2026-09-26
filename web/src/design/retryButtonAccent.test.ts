@@ -83,7 +83,9 @@ describe('the retry button carries its accent through a variant, not a className
 
   it('all six sites use it', () => {
     let n = 0
-    for (const rel of [...RETRY_SITES, 'pages/ChatPage.tsx']) {
+    // The chat's two (the attachment chip's Open and the preview's Open original file) moved with the
+    // attachment chips into their own module.
+    for (const rel of [...RETRY_SITES, 'pages/ChatPage.tsx', 'pages/chat/AttachmentChips.tsx']) {
       const code = strip(read(rel))
       n += [...code.matchAll(/<Button variant="ghost-accent"/g)].length
     }

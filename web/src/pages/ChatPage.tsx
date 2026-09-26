@@ -16,7 +16,7 @@ const DEFAULT_EXIT_PHRASES = ['cancel', 'never mind', 'forget it']
 import { fvs, withWeight } from '../design/fontWeight'
 import { playCue } from '../design/soundCues'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowLeft, ArrowRight, ArrowUp, GripVertical, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, ListTree, Scissors, Shuffle, Send } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, ArrowLeft, ArrowRight, ArrowUp, GripVertical, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, ListTree, Scissors, Shuffle, Send } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -76,7 +76,9 @@ import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, 
 import { sessionTemplatePatch } from './chat/sessionTemplate'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle } from './chat/chatTypes'
+import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf } from './chat/chatTypes'
+import { isImagePath } from './chat/imageAttachments'
+import { AttachmentChips, TurnAttachments } from './chat/AttachmentChips'
 import { readOnlyCommandOf } from './chat/approvalMeta'
 import { ThinkingBlock } from './chat/ThinkingBlock'
 import { branchIndexOf, branchParentKey } from './chat/branchLineage'
@@ -1550,6 +1552,17 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               }
               return Object.keys(patch).length ? { ...t, ...patch } : t
             })
+          })
+          // How the turn's attached images reached the model is decided server-side once the
+          // serving model is known, and recorded on the USER message's meta — invisible to the
+          // WS stream like the citations above. Only the snapshot's LAST user message may speak
+          // for the just-sent turn, and only a turn that carries files can take it.
+          const lastUser = [...(d.messages || [])].reverse().find((m) => m.role === 'user')
+          const delivered = imageDeliveryOf(lastUser?.meta)
+          if (delivered) setTurns((prev) => {
+            const i = prev.map((t) => t.role).lastIndexOf('user')
+            if (i < 0 || !prev[i].files?.length) return prev
+            return prev.map((t, j) => (j === i ? { ...t, imageDelivery: delivered } : t))
           })
         }).catch(() => {})
         break
@@ -3233,7 +3246,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           ))}
         </div>
       )}
-      <MentionChips paths={[...mentionedFiles, ...attachedPaths]}
+      <AttachmentChips paths={[...mentionedFiles, ...attachedPaths]} images={attachedPaths.filter(isImagePath)}
+        session={sessionId ?? ''} agent={selection.agent} model={selection.model === 'Auto' ? '' : selection.model}
+        runtime={acpFor(selection.agent)?.providerId ?? ''}
         onRemove={(p) => { setMentionedFiles((prev) => prev.filter((x) => x !== p)); setAttachedPaths((prev) => prev.filter((x) => x !== p)) }}
         onOpen={setOpenFile} />
       <KnowledgeChips items={mentionedKnowledge}
@@ -3654,7 +3669,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                             <div className="group/msg">
                               <MessageUser fromComposer={isLast} onFileClick={setOpenFile} pastes={turn.pastes} optimized={turn.optimized}
                                 onExpand={() => { followTurnRef.current = false }}>{turnTextOf(turn)}</MessageUser>
-                              {turn.files && turn.files.length > 0 && <TurnAttachments paths={turn.files} onOpenFile={setOpenFile} />}
+                              {turn.files && turn.files.length > 0 && <TurnAttachments paths={turn.files} delivery={turn.imageDelivery} onOpenFile={setOpenFile} />}
                               {turn.rewound && turn.rewound.length > 0 && (
                                 <RewindDivider snapshots={turn.rewound} canFork={memoryMode === 'persistent'} onFork={(si) => forkRewound(i, si)} />
                               )}
@@ -3824,102 +3839,6 @@ function AnimatePresenceFilePanel({ path, onClose, commentTarget }: { path: stri
     <AnimatePresence>
       {path && <ChatFilePanel path={path} onClose={onClose} commentTarget={commentTarget} />}
     </AnimatePresence>
-  )
-}
-
-/** Attachment chips shown on a SENT user turn (right-aligned under the bubble),
- *  one per file attached to that turn. Clicking a chip opens a preview modal:
- *  the EXTRACTED content the agent saw (fetched on open) + a button to open the
- *  ORIGINAL file in the file panel. So the user can always see what they attached
- *  and exactly what was fed to the model. */
-function TurnAttachments({ paths, onOpenFile }: { paths: string[]; onOpenFile: (p: string) => void }) {
-  const [peek, setPeek] = useState<string | null>(null)
-  const base = (p: string) => (p.replace(/\/+$/, '').split('/').pop() || p).replace(/^[0-9a-f]{32}_/, '')
-  return (
-    <div className="mt-1.5 flex flex-wrap justify-end gap-1.5">
-      {paths.map((p) => (
-        <button key={p} type="button" onClick={() => setPeek(p)} title={`Preview ${base(p)}`}
-          className="inline-flex items-center gap-1.5 rounded-pill border border-outline-variant/50 bg-surface-container px-2.5 py-1 text-[0.75rem] text-on-surface-var transition-colors hover:bg-surface-high hover:text-on-surface">
-          <Paperclip size={11} className="shrink-0 text-on-surface-low" />
-          <span className="max-w-[200px] truncate">{base(p)}</span>
-        </button>
-      ))}
-      {peek && <AttachmentPeekModal path={peek} name={base(peek)} onOpenFile={onOpenFile} onClose={() => setPeek(null)} />}
-    </div>
-  )
-}
-
-/** Preview an attachment: its extracted text content (what the agent saw) +
- *  open-original. Extraction is fetched on open (awaits the upload-time job). */
-function AttachmentPeekModal({ path, name, onOpenFile, onClose }: { path: string; name: string; onOpenFile: (p: string) => void; onClose: () => void }) {
-  const [text, setText] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-  useEffect(() => {
-    let alive = true
-    setLoading(true)
-    api.attachmentExtract(path)
-      .then((r) => { if (alive) setText(r.text || '') })
-      .catch(() => { if (alive) setText('') })
-      .finally(() => { if (alive) setLoading(false) })
-    return () => { alive = false }
-  }, [path])
-  return (
-    <Modal title={name} icon={<Paperclip size={18} className="text-primary" />} onClose={onClose}>
-      <div className="flex flex-col gap-3">
-        <Button variant="ghost-accent" size="sm" onClick={() => { onOpenFile(path); onClose() }}
-          className="self-start border border-outline-variant/50">
-          <ExternalLink size={14} /> Open original file
-        </Button>
-        <div>
-          <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Extracted content (what the agent saw)</div>
-          {loading ? (
-            <div className="flex items-center gap-2 text-on-surface-low text-[0.8125rem] py-3"><Loader2 size={14} className="animate-spin" /> Extracting…</div>
-          ) : text ? (
-            <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap rounded-md bg-surface-low px-m py-2 font-mono text-on-surface-var text-[0.75rem] leading-relaxed">{text}</pre>
-          ) : (
-            <p className="text-on-surface-low text-[0.8125rem]">No extractable text content (e.g. an image with no OCR configured).</p>
-          )}
-        </div>
-      </div>
-    </Modal>
-  )
-}
-
-/** Removable attachment cards for large pastes, shown ABOVE the composer. Each
-/** Highlighted chips for @-mentioned files, shown ABOVE the composer. Clicking
- *  the chip reveals the FULL path inline (so the user knows exactly which file)
- *  and offers Open (file panel); ✕ removes the attachment. */
-function MentionChips({ paths, onRemove, onOpen }: { paths: string[]; onRemove: (p: string) => void; onOpen: (p: string) => void }) {
-  const [expanded, setExpanded] = useState<string | null>(null)
-  if (!paths.length) return null
-  // Uploaded files are saved as `<uuid4-hex>_<original-name>`; strip that
-  // collision-avoidance prefix so the chip shows the clean name the user dropped.
-  const base = (p: string) => (p.replace(/\/+$/, '').split('/').pop() || p).replace(/^[0-9a-f]{32}_/, '')
-  return (
-    <div className="mb-2 flex flex-wrap gap-2">
-      {paths.map((p) => {
-        const open = expanded === p
-        return (
-          <div key={p} className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-2.5 py-1.5 text-[0.8125rem]"
-            style={{ background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)' }}>
-            <FileText size={13} className="shrink-0 text-primary" />
-            {/* An accordion, so `aria-expanded` — the chip swaps a basename for the full path AND
-                reveals an Open button, both gated on the same flag. */}
-            <button type="button" aria-expanded={open} onClick={() => setExpanded(open ? null : p)}
-              title={open ? 'Collapse' : 'Show full path'}
-              className="min-w-0 text-left font-mono text-on-surface">
-              {open ? <span className="break-all">{p}</span> : base(p)}
-            </button>
-            {open && (
-              <Button variant="ghost-accent" size="xs" title="Open file" onClick={() => onOpen(p)}
-                className="shrink-0 h-6 px-1.5 text-[0.75rem]">Open</Button>
-            )}
-            <IconButton icon={X} label="Remove file" onClick={() => onRemove(p)} size={20} iconSize={13}
-              tone="danger" className="shrink-0" />
-          </div>
-        )
-      })}
-    </div>
   )
 }
 
