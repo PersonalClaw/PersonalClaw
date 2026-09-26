@@ -761,13 +761,14 @@ def _unbind_bound_chats(state, pid: str) -> int:
     return n
 
 
-async def _teardown_bound_loops(pid: str) -> None:
-    """Tear down every loop scoped under a project being force-deleted: stop the worker
-    + clean its git worktrees/branches + delete the loop row. Without this, force-delete
-    rmtree'd the project dir but left bound loops orphaned — workers still running, their
-    tasks_project_id pointing at a deleted project, and `.worktrees/`/`pclaw/task-*`
+async def _teardown_bound_loops(pid: str, state: Any) -> None:
+    """Tear down every loop scoped under a project being force-deleted: stop the worker and
+    its turn in flight + clean its git worktrees/branches + delete the loop row. Without this,
+    force-delete rmtree'd the project dir but left bound loops orphaned — workers still running,
+    their tasks_project_id pointing at a deleted project, and `.worktrees/`/`pclaw/task-*`
     branches littering the user's repo (the exact harm the 409 guard warns about, done
-    anyway on force). Best-effort per loop; never raises."""
+    anyway on force). ``state`` may be None (a task-only app), which halts no turns. Best-effort
+    per loop; never raises."""
     try:
         from personalclaw.loop import manager as loop_manager
         from personalclaw.loop import store as loop_store
@@ -780,7 +781,7 @@ async def _teardown_bound_loops(pid: str) -> None:
         for lid in bound:
             try:
                 if svc is not None:
-                    await loop_manager.teardown_for_delete(svc, lid)
+                    await loop_manager.teardown_for_delete(state, svc, lid)
                 loop_store.delete(lid)
             except Exception:
                 logger.debug("force-delete: teardown of bound loop %s failed", lid, exc_info=True)
@@ -817,7 +818,7 @@ async def api_projects_delete(request: web.Request) -> web.Response:
         # Force-delete: tear down the bound loops FIRST (stop workers + clean worktrees +
         # delete rows) so they aren't orphaned, then UNBIND the project-bound chats (clear
         # their project_id) — chats are the user's conversations, detached not destroyed.
-        await _teardown_bound_loops(pid)
+        await _teardown_bound_loops(pid, state)
         _unbind_bound_chats(state, pid)
     # Cascade the project's TASKS before the project + its lists are dropped. `delete_project`
     # removes the task LISTS (and tombstones them) but the task rows live in the native task

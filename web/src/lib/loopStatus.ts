@@ -195,3 +195,25 @@ export const LOOP_ACTION_SOURCE_STATUSES: Readonly<Record<LoopAction, ReadonlySe
   resume: new Set(['paused', 'stagnant', 'blocked', 'needs_input', 'failed']),
   stop: STOPPABLE_LOOP_STATUSES,
 }
+
+/** The same question for a RUN-BACKED loop — one whose row carries `run_id` (PP-16: a ported kind
+ *  runs as a workflow run, and `GET /api/loops` lists it beside the loops-table rows). Mirrors
+ *  `workflows/loop_view.py:RUN_ACTION_SOURCE_STATES`, railed equal by
+ *  `tests/test_loop_action_guard_mirror.py`.
+ *
+ *  Narrower than the map above, and it has to be: a run has ONE attempt, so it cannot resume from
+ *  `failed`; and a run waiting on a gate (`needs_input`) is answered on its run page, where a bare
+ *  resume would clear nothing and report success. Read it through `loopActionSources`, never by
+ *  testing the kind at a call site. */
+export const RUN_LOOP_ACTION_SOURCE_STATUSES: Readonly<Record<LoopAction, ReadonlySet<string>>> = {
+  start: new Set(['ready']),
+  pause: new Set(['running']),
+  resume: new Set(['paused']),
+  stop: new Set(['ready', 'running', 'paused', 'needs_input']),
+}
+
+/** The action map for THIS loop's backing — what every surface that lists both kinds of loop asks
+ *  before rendering a Start/Pause/Resume/Stop. */
+export function loopActionSources(loop: { run_id?: string }): Readonly<Record<LoopAction, ReadonlySet<string>>> {
+  return loop.run_id ? RUN_LOOP_ACTION_SOURCE_STATUSES : LOOP_ACTION_SOURCE_STATUSES
+}

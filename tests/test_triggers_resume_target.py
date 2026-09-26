@@ -610,18 +610,16 @@ async def test_NO_supervisor_is_DEFERRED_and_says_why(isolated, monkeypatch):
 
 @pytest.mark.anyio
 async def test_a_pause_is_CLEARED_when_no_answer_is_declared(isolated, monkeypatch):
-    """The safe unattended default: `resume_run`'s token-less, answer-less path clears
-    `pause_requested` and does NOT answer a gate. A `goal-pursuit-monitor` says "carry on"; it does
-    not hold an approval."""
+    """The safe unattended default: `resume_run`'s token-less, answer-less path clears the run's
+    sticky pause intent and does NOT answer a gate. A `goal-pursuit-monitor` says "carry on"; it
+    does not hold an approval."""
     run, watchdog = await _parked_run()
     _attach(monkeypatch, watchdog)
-    fresh = wstore.get(run.id)
-    fresh.extra["pause_requested"] = True
-    wstore.save(fresh)
+    wstore.request_pause(run.id)
 
     outcome = await _fire(run.id)  # no `answer` key at all
     assert outcome.outcome == Outcome.RAN.value, outcome.reason
-    assert "pause_requested" not in wstore.get(run.id).extra
+    assert not wstore.pause_requested(run.id)
     # The gate is UNTOUCHED — clearing a pause is not answering a question.
     from personalclaw.workflows.human_input import list_continuations
 

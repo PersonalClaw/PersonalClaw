@@ -595,7 +595,25 @@ class GatewayOrchestrator:
                 else:
                     _parent_session_name = None
 
-                if _parent_session_name:
+                from personalclaw.workflows import ownership as _ownership
+
+                if _parent_session_name and _parent_session_name.startswith(
+                    _ownership.OWNED_PREFIX
+                ):
+                    # A workflow STAGE: its parent is the run-owned key `workflow:<run>:<node>`,
+                    # which is never a dashboard session, so there is no chat Trust toggle to
+                    # consult and a session lookup can only ever miss. An UNATTENDED run never
+                    # reaches here — its stages spawn `approval_mode="auto"`
+                    # (`engine.dispatch_stage`) — so this is an attended run asking, and the audit
+                    # says that instead of `scoped_trust_session_not_found`, which read as a
+                    # broken lookup on every stage of every run.
+                    _sel_log(
+                        caller=f"run:{_parent_session_name}",
+                        operation=f"{source}.run_stage_attended",
+                        outcome="not_auto_approved",
+                        resources=_safe_title,
+                    )
+                elif _parent_session_name:
                     _ps = (self.dashboard_state._sessions or {}).get(_parent_session_name)
                     if _ps and _ps._trust:
                         _sel_log(
@@ -2655,6 +2673,20 @@ class GatewayOrchestrator:
                     finally:
                         _sess._running = False
 
+            def _cycle_still_armed(_sess: Any) -> bool:
+                """Is the loop that fired this cycle still armed to run it?
+
+                Two facts, both required: the session is still the one the dashboard has
+                registered under its key (a delete pops it), and the nudge loop that fired the
+                cycle still exists and is active (a pause deactivates it, a stop removes it).
+                """
+                key = str(getattr(_sess, "key", "") or "")
+                if not key or dstate._sessions.get(key) is not _sess:
+                    return False
+                nudge_svc = self.autonudge_svc
+                armed = nudge_svc.get_by_session(key) if nudge_svc is not None else None
+                return armed is not None and bool(getattr(armed, "active", False))
+
             async def _run_turn_bounded(_sess=session, _msg=tagged) -> None:
                 # Bound each turn so a wedged worker turn can't hold the session
                 # `running` forever. Loop cycles run long (subagent fan-out,
@@ -2681,6 +2713,17 @@ class GatewayOrchestrator:
                         if _finding_count(_sess.key) > before or getattr(
                             _sess, "_last_turn_errored", False
                         ):
+                            break
+                        if not _cycle_still_armed(_sess):
+                            # The loop was paused, stopped or deleted while this cycle ran. The
+                            # re-prompts are the SAME cycle, so they end with it — this is what
+                            # used to write a finding minutes after "Paused", and re-save a
+                            # deleted loop's transcript as an orphan chat.
+                            logger.info(
+                                "AutoNudge: %s is no longer armed — abandoning the cycle's "
+                                "re-prompts",
+                                _sess.key,
+                            )
                             break
                         logger.info(
                             "AutoNudge: %s produced no finding (re-prompt %d/%d) — fresh ACP session + re-prompt",  # noqa: E501

@@ -25,3 +25,13 @@ const LOOP_KIND_META: Record<LoopKind, LoopKindMeta> = {
 export function loopKindMeta(kind: string | undefined): LoopKindMeta {
   return (kind && LOOP_KIND_META[kind as LoopKind]) || LOOP_KIND_META.general
 }
+
+/** The route (no leading `#/`) that opens a loop — the ONE answer for every surface that links to
+ *  one. A run-backed loop (its row carries `run_id`, PP-16) opens on its run page, which is where its
+ *  steps, outputs and decisions live; a code loop in the Code section; every other kind in the loop
+ *  cockpit. Keyed by the BODY (`run_id`), never by the kind — which kinds are run-backed grows. A
+ *  `#/loops/<id>` link to a run-backed loop still lands, one redirect later (`LoopsSection`). */
+export function loopRoute(loop: { id: string; kind?: string; run_id?: string }): string {
+  if (loop.run_id) return `workflows/runs/${loop.run_id}`
+  return loop.kind === 'code' ? `code/${loop.id}` : `loops/${loop.id}`
+}

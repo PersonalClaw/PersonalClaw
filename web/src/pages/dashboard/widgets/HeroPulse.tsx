@@ -7,7 +7,6 @@ import type { LucideIcon } from 'lucide-react'
 import { useDashboardLive } from '../DashboardLive'
 import { physics } from '../../../design/motion'
 import type { RouteProps } from '../../../app/useQueryState'
-import { ACTIVE_LOOP_STATUSES } from '../../../lib/loopStatus'
 import { mirroredApprovalId } from '../../../lib/attentionLanes'
 
 
@@ -33,8 +32,13 @@ export function HeroPulse({ navigate, variant = 'strip' }: RouteProps & { varian
     approvalsErr, inboxErr, tasksErr, loopsErr, notificationsErr, read,
   } = useDashboardLive()
 
+  // The pill says "loops RUNNING", so it counts `running` — not ACTIVE_LOOP_STATUSES, which also
+  // holds the parked states. Counting that set, a paused loop read as "1 loop running" (measured
+  // 2026-09-25), and the one user it misleads most is the one who just paused it to make it stop. A
+  // loop waiting on the user is not lost by this: it raises an inbox item, which the inbox pill
+  // beside this counts.
   const runningLoops = useMemo(
-    () => loops.filter((l) => ACTIVE_LOOP_STATUSES.has(l.status)).length,
+    () => loops.filter((l) => l.status === 'running').length,
     [loops],
   )
   const unread = useMemo(() => notifications.filter((n) => !n.acked).length, [notifications])
@@ -77,7 +81,7 @@ export function HeroPulse({ navigate, variant = 'strip' }: RouteProps & { varian
     return { n, why: 'ok' }
   }
   const pills: { key: string; icon: LucideIcon; n: number | null; why: Why; label: string; go: string; tone: string }[] = [
-    { key: 'loops', icon: Activity, ...pill(runningLoops, loopsErr, read.loops), label: runningLoops === 1 ? 'loop running' : 'loops running', go: 'projects', tone: 'var(--color-primary)' },
+    { key: 'loops', icon: Activity, ...pill(runningLoops, loopsErr, read.loops), label: runningLoops === 1 ? 'loop running' : 'loops running', go: 'loops/history', tone: 'var(--color-primary)' },
     { key: 'appr', icon: ShieldCheck, ...pill(approvals.length, approvalsErr, read.approvals), label: approvals.length === 1 ? 'approval waiting' : 'approvals waiting', go: 'chat', tone: 'var(--color-warn)' },
     { key: 'tasks', icon: ListTodo, ...pill(tasks.length, tasksErr, read.tasks), label: tasks.length === 1 ? 'task ready' : 'tasks ready', go: 'tasks', tone: 'var(--color-info)' },
     { key: 'inbox', icon: Inbox, ...pill(inboxMsgs, inboxErr, read.inbox), label: 'inbox', go: 'inbox', tone: 'var(--color-secondary)' },

@@ -58,6 +58,11 @@ pytestmark = pytest.mark.skipif(not _WEB.exists(), reason="web sources not prese
 #: literal: a rename must red loudly here, not silently stop matching somewhere downstream.
 _DECL = "export const LOOP_ACTION_SOURCE_STATUSES"
 
+#: The RUN-BACKED loop's map (PP-16: a ported kind runs as a workflow run and is listed beside the
+#: loops-table rows), mirroring `workflows/loop_view.py:RUN_ACTION_SOURCE_STATES`. Parsed by the
+#: same parser, so it carries the same floors.
+_RUN_DECL = "export const RUN_LOOP_ACTION_SOURCE_STATUSES"
+
 #: One row of the map: an action keyed to either an inline ``new Set([...])`` or a reference to an
 #: already-exported set (``stop``). A reference that cannot be resolved is an error, never an empty
 #: set — an unresolved row must not read as "this action allows nothing".
@@ -114,17 +119,19 @@ def _web_sources() -> list[Path]:
     ]
 
 
-def _parse_action_sources(text: str) -> tuple[dict[str, set[str]], dict[str, str]]:
-    """Parse the frontend action-guard map out of TypeScript.
+def _parse_action_sources(
+    text: str, decl: str = _DECL
+) -> tuple[dict[str, set[str]], dict[str, str]]:
+    """Parse one frontend action-guard map (``decl``) out of TypeScript.
 
     Returns ``(action -> statuses, action -> referenced set name)``. Every floor lives here so a
     parser that stops matching reds once, loudly, instead of making each caller's equality
     assertion vacuously true.
     """
-    parts = text.split(_DECL, 1)
-    assert len(parts) == 2, f"{_REGISTRY} no longer declares {_DECL} — parser drift?"
+    parts = text.split(decl, 1)
+    assert len(parts) == 2, f"{_REGISTRY} no longer declares {decl} — parser drift?"
     body = parts[1].split("\n}", 1)
-    assert len(body) == 2, f"{_DECL} has no closing brace — parser drift?"
+    assert len(body) == 2, f"{decl} has no closing brace — parser drift?"
     table = body[0]
 
     raw = {name: members for name, members in _NAMED_SET.findall(text)}
@@ -153,7 +160,7 @@ def _parse_action_sources(text: str) -> tuple[dict[str, set[str]], dict[str, str
                 "SUBSET and pass on a mirror that is missing members"
             )
     rows = _ROW.findall(table)
-    assert rows, f"parsed no rows out of {_DECL} — parser drift?"
+    assert rows, f"parsed no rows out of {decl} — parser drift?"
 
     sources: dict[str, set[str]] = {}
     refs: dict[str, str] = {}
@@ -168,7 +175,7 @@ def _parse_action_sources(text: str) -> tuple[dict[str, set[str]], dict[str, str
         else:
             sources[action] = set(_MEMBER.findall(literal))
         assert sources[action], (
-            f"parsed an EMPTY state set for `{action}` out of {_DECL} — parser drift? "
+            f"parsed an EMPTY state set for `{action}` out of {decl} — parser drift? "
             "An empty set would make this action's equality assertion meaningless."
         )
     return sources, refs
@@ -199,6 +206,29 @@ def test_each_action_mirrors_the_backend_source_states_exactly():
         "buys the user a 409, and one it accepts but the UI withholds strands the loop — five of "
         "six hand-written `resume` guards omitted `blocked`, so a blocked loop could not be "
         "resumed from any surface while the backend was willing."
+    )
+
+
+def test_the_run_backed_mirror_equals_the_run_action_table():
+    """A run-backed loop is listed on the same surfaces as a loops-table row, and its lifecycle is
+    the RUN's: one attempt (no resume from ``failed``) and a gate answered on its run page. The list
+    offering the loops-table Resume on a failed run-backed row would buy the user a 409; this is the
+    same equality rail, for the second map."""
+    from personalclaw.workflows.loop_view import RUN_ACTION_SOURCE_STATES
+
+    sources, _ = _parse_action_sources(_registry_text(), _RUN_DECL)
+    assert set(sources) == set(RUN_ACTION_SOURCE_STATES), (
+        f"RUN_LOOP_ACTION_SOURCE_STATUSES covers {sorted(sources)} but the run table has "
+        f"{sorted(RUN_ACTION_SOURCE_STATES)}"
+    )
+    drift = {
+        action: (sorted(sources[action]), sorted(s.value for s in states))
+        for action, states in RUN_ACTION_SOURCE_STATES.items()
+        if sources[action] != {s.value for s in states}
+    }
+    assert not drift, (
+        "RUN_LOOP_ACTION_SOURCE_STATUSES disagrees with workflows/loop_view.py:"
+        f"RUN_ACTION_SOURCE_STATES per action (frontend vs backend): {drift}"
     )
 
 
@@ -255,6 +285,11 @@ def test_the_parse_floors_fire():
         assert stub != real, f"the {label!r} stub did not change the source — stub drift?"
         with pytest.raises(AssertionError):
             _parse_action_sources(stub)
+    # The run-backed map reds on its own absence rather than silently parsing the other one.
+    no_run_map = real.replace(_RUN_DECL, "const somethingElse")
+    assert no_run_map != real, "the run-map stub did not change the source — stub drift?"
+    with pytest.raises(AssertionError):
+        _parse_action_sources(no_run_map, _RUN_DECL)
 
 
 def test_there_is_exactly_one_loop_action_guard_map():
@@ -371,7 +406,9 @@ def test_every_lifecycle_surface_actually_reaches_the_mirror():
         path = _WEB / rel
         assert path.exists(), f"{rel} is gone — update this list rather than letting it rot"
         text = _strip_comments(path.read_text(encoding="utf-8"))
-        if "LOOP_ACTION_SOURCE_STATUSES" not in text:
+        # `loopActionSources(loop)` is the mirror too — it answers from one of the two maps by the
+        # loop's backing, and it is what a surface listing BOTH kinds of loop must ask.
+        if "LOOP_ACTION_SOURCE_STATUSES" not in text and "loopActionSources(" not in text:
             missing.append(rel)
     assert not missing, (
         f"a lifecycle surface no longer reaches the action mirror: {missing}. Either it lost its "

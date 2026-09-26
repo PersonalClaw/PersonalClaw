@@ -100,6 +100,10 @@ class _FakeSvc:
     def get_by_session(self, session_name):
         return next((lp for lp in self._loops.values() if lp.session_name == session_name), None)
 
+    def list_all(self):
+        # The real service's public surface (`triggers/nudge.py`); `manager._teardown` scans it.
+        return list(self._loops.values())
+
     async def update(self, loop_id, **kw):
         lp = self._loops.get(loop_id)
         if lp:

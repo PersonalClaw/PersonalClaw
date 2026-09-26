@@ -39,10 +39,10 @@ import { loopStatusColor, loopStatusLabel } from '../../lib/loopStatus'
 export function ProjectsSection({ sub, navigate, query, setQuery }: RouteProps) {
   const seg = (sub || '').split('/')[0]
   if (seg) return <ProjectDetailPage id={seg} onBack={() => navigate('projects')} navigate={navigate} query={query} setQuery={setQuery} />
-  return <ProjectListPage onOpen={(id) => navigate(`projects/${id}`)} query={query} setQuery={setQuery} />
+  return <ProjectListPage onOpen={(id) => navigate(`projects/${id}`)} onOpenLoops={() => navigate('loops/history')} query={query} setQuery={setQuery} />
 }
 
-function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
+function ProjectListPage({ onOpen, onOpenLoops, query, setQuery }: { onOpen: (id: string) => void; onOpenLoops: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
   const { data: projects, loading, error: loadErr, refresh } = useQuery('projects:list', () => api.projects(), { persist: true })
   // List search is URL-backed (?q, replace) — shareable + refresh-stable, no
   // per-keystroke history. (Was local useState.)
@@ -153,7 +153,10 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
       <TopBar
         keepCornerPadding
         left={<div className="flex items-center gap-2"><FolderKanban size={18} className="text-primary" /><PageTitle>Projects</PageTitle></div>}
-        right={<HeaderActions><HeaderControl icon={Plus} label="New project" onClick={() => setCreating(true)} variant="primary" priority="primary" /></HeaderActions>} />
+        // "Loops": the nav's Projects tile is the home of loops too (a loop deep-link lights it),
+        // and Home's "loops running" pill lands here — which had no way to the loops at all
+        // (measured 2026-09-25).
+        right={<HeaderActions><HeaderControl icon={Repeat} label="Loops" onClick={onOpenLoops} /><HeaderControl icon={Plus} label="New project" onClick={() => setCreating(true)} variant="primary" priority="primary" /></HeaderActions>} />
 
       {!!projects?.length && (
         <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search projects', label: 'Search projects' }}

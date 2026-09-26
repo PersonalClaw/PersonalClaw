@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import { useChatSocket, type WsMessage } from './useChatSocket'
 import { useVisiblePoll } from './useVisiblePoll'
+import { loopRoute } from './loopKind'
 import type { ChatSessionSummary, Loop, PendingApproval, SpawnedAgent } from './api'
 
 // ── AgentActivityFeed (AMBIENT-SURFACES A2-3) ────────────────────────────────
@@ -142,7 +143,8 @@ export function foldLoops(loops: Loop[], blocked: Set<string>): AgentActivityEnt
       title: label(l.name || l.task, 'Loop'),
       ...(total === undefined ? {} : { progress: total }),
       refs: {
-        link: `#/${l.kind === 'code' ? 'code' : 'loops'}/${l.id}`,
+        // `loopRoute`: a run-backed loop (`run_id`) opens on its run page, a code loop in Code.
+        link: `#/${loopRoute(l)}`,
         ...(l.session_key ? { session: l.session_key } : {}),
       },
     }

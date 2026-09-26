@@ -112,6 +112,8 @@ def _connect() -> sqlite3.Connection:
             policy_overrides TEXT NOT NULL DEFAULT '{}',
             owner_username TEXT NOT NULL DEFAULT '',
             origin_harness TEXT NOT NULL DEFAULT '',
+            loop_kind TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL DEFAULT '',
             extra TEXT NOT NULL DEFAULT '{}'
         )""")
     # There is no DROP path, and PP-16 seam 4c's retirement of `task_list_id` deliberately
@@ -134,12 +136,16 @@ def _connect() -> sqlite3.Connection:
     # TSE2-1: `owner_username`/`origin_harness` join the same additive ladder, with the SAME
     # defaults the fresh DDL declares — a home created before this change gains them empty, which
     # `WorkflowRun.belongs_to` reads as the owner's, so a solo install is unchanged.
+    # `loop_kind`/`title` likewise: a pre-change run gains them empty, which reads as "not a loop",
+    # which is what every run created before the loop door recorded them was.
     _ensure_columns(
         conn,
         {
             "policy_overrides": "TEXT NOT NULL DEFAULT '{}'",
             "owner_username": "TEXT NOT NULL DEFAULT ''",
             "origin_harness": "TEXT NOT NULL DEFAULT ''",
+            "loop_kind": "TEXT NOT NULL DEFAULT ''",
+            "title": "TEXT NOT NULL DEFAULT ''",
         },
     )
     # The run-tree query (WF2-R13). Without it, listing a tree scans the table.
@@ -148,6 +154,8 @@ def _connect() -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_runs_name_created ON runs(workflow_name, created_at)"
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status)")
+    # The loop listing (`list_loop_runs`) selects on it every time a loop surface polls.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_loop_kind ON runs(loop_kind, created_at)")
     conn.commit()
     return conn
 
@@ -194,6 +202,8 @@ _COLUMNS = (
     "policy_overrides",
     "owner_username",
     "origin_harness",
+    "loop_kind",
+    "title",
     "extra",
 )
 
@@ -352,6 +362,39 @@ def active_runs() -> list[WorkflowRun]:
     try:
         rows = conn.execute(
             f"SELECT * FROM runs WHERE status IN ({','.join('?' * len(live))})", live
+        ).fetchall()
+    finally:
+        conn.close()
+    return [_row_to_run(r) for r in rows]
+
+
+def list_loop_runs(*, project_id: str = "", kind: str = "") -> list[WorkflowRun]:
+    """Every run started as a LOOP (``loop_kind`` set), newest first — the run half of the ONE
+    loop listing (``GET /api/loops``), which unions these with the loop-table rows.
+
+    Deliberately unpaginated, like the loop-table listing it is unioned with: the loop surfaces
+    count and filter the whole list client-side (Active/Ongoing/Done), and a page boundary would
+    make those counts disagree with the rows.
+
+    Returns nothing when the store does not exist yet, WITHOUT opening it — the same reason as
+    :func:`def_names`: the loop list is polled from Home, and asking "are there any run-backed
+    loops?" must not mint an empty ``runs.db`` on a gateway that has never started a run.
+    """
+    if not _db_path().is_file():
+        return []
+    where = ["loop_kind != ''"]
+    params: list[Any] = []
+    if project_id:
+        where.append("project_id = ?")
+        params.append(project_id)
+    if kind:
+        where.append("loop_kind = ?")
+        params.append(kind)
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            f"SELECT * FROM runs WHERE {' AND '.join(where)} ORDER BY created_at DESC, id DESC",
+            params,
         ).fetchall()
     finally:
         conn.close()
@@ -685,3 +728,25 @@ def cancel_requested(run_id: str) -> bool:
 
 def clear_cancel(run_id: str) -> None:
     (run_dir(run_id) / "CANCEL").unlink(missing_ok=True)
+
+
+def request_pause(run_id: str) -> None:
+    """Persist a PAUSE intent — a file, for the same two reasons as :func:`request_cancel`.
+
+    Sticky, so a paused run STAYS paused across a gateway restart (the watchdog does not re-adopt
+    it) instead of silently resuming. And a file rather than a key on the row, because the live
+    controller rewrites the whole row from its in-memory copy on every save: an intent written
+    into ``extra`` by a request handler was overwritten by the next tick, which is how the old
+    ``extra["pause_requested"]`` flag could never be read by anything (#370).
+    """
+    path = run_dir(run_id) / "PAUSE"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(path, _now())
+
+
+def pause_requested(run_id: str) -> bool:
+    return (run_dir(run_id) / "PAUSE").is_file()
+
+
+def clear_pause(run_id: str) -> None:
+    (run_dir(run_id) / "PAUSE").unlink(missing_ok=True)

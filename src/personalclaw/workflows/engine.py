@@ -591,6 +591,33 @@ def release_execution_claim(claim_target: str, holder: str) -> None:
         logger.debug("claim release failed for %s", claim_target, exc_info=True)
 
 
+def stage_capability(cfg: dict[str, Any]) -> str:
+    """The ONE capability decision for a stage leaf (§4.1): ``"mutating"`` or ``"research"``.
+
+    An explicit ``capability`` wins. Absent one, ``tools_posture: full`` IS the declaration: a
+    stage that declares the full tool posture has asked for write access in the only words the
+    bundled templates use for it, and its template's ``metadata.capabilities`` — the install-consent
+    surface the Store shows — already claims ``write`` (railed by
+    ``test_workflows_loop_templates.test_a_writing_template_declares_write_capability``).
+
+    🔴 Measured before this existed: 12 stages across 6 bundled templates declare
+    ``tools_posture: full`` and NONE declares ``capability``, so since AG-11 made ``capability`` the
+    one decision every one of them ran READ-ONLY — `general-project`'s ``work``, `code-project`'s
+    ``code``, `deep-research`'s ``synthesize``. The worker's writes were denied at the tool-grant
+    layer, the judge found no artifacts, and a General loop could never produce the file its task
+    asked for while its template told the user it could write.
+
+    Anything else — ``verify`` (the judge posture), no posture at all — stays research, the same
+    safe default ``Capability.RESEARCH`` encodes: a leaf wrongly restricted fails visibly, while one
+    wrongly unrestricted has ambient write access nobody asked for.
+    """
+    declared = str(cfg.get("capability", "") or "").strip().lower()
+    if declared in ("mutating", "research"):
+        return declared
+    posture = str(cfg.get("tools_posture", "") or "").strip().lower()
+    return "mutating" if posture == "full" else "research"
+
+
 def leaf_spawn_env(node: Node, cfg: dict[str, Any], *, run_id: str, depth: int) -> dict[str, str]:
     """The env one stage leaf runs with: lineage + capability posture, secret-filtered.
 
@@ -612,10 +639,7 @@ def leaf_spawn_env(node: Node, cfg: dict[str, Any], *, run_id: str, depth: int) 
         node_id=node.id or "",
         depth=int(depth) + 1,
     )
-    # Absent `capability` means research — the same safe default `Capability.RESEARCH` encodes, and
-    # for the same reason: a leaf wrongly restricted fails visibly, while one wrongly unrestricted
-    # has ambient write access nobody asked for.
-    if str(cfg.get("capability", "") or "research").strip().lower() != "mutating":
+    if stage_capability(cfg) != "mutating":
         lineage[LEAF_READ_ONLY_KEY] = "1"
     return leaf_env(dict(os.environ), lineage)
 
@@ -632,6 +656,9 @@ async def dispatch_stage(
     #: `claim_key` on why a node id is not one.
     instance_path: str = "",
     cwd: str = "",
+    #: The run carries the user's explicit UNATTENDED grant (`supervisor_policy.unattended_grant`).
+    #: Threaded from the controller, which is the only layer holding the run's overlay.
+    unattended: bool = False,
 ) -> NodeResult:
     """One subagent execution, with tools and a session.
 
@@ -641,6 +668,17 @@ async def dispatch_stage(
 
     Depth is enforced in CODE here (`MAX_WF_DEPTH`), which is new: the existing contract
     is a sentence in a system prompt, and a prompt is not an enforcement mechanism.
+
+    **An unattended run spawns its stages `approval_mode="auto"`** unless the node declares its
+    own mode. The spawn's parent is the RUN-OWNED key `workflow:<run>:<node>`, which is never a
+    dashboard session, so the approval callback's trust lookup could not match it and every stage
+    of an "Unattended" loop stopped on "This step needs your approval" — six clicks in the
+    2026-09-25 run before it escalated. The grant is the user's own creation-time choice carried in
+    the run's overlay, which is exactly the headless-caller case `SubagentManager.spawn` documents
+    for `approval_mode="auto"`. It widens nothing else: the capability class below still decides
+    whether the stage may write, the operator ceiling still bounds the auto-approval grant
+    (`subagent._run_inner`'s PHF-8 check), and the spawn and every auto-approved tool call are
+    SEL-audited as they are for any other auto-approved spawn.
     """
     if depth >= MAX_WF_DEPTH:
         return _fail(
@@ -737,18 +775,15 @@ async def dispatch_stage(
             max_turns=int(cfg.get("max_turns", 0) or 0),
             cwd=cwd,
             silent=True,
-            approval_mode=str(cfg.get("approval_mode", "") or "") or None,
-            # ONE capability decision (§4.1): the node's `capability` drives BOTH the leaf-env
+            approval_mode=(
+                str(cfg.get("approval_mode", "") or "") or ("auto" if unattended else None)
+            ),
+            # ONE capability decision (§4.1, `stage_capability`): it drives BOTH the leaf-env
             # read-only flag (`leaf_spawn_env` → the handler seam `leaf_tool_denial`, in-process MCP
             # tools) AND the subagent capability class (the `_run_inner` approval loop, the worker's
             # NATIVE tools). A research node passed as research here has its native Write/Bash
-            # denied too — the gap the MCP-only seam left open. `mutating` iff declared, as in
-            # leaf_env.
-            capability_class=(
-                "mutating"
-                if str(cfg.get("capability", "") or "research").strip().lower() == "mutating"
-                else "research"
-            ),
+            # denied too — the gap the MCP-only seam left open.
+            capability_class=stage_capability(cfg),
             # The leaf's lineage + capability posture, secret-filtered (WF2WOR-5 C2). This is the
             # WRITER for the flags `mcp_shared.leaf_tool_denial` reads: without it the depth counter
             # and the read-only flag would never be set, and the handler seam would be a gate on a
@@ -2612,6 +2647,8 @@ async def dispatch(
     #: The run's parsed `runtime_hints.judge` (WF2LOO-13). Only the JUDGE gate branch and the
     #: judge-contract seam below read it.
     judge_hints: JudgeHints | None = None,
+    #: The run's explicit UNATTENDED grant. Only the STAGE branch reads it (see `dispatch_stage`).
+    unattended: bool = False,
 ) -> NodeResult:
     """Route one node to its dispatcher.
 
@@ -2641,6 +2678,7 @@ async def dispatch(
         worker_model=worker_model,
         compaction_saves=compaction_saves,
         judge_hints=judge_hints,
+        unattended=unattended,
     )
     # What the node's own work returned, BEFORE the seams below add keys to it: the only value the
     # schema notice may compare (#3545). The judge contract writes every key a judge schema
@@ -2704,6 +2742,7 @@ async def _dispatch_inner(
     worker_model: str = "",
     compaction_saves: list[float] | None = None,
     judge_hints: JudgeHints | None = None,
+    unattended: bool = False,
 ) -> NodeResult:
     kind = node.kind
     dispatcher = _LEAF_DISPATCHERS.get(kind)
@@ -2725,6 +2764,7 @@ async def _dispatch_inner(
             run_id=run_id,
             instance_path=instance_path,
             cwd=cwd,
+            unattended=unattended,
         )
     if dispatcher is dispatch_branch:
         return await dispatcher(node, ctx)

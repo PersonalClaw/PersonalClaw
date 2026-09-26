@@ -501,6 +501,7 @@ def _build_native_runtime(
             use_case=inner_axis,
         )
 
+    cwd = _native_session_cwd(cwd)
     definition = AgentRuntimeDefinition(
         name=name,
         provider="native",
@@ -587,6 +588,46 @@ def _build_native_runtime(
         tool_groups=list(tool_groups) if tool_groups is not None else None,
         surface=inner_axis,
     )
+
+
+def _native_session_cwd(cwd: str | None) -> str:
+    """The directory a native session's file and shell tools are rooted in — never an ambient one.
+
+    🔴 With no explicit ``cwd`` the platform tool provider fell back to ``Path.cwd()``: the
+    GATEWAY PROCESS's own working directory. Every native session created without one — a
+    workflow stage's subagent on a project-less run, a background session — therefore read and
+    wrote relative to wherever the gateway happened to be started. Measured on a General loop run
+    unattended: its worker wrote ``checklist.md`` into the repository checkout the gateway was
+    launched from, while the run page said it had looked in the run's own directory. For a gateway
+    started from the home directory that is ``~``; for a service manager it can be ``/``. Either
+    way the loop's result lands somewhere the user cannot find, which is the family the ACP spawn
+    path already refuses (``session._acp_spawn_cwd``).
+
+    So a native session defaults to the same place an ACP one does: the configured workspace root
+    (``default_workspace_dir()`` — validated to exist and not to be a sensitive path), which is
+    also where a new chat, the Terminal and the Files page open. When no safe workspace resolves,
+    a fresh private scratch directory stands in rather than the process cwd, and the reason is
+    logged — a session whose tools are rooted in an empty directory is recoverable; files written
+    into an ambient one are not.
+    """
+    explicit = str(cwd or "").strip()
+    if explicit:
+        return explicit
+    from personalclaw.config.loader import default_workspace_dir
+
+    default = str(default_workspace_dir() or "").strip()
+    if default:
+        return default
+    import tempfile
+
+    scratch = tempfile.mkdtemp(prefix="personalclaw-no-workspace-")
+    logger.warning(
+        "native session: no usable workspace root resolved (PERSONALCLAW_WORKSPACE, or the "
+        "workspace directory in Settings); its tools are rooted in the scratch directory %s "
+        "instead of the gateway's own working directory",
+        scratch,
+    )
+    return scratch
 
 
 def _model_app_for_provider_type(provider_type: str) -> tuple[str, bool] | None:

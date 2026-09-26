@@ -197,3 +197,58 @@ def resolve_run_items(state: Any, run_id: str) -> int:
     module exists to avoid, arrived by a different path.
     """
     return resolve_gate_item(state, run_id)
+
+
+def announce_loop_end(state: Any, run: Any, status: Any) -> str:
+    """Tell the user a run started AS A LOOP has ended, as a loops-table loop always has.
+
+    🔴 A General loop is a workflow run (PP-16), and the workflow engine told nobody when one
+    ended. Measured 2026-09-25 on a live drive: an unattended General loop finished, another was
+    cancelled, a third stopped at its cycle ceiling with "This run stopped and needs a decision" —
+    and there was not one notification or inbox row for any of them. A loop you start unattended
+    is one you are not watching; the end of it is the thing you need to hear. The loops-table
+    watchdog announces the same moments (`loop/watchdog.py:_NOTIFY_EVENTS`), so this is parity:
+
+    * ``complete`` → one "Loop complete" notification;
+    * ``failed`` → one "Loop failed" notification, carrying the engine's reason;
+    * ``escalated`` → a durable **needs a decision** inbox row plus its one notification (the
+      loop stopped before its done condition and a human decides what happens next — the
+      standing-request shape, like a loop waiting on input);
+    * ``cancelled`` → nothing: the user did it.
+
+    Its refs carry ``loop`` (every loop surface deep-links by it, and ``#/loops/<id>`` lands on
+    the run page) AND ``workflow``, so deleting the run closes the row with the run's others.
+    Deduped per run: a run ends once. Best-effort like everything here. Returns the item id or "".
+    """
+    if state is None or not getattr(run, "loop_kind", ""):
+        return ""
+    from personalclaw import notification_kinds
+    from personalclaw.workflows.models import RunStatus
+
+    title = str(getattr(run, "title", "") or getattr(run, "workflow_name", "") or run.id)
+    meta = {"loop_id": run.id, "loop_kind": run.loop_kind, "run_id": run.id}
+    try:
+        if status == RunStatus.COMPLETE:
+            state.notify(notification_kinds.LOOP_COMPLETE, "Loop complete", title, meta=meta)
+        elif status == RunStatus.FAILED:
+            reason = str(getattr(run, "error_message", "") or "").strip()
+            body = f"{title} — {reason}" if reason else title
+            state.notify(notification_kinds.LOOP_FAILED, "Loop failed", body[:300], meta=meta)
+        elif status == RunStatus.ESCALATED:
+            from personalclaw.inbox import ItemKind, emit_attention_item
+
+            attention = getattr(run, "attention", None) or {}
+            detail = str(attention.get("detail") or attention.get("reason") or "").strip()
+            return emit_attention_item(
+                state,
+                source=SOURCE,
+                kind=KIND,
+                item_kind=ItemKind.NEEDS_INPUT.value,
+                title="Loop needs a decision",
+                body=f"{title} — {detail}" if detail else title,
+                refs={"loop": run.id, "loop_kind": run.loop_kind, "workflow": run.id},
+                dedup_key=f"loop-run:{run.id}:escalated",
+            )
+    except Exception:
+        logger.debug("workflow %s: could not announce the loop's end", run.id, exc_info=True)
+    return ""

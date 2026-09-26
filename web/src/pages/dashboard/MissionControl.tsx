@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import { AlertTriangle, Check, CheckCircle2, X } from 'lucide-react'
-import { api, type ChatSessionSummary, type InboxItem, type PendingApproval } from '../../lib/api'
+import { api, type ChatSessionSummary, type InboxItem, type Loop, type PendingApproval } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { rowSubject } from '../../lib/rowSubject'
 import { Button } from '../../ui/Button'
@@ -84,6 +84,9 @@ interface Attention {
   items: InboxItem[]
   approvals: PendingApproval[]
   activity: SessionActivity[]
+  /** Every loop, whatever backs it (`GET /api/loops` lists run-backed loops too) — the Working
+   *  lane's evidence for a loop no chat session carries. */
+  loops: Loop[]
 }
 
 /** ── WHY A THIRD SOURCE ───────────────────────────────────────────────────────────────────────
@@ -136,12 +139,13 @@ function activityOf(s: ChatSessionSummary): SessionActivity {
  *  Concatenating the lists here would double-count every mirrored approval and make each lane's
  *  count a lie. */
 async function readAttention(): Promise<Attention> {
-  const [items, approvals, sessions] = await Promise.all([
+  const [items, approvals, sessions, loops] = await Promise.all([
     api.inboxOpen(),
     api.approvals(),
     api.chatSessions(),
+    api.uLoops(),
   ])
-  return { items, approvals, activity: sessions.map(activityOf) }
+  return { items, approvals, activity: sessions.map(activityOf), loops }
 }
 
 /** What answering a parked run needs, read off the inbox row's free-form `refs`.
@@ -205,8 +209,9 @@ export function MissionControl() {
   const items = data?.items ?? []
   const approvals = data?.approvals ?? []
   const activity = data?.activity ?? []
+  const loops = data?.loops ?? []
   // The sibling owns the split. This view never classifies an item itself — see the header note.
-  const lanes = useMemo(() => toLanes(items, approvals, activity), [items, approvals, activity])
+  const lanes = useMemo(() => toLanes(items, approvals, activity, loops), [items, approvals, activity, loops])
 
   const mark = useCallback((id: string, o: Outcome) => {
     setOutcomes((prev) => ({ ...prev, [id]: o }))

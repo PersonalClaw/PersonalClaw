@@ -459,22 +459,23 @@ async def _create_ported_kind_as_run(
     view here would describe state that does not exist. It answers 202 + the run's identity,
     matching the non-blocking arm of ``POST /api/workflows/runs``.
 
-    The narrowing that comes with that, stated rather than hidden: of the five per-instance knobs
-    a create body carries and ``supervisor_policy.OVERRIDABLE_POLICY_KEYS`` names, only
-    ``success_criteria`` has a home on the run path (as the template's declared
-    ``exit_condition``). ``max_cycles`` in particular does NOT bound a run: the iteration cap is
-    the loop node's own ``max_iterations`` (``tick.py`` reads it off ``node.config``), which
-    ``general-project`` declares as a literal 6, and ``SupervisorPolicy.budget_max_cycles`` only
-    reaches ``convergence.evaluate`` on a tripped breaker — where ``_convergence_state`` leaves the
-    cycle count it passes at 0, so its budget branch is vacuous. Giving those knobs a home is the
-    next unit's work, not a thing to fake here.
-    (That cycle-count field is DESCRIBED here rather than spelled, and the omission is deliberate.
+    **What the run carries from the create body, and why each is load-bearing.** The loop's name
+    becomes the run's ``title`` and its kind the run's ``loop_kind`` — which is what lists it as a
+    loop at all (``api_loop_list``). ``attended`` and ``max_cycles`` become the run's sparse policy
+    overlay, set at create so the first tick sees them: an explicit ``attended: false`` is the
+    UNATTENDED grant its stages spawn on (``supervisor_policy.unattended_grant``), and
+    ``max_cycles`` bounds the loop node's iterations (``loop_iteration_cap``).
+    ``success_criteria`` is the template's declared ``exit_condition``. Before this the door
+    handed the run the task alone: an "Unattended" loop stopped for approval on every stage, its
+    budget was the template's literal 6 while every surface counted toward 30, and it was listed
+    nowhere. ``auto_teardown_on_complete`` has no home on a run and is refused by the shared
+    validation gate above rather than dropped.
+    (A retired cycle-count field is DESCRIBED in this module rather than spelled, deliberately.
     PP-16 seam 4a retired the name, and its rail censuses ``src/`` for it by AST; the rail's SQL arm
     fires on any string constant carrying the name near ``set ``/``update ``/…, and a docstring IS a
-    string constant — the word "superset" four paragraphs up satisfies the marker. The rail's own
-    docstring says prose mentions must never red it, so the cheap honest move is to not reprint a
-    retired identifier in a module that has no business holding one. Grep its retirement rail under
-    ``tests/`` for the spelling.)
+    string constant. The rail's own docstring says prose mentions must never red it, so the cheap
+    honest move is to not reprint a retired identifier in a module that has no business holding
+    one. Grep its retirement rail under ``tests/`` for the spelling.)
     """
     from personalclaw.workflows import service as workflows
     from personalclaw.workflows.handlers import _audit, _guard, _reply, _supervisor
@@ -483,6 +484,17 @@ async def _create_ported_kind_as_run(
     denied = _guard(request, "workflow_run_start")
     if denied is not None:
         return denied
+    # The per-instance knobs this create body actually carried — only those, so a body that never
+    # said "attended" leaves the overlay without the key and the run asks per stage, exactly as a
+    # run started anywhere else does. Both are already type-checked by `validation.validate`
+    # (a non-boolean `attended` and a non-integer `max_cycles` are 400s before this point).
+    overrides: dict[str, Any] = {}
+    if isinstance(body.get("attended"), bool):
+        overrides["attended"] = body["attended"]
+    # The validator's own coercion, so "30" and 30 mean the same budget here as they did there.
+    cycles = validation._as_int(body.get("max_cycles"))
+    if cycles is not None:
+        overrides["max_cycles"] = cycles
     result = await workflows.start_kind_run(
         kind,
         task=task,
@@ -490,6 +502,14 @@ async def _create_ported_kind_as_run(
         # concept ("what done means"), per `start_kind_run`'s own docstring. Left blank, the
         # template's declared default applies, so an omitted criterion is not an empty one.
         exit_condition=str(body.get("success_criteria") or "").strip(),
+        # The SAME name precedence a loops row gets (`_build_loop_from_body`): explicit name →
+        # the classifier's clean title → a word-aware derivation from the task.
+        title=(
+            str(body.get("name") or "").strip()
+            or str(body.get("title") or "").strip()
+            or _derive_name(task)
+        ),
+        policy_overrides=overrides,
         supervisor=_supervisor(request),
         # `API`, matching the sibling route on the same surface (`api_run_start`): this is an HTTP
         # caller either way, and an origin that disagreed between the two doors would make the
@@ -552,10 +572,74 @@ async def api_loop_create(request: web.Request) -> web.Response:
 
 
 async def api_loop_list(request: web.Request) -> web.Response:
-    """GET /api/loops[?project_id=…][?kind=…] — loops (redacted), newest first."""
+    """GET /api/loops[?project_id=…][?kind=…] — EVERY loop (redacted), newest first.
+
+    Two homes, one listing: the loops-table rows AND the runs started as loops
+    (`workflows.loop_view`), which carry a ``run_id``. A ported kind stopped writing a loops row at
+    PP-16, and every surface reading this route — the Loops list, Home's pulse and Active work,
+    Mission Control's Working lane, the nav badge — kept reading the loops table alone, so a running
+    General loop was "No loops yet" everywhere except Agent world. One route answering for both is
+    what keeps those surfaces from each having to learn a second source.
+    """
+    from personalclaw.workflows import loop_view
+
     project_id = request.query.get("project_id", "").strip()
     kind = request.query.get("kind", "").strip().lower()
-    return web.json_response({"loops": store.list_redacted(project_id=project_id, kind=kind)})
+    rows = store.list_redacted(project_id=project_id, kind=kind)
+    rows += loop_view.list_loop_views(project_id=project_id, kind=kind)
+    rows.sort(key=lambda r: float(r.get("created_at") or 0.0), reverse=True)
+    return web.json_response({"loops": rows})
+
+
+def _run_backed(cid: str) -> Any:
+    """The run behind a run-backed loop id, or ``None`` when ``cid`` names no loop run."""
+    from personalclaw.workflows import store as run_store
+
+    run = run_store.get(cid)
+    return run if run is not None and run.loop_kind else None
+
+
+async def _run_backed_action(request: web.Request, run: Any, action: str) -> web.Response:
+    """``PATCH /api/loops/{id}`` for a run-backed loop: the lifecycle verb, applied by the RUN.
+
+    The same 409 sentence as a loops row (`_refuse_source_state`), judged against the run's own
+    narrower table (`loop_view.RUN_ACTION_SOURCE_STATES`). Each verb carries the permission and
+    the audit of its sibling route in the workflows family — a second door to pausing or
+    cancelling a run must not be a door around its guard.
+    """
+    from personalclaw.workflows import loop_view
+    from personalclaw.workflows import service as workflows
+    from personalclaw.workflows.handlers import _audit, _guard, _reply, _supervisor
+
+    refusal = _refuse_source_state(
+        action,
+        loop_view.loop_status(run).value,
+        loop_view.RUN_ACTION_SOURCE_STATES[action],
+    )
+    if refusal is not None:
+        return refusal
+    operation = {
+        "start": "workflow_run_start",
+        "pause": "workflow_run_pause",
+        "resume": "workflow_run_resume",
+        "stop": "workflow_run_cancel",
+    }[action]
+    denied = _guard(request, operation)
+    if denied is not None:
+        return denied
+    supervisor = _supervisor(request)
+    if action == "pause":
+        result = workflows.pause_run(run.id, supervisor=supervisor)
+    elif action == "resume":
+        result = workflows.resume_run(run.id, supervisor=supervisor)
+    elif action == "stop":
+        result = workflows.cancel_run(run.id, supervisor=supervisor)
+    else:
+        result = await workflows.start_draft_run(run.id, supervisor=supervisor)
+    _audit(request, operation, "success" if result.get("ok") else "failure", run.id)
+    if not result.get("ok"):
+        return _reply(result)
+    return web.json_response(loop_view.get_loop_view(run.id))
 
 
 async def api_loop_get(request: web.Request) -> web.Response:
@@ -568,6 +652,13 @@ async def api_loop_get(request: web.Request) -> web.Response:
         return web.json_response({"error": "Invalid loop id"}, status=400)
     view = _loop_view(cid)
     if view is None:
+        # A run-backed loop answers too, carrying its `run_id`, so a `#/loops/<id>` link to one
+        # opens its run cockpit instead of "This loop no longer exists".
+        from personalclaw.workflows import loop_view
+
+        run_view = loop_view.get_loop_view(cid)
+        if run_view is not None:
+            return web.json_response(run_view)
         return web.json_response({"error": "Not found"}, status=404)
     # What this loop cost (MRT-3). Detail-only, never on the list: it is one JSONL scan per loop,
     # so putting it on `api_loop_list` would be N scans per poll. Best-effort — a money read must
@@ -797,6 +888,9 @@ async def api_loop_action(request: web.Request) -> web.Response:
         return web.json_response({"error": f"Unknown action: {action}"}, status=400)
     loop = store.get(cid)
     if loop is None:
+        run = _run_backed(cid)
+        if run is not None:
+            return await _run_backed_action(request, run, action)
         return web.json_response({"error": "Not found"}, status=404)
     refusal = _refuse_source_state(action, loop.status, ACTION_SOURCE_STATES[action])
     if refusal is not None:
@@ -851,16 +945,44 @@ async def _reap_loop_sessions(state, loop_id: str) -> None:
                 logger.debug("reap: transcript delete failed for %s", k, exc_info=True)
 
 
+async def _run_backed_delete(request: web.Request, run: Any) -> web.Response:
+    """``DELETE /api/loops/{id}`` for a run-backed loop: the run's own delete, with its guard.
+
+    `service.delete_run` refuses a run that can still move (``WF_RUN_NOT_TERMINAL``) and tears its
+    workspace down before the directory goes — the same two rules the Workflows page's delete has,
+    because it is the same operation reached through the loop surfaces.
+    """
+    from personalclaw.workflows import service as workflows
+    from personalclaw.workflows.handlers import _audit, _guard, _reply, _supervisor
+
+    denied = _guard(request, "workflow_run_delete")
+    if denied is not None:
+        return denied
+    result = await workflows.delete_run(run.id, supervisor=_supervisor(request))
+    _audit(request, "workflow_run_delete", "success" if result.get("ok") else "failure", run.id)
+    if not result.get("ok"):
+        return _reply(result)
+    try:
+        request.app["state"].push_refresh("loops")
+    except Exception:
+        logger.debug("run-backed loop delete publish failed", exc_info=True)
+    return web.json_response({"ok": bool(result.get("deleted"))})
+
+
 async def api_loop_delete(request: web.Request) -> web.Response:
     cid = request.match_info["id"]
     if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
+    if store.get(cid) is None:
+        run = _run_backed(cid)
+        if run is not None:
+            return await _run_backed_delete(request, run)
     from personalclaw.triggers.nudge import get_instance
 
     svc = get_instance()
     if svc is not None:
         try:
-            await manager.teardown_for_delete(svc, cid)
+            await manager.teardown_for_delete(request.app["state"], svc, cid)
         except Exception:
             logger.debug("loop teardown-for-delete failed for %s", cid, exc_info=True)
     deleted = store.delete(cid)
@@ -891,7 +1013,23 @@ async def api_loop_nudge(request: web.Request) -> web.Response:
         return web.json_response({"error": "text required"}, status=400)
     proj = store.get(cid)
     if proj is None:
-        return web.json_response({"error": "Not found"}, status=404)
+        run = _run_backed(cid)
+        if run is None:
+            return web.json_response({"error": "Not found"}, status=404)
+        # A run-backed loop is steered by its RUN: the instruction is queued on the run and
+        # consumed at the next iteration boundary, which is what a loop nudge means. Guarded and
+        # audited as the run's own steer route is.
+        from personalclaw.workflows import service as workflows
+        from personalclaw.workflows.handlers import _audit, _guard, _reply
+
+        denied = _guard(request, "workflow_run_steer")
+        if denied is not None:
+            return denied
+        steered = workflows.steer_run(run.id, text)
+        _audit(request, "workflow_run_steer", "success" if steered.get("ok") else "failure", run.id)
+        if not steered.get("ok"):
+            return _reply(steered)
+        return web.json_response({"ok": True})
     from personalclaw.loop.loop import TERMINAL_STATUSES
 
     if LoopStatus(proj.status) in TERMINAL_STATUSES:

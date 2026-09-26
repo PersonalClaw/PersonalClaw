@@ -59,7 +59,7 @@ _BUNDLED = Path(__file__).resolve().parent.parent / "src" / "personalclaw" / "wo
 #: The fields PP-16 must decide about before `loop/store.py` can be retired. Pinned EXACTLY: this
 #: set shrinks as the atom lands. Growing it is a deliberate act that has to be argued for here.
 _EXPECTED_HOMELESS = {
-    "name",
+    # `name` LEFT this set when the loop door started stamping it as `WorkflowRun.title`.
     "provider_agent",
     "strategy_id",
     "strategy_config",
