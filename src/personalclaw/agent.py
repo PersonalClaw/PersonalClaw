@@ -1211,12 +1211,19 @@ def rebuild_agent_config(*, clean: bool = False) -> Path:
     managed_names = set(_MANAGED_MCP_SERVERS)
 
     # ~/.personalclaw/mcp.json — user-configured MCP overrides (highest priority).
+    from personalclaw.config.secret_refs import MCP_DEFINITION_KEYS
+
     personalclaw_mcp = _load_json(_USER_DIR / "mcp.json").get("mcpServers", {})
     for name, spec in personalclaw_mcp.items():
         if isinstance(spec, dict) and name not in managed_names:
             mcps = config.setdefault("mcpServers", {})
             if name in mcps and isinstance(mcps[name], dict):
-                mcps[name].update(spec)
+                # mcp.json DEFINES the server, so its definition replaces the copy's whole; the
+                # copy keeps only the state it adds (`autoApprove`, …). A key-by-key merge kept
+                # whatever an edit had removed — cleared arguments, a deleted variable — in the
+                # copy `list_servers` reads first.
+                kept = {k: v for k, v in mcps[name].items() if k not in MCP_DEFINITION_KEYS}
+                mcps[name] = {**kept, **spec}
             else:
                 mcps[name] = spec
 

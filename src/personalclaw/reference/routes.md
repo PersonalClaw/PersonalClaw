@@ -459,9 +459,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/mcp/probe` — return cached probe results (non-blocking).
 - `POST /api/mcp/probe` — probe all MCP servers and return live status.
 - `POST /api/mcp/probe/{name}` — reconnect (re-probe) a SINGLE MCP server.
-- `POST /api/mcp/remove` — uninstall an MCP server.
-- `DELETE /api/mcp/servers/{name}` — register or remove an MCP server.
-- `PUT /api/mcp/servers/{name}` — register or remove an MCP server.
+- `DELETE /api/mcp/servers/{name}` — read, add or edit, or remove one MCP server.
+- `GET /api/mcp/servers/{name}` — read, add or edit, or remove one MCP server.
+- `PUT /api/mcp/servers/{name}` — read, add or edit, or remove one MCP server.
 - `POST /api/mcp/sync` — apply MCP config changes and restart sessions.
 - `POST /api/mcp/toggle` — enable or disable an MCP server globally.
 - `POST /api/mcp/toggle-all` — enable or disable all MCP servers.

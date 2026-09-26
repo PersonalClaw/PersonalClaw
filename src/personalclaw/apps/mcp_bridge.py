@@ -105,62 +105,40 @@ def register_app_mcp_servers(manifest: AppManifest) -> list[str]:
 
 
 def deregister_app_mcp_servers(app_name: str) -> int:
-    """Remove every ``{app_name}:*`` MCP server from the live config AND the
-    installed agent config. Returns the count removed from mcp.json.
+    """Remove every ``{app_name}:*`` MCP server from the live config AND the installed agent
+    config, with the values it owns. Returns how many servers were removed.
 
     The agent config (``personalclaw.json``) also carries the server spec under
     ``mcpServers`` plus ``@{app}:{server}`` refs in ``tools``/``allowedTools`` —
     discovery reads it as a ``source="agent"`` server, so a deregister that only
     cleaned mcp.json left the server visible + uncallable forever (the bug behind
-    'the provider didn't delete'). Clean both stores so uninstalling the app
-    actually removes its servers everywhere."""
-    data = _load()
-    bucket = data.get("mcpServers")
+    'the provider didn't delete'). The names are collected from both files, refs included,
+    and removed through ``secret_refs.remove_mcp_servers``, the one delete every surface uses."""
+    from personalclaw.config.secret_refs import mcp_documents, remove_mcp_servers
+
     prefix = f"{app_name}{_NS_SEP}"
-    doomed: list[str] = []
-    if isinstance(bucket, dict):
-        doomed = [k for k in bucket if k.startswith(prefix)]
-        for k in doomed:
-            bucket.pop(k, None)
-        if doomed:
-            _save(data)
-            logger.info("app %s: deregistered MCP servers %s (mcp.json)", app_name, doomed)
-    _deregister_from_agent_config(prefix)
-    return len(doomed)
-
-
-def _deregister_from_agent_config(prefix: str) -> None:
-    """Strip every ``{prefix}*`` server from the installed agent config —
-    ``mcpServers`` specs + the ``@name`` refs in ``tools``/``allowedTools`` — so an
-    app-contributed (source="agent") MCP server is fully removed on uninstall."""
-    try:
-        from personalclaw.agent import AGENT_FILENAME
-        from personalclaw.config.secret_refs import write_mcp_document
-
-        path = config_dir() / "agents" / AGENT_FILENAME
-        if not path.is_file():
-            return
-        cfg = json.loads(path.read_text(encoding="utf-8"))
-        servers = cfg.get("mcpServers")
-        changed = False
+    names: set[str] = set()
+    for path in mcp_documents():
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(doc, dict):
+            continue
+        servers = doc.get("mcpServers")
         if isinstance(servers, dict):
-            for k in [k for k in servers if k.startswith(prefix)]:
-                servers.pop(k, None)
-                changed = True
+            names.update(k for k in servers if k.startswith(prefix))
         for list_key in ("tools", "allowedTools"):
-            lst = cfg.get(list_key)
-            if isinstance(lst, list):
-                kept = [
-                    t for t in lst if not (isinstance(t, str) and t.lstrip("@").startswith(prefix))
-                ]
-                if len(kept) != len(lst):
-                    cfg[list_key] = kept
-                    changed = True
-        if changed:
-            write_mcp_document(path, cfg)
-            logger.info("deregistered MCP servers %s* from agent config", prefix)
-    except Exception:
-        logger.debug("agent-config MCP deregister skipped for %s*", prefix, exc_info=True)
+            listed = doc.get(list_key)
+            names.update(
+                t[1:]
+                for t in (listed if isinstance(listed, list) else [])
+                if isinstance(t, str) and t.startswith(f"@{prefix}")
+            )
+    removed = remove_mcp_servers(names)
+    if removed:
+        logger.info("app %s: deregistered MCP servers %s", app_name, removed)
+    return len(removed)
 
 
 def app_mcp_server_keys(app_name: str) -> list[str]:

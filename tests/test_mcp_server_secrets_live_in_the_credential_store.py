@@ -63,11 +63,6 @@ def _digest(value: str) -> str:
 def home(monkeypatch):
     monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     home = config_loader.config_dir()
-    from personalclaw.dashboard.handlers import mcp as mcp_mod
-
-    # Frozen at import (`_GLOBAL_MCP_JSON = _canonical_mcp_json()`); in production both name
-    # this home's mcp.json, so the test makes them agree the same way.
-    monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", home / "mcp.json")
     monkeypatch.setattr("personalclaw.agent._USER_DIR", home)
     agents = home / "agents"
     agents.mkdir(parents=True, exist_ok=True)
@@ -170,12 +165,14 @@ def test_a_variable_marked_plain_is_still_stored_when_its_name_is_a_credential(h
     assert TOKEN not in (home / "mcp.json").read_text()
 
 
-def test_a_multi_line_value_is_refused_and_nothing_is_written(home):
-    resp = _put("pem", {"command": "npx", "env": {"PRIVATE_KEY": "line-one\nline-two"}})
+def test_a_value_no_credential_can_hold_is_refused_and_nothing_is_written(home):
+    # A multi-line value is stored now (`test_multiline_secret_is_kept_in_the_credential_store`);
+    # NUL is the one character refused, and refused before anything is stored.
+    resp = _put("nul", {"command": "npx", "env": {"GITHUB_TOKEN": TOKEN, "BAD": "a\x00b"}})
     assert resp.status == 400
-    assert "multi-line" in json.loads(resp.body)["error"]["message"]
+    assert "NUL" in json.loads(resp.body)["error"]["message"]
     assert not (home / "mcp.json").exists()
-    assert _mcp_keys("pem") == []
+    assert _mcp_keys("nul") == []
 
 
 def test_removing_a_server_deletes_its_stored_secrets(home):
@@ -390,14 +387,14 @@ def test_a_server_moved_at_boot_still_starts_with_its_token(home, echo_server):
     assert asyncio.run(_call_read_env("echo", "GITHUB_TOKEN")) == TOKEN
 
 
-def test_a_multi_line_value_stays_inline_at_boot_and_the_rest_still_moves(home):
-    pem = "-----BEGIN KEY-----\nabc\n-----END KEY-----"
+def test_a_value_no_credential_can_hold_stays_inline_at_boot_and_the_rest_still_moves(home):
+    bad = "abc\x00def"
     (home / "mcp.json").write_text(
-        json.dumps({"mcpServers": {"g": {"command": "x", "env": {"PEM": pem, "API": TOKEN}}}})
+        json.dumps({"mcpServers": {"g": {"command": "x", "env": {"BAD": bad, "API": TOKEN}}}})
     )
     migrate_plaintext_secrets()
     env = _read(home / "mcp.json")["mcpServers"]["g"]["env"]
-    assert env["PEM"] == pem
+    assert env["BAD"] == bad
     assert ref_key(env["API"]) and TOKEN not in (home / "mcp.json").read_text()
 
 

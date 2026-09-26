@@ -709,6 +709,19 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "approval_owner_ended": (
         "The work that asked for this approval has ended, so it was cancelled and nothing ran."
     ),
+    # ── saving an MCP server (dashboard/handlers/mcp.py — PUT /api/mcp/servers/{name}) ──
+    # `invalid_env` (400) — the environment cannot be saved as sent: `env` is not a map of names
+    # to strings, `plainEnv`/`keepEnv` is not a list of names, a variable asked to keep its saved
+    # value has none saved, or a value holds a character no credential can (NUL). The message
+    # names the variable. `mcp_server_not_editable` (409) — the name belongs to a server
+    # PersonalClaw manages itself or an app provides, so its definition is not the form's to
+    # replace; the message says which.
+    "invalid_env": (
+        "The MCP server's environment cannot be saved as sent; the message names the variable."
+    ),
+    "mcp_server_not_editable": (
+        "PersonalClaw or an app provides this MCP server, so it cannot be saved from here."
+    ),
 }
 
 

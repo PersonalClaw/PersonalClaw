@@ -46,6 +46,7 @@ from pathlib import Path
 
 from personalclaw.config import loader as _loader
 from personalclaw.config.credentials import (
+    _decode_dotenv_value,
     _dotenv_credentials,
     _dotenv_remove_credentials,
     _keychain_delete,
@@ -341,8 +342,9 @@ def _parse_env_bytes(raw: bytes) -> dict[str, str]:
     """Parse snapshot bytes with ``.env``'s own rules. Reader only — never a writer.
 
     Shares :func:`personalclaw.config.credentials._dotenv_credentials`'s grammar
-    (``#`` comments, ``KEY=VALUE``, trimmed) but reads BYTES rather than the live path, so
-    verify and rollback can inspect the snapshot without pointing the live parser at it.
+    (``#`` comments, ``KEY=VALUE``, trimmed, a quoted value decoded) but reads BYTES rather than
+    the live path, so verify and rollback can inspect the snapshot without pointing the live
+    parser at it.
     """
     out: dict[str, str] = {}
     for line in raw.decode("utf-8", "replace").splitlines():
@@ -350,5 +352,5 @@ def _parse_env_bytes(raw: bytes) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
-        out[k.strip()] = v.strip()
+        out[k.strip()] = _decode_dotenv_value(v.strip())
     return out

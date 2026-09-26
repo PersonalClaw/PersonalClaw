@@ -42,37 +42,30 @@ def _get_probe_timeout() -> int:
 # Probe results expire after 30 minutes → status becomes "outdated"
 _PROBE_TTL_SECS = 1800
 
-# Well-known MCP config locations, tagged by scope.  Scope names match
-# the dashboard badges (personalclaw / globalMcp / ccGlobal) and are the
-# source of truth for the ``presence`` field on each server.
-SCOPE_PERSONALCLAW = "personalclaw"
-SCOPE_LEGACY_GLOBAL = "globalMcp"
-SCOPE_CC_GLOBAL = "ccGlobal"
 
-
-# Single source of truth pairing each config path with its scope label.
-# Priority at collision time is controlled by the explicit scope iteration
-# order in :func:`_load_mcp_json` (personalclaw > legacy global), not by this
-# tuple's order.
+# PersonalClaw discovers MCP servers ONLY from its own config. A Claude-Code-only server
+# (``~/.claude.json``) is not invocable by the native loop, so surfacing it here would imply
+# tools the agent can't call. Such servers are instead offered as explicit *import
+# suggestions* via :func:`discover_importable_servers` + the ``/api/mcp/apply`` endpoint,
+# which copies a chosen spec into ``~/.personalclaw/mcp.json``.
 #
-# PersonalClaw discovers MCP servers ONLY from its own config scopes. A
-# Claude-Code-only server (``~/.claude.json``) is not invocable by the native
-# loop, so surfacing it here would imply tools the agent can't call. Such
-# servers are instead offered as explicit *import suggestions* via
-# :func:`discover_importable_servers` + the ``/api/mcp/apply`` endpoint, which
-# copies a chosen spec into ``~/.personalclaw/mcp.json``.
-# UT3: ONE canonical MCP store. The former legacy ``settings/mcp.json`` source was
-# dropped (its content is migrated into this file once, at startup, by
-# handlers/mcp._migrate_legacy_mcp_json) so there is a single read+write path the
-# dashboard, the provider instances, agent.py, and the native runtime all share.
+# UT3: ONE canonical MCP store. The former legacy ``settings/mcp.json`` source was dropped (its
+# content is migrated into this file once, at startup, by handlers/mcp._migrate_legacy_mcp_json)
+# so there is a single read+write path the dashboard, the provider instances, agent.py, and the
+# native runtime all share. The "global" scope that file used to be is gone with it: a second
+# scope NAME left pointing at the one file is how Import added a server and removed it again in
+# the same request.
+#
 # A FUNCTION, not a module constant: a `Path.home()` value computed at import time is
 # frozen before `PERSONALCLAW_HOME` can matter, so an isolated dev home read the operator's
 # real `~/.personalclaw/mcp.json` — their servers and their credentials — while the
 # dashboard wrote the dev home. Resolved per call, through `config_dir()`.
-def _mcp_sources() -> tuple[tuple[Path, str], ...]:
+def _mcp_json_paths() -> tuple[Path, ...]:
+    """The MCP config files discovery reads. Tests monkeypatch this to inject fixture paths
+    (several patch more than one, to exercise first-wins precedence)."""
     from personalclaw.config.loader import config_dir
 
-    return ((config_dir() / "mcp.json", SCOPE_PERSONALCLAW),)
+    return (config_dir() / "mcp.json",)
 
 
 # External backend MCP configs PersonalClaw can *import from* (but never
@@ -80,13 +73,6 @@ def _mcp_sources() -> tuple[tuple[Path, str], ...]:
 # the import-suggestions UI. Extensible: add further backend config paths here
 # once their formats are confirmed — the discovery + import path is backend-agnostic.
 _IMPORT_SOURCES: tuple[tuple[Path, str], ...] = ((Path.home() / ".claude.json", "Claude Code"),)
-
-
-# Test override seam: tests monkeypatch this FUNCTION to inject fixture paths (several
-# patch more than one path to exercise merge precedence, which a single `config_dir()`
-# derivation cannot express). Derived from :func:`_mcp_sources` so the two cannot drift.
-def _mcp_json_paths() -> tuple[Path, ...]:
-    return tuple(p for p, _ in _mcp_sources())
 
 
 @dataclass
@@ -148,13 +134,6 @@ class McpServerInfo:
     tools: list[dict[str, Any]] = field(default_factory=list)
     error: str = ""
     source: str = "agent"  # agent | mcp.json | discovered
-    presence: dict[str, bool] = field(
-        default_factory=lambda: {
-            SCOPE_PERSONALCLAW: False,
-            SCOPE_LEGACY_GLOBAL: False,
-            SCOPE_CC_GLOBAL: False,
-        }
-    )
     disabled_tools: list[str] = field(default_factory=list)
 
     @property
@@ -171,7 +150,6 @@ class McpServerInfo:
             "tools": self.tools,
             "error": self.error,
             "source": self.source,
-            "presence": dict(self.presence),
         }
         if self.url:
             d["url"] = self.url
@@ -246,26 +224,14 @@ def _load_agent_config() -> dict[str, Any]:
     return merged
 
 
-def _load_mcp_json_by_source() -> dict[str, dict[str, Any]]:
-    """Return ``{scope: {name: spec}}`` keyed by scope name.
+def _load_mcp_json() -> dict[str, Any]:
+    """``mcpServers`` from every path :func:`_mcp_json_paths` names, merged.
 
-    Reads every well-known MCP config location and bucketizes servers by
-    their origin scope.  Unlike :func:`_load_mcp_json`, no cross-source
-    merging happens — callers that need per-scope presence use this.
-
-    Iterates :func:`_mcp_sources` (path + scope pairs), so paths and scope
-    labels can never drift.  When tests monkeypatch :func:`_mcp_json_paths`
-    to a shorter tuple for isolation, the corresponding scopes are
-    recovered by looking up each patched path in ``_mcp_sources()``; any
-    unknown path falls back to :data:`SCOPE_PERSONALCLAW`.
+    Earlier paths take precedence — if the same server name appears in
+    multiple files, the first definition wins (via ``setdefault``).
     """
-    result: dict[str, dict[str, Any]] = {
-        SCOPE_PERSONALCLAW: {},
-        SCOPE_LEGACY_GLOBAL: {},
-    }
-    path_to_scope = {p: scope for p, scope in _mcp_sources()}
+    merged: dict[str, Any] = {}
     for p in _mcp_json_paths():
-        scope = path_to_scope.get(p, SCOPE_PERSONALCLAW)
         if not p.is_file():
             continue
         try:
@@ -279,32 +245,8 @@ def _load_mcp_json_by_source() -> dict[str, dict[str, Any]]:
             continue
         servers = data.get("mcpServers", {})
         if isinstance(servers, dict):
-            # Merge instead of overwriting — if two paths resolve to the
-            # same scope (legitimate duplicates, or tests that monkeypatch
-            # _mcp_json_paths() with fallback-scoped paths), setdefault keeps
-            # first-wins semantics within the scope.
-            bucket = result[scope]
             for name, spec in servers.items():
-                bucket.setdefault(name, spec)
-    return result
-
-
-def _load_mcp_json() -> dict[str, Any]:
-    """Load and merge mcpServers from all well-known mcp.json locations.
-
-    Earlier paths take precedence — if the same server name appears in
-    multiple files, the first definition wins (via ``setdefault``).
-    Retained for callers that only need a merged view; use
-    :func:`_load_mcp_json_by_source` when per-scope presence matters.
-    """
-    merged: dict[str, Any] = {}
-    by_source = _load_mcp_json_by_source()
-    # Iteration order = priority (setdefault is a no-op once populated):
-    # personalclaw-specific file > legacy global. Matches rebuild_agent_config's
-    # merge order in agent.py.
-    for scope in (SCOPE_PERSONALCLAW, SCOPE_LEGACY_GLOBAL):
-        for name, spec in by_source.get(scope, {}).items():
-            merged.setdefault(name, spec)
+                merged.setdefault(name, spec)
     return merged
 
 
@@ -358,15 +300,11 @@ def _fix_stale_managed_command(name: str, spec: dict) -> None:
 
 
 def list_servers() -> list[McpServerInfo]:
-    """Return all known MCP servers from agent config + mcp.json + CC global.
+    """Return all known MCP servers from the agent config and ``mcp.json``.
 
-    Merges cached probe results so status/tools survive across requests.
-    Populates ``presence`` for each server with booleans for whether the
-    server appears in each of the three scope config files.
-
-    Servers that live only in a provider global (e.g. a user added one via
-    directly to ``~/.claude.json``) still show up
-    on the dashboard so users get a full inventory from one page.
+    Merges cached probe results so status/tools survive across requests. A server configured
+    only in another tool (Claude Code) is not listed here: it is an import suggestion
+    (:func:`discover_importable_servers`), because the native loop cannot call it.
     """
     servers: dict[str, McpServerInfo] = {}
     disabled_in_agent: set[str] = set()
@@ -382,61 +320,18 @@ def list_servers() -> list[McpServerInfo]:
                 _fix_stale_managed_command(name, spec)
                 servers[name] = _server_from_spec(name, spec, "agent")
 
-    # 2. From scope-tagged mcp.json sources, in priority order so highest-
-    #    priority scope populates disabled_tools first and lower scopes
-    #    don't overwrite it.  Order = personalclaw-specific > CC global >
-    #    Legacy global, matching rebuild_agent_config's merge priority.
-    by_source = _load_mcp_json_by_source()
-    disabled_tools_claimed: set[str] = set()
-    for scope in (SCOPE_PERSONALCLAW, SCOPE_LEGACY_GLOBAL):
-        for name, spec in by_source.get(scope, {}).items():
-            if not isinstance(spec, dict):
-                continue
-            # Introduce the server first (if new) so the disabledTools
-            # carry below applies to both new and existing entries.  Without
-            # this ordering, the highest-priority scope's disabledTools is
-            # dropped for new servers because `name in servers` is False
-            # before insertion, letting a lower-priority scope's value
-            # overwrite the (empty) default on a later iteration.
-            if not spec.get("disabled") and name not in servers and name not in disabled_in_agent:
-                servers[name] = _server_from_spec(name, spec, "mcp.json")
+    # 2. From mcp.json. Introduce the server first (if new) so the disabledTools carry below
+    #    applies to new and existing entries alike. "disabledTools" by key presence, not
+    #    truthiness: an explicit [] ("every tool enabled") is the user's answer too.
+    for name, spec in _load_mcp_json().items():
+        if not isinstance(spec, dict):
+            continue
+        if not spec.get("disabled") and name not in servers and name not in disabled_in_agent:
+            servers[name] = _server_from_spec(name, spec, "mcp.json")
+        if name in servers and "disabledTools" in spec:
+            servers[name].disabled_tools = spec.get("disabledTools", [])
 
-            # Per-tool disables: first-scope-wins.  Use "disabledTools" in
-            # spec (key presence) rather than truthiness so an explicit
-            # "disabledTools": [] (user intent: "all tools enabled") is
-            # respected and prevents lower-priority scopes from overwriting.
-            if name in servers and "disabledTools" in spec and name not in disabled_tools_claimed:
-                servers[name].disabled_tools = spec.get("disabledTools", [])
-                disabled_tools_claimed.add(name)
-
-    # 3. Compute per-scope presence.
-    #
-    #    MC presence = "will this load in PersonalClaw sessions after the next
-    #    rebuild".  A server present in any PClaw scope source (or already in
-    #    the current merged agent config) counts as MC green unless PersonalClaw
-    #    has an explicit ``disabled: true`` override.  ``ccGlobal`` presence is
-    #    always False here: PersonalClaw does not read ``~/.claude.json`` as a
-    #    discovery source — Claude-Code servers are surfaced only as explicit
-    #    import suggestions (see :func:`discover_importable_servers`).
-    agent_names = set(agent_cfg.get("mcpServers", {}).keys())
-    personalclaw_own = by_source.get(SCOPE_PERSONALCLAW, {})
-    for name, server in servers.items():
-        pc_disabled = (
-            isinstance(personalclaw_own.get(name), dict)
-            and personalclaw_own[name].get("disabled") is True
-        )
-        in_any_source = (
-            name in agent_names
-            or name in personalclaw_own
-            or name in by_source.get(SCOPE_LEGACY_GLOBAL, {})
-        )
-        server.presence = {
-            SCOPE_PERSONALCLAW: in_any_source and not pc_disabled,
-            SCOPE_LEGACY_GLOBAL: name in by_source.get(SCOPE_LEGACY_GLOBAL, {}),
-            SCOPE_CC_GLOBAL: False,
-        }
-
-    # 4. Merge cached probe results
+    # 3. Merge cached probe results
     for s in servers.values():
         status, tools, error = _get_cached(s.name)
         s.status = status
@@ -828,11 +723,13 @@ def discover_importable_servers() -> list[dict[str, Any]]:
     Claude-Code-only server). The UI offers each as an explicit "Import" action
     backed by ``/api/mcp/apply``, which copies the spec into the PClaw scope.
 
-    Each entry: ``{name, backend, command, args, env, url, headers}`` — enough
-    to render the suggestion and round-trip the spec on import.
+    Each entry: ``{name, backend, command, args, url, env, headers}``, where ``env`` and
+    ``headers`` are ``[{name, hasValue}]`` — which variables the server sets, never what they
+    hold. This is the list a browser renders, and those values are the server's tokens; the
+    import reads them from the backend's own file, server-side, and stores them.
     """
-    # Servers already known to PClaw (own scope + legacy global + agent config)
-    # are not "importable" — they're already first-class.
+    # Servers already known to PClaw (mcp.json + the agent config) are not
+    # "importable" — they're already first-class.
     known: set[str] = set(_load_mcp_json().keys())
     known |= set(_load_agent_config().get("mcpServers", {}).keys())
 
@@ -865,12 +762,20 @@ def discover_importable_servers() -> list[dict[str, Any]]:
                     "backend": backend,
                     "command": spec.get("command", ""),
                     "args": spec.get("args", []),
-                    "env": spec.get("env", {}),
                     "url": spec.get("url", ""),
-                    "headers": spec.get("headers", {}),
+                    "env": _names_with_presence(spec.get("env")),
+                    "headers": _names_with_presence(spec.get("headers")),
                 }
             )
     return out
+
+
+def _names_with_presence(values: Any) -> list[dict[str, Any]]:
+    """``{name: value}`` as ``[{"name", "hasValue"}]``: what a listing may say about another
+    tool's environment or headers without holding any of it."""
+    if not isinstance(values, dict):
+        return []
+    return [{"name": str(k), "hasValue": v not in (None, "")} for k, v in values.items()]
 
 
 def sync_to_agent_config(servers: list[McpServerInfo]) -> bool:

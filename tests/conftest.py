@@ -65,15 +65,16 @@ def _caller_chose_a_home() -> bool:
 
 
 # ── Import-window home (CRE-8, the half no fixture can reach) ───────────
-# `_isolate_real_home_writers` redirects an unchosen home for each TEST. Six modules resolve the
+# `_isolate_real_home_writers` redirects an unchosen home for each TEST. Five modules resolve the
 # home at IMPORT, during collection, before any fixture exists: `agent` (`_USER_DIR` and the
 # prompt/overrides/`_DEFAULT_HOOKS_DIR` paths built from it), `agents.marketplace` (its local
-# registry), `dashboard.handlers.hooks` (`_HOOK_STORE_PATH`), `dashboard.handlers.mcp`
-# (`_GLOBAL_MCP_JSON`), and both skill roots (`skills.marketplace`, `skills.native`). Measured
-# under the guard above on a full run: every worker mkdir'd the real `~/.personalclaw` at import
-# (so a fresh machine or CI runner has one created just by collecting), and 150+ tests read the
-# owner's real skills, agent hooks and `mcp.json` through those frozen paths. Converting the six
-# is a product change with ~17 test sites that patch the constants
+# registry), `dashboard.handlers.hooks` (`_HOOK_STORE_PATH`), and both skill roots
+# (`skills.marketplace`, `skills.native`). (`dashboard.handlers.mcp` was the sixth, until its
+# `_GLOBAL_MCP_JSON` was deleted.) Measured under the guard above on a full run: every worker
+# mkdir'd the real `~/.personalclaw` at import (so a fresh machine or CI runner has one created
+# just by collecting), and 150+ tests read the owner's real skills, agent hooks and `mcp.json`
+# through those frozen paths. Converting the rest is a product change with ~17 test sites that
+# patch the constants
 # (`test_agent_paths_resolve_at_call_time.py` records the debt); this closes the suite's exposure
 # without it: until collection finishes, an unchosen home is ONE per-process scratch directory.
 # After that the per-test redirect takes over — and a resolution that happens outside every test

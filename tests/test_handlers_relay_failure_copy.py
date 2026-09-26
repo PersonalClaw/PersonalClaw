@@ -120,13 +120,12 @@ async def test_mcp_toggle_write_failure_speaks_guidance(tmp_path, monkeypatch) -
 
     mcp_json = tmp_path / "mcp.json"
     mcp_json.write_text(json.dumps({"mcpServers": {"srv": {"command": "x"}}}))
-    monkeypatch.setattr(mcp_h, "_GLOBAL_MCP_JSON", mcp_json)
-    monkeypatch.setattr(mcp_h, "_MCP_LOCK_PATH", tmp_path / "mcp.lock")
+    monkeypatch.setattr(mcp_h, "_canonical_mcp_json", lambda: mcp_json)
 
-    def _boom(data: dict) -> None:
+    def _boom(path, data: dict) -> None:
         raise RuntimeError(_SECRET)
 
-    monkeypatch.setattr(mcp_h, "_write_mcp_json", _boom)
+    monkeypatch.setattr(mcp_h, "_atomic_write", _boom)
 
     resp = await mcp_h.api_mcp_toggle(_JsonRequest({"name": "srv", "enabled": False}))
 

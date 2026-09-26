@@ -18,7 +18,8 @@ Each ``mcpServers`` entry maps to one :class:`ExtensionInstance`:
 
 Writes preserve any ``env``/``headers`` already on the spec so editing from the
 card never drops credentials configured elsewhere — and every write goes through
-``secret_refs.write_mcp_document``, so those values stay in the credential store.
+``secret_refs.write_mcp_document``, so those values stay in the credential store. A delete goes
+through ``secret_refs.remove_mcp_servers``, the same one the Tools page uses.
 """
 
 from __future__ import annotations
@@ -164,10 +165,13 @@ def update_instance(
 
 
 def delete_instance(instance_id: str) -> bool:
-    data = _load()
-    servers = data.get("mcpServers", {})
-    if instance_id not in servers:
-        return False
-    del servers[instance_id]
-    _save(data)
-    return True
+    """Remove the server everywhere it is configured, and the values it owns.
+
+    Through :func:`~personalclaw.config.secret_refs.remove_mcp_servers`, the one delete. This
+    card used to remove the server from ``mcp.json`` only: the agent config kept its copy (the
+    rebuild merges additively, so nothing took it out), the Tools page kept listing it, and its
+    credential-store keys stayed, because that copy still referenced them.
+    """
+    from personalclaw.config.secret_refs import remove_mcp_servers
+
+    return bool(remove_mcp_servers([instance_id]))

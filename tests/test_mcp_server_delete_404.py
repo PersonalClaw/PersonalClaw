@@ -36,25 +36,23 @@ def _delete_request(name: str) -> MagicMock:
     return request
 
 
-def _isolate(mcp_mod, tmp_path, monkeypatch):
-    """Point every store this handler touches at tmp_path, and no-op the lock +
-    agent-config sync so the test never reads/writes anything under the real home."""
-    mc_path = tmp_path / "personalclaw.mcp.json"
-    global_path = tmp_path / "global_mcp.json"
-    monkeypatch.setattr(mcp_mod, "_canonical_mcp_json", lambda: mc_path)
-    monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", global_path)
+def _isolate(mcp_mod, monkeypatch):
+    """The delete writes the two documents of the per-test home (conftest redirects it), so the
+    test never reads or writes anything under the real home. The lock and the audit row are
+    no-ops. Returns that home's ``mcp.json``."""
+    from personalclaw.config import loader as config_loader
+
+    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     monkeypatch.setattr(mcp_mod, "_get_mcp_lock", lambda: _NoLock())
-    monkeypatch.setattr(mcp_mod, "_server_in_agent_config", lambda name: False)
-    monkeypatch.setattr(mcp_mod, "_sync_mcp_to_agent", lambda name, enabled, remove=False: None)
     monkeypatch.setattr(mcp_mod.sel(), "log_api_access", lambda **kw: None, raising=False)
-    return mc_path
+    return config_loader.config_dir() / "mcp.json"
 
 
 @pytest.mark.asyncio
 async def test_delete_unknown_server_404s_with_error_envelope(tmp_path, monkeypatch):
     from personalclaw.dashboard.handlers import mcp as mcp_mod
 
-    _isolate(mcp_mod, tmp_path, monkeypatch)
+    _isolate(mcp_mod, monkeypatch)
 
     resp = await mcp_mod.api_mcp_server_detail(_delete_request("qa23-nope-zzz"))
     assert resp.status == 404
@@ -72,7 +70,7 @@ async def test_delete_unknown_server_404s_with_error_envelope(tmp_path, monkeypa
 async def test_delete_existing_server_still_200s_and_removes_it(tmp_path, monkeypatch):
     from personalclaw.dashboard.handlers import mcp as mcp_mod
 
-    mc_path = _isolate(mcp_mod, tmp_path, monkeypatch)
+    mc_path = _isolate(mcp_mod, monkeypatch)
     mc_path.write_text(json.dumps({"mcpServers": {"real-srv": {"command": "x"}}}))
 
     resp = await mcp_mod.api_mcp_server_detail(_delete_request("real-srv"))

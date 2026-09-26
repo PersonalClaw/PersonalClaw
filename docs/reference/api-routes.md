@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **855 registrations** over **694 distinct paths** — 848 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **855 registrations** over **693 distinct paths** — 848 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -36,7 +36,7 @@ The 127 families the surface divides into, largest first.
 | `/api/skills` | 19 | 15 |
 | `/api/voice` | 17 | 11 |
 | `/api/triggers` | 16 | 14 |
-| `/api/mcp` | 15 | 13 |
+| `/api/mcp` | 15 | 12 |
 | `/api/projects` | 14 | 10 |
 | `/api/providers` | 14 | 10 |
 | `/api/sessions` | 14 | 11 |
@@ -611,9 +611,9 @@ The 848 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/mcp/probe` | return cached probe results (non-blocking). |
 | `POST` | `/api/mcp/probe` | probe all MCP servers and return live status. |
 | `POST` | `/api/mcp/probe/{name}` | reconnect (re-probe) a SINGLE MCP server. |
-| `POST` | `/api/mcp/remove` | uninstall an MCP server. |
-| `DELETE` | `/api/mcp/servers/{name}` | register or remove an MCP server. |
-| `PUT` | `/api/mcp/servers/{name}` | register or remove an MCP server. |
+| `DELETE` | `/api/mcp/servers/{name}` | read, add or edit, or remove one MCP server. |
+| `GET` | `/api/mcp/servers/{name}` | read, add or edit, or remove one MCP server. |
+| `PUT` | `/api/mcp/servers/{name}` | read, add or edit, or remove one MCP server. |
 | `POST` | `/api/mcp/sync` | apply MCP config changes and restart sessions. |
 | `POST` | `/api/mcp/toggle` | enable or disable an MCP server globally. |
 | `POST` | `/api/mcp/toggle-all` | enable or disable all MCP servers. |

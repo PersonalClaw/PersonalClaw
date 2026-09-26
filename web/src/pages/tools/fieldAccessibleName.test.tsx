@@ -106,9 +106,10 @@ describe('ToolsPage uses the shared Field', () => {
 
   it('still wraps its inputs in Field, so the labels are published', () => {
     // Deleting the local Field without importing the shared one would ALSO remove the label text —
-    // this pins that the fields survived the swap. Nine: the MCP form's "Plain values" field joined
-    // its "Environment" field when env values moved to the credential store.
-    expect((src.match(/<Field label=/g) ?? []).length).toBe(9)
+    // this pins that the fields survived the swap. Nine in the Add form (the MCP form's "Plain
+    // values" field joined its "Environment" field when env values moved to the credential store),
+    // and four in the Edit form: Command, Arguments, Environment, Plain values.
+    expect((src.match(/<Field label=/g) ?? []).length).toBe(13)
   })
 })
 

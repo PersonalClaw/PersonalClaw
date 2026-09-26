@@ -238,7 +238,12 @@ Data leaving the running system:
   agent config carry a `{{secret:…}}` reference, resolved where the value is used: an MCP
   server's at spawn, the webhook token when a request is checked. Every path that adds or changes
   an MCP server writes through `secret_refs.write_mcp_document`. Deleting a provider, removing an MCP
-  server on the Tools page, or either removal rung of an app, deletes what it owned.
+  server (the Tools page and the provider card share one delete, `secret_refs.remove_mcp_servers`,
+  which takes it out of both documents), or either removal rung of an app, deletes what it owned.
+  An owned secret is never put in the gateway's environment, so no child process, an MCP server
+  included, inherits another record's value: `AppConfig.load_credentials` and the CLI's `.env`
+  loader (`cli.main`) both skip `PCSECRET_` keys. `GET /api/mcp/importable` sends another tool's
+  variable and header names, never their values.
 - **Private home** (`atomic_write.py`): a file the atomic writers put under the home —
   `atomic_write`, and `agent._atomic_json_write` for `mcp.json` and the agent config — is 0600
   in a 0700 directory, and a wider mode is refused. `config.json`, an app's `data/config.json`,
@@ -251,7 +256,7 @@ Data leaving the running system:
   per-app `.app_secret` enters neither a snapshot nor an export. No settings file an archive
   carries holds a stored value (`tests/test_export_carries_no_credential_store_value.py`
   searches every member for every value the store holds). What a reference cannot cover (copies
-  made before the upgrade, a multi-line value, Claude Code's own config) is in
+  made before the upgrade, a value with a NUL character, Claude Code's own config) is in
   [limitations.md §6](limitations.md).
 - **Memory privacy** (`session_restrictions.py`): temporary/incognito sessions
   gate memory reads/writes.

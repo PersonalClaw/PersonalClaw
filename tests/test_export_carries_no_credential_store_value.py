@@ -58,7 +58,6 @@ def home(monkeypatch):
     home = config_loader.config_dir()
     from personalclaw.dashboard.handlers import mcp as mcp_mod
 
-    monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", home / "mcp.json")
     register_branded_app(
         BrandedProviderSpec(
             type=FIXTURE_TYPE, protocol="openai", default_base_url="https://x.invalid/v1"

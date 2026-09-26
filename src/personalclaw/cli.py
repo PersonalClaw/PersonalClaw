@@ -1430,14 +1430,28 @@ def main() -> None:
     # Load .env from the project root (CWD or detected project dir) and from
     # PERSONALCLAW_HOME so credentials resolve via os.environ without requiring
     # users to manually copy .env into ~/.personalclaw.
-    from dotenv import load_dotenv as _load_dotenv
+    #
+    # NAMED credentials only. The home's `.env` is also where the credential store keeps every
+    # OWNED secret (`PCSECRET_…`: provider keys, app tokens, each MCP server's env and header
+    # values, the webhook token), and those are read through their settings reference and never
+    # exported — `AppConfig.load_credentials` holds the same line. python-dotenv's `load_dotenv`
+    # sets every line, so it handed all of them to every child the gateway spawns: each MCP
+    # server started with every other server's tokens.
+    from dotenv import dotenv_values as _dotenv_values
+
+    from personalclaw.config.credentials import is_owned_key
+
+    def _load_named_credentials(path: Path) -> None:
+        for key, value in _dotenv_values(path).items():
+            if value is not None and not is_owned_key(key):
+                os.environ.setdefault(key, value)
 
     _cwd_env = Path.cwd() / ".env"
     if _cwd_env.is_file():
-        _load_dotenv(_cwd_env, override=False)
+        _load_named_credentials(_cwd_env)
     _home_env = config_dir() / ".env"
     if _home_env.is_file() and _home_env != _cwd_env:
-        _load_dotenv(_home_env, override=False)
+        _load_named_credentials(_home_env)
 
     # Validate PERSONALCLAW_PORT early — fail fast before anything else loads.
     _raw_port = os.environ.get("PERSONALCLAW_PORT")

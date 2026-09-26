@@ -16,7 +16,7 @@ from personalclaw.apps.secret_fields import (
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
-from personalclaw.config.secret_refs import store_config_secrets
+from personalclaw.config.secret_refs import reveal_stored_values, store_config_secrets
 from personalclaw.hooks import safe_read_file
 from personalclaw.sel import sel
 
@@ -59,10 +59,7 @@ def _report_withheld(masked_paths: list[str], key: str | None) -> None:
     exists. STDERR rather than stdout because `config get > f.json` must stay valid JSON; that
     redirect is the documented round-trip and a note inside the document would break it.
     """
-    if key is not None:
-        # `providers[0].api_key` is under `providers`, so the subtree test has to admit the
-        # index bracket as well as the dot separator.
-        masked_paths = [p for p in masked_paths if p == key or p.startswith((f"{key}.", f"{key}["))]
+    masked_paths = _in_subtree(masked_paths, key)
     if not masked_paths:
         return
     shown = ", ".join(masked_paths[:6])
@@ -77,6 +74,26 @@ def _report_withheld(masked_paths: list[str], key: str | None) -> None:
         "for a file you intend to `config set --file` back.",
         file=sys.stderr,
     )
+
+
+def _in_subtree(paths: list[str], key: str | None) -> list[str]:
+    """The paths at or under ``key`` (all of them for the whole document). ``providers[0].api_key``
+    is under ``providers``, so the test admits the index bracket as well as the dot separator."""
+    if key is None:
+        return paths
+    return [p for p in paths if p == key or p.startswith((f"{key}.", f"{key}["))]
+
+
+def _report_unresolved(paths: list[str], key: str | None) -> None:
+    """Name, on STDERR, every revealed field whose reference points at nothing in the store — so a
+    printed ``{{secret:…}}`` reads as "this value is missing", not as the value."""
+    paths = _in_subtree(paths, key)
+    if paths:
+        print(
+            f"⚠️  {len(paths)} field(s) refer to a value the credential store no longer holds, "
+            f"printed as the reference: {', '.join(paths)}",
+            file=sys.stderr,
+        )
 
 
 def _refuse(operation: str, resources: str, message: str, outcome: str = "error") -> NoReturn:
@@ -133,11 +150,18 @@ def _config_cmd(args: argparse.Namespace) -> None:
         # in it, which was not (#3125). Masked by DEFAULT, because the operator who needs a
         # plaintext config is the rare case and the one reading a terminal is not.
         masked_paths: list[str] = []
-        if not reveal:
+        unresolved: list[str] = []
+        if reveal:
+            # The file holds a `{{secret:…}}` reference where PersonalClaw moved a credential into
+            # the store (a provider key, the webhook token). `--reveal` is the owner asking for
+            # the credential itself, so the reference is resolved, not printed.
+            d, unresolved = reveal_stored_values(d)
+        else:
             d, masked_paths = mask_secrets_in_document(d)
         if not key:
             print(json.dumps(d, indent=2))
             _report_withheld(masked_paths, None)
+            _report_unresolved(unresolved, None)
             return
         val = _dict_get(d, key)
         if val is _MISSING:
@@ -148,6 +172,7 @@ def _config_cmd(args: argparse.Namespace) -> None:
         else:
             print(val)
         _report_withheld(masked_paths, key)
+        _report_unresolved(unresolved, key)
     elif action == "set":
 
         file_path = getattr(args, "file", None)
