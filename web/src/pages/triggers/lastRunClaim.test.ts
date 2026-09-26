@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { scheduleToTrigger, storeToTrigger, eventToTrigger, hookToTrigger } from './triggerMeta'
+import { scheduleToTrigger, storeToTrigger, hookToTrigger } from './triggerMeta'
 import { triggerStatusMeta } from '../schedule/scheduleMeta'
 import type { ScheduleJob, Trigger as WireTrigger, HookItem } from '../../lib/api'
 
@@ -111,11 +111,12 @@ describe('the same claim, for every other kind', () => {
   })
 
   it('an event trigger with no fires does not claim a successful run', () => {
-    const wire = { kind: 'event', id: 'event:x', raw_id: 'x', name: 'x', enabled: true, pattern: 'AppEvent', health: 'ok', state: 'active', fire_count: 0 } as WireTrigger
-    const t = eventToTrigger(wire)
+    // A data event is a store row; its `run_count` is the same fire meter every store row carries.
+    const wire = { kind: 'store', store_kind: 'event', id: 'store:event:x', raw_id: 'event:x', name: 'x', enabled: true, spec: { source: 'app', pattern: 'AppEvent' }, health: 'ok', state: 'active', run_count: 0 } as unknown as WireTrigger
+    const t = storeToTrigger(wire)
     expect(t.hasRun).toBe(false)
     expect(triggerStatusMeta(t).label).toBe(NEVER.label)
-    expect(triggerStatusMeta(eventToTrigger({ ...wire, fire_count: 7 })).label).toBe('ok')
+    expect(triggerStatusMeta(storeToTrigger({ ...wire, run_count: 7 })).label).toBe('ok')
   })
 
   it('a lifecycle hook reports its own run outcome, with no rollup to confuse it', () => {

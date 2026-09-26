@@ -2480,18 +2480,16 @@ export type EventPattern =
 // helpers project it onto ScheduleJob; the lifecycle helpers onto HookItem.
 export interface TriggerAction { provider: string; config: Record<string, unknown> }
 export interface Trigger {
-  // `GET /api/triggers` serves FOUR kinds (handlers/triggers.py `api_triggers_list`); `event` was
-  // missing from this union while `_serialize_event` was already emitting it, so a data-event row
-  // was untypeable on the wire and the list page fetched only three of the four sources.
-  kind: 'schedule' | 'lifecycle' | 'event' | 'store'; id: string; raw_id: string; name: string; enabled: boolean
+  // `GET /api/triggers` serves THREE namespaces (handlers/triggers.py `api_triggers`). A data-event
+  // trigger is a row in the one trigger store, so it arrives as `store` with `store_kind: 'event'`
+  // and its pattern + matcher in `spec` — the separate `event` namespace went with the second store.
+  kind: 'schedule' | 'lifecycle' | 'store'; id: string; raw_id: string; name: string; enabled: boolean
   action: TriggerAction
-  // event fields (kind=event) — the data-event trigger's pattern + the ONE matcher its pattern
-  // reads (`eventPatternMeta().matcher` names which), plus its fire budget.
-  pattern?: string; sender_glob?: string; address_glob?: string; key_glob?: string; content_re?: string
-  event_glob?: string; fire_count?: number; max_fires?: number
   // store fields (kind=store) — the unified TriggerStore kinds with no legacy backend
-  // (file/web_watch/idle/run_completed/view/webhook). Created via the automation_* chat tools.
-  store_kind?: string; created_by?: string; spec?: Record<string, unknown>
+  // (file/web_watch/idle/run_completed/view/webhook/event/manual). A store row also carries
+  // `last_run_ts` (declared with the schedule fields below) and `last_run_status`, its newest run
+  // record's status — a manual run is recorded there without touching `run_count`.
+  store_kind?: string; created_by?: string; spec?: Record<string, unknown>; last_run_status?: string | null
   // `state` is the LIFECYCLE (`active | paused | autopaused | parked | quarantined | retired`);
   // `health` is the rollup (`ok | degraded | parked | failing`). Two vocabularies, both needed:
   // an autopaused trigger is `health: failing`, and "failing" does not say it has STOPPED (S164).
@@ -2593,7 +2591,8 @@ export interface LifecycleEventInfo { event: string; label: string; desc: string
 // against; the UI never re-derives that prefix, or it would drift from `trigger_sources.namespace`.
 export interface AppSourceEvent { event: string; source_event: string }
 export interface AppSourceInfo { app: string; label: string; events: AppSourceEvent[] }
-export interface TriggerVariables { schedule: string[]; lifecycle: LifecycleEventInfo[]; app_sources: AppSourceInfo[] }
+// `event` is the `$variables` a data-event trigger's action can use (`event_triggers.EVENT_VARS`).
+export interface TriggerVariables { schedule: string[]; lifecycle: LifecycleEventInfo[]; app_sources: AppSourceInfo[]; event: string[] }
 // One manual store/schedule-trigger fire (POST /api/triggers/{schedule|store}:{id}/run).
 // `ok` is whether the action ACTUALLY RAN — not whether the request was understood. A trigger whose
 // action cannot be resolved answers 200 with `ok: false` and the reason in `result`, because a
@@ -3361,15 +3360,6 @@ export interface WeekProjection {
   truncated: string[]
 }
 
-// One manual event-trigger fire (POST /api/triggers/event:{id}/run|test). `ran` and `success` are
-// deliberately separate: `ran` is whether the trigger reached its action provider at all (false for
-// incident mode, an unregistered provider, or a denylist block — `reason` says which), while
-// `success` is that provider's own verdict. Collapsing them would report a misconfigured action as
-// "never fired", which points the user at the wrong thing entirely.
-export interface EventFireResult {
-  ok: boolean
-  result: { ran: boolean; reason: string; success?: boolean; exit_code?: number; stdout?: string; stderr?: string; error?: string; duration_ms?: number }
-}
 // Knowledge = a library of TYPED items (note/bookmark/media/docs) with extracted
 // content + AI insights. The typed-format enum, media/file fields, structured
 // insights, and provider attribution mirror the target vision (OpenForge-style);
@@ -7266,7 +7256,7 @@ export const api = {
   // Triggers — the unified surface (schedule + lifecycle). The schedule helpers
   // below speak the schedule wire shape the shared Schedule* components already
   // use; the api layer namespaces the id (schedule:<id>) and routes to /api/triggers.
-  triggers: (type?: 'schedule' | 'lifecycle' | 'event') =>
+  triggers: (type?: 'schedule' | 'lifecycle' | 'store') =>
     get<{ triggers: Trigger[]; server_tz: string; owner?: string }>(
       `/api/triggers${type ? `?type=${type}` : ''}`,
     ),
@@ -7282,38 +7272,20 @@ export const api = {
     if (until) qs.set('until', until)
     return get<WeekProjection>(`/api/triggers/week?${qs.toString()}`)
   },
-  // ── event-kind (data-event) triggers: the S67 parity surface ──
-  // The backend handled `event` in list/create/DELETE only; toggle/run/test/PUT fell through to the
-  // schedule branch and answered 404, so the UI had no way to reach them and no client methods
-  // existed. `ran` is whether the trigger REACHED its provider; `success` is the provider's own
-  // verdict — a misconfigured action reports ran:true / success:false, which is a different problem
-  // from "it never fired" and must stay distinguishable.
-  eventTriggers: () => get<{ triggers: Trigger[] }>('/api/triggers?type=event').then((d) => d.triggers),
-  // Create a data-event trigger (EIAT-5). The backend DERIVES `source` from `pattern`
-  // (PATTERN_SOURCE) — never taken from the wire — so the body carries only the pattern, its
-  // one wired matcher field, the action, and an optional max_fires. A 201 body may carry a
-  // `warning` (a catastrophic content_re warns rather than refuses, §7/R4 rule d).
+  // Create a data-event trigger (EIAT-5): a `kind: "event"` row in the one trigger store, which then
+  // lists, runs, toggles and deletes through the `store:` helpers like every other store trigger.
+  // The backend DERIVES `source` from `pattern` (PATTERN_SOURCE) — never taken from the wire — so
+  // the body carries only the pattern, its one matcher field, the action and the optional budget.
+  // A 201 may carry a `warning` (a catastrophic content_re warns rather than refuses, §7/R4 rule d).
   createEvent: (body: {
     name?: string; pattern: EventPattern
     sender_glob?: string; address_glob?: string; key_glob?: string; content_re?: string
     // AppEvent's matcher (AUTO-A4): a glob on the NAMESPACED event name (`app:<app>:<event>`).
     // Empty matches every app event — the catch-all, which is why AppEvent needs no second pattern.
     event_glob?: string
-    max_fires?: number; action: { provider: string; config: Record<string, unknown> }
-  }) => withSecurityConsent((c) => post<Trigger & { warning?: string }>('/api/triggers',
+    max_fires?: number; debounce_secs?: number; action: { provider: string; config: Record<string, unknown> }
+  }) => withSecurityConsent((c) => post<{ ok: boolean; trigger: Trigger; warning?: string }>('/api/triggers',
     { trigger_type: 'event', ...body, ...(c ? { confirm: true } : {}) })),
-  updateEventTrigger: (id: string, body: Record<string, unknown>) =>
-    withSecurityConsent((c) => put<{ ok: boolean; trigger: Trigger }>(
-      `/api/triggers/event:${encodeURIComponent(id)}`, c ? { ...body, confirm: true } : body)),
-  deleteEventTrigger: (id: string) => del(`/api/triggers/event:${encodeURIComponent(id)}`),
-  toggleEventTrigger: (id: string, enabled?: boolean) =>
-    post<{ ok: boolean; trigger: Trigger }>(`/api/triggers/event:${encodeURIComponent(id)}/toggle`, enabled === undefined ? {} : { enabled }),
-  runEventTrigger: (id: string, body?: { key?: string; value?: string; event_type?: string }) =>
-    post<EventFireResult>(`/api/triggers/event:${encodeURIComponent(id)}/run`, body ?? {}),
-  testEventTrigger: (id: string, body?: { key?: string; value?: string; event_type?: string }) =>
-    post<EventFireResult>(`/api/triggers/event:${encodeURIComponent(id)}/test`, { ...(body ?? {}), test: true }),
-  eventTriggerHistory: (id: string) =>
-    get<{ runs: never[]; total: number; supported: boolean; reason: string; fire_count: number; last_fired_at: number }>(`/api/triggers/event:${encodeURIComponent(id)}/history`),
   // schedule trigger helpers (id is the bare schedule raw id — the shared
   // Schedule* components mutate by bare id, which the helpers re-namespace).
   schedules: () => get<{ triggers: Trigger[]; server_tz: string }>('/api/triggers?type=schedule')

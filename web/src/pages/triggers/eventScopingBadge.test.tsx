@@ -16,6 +16,7 @@ import type { TriggerVariables } from '../../lib/api'
 const cat = (over: Partial<TriggerVariables['lifecycle'][number]>[] = []): TriggerVariables => ({
   schedule: [],
   app_sources: [],
+  event: [],
   lifecycle: [
     { event: 'MemoryWrite', label: 'Memory write', desc: '', vars: [], blocking: false, agent_scoped: false },
     { event: 'Error', label: 'Error', desc: '', vars: [], blocking: false, agent_scoped: true },

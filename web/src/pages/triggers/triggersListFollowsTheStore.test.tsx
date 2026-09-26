@@ -11,7 +11,7 @@ import type { WsMessage } from '../../lib/useChatSocket'
 // changes (a store write by anyone, found by the clock loop's tick), and every source re-reads.
 //
 // And the two store kinds the chat's `automation_create` makes that no page listed (`event`,
-// `manual`) are listed and labelled for what they are.
+// `manual`) are listed and labelled for what they are — a data event by the pattern it listens for.
 
 type Row = Record<string, unknown>
 
@@ -26,7 +26,6 @@ function mockApi() {
       schedules: () => Promise.resolve({ jobs: [] }),
       hooks: () => Promise.resolve([]),
       storeTriggers: () => storeTriggers(),
-      eventTriggers: () => Promise.resolve([]),
       actionProviders: () => Promise.resolve([]),
       autonomyLadder: () => Promise.reject(new Error('no ladder in this test')),
       triggerVariables: () => Promise.resolve({ lifecycle: [], schedule: [], event: [] }),
@@ -37,10 +36,10 @@ function mockApi() {
   }))
 }
 
-function storeRow(kind: string, name: string): Row {
+function storeRow(kind: string, name: string, spec: Row = {}): Row {
   return {
     kind: 'store', store_kind: kind, id: `store:${kind}:${name}`, raw_id: `${kind}:${name}`, name,
-    enabled: true, spec: {}, action: { provider: 'notify', config: {} }, health: 'healthy',
+    enabled: true, spec, action: { provider: 'notify', config: {} }, health: 'healthy',
     state: 'active', run_count: 0, last_error: '', broken: [], warnings: [],
   }
 }
@@ -85,10 +84,13 @@ describe('the Triggers page follows the trigger store', () => {
   })
 
   it('labels the event and manual automations the chat makes for what they are', async () => {
-    storeRows = [storeRow('event', 'When I end a session'), storeRow('manual', 'Tidy downloads')]
+    storeRows = [
+      storeRow('event', 'When a note lands', { source: 'memory', pattern: 'MemoryKeyPattern', key_glob: 'notes.*' }),
+      storeRow('manual', 'Tidy downloads'),
+    ]
     await mount()
     await waitFor(() => expect(screen.getByText('Tidy downloads')).toBeInTheDocument())
-    expect(screen.getByText('On an event')).toBeInTheDocument()
+    expect(screen.getByText('Memory write to a key')).toBeInTheDocument()
     expect(screen.getByText('When you run it')).toBeInTheDocument()
   })
 })

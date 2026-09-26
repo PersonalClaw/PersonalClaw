@@ -100,9 +100,15 @@ DISPOSITION: tuple[Row, ...] = (
         surface="event_triggers.py",
         module="personalclaw.event_triggers",
         verdict=Verdict.ABSORBED,
-        keeps=("max_fires / debounce / rate-cap become trigger gates",),
-        note="Fixes the verified sync-CLI silent-skip: a fire with no running loop recorded "
-        "fire_count and skipped the action. Fires now spool (§3.3).",
+        keeps=(
+            "max_fires / debounce become trigger gates",
+            "the rate cap becomes the event router's storm guard",
+        ),
+        note="Its store, engine and dispatch are gone: event rows live in triggers.json (a legacy "
+        "event_triggers.json is absorbed at boot), the gateway's router admits them through the "
+        "tick's gate walk and fires them through the one store dispatch, and an event raised in "
+        "a process without the router spools (§3.3). The module that remains is the bus and the "
+        "pattern grammar.",
     ),
     Row(
         surface="autonudge.py",

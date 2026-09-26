@@ -22,6 +22,10 @@ caller, because these are public functions and a park reason is free text.
 
 WHY A PARITY RAIL RATHER THAN THREE ASSERTIONS: three projections drifting apart IS the defect. A
 per-projection test could pass on all three while they disagreed about which fields exist.
+
+The event kind has since moved into the one trigger store, so its rows take the STORE projection
+and there are two projections, not three. The `event` cases stay named below so the rail proves an
+event row reaches the list through the same projection as every other store kind.
 """
 
 from __future__ import annotations
@@ -86,21 +90,15 @@ def _store_row(trigger: Trigger) -> dict[str, Any]:
     return _serialize_store(LoadedTrigger(trigger=trigger))
 
 
-def _event_row(trigger: Any) -> dict[str, Any]:
-    from personalclaw.dashboard.handlers.triggers import _serialize_event
+def _event_trigger(**over: Any) -> Trigger:
+    from personalclaw.event_triggers import APP_EVENT, event_spec
 
-    return _serialize_event(trigger)
-
-
-def _event_trigger(**over: Any) -> Any:
-    from personalclaw.event_triggers import EventTrigger
-
-    t = EventTrigger(
-        id="parity-event",
-        source="app",
-        pattern="AppEvent",
-        action_provider="notify",
-        action_config={"message": "hi"},
+    t = Trigger(
+        id="event:parity",
+        name="Parity event",
+        kind="event",
+        spec=event_spec(APP_EVENT),
+        workflow={"inline": {"provider": "notify", "config": {"message": "hi"}}},
     )
     for key, value in over.items():
         setattr(t, key, value)
@@ -118,7 +116,7 @@ def test_every_store_backed_projection_carries_the_lifecycle_triple(kind: str) -
     elif kind == "store":
         row = _store_row(_file())
     else:
-        row = _event_row(_event_trigger())
+        row = _store_row(_event_trigger())
     missing = [f for f in LIFECYCLE_FACTS if f not in row]
     assert not missing, f"{kind} projection omits {missing} — the row cannot report its lifecycle"
 
@@ -178,18 +176,19 @@ def test_the_reason_a_row_renders_is_redacted_by_the_projection(kind: str) -> No
     elif kind == "store":
         row = _store_row(_file(last_error_summary=reason))
     else:
-        row = _event_row(_event_trigger(state="parked", park_reason=reason))
+        row = _store_row(_event_trigger(state="parked", last_error_summary=reason))
     assert CANARY not in (row["last_error"] or ""), f"{kind} leaks a credential into the UI"
     assert row["last_error"], "and it does not answer with nothing instead"
 
 
 def test_the_event_projection_redacts_on_its_own() -> None:
-    """The one that did not, before this change.
+    """The one that did not, before issue 496.
 
     Called out separately because the parametrised case above helps the schedule kind along (its
-    scrubbing lives in `_schedule_row_for`) and would therefore have passed for the event kind
-    too if it did the same. This asserts `_serialize_event` itself.
+    scrubbing lives in `_schedule_row_for`) and would therefore have passed for the event kind too
+    if it did the same. An event row is a store row now, so this asserts the store projection on
+    a parked EVENT row — the park reason an app's absence writes.
     """
-    row = _event_row(_event_trigger(state="parked", park_reason=f"app gone; token {CANARY}"))
+    row = _store_row(_event_trigger(state="parked", last_error_summary=f"app gone; token {CANARY}"))
     assert CANARY not in row["last_error"]
     assert "app gone" in row["last_error"], "the useful half of the reason survives"

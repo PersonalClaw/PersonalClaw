@@ -995,9 +995,10 @@ def diagnose(
 
         # 🔴 An `agent_scope` that ENFORCES NOTHING (§1.4 decision 2 — S131). The key is declared,
         # validated (as of this session) and persisted — but no fire path reads it, because the
-        # store-backed `event` kind fires on MEMORY events while agent scoping lives on the
-        # chat-turn hook path (`fire_for_ids`). An author who set it believes their trigger is
-        # fenced to one agent. Named here because that belief is the whole risk.
+        # store-backed `event` kind fires on memory, inbox and app events, none of which carries an
+        # agent, while agent scoping lives on the chat-turn hook path (`fire_for_ids`). An author
+        # who set it believes their trigger is fenced to one agent. Named here because that belief
+        # is the whole risk.
         spec_scope = entry.get("spec")
         if isinstance(spec_scope, dict) and spec_scope.get("agent_scope"):
             report.findings.append(

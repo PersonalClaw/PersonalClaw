@@ -398,6 +398,8 @@ class GatewayOrchestrator:
         self._web_watch_task: "asyncio.Task[None] | None" = None  # S121 web_watch poll loop
         self._clock_task: "asyncio.Task[None] | None" = None  # S100 unified clock loop
         self._reaper_task: "asyncio.Task[None] | None" = None  # S106 trigger reaper
+        # The event bus's router (`triggers.event_fire`): fires `kind: "event"` triggers.
+        self._event_router: Any = None
         # RUM-5: a staged auto-update waiter that HOLDS until in-flight work drains,
         # then applies. One at a time — a second available-update check reuses the
         # live waiter rather than spawning a rival apply against the same tree.
@@ -1073,17 +1075,60 @@ class GatewayOrchestrator:
         store = TriggerStore(base_dir=config_dir())
         await reaper.run_forever(store=store, base_dir=store.base_dir)
 
+    def _start_event_triggers(self, *, enabled: bool = True) -> None:
+        """Attach the event bus's router, so `kind: "event"` triggers fire in this process.
+
+        The router matches every bus event against the store's `event` rows, admits each match
+        through the clock fire's own gate walk, and dispatches it through `_fire_store_trigger` —
+        see `triggers/event_fire.py`. Until this is attached, a memory write, an inbox message or an
+        app event is spooled for the tick instead (the path every OTHER process takes), which is
+        what makes the gateway the one place an event trigger's action runs.
+
+        `enabled=False` is the `--no-crons` gateway: the router declines events rather than letting
+        them pile up in the spool to fire, late, on the next normal boot.
+        """
+        from personalclaw import event_triggers
+        from personalclaw.triggers.event_fire import EventRouter
+
+        self._stop_event_triggers()
+        router = EventRouter(
+            dispatch=self._fire_store_trigger,
+            loop=asyncio.get_running_loop(),
+            enabled=enabled,
+        )
+        self._event_router = router
+        event_triggers.attach(router)
+
+    def _stop_event_triggers(self) -> None:
+        """Detach the router and cancel the fires still running. Idempotent; never raises."""
+        from personalclaw import event_triggers
+
+        router = getattr(self, "_event_router", None)
+        if router is None:
+            return
+        event_triggers.detach(router)
+        self._event_router = None
+        for task in list(getattr(router, "_pending", ())):
+            task.cancel()
+
     @_background_write_surface
     async def _fire_store_trigger(
-        self, trigger: Any, payload: dict[str, Any], *, event: str = "trigger.fired"
+        self,
+        trigger: Any,
+        payload: dict[str, Any],
+        *,
+        event: str = "trigger.fired",
+        context: str = "",
     ) -> None:
         """Run one store-backed trigger's declared action through the action-provider registry.
 
-        Shared by the clock loop and the file-watch loop, so every store-backed fire goes
-        through one
-        dispatch. A failed action is logged rather than raised: the outcome belongs to the
-        executor's
-        typed classification, and a raise here would strand the rest of the drain.
+        THE dispatch for every store-backed fire — clock, file, web_watch, webhook, chained, event —
+        so each executes the same action the same way. A failed action is logged rather than raised:
+        the outcome belongs to the executor's typed classification, and a raise here would strand
+        the rest of the drain.
+
+        `event` labels the source to the provider (`file.changed`, `memory.create`, …) and `context`
+        is the free-form `$CONTEXT` line a template renders; only an event fire has one to give.
         """
         from personalclaw.action_providers import ActionContext, get_action_provider
         from personalclaw.action_providers.registry import _ensure_default_providers_registered
@@ -1148,7 +1193,8 @@ class GatewayOrchestrator:
             # Fenced for CLEAN too, not only suspicious: the screen is a pattern matcher and its
             # clean verdict means "no known pattern", not "trustworthy". This text still crossed the
             # trust boundary, and every other ingestion seam in the codebase fences it
-            # unconditionally (`web/fetch`, `inbox_service`, `event_triggers`, `bindings`). Fencing
+            # unconditionally (`web/fetch`, `inbox_service`, `bindings`; a data-event fire arrives
+            # here already fenced at origin by `event_triggers.fire_payload`). Fencing
             # only what a matcher flagged would make the guarantee depend on the corpus being
             # complete, which is the one thing a pattern corpus never is.
             payload = screen_mod.fence_payload(
@@ -1179,7 +1225,7 @@ class GatewayOrchestrator:
 
         ctx = ActionContext(
             event=event,
-            context="",
+            context=context,
             payload=payload,
             status_url=_trigger_status_url(trigger_id=str(getattr(trigger, "id", "") or "")),
         )
@@ -1204,9 +1250,9 @@ class GatewayOrchestrator:
         from personalclaw.guardrails.rungs import announce_withheld, record_reversal
         from personalclaw.guardrails.rungs import route_provider_action as _route_action
 
-        # 🔴 THE SESSION IDENTITY (PHF-8), now shared by BOTH gates on this seam (the shape
-        # `event_triggers` uses), so the denylist and the ladder judge one fire under one resolved
-        # posture rather than two. The rung call passed `session_key=""` — which
+        # 🔴 THE SESSION IDENTITY (PHF-8), now shared by BOTH gates on this seam (the shape the
+        # retired data-event engine used), so the denylist and the ladder judge one fire under one
+        # resolved posture rather than two. The rung call passed `session_key=""` — which
         # `is_unattended_session` classifies as ATTENDED, so a clock/file/webhook trigger
         # fire resolved INTERACTIVE and "headless by construction" held only in tests. A
         # store-trigger fire has no chat session by definition, so it gets the sessionless
@@ -1247,9 +1293,9 @@ class GatewayOrchestrator:
         # names `_run_action_job` as the third dispatch seam; that method retired with
         # `ScheduleService` (S112) and, per the note at its old site, "the substrate GENERALIZED
         # both: action dispatch is `_fire_store_trigger`". So this IS the third seam, under a new
-        # name — and it is the one every clock / file / webhook / chained trigger passes through.
-        # Wiring only the hook and event-trigger seams would honour a declared floor at two of
-        # three dispatch points, which is the same shape as not honouring it at all.
+        # name — and it is the one every clock / file / webhook / chained / data-event trigger
+        # passes through. Wiring only the other seams would honour a declared floor at some
+        # dispatch points and not this one, which is the same shape as not honouring it at all.
         #
         # The route comes from the provider NAME; the name→type mapping lives on the declaration
         # (`ActionTypeSpec.providers`), so an app-contributed action inherits its declared bounds
@@ -1398,9 +1444,9 @@ class GatewayOrchestrator:
         except Exception as exc:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
             # PLATFORM-LEGIBILITY §2: a provider that RAISES (rather than returning a failed
             # result) is wrapped in the shared WHAT/WHY/FIX envelope here — the same wrap the
-            # hook (`hooks.py`) and event-trigger (`event_triggers.py`) seams already apply — so
-            # an app-contributed provider surfaces a coded, actionable failure on this (busiest,
-            # unattended: clock/file/webhook/chained) dispatch path instead of a bare
+            # hook seam (`hooks.py`) applies — so an app-contributed provider surfaces a coded,
+            # actionable failure on this (busiest, unattended: clock/file/webhook/chained/event)
+            # dispatch path instead of a bare
             # ``TypeName: msg``. Retiring `_run_action_job` (S112) dropped this wrap the way it
             # dropped the denylist (AG-12): the successor seam inherited neither. Built ONCE and
             # threaded into BOTH sinks — the persisted run record / `last_error_summary`, and the
@@ -2163,6 +2209,9 @@ class GatewayOrchestrator:
         # event kinds), and the clock loop, reaper and run records are their own modules now.
         if self._no_crons:
             logger.info("Automations disabled (--no-crons)")
+            # Declined here rather than spooled: nothing drains the spool in this mode, and a
+            # spooled event would fire on the next normal boot, hours after the fact.
+            self._start_event_triggers(enabled=False)
         else:
             # Rotate run history at boot — the ONE load-bearing thing the retired legacy service's
             # boot call still did. `ScheduleRunStore` owns rotation, so it is called directly
@@ -2202,6 +2251,11 @@ class GatewayOrchestrator:
                 migrate_and_arm()
             except Exception:
                 logger.warning("trigger-store migration failed at boot", exc_info=True)
+            # The event bus's router (`triggers/event_fire.py`) — what makes a `kind: "event"`
+            # trigger fire. AFTER the migration, so a legacy `event_triggers.json` it absorbed is
+            # already rows in the store the router reads. Same else-branch as every other runtime
+            # here: an event trigger is unattended background work like a cron.
+            self._start_event_triggers()
             # 🔴 THE TWO SYSTEM RECONCILERS, now AFTER the migration and against the STORE (S108).
             # Both used to write `crons.json` from BEFORE this point, which was doubly wrong: the
             # clock engine reads the store only, and the migration that would have imported their
@@ -4113,6 +4167,9 @@ class GatewayOrchestrator:
             await self.loop_watchdog.stop()
         if self.workflow_watchdog:
             await self.workflow_watchdog.stop()
+        # Detached first, so an event reported during shutdown is spooled for the next boot rather
+        # than handed to a loop that is about to stop.
+        self._stop_event_triggers()
         for _task in (
             self._file_watch_task,
             self._web_watch_task,

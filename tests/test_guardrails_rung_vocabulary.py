@@ -102,15 +102,18 @@ def test_the_key_is_still_carried_where_a_MACHINE_needs_it() -> None:
 
 
 def test_every_call_site_still_EMBEDS_the_reason_rather_than_showing_it_alone() -> None:
-    """The warrant for a subject-less-of-the-key sentence: each of the six consumers supplies the
+    """The warrant for a subject-less-of-the-key sentence: each of the four consumers supplies the
     context. If a new call site ever surfaced `reason` on its own, "this action …" would have no
-    referent and the key would need to come back — so the shape is pinned here."""
+    referent and the key would need to come back — so the shape is pinned here.
+
+    Four, not six: the retired data-event engine carried two of its own, and a data-event fire now
+    takes the store dispatch in `gateway`, whose two call sites are counted here."""
     import inspect
 
-    from personalclaw import event_triggers, gateway, hooks
+    from personalclaw import gateway, hooks
 
     embedded = 0
-    for mod in (gateway, hooks, event_triggers):
+    for mod in (gateway, hooks):
         src = inspect.getsource(mod)
         assert "{route.reason}" in src, f"{mod.__name__} should compose the reason"
         # 🪤 Scan a WINDOW, not the line. The inbox body is a two-line implicit concatenation, so
@@ -126,7 +129,7 @@ def test_every_call_site_still_EMBEDS_the_reason_rather_than_showing_it_alone() 
             ), f"{mod.__name__}: unframed reason near offset {at}"
             embedded += 1
             at += 1
-    assert embedded >= 6, f"expected the six known call sites, found {embedded}"
+    assert embedded >= 4, f"expected the four known call sites, found {embedded}"
 
 
 def test_the_NARROWED_branch_names_both_rungs_in_user_words(monkeypatch) -> None:

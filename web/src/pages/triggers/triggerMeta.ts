@@ -6,8 +6,9 @@ import { deriveKind, deriveMode, kindMeta as schedKindMeta, modeMeta as schedMod
 import { epochSeconds } from '../../lib/epoch'
 
 // ── Trigger kind: schedule (a tick fires), lifecycle (an agent-loop event fires),
-//    event (a data event — an inbox message or a memory write — fires), or store (a
-//    unified TriggerStore kind with no legacy backend — file/web_watch/…) ──
+//    event (a data event — an inbox message, a memory write or an app event — fires), or store
+//    (another unified TriggerStore kind — file/web_watch/…). A data-event trigger is a store row
+//    too; it is its own kind here because the page presents and filters it by what it listens for. ──
 export type TriggerKind = 'schedule' | 'lifecycle' | 'event' | 'store'
 export interface TriggerKindMeta { key: TriggerKind; label: string; icon: LucideIcon; tone: string; hint: string }
 export const TRIGGER_KINDS: TriggerKindMeta[] = [
@@ -31,17 +32,17 @@ export interface EventPatternMeta {
   matcherLabel: string
   matcherHint: string
   matcherPlaceholder: string
-  /** Whether an empty matcher is rejected server-side (InboxSender requires a sender_glob —
-   *  otherwise it would fire on every message from its source). */
+  /** Whether an empty matcher is rejected server-side (`event_triggers.REQUIRED_MATCHER`): the
+   *  matcher treats an empty glob or regex as matching nothing, so the trigger could never fire. */
   matcherRequired: boolean
 }
 export const EVENT_PATTERN_META: EventPatternMeta[] = [
   { pattern: 'InboxMessage', source: 'inbox', label: 'Any inbox message', desc: 'Every accepted message from a watched inbox source (Slack, Telegram, email, …).', matcher: null, matcherLabel: '', matcherHint: '', matcherPlaceholder: '', matcherRequired: false },
   { pattern: 'InboxSender', source: 'inbox', label: 'Inbox message from a sender', desc: 'An inbox message whose sender matches a glob.', matcher: 'sender_glob', matcherLabel: 'Sender glob', matcherHint: 'Glob on the sender id (e.g. alice@example.com, U*, +1415*). Required.', matcherPlaceholder: 'alice@example.com', matcherRequired: true },
-  { pattern: 'InboxAddress', source: 'inbox', label: 'Inbox message to an address', desc: 'An inbox message whose receiving address/channel matches a glob.', matcher: 'address_glob', matcherLabel: 'Address glob', matcherHint: 'Glob on the receiving address or channel (e.g. support@*, #alerts). Empty matches all.', matcherPlaceholder: 'support@*', matcherRequired: false },
+  { pattern: 'InboxAddress', source: 'inbox', label: 'Inbox message to an address', desc: 'An inbox message whose receiving address/channel matches a glob.', matcher: 'address_glob', matcherLabel: 'Address glob', matcherHint: 'Glob on the receiving address or channel (e.g. support@*, #alerts). Required — use "Any inbox message" to fire on every one.', matcherPlaceholder: 'support@*', matcherRequired: true },
   { pattern: 'MemoryUpdate', source: 'memory', label: 'Any memory write', desc: 'Every memory create, update, or delete.', matcher: null, matcherLabel: '', matcherHint: '', matcherPlaceholder: '', matcherRequired: false },
-  { pattern: 'MemoryKeyPattern', source: 'memory', label: 'Memory write to a key', desc: 'A memory write whose key matches a glob.', matcher: 'key_glob', matcherLabel: 'Key glob', matcherHint: 'Glob on the memory key (e.g. project.acme.*). Empty matches nothing.', matcherPlaceholder: 'project.acme.*', matcherRequired: false },
-  { pattern: 'ContentMatch', source: 'memory', label: 'Memory write matching content', desc: "A memory write whose value matches a regex (or substring if it isn't valid regex).", matcher: 'content_re', matcherLabel: 'Content matcher', matcherHint: 'Regex matched against the written value (substring fallback). Empty matches nothing.', matcherPlaceholder: 'invoice|payment', matcherRequired: false },
+  { pattern: 'MemoryKeyPattern', source: 'memory', label: 'Memory write to a key', desc: 'A memory write whose key matches a glob.', matcher: 'key_glob', matcherLabel: 'Key glob', matcherHint: 'Glob on the memory key (e.g. project.acme.*). Required — use "Any memory write" to fire on every one.', matcherPlaceholder: 'project.acme.*', matcherRequired: true },
+  { pattern: 'ContentMatch', source: 'memory', label: 'Memory write matching content', desc: "A memory write whose value matches a regex (or substring if it isn't valid regex).", matcher: 'content_re', matcherLabel: 'Content matcher', matcherHint: 'Regex matched against the written value (substring fallback). Required.', matcherPlaceholder: 'invoice|payment', matcherRequired: true },
   // AUTO-A4. `matcherRequired: false` because an empty glob is the deliberate CATCH-ALL here, unlike
   // MemoryKeyPattern's empty glob (which matches nothing) — the backend's `matches()` documents the
   // asymmetry, and this row mirrors it rather than inventing a stricter form-side rule.
@@ -116,9 +117,9 @@ const STORE_KIND_META: Record<string, { label: string; icon: LucideIcon }> = {
   run_completed: { label: 'When a run finishes', icon: Workflow },
   view: { label: 'View trigger', icon: FileText },
   webhook: { label: 'On webhook', icon: Webhook },
-  // Both made by the chat's `automation_create` ("when I …" routes to `event`; `manual` is asked
-  // for by name) and listed nowhere until the list and the status count shared one gathering.
-  event: { label: 'On an event', icon: Zap },
+  // Asked for by name in the chat's `automation_create`, and listed nowhere until the list and the
+  // status count shared one gathering. (A data-event row is presented by its pattern instead — see
+  // `storeToTrigger`.)
   manual: { label: 'When you run it', icon: Play },
 }
 function storeKindMeta(storeKind?: string): { label: string; icon: LucideIcon } {
@@ -287,12 +288,12 @@ export interface Trigger {
   schedule?: ScheduleJob
   hook?: HookItem
   store?: WireTrigger        // store only: the raw wire row for the inspector
-  /** event only: the pattern key + the ONE matcher value that pattern reads, for the inspector.
-   *  Deliberately NOT reusing the lifecycle `hook` field — the panel's dispatch falls through to
-   *  `open.hook`, so an event row carrying one would open the wrong inspector. */
+  /** event only: the pattern key + the ONE matcher value that pattern reads. The row itself rides
+   *  `store` — an event trigger is a store row, and it opens in the store inspector. Deliberately
+   *  NOT the lifecycle `hook` field: the panel's dispatch falls through to `open.hook`, so an event
+   *  row carrying one would open the wrong inspector. */
   eventPattern?: string
   eventMatcher?: string
-  event?: WireTrigger        // event only: the raw wire row
 }
 
 /** The row `?open=<id>` names on the Triggers page, or null.
@@ -301,13 +302,14 @@ export interface Trigger {
  *  first. But the trigger SUBSTRATE speaks the store's own id — `delivery.status_url`, the
  *  autopause attention card and the triage digest all mint `#/triggers?open=clock:x` — and an
  *  exact match on the namespaced id sent every one of those links to the list with no panel open.
- *  So a store id resolves too, and ONLY against the two kinds the trigger store backs (`schedule`
- *  and `store`): a lifecycle hook or a data-event trigger lives in a store of its own whose ids
- *  are minted independently, and a bare id is not allowed to wander across that boundary. */
+ *  So a store id resolves too, and ONLY against the kinds the trigger store backs (`schedule`,
+ *  `store`, and `event`, a store row presented by its pattern): a lifecycle hook lives in a store
+ *  of its own whose ids are minted independently, and a bare id is not allowed to wander across
+ *  that boundary. */
 export function resolveOpenTrigger(triggers: readonly Trigger[] | null | undefined, openId: string | null): Trigger | null {
   if (!triggers || !openId) return null
   return triggers.find((t) => t.id === openId)
-    ?? triggers.find((t) => (t.kind === 'schedule' || t.kind === 'store') && t.rawId === openId)
+    ?? triggers.find((t) => t.kind !== 'lifecycle' && t.rawId === openId)
     ?? null
 }
 
@@ -379,80 +381,53 @@ export function hookToTrigger(h: HookItem): Trigger {
 /** Project a store-backed Trigger (file/web_watch/idle/…) onto the shared view-model. The wire
  *  id is already `store:<kind>:<slug>`; `rawId` keeps the store's own `<kind>:<slug>` so the
  *  toggle/run/delete helpers re-namespace it. A broken row (S87 lenient load) carries its parse
- *  errors so the list can flag it rather than hiding an automation the user can't otherwise debug. */
+ *  errors so the list can flag it rather than hiding an automation the user can't otherwise debug.
+ *
+ *  A data-event row (`store_kind: 'event'`) is presented by what it listens for — its pattern, from
+ *  `eventPatternMeta()`, the owner the create form reads too, so a pattern cannot be called one thing
+ *  on the form and another in the list — and takes the `event` kind so the Data events filter holds
+ *  it. Everything else about it is the store row's: its run history, its Run now, its delete. */
 export function storeToTrigger(t: WireTrigger): Trigger {
-  const km = storeKindMeta(t.store_kind)
   const provider = t.action?.provider
+  const isEvent = t.store_kind === 'event'
+  const spec = (t.spec ?? {}) as Record<string, unknown>
+  const pattern = typeof spec.pattern === 'string' ? spec.pattern : ''
+  // Only a pattern the grammar knows is described by it. `eventPatternMeta` falls back to its first
+  // row for anything else, which would label a broken row (one saved with a lifecycle event name, say)
+  // "Any inbox message" — a description of a trigger it is not. The broken row says what it stores.
+  const pm = EVENT_PATTERN_META.find((row) => row.pattern === pattern) ?? null
+  const km = !isEvent
+    ? storeKindMeta(t.store_kind)
+    : pm
+      ? { label: pm.label, icon: eventSourceIcon(pm.source) }
+      : { label: pattern ? `Data event · ${pattern}` : 'Data event', icon: Zap }
   return {
-    kind: 'store', id: t.id, rawId: t.raw_id, name: t.name || t.raw_id, enabled: t.enabled,
-    whenLabel: km.label, whenIcon: km.icon, whenTone: 'var(--color-primary)',
+    kind: isEvent ? 'event' : 'store', id: t.id, rawId: t.raw_id, name: t.name || t.raw_id, enabled: t.enabled,
+    whenLabel: km.label, whenIcon: km.icon, whenTone: isEvent ? 'var(--color-secondary)' : 'var(--color-primary)',
     actionLabel: provider ? actionLabel(provider) : 'Action',
     actionIcon: provider ? actionIcon(provider) : Zap,
     actionProvider: provider,
     // 🔴 `t.health` used to land in `runStatus` and the list then read that field with the HEALTH
-    // mapper — the one-field-two-vocabularies shape itself. It now travels as `health`; a store row
-    // carries no run-outcome field at all, so `runStatus` is honestly null and `run_count` answers
-    // "has it ever fired" for the `hasRun` gate.
-    lastRunTs: null, runStatus: null,
+    // mapper — the one-field-two-vocabularies shape itself. It now travels as `health`, and the run
+    // outcome comes from the row's own run fields: `last_run_status` (its newest run record) and
+    // `last_run_ts`. `run_count` alone cannot answer "has it run": it is the FIRE meter, which a Run
+    // button deliberately does not spend, so a manual trigger read "never" beside its recorded runs.
+    lastRunTs: t.last_run_ts ?? null, runStatus: t.last_run_status ?? null,
     health: t.health || null, state: t.state || null, lastError: t.last_error || null,
-    hasRun: (t.run_count ?? 0) > 0,
+    hasRun: (t.run_count ?? 0) > 0 || t.last_run_ts != null,
     runCount: t.run_count ?? null, usedBy: [],
     storeKind: t.store_kind, broken: t.broken ?? [], warnings: t.warnings ?? [], store: t,
-    author: t.author, readOnly: t.read_only === true,
-  }
-}
-
-/** Project a wire data-event trigger onto the list's `Trigger` shape.
- *
- *  The list renders `whenLabel` / `whenIcon` / `whenTone` / `actionLabel` / `actionIcon`, and the
- *  unified endpoint sends NONE of them — every kind gets its presentation from a converter here.
- *  Event rows had no converter, which is the other half of why they never appeared: even once
- *  fetched, `open.whenIcon` on a raw row would be `undefined` at render.
- *
- *  `whenLabel` comes from `eventPatternMeta()` — the same owner the create form and the pattern
- *  option list read, so a pattern cannot be called one thing on the form and another in the list. */
-export function eventToTrigger(t: WireTrigger): Trigger {
-  const pm = eventPatternMeta(t.pattern)
-  const provider = t.action?.provider
-  return {
-    kind: 'event', id: t.id, rawId: t.raw_id || t.id.replace(/^event:/, ''), name: t.name || t.id, enabled: t.enabled,
-    whenLabel: pm.label, whenIcon: eventSourceIcon(pm.source), whenTone: 'var(--color-secondary)',
-    actionLabel: provider ? actionLabel(provider) : 'Action',
-    actionIcon: provider ? actionIcon(provider) : Zap,
-    actionProvider: provider,
-    // A data event has no clock, so there is no next run and no duration to show. `runCount` is
-    // the fire count — the one live number an event row can honestly report, and the `hasRun`
-    // signal for the dot.
-    //
-    // 🔴 `state: null` AND `runStatus: null` WERE HARDCODED (issue 496). `_serialize_event` sends
-    // `state`, `health` and `last_error`, and its docstring says why: *"`health` rides along so the
-    // shared `triggerHealthMeta` mapper works here exactly as it does for store triggers, rather
-    // than a third vocabulary on a third surface."* This converter threw all three away, so the
-    // backend's whole point was inert. Measured on a live gateway: an event trigger PARKED because
-    // the app that owns its event was uninstalled rendered the neutral "never run" dot —
-    // indistinguishable from a healthy active one — with the reason on the wire, unread.
-    //
-    // `runStatus` stays null on purpose: this store keeps no run records, so there IS no run
-    // outcome. The rollup goes in `health`, where the mapper that speaks its vocabulary reads it.
-    lastRunTs: null, runStatus: null,
-    health: t.health || null, state: t.state || null, lastError: t.last_error || null,
-    hasRun: (t.fire_count ?? 0) > 0,
-    runCount: t.fire_count ?? null, usedBy: [],
-    // Carried so the inspector can show the pattern + matcher without refetching.
-    eventPattern: t.pattern, eventMatcher: eventMatcherValue(t, pm.matcher), event: t,
-    // Uniform with scheduleToTrigger/storeToTrigger: the server's verdict, passed through.
-    // Inert until `_serialize_event` sends attribution, but the mapper should not be the
-    // reason a foreign event row renders an action row its siblings would hide.
+    ...(isEvent ? { eventPattern: pattern, eventMatcher: pm ? eventMatcherValue(spec, pm.matcher) : '' } : {}),
     author: t.author, readOnly: t.read_only === true,
   }
 }
 
 /** The ONE matcher value this pattern reads, as a display string. `eventPatternMeta().matcher`
- *  names the field; anything else on the row is inert for this pattern, so showing it would
+ *  names the field; anything else in the spec is inert for this pattern, so showing it would
  *  claim a constraint that does not apply. */
-export function eventMatcherValue(t: WireTrigger, field: EventMatcherField): string {
+export function eventMatcherValue(spec: Record<string, unknown>, field: EventMatcherField): string {
   if (!field) return ''
-  return String((t as unknown as Record<string, unknown>)[field] ?? '')
+  return String(spec[field] ?? '')
 }
 
 export function relPast(ts?: number | string | null): string {

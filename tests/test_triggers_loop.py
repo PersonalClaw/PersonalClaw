@@ -406,6 +406,18 @@ def test_the_legacy_refresh_callback_is_gone():
 # ── S142: criterion 7's two SEPARATE wake sources, both of which had no caller ──
 
 
+def _attach_router(monkeypatch) -> None:
+    """Give this process an event router, as the gateway the drain runs in always has one.
+
+    `_reenter_spooled` refuses to re-emit into a process WITHOUT a router — there `emit_event`
+    would only spool the event again — so a drain test that did not attach one would measure that
+    refusal instead of the drain. A no-op router is enough: these tests stop at `emit_event`.
+    """
+    import personalclaw.event_triggers as et
+
+    monkeypatch.setattr(et, "_router", lambda event: None)
+
+
 def _spool_one(home, *, key="notes/x"):
     from personalclaw.triggers.dispatch import Envelope, spool_fire
 
@@ -433,6 +445,7 @@ def test_an_IDLE_tick_still_drains_the_spool(tmp_path, monkeypatch):
     from personalclaw.config import loader
 
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    _attach_router(monkeypatch)
     from personalclaw.triggers.dispatch import drain_spool
 
     store = TriggerStore(base_dir=tmp_path)  # no triggers at all -> zero fires
@@ -451,6 +464,7 @@ def test_the_spool_drains_EXACTLY_ONCE(tmp_path, monkeypatch):
     from personalclaw.config import loader
 
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    _attach_router(monkeypatch)
     from personalclaw.triggers.dispatch import drain_spool
 
     store = TriggerStore(base_dir=tmp_path)
@@ -474,6 +488,7 @@ def test_a_spooled_fire_re_enters_through_the_SAME_seam(tmp_path, monkeypatch):
     from personalclaw.config import loader
 
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    _attach_router(monkeypatch)
     seen: list[dict] = []
     import personalclaw.event_triggers as et
 
@@ -495,6 +510,7 @@ def test_a_DAMAGED_spool_line_does_not_hide_the_rest(tmp_path, monkeypatch):
     from personalclaw.config import loader
 
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    _attach_router(monkeypatch)
     from personalclaw.triggers.dispatch import spool_path
 
     _spool_one(tmp_path, key="good")
@@ -541,16 +557,18 @@ def _isolate(tmp_path, monkeypatch):
     from personalclaw.config import loader
 
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    _attach_router(monkeypatch)
 
 
 def _engine_down(monkeypatch):
-    """Make the PRE-DELIVERY engine resolve fail — a failure provably before any side effect."""
+    """Take the event router away — the PRE-DELIVERY failure, provably before any side effect.
+
+    Without a router `emit_event` does not deliver, it spools the event again, so `_reenter_spooled`
+    checks for one immediately above the side-effect boundary and reports its absence as TRANSIENT.
+    """
     import personalclaw.event_triggers as et
 
-    def _boom():
-        raise RuntimeError("event engine unreachable")
-
-    monkeypatch.setattr(et, "get_engine", _boom)
+    monkeypatch.setattr(et, "_router", None)
 
 
 def _tick(tmp_path, *, now=NOW):

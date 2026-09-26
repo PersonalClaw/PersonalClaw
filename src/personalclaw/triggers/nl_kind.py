@@ -103,8 +103,29 @@ _KIND_CUES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("webhook", ("webhook", "incoming request", "posts to")),
     (
         "event",
-        ("when i ", "whenever i ", "session", "memory", "subagent", "approval", "compact", "hook"),
+        ("when i ", "whenever i ", "memory", "session", "subagent", "approval", "compact", "hook"),
     ),
+)
+
+#: Words that name an AGENT-LIFECYCLE event — a session ending, a subagent, an approval, a context
+#: compaction, a hook. Those fire lifecycle triggers (`hooks.json`, the Triggers page's "Lifecycle
+#: event" type), which no store row is matched against, so an `event` automation made from one
+#: could never fire. Found by driving it: "when a session ends" routed to `event` with an empty
+#: spec, and the only spec that saved (`{source: session, pattern: SessionEnd}`) sat in the store
+#: listed, counted and silent. Checked where the `event` cue would claim the request (after
+#: `webhook`, whose own cue ends in "hook").
+_LIFECYCLE_CUES: tuple[str, ...] = ("session", "subagent", "approval", "compact", "hook")
+
+#: A cue naming a data-event SOURCE outright wins over a lifecycle word in the same request:
+#: "when a memory about this session changes" is a memory write.
+_DATA_EVENT_CUES: tuple[str, ...] = ("memory",)
+
+_LIFECYCLE_REFUSAL = (
+    "That names an agent-lifecycle event (a session, subagent, approval, compaction or hook). "
+    "Those "
+    "fire lifecycle triggers, which automation_create cannot make: create one on the Triggers "
+    "page, type 'Lifecycle event'. An event automation here reacts to a memory write, an inbox "
+    "message or an app event."
 )
 
 #: A glob/path token. `~`-rooted, absolute, or dotted-relative — the three shapes a user actually
@@ -241,6 +262,8 @@ def route(when: str) -> Route:
 
     # ── the kinds that need no extraction, most-specific first ──
     for kind, cues in _KIND_CUES:
+        if kind == "event" and _has(low, _LIFECYCLE_CUES) and not _has(low, _DATA_EVENT_CUES):
+            return Route(error=_LIFECYCLE_REFUSAL)
         if _has(low, cues):
             return Route(
                 kind=kind,

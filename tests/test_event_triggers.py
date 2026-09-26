@@ -1,284 +1,253 @@
-"""Data-event triggers (#38) — memory-event pattern matching + store + auto-disable."""
+"""Data-event triggers (#38): the pattern grammar over store rows, the spec helpers, the bus."""
 
 from __future__ import annotations
-
-import asyncio
 
 import pytest
 
 from personalclaw.event_triggers import (
+    APP_EVENT,
     CONTENT_MATCH,
+    EVENT_VARS,
+    INBOX_ADDRESS,
+    INBOX_MESSAGE,
+    INBOX_SENDER,
     MEMORY_KEY_PATTERN,
     MEMORY_UPDATE,
+    SOURCE_APP,
     SOURCE_INBOX,
     SOURCE_MEMORY,
-    EventTrigger,
-    EventTriggerEngine,
-    EventTriggerStore,
+    BusEvent,
+    attach,
+    detach,
+    emit_event,
+    event_spec,
+    fire_payload,
     matches,
+    router_attached,
+    with_derived_source,
 )
+from personalclaw.triggers.models import Trigger, TriggerState
+
+
+def _row(pattern: str, matcher: str = "", **fields) -> Trigger:
+    return Trigger(
+        id="event:t", name="t", kind="event", spec=event_spec(pattern, matcher), **fields
+    )
+
+
+def _hit(trigger: Trigger, **event) -> bool:
+    base = {"source": SOURCE_MEMORY, "event_type": "create", "key": "k", "value": "v"}
+    return matches(trigger, **{**base, **event})
+
 
 # ── pure matching ──
 
 
-def test_memory_update_matches_any():
-    t = EventTrigger(id="t", pattern=MEMORY_UPDATE)
-    assert matches(t, source=SOURCE_MEMORY, event_type="create", key="anything", value="v")
+def test_memory_update_matches_any_memory_write():
+    assert _hit(_row(MEMORY_UPDATE), key="anything")
 
 
 def test_key_pattern_glob():
-    t = EventTrigger(id="t", pattern=MEMORY_KEY_PATTERN, key_glob="project.acme.*")
-    assert matches(
-        t, source=SOURCE_MEMORY, event_type="create", key="project.acme.deadline", value="v"
-    )
-    assert not matches(
-        t, source=SOURCE_MEMORY, event_type="create", key="project.other.x", value="v"
-    )
+    t = _row(MEMORY_KEY_PATTERN, "project.acme.*")
+    assert _hit(t, key="project.acme.deadline")
+    assert not _hit(t, key="project.other.x")
 
 
 def test_content_match_regex():
-    t = EventTrigger(id="t", pattern=CONTENT_MATCH, content_re=r"\bdeadline\b")
-    assert matches(
-        t, source=SOURCE_MEMORY, event_type="update", key="k", value="the deadline is friday"
-    )
-    assert not matches(t, source=SOURCE_MEMORY, event_type="update", key="k", value="no match here")
+    t = _row(CONTENT_MATCH, r"\bdeadline\b")
+    assert _hit(t, event_type="update", value="the deadline is friday")
+    assert not _hit(t, event_type="update", value="no match here")
 
 
 def test_content_match_bad_regex_falls_back_to_substring():
-    t = EventTrigger(id="t", pattern=CONTENT_MATCH, content_re="[unclosed")
-    assert matches(
-        t, source=SOURCE_MEMORY, event_type="update", key="k", value="has [unclosed bracket"
-    )
+    assert _hit(_row(CONTENT_MATCH, "[unclosed"), value="has [unclosed bracket")
 
 
-def test_disabled_never_matches():
-    t = EventTrigger(id="t", pattern=MEMORY_UPDATE, enabled=False)
-    assert not matches(t, source=SOURCE_MEMORY, event_type="create", key="k", value="v")
+def test_content_match_scans_a_bounded_prefix_only():
+    from personalclaw.event_triggers import CONTENT_MATCH_SCAN_LIMIT
+
+    late = "x" * CONTENT_MATCH_SCAN_LIMIT + "needle"
+    assert not _hit(_row(CONTENT_MATCH, "needle"), value=late)
 
 
-def test_exhausted_max_fires_never_matches():
-    t = EventTrigger(id="t", pattern=MEMORY_UPDATE, max_fires=2, fire_count=2)
-    assert not matches(t, source=SOURCE_MEMORY, event_type="create", key="k", value="v")
+def test_a_disabled_row_never_matches():
+    assert not _hit(_row(MEMORY_UPDATE, enabled=False))
 
 
-# ── store + auto-disable ──
+@pytest.mark.parametrize("state", ["parked", "autopaused", "quarantined", "paused", "retired"])
+def test_a_row_that_is_not_ACTIVE_never_matches(state):
+    """`enabled` and `state` asked as ONE question: checking `enabled` alone is how a parked or
+    autopaused trigger keeps firing."""
+    assert not _hit(_row(MEMORY_UPDATE, state=state))
+    assert _hit(_row(MEMORY_UPDATE, state=TriggerState.ACTIVE.value))
 
 
-@pytest.fixture
-def store(tmp_path):
-    return EventTriggerStore(tmp_path / "event_triggers.json")
-
-
-def test_store_crud(store):
-    store.upsert(EventTrigger(id="a", pattern=MEMORY_UPDATE))
-    assert len(store.load()) == 1
-    store.upsert(EventTrigger(id="a", pattern=CONTENT_MATCH, content_re="x"))  # replace
-    assert store.load()[0].pattern == CONTENT_MATCH
-    assert store.delete("a") is True
-    assert store.load() == []
-
-
-def test_record_fire_auto_disables_at_max(store):
-    store.upsert(EventTrigger(id="oneshot", pattern=MEMORY_UPDATE, max_fires=1))
-    store.record_fire("oneshot", now=100.0)
-    t = store.load()[0]
-    assert t.fire_count == 1 and t.enabled is False  # exhausted → self-retired
-
-
-def test_record_fire_unlimited_stays_enabled(store):
-    store.upsert(EventTrigger(id="forever", pattern=MEMORY_UPDATE, max_fires=0))
-    store.record_fire("forever", now=1.0)
-    store.record_fire("forever", now=2.0)
-    t = store.load()[0]
-    assert t.fire_count == 2 and t.enabled is True
-
-
-# ── engine: fire + debounce + rate cap ──
-
-
-def test_engine_fires_action(store, monkeypatch):
-    fired = []
-
-    class _StubProvider:
-        async def execute(self, cfg, ctx, timeout=30):
-            fired.append((cfg, ctx.payload))
-
-    monkeypatch.setattr(
-        "personalclaw.action_providers.get_action_provider", lambda n: _StubProvider()
-    )
-    store.upsert(
-        EventTrigger(
-            id="t",
-            pattern=MEMORY_KEY_PATTERN,
-            key_glob="x.*",
-            action_provider="notify",
-            action_config={"title": "hi"},
-            debounce_secs=0,
-        )
-    )
-    eng = EventTriggerEngine(store=store)
-
-    async def go():
-        eng.on_event(source=SOURCE_MEMORY, event_type="create", key="x.y", value="v", now=10.0)
-        await asyncio.sleep(0.05)  # let the scheduled task run
-
-    asyncio.run(go())
-    assert fired and fired[0][1]["key"] == "x.y"
-    # fire recorded
-    assert store.load()[0].fire_count == 1
-
-
-def test_engine_debounce_suppresses_rapid_refire(store, monkeypatch):
-    n = {"count": 0}
-
-    class _Stub:
-        async def execute(self, cfg, ctx, timeout=30):
-            n["count"] += 1
-
-    monkeypatch.setattr("personalclaw.action_providers.get_action_provider", lambda _n: _Stub())
-    store.upsert(EventTrigger(id="t", pattern=MEMORY_UPDATE, debounce_secs=30))
-    eng = EventTriggerEngine(store=store)
-
-    async def go():
-        eng.on_event(source=SOURCE_MEMORY, event_type="create", key="k", value="v", now=10.0)
-        eng.on_event(
-            source=SOURCE_MEMORY, event_type="create", key="k", value="v", now=11.0
-        )  # within debounce
-        await asyncio.sleep(0.05)
-
-    asyncio.run(go())
-    assert n["count"] == 1  # second suppressed
+def test_only_an_event_row_matches():
+    clock = Trigger(id="clock:x", name="x", kind="clock", spec=event_spec(MEMORY_UPDATE))
+    assert not _hit(clock)
 
 
 # ── EIAT-1: source scoping + inbox patterns ──
 
 
-def test_memory_trigger_never_fires_on_inbox_event():
+def test_a_memory_trigger_never_fires_on_an_inbox_event():
     """A memory trigger is invisible to an inbox event — the source gate, not the pattern."""
-    t = EventTrigger(id="t", pattern=MEMORY_UPDATE, source=SOURCE_MEMORY)
-    assert matches(t, source=SOURCE_MEMORY, event_type="create", key="k", value="v")
-    assert not matches(t, source=SOURCE_INBOX, event_type="message_received", key="k", value="v")
+    t = _row(MEMORY_UPDATE)
+    assert _hit(t)
+    assert not _hit(t, source=SOURCE_INBOX, event_type="message_received")
+
+
+def test_a_row_whose_source_contradicts_its_pattern_matches_nothing():
+    """A hand-edited `{source: inbox, pattern: MemoryUpdate}` must not become an inbox catch-all."""
+    t = Trigger(
+        id="event:t", name="t", kind="event", spec={"source": "inbox", "pattern": MEMORY_UPDATE}
+    )
+    assert not _hit(t, source=SOURCE_INBOX, event_type="message_received")
+    assert not _hit(t)
 
 
 def test_inbox_message_matches_any_inbox_event_only():
-    from personalclaw.event_triggers import INBOX_MESSAGE
-
-    t = EventTrigger(id="t", pattern=INBOX_MESSAGE, source=SOURCE_INBOX)
-    assert matches(t, source=SOURCE_INBOX, event_type="message_received", key="k", value="hi")
-    # ...but never on a memory event, even though InboxMessage otherwise matches anything.
-    assert not matches(t, source=SOURCE_MEMORY, event_type="create", key="k", value="hi")
+    t = _row(INBOX_MESSAGE)
+    assert _hit(t, source=SOURCE_INBOX, event_type="message_received", value="hi")
+    assert not _hit(t, value="hi")
 
 
 def test_inbox_sender_glob_reads_meta():
-    from personalclaw.event_triggers import INBOX_SENDER
-
-    t = EventTrigger(id="t", pattern=INBOX_SENDER, source=SOURCE_INBOX, sender_glob="boss@*")
-    assert matches(
-        t,
-        source=SOURCE_INBOX,
-        event_type="message_received",
-        key="k",
-        value="v",
-        meta={"sender": "boss@corp.test"},
-    )
-    assert not matches(
-        t,
-        source=SOURCE_INBOX,
-        event_type="message_received",
-        key="k",
-        value="v",
-        meta={"sender": "spam@corp.test"},
-    )
+    t = _row(INBOX_SENDER, "boss@*")
+    inbox = {"source": SOURCE_INBOX, "event_type": "message_received"}
+    assert _hit(t, **inbox, meta={"sender": "boss@corp.test"})
+    assert not _hit(t, **inbox, meta={"sender": "spam@corp.test"})
     # No meta → nothing to match a sender against → no fire.
-    assert not matches(t, source=SOURCE_INBOX, event_type="message_received", key="k", value="v")
+    assert not _hit(t, **inbox)
 
 
 def test_inbox_address_glob_reads_meta():
-    from personalclaw.event_triggers import INBOX_ADDRESS
+    t = _row(INBOX_ADDRESS, "C_ALERTS*")
+    inbox = {"source": SOURCE_INBOX, "event_type": "message_received"}
+    assert _hit(t, **inbox, meta={"address": "C_ALERTS_42"})
+    assert not _hit(t, **inbox, meta={"address": "C_RANDOM"})
 
-    t = EventTrigger(id="t", pattern=INBOX_ADDRESS, source=SOURCE_INBOX, address_glob="C_ALERTS*")
-    assert matches(
-        t,
-        source=SOURCE_INBOX,
-        event_type="message_received",
-        key="k",
-        value="v",
-        meta={"address": "C_ALERTS_42"},
+
+def test_an_app_event_glob_matches_the_namespaced_name():
+    t = _row(APP_EVENT, "app:calendar:*")
+    app = {"source": SOURCE_APP}
+    assert _hit(t, **app, event_type="app:calendar:meeting_soon")
+    assert not _hit(t, **app, event_type="app:weather:rain")
+
+
+def test_an_empty_app_glob_is_the_catch_all():
+    assert _hit(_row(APP_EVENT), source=SOURCE_APP, event_type="app:anything:at_all")
+
+
+# ── the spec helpers ──
+
+
+def test_event_spec_derives_the_source_and_keeps_only_the_patterns_matcher():
+    assert event_spec(INBOX_SENDER, "alice@*") == {
+        "source": "inbox",
+        "pattern": INBOX_SENDER,
+        "sender_glob": "alice@*",
+    }
+    # A pattern with no matcher carries none, whatever was offered.
+    assert event_spec(MEMORY_UPDATE, "ignored") == {"source": "memory", "pattern": MEMORY_UPDATE}
+    # An empty matcher is omitted, so validation reports a missing required one.
+    assert event_spec(MEMORY_KEY_PATTERN, "") == {"source": "memory", "pattern": MEMORY_KEY_PATTERN}
+
+
+def test_with_derived_source_fills_the_source_but_never_overrides_one():
+    assert with_derived_source({"pattern": MEMORY_UPDATE})["source"] == "memory"
+    # A contradiction is kept, so validation refuses it rather than silently correcting it.
+    assert with_derived_source({"pattern": MEMORY_UPDATE, "source": "inbox"})["source"] == "inbox"
+
+
+# ── the bus ──
+
+
+def test_an_attached_router_receives_every_event_and_nothing_is_spooled(tmp_path, monkeypatch):
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    seen: list[BusEvent] = []
+
+    def router(event):
+        seen.append(event)
+
+    attach(router)
+    try:
+        assert router_attached()
+        emit_event(source=SOURCE_MEMORY, event_type="create", key="k", value="v", now=1.0)
+    finally:
+        detach(router)
+    assert [(e.source, e.key, e.value) for e in seen] == [("memory", "k", "v")]
+    assert not (tmp_path / "trigger-spool.jsonl").exists()
+    assert not router_attached()
+
+
+def test_detach_removes_only_the_router_it_names():
+    """A stale shutdown must not detach a router a newer gateway in the same process attached."""
+
+    def old(event):
+        return None
+
+    def new(event):
+        return None
+
+    attach(new)
+    try:
+        detach(old)
+        assert router_attached()
+    finally:
+        detach(new)
+    assert not router_attached()
+
+
+def test_a_raising_router_never_breaks_the_write_that_emitted():
+    def boom(event):
+        raise RuntimeError("router down")
+
+    attach(boom)
+    try:
+        emit_event(source=SOURCE_MEMORY, event_type="create", key="k", value="v", now=1.0)
+    finally:
+        detach(boom)
+
+
+# ── what a fire hands the dispatch ──
+
+
+def test_the_value_is_fenced_at_origin_with_its_provenance():
+    event = BusEvent(source="memory", event_type="create", key="project.x", value="hello", now=1.0)
+    payload, context = fire_payload("event:t", event)
+    assert payload["trigger_id"] == "event:t"
+    assert payload["key"] == "project.x"
+    assert "source_type=event:memory:create" in payload["value"]
+    assert "source_id=project.x" in payload["value"]
+    assert "transformation_path=truncate:2000" in payload["value"]
+    assert "hello" in payload["value"]
+    assert context.startswith("project.x: ") and "hello" in context
+
+
+def test_a_long_value_is_truncated_to_2000_inside_the_fence():
+    event = BusEvent(source="memory", event_type="create", key="k", value="z" * 5000, now=1.0)
+    payload, _context = fire_payload("event:t", event)
+    assert "z" * 2000 in payload["value"]
+    assert "z" * 2001 not in payload["value"]
+    assert payload["value"].rstrip().endswith("</untrusted_content>")
+
+
+def test_text_already_fenced_at_origin_is_not_re_wrapped():
+    from personalclaw.security import fence_untrusted
+
+    fenced = fence_untrusted(
+        "app text", source="trigger:app:cal:x", source_type="app:cal", source_id="x"
     )
-    assert not matches(
-        t,
-        source=SOURCE_INBOX,
-        event_type="message_received",
-        key="k",
-        value="v",
-        meta={"address": "C_RANDOM"},
-    )
+    event = BusEvent(source="app", event_type="app:cal:x", key="x", value=fenced, now=1.0)
+    payload, _context = fire_payload("event:t", event)
+    assert payload["value"].count("<untrusted_content") == 1
+    assert "source_type=app:cal" in payload["value"]
 
 
-def test_inbox_sender_without_glob_never_matches():
-    """An InboxSender with no glob matches nothing (the store/handlers reject creating one)."""
-    from personalclaw.event_triggers import INBOX_SENDER
-
-    t = EventTrigger(id="t", pattern=INBOX_SENDER, source=SOURCE_INBOX, sender_glob="")
-    assert not matches(
-        t,
-        source=SOURCE_INBOX,
-        event_type="message_received",
-        key="k",
-        value="v",
-        meta={"sender": "anyone@corp.test"},
-    )
-
-
-def test_from_dict_infers_source_for_legacy_memory_spec():
-    """A spec persisted before EIAT-1 (no ``source`` key) keeps memory semantics."""
-    t = EventTrigger.from_dict({"id": "legacy", "pattern": MEMORY_UPDATE})
-    assert t.source == SOURCE_MEMORY
-    assert matches(t, source=SOURCE_MEMORY, event_type="create", key="k", value="v")
-    assert not matches(t, source=SOURCE_INBOX, event_type="message_received", key="k", value="v")
-
-
-def test_to_dict_round_trip_preserves_inbox_fields():
-    from personalclaw.event_triggers import INBOX_SENDER
-
-    t = EventTrigger(
-        id="t", pattern=INBOX_SENDER, source=SOURCE_INBOX, sender_glob="a*", address_glob="C*"
-    )
-    back = EventTrigger.from_dict(t.to_dict())
-    assert back.source == SOURCE_INBOX
-    assert back.sender_glob == "a*"
-    assert back.address_glob == "C*"
-
-
-def test_engine_scopes_fire_by_source(store, monkeypatch):
-    """The live engine fires only the trigger whose source matches the event."""
-    fired: list[str] = []
-
-    class _Stub:
-        async def execute(self, cfg, ctx, timeout=30):
-            fired.append(ctx.payload["trigger_id"])
-
-    monkeypatch.setattr("personalclaw.action_providers.get_action_provider", lambda _n: _Stub())
-    store.upsert(
-        EventTrigger(id="mem", pattern=MEMORY_UPDATE, source=SOURCE_MEMORY, debounce_secs=0)
-    )
-    from personalclaw.event_triggers import INBOX_MESSAGE
-
-    store.upsert(
-        EventTrigger(id="inb", pattern=INBOX_MESSAGE, source=SOURCE_INBOX, debounce_secs=0)
-    )
-    eng = EventTriggerEngine(store=store)
-
-    async def go():
-        eng.on_event(
-            source=SOURCE_INBOX,
-            event_type="message_received",
-            key="m1",
-            value="hi",
-            now=10.0,
-            meta={"sender": "a@b.test"},
-        )
-        await asyncio.sleep(0.05)
-
-    asyncio.run(go())
-    assert fired == ["inb"]  # the memory trigger did NOT fire on an inbox event
+def test_the_advertised_variables_are_exactly_what_the_payload_carries():
+    """The create form offers `EVENT_VARS`; each must be something a template can resolve."""
+    event = BusEvent(source="inbox", event_type="message_received", key="k", value="v", now=1.0)
+    payload, _context = fire_payload("event:t", event)
+    offered = {v.lstrip("$") for v in EVENT_VARS} - {"EVENT", "CONTEXT"}
+    assert offered <= set(payload), offered - set(payload)

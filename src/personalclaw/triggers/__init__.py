@@ -13,7 +13,9 @@ Three stores this absorbs, measured before the dataclass was written (S62):
 * `crons.json` — `ScheduleJob`, 33 fields including `skip_dates`, IANA `timezone`,
   `strict_schedule`, `delete_after_run`, `agent_sequence`, `consecutive_failures`.
 * `event_triggers.json` — `EventTrigger`, 11 fields: `pattern`, `key_glob`, `content_re`,
-  `max_fires`, `fire_count`, `debounce_secs`, `last_fired_at`.
+  `max_fires`, `fire_count`, `debounce_secs`, `last_fired_at` (absorbed since: event rows are
+  `kind: "event"` rows in the one store, and `boot_migrate.absorb_event_triggers` imports a legacy
+  file at boot).
 * the hook/autonudge configs, whose semantics arrive as the `event` and `idle` kinds.
 
 Every field those carry has a home in `Trigger` or its `spec`/`gates`, and

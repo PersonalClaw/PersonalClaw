@@ -27,6 +27,9 @@ store's own catalog so a wired event cannot leave this list stale and lying.
 through to the `schedule` branch and is looked up among cron jobs. It is not there, so the user gets
 `404 {"error": "not found"}` — the API says their trigger does not exist. `PARITY_OPERATIONS` plus
 `missing_operations()` turn that into an assertion a facade test can make per kind.
+
+The `event:` namespace itself is gone since: a data-event trigger is a row in the one trigger store,
+addressed `store:<id>`, so it takes the store kind's operations rather than a branch of its own.
 """
 
 from __future__ import annotations
@@ -63,6 +66,11 @@ PARITY_EXEMPTIONS: dict[str, dict[str, str]] = {
         # Measured: `api_trigger_test` refuses schedule with 400 "use /run". Also correct: a
         # schedule trigger's action IS its run, and /run already has a dry-run mode.
         "test": "a schedule trigger's action is its run; /run?dry_run=1 previews it",
+    },
+    "store": {
+        # The same refusal for the same reason, for every store kind — a data-event trigger
+        # included, since event rows live in the one store and are addressed `store:<id>`.
+        "test": "a store trigger's action is its run; /run?dry_run=1 previews it",
     },
 }
 

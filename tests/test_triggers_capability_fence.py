@@ -196,14 +196,21 @@ def test_mixed_triggers_are_decided_INDEPENDENTLY(store, tmp_path):
     assert sorted(f.trigger.id for f in result.fires) == ["clock:ok", "clock:ro"]
 
 
-def test_the_production_tick_POPULATES_requested(store, tmp_path):
+def test_the_production_admission_POPULATES_requested(store, tmp_path):
     """🔴 The defect itself, pinned. `service.tick` omitted `requested`, so the fence never ran. A
     source check, because the property is that the field is SUPPLIED — a behavioural test would pass
-    against a fence that happened to allow everything."""
+    against a fence that happened to allow everything.
+
+    The gate context is built in `admit_fire`, the ONE admission the tick and the event router both
+    call, so the field is asserted there and each production caller is asserted to reach it."""
     import inspect
 
-    src = inspect.getsource(svc.tick)
-    assert "requested=" in src, "tick must tell the fence what the trigger asks for"
+    from personalclaw.triggers import event_fire
+
+    src = inspect.getsource(svc.admit_fire)
+    assert "requested=" in src, "admission must tell the fence what the trigger asks for"
+    assert "admit_fire(" in inspect.getsource(svc.tick)
+    assert "admit_fire(" in inspect.getsource(event_fire.EventRouter)
 
 
 # ── the save-time freeze ──

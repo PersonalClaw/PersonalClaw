@@ -14,8 +14,9 @@ constructed object:
 4. Fail-closed behaviour for every refusal the undo executor can reach, and for a grant
    above the ceiling or during a cooldown.
 
-The withhold → grant → execute → undo round trip runs against ``execute_event_action``, the
-same dispatch AG-7 wired, so nothing here proves a code path a user cannot reach.
+The withhold → grant → execute → undo round trip runs a memory write through a stored ``event``
+trigger — the gateway's router and ``_fire_store_trigger``, the dispatch AG-7 wired — so nothing
+here proves a code path a user cannot reach.
 """
 
 from __future__ import annotations
@@ -136,30 +137,11 @@ def _install_app_action(*, floor: str, ceiling: str) -> _TaskFilingAction:
 
 
 def _fire() -> Any:
-    """Drive the REAL data-event fire path for the app's action."""
-    from personalclaw.event_triggers import (
-        MEMORY_UPDATE,
-        SOURCE_MEMORY,
-        EventTrigger,
-        execute_event_action,
-    )
+    """Drive the REAL data-event fire path for the app's action; `ran`/`reason` are its run
+    row's."""
+    from fakes import fire_memory_event_trigger
 
-    trigger = EventTrigger(
-        id="t-acme",
-        pattern=MEMORY_UPDATE,
-        source=SOURCE_MEMORY,
-        action_provider="acme-file-task",
-        action_config={},
-    )
-    return asyncio.run(
-        execute_event_action(
-            trigger,
-            source=SOURCE_MEMORY,
-            event_type="update",
-            key="project.acme.status",
-            value="green",
-        )
-    )
+    return fire_memory_event_trigger("acme-file-task")
 
 
 def _task_files(home: Path) -> list[Path]:

@@ -193,10 +193,6 @@ def test_engaged_automation_ignores_system_triggers(monkeypatch: pytest.MonkeyPa
     """The boot-registered digest trigger (created_by='system') must not read as the
     user having automated anything — issue 458 defect 1: the tip was unreachable on
     every install because boot filled the store before the first interaction."""
-    monkeypatch.setattr(
-        "personalclaw.event_triggers.EventTriggerStore",
-        lambda _p: SimpleNamespace(load=lambda: []),
-    )
 
     def _store_with(rows):
         return lambda base_dir: SimpleNamespace(load=lambda: rows)

@@ -535,6 +535,48 @@ class TestTriggerRunResolver:
         # It must NOT pretend a per-run transcript exists for this kind.
         assert "no per-run history" in ctx.snapshot
 
+    @pytest.mark.asyncio
+    async def test_an_event_trigger_resolves_its_row_and_its_latest_run(
+        self, tmp_path, monkeypatch
+    ):
+        """A data-event trigger is a store row with a run ledger, addressed by its store id. This
+        read a second store that no longer exists, so every event investigation missed."""
+        from personalclaw.event_triggers import MEMORY_KEY_PATTERN, event_spec
+        from personalclaw.schedule_history import ScheduleRun, ScheduleRunStore
+        from personalclaw.triggers.models import Trigger
+        from personalclaw.triggers.store import TriggerStore
+
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+        TriggerStore(base_dir=tmp_path).upsert(
+            Trigger(
+                id="event:acme-watch",
+                name="Acme watch",
+                kind="event",
+                spec=event_spec(MEMORY_KEY_PATTERN, "project.acme.*"),
+                workflow={"inline": {"provider": "notify", "config": {}}},
+                run_count=1,
+            )
+        )
+        await ScheduleRunStore(tmp_path).append(
+            ScheduleRun(
+                run_id="fire-1",
+                job_id="event:acme-watch",
+                trigger="ok",
+                started_at=1.0,
+                finished_at=1.0,
+                status="failure",
+                error="provider down",
+            )
+        )
+        ctx = await inv.resolve("trigger_run", "event:acme-watch", None)
+        assert ctx is not None
+        assert "key_glob = 'project.acme.*'" in ctx.snapshot
+        assert "Recorded runs: 1" in ctx.snapshot
+        assert "Most recent run: failure — provider down" in ctx.snapshot
+        assert ctx.back_link == "#/triggers?open=event:acme-watch"
+        assert await inv.resolve("trigger_run", "event:nope", None) is None
+
 
 class TestDoctorResolver:
     @pytest.mark.asyncio
