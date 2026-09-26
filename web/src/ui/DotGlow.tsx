@@ -28,8 +28,81 @@ const BG_STYLE_TOKEN = TOKENS.find((t) => t.kind === 'select' && t.varName === '
  *     composer) × distance fade, lavender→pink.
  *
  *  Canvas + requestAnimationFrame. Respects prefers-reduced-motion (static
- *  frame). Decorative; fills a box centred on the composer (see ComposerStage). */
+ *  frame). Decorative; fills its stage (the box it is mounted in) and lights it
+ *  from the composer (see ComposerStage).
+ *
+ *  ONE light, and it never meets an edge. Both halves are measured decisions:
+ *
+ *   · There used to be a SECOND light that split off the composer on send and
+ *     parked behind the streaming turn. It had no surface to come from — a 1px
+ *     anchor in the transcript — so it rendered as a ~180px smudge behind the
+ *     text that climbed the page with the auto-scroll and jumped when turns
+ *     appeared (measured: 638px → 192px in 20s of one reply). On a light canvas a
+ *     tinted glow LOWERS luminance, so there it was literally a grey shadow
+ *     ((240,244,248) → (239,239,242) at its core). It is gone, not tuned: light
+ *     with no emitter reads as a stain at any strength that is visible at all.
+ *   · The bloom reaches `HALO_REACH` past the composer, but a docked composer sits
+ *     one page gutter (16px) from the stage's bottom and, at the shipped `full`
+ *     width, from its sides. The layer's own `overflow-hidden` then cut the halo
+ *     at ~94% strength into a straight line at the rail and the page bottom. So
+ *     the layer now fades its light to zero before each edge, over exactly the
+ *     room there is (`haloFades`), and the clip underneath is never reached. */
 export interface GlowRect { cx: number; cy: number; halfW: number; halfH: number; radius?: number }
+
+/** The bloom's box-shadow geometry. Declared once so the paint and the reach the
+ *  edge fades clamp to can never disagree. */
+const BLOOM_SPREAD = 60
+const BLOOM_BLUR = 120
+/** The coral aura a FOCUSED composer gathers close around it. It used to be painted by
+ *  the composer itself (the cards' `--shadow-lift`), where the page gutter clipped it
+ *  into a line; here it lives inside the edge-faded layer, so it keeps its ~40px reach
+ *  and still never meets an edge. Well inside `HALO_REACH`, so the fades cover it. */
+const FOCUS_BLOOM = '0 0 48px -6px color-mix(in srgb, var(--glow-a) 50%, transparent)'
+/** How far past the light source's edge the bloom is still visible: its spread plus
+ *  its blur radius (a blur radius is ~2σ of the Gaussian, out from the spread edge). */
+export const HALO_REACH = BLOOM_SPREAD + BLOOM_BLUR
+
+/** Per-edge fade widths, in the stage's layout px. */
+export interface HaloFades { l: number; r: number; t: number; b: number }
+
+/** How wide the halo's fade to nothing must be at each edge of its stage.
+ *
+ *  The room between the light and that edge, capped at the light's reach: where the
+ *  halo has its full reach it falls off on its own and the fade is a no-op; where it
+ *  does not, the fade spends exactly the room there is, so the light is at full
+ *  strength where it leaves the composer and at zero where the stage ends — never
+ *  cut. No source (nothing measured yet) fades every edge by the full reach, so the
+ *  unanchored fallback field is contained too. */
+export function haloFades(src: GlowRect | null, w: number, h: number, reach = HALO_REACH): HaloFades {
+  if (!src) return { l: reach, r: reach, t: reach, b: reach }
+  const room = (px: number) => Math.round(Math.max(0, Math.min(reach, px)))
+  return {
+    l: room(src.cx - src.halfW),
+    r: room(w - (src.cx + src.halfW)),
+    t: room(src.cy - src.halfH),
+    b: room(h - (src.cy + src.halfH)),
+  }
+}
+
+/** The CSS custom properties `haloFades` is written to, on the layer itself. */
+export const HALO_FADE_VARS = { l: '--halo-fade-l', r: '--halo-fade-r', t: '--halo-fade-t', b: '--halo-fade-b' } as const
+
+/** One edge-to-edge axis of the mask: transparent AT each edge, opaque once its fade
+ *  width is spent. The ramp is smoothstep-shaped (0 · .16 · .5 · .84 · 1 at quarter
+ *  steps) so it has zero slope at both ends — neither the stage edge nor the point
+ *  where the fade begins shows as a crease. */
+function maskAxis(dir: 'right' | 'bottom', start: string, end: string): string {
+  const a = `var(${start}, 0px)`
+  const b = `var(${end}, 0px)`
+  return `linear-gradient(to ${dir}, `
+    + `rgb(0 0 0 / 0) 0, rgb(0 0 0 / .16) calc(${a} * .25), rgb(0 0 0 / .5) calc(${a} * .5), rgb(0 0 0 / .84) calc(${a} * .75), #000 ${a}, `
+    + `#000 calc(100% - ${b}), rgb(0 0 0 / .84) calc(100% - ${b} * .75), rgb(0 0 0 / .5) calc(100% - ${b} * .5), rgb(0 0 0 / .16) calc(100% - ${b} * .25), rgb(0 0 0 / 0) 100%)`
+}
+
+/** The layer's mask: the two axes INTERSECTED, so a corner fades on both. (The default
+ *  composite is `add` — a union — which would leave every edge unfaded wherever the
+ *  other axis is opaque.) */
+export const HALO_MASK = `${maskAxis('right', HALO_FADE_VARS.l, HALO_FADE_VARS.r)}, ${maskAxis('bottom', HALO_FADE_VARS.t, HALO_FADE_VARS.b)}`
 
 /** Draw one dot of the given shape at (x,y) with radius r. */
 function drawDot(g: CanvasRenderingContext2D, shape: string, x: number, y: number, r: number) {
@@ -94,22 +167,18 @@ function drawDot(g: CanvasRenderingContext2D, shape: string, x: number, y: numbe
 }
 
 export function DotGlow({
-  className, intensity = 1, composerRef, focusRef,
+  className, intensity = 1, focused = false, composerRef,
 }: {
   className?: string
   intensity?: number
+  /** The composer has the caret: the halo gathers a coral aura close around it
+   *  (`FOCUS_BLOOM`), cross-fading in and out over 200ms. */
+  focused?: boolean
   /** ref to the composer element; the glow measures it LIVE each frame so it
    *  tracks the composer exactly in sync (the composer itself spring-animates
    *  its position), with no separate easing. Glow falls off a uniform distance
    *  from the composer's rounded-rect edges. */
   composerRef?: React.RefObject<HTMLElement | null>
-  /** Optional DYNAMIC focus target (chat glow-travel). When provided and its
-   *  `.current` is non-null, the glow focus TRAVELS toward this element's rect
-   *  instead of the composer — a held rect lerps each frame, so switching the
-   *  target (composer → landing message → back) reads as a smooth glide rather
-   *  than a snap. When this prop is absent, behavior is identical to before
-   *  (measure the composer live, no easing) so the other surfaces don't change. */
-  focusRef?: React.RefObject<HTMLElement | null>
 }) {
   // Master backdrop mode, resolved live from the appearance store so a change
   // re-keys the render effect below (tear down + rebuild the loop cleanly).
@@ -127,14 +196,10 @@ export function DotGlow({
   const reduce = prefersReducedMotion()
   const ref = useRef<HTMLCanvasElement>(null)
   const bloomRef = useRef<HTMLDivElement>(null)
-  const bloom2Ref = useRef<HTMLDivElement>(null)  // bloom for the split-off traveling light
+  const focusBloomRef = useRef<HTMLDivElement>(null)
   // target glow intensity (1 = rest, >1 = composer focused/lifted); lerped.
   const targetI = useRef(intensity)
   targetI.current = intensity
-  // stable holder for the dynamic focus ref so the rAF loop reads the latest
-  // without re-subscribing the effect each render.
-  const focusElRef = useRef(focusRef)
-  focusElRef.current = focusRef
 
   useEffect(() => {
     const canvas: HTMLCanvasElement | null = ref.current
@@ -150,19 +215,28 @@ export function DotGlow({
     //              'still' draws exactly one frozen frame, like reduced-motion.
     const drawDots = bgStyle === 'waves' || bgStyle === 'still'
     const animate = (bgStyle === 'waves' || bgStyle === 'glow') && !reduce
-    // 'none' → a transparent, empty layer: clear the canvas, hide both blooms,
+    // 'none' → a transparent, empty layer: clear the canvas, hide the blooms,
     // never start the loop or observe resizes.
     if (bgStyle === 'none') {
       g.setTransform(1, 0, 0, 1, 0, 0)
       g.clearRect(0, 0, cv.width, cv.height)
       if (bloomRef.current) bloomRef.current.style.opacity = '0'
-      if (bloom2Ref.current) bloom2Ref.current.style.opacity = '0'
       return
     }
     let raf = 0
     let w = 0, h = 0, dpr = 1
 
+    // The layer itself: its box is the STAGE the light is contained in, and it
+    // carries the edge fades the mask reads.
     const parent = cv.parentElement!
+    let fades: HaloFades | null = null
+    const writeFades = (next: HaloFades) => {
+      // Only on change: a style write per frame would re-resolve the mask 60×/s
+      // for a value that moves only while the composer does.
+      if (fades && next.l === fades.l && next.r === fades.r && next.t === fades.t && next.b === fades.b) return
+      fades = next
+      for (const k of ['l', 'r', 't', 'b'] as const) parent.style.setProperty(HALO_FADE_VARS[k], `${next[k]}px`)
+    }
     function resize() {
       dpr = Math.min(window.devicePixelRatio || 1, 2)
       w = parent.clientWidth
@@ -187,9 +261,6 @@ export function DotGlow({
     ro.observe(parent)
 
     let inten = targetI.current                // lerped glow intensity
-    let held: GlowRect | null = null           // smoothed focus rect (glow-travel)
-    let travelI = 0                            // lerped 0..1 strength of the split-off light (smooth fade in/out)
-    const TRAVEL_STRENGTH = 0.55               // the traveling light is subtler than the composer's
 
     // ── 3D ground-plane scene (perspective floor, steep ~45° tilt) ──
     // Camera at height CAM_H above a floor (y=0), pitched toward it. A floor
@@ -259,37 +330,15 @@ export function DotGlow({
         return { cx: (cr.left - pr.left + cr.width / 2) / z, cy: (cr.top - pr.top + cr.height / 2) / z, halfW: (cr.width / 2) / z, halfH: (cr.height / 2) / z, radius: brRaw / z }
       }
 
-      // PRIMARY light: the composer, measured LIVE each frame (it spring-animates
-      // its own position) → glow tracks it in sync, no easing. This ALWAYS stays
-      // lit (the glow never leaves the composer).
+      // The light: the composer, measured LIVE each frame (it spring-animates its
+      // own position) → glow tracks it in sync, no easing. This ALWAYS stays lit
+      // (the glow never leaves the composer).
       let rc: GlowRect | null = null
       const cel = composerRef?.current
       if (cel) rc = measure(cel)
-
-      // SECOND light (glow-travel): when a dynamic focus target is set (the active
-      // turn's stable thinking anchor), a subtler glow SPLITS OFF from the composer
-      // and travels with the message — additive, so the composer keeps its glow.
-      // `held` seeds at the composer rect then lerps toward the target (detach +
-      // glide). `travelI` lerps 0↔1 so the light FADES in on send and FADES out on
-      // done (no hard pop). We keep `held` alive through the fade-out.
-      const fel = focusElRef.current?.current ?? null
-      travelI += ((fel ? 1 : 0) - travelI) * 0.08   // slow, graceful fade
-      if (fel) {
-        const target = measure(fel)
-        if (!held) held = rc ?? target               // split off FROM the composer
-        else {
-          const k = 0.14                              // travel smoothing (visible glide)
-          held = {
-            cx: held.cx + (target.cx - held.cx) * k,
-            cy: held.cy + (target.cy - held.cy) * k,
-            halfW: held.halfW + (target.halfW - held.halfW) * k,
-            halfH: held.halfH + (target.halfH - held.halfH) * k,
-          }
-        }
-      } else if (travelI < 0.02) {
-        held = null                                   // fully faded → drop the rect
-      }
-      const rc2 = (held && travelI > 0.02) ? held : null
+      // …and never reaches the stage's edges: the fades follow the same live rect,
+      // so a composer that moves (hero → dock) or grows keeps its halo whole.
+      writeFades(haloFades(rc, w, h))
       // drive the soft CSS bloom from the same live rect (in sync)
       if (bloomRef.current && rc) {
         const b = bloomRef.current.style
@@ -300,16 +349,16 @@ export function DotGlow({
       } else if (bloomRef.current) {
         bloomRef.current.style.opacity = '0'
       }
-      // second bloom rides the traveling (split-off) light; opacity tracks the
-      // travelI fade so it eases in/out rather than popping.
-      if (bloom2Ref.current && rc2) {
-        const b = bloom2Ref.current.style
-        b.left = rc2.cx - rc2.halfW + 'px'; b.top = rc2.cy - rc2.halfH + 'px'
-        b.width = rc2.halfW * 2 + 'px'; b.height = rc2.halfH * 2 + 'px'
-        if (rc2.radius != null) b.borderRadius = rc2.radius + 'px'  // hug the traveling target's corner radius
-        b.opacity = String(Math.min(1, travelI * 1.2))
-      } else if (bloom2Ref.current) {
-        bloom2Ref.current.style.opacity = '0'
+      // The focus aura rides the same rect. Its OPACITY is React's (the `focused`
+      // prop, on the effects curve), so only placement is written here.
+      if (focusBloomRef.current) {
+        const f = focusBloomRef.current.style
+        f.visibility = rc ? '' : 'hidden'
+        if (rc) {
+          f.left = rc.cx - rc.halfW + 'px'; f.top = rc.cy - rc.halfH + 'px'
+          f.width = rc.halfW * 2 + 'px'; f.height = rc.halfH * 2 + 'px'
+          if (rc.radius != null) f.borderRadius = rc.radius + 'px'
+        }
       }
       // The surface geometry is WORLD-FIXED to the canvas — it never moves with
       // the composer. Horizon + centre are pinned; only the illumination
@@ -318,8 +367,8 @@ export function DotGlow({
       const focalPx = FOCAL * h * 0.5
       const cxPx = w / 2
 
-      // 'glow' mode keeps the composer's soft light (the CSS blooms above) but
-      // skips the dot lattice entirely — the canvas stays clear behind them.
+      // 'glow' mode keeps the composer's soft light (the CSS bloom above) but
+      // skips the dot lattice entirely — the canvas stays clear behind it.
       if (drawDots) for (let j = ROWS - 1; j >= 0; j--) {
         const dz = j / (ROWS - 1)
         const wz = NEAR_Z + (FAR_Z - NEAR_Z) * (dz * dz)   // ease → dense horizon
@@ -358,20 +407,13 @@ export function DotGlow({
           const crest = (wave + 1) / 2
           // Falloff = uniform distance OUTWARD from a rounded-rect's edges (not a
           // centre oval): brightest near the edges, decaying with distance, tight
-          // reach so it hugs the source. Two lights — the composer (rc) and the
-          // split-off traveling light (rc2) — combine by MAX so the composer stays
-          // lit while a second pool rides the active turn.
+          // reach so it hugs the source.
           const REACH = Math.min(w, h) * 0.18
-          const proxOf = (q: GlowRect) => {
-            const dx = Math.max(Math.abs(sx - q.cx) - q.halfW, 0)
-            const dy = Math.max(Math.abs(sy - q.cy) - q.halfH, 0)
-            return Math.max(0, 1 - Math.hypot(dx, dy) / REACH) ** 3.4
-          }
           let prox: number
-          if (rc || rc2) {
-            // composer light at full strength; the traveling light scaled by its
-            // fade (travelI) and a subtler ceiling (TRAVEL_STRENGTH).
-            prox = Math.max(rc ? proxOf(rc) : 0, rc2 ? proxOf(rc2) * travelI * TRAVEL_STRENGTH : 0)
+          if (rc) {
+            const dx = Math.max(Math.abs(sx - rc.cx) - rc.halfW, 0)
+            const dy = Math.max(Math.abs(sy - rc.cy) - rc.halfH, 0)
+            prox = Math.max(0, 1 - Math.hypot(dx, dy) / REACH) ** 3.4
           } else {
             const dxn = (sx - cxPx) / (Math.min(w, 1100) * 0.6)
             const dyn = (sy - h * 0.5) / (h * 0.34)
@@ -408,6 +450,9 @@ export function DotGlow({
       className={`pointer-events-none absolute inset-0 overflow-hidden ${className ?? ''}`}
       aria-hidden
       data-dot-glow={reduce ? 'instant' : 'animated'}
+      // The edge fades (see `haloFades`). `overflow-hidden` above still keeps the light
+      // off the stage's neighbours; this is what keeps it from ever being CUT there.
+      style={{ maskImage: HALO_MASK, WebkitMaskImage: HALO_MASK, maskComposite: 'intersect', WebkitMaskComposite: 'source-in' }}
     >
       {/* soft light bloom hugging the composer rect — positioned live each frame
           by the canvas loop (in perfect sync with the composer). */}
@@ -416,20 +461,19 @@ export function DotGlow({
         className="absolute"
         style={{
           borderRadius: 'var(--radius-xli)',
-          boxShadow: '0 0 120px 60px color-mix(in srgb, var(--glow-a) 18%, transparent)',
+          boxShadow: `0 0 ${BLOOM_BLUR}px ${BLOOM_SPREAD}px color-mix(in srgb, var(--glow-a) 18%, transparent)`,
           opacity: 0,
         }}
       />
-      {/* second bloom — the split-off light that travels with the sent message
-          and sits behind the active turn while it streams. Subtler than the
-          composer bloom; opacity is driven per-frame by the travelI fade. */}
+      {/* the focus aura — close around the composer while it has the caret. */}
       <div
-        ref={bloom2Ref}
-        className="absolute"
+        ref={focusBloomRef}
+        data-dot-glow-focus
+        className="absolute transition-opacity duration-200"
         style={{
           borderRadius: 'var(--radius-xli)',
-          boxShadow: '0 0 90px 36px color-mix(in srgb, var(--glow-a) 11%, transparent)',
-          opacity: 0,
+          boxShadow: FOCUS_BLOOM,
+          opacity: focused && bgStyle !== 'none' ? 1 : 0,
         }}
       />
       <canvas ref={ref} className="absolute inset-0" />
