@@ -27,7 +27,7 @@ vi.mock('./identity', async (orig) => {
   const real = await orig<typeof import('./identity')>()
   return {
     ...real,
-    useIdentity: () => ({ name: 'Ada', username: 'ada', onboarded: true, loaded: true, setName: async () => {} }),
+    useIdentity: () => ({ status: 'ready', name: 'Ada', username: 'ada', onboarded: true, setName: async () => {} }),
   }
 })
 // Every gateway read resolves empty; the envelope-shaped reads are named (see navDisclosure.test).

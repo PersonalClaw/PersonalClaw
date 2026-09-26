@@ -891,10 +891,11 @@ const SWALLOW_BUDGET: Record<string, number> = {
   'pages/settings/RoutingPanel.tsx': 3,
   // 3 → 2. The providers read is fixed: a 500 on /api/search/providers told a user with three
   // registered providers "No search providers configured" and pointed them at the Store to install
-  // their first one. The two left are the active BINDINGS (`{}` → every use-case reads "none — falls
-  // back to General", which is a claim and is worth its own row in the issue) and the `/api/tools`
-  // probe, whose `null` — not `[]` — is deliberate: it withholds the missing-tool note rather than
-  // accusing the user of a missing app off an unreachable read.
+  // their first one. The two left are the active BINDINGS and the `/api/tools` probe, and both now
+  // substitute `null`, which is deliberate: the tools probe withholds the missing-tool note rather than
+  // accusing the user of a missing app off an unreachable read, and the bindings replace the use-case
+  // rows with a retry. The bindings used to substitute `{}`, so every use case read "none — falls back
+  // to General" and offered its providers to pick (`searchBindingsUnread.test.tsx`).
   'pages/settings/SearchPanel.tsx': 2,
   'pages/settings/SecurityPanel.tsx': 2,
   'pages/settings/UpdatesPanel.tsx': 1,
@@ -924,7 +925,7 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // is unimportant".
   'pages/settings/settingsWidgets.tsx': 2,
   'pages/skills/LearningSummaryBlock.tsx': 1,
-  'pages/skills/SkillInspector.tsx': 2,
+  'pages/skills/SkillInspector.tsx': 1,
   'pages/skills/SkillsPage.tsx': 2,
   'pages/tasks/TasksListPage.tsx': 2,
   // 2nd (SCALAR widening): the tab-restore effect's `setRestored(true)`. "The restore attempt has
@@ -1330,7 +1331,7 @@ const FETCHER_SWALLOW_BUDGET: Record<string, number> = {
   'pages/settings/VoicePanel.tsx': 1,
   'pages/settings/settingsWidgets.tsx': 2,
   'pages/skills/LearningSummaryBlock.tsx': 1,
-  'pages/skills/SkillInspector.tsx': 2,
+  'pages/skills/SkillInspector.tsx': 1,
   'pages/skills/SkillsPage.tsx': 2,
   'pages/tools/ToolsPage.tsx': 1,
   'pages/triggers/TriggersListPage.tsx': 1,
@@ -1361,7 +1362,7 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   // arm placed BEFORE the skeleton, which is where the reachability lives.
   'pages/prompts/SyntaxReference.tsx': 1,
   'pages/settings/ChatPanel.tsx': 0,
-  'pages/settings/CompanionPanel.tsx': 3,
+  'pages/settings/CompanionPanel.tsx': 2,
   'pages/settings/MemoryPanel.tsx': 8,
   'pages/settings/ModelBackends.tsx': 1,
   'pages/settings/ModelsPanel.tsx': 2,
@@ -1382,7 +1383,7 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   'pages/settings/SecurityPanel.tsx': 3,
   'pages/settings/UsagePanel.tsx': 5,
   'pages/skills/LearningSummaryBlock.tsx': 1,
-  'pages/skills/SkillInspector.tsx': 2,
+  'pages/skills/SkillInspector.tsx': 1,
   'pages/skills/SkillsPage.tsx': 2,
   'pages/tasks/TaskCreatePage.tsx': 1,
   'pages/triggers/TriggersListPage.tsx': 1,

@@ -18,6 +18,7 @@ import { readNavDisclosure, setNavMode } from './navDisclosure'
 import { APP_NAME } from './config'
 import { notify } from './appSdk'
 import { api, type OnboardingStatePatch } from '../lib/api'
+import { readableErrText } from '../lib/errText'
 import { chatModelSummary } from './onboarding/chatModelSummary'
 import { checkChatModel } from './onboarding/checkChatModel'
 import { StepRow, type StepState } from './onboarding/StepStack'
@@ -132,7 +133,7 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
    *  flip does that and this is a no-op. `App` owns the move either way — one navigator. */
   onFinished: () => void
 }) {
-  const { name: storedName, setName, username: storedHandle } = useIdentity()
+  const { name: storedName, setName, keepOrDefaultName, username: storedHandle } = useIdentity()
   /** Seeded from what this install already stores, then from a live draft.
    *
    *  The STORED name matters for a deliberate re-run: "Run setup again" no longer clears identity,
@@ -140,12 +141,14 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
    *  a rename. The stored HANDLE is seeded as already-touched for the same reason — the suggestion
    *  may not overwrite a choice already made.
    *
-   *  Reading the context values as INITIAL state is safe because `App` renders a spinner until
-   *  `loaded`, so the identity fetch has resolved before this component first mounts. */
+   *  Reading the context values as INITIAL state is safe because `App` renders this flow only once
+   *  the identity read has SUCCEEDED (a failed read gets a retry screen instead), so an empty
+   *  stored name here is a home that has none, never one nobody could read. */
   const [draft, setDraft] = useState<Draft>(() => loadDraft(storedName, storedHandle))
   /** A deliberate re-run ("Run setup again"): this install already HAS a name, so it is past
-   *  first run. Decided once, at mount — `App` renders the flow only after identity has loaded,
-   *  and the only thing that changes the stored name mid-flow is `finish()` itself.
+   *  first run. Decided once, at mount — `App` renders the flow only after the identity read has
+   *  succeeded, and nothing in the app writes an empty name, so a re-run's name cannot vanish
+   *  mid-flow.
    *
    *  🔴 It decides what skipping may write. Settings → Account promises "your name, handle and
    *  everything already set up are kept", and the flow pre-fills both — but "Skip setup for now"
@@ -423,17 +426,21 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
     // re-run request is what releases the guard for an onboarded user.
     if (namePassed || !rerun) {
       try {
-        // The handle rides along in the SAME write — one act commits identity, so the name and the
-        // handle can never disagree about whether first run happened. It is passed explicitly
-        // (rather than derived server-side from `user_name`) because only a surface that ASKED may
-        // send one: see `setName` in app/identity.
-        //
-        // `savedHandle` is deliberately NOT defaulted the way the name is. Skipping setup from the
-        // first step falls back to DEFAULT_USER_NAME for the name because the route guard needs a
-        // non-empty one, but there is no equivalent need for a handle and `slugify_username` never
-        // invents a fallback — so a skipped run commits '' and the records it writes stay
-        // unattributed, which is the shipped promise.
-        await setName(savedName || DEFAULT_USER_NAME, savedHandle)
+        if (namePassed) {
+          // The handle rides along in the SAME write — one act commits identity, so the name and
+          // the handle can never disagree about whether first run happened. It is passed explicitly
+          // (rather than derived server-side from `user_name`) because only a surface that ASKED
+          // may send one: see `setName` in app/identity.
+          await setName(savedName, savedHandle)
+        } else {
+          // A FIRST run skipped without a name. The route guard needs a non-empty one, so identity
+          // falls back to DEFAULT_USER_NAME — but that is the one write the user did not author, so
+          // `keepOrDefaultName` reads what is stored NOW and commits it only onto a home that still
+          // has no name, keeping any name it finds; a failed read writes nothing and lands below.
+          // No handle is sent: the skip asked for none, so a fresh home's records stay
+          // unattributed and a handle already stored stays put.
+          await keepOrDefaultName()
+        }
       } catch (e: unknown) {
         let msg = e instanceof Error ? e.message : 'the request failed'
         try { msg = JSON.parse(msg).error || msg } catch { /* raw text */ }
@@ -442,8 +449,16 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
         // it turns a failed RESPONSE into a sentence, and here there is no response. A first-run user
         // reading "Failed to fetch" learns nothing they can act on; the local gateway being down is
         // both the likeliest cause and the one they can actually fix.
-        if (e instanceof TypeError) msg = `${APP_NAME} didn't respond — check it is still running`
-        notify(`Couldn't save your name: ${msg}. Setup is still open — nothing was lost.`, 'error')
+        // A 503 from something in front of the gateway is no better: its body is not the gateway's,
+        // so the message is `errEnvelope`'s placeholder — measured in the browser as "Couldn't
+        // finish setup: HTTP 503." `readableErrText` names that closed set; a message the backend
+        // actually wrote still reaches the user.
+        if (e instanceof TypeError || !readableErrText(msg)) msg = `${APP_NAME} didn't respond — check it is still running`
+        // A skip typed no name, so its failure is not "your name" failing to save: it is the check
+        // of what is stored, or the fallback write — and either way nothing was written.
+        notify(namePassed
+          ? `Couldn't save your name: ${msg}. Setup is still open — nothing was lost.`
+          : `Couldn't finish setup: ${msg}. Setup is still open, and nothing was changed.`, 'error')
         return
       }
     }
@@ -477,7 +492,9 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
    *  committing identity is what releases the route guard. Skipping a FIRST run from its first
    *  step has no name to commit, so identity falls back to `DEFAULT_USER_NAME` — the same word the
    *  Settings → Account field uses — and the link says so, because a visible default beats a
-   *  silent rename. Skipping a RE-RUN commits nothing: the saved name and handle stay (`rerun`). */
+   *  silent rename. The fallback lands only on a home that still has no name when the skip does
+   *  (`keepOrDefaultName`). Skipping a RE-RUN commits nothing: the saved name and handle stay
+   *  (`rerun`). */
   function skipSetup() {
     finish()
   }

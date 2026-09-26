@@ -8,6 +8,7 @@ import { api } from '../../lib/api'
 import { PanelHeader, Section, Field, Row, Toggle } from './settingsUI'
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
+import { InlineError } from '../../ui/InlineError'
 
 /** Account / identity settings. Self-hosted single-user → the two identities are
  *  the operator's name (SERVER-side DashboardConfig.user_name, follows the user
@@ -41,16 +42,25 @@ export function AccountPanel() {
   // Attribution handle (dashboard.username) — stamped onto records this user
   // creates. The server normalizes to the canonical slug, so we show what it
   // stored rather than the raw keystrokes (typing "Jo Smith" saves "jo-smith").
-  const [handle, setHandle] = useState('')
+  //
+  // 🔴 `null` UNTIL READ, for this field and the assistant name below. Both reads swallowed their
+  // failure (`.catch(() => {})`) and left `''`, so an unread handle showed as NO handle — beside a
+  // hint saying an empty one keeps records unattributed — and an unread assistant name showed as
+  // the default. Typing into either then overwrote a stored value the user could not see. Unread,
+  // each field is disabled and says why, and a failed read offers a retry.
+  const [handle, setHandle] = useState<string | null>(null)
   const [handleDraft, setHandleDraft] = useState('')
+  const [handleErr, setHandleErr] = useState('')
   const [handleSaved, setHandleSaved] = useState(false)
-  useEffect(() => {
+  const loadHandle = () => {
+    setHandleErr('')
     api.dashboardConfig().then((c) => {
       const v = String(c?.username ?? '')
       setHandle(v); setHandleDraft(v)
-    }).catch(() => {})
-  }, [])
-  const handleDirty = handleDraft.trim() !== handle
+    }).catch((e) => setHandleErr(String((e as Error)?.message || e)))
+  }
+  useEffect(loadHandle, [])
+  const handleDirty = handle !== null && handleDraft.trim() !== handle
   const saveHandle = () => {
     api.saveDashboardConfig({ username: handleDraft.trim() })
       .then(() => api.dashboardConfig())
@@ -68,16 +78,25 @@ export function AccountPanel() {
   // cannot carry (the toast names it) and answers with the whole stored config, so the field shows
   // the name from that ANSWER, as Username does. Setting it from the draft is how "Saved" once sat
   // beside `Chloé's Aide` while the server had stored `Chlos Aide`.
-  const [botName, setBotName] = useState('')
+  const [botName, setBotName] = useState<string | null>(null)
   const [botDraft, setBotDraft] = useState('')
+  const [botErr, setBotErr] = useState('')
   const [botSaved, setBotSaved] = useState(false)
-  useEffect(() => {
+  const loadBot = () => {
+    setBotErr('')
     api.personalclawConfig().then((c) => {
       const v = String(c?.agent?.bot_name ?? '')
       setBotName(v); setBotDraft(v)
-    }).catch(() => {})
-  }, [])
-  const botDirty = botDraft.trim() !== botName
+    }).catch((e) => setBotErr(String((e as Error)?.message || e)))
+  }
+  useEffect(loadBot, [])
+  const botDirty = botName !== null && botDraft.trim() !== botName
+
+  /** Why an unread field is unavailable. The two cases are different facts: "still reading" heals
+   *  itself, a failed read does not (the same distinction `InboxSettingsPanel` draws). */
+  const unread = (err: string) => err
+    ? "Couldn't read what is saved, so it can't be changed until a retry succeeds"
+    : 'Still reading what is saved'
   const saveBot = () => {
     api.patchConfig('agent.bot_name', botDraft.trim()).then((c) => {
       const stored = String(c?.agent?.bot_name ?? '')
@@ -114,29 +133,42 @@ export function AccountPanel() {
           </div>
         </Field>
         <Field label="Username" hint="A short handle stamped onto things you create (tasks, comments) so contributions stay attributable later. Lowercase letters, digits, - and _ — anything else is normalized. It's a label, not a login. Leave it empty to keep records unattributed.">
-          <div className="flex items-center gap-s">
-            <div className="flex-1" style={{ maxWidth: 280 }}>
-              <TextInput value={handleDraft} onChange={setHandleDraft}
-                placeholder={suggestHandle(name) || 'your-handle'} />
+          <div className="flex flex-col gap-s">
+            <div className="flex items-center gap-s">
+              <div className="flex-1" style={{ maxWidth: 280 }}>
+                {/* No suggestion while unread: in a dimmed field it reads as the stored handle. */}
+                <TextInput value={handleDraft} onChange={setHandleDraft}
+                  placeholder={handle === null ? '' : (suggestHandle(name) || 'your-handle')}
+                  disabled={handle === null} disabledReason={handle === null ? unread(handleErr) : undefined} />
+              </div>
+              {/* The shared Button primitive — the two older Save buttons in this
+                  panel are hand-rolled, but new chrome adopts the kit. */}
+              <Button size="sm" variant={handleDirty ? 'primary' : 'secondary'} ariaLabel="Save: Username"
+                disabled={!handleDirty}
+                disabledReason={handle === null ? unread(handleErr) : !handleDirty ? 'No changes to save' : undefined}
+                onClick={saveHandle}>
+                {handleSaved ? <Check size={14} /> : null} {handleSaved ? 'Saved' : 'Save'}
+              </Button>
             </div>
-            {/* The shared Button primitive — the two older Save buttons in this
-                panel are hand-rolled, but new chrome adopts the kit. */}
-            <Button size="sm" variant={handleDirty ? 'primary' : 'secondary'} ariaLabel="Save: Username"
-              disabled={!handleDirty} disabledReason={!handleDirty ? 'No changes to save' : undefined} onClick={saveHandle}>
-              {handleSaved ? <Check size={14} /> : null} {handleSaved ? 'Saved' : 'Save'}
-            </Button>
+            {handleErr && <InlineError icon onRetry={loadHandle}>Couldn't read your saved username: {handleErr}</InlineError>}
           </div>
         </Field>
         <Field label="Assistant name" hint="What the assistant calls itself in prompts and greetings ({{bot_name}}). Empty uses the default, PersonalClaw.">
-          <div className="flex items-center gap-s">
-            <div className="flex-1" style={{ maxWidth: 280 }}><TextInput value={botDraft} onChange={setBotDraft} placeholder="PersonalClaw" /></div>
-            <button type="button" onClick={botDirty ? saveBot : undefined} aria-disabled={!botDirty || undefined}
-              aria-label="Save: Assistant name"
-              title={!botDirty ? 'No changes to save' : undefined}
-              data-type="body-s" className="inline-flex items-center gap-1 rounded-md px-3 h-9 disabled:opacity-40 aria-disabled:opacity-40"
-              style={{ background: botDirty ? 'var(--color-primary)' : 'var(--color-surface-high)', color: botDirty ? 'var(--color-on-primary)' : 'var(--color-on-surface-low)' }}>
-              {botSaved ? <Check size={14} /> : null} {botSaved ? 'Saved' : 'Save'}
-            </button>
+          <div className="flex flex-col gap-s">
+            <div className="flex items-center gap-s">
+              <div className="flex-1" style={{ maxWidth: 280 }}>
+                <TextInput value={botDraft} onChange={setBotDraft} placeholder={botName === null ? '' : 'PersonalClaw'}
+                  disabled={botName === null} disabledReason={botName === null ? unread(botErr) : undefined} />
+              </div>
+              <button type="button" onClick={botDirty ? saveBot : undefined} aria-disabled={!botDirty || undefined}
+                aria-label="Save: Assistant name"
+                title={botName === null ? unread(botErr) : !botDirty ? 'No changes to save' : undefined}
+                data-type="body-s" className="inline-flex items-center gap-1 rounded-md px-3 h-9 disabled:opacity-40 aria-disabled:opacity-40"
+                style={{ background: botDirty ? 'var(--color-primary)' : 'var(--color-surface-high)', color: botDirty ? 'var(--color-on-primary)' : 'var(--color-on-surface-low)' }}>
+                {botSaved ? <Check size={14} /> : null} {botSaved ? 'Saved' : 'Save'}
+              </button>
+            </div>
+            {botErr && <InlineError icon onRetry={loadBot}>Couldn't read the saved assistant name: {botErr}</InlineError>}
           </div>
         </Field>
         {/* 🔴 THIS USED TO CLEAR YOUR NAME. "Restart onboarding" worked by wiping `user_name`,

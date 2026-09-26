@@ -6,7 +6,8 @@ import { useQuery } from '../../lib/data'
 import { PanelHeader, Section, RowGroup, ToggleRow, Field, Row, SegPills } from './settingsUI'
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
-import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
+import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
+import { InlineError } from '../../ui/InlineError'
 import { serviceWorkerBlockedReason } from '../../app/registerServiceWorker'
 
 // The editable companion.* fields mirror the backend _EDITABLE_CONFIG allowlist
@@ -40,7 +41,7 @@ export function CompanionPanel() {
   )
   // Same key as #/companion's reader: one collection, one namespace (splitCollectionBusts).
   const { data: pushStatus } = useQuery('companion:push', () => api.pushStatus())
-  const { data: mobileData } = useQuery('settings:companion:mobile', () =>
+  const { data: mobileData, error: mobileErr, refresh: refreshMobile } = useQuery('settings:companion:mobile', () =>
     api.personalclawConfig().then((c) => (c.mobile ?? {}) as CompanionCfg),
     { persist: true },
   )
@@ -208,6 +209,15 @@ export function CompanionPanel() {
           different questions; collapsing them would put a phone-only control on a desktop
           page that cannot honour it. */}
       <Section title="Phone push" hint="How a wake-up reaches your phone. Every push carries ids only — never the tool, its arguments or any message text.">
+        {/* 🔴 ONLY FROM A READ. This section has its own read, and the panel's failure branch above
+            covers a different one — so when only THIS read failed, the backend pills rendered "Web
+            push" as selected whatever was stored, the ntfy topic field vanished, and each click
+            wrote. It now renders its controls from a successful read and nothing else. */}
+        {mobileCfg === null ? (
+          mobileErr
+            ? <InlineError icon onRetry={refreshMobile}>Couldn't read your phone push settings: {String((mobileErr as Error)?.message || mobileErr)}</InlineError>
+            : <ListSkeleton rows={2} what="phone push settings" />
+        ) : (
         <RowGroup>
           <Field label="Push backend" hint="'Web push' uses your browser's own subscription and needs a keypair from `personalclaw push init`. 'ntfy' publishes to a self-hosted topic. 'Off' sends nothing.">
             <SegPills
@@ -254,6 +264,7 @@ export function CompanionPanel() {
             </Field>
           ) : null}
         </RowGroup>
+        )}
       </Section>
 
       {/* INSTALL & OFFLINE (MOBILE-COMPANION T3.1). `serviceWorkerBlockedReason` was written to be

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { useState } from 'react'
 import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react'
 
 // ── TSE-1: who may write the attribution handle, and the ONE slug rule ────────────────────
@@ -31,7 +32,7 @@ vi.mock('../lib/api', () => ({
   },
 }))
 
-import { IdentityProvider, useIdentity, suggestHandle, USERNAME_MAX_LEN } from './identity'
+import { IdentityProvider, useIdentity, suggestHandle, USERNAME_MAX_LEN, DEFAULT_USER_NAME } from './identity'
 
 /** Buttons for the three write shapes a caller can produce.
  *
@@ -42,16 +43,23 @@ import { IdentityProvider, useIdentity, suggestHandle, USERNAME_MAX_LEN } from '
  *  must not disturb a handle it was not asked about — is exactly what the `rename-only` case above
  *  pins, on the path that still exists. */
 function Harness() {
-  const { setName, name, username } = useIdentity()
+  const { setName, keepOrDefaultName, retry, status, name, username } = useIdentity()
+  const [kept, setKept] = useState('')
   return (
     <div>
       <button type="button" onClick={() => setName('Ada King')}>rename-only</button>
       <button type="button" onClick={() => setName('Ada King', 'ada-king')}>rename-with-handle</button>
       <button type="button" onClick={() => setName('Ada King', '')}>rename-clearing-handle</button>
+      <button type="button" onClick={() => keepOrDefaultName().then(
+        () => setKept('resolved'), (e: Error) => setKept(`rejected: ${e.message}`))}>keep-or-default</button>
+      <button type="button" onClick={retry}>retry</button>
       <output>{`${name}|${username}`}</output>
+      <span data-testid="read">{status}</span>
+      <span data-testid="kept">{kept}</span>
     </div>
   )
 }
+const readStatus = () => screen.getByTestId('read').textContent
 
 async function renderHarness(stored: { user_name?: string; username?: string } = {}) {
   dashboardConfig.mockResolvedValue({ user_name: '', username: '', ...stored })
@@ -100,13 +108,85 @@ describe('setName sends the handle only when its caller passes one', () => {
     await renderHarness({ user_name: 'Ada Lovelace', username: 'lovelace' })
     expect(screen.getByRole('status').textContent).toBe('Ada Lovelace|lovelace')
   })
+})
 
-  it('degrades to no handle when the config cannot be read', async () => {
+// ── a failed read is its own state, never an empty identity ──────────────────────────────
+//
+// This block REPLACES an assertion that pinned the defect. It read: an unreadable config "must read
+// as 'no handle' rather than wedging the app", and it asserted the provider then reported `|` — no
+// name, no handle, loaded. The handle half was harmless; the NAME half was not, because `onboarded`
+// is derived from the name: an unreadable config therefore read as a fresh home, the shell opened
+// first-run setup for an onboarded user, and that screen's "Skip setup for now" PUT
+// `{"user_name":"Operator","username":""}` over the real name and handle. The bargain it cited
+// (`identity.current_username()` treating an unreadable config as unattributed) is sound for a
+// label decorating a write; it is unsound for the value that decides whether setup runs.
+//
+// "Don't wedge the app" is kept the honest way — a retry — and asserted here and, through the real
+// shell, in `identityReadFailure.test.tsx`.
+describe('a failed read is its own state, never an empty identity', () => {
+  it('reports the failure as a failure, and writes nothing', async () => {
     dashboardConfig.mockRejectedValue(new Error('gateway down'))
     render(<IdentityProvider><Harness /></IdentityProvider>)
-    // Attribution decorates a write; an unreadable config must read as "no handle" rather
-    // than wedging the app — the same bargain `identity.current_username()` makes server-side.
-    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('|'))
+    await waitFor(() => expect(readStatus()).toBe('failed'))
+    expect(saveDashboardConfig).not.toHaveBeenCalled()
+  })
+
+  it('reads again on retry, and then reports what is stored', async () => {
+    dashboardConfig
+      .mockRejectedValueOnce(new Error('gateway down'))
+      .mockResolvedValue({ user_name: 'Ada Lovelace', username: 'lovelace' })
+    render(<IdentityProvider><Harness /></IdentityProvider>)
+    await waitFor(() => expect(readStatus()).toBe('failed'))
+    fireEvent.click(screen.getByRole('button', { name: 'retry' }))
+    await waitFor(() => expect(readStatus()).toBe('ready'))
+    expect(screen.getByRole('status').textContent).toBe('Ada Lovelace|lovelace')
+    expect(dashboardConfig).toHaveBeenCalledTimes(2)
+    expect(saveDashboardConfig).not.toHaveBeenCalled()
+  })
+})
+
+// ── keepOrDefaultName: a skipped first run's fallback lands only on a home with no name ──
+//
+// The fallback is the one identity write the user did not author, so it is decided from a read of
+// what is stored at the moment of the skip — not from the read the tab took when it opened, which
+// another tab or device may have overtaken.
+describe('keepOrDefaultName reads before it writes', () => {
+  it('keeps a name stored since the first read, and writes nothing', async () => {
+    await renderHarness()
+    dashboardConfig.mockResolvedValue({ user_name: 'Ada Lovelace', username: 'lovelace' })
+    fireEvent.click(screen.getByRole('button', { name: 'keep-or-default' }))
+    await waitFor(() => expect(screen.getByTestId('kept').textContent).toBe('resolved'))
+    // Adopted, so `onboarded` flips and the route guard lets the user out — without a write.
+    expect(screen.getByRole('status').textContent).toBe('Ada Lovelace|lovelace')
+    expect(saveDashboardConfig).not.toHaveBeenCalled()
+  })
+
+  it('rejects and writes nothing when that read fails', async () => {
+    await renderHarness()
+    dashboardConfig.mockRejectedValue(new Error('gateway down'))
+    fireEvent.click(screen.getByRole('button', { name: 'keep-or-default' }))
+    await waitFor(() => expect(screen.getByTestId('kept').textContent).toBe('rejected: gateway down'))
+    expect(saveDashboardConfig).not.toHaveBeenCalled()
+  })
+
+  it('writes the default name — and no handle key — onto a home with none', async () => {
+    // A handle with no name is what the old "Restart onboarding" left behind. Key ABSENCE, as in
+    // the first block: the skip asked for no handle, and `username: ''` would erase this one.
+    await renderHarness({ username: 'lovelace' })
+    fireEvent.click(screen.getByRole('button', { name: 'keep-or-default' }))
+    await waitFor(() => expect(screen.getByTestId('kept').textContent).toBe('resolved'))
+    expect(saveDashboardConfig.mock.calls).toEqual([[{ user_name: DEFAULT_USER_NAME }]])
+    expect(screen.getByRole('status').textContent).toBe(`${DEFAULT_USER_NAME}|lovelace`)
+  })
+
+  it('a refused fallback write rejects, and claims no name the server never stored', async () => {
+    // The fallback write itself can fail (a read-only config, a full disk); the rejection reaches
+    // the caller, which keeps setup open, and `onboarded` stays false.
+    await renderHarness()
+    saveDashboardConfig.mockRejectedValue(new Error('read-only config'))
+    fireEvent.click(screen.getByRole('button', { name: 'keep-or-default' }))
+    await waitFor(() => expect(screen.getByTestId('kept').textContent).toBe('rejected: read-only config'))
+    expect(screen.getByRole('status').textContent).toBe('|')
   })
 })
 

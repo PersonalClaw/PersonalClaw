@@ -65,8 +65,9 @@ interface ToolsIndexData {
   poolStats: McpPoolStats
   groups: ToolGroupsData | null
   // MBR-1: the names of servers granted `elicitation/create` — the per-server right to
-  // interrupt a tool call and ask the user a question. Empty on a fresh install.
-  elicitationServers: string[]
+  // interrupt a tool call and ask the user a question. Empty on a fresh install; `null` when
+  // the grants could not be read, which is a different answer (see the fetcher).
+  elicitationServers: string[] | null
 }
 
 export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQuery'>) {
@@ -83,10 +84,13 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
       api.importableMcp().catch(() => [] as ImportableMcpServer[]),
       api.mcpPoolStats().catch(() => ({ available: false } as McpPoolStats)),
       api.toolGroups().catch(() => null),
-      // Same tolerated-rejection reasoning as the four above: an unreadable config must
-      // not hide the tool list. `[]` is also the FAIL-CLOSED answer here — it renders
-      // every grant as off, which understates rather than overstates what a server may do.
-      api.mcpElicitationServers().catch(() => [] as string[]),
+      // Tolerated like the four above — an unreadable config must not hide the tool list — but
+      // with `null`, never `[]`. `[]` was defended here as the fail-closed answer, and for the
+      // DISPLAY it was: every grant rendered off. The WRITE is the whole allowlist, though
+      // (`toggleElicitation`), so granting one server from a fabricated `[]` sent `[that one]`
+      // and revoked every other server's grant — under a confirmation that says "No other
+      // server is affected." Unknown grants disable the control instead.
+      api.mcpElicitationServers().catch(() => null),
     ])
     return { tools: idx.tools, loadFailures: idx.load_failures ?? [], servers, importable, poolStats, groups, elicitationServers }
   }, { persist: true })
@@ -95,7 +99,8 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
   const servers = data?.servers ?? []
   const importable = data?.importable ?? []
   const poolStats = data?.poolStats ?? null
-  const elicitationServers = data?.elicitationServers ?? []
+  /** `null` while unread or unreadable: no grant can be written from it. */
+  const elicitationServers = data?.elicitationServers ?? null
   const groupsInfo = data?.groups ?? null
   const groupsEnabled = !!groupsInfo?.enabled
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
@@ -148,6 +153,9 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
   // Revoking takes effect on the server's NEXT handshake — the grant is read at session
   // construction — which is why the confirmation copy says "reconnect", not "immediately".
   async function toggleElicitation(s: McpServer) {
+    // The control is disabled while this is `null`; the narrowing is what keeps the whole-list
+    // write below from ever being built out of an unread list.
+    if (!elicitationServers) return
     const granted = elicitationServers.includes(s.name)
     const next = granted
       ? elicitationServers.filter((n) => n !== s.name)
@@ -339,7 +347,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
               {!filtered && loadFailures.length > 0 && <LoadFailures failures={loadFailures} />}
               {!filtered && groupsInfo && <ToolGroupsTile data={groupsInfo} onChanged={load} />}
               {!filtered && <McpPoolTile stats={poolStats} />}
-              {groups?.map((g) => <GroupBlock key={g.key} g={g} onOpen={setOpenName} onToggleServer={toggleServer} onRemoveServer={removeServer} onToggleTool={toggleTool} onToggleProvider={toggleProvider} onReconnect={reconnectServer} reconnecting={reconnecting} elicitationGranted={!!g.server && elicitationServers.includes(g.server.name)} onToggleElicitation={toggleElicitation} />)}
+              {groups?.map((g) => <GroupBlock key={g.key} g={g} onOpen={setOpenName} onToggleServer={toggleServer} onRemoveServer={removeServer} onToggleTool={toggleTool} onToggleProvider={toggleProvider} onReconnect={reconnectServer} reconnecting={reconnecting} elicitationGranted={!g.server ? false : elicitationServers ? elicitationServers.includes(g.server.name) : null} onToggleElicitation={toggleElicitation} />)}
               {!filtered && importable.length > 0 && <ImportSuggestions servers={importable} onImported={() => setTimeout(load, 300)} />}
             </div>
           )}
@@ -432,7 +440,7 @@ export function providerBadge(g: Pick<Group, 'providerLocked' | 'tier'>): { labe
   return { label: trustTierLabel(g.tier), title: trustTierHint(g.tier) }
 }
 
-function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, onToggleProvider, onReconnect, reconnecting, elicitationGranted, onToggleElicitation }: { g: Group; onOpen: (name: string) => void; onToggleServer: (s: McpServer) => void; onRemoveServer: (s: McpServer) => void; onToggleTool: (g: Group, t: ToolItem) => void; onToggleProvider: (g: Group) => void; onReconnect: (s: McpServer) => void; reconnecting: string | null; elicitationGranted: boolean; onToggleElicitation: (s: McpServer) => void }) {
+function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, onToggleProvider, onReconnect, reconnecting, elicitationGranted, onToggleElicitation }: { g: Group; onOpen: (name: string) => void; onToggleServer: (s: McpServer) => void; onRemoveServer: (s: McpServer) => void; onToggleTool: (g: Group, t: ToolItem) => void; onToggleProvider: (g: Group) => void; onReconnect: (s: McpServer) => void; reconnecting: string | null; elicitationGranted: boolean | null; onToggleElicitation: (s: McpServer) => void }) {
   const health = g.server ? serverHealth(g.server) : null
   // A native provider (not the locked platform one) gets a whole-provider toggle.
   const nativeToggleable = g.kind === 'native' && !g.providerLocked
@@ -469,13 +477,21 @@ function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, o
                 grants what. `SquareIconButton`'s `on` gives the coral tint AND
                 `aria-pressed`, so the state is readable by sight and by screen reader, and
                 the accessible name states the grant rather than the verb. */}
-            <SquareIconButton label={elicitationGranted
-              ? `Stop ${g.server.name} asking you questions`
-              : `Let ${g.server.name} ask you questions`}
-              title={elicitationGranted
-                ? 'This server may interrupt a tool call to ask you a question. Each one comes to you as an approval card.'
-                : 'This server cannot ask you questions. PersonalClaw does not advertise the capability to it, and refuses if it asks anyway.'}
-              on={elicitationGranted} iconSize={13} onClick={() => onToggleElicitation(g.server!)}>
+            {/* `null` = the grants could not be read: the name claims neither state, and the
+                control is disabled, because its write is the whole allowlist (`toggleElicitation`). */}
+            <SquareIconButton label={elicitationGranted === null
+              ? `Questions from ${g.server.name}`
+              : elicitationGranted
+                ? `Stop ${g.server.name} asking you questions`
+                : `Let ${g.server.name} ask you questions`}
+              title={elicitationGranted === null
+                ? `Whether ${g.server.name} may ask you questions`
+                : elicitationGranted
+                  ? 'This server may interrupt a tool call to ask you a question. Each one comes to you as an approval card.'
+                  : 'This server cannot ask you questions. PersonalClaw does not advertise the capability to it, and refuses if it asks anyway.'}
+              disabled={elicitationGranted === null}
+              disabledReason="couldn't read which servers may ask you questions, so none can be changed. Reload the page to try again."
+              on={!!elicitationGranted} iconSize={13} onClick={() => onToggleElicitation(g.server!)}>
               <MessageCircleQuestion size={13} />
             </SquareIconButton>
             {/* Reconnect just THIS server (re-probe) — recover a timed-out/errored

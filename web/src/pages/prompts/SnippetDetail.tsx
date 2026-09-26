@@ -36,7 +36,10 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
   const { data: fetched, error: hydrateErr, refresh: refetch } = useQuery<PromptSnippet | undefined>(`snippet:${snippet.name}`, () => (snippet.content == null ? api.snippet(snippet.name) : Promise.resolve(undefined)), { persist: true })
   const full = snippet.content != null ? snippet : fetched
 
-  useEffect(() => { if (full) setDraft(toSnippetDraft(full)) }, [full])
+  // Seeded DURING RENDER, not in an effect — `PromptDetail` records why: an effect seeds after the
+  // edit form's first commit, whose Save would send the list row's empty body.
+  const [seededFrom, setSeededFrom] = useState<PromptSnippet | undefined>(full)
+  if (full && full !== seededFrom) { setSeededFrom(full); setDraft(toSnippetDraft(full)) }
 
   async function save() {
     if (!draft.name.trim()) { setErr('Name is required'); return }
@@ -55,6 +58,15 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
     catch (e) { setErr(e instanceof Error ? e.message : 'Delete failed') }
   }
 
+  // 🔴 THE FULL RECORD FIRST, THEN THE EDITOR — `PromptDetail`'s defect and fix, identically: the
+  // draft starts as the list row, which carries no `content`, and Save PUTs the whole snippet.
+  if (full === undefined && hydrateErr) {
+    return <LoadError what="snippet" error={hydrateErr} onRetry={refetch} />
+  }
+  if (full === undefined) {
+    return <div className="flex h-40 items-center justify-center"><Loader2 size={20} className="animate-spin text-on-surface-low" /></div>
+  }
+
   if (editing) {
     return (
       <div className="flex flex-col gap-l">
@@ -63,19 +75,12 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
         </div>
         <SnippetForm draft={draft} onChange={setDraft} nameLocked />
         <FormFooter error={err}>
-          <Button variant="ghost" size="sm" onClick={() => { if (full) setDraft(toSnippetDraft(full)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
+          <Button variant="ghost" size="sm" onClick={() => { setDraft(toSnippetDraft(full)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} loading={saving} disabled={saving || !draft.name.trim()}
             disabledReason={!draft.name.trim() ? 'Enter a name first' : undefined}><Check size={15} /> Save</Button>
         </FormFooter>
       </div>
     )
-  }
-
-  if (full === undefined && hydrateErr) {
-    return <LoadError what="snippet" error={hydrateErr} onRetry={refetch} />
-  }
-  if (full === undefined) {
-    return <div className="flex h-40 items-center justify-center"><Loader2 size={20} className="animate-spin text-on-surface-low" /></div>
   }
 
   const vars = promptVars(full)

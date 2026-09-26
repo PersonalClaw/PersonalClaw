@@ -76,7 +76,10 @@ export function ProjectionRulesPanel() {
               No custom rules — the builtin projectors handle logs, diffs, JSON, test output, CSV, and code automatically, and a builtin rule pack recognises common command output (git, pytest, npm, docker…). Add a rule only for a tool whose large output isn't recognised.
             </div>
           ) : null}
-          <AddRule disabled={busy} onAdd={(r) => save([...list, r])} />
+          {/* 🔴 ONLY ONCE THE RULES HAVE BEEN READ. Adding writes the WHOLE list (`save([...list, r])`,
+              and the server replaces it), so while `rules` is unread — loading, or failed behind the
+              Retry above — `list` is a fabricated `[]` and one added rule deleted every stored one. */}
+          {rules !== undefined && <AddRule disabled={busy} onAdd={(r) => save([...list, r])} />}
           {err && <div data-type="body-s" className="flex items-center gap-1.5 text-danger"><AlertTriangle size={13} /> {err}</div>}
         </div>
       </Section>
