@@ -74,7 +74,7 @@ since a remote server's headers hold its bearer token), your backups (export, im
 restore), who may message your agent from a chat channel, taking back an autonomy grant or
 undoing what an automation did, and bringing your setup over from other agent tools
 (`/api/onboarding/import`, which copies their MCP servers, skills, agents, prompts,
-instructions, memories and conversations in).
+instructions, memories, conversations and denied commands in).
 Holding any of those would make every other
 line in a manifest moot, so there is nothing to scope — and before the registry existed,
 an app declaring `/api/ws` (the event socket) prefix-matched `/api/ws/terminal/{id}` and

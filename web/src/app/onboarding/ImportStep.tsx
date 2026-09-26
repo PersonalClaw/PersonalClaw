@@ -69,6 +69,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   agents: 'Agents',
   prompts: 'Prompts',
   conversations: 'Conversations',
+  denied_commands: 'Denied commands',
   settings: 'Settings',
 }
 /** Where each category lands here — the destination in plain words, so ticking a box
@@ -81,6 +82,7 @@ const CATEGORY_BLURB: Record<string, string> = {
   agents: 'Subagents, added to your Agents page.',
   prompts: 'Slash commands and saved prompts, run in chat as @name.',
   conversations: 'Past conversations, listed in Chat under the dates they happened.',
+  denied_commands: 'Commands the other tool refused to run, added to your shell denylist in Settings › Security.',
   settings: 'Staged for you to review — never merged into live config.',
 }
 
@@ -111,7 +113,7 @@ export function labelOfCategory(category: string): string {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
-/** Whether an item begins ticked: every `new` one, bar what the other tool never let run. */
+/** Whether an item begins ticked: every `new` one, bar what the other tool does not use. */
 const startsTicked = (i: OnboardingImportItem) => i.state === 'new' && i.preselected !== false
 
 /** What was left out of ONE item, value-free. The skipped count covers dropped secret
@@ -203,8 +205,9 @@ export function ImportStep({ onDone, onSkip }: {
       setScan(s)
       // Everything that CAN come over starts ticked: the user came here to bring their
       // setup over, and un-ticking is a smaller act than hunting for what to tick. The one
-      // exception is an item the other tool itself never let run (`preselected: false` — a
-      // project's MCP server nobody approved there): bringing that over is the user's call.
+      // exception is an item the other tool itself does not use (`preselected: false` — a
+      // project's MCP server nobody approved there, a file an override replaces): bringing that
+      // over is the user's call, and the item's note says why.
       setPicked(new Set(s.sources.filter((x) => x.detected)
         .flatMap((x) => x.items.filter(startsTicked).map((i) => i.fingerprint))))
       setOpen(new Set())
@@ -319,7 +322,7 @@ export function ImportStep({ onDone, onSkip }: {
               <p data-type="body-s" className="text-on-surface-var">
                 {nothingNew
                   ? `Everything we found in ${found} is already here, or differs from what you have — nothing new to bring over.`
-                  : `We found ${found} on this machine. Bring ${one ? 'its' : 'their'} setup over — ${one ? 'it is' : 'they are'} only read, nothing in ${one ? 'it' : 'them'} is changed, and credentials are never imported. Everything is ticked${unticked ? `, except ${plural(unticked, 'item', 'items')} the other tool never let run` : ''}; choose item by item inside any group.`}
+                  : `We found ${found} on this machine. Bring ${one ? 'its' : 'their'} setup over — ${one ? 'it is' : 'they are'} only read, nothing in ${one ? 'it' : 'them'} is changed, and credentials are never imported. Everything is ticked${unticked ? `, except ${plural(unticked, 'item', 'items')} the other tool does not use` : ''}; choose item by item inside any group.`}
               </p>
 
               <motion.div className="flex flex-col gap-s" initial="initial" animate="animate"

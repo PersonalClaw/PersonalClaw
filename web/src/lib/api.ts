@@ -5117,8 +5117,9 @@ export type OnboardingImportItemState = 'new' | 'existing' | 'conflict' | 'rejec
  *  scanner. `detail` says why a non-`new` item will not be written, in words true both
  *  before and after an import. `origin` is where in the tool it was found ("Local scope ·
  *  /Users/you/api", "Project · ~/src/app"), `note` what the import leaves out of it or changes,
- *  and `preselected` false for an item the other tool itself never let run — a project's MCP
- *  server nobody approved — so the step starts with it unticked. */
+ *  and `preselected` false for an item the other tool itself does not use as it stands — a
+ *  project's MCP server nobody approved, an AGENTS.md Codex reads an override of instead — so the
+ *  step starts with it unticked. */
 export interface OnboardingImportItem {
   fingerprint: string; source: string; category: string; key: string; title: string
   origin: string; note: string; preselected: boolean
@@ -7700,10 +7701,10 @@ export const api = {
   removeMcpServer: (name: string) => del(`/api/mcp/servers/${encodeURIComponent(name)}`),
   // Servers configured in an external backend (Claude Code) not yet in PClaw.
   importableMcp: () => get<{ servers: ImportableMcpServer[] }>('/api/mcp/importable').then((r) => r.servers),
-  // Import a discovered server into ~/.personalclaw/mcp.json. The gateway copies it from Claude Code's
-  // own file, values included (stored in the credential store), and leaves that file as it is. The
-  // route answers 200 for a batch, so a change that did not land carries an `error` — thrown here, so
-  // `reportingWrite` reports both failure shapes.
+  // Import a discovered server into ~/.personalclaw/mcp.json. The gateway copies it from the other
+  // tool's own file, values included (stored in the credential store), and leaves that file as it is.
+  // The route answers 200 for a batch, so a change that did not land carries an `error` — thrown here,
+  // so `reportingWrite` reports both failure shapes.
   /** Import one listed server: the row's `id` names it in its scope, and the gateway reads its
    *  definition again from the other tool's own files. Claude Code's file is left as it is — the
    *  import used to send `ccGlobal: true`, which copied a local- or project-scope server into

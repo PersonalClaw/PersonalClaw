@@ -1569,8 +1569,9 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
     Removing a server is ``DELETE /api/mcp/servers/{name}``, not a change here.
 
     An import from the Tools page's list carries ``"from": <the row's id>``: the server is then
-    copied exactly as that row showed it, from whichever of Claude Code's scopes it came from —
-    user, local or a project's ``.mcp.json`` (``mcp_discovery.importable_spec``).
+    copied exactly as that row showed it, from the tool and the scope it came from — Claude
+    Code's user, local or project ``.mcp.json`` scope, or Codex's ``config.toml``
+    (``mcp_discovery.importable_spec``).
 
     After all changes are written, ``rebuild_agent_config`` is called once so the agent config
     (``~/.personalclaw/agents/personalclaw.json``) reflects the new merged state. Returns a
@@ -1652,10 +1653,10 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
             # importing a Claude-Code-only server would be a no-op (nothing to
             # enable in the PClaw scope).
             #
-            # `from` is the Import list's id for one server in one of Claude Code's scopes: a
-            # local- or project-scope server is found by nothing that searches by name, and two
-            # scopes can hold one name. The definition is read again from Claude Code's own
-            # files (`importable_spec`), so the request names a row and never a path or a spec.
+            # `from` is the Import list's id for one server in one tool's scope: a local- or
+            # project-scope server is found by nothing that searches by name, and two scopes
+            # (or two tools) can hold one name. The definition is read again from that tool's
+            # own files (`importable_spec`), so the request names a row, never a path or a spec.
             preserved_spec: dict | None = None
             listed = change.get("from")
             if listed is not None and not (
@@ -1674,8 +1675,8 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
                         results.append(
                             {
                                 "name": name,
-                                "error": f"Claude Code no longer has the '{name}' server this "
-                                "list showed. Reload the list to see what it has now.",
+                                "error": f"The tool this list read no longer has the '{name}' "
+                                "server it showed. Reload the list to see what it has now.",
                             }
                         )
                         continue

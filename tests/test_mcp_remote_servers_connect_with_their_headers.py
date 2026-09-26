@@ -531,6 +531,8 @@ def test_a_server_imported_from_claude_code_connects_with_its_headers(tmp_path, 
         PERSONALCLAW_CREDENTIAL_BACKEND="dotenv",
         PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"),
     )
+    # The import list reads Codex too: its home is the fake user's, never a developer's.
+    env.pop("CODEX_HOME", None)
     proc = subprocess.run(
         [sys.executable, str(driver), NAME],
         env=env,

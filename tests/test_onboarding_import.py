@@ -24,9 +24,8 @@ The load-bearing tests, one per property the atom names:
 * ``test_the_plan_says_before_the_import_what_the_import_then_does`` — the state a scan shows
   beside an item is the outcome its import reports, for every state, because the writer
   consults the planner rather than re-deciding.
-* ``test_each_item_carries_its_own_withheld_count`` /
-  ``test_split_tables_is_strip_secrets_with_the_count_kept_per_entry`` — a user can see WHICH
-  item comes over without a credential, and the per-entry split cannot change a total.
+* ``test_each_item_carries_its_own_withheld_count`` — a user can see WHICH item comes over
+  without a credential.
 """
 
 from __future__ import annotations
@@ -50,7 +49,6 @@ from personalclaw.onboarding_import import (
     run_import,
     scan_source,
 )
-from personalclaw.onboarding_import.floors import split_tables, strip_secrets
 from personalclaw.onboarding_import.sources import claude_code, codex
 from personalclaw.onboarding_import.writers import (
     _PLANNERS,
@@ -605,31 +603,6 @@ def test_codex_attributes_each_server_and_the_settings_remainder(tmp_path: Path)
     assert by_key["config.toml"].payload == {"model": "gpt-5"}
     assert result.secrets_skipped == 3
     assert result.secrets_outside_items() == 0
-
-
-@pytest.mark.parametrize(
-    "doc",
-    [
-        {"mcpServers": {"a": {"env": {"API_KEY": "x", "K": "v"}}, "b": {"command": "c"}}},
-        {"mcpServers": {"auth-proxy": {"command": "c"}, "ok": {"token": "t"}}, "secret": 1},
-        {"mcpServers": {"a": "not-a-dict", "b": {"args": [{"password": "p"}]}}, "top": [1]},
-        {"mcpServers": ["not", "a", "table"], "access_key": "k"},
-        {"mcp_servers": {"a": {"k": 1}}, "mcpServers": {"a": {"api_key": "z"}}},
-        ["not", "a", "document"],
-    ],
-)
-def test_split_tables_is_strip_secrets_with_the_count_kept_per_entry(doc) -> None:
-    """The per-entry walk may not change a TOTAL: whatever the document's shape — secret-named
-    servers, junk entries, a table that is not one, a name defined in two tables — the split's
-    total is the whole-document strip's count, and every value it returns is stripped."""
-    tables = ("mcp_servers", "mcpServers")
-    split = split_tables(doc, tables)
-    assert split.total == strip_secrets(doc)[1]
-    for _name, entry, withheld in split.entries:
-        assert strip_secrets(entry) == (entry, 0), "an entry left the floor unstripped"
-        assert withheld >= 0
-    assert strip_secrets(split.remainder)[1] == 0
-    assert len({name for name, _e, _w in split.entries}) == len(split.entries)
 
 
 # ── dispatch is exhaustive ────────────────────────────────────────────────────

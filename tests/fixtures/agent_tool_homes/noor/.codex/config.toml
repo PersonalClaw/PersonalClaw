@@ -1,0 +1,70 @@
+model = "gpt-5.5-codex"
+model_provider = "openai"
+model_reasoning_effort = "medium"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+notify = ["/Users/noor/.codex/notify.sh"]
+check_for_update_on_startup = true
+
+[sandbox_workspace_write]
+network_access = false
+
+[shell_environment_policy]
+inherit = "core"
+exclude = ["AWS_*", "*_TOKEN", "*_KEY", "*_SECRET"]
+
+[tui]
+notifications = true
+
+[history]
+persistence = "save-all"
+
+[profiles.deep]
+model = "gpt-5.5-codex"
+model_reasoning_effort = "high"
+
+[profiles.local]
+model_provider = "ollama"
+model = "qwen3-coder:30b"
+approval_policy = "on-request"
+
+[model_providers.ollama]
+name = "Ollama"
+base_url = "http://localhost:11434/v1"
+
+[mcp_servers.github]
+command = "docker"
+args = ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN", "ghcr.io/github/github-mcp-server"]
+
+[mcp_servers.github.env]
+GITHUB_PERSONAL_ACCESS_TOKEN = "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Zx"
+
+[mcp_servers.feedsmith-db]
+command = "uvx"
+args = ["postgres-mcp", "--access-mode=restricted"]
+startup_timeout_sec = 20
+
+[mcp_servers.feedsmith-db.env]
+DATABASE_URI = "postgresql://feedsmith:s3a-Gull-Harbour-42@localhost:5433/feedsmith_dev"
+
+[mcp_servers.sentry]
+url = "https://mcp.sentry.dev/mcp"
+bearer_token_env_var = "SENTRY_ACCESS_TOKEN"
+http_headers = { "X-Sentry-Org" = "cartwheel" }
+
+[mcp_servers.openaiDeveloperDocs]
+url = "https://developers.openai.com/mcp"
+
+[mcp_servers.notes]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/Users/noor/Notes/Garden"]
+enabled = false
+
+[projects."/Users/noor/src/feedsmith"]
+trust_level = "trusted"
+
+[projects."/Users/noor/work/carrier-webhooks"]
+trust_level = "trusted"
+
+[projects."/Users/noor/work/eta-engine"]
+trust_level = "trusted"
