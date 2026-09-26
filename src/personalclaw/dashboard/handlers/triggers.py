@@ -51,16 +51,6 @@ _LIFECYCLE = "lifecycle"
 _EVENT = "event"  # data-event triggers (#38): memory/content patterns
 _STORE = "store"  # unified TriggerStore kinds with no legacy backend (file/web_watch/idle/…)
 
-#: The `TriggerStore` kinds the three legacy backends do NOT already surface. `clock` is the
-#: schedule backend's, `event` is the event-trigger store's, `manual` has no autonomous surface;
-#: everything else (file/web_watch/idle/run_completed/view/webhook) can ONLY be created through the
-#: `automation_*` chat tools (S92) and, until now, was invisible on the Automations page — created,
-#: fired (S93 for `file`), and unlistable. This is the additive read-plus-safe-mutation slice, not
-#: the §6 class-B re-point of the schedule/event backends onto the store.
-_STORE_ONLY_KINDS: frozenset[str] = frozenset(
-    {"file", "web_watch", "idle", "run_completed", "view", "webhook"}
-)
-
 
 def _event_store():
     from personalclaw.config.loader import config_dir
@@ -466,36 +456,11 @@ def _last_run_status(state: DashboardState, job_id: str) -> str | None:
     return status or None
 
 
-def _schedule_rows(state: DashboardState) -> list[dict[str, Any]]:
-    """Every schedule trigger, read from the unified store (§6 re-point — S99).
-
-    The store is the source of truth once the boot migration has run (S98). The legacy service is
-    consulted ONLY when the store holds no clock rows, which happens on a home whose migration has
-    not run yet — reading the old file for one more boot is strictly better than showing a user zero
-    schedules. That fallback is what retires when `ScheduleService` does.
-
-    Names/results are redacted on the way out exactly as `_serialize_schedule` did: the projection
-    is a data mapping and knows nothing about credential scrubbing.
-    """
-    from personalclaw.triggers.ownership import owner_username
-    from personalclaw.triggers.provider import all_rows
-
-    store = _trigger_store()
-    # `all_rows`, not `store.load()`: a registered `trigger` provider's rows belong on this page too
-    # (TSE-4). Resolved ONCE for the whole list rather than per row — the owner is one config read
-    # and a per-row read would make a 40-automation page do 40 of them.
-    owner = owner_username()
-    clock_rows = [row for row in all_rows(store) if row.trigger.kind == "clock"]
-    if clock_rows:
-        return [_schedule_row_for(state, row, owner=owner) for row in clock_rows]
-    return []
-
-
 def _schedule_row_for(state: DashboardState, row: Any, *, owner: str = "") -> dict[str, Any]:
     """ONE schedule row, projected and redacted (S101).
 
-    Factored out of `_schedule_rows` so the list and the single-row write responses (create,
-    update) answer in exactly the same shape. Two projections would drift, and a create that
+    Shared by the list (`api_triggers`) and the single-row write responses (create, update), so
+    they answer in exactly the same shape. Two projections would drift, and a create that
     returned a different shape than the list is how a UI ends up with two ideas of one trigger.
 
     Takes the `LoadedTrigger` for the reason `_issue_messages` explains: `issues` used to be a
@@ -665,39 +630,55 @@ def _app_source_catalog() -> list[dict[str, Any]]:
 # ── list ──
 
 
-def unified_trigger_count(state: DashboardState) -> int:
-    """The number of triggers ``GET /api/triggers`` lists — the tally the dashboard
-    SystemHealth rail renders under "triggers" so it AGREES with the Triggers page (#773).
+#: The kinds `GET /api/triggers` lists, in the order it lists them.
+_LIST_KINDS: tuple[str, ...] = (_SCHEDULE, _LIFECYCLE, _EVENT, _STORE)
 
-    Counts the SAME four sources :func:`api_triggers` gathers — clock schedules and the
-    store-only kinds from the unified store, lifecycle hooks, and data-event triggers —
-    but never serializes or redacts a row: a status poll only needs the tally. This is
-    deliberately WIDER than ``DashboardState.trigger_counts()`` / the ``cron`` status
-    block, which count the schedule store alone and stay as they are; the rail exists to
-    over-claim otherwise — it labels a schedule-store count "triggers" while the Triggers
-    page adds the (7 globally-fired) lifecycle hooks the store never held.
 
-    Never raises: ``GET /api/status`` is what a user opens when something is already
-    wrong, so a source that cannot be read contributes 0 rather than 500ing the surface —
-    exactly the contract ``trigger_counts()`` keeps for the schedule half.
+def _gather(state: DashboardState, kind: str) -> list[Any]:
+    """Every trigger of one listed *kind*, unserialized: THE one gathering.
+
+    The Triggers page lists it and the status strip counts it, and both read it HERE. The count was
+    a hand-copied duplicate of the list's gathering, and the strip said "6 triggers" over a page
+    that listed 5 (day 8).
+
+    * ``schedule``: the unified store's ``clock`` rows (§6's re-point, S99).
+    * ``lifecycle``: every hook in the hook store.
+    * ``event``: every data-event trigger (``event_triggers.json``, a store of its own).
+    * ``store``: every OTHER unified-store row. That includes ``event`` and ``manual`` rows, which
+      ``automation_create`` makes and which the old gathering listed and counted nowhere: created,
+      and invisible on the one page a user manages automations from. Broken rows (S87 lenient
+      parse) are included, not hidden: a broken automation invisible on its own page is
+      undebuggable.
+
+    ``all_rows``, not ``store.load()``: a registered ``trigger`` provider's rows belong on this page
+    too (TSE-4). Raises on a source that cannot be read; the caller decides what that means.
     """
-    total = 0
-    try:
+    if kind in (_SCHEDULE, _STORE):
         from personalclaw.triggers.provider import all_rows
 
-        for row in all_rows(_trigger_store()):
-            if row.trigger.kind == "clock" or row.trigger.kind in _STORE_ONLY_KINDS:
-                total += 1
-    except Exception:  # noqa: BLE001 - a status read must never fail on the store half
-        logger.debug("schedule/store trigger count unavailable", exc_info=True)
-    try:
-        total += len(_hook_store(state).list_all())
-    except Exception:  # noqa: BLE001 - nor on the lifecycle-hook half
-        logger.debug("lifecycle hook count unavailable", exc_info=True)
-    try:
-        total += len(_event_store().load())
-    except Exception:  # noqa: BLE001 - nor on the data-event half
-        logger.debug("event trigger count unavailable", exc_info=True)
+        rows = all_rows(_trigger_store())
+        clock = kind == _SCHEDULE
+        return [row for row in rows if (row.trigger.kind == "clock") is clock]
+    if kind == _LIFECYCLE:
+        return list(_hook_store(state).list_all())
+    if kind == _EVENT:
+        return list(_event_store().load())
+    raise ValueError(f"not a listed trigger kind: {kind!r}")
+
+
+def unified_trigger_count(state: DashboardState) -> int:
+    """How many triggers ``GET /api/triggers`` lists: the status strip's "triggers" (#773).
+
+    The same :func:`_gather`, counted instead of serialized. Never raises: ``GET /api/status`` is
+    what a user opens when something is already wrong, so a kind that cannot be read contributes 0
+    rather than failing the surface.
+    """
+    total = 0
+    for kind in _LIST_KINDS:
+        try:
+            total += len(_gather(state, kind))
+        except Exception:  # noqa: BLE001 - a status read must never fail on one source
+            logger.debug("trigger count: %s unavailable", kind, exc_info=True)
     return total
 
 
@@ -707,40 +688,29 @@ async def api_triggers(request: web.Request) -> web.Response:
     ``?type=`` filters to one kind. The response also carries ``server_tz`` for
     the schedule cadence rendering the list does client-side.
     """
-    state: DashboardState = request.app["state"]
-    want = request.query.get("type", "").strip().lower()
-
-    triggers: list[dict[str, Any]] = []
-    if want in ("", _SCHEDULE):
-        # 🔴 §6's re-point: the schedule list is read from the UNIFIED STORE, not `state.crons`.
-        # Verified before switching — after the boot migration (S98) the store lists exactly the
-        # same job ids the legacy service does, so nothing vanishes from the page. Falls back to
-        # the legacy service only when the store holds no clock rows (a home whose migration has
-        # not run yet): showing a user zero schedules would be worse than reading the old file
-        # for one more boot.
-        triggers.extend(_schedule_rows(state))
-    if want in ("", _LIFECYCLE):
-        used_by = _used_by_index()
-        for hook in _hook_store(state).list_all():
-            triggers.append(_serialize_lifecycle(hook, used_by.get(hook.id, [])))
-    if want in ("", _EVENT):
-        for t in _event_store().load():
-            triggers.append(_serialize_event(t))
-    if want in ("", _STORE):
-        # Store-only kinds (file/web_watch/idle/…) have no legacy backend. Without this they are
-        # created and fired but never listed — the present-and-inert gap S92/S93 opened. Broken
-        # rows (S87 lenient parse) are shown, not hidden: a broken automation invisible on its own
-        # page is undebuggable.
-        from personalclaw.triggers.ownership import owner_username
-        from personalclaw.triggers.provider import all_rows
-
-        owner = owner_username()
-        for row in all_rows(_trigger_store()):
-            if row.trigger.kind in _STORE_ONLY_KINDS:
-                triggers.append(_serialize_store(row, owner=owner))
-
     from personalclaw.schedule import get_local_tz
     from personalclaw.triggers.ownership import owner_username
+
+    state: DashboardState = request.app["state"]
+    want = request.query.get("type", "").strip().lower()
+    # Resolved ONCE for the whole list rather than per row: the owner is one config read, and a
+    # per-row read would make a 40-automation page do 40 of them.
+    owner = owner_username()
+
+    triggers: list[dict[str, Any]] = []
+    for kind in _LIST_KINDS:
+        if want not in ("", kind):
+            continue
+        rows = _gather(state, kind)
+        if kind == _SCHEDULE:
+            triggers.extend(_schedule_row_for(state, row, owner=owner) for row in rows)
+        elif kind == _LIFECYCLE:
+            used_by = _used_by_index()
+            triggers.extend(_serialize_lifecycle(h, used_by.get(h.id, [])) for h in rows)
+        elif kind == _EVENT:
+            triggers.extend(_serialize_event(t) for t in rows)
+        else:
+            triggers.extend(_serialize_store(row, owner=owner) for row in rows)
 
     tz_name, _ = get_local_tz()
     # `owner` mirrors the tasks seam's list response (§2.1): the page labels a foreign row with its
@@ -2510,8 +2480,8 @@ async def api_triggers_doctor(request: web.Request) -> web.Response:
     # that covered one kind's parse issues would be a doctor whose silence means nothing.
     for loaded in loaded_rows:
         # The same namespace the LIST route gives this row, so a UI can join a finding back onto the
-        # trigger it is about: `_schedule_rows` serves clock rows under `schedule:` and
-        # `_serialize_store` serves the store-only kinds under `store:`.
+        # trigger it is about: `_gather` lists clock rows under `schedule:` and every other store
+        # kind under `store:`.
         ns = _SCHEDULE if loaded.trigger.kind == "clock" else _STORE
         for issue in loaded.issues:
             is_error = issue.severity == "error"

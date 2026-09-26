@@ -996,9 +996,9 @@ async def api_loop_delete(request: web.Request) -> web.Response:
         await _reap_loop_sessions(request.app["state"], cid)
     except Exception:
         logger.debug("loop session reap failed for %s", cid, exc_info=True)
+    # No `loops` refresh here: `store.delete` announces the deletion itself.
     try:
         request.app["state"].loop_sse().publish(registry_key(cid), "deleted", {"loop_id": cid})
-        request.app["state"].push_refresh("loops")
     except Exception:
         logger.debug("loop delete publish failed", exc_info=True)
     return web.json_response({"ok": deleted})

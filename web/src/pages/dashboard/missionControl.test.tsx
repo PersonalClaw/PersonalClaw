@@ -4,6 +4,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { resetDataStore } from '../../lib/data'
 import type { InboxItem, PendingApproval } from '../../lib/api'
+import type { LaneCard } from '../../lib/attentionLanes'
 
 // ── AMBIENT-SURFACES AS-8: Mission Control is a CONTROL surface ──────────────────────────────
 //
@@ -41,6 +42,8 @@ vi.mock('../../lib/api', async (orig) => ({
     resumeWorkflowRun: (...a: unknown[]) => resumeWorkflowRun(...a),
   },
 }))
+
+vi.mock('../../lib/useChatSocket', () => ({ useChatSocket: () => {} }))
 
 const toLanes = vi.fn()
 const laneFor = vi.fn()
@@ -92,6 +95,21 @@ const questionItem = (choices: string[] = ['Ship it', 'Hold']): InboxItem => ({
   },
 })
 
+/** Cards in the shape `toLanes` really returns — typed as `LaneCard`, so a fixture cannot hand
+ *  this view a field the derivation never sets (the defect that left every card verb-less). */
+const approvalCard = (over: Partial<Extract<LaneCard, { origin: 'approval' }>> = {}): LaneCard => ({
+  key: 'approval:appr-1', lane: 'needs-approval', origin: 'approval', id: 'appr-1',
+  title: 'shell.run', at: 1, approval: approval(), ...over,
+})
+const questionCard = (item: InboxItem): LaneCard => ({
+  key: `inbox:${item.id}`, lane: 'your-turn', origin: 'inbox', id: item.id,
+  title: 'loop-worker', at: null, item,
+})
+const sessionCard = (key: string, title: string): LaneCard => ({
+  key: `session:${key}`, lane: 'working', origin: 'session', id: key, title, at: null,
+  session: { key, title, running: true, stopping: false, pending_approval: false },
+})
+
 /** All four keys, always — `toLanes`' own contract. */
 const lanes = (over: Partial<Record<string, unknown[]>> = {}) => ({
   'needs-approval': [], 'your-turn': [], working: [], idle: [], ...over,
@@ -124,7 +142,7 @@ describe('the four lanes', () => {
     // A lane that disappears when it empties reads as "nothing needs me" — the user cannot tell
     // an empty queue from one that failed to render. So each empty lane states its own emptiness.
     approvals.mockResolvedValue([approval()])
-    toLanes.mockReturnValue(lanes({ 'needs-approval': [{ id: 'c1', title: 'shell.run', approval: approval() }] }))
+    toLanes.mockReturnValue(lanes({ 'needs-approval': [approvalCard()] }))
     render(<MissionControl />)
 
     expect(await screen.findByText('Nothing is waiting on an answer from you.')).toBeTruthy()
@@ -137,7 +155,7 @@ describe('the four lanes', () => {
 
 // ── Clause 2: approving from a lane resolves the approval ───────────────────────────────────
 describe('approving from a lane', () => {
-  const card = { id: 'c1', title: 'shell.run', detail: 'rm -rf ./build', approval: approval() }
+  const card = approvalCard({ subtitle: 'rm -rf ./build' })
 
   beforeEach(() => {
     approvals.mockResolvedValue([approval()])
@@ -194,7 +212,7 @@ describe('approving from a lane', () => {
 
 // ── Clause 3: a question answered from a card unblocks its loop ─────────────────────────────
 describe('answering a pending question', () => {
-  const card = { id: 'q1', title: 'loop-worker', item: questionItem() }
+  const card = questionCard(questionItem())
 
   beforeEach(() => {
     inboxOpen.mockResolvedValue([questionItem()])
@@ -231,7 +249,7 @@ describe('answering a pending question', () => {
   it('a question with NO options says where to answer it instead of faking a text box', async () => {
     // The wire DOES carry `choices[]`, but a freeform gate legitimately has none. A text box here
     // would submit prose the run's gate never offered.
-    const bare = { id: 'q2', title: 'loop-worker', item: questionItem([]) }
+    const bare = questionCard({ ...questionItem([]), id: 'inbox-2' })
     toLanes.mockReturnValue(lanes({ 'your-turn': [bare] }))
     render(<MissionControl />)
 
@@ -331,7 +349,7 @@ describe('the lane split comes from lib/attentionLanes, not from this view', () 
     // argument is the ONLY path to that lane. Without it the lane renders permanently empty while
     // wearing a confident label, and the atom's four lanes are really three.
     chatSessions.mockResolvedValue([session()])
-    toLanes.mockReturnValue(lanes({ working: [{ id: 'session:chat-1', title: 'nightly sweep' }] }))
+    toLanes.mockReturnValue(lanes({ working: [sessionCard('chat-1', 'nightly sweep')] }))
     render(<MissionControl />)
 
     expect(await screen.findByText('nightly sweep')).toBeTruthy()
@@ -339,7 +357,7 @@ describe('the lane split comes from lib/attentionLanes, not from this view', () 
   })
 
   it('renders the lanes the sibling returned, in the sibling’s declared order', async () => {
-    toLanes.mockReturnValue(lanes({ working: [{ id: 'w1', title: 'nightly sweep' }] }))
+    toLanes.mockReturnValue(lanes({ working: [sessionCard('w1', 'nightly sweep')] }))
     render(<MissionControl />)
     await screen.findByText('nightly sweep')
 

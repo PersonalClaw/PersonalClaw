@@ -62,6 +62,7 @@ async def run_forever(
     sessions: Any = None,
     base_dir: Any = None,
     user_active: Callable[[], bool] | None = None,
+    on_store_changed: Callable[[], None] | None = None,
 ) -> None:
     """Drive the clock forever: tick, dispatch what fired, execute, sleep. NEVER returns normally.
 
@@ -75,6 +76,10 @@ async def run_forever(
     for `_on_job` and S90's executor uses for its runner. That is what lets the entire chain
     be driven
     end to end in a test without a model.
+
+    `on_store_changed` is told when a tick finds the store written by someone else since the last
+    one (`TickResult.store_changed`): the one place that notices every writer, including one in
+    another process. Best-effort, like everything else a tick reports.
     """
     # Resumes whose session was not ready last tick. Owned HERE, by the only thing that outlives a
     # tick: `tick_once` is deliberately stateless so a test can drive one iteration, and a retry
@@ -93,6 +98,8 @@ async def run_forever(
                 pending_resumes=pending,
             )
             sleep_for = min(max(0.5, float(result.next_sleep)), MAX_ITERATION_SLEEP_SECS)
+            if on_store_changed is not None and getattr(result, "store_changed", False):
+                on_store_changed()
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - the loop must outlive any single tick's failure

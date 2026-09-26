@@ -1404,8 +1404,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       case 'approval_resolved':
         // Matched by the chat's own id, like the card was created; the session gate above has
         // already dropped a frame for another chat, which may be waiting on the same bare id.
+        // `outcome` is how it ENDED (approved / rejected / expired / cancelled): a stopped turn
+        // is not a Deny, and the card says which, in the words the transcript row will use.
         setTurns((prev) => prev.map((t) => ({ ...t, segments: t.segments.map((sg) =>
-          sg.kind === 'approval' && sg.id === String(d.request_id ?? '') ? { ...sg, resolved: d.approved ? 'approved' : 'rejected' } as ApprovalSegment : sg) })))
+          sg.kind === 'approval' && sg.id === String(d.request_id ?? '') ? { ...sg, resolved: String(d.outcome ?? '') } as ApprovalSegment : sg) })))
         break
       case 'chat_segment': endTextRun(); break
       // A regenerated answer landed (fresh reply → new variant) OR the user switched

@@ -118,6 +118,7 @@ from personalclaw.workflows.models import (
     NodeKind,
     RunStatus,
     WorkflowRun,
+    run_ending,
     spec_path,
 )
 from personalclaw.workflows.resilience import (
@@ -4971,10 +4972,11 @@ class RunController:
         # and a spawn still waiting on approval stayed in the approvals queue — measured 2026-09-25,
         # a cancelled run's `spawn:` approval was approvable, and approving it spawned a subagent
         # for a run that no longer existed. Stopping the subagent ends both:
-        # `SubagentManager.cancel` cancels the waiting task, whose `finally` expires the pending
-        # approval.
+        # `SubagentManager.cancel` cancels the waiting task, whose `finally` ends the pending
+        # approval as `cancelled`, and the subagent's error names the run's ending.
         nodes = dict(_walk(self.root))
-        for path in await self._stop_dispatched_stages():
+        why = f"Cancelled: the workflow run {run_ending(RunStatus.CANCELLED)}"
+        for path in await self._stop_dispatched_stages(reason=why):
             inst = self._instance(path)
             inst.state = InstanceState.CANCELLED
             inst.completed_at = _now()
@@ -4992,7 +4994,7 @@ class RunController:
             )
         self._persist_state()
 
-    async def _stop_dispatched_stages(self) -> list[str]:
+    async def _stop_dispatched_stages(self, *, reason: str) -> list[str]:
         """Stop every dispatched stage's subagent; return the paths whose subagent was stopped.
 
         A path whose subagent had ALREADY finished (or that this process's manager does not know —
@@ -5009,7 +5011,7 @@ class RunController:
         for path in self._awaiting_out_of_band_work():
             inst = self._instance(path)
             try:
-                cancelled = bool(await manager.cancel(inst.subagent_id))
+                cancelled = bool(await manager.cancel(inst.subagent_id, reason=reason))
             except Exception:
                 logger.warning(
                     "run %s: could not stop the subagent for %s", self.run.id, path, exc_info=True
@@ -5038,7 +5040,7 @@ class RunController:
         * an awaited node is cancelled and reset the same way.
         """
         self._reconcile_dispatched_stages()
-        withdrawn = list(await self._stop_dispatched_stages())
+        withdrawn = list(await self._stop_dispatched_stages(reason="Stopped: the run was paused"))
         for entry in list(self._inflight.values()):
             entry.task.cancel()
             withdrawn.append(entry.ready.path)
@@ -5099,7 +5101,11 @@ class RunController:
             # it is actionable now. Leaving the rows open would put a permanently unanswerable
             # gate in the inbox — cancel a run mid-gate and the question survives the run.
             # NEEDS_INPUT is deliberately not terminal here: that run is waiting, not finished.
+            # The same for every approval still listed under it, whatever the ending.
             attention.resolve_run_items(self.services.attention_state, self.run.id)
+            attention.cancel_run_approvals(
+                self.services.attention_state, self.run.id, run_ending(status)
+            )
             # A run started as a loop says it ended, the way a loops-table loop does — after the
             # resolve above, so the "needs a decision" row it may raise is not closed with the
             # run's other rows.

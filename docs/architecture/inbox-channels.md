@@ -43,6 +43,22 @@ against core protocols). Paths are relative to
   `false`/`3650` said to keep. An **absent** file is unaffected and still means
   "first run, use the defaults" — see `load_inbox_settings()`.
 
+### One status transition
+
+A row moves between states in exactly one place, `inbox.set_item_status(state, store, items,
+status)`, and `InboxStore.update` refuses a `status`. A move is three writes: the row
+(persisted once per batch); one `inbox_item_updated` frame per moved row, because the Inbox page,
+Home and Mission Control read the Inbox on its frames rather than polling it; and, when a row
+**closes** (leaves `OPEN_STATUSES`), the bell: every notification that is a view of the row
+(`meta.inbox_item`, stamped by `emit_attention_item` and `notify_inbox_alert`) is marked read
+through `DashboardState.ack_item_notifications`, one rewrite and one `notification_ack` frame for
+the batch. Reading a row (PENDING → SEEN) is announced and leaves the bell alone. Every closer
+goes through it: the Inbox routes (PUT, dismiss-all, send, proposal apply, restore, seen),
+`resolve_attention_items` (approvals, workflow gates, loops, rooms), the inbox-op action
+provider, and the skill, learning and session-organize proposal resolvers. The link used to run
+one way, so a note handled in the Inbox (and every other closed row) left its notification
+unread. A row raised by `emit_attention_item` is announced as `inbox_new_item` the same way.
+
 ## The shared inbox (multi-owner attribution)
 
 An inbox item carries `owner_username` and `origin_harness` — the **same two fields, same
@@ -101,7 +117,8 @@ sibling-preserving read-modify-write — before it can claim a merge-safe semant
 
 A tool call waiting on a human decision — from a chat, a subagent, a workflow stage, or an MCP
 server's elicitation — is **one entry** in `DashboardState._pending_approvals`
-(`dashboard/state.py`), and every surface reads that entry:
+(`dashboard/approval_state.py`, the registry `DashboardState` mixes in), and every surface
+reads that entry:
 
 | Surface | Reads |
 |---|---|
@@ -132,9 +149,22 @@ for every door.
 
 **Every end goes through `withdraw_approval`.** An answer, an expiry, a torn-down turn: the entry
 leaves the registry, its Inbox row is closed through `resolve_attention_items` on the live store,
-and one `approval_resolved` frame (`id`, `request_id`, `session`, `approved`) tells every open
-surface. No approval survives a restart, so `close_orphaned_approval_rows` closes, at boot, any
-row still asking for one.
+and one `approval_resolved` frame (`id`, `request_id`, `session`, `approved`, `outcome`) tells
+every open surface. `outcome` is how it ended (`approved`, `rejected`, `expired`, `cancelled`),
+so a card can say "cancelled" for a stopped turn instead of reading it as a Deny. No approval
+survives a restart, so `close_orphaned_approval_rows` closes, at boot, any row still asking for
+one.
+
+**An ended owner ends its approvals.** Cancelling a workflow run stops its dispatched stages
+(each subagent cancelled with the run's own reason), and a run that ends for any reason cancels
+every approval still under `workflow:<run>:`; stopping a loop stops its worker turns; stopping a
+chat turn (`SessionManager.stop_turn`, through the hook `DashboardState` registers) ends that
+turn's approvals; cancelling a subagent ends its spawn and tool approvals, which are keyed
+`subagent:<id>:<request_id>` so two subagents' requests can never share an id. Each ends as
+`cancelled`, with an `approval_cancelled` SEL row. And the decision path checks again
+(`approval_owner.owner_ended`, fail-closed): an approval whose run, loop or subagent is gone is
+answered **409 `approval_owner_ended`** and nothing runs. On day 8, approving a cancelled run's
+leftover spawn approval started the subagent.
 
 **Announced once.** The Inbox row is the durable listing, not a second announcement: the chat
 card announces an approval in context and the nudge everywhere else, so the SPA's notification
@@ -230,7 +260,10 @@ and `badge` are local deliveries too, and a foreign note in the morning digest
 is a foreign note fired one day late.
 
 Unread counts are *derived* from unacked log entries; deletes broadcast
-`notification_removed`. Notification metadata may carry a `channel_link` —
+`notification_removed`. A note that is recorded without being fired (a `badge`, a foreign
+addressee) sends a quiet `notification_logged` frame, so the bell and Home count it at once
+without a toast; the bell, Home and the feed re-read on any `notification*` frame and poll only
+as a once-a-minute safety net. Notification metadata may carry a `channel_link` —
 built via `ChannelDelivery.build_thread_link`, never by core string-formatting
 a vendor URL.
 

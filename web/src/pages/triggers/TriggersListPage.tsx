@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { Plus, Zap, Clock, Pencil, CalendarDays, Users, ShieldOff, Trash2 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -18,6 +18,8 @@ import { confirmDelete } from '../../ui/dialog'
 import { reportingWrite } from '../../app/reportingWrite'
 import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryState'
 import { useQuery, invalidateKeys } from '../../lib/data'
+import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
+import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { api, type ActionProvider } from '../../lib/api'
 import { ScheduleDetail } from '../schedule/ScheduleDetail'
 import { LifecycleDetail } from './LifecycleDetail'
@@ -111,10 +113,18 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   const loadHooks = () => { invalidateKeys('triggers:hooks'); refreshHooks() }
   const loadStores = () => { invalidateKeys('triggers:store'); refreshStores() }
   const loadEvents = () => { invalidateKeys('triggers:events'); refreshEvents() }
-  useEffect(() => {
-    const t = window.setInterval(refreshSchedules, 10000)  // keep schedule next-run/running fresh
-    return () => clearInterval(t)
-  }, [refreshSchedules])
+  // Keep schedule next-run/running fresh, paused while hidden and slower while nobody is here.
+  useVisiblePoll(refreshSchedules, 10_000, { immediate: false })
+  // 🔴 A trigger written anywhere else (a loop's auto-nudge, the chat's automation tools, another
+  // tab) reached the status strip's count on its next poll and never reached this page: only
+  // schedules re-read, so the strip said "6 triggers" over a list of 5 (day 8). The gateway says
+  // `crons` whenever the trigger store changes, and every source re-reads on it.
+  useChatSocket((m: WsMessage) => {
+    const kinds = m.type === 'refresh' ? m.data?.kinds : undefined
+    if (Array.isArray(kinds) && kinds.includes('crons')) {
+      loadSchedules(); loadHooks(); loadStores(); loadEvents()
+    }
+  })
 
   const triggers = useMemo<Trigger[] | null>(() => {
     if (schedules === undefined || hooks === undefined || stores === undefined || events === undefined) return null

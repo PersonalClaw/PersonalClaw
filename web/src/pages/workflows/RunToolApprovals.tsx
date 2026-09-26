@@ -41,10 +41,13 @@ export function RunToolApprovals({ runId }: { runId: string }) {
   }, [runId])
 
   useEffect(() => { load() }, [load])
-  // The approvals queue is fanned out over the multiplexed WS as its own frame, so this needs no
-  // poll: `state` broadcasts on raise AND on resolve, which is also what clears a row answered
-  // from the dashboard or from chat while this page is open.
-  useChatSocket((m: WsMessage) => { if (m.type === 'approval') load() })
+  // The approvals queue is fanned out over the multiplexed WS, so this needs no poll: `state`
+  // broadcasts `approval` on raise and `approval_resolved` when one ends — answered from Home or
+  // chat, expired, or cancelled with its run. Listening to the first frame only is how a
+  // cancelled run's page went on offering Approve/Reject for a step that would never run.
+  useChatSocket((m: WsMessage) => {
+    if (m.type === 'approval' || m.type === 'approval_resolved') load()
+  })
 
   // Keyed by `<id>:<action>`, not by id alone, so the in-flight state names WHICH verb is running.
   // That is what lets each button publish `aria-busy` for its OWN operation (`loading`) while the

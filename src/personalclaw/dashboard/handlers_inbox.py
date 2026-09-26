@@ -17,6 +17,7 @@ from personalclaw.inbox import (
     ItemStatus,
     owner_view,
     redact_item,
+    set_item_status,
     validate_updatable_fields,
 )
 from personalclaw.request_validation import json_object_body, string_field
@@ -51,6 +52,16 @@ def _get_inbox(state: "DashboardState") -> tuple[InboxState, InboxStore]:
 #: re-implemented: it moved DOWN to `personalclaw.inbox` so a core action provider can reach
 #: it without importing the HTTP surface (see `inbox.redact_item`).
 _redact_item = redact_item
+
+
+def _announce_unless_moved(state: "DashboardState", item, status_before: str) -> None:
+    """Send the written row to every open surface, unless a status move already did.
+
+    A move announces itself (`set_item_status`), and a second frame for the same write makes
+    every listening surface read the Inbox twice.
+    """
+    if item.status == status_before:
+        state.broadcast_ws("inbox_item_updated", _redact_item(item.to_dict()))
 
 
 # ── P11 engagement ranking ──
@@ -459,16 +470,9 @@ async def api_inbox_seen(request: web.Request) -> web.Response:
     if isinstance(kind_filter, str) and kind_filter:
         targets = _filter_by_kind(targets, kind_filter)
 
-    changed = []
-    for item in targets:
-        if item.status == ItemStatus.PENDING:
-            item.status = ItemStatus.SEEN.value
-            changed.append(item)
-    if changed:
-        inbox.save()
-        for item in changed:
-            state.broadcast_ws("inbox_item_updated", _redact_item(item.to_dict()))
-    return web.json_response({"ok": True, "seen": len(changed)})
+    pending = [item for item in targets if item.status == ItemStatus.PENDING]
+    seen = set_item_status(state, inbox, pending, ItemStatus.SEEN)
+    return web.json_response({"ok": True, "seen": len(seen)})
 
 
 async def api_inbox_update(request: web.Request) -> web.Response:
@@ -513,6 +517,7 @@ async def api_inbox_update(request: web.Request) -> web.Response:
         return json_error("invalid_field_type", message=str(exc), status=400)
 
     # 4. Mutate.
+    status_before = item.status
     if body.get("mute_thread"):
         thread_key = item.thread_ts or item.id.split("_", 1)[1]
         inbox_state.muted_threads.add(thread_key)
@@ -528,9 +533,14 @@ async def api_inbox_update(request: web.Request) -> web.Response:
     if body.get("favorited") is True:
         _record_signal(state, item, "favorite")
 
+    # The fields first, then the move: a status is the one transition (`set_item_status`), and
+    # moving last means the frame it sends carries the row with every field applied.
+    status = updates.pop("status", None)
     updated = inbox.update(item_id, **updates)
     if not updated:  # unreachable after the resolve above; keeps the Optional narrowed
         return web.json_response({"error": "not found"}, status=404)
+    if status is not None:
+        set_item_status(state, inbox, [updated], status)
 
     try:
         sel().log_tool_invocation(
@@ -543,7 +553,7 @@ async def api_inbox_update(request: web.Request) -> web.Response:
     except Exception:
         logger.warning("SEL audit failed for inbox update", exc_info=True)
 
-    state.broadcast_ws("inbox_item_updated", _redact_item(updated.to_dict()))
+    _announce_unless_moved(state, updated, status_before)
     return web.json_response(_redact_item(updated.to_dict()))
 
 
@@ -565,12 +575,11 @@ async def api_inbox_restore(request: web.Request) -> web.Response:
         return web.json_response({"error": "item is not filtered"}, status=409)
 
     withheld = item.refs.get("verify_withheld") if isinstance(item.refs, dict) else None
-    item.status = ItemStatus.PENDING.value
     item.refs["verify"] = "restored"
     # Drop the replay payload the instant it is consumed — the FILTERED guard above already
     # prevents a second fire, and leaving it invites a future re-fire path.
     item.refs.pop("verify_withheld", None)
-    inbox.save()
+    set_item_status(state, inbox, [item], ItemStatus.PENDING)
 
     if state is not None and isinstance(withheld, dict):
         try:
@@ -603,7 +612,6 @@ async def api_inbox_restore(request: web.Request) -> web.Response:
     except Exception:
         logger.warning("SEL audit failed for inbox restore", exc_info=True)
 
-    state.broadcast_ws("inbox_item_updated", _redact_item(item.to_dict()))
     return web.json_response(_redact_item(item.to_dict()))
 
 
@@ -622,10 +630,7 @@ async def api_inbox_dismiss_all(request: web.Request) -> web.Response:
     """
     state: "DashboardState" = request.app["state"]
     inbox_state, inbox = _get_inbox(state)
-    swept: list = []
-    for item in inbox.open_items():
-        inbox.update(item.id, status=ItemStatus.DISMISSED)
-        swept.append(item)
+    swept = set_item_status(state, inbox, inbox.open_items(), ItemStatus.DISMISSED)
     count = len(swept)
     # Dismissing a whole queue in one click is the strongest topic-rejection a user can
     # express — it trains the ranker exactly like dismissing each row would have, in one write.
@@ -751,9 +756,11 @@ async def api_inbox_send(request: web.Request) -> web.Response:
 
             session.enqueue_or_run_prompt(text, run_chat, state)
             delivered = True
-        inbox.update(item_id, status=ItemStatus.HANDLED.value, draft=text)
+        status_before = item.status
+        inbox.update(item_id, draft=text)
+        set_item_status(state, inbox, [item], ItemStatus.HANDLED)
         _record_signal(state, item, "reply")  # replying = a positive engagement signal
-        state.broadcast_ws("inbox_item_updated", _redact_item(item.to_dict()))
+        _announce_unless_moved(state, item, status_before)
         return web.json_response({"ok": True, "delivered_to_session": delivered})
 
     return web.json_response(
@@ -1057,8 +1064,8 @@ async def api_inbox_note_create(request: web.Request) -> web.Response:
         # answering 201 would tell the user their note was saved when it was not.
         return json_error("note_not_saved", status=500)
 
+    # No `inbox_new_item` here: `emit_attention_item` announces every row it raises.
     payload = _redact_item(item.to_dict())
-    state.broadcast_ws("inbox_new_item", payload)
     return web.json_response({"ok": True, "id": item_id, "item": payload}, status=201)
 
 
@@ -1189,7 +1196,10 @@ async def api_inbox_proposal_apply(request: web.Request) -> web.Response:
     except Exception:
         logger.debug("proposal apply: learning installer unavailable", exc_info=True)
 
-    outcome = await pc.apply_item(item, store=inbox, edited=edited, installer=installer)
+    status_before = item.status
+    outcome = await pc.apply_item(
+        item, store=inbox, state=state, edited=edited, installer=installer
+    )
     try:
         sel().log_tool_invocation(
             session_key="dashboard:inbox",
@@ -1201,7 +1211,7 @@ async def api_inbox_proposal_apply(request: web.Request) -> web.Response:
     except Exception:
         logger.warning("SEL audit failed for proposal apply", exc_info=True)
 
-    state.broadcast_ws("inbox_item_updated", _redact_item(item.to_dict()))
+    _announce_unless_moved(state, item, status_before)
     return web.json_response(
         {**outcome.to_dict(), "item": _redact_item(item.to_dict())},
         status=200,

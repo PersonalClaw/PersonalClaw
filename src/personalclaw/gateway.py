@@ -78,6 +78,7 @@ from personalclaw.subagent import (
     SubagentInfo,
     SubagentManager,
     ToolApprovalCallback,
+    approval_subagent_id,
     resolve_max_subagents,
 )
 from personalclaw.triggers.models import Outcome
@@ -719,8 +720,13 @@ class GatewayOrchestrator:
                             on_prompted=_on_prompted,
                         )
                     finally:
-                        if self.dashboard_state:
-                            self.dashboard_state.resolve_approval(request_id, bool(approved))
+                        # Only a real answer is delivered to the dashboard's copy. `None` is the
+                        # channel producing NO answer (it could not deliver, or this wait was
+                        # cancelled); recording that as a rejection wrote an `approval_decision`
+                        # row and a "denied" card for a decision nobody made. Cancelling the
+                        # dashboard waiter instead ends its approval as `cancelled`.
+                        if self.dashboard_state and approved is not None:
+                            self.dashboard_state.resolve_approval(request_id, approved)
                         if dashboard_future and not dashboard_future.done():
                             dashboard_future.cancel()
 
@@ -1026,15 +1032,19 @@ class GatewayOrchestrator:
             runner=_runner,
             sessions=self.sessions,
             base_dir=store.base_dir,
+            # A row written by anyone else (a loop's auto-nudge, the chat's automation tools in
+            # their own process) reaches an open Triggers page within one tick, rather than never.
+            on_store_changed=lambda: self._push_trigger_refresh("crons"),
         )
 
-    def _push_trigger_refresh(self) -> None:
+    def _push_trigger_refresh(self, *kinds: str) -> None:
         """Hint open dashboard views to refresh after a store-backed fire (S107).
 
-        Both kinds, matching what the legacy `_record_run` pushed plus the list the fire may have
-        changed: `cron_history` for the run feed, `crons` for the trigger list's status dots and
-        next-fire times. Best-effort — a broadcast failure must never affect the fire's outcome, and
-        a dashboard-less gateway (`--no-dashboard`) simply has nothing to notify.
+        Both kinds by default, matching what the legacy `_record_run` pushed plus the list the fire
+        may have changed: `cron_history` for the run feed, `crons` for the trigger list's status
+        dots and next-fire times. A store change that is not a fire names `crons` alone.
+        Best-effort — a broadcast failure must never affect the fire's outcome, and a
+        dashboard-less gateway (`--no-dashboard`) simply has nothing to notify.
         """
         # `getattr`, not attribute access: this runs in the fire path's `finally`, and an
         # orchestrator that has not reached `_init_dashboard` yet (or a partially-built one) has
@@ -1044,7 +1054,7 @@ class GatewayOrchestrator:
         if state is None:
             return
         try:
-            state.push_refresh("crons", "cron_history")
+            state.push_refresh(*(kinds or ("crons", "cron_history")))
         except Exception:  # noqa: BLE001 - a refresh hint is never worth failing a fire over
             logger.debug("could not push a trigger refresh", exc_info=True)
 
@@ -3848,8 +3858,13 @@ class GatewayOrchestrator:
             return is_yolo_mode()
 
         def _spawn_session_resolver(request_id: str) -> str:
-            """Resolve session from spawn request_id (spawn:{agent_id})."""
-            agent_id = request_id.removeprefix("spawn:")
+            """The parent session of the subagent a spawn or tool-call approval id names.
+
+            Both shapes carry the subagent (``subagent.approval_subagent_id``), so a stage's tool
+            call is listed under its run like the stage's spawn is — which is what lets the run's
+            page show it and the decision path tell when that run has ended.
+            """
+            agent_id = approval_subagent_id(request_id)
             info = self.subagent_mgr.get(agent_id) if self.subagent_mgr is not None else None
             session = (
                 info.parent_session_key.removeprefix("dashboard:")

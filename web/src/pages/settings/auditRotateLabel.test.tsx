@@ -8,8 +8,8 @@ import { AuditPanel } from './AuditPanel'
 // ── The "Rotate" control promised something it never did (issue 534) ───────────────────────────────
 //
 // The confirm dialog said "Rotate the audit-log signing key?" / "Past entries stay verifiable under
-// the old key." — but `SecurityEventLog.rotate()` only ARCHIVES the log to a timestamped `.bak.jsonl`
-// and starts a fresh HMAC chain; the signing key is create-only and is never rewritten. And the
+// the old key." — but `SecurityEventLog.rotate()` only ARCHIVES the log (into `sel_archive/`, under a
+// UTC timestamp) and starts a fresh HMAC chain; the signing key is create-only and is never rewritten. And the
 // archived entries leave the dashboard verify/browse surface entirely, so "stay verifiable" was false
 // on two counts. This pins the corrected, honest copy AND the previously-dropped success payload:
 // `selRotate` was typed `{ ok?: boolean }`, discarding the real `{ rotated, entries_before,
@@ -75,14 +75,14 @@ describe('a successful rotate tells the user where the log was archived', () => 
       rotated: true,
       entries_before: 3,
       entries_after: 0,
-      archive_path: '/home/u/.personalclaw/security_events.20260902T010203Z.bak.jsonl',
+      archive_path: '/home/u/.personalclaw/sel_archive/security_events.20260902T010203.000000Z.jsonl',
     })
     render(<AuditPanel />)
     fireEvent.click(await screen.findByRole('button', { name: /^Rotate$/ }))
     await waitFor(() => expect(selRotate).toHaveBeenCalled())
     await waitFor(() => expect(notify).toHaveBeenCalled())
     const [message, level] = notify.mock.calls.at(-1) as [string, string]
-    expect(message).toContain('security_events.20260902T010203Z.bak.jsonl')
+    expect(message).toContain('security_events.20260902T010203.000000Z.jsonl')
     expect(message, 'basename only — never the containing directory').not.toContain('/home/u/')
     expect(level).toBe('success')
   })

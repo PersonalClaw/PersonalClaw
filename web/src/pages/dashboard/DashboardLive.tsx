@@ -129,10 +129,19 @@ export function useDashboardLive(): DashboardLiveData {
   return ctx
 }
 
-// Poll cadences (ms). Pushed-or-fast data refetches on its WS signal AND on a
-// short poll as a safety net; slow data polls only.
+// Poll cadences (ms), for the slices the gateway does NOT signal. A slice whose every change
+// arrives as a frame (approvals, the Inbox, notifications) is not polled at all: it is read on
+// mount, on its frame, and after a socket drop — polling it as well is what put an idle Home tab
+// at 428 requests in 3 minutes (measured, day 8). Both polls also back off while nobody is using
+// the tab (`useVisiblePoll`).
 const FAST_POLL = 8000
 const SLOW_POLL = 20000
+
+/** The `refresh` hint's kinds (`DashboardState.push_refresh`), when a frame is one. */
+function refreshKinds(m: WsMessage): string[] {
+  const kinds = m.type === 'refresh' ? m.data?.kinds : undefined
+  return Array.isArray(kinds) ? kinds.map(String) : []
+}
 
 export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const [approvals, setApprovals] = useState<PendingApproval[]>([])
@@ -266,6 +275,17 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   }, [loadLoops, loadStatus])
   useEffect(() => () => { if (workDebounce.current) clearTimeout(workDebounce.current) }, [])
 
+  // A burst of frames for one slice is ONE re-read, shortly after the first frame: "Dismiss all"
+  // moves every row and says so once per row, and a close also reads its notifications, so a
+  // 37-row sweep was 37 reads of the Inbox and more of the bell. The first frame schedules the
+  // read and the rest of the burst joins it.
+  const soonTimers = useRef<Map<string, number>>(new Map())
+  const soon = useCallback((slice: string, load: () => void) => {
+    if (soonTimers.current.has(slice)) return
+    soonTimers.current.set(slice, window.setTimeout(() => { soonTimers.current.delete(slice); load() }, 150))
+  }, [])
+  useEffect(() => () => { for (const timer of soonTimers.current.values()) clearTimeout(timer) }, [])
+
   // ONE socket for the whole dashboard. Envelopes are refetch SIGNALS: route each
   // type to the slice it affects so a change lands immediately, not next poll.
   const onMessage = useCallback((m: WsMessage) => {
@@ -274,15 +294,23 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
     // so BOTH frames move both slices. `approval_resolved` is what takes an answered (or expired)
     // approval off Home at once — without it the count and To triage kept a decided approval up
     // to the next poll, offering Approve/Reject on a call that had already been answered.
-    if (t === 'approval' || t === 'approval_resolved') { loadApprovals(); loadInbox() }
-    else if (t.startsWith('inbox')) loadInbox()
-    else if (t.startsWith('notification')) loadNotifications()
+    if (t === 'approval' || t === 'approval_resolved') { soon('approvals', loadApprovals); soon('inbox', loadInbox) }
+    else if (t.startsWith('inbox')) soon('inbox', loadInbox)
+    else if (t.startsWith('notification')) soon('notifications', loadNotifications)
+    // The gateway's refresh hint: a loop started, paused, stopped or was deleted (`loops`); an
+    // automation changed (`crons`) or ran (`cron_history`). `history` is the CHAT history, and the
+    // run feed below is not.
+    else if (t === 'refresh') {
+      const kinds = refreshKinds(m)
+      if (kinds.includes('loops')) soon('loops', loadLoops)
+      if (kinds.includes('crons') || kinds.includes('cron_history')) soon('schedule', loadSchedule)
+    }
     // Loop / run progress + session lifecycle nudges refresh the work + status views
     // (debounced — these can fire rapidly during streaming).
     else if (t === 'update_progress' || t === 'chat_status' || t === 'sessions' || t.startsWith('subagent')) {
       refreshWork()
     }
-  }, [loadApprovals, loadInbox, loadNotifications, refreshWork])
+  }, [soon, loadApprovals, loadInbox, loadNotifications, loadLoops, loadSchedule, refreshWork])
 
   useChatSocket(
     onMessage,
@@ -292,10 +320,14 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
     // /api/system poll), so the dashboard feed doesn't track link state itself.
   )
 
-  // Initial load once, then visibility-gated polls (pause when the tab is hidden).
+  // Initial load once, then visibility-gated polls (pause when the tab is hidden) for the slices
+  // nothing signals. `immediate: false`: `refreshAll` IS the first read, and each poll firing on
+  // mount as well fetched every endpoint twice before the page had painted.
   useEffect(() => { refreshAll() }, [refreshAll])
-  useVisiblePoll(() => { loadApprovals(); loadInbox(); loadProposals(); loadLoops(); loadTasks(); loadSystem() }, FAST_POLL)
-  useVisiblePoll(() => { loadSchedule(); loadStatus(); loadNotifications(); loadDiscover(); loadDoctor() }, SLOW_POLL)
+  useVisiblePoll(() => { loadLoops(); loadSystem() }, FAST_POLL, { immediate: false })
+  useVisiblePoll(() => {
+    loadProposals(); loadTasks(); loadSchedule(); loadStatus(); loadDiscover(); loadDoctor()
+  }, SLOW_POLL, { immediate: false })
 
   const value: DashboardLiveData = {
     approvals, inbox, proposals, approvalsErr, inboxErr, proposalsErr,

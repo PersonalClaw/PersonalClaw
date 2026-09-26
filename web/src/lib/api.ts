@@ -276,6 +276,8 @@ export interface DoctorReport {
 // No-model degraded mode (PLATFORM-RESILIENCE §5).
 export interface DegradedSurface {
   surface: string
+  /** What the user calls the surface (the contract's `label`): the only name to show for it. */
+  label: string
   available: boolean
   floor: string
   backlog: number

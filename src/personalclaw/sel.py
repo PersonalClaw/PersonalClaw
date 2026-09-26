@@ -15,12 +15,14 @@ Storage: ``~/.personalclaw/security_events.jsonl`` (append-only JSONL)
 Retention: configurable, default 365 days.
 """
 
+import contextlib
 import hashlib
 import hmac
 import json
 import logging
 import os
 import threading
+import time
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, field
@@ -55,14 +57,24 @@ _MAX_ARG_LEN = 500
 # Default tamper-check window: verify the most recent N entries instead of the
 # whole (unbounded, append-only) chain, so the audit UI stays responsive.
 _VERIFY_WINDOW = 5000
-# Hard size cap for the on-disk log. The chain is append-only and high-rate, so a
-# size bound (not just age) keeps reads/verify fast. Comfortably above the verify
-# window so a prune never erases the whole verifiable tail.
-_MAX_ENTRIES = 50000
+#: Where a rotated log goes: ONE directory, declared in the durability inventory
+#: (`security_events_archive`), so a rotated file is captured by `personalclaw snapshot` and
+#: claimed by `audit_home()` exactly like the live one. The manual rotate used to rename the
+#: log to `security_events.<ts>.bak.jsonl` beside it — a path no inventory entry claimed, so
+#: the one copy of the pre-rotation audit trail was missing from every snapshot.
+_ARCHIVE_DIR = "sel_archive"
+#: The live file rotates into the archive once it reaches this size. The size bound is what
+#: keeps reads and verification fast; rotating (rather than trimming the oldest rows out, as
+#: the entry cap this replaced did) keeps the evidence until retention says it may go.
+_ROTATE_BYTES = 16 * 1024 * 1024
+#: The archive's ceiling on disk, a backstop behind the age retention: past it the OLDEST
+#: rotated files are removed first, and the removal is itself recorded in the log.
+_ARCHIVE_MAX_BYTES = 512 * 1024 * 1024
+_ROTATE_LOCK = ".rotate.lock"
 #: How many log lines ONE :meth:`SecurityEventLog.audit_page` request may read.
 #:
 #: A BUDGET, not a wall — and the distinction is the whole of issue #593's second half.
-#: This used to be ``scan_cap=_MAX_ENTRIES``: every page re-read the newest 50,000 lines and
+#: This used to be a 50,000-line scan cap: every page re-read the newest 50,000 lines and
 #: nothing older was reachable at any page depth. Measured on a 63,653-entry log: 13,653 rows
 #: (21.4%) unreachable, and 2.1s of server work for EVERY page including the first, because
 #: the whole 50,000-line tail was read and split before the first row was chosen.
@@ -420,11 +432,33 @@ class SecurityEventLog:
             return
         self._dir = base_dir or _default_dir()
         self._path = self._dir / _SEL_FILE
+        self._archive_dir = self._dir / _ARCHIVE_DIR
         self._lock = threading.Lock()
         self._hmac_key = self._load_or_create_hmac_key()
         self._last_hash = self._read_last_hash()
         self._forward_callback: Callable[[dict], None] | None = None
+        self._adopt_loose_archives()
         self._initialized = True
+
+    def _adopt_loose_archives(self) -> None:
+        """Move archives an earlier manual rotate left beside the log into the archive directory.
+
+        Idempotent, and safe to race: several processes construct this log, and whichever moves
+        a file first wins while the others find nothing to move. Only the exact name the old
+        rotate wrote (`security_events.<ts>.bak.jsonl`) is adopted.
+        """
+        try:
+            loose = sorted(self._dir.glob(f"{self._path.stem}.*.bak{self._path.suffix}"))
+        except OSError:
+            return
+        for path in loose:
+            try:
+                self._archive_dir.mkdir(parents=True, exist_ok=True)
+                target = self._archive_dir / path.name
+                if not target.exists():
+                    path.rename(target)
+            except OSError:
+                logger.debug("could not adopt the loose SEL archive %s", path, exc_info=True)
 
     def set_forward_callback(self, callback: Callable[[dict], None] | None) -> None:
         """Register an optional callback to forward events to a centralized log system."""
@@ -554,13 +588,113 @@ class SecurityEventLog:
             self._dir.mkdir(parents=True, exist_ok=True)
             with open(self._path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(asdict(event)) + "\n")
+                full = f.tell() >= _ROTATE_BYTES
             self._last_hash = event.entry_hash
             callback = self._forward_callback
+        if full:
+            self._rotate_when_full()
         if callback:
             try:
                 callback(redact_event(asdict(event)))
             except Exception:
                 logger.warning("forward_callback failed", exc_info=True)
+
+    def _rotate_when_full(self) -> None:
+        """Rotate the live file into the archive once it reached `_ROTATE_BYTES`, then record it.
+
+        Several processes append to this file without IPC, so the decision is re-made under a
+        cross-process lock: whoever takes it first rotates, and the rest find a small file and
+        do nothing. Never raises — a failed rotation must not cost the event that triggered it,
+        which is already on disk. The rotation is itself a security-relevant state change, so it
+        is logged, into the fresh file, after every lock is released.
+        """
+        try:
+            with self._lock, self._rotation_lock():
+                if self._size() < _ROTATE_BYTES:
+                    return
+                archived = self._archive_live()
+                expired = self._expire_archives()
+        except Exception:
+            logger.warning(
+                "SEL rotation failed; the log keeps growing until it succeeds", exc_info=True
+            )
+            return
+        if archived is not None:
+            self.log_api_access(
+                caller="sel",
+                operation="sel.rotated",
+                outcome="archived",
+                resources=f"{_ARCHIVE_DIR}/{archived.name}",
+                metadata={"expired_archives": expired} if expired else None,
+            )
+
+    @contextlib.contextmanager
+    def _rotation_lock(self) -> "Iterator[None]":
+        """The cross-process lock every rotation and archive expiry holds (`fcntl.flock`, the
+        established primitive — see `personalclaw.concurrency`)."""
+        import fcntl
+
+        self._archive_dir.mkdir(parents=True, exist_ok=True)
+        with open(self._archive_dir / _ROTATE_LOCK, "a") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    def _archive_live(self) -> Path | None:
+        """Move the live file into the archive under a UTC timestamp, starting a fresh chain.
+
+        Caller holds both locks. Returns the archive's path, or None when there was no file.
+        """
+        if not self._path.exists():
+            return None
+        self._archive_dir.mkdir(parents=True, exist_ok=True)
+        # Microseconds, so names sort in the order the files were rotated — a person listing the
+        # directory reads the trail oldest to newest, and two rotations never share a second.
+        ts = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+        target = self._archive_dir / f"{self._path.stem}.{ts}{self._path.suffix}"
+        n = 1
+        while target.exists():  # a clock that did not advance
+            n += 1
+            target = self._archive_dir / f"{self._path.stem}.{ts}.{n:03d}{self._path.suffix}"
+        self._path.rename(target)
+        self._last_hash = ""
+        return target
+
+    def _archives(self) -> list[Path]:
+        """Rotated files, oldest first (by modification time: the moment each was rotated)."""
+        try:
+            files = [p for p in self._archive_dir.glob(f"{self._path.stem}.*{self._path.suffix}")]
+        except OSError:
+            return []
+        return sorted(files, key=lambda p: p.stat().st_mtime)
+
+    def _expired_archives(self, keep_days: int = _RETENTION_DAYS) -> list[Path]:
+        """The rotated files retention says may go: every file rotated more than *keep_days*
+        ago, then the oldest remaining ones until the archive fits under `_ARCHIVE_MAX_BYTES`."""
+        archives = self._archives()
+        cutoff = time.time() - keep_days * 86400
+        expired = [p for p in archives if p.stat().st_mtime < cutoff]
+        remaining = [p for p in archives if p not in expired]
+        total = sum(p.stat().st_size for p in remaining)
+        while remaining and total > _ARCHIVE_MAX_BYTES:
+            oldest = remaining.pop(0)
+            total -= oldest.stat().st_size
+            expired.append(oldest)
+        return expired
+
+    def _expire_archives(self, keep_days: int = _RETENTION_DAYS) -> list[str]:
+        """Remove what `_expired_archives` names. Caller holds the rotation lock. Returns the
+        removed files' names, for the event that records the removal."""
+        removed: list[str] = []
+        for path in self._expired_archives(keep_days):
+            try:
+                path.unlink()
+                removed.append(path.name)
+            except OSError:
+                logger.debug("could not remove the expired SEL archive %s", path, exc_info=True)
+        return removed
 
     def log_tool_invocation(
         self,
@@ -675,16 +809,17 @@ class SecurityEventLog:
         return checked, valid
 
     def rotate(self, archive: bool = True) -> dict:
-        """Rotate the SEL log to start a fresh HMAC chain.
+        """Rotate the SEL log to start a fresh HMAC chain — the same rotation the size bound
+        triggers, on demand.
 
-        When ``archive`` is True (default) the existing log is renamed with a
-        timestamp suffix; otherwise it is deleted. Use this to clear a chain
-        break and start a clean HMAC chain. Returns a dict with the
-        before/after entry count and the archive path (if any).
+        When ``archive`` is True (default) the existing log moves into the archive directory
+        under a UTC timestamp, where retention and snapshots cover it; otherwise it is deleted.
+        Use this to clear a chain break and start a clean HMAC chain. Returns a dict with the
+        before/after entry count and the archive path (if any). An archive that cannot be
+        written leaves the live log in place and says so — it used to delete it, which turned a
+        failed rename into the loss of the whole audit trail.
         """
-        from datetime import datetime, timezone
-
-        with self._lock:
+        with self._lock, self._rotation_lock():
             entries_before = 0
             archive_path: Path | None = None
             if self._path.exists():
@@ -697,15 +832,16 @@ class SecurityEventLog:
                 except OSError:
                     entries_before = 0
                 if archive:
-                    ts = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-                    archive_path = self._path.with_name(
-                        f"{self._path.stem}.{ts}.bak{self._path.suffix}"
-                    )
                     try:
-                        self._path.rename(archive_path)
+                        archive_path = self._archive_live()
                     except OSError:
-                        archive_path = None
-                        self._path.unlink(missing_ok=True)
+                        logger.warning("SEL archive failed; the live log is kept", exc_info=True)
+                        return {
+                            "rotated": False,
+                            "entries_before": entries_before,
+                            "entries_after": entries_before,
+                            "archive_path": "",
+                        }
                 else:
                     self._path.unlink(missing_ok=True)
             self._last_hash = ""
@@ -799,7 +935,7 @@ class SecurityEventLog:
         page reads backward only from where the previous one stopped instead of re-reading the
         tail. ``scan_budget`` bounds ONE request's work; when it stops the walk early the page
         comes back with an anchor at the stopping point and ``truncated=True``, so the operator
-        continues from there. This used to be ``scan_cap=_MAX_ENTRIES``, bounding the whole
+        continues from there. This used to be a 50,000-line scan cap, bounding the whole
         LOG: measured on a 63,653-entry log, 13,653 rows (21.4%) were unreachable at any page
         depth, and every page — including the first — cost 2.1s because the newest 50,000 lines
         were read and split before the first row was chosen.
@@ -871,10 +1007,10 @@ class SecurityEventLog:
             "cursor_found": True,
         }
 
-    def _prune_plan(self, keep_days: int, max_entries: int) -> tuple[list[str], int]:
-        """Compute ``(kept_lines, removed_count)`` without writing anything. Shared by
-        ``prune`` and ``count_prunable`` so the measured deficit is exactly the number of
-        entries a prune would drop."""
+    def _prune_plan(self, keep_days: int) -> tuple[list[str], int]:
+        """Compute ``(kept_lines, removed_count)`` for the LIVE file without writing anything.
+        Shared by ``prune`` and ``count_prunable`` so the measured deficit is exactly the number
+        of entries a prune would drop."""
         if not self._path.exists():
             return [], 0
         from datetime import timedelta
@@ -896,45 +1032,54 @@ class SecurityEventLog:
                 removed += 1
                 continue
             kept.append(line)
-
-        # Size cap: keep only the newest max_entries (entries are appended in order).
-        if max_entries > 0 and len(kept) > max_entries:
-            removed += len(kept) - max_entries
-            kept = kept[-max_entries:]
         return kept, removed
 
-    def count_prunable(
-        self, keep_days: int = _RETENTION_DAYS, max_entries: int = _MAX_ENTRIES
-    ) -> int:
-        """Read-only count of entries a ``prune()`` would remove (the remediation engine's
-        measured deficit for the SEL prune)."""
-        return self._prune_plan(keep_days, max_entries)[1]
+    @staticmethod
+    def _entries_in(path: Path) -> int:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                return sum(1 for line in fh if line.strip())
+        except OSError:
+            return 0
 
-    def prune(self, keep_days: int = _RETENTION_DAYS, max_entries: int = _MAX_ENTRIES) -> int:
-        """Trim the log. Returns the number of entries removed.
+    def count_prunable(self, keep_days: int = _RETENTION_DAYS) -> int:
+        """Read-only count of entries a ``prune()`` would remove — aged-out rows of the live file
+        plus every row of an archive retention would expire (the remediation engine's measured
+        deficit for the SEL prune)."""
+        live = self._prune_plan(keep_days)[1]
+        return live + sum(self._entries_in(p) for p in self._expired_archives(keep_days))
 
-        Two bounds, both applied (whichever drops more wins per entry):
-        - age: drop entries older than ``keep_days``.
-        - size: keep at most the newest ``max_entries``.
+    def prune(self, keep_days: int = _RETENTION_DAYS) -> int:
+        """Apply retention. Returns the number of entries removed.
 
-        The size cap is the real defense — the log is append-only and high-rate
-        (every gateway/channel/mcp action, including dashboard polls, appends), so an
-        age-only prune still lets the file grow to millions of entries within the
-        retention window and makes reads/verify crawl. Pass ``max_entries<=0`` to
-        disable the size cap.
+        Age is the only bound here: rows older than ``keep_days`` leave the live file, and a
+        rotated file retention has expired leaves the archive. SIZE is the rotation's job
+        (`_ROTATE_BYTES`), which bounds the live file by MOVING rows into the archive — the
+        entry cap this used to apply bounded it by deleting the oldest rows, so a busy week
+        erased the audit trail well inside the retention it claims. An archive removal is a
+        state change of the audit trail itself, so it is recorded.
         """
-        kept, removed = self._prune_plan(keep_days, max_entries)
+        kept, removed = self._prune_plan(keep_days)
         if removed:
             with self._lock:
                 atomic_write(self._path, "\n".join(kept) + "\n" if kept else "")
                 self._last_hash = self._read_last_hash()
-            logger.info(
-                "SEL pruned %d entries (keep_days=%d, max_entries=%d)",
-                removed,
-                keep_days,
-                max_entries,
+        with self._lock, self._rotation_lock():
+            doomed = self._expired_archives(keep_days)
+            archived_rows = sum(self._entries_in(p) for p in doomed)
+            expired = self._expire_archives(keep_days)
+        if expired:
+            self.log_api_access(
+                caller="sel",
+                operation="sel.archive_expired",
+                outcome="removed",
+                resources=", ".join(expired)[:500],
+                metadata={"keep_days": keep_days, "entries": archived_rows},
             )
-        return removed
+        total = removed + (archived_rows if expired else 0)
+        if total:
+            logger.info("SEL pruned %d entries (keep_days=%d)", total, keep_days)
+        return total
 
 
 def _infer_source(session_key: str) -> str:

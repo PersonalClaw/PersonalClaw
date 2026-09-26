@@ -538,6 +538,22 @@ RESUMABLE_ENDED_RUN_STATUSES: frozenset[RunStatus] = frozenset()
 
 TERMINAL_RUN_STATUSES: frozenset[RunStatus] = ENDED_RUN_STATUSES - RESUMABLE_ENDED_RUN_STATUSES
 
+#: How a sentence says a run ended: "the workflow run <phrase>". One table, because two surfaces
+#: say it — the error a stage's stopped subagent ends with, and the refusal a door gives for an
+#: approval that run left behind — and they must not describe one ending two ways.
+_RUN_ENDING_PHRASES: dict[RunStatus, str] = {
+    RunStatus.CANCELLED: "was cancelled",
+    RunStatus.FAILED: "failed",
+    RunStatus.COMPLETE: "has finished",
+    RunStatus.ESCALATED: "has stopped",
+}
+
+
+def run_ending(status: RunStatus) -> str:
+    """How a run with *status* ended, as the rest of "the workflow run …". A status added
+    without a phrase is worded by its own value, so the sentence still reads."""
+    return _RUN_ENDING_PHRASES.get(status, f"is {status.value}")
+
 
 class OriginKind(str, Enum):
     CHAT = "chat"

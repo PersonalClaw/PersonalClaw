@@ -17,6 +17,12 @@ from aiohttp.client_exceptions import ClientConnectionResetError
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig, default_workspace_dir, resolve_session_workspace
+from personalclaw.dashboard.approval_state import (
+    SESSION_APPROVAL_ACTIONS,
+    STANDING_APPROVAL_ACTIONS,
+    _mark_permission_resolved,
+    chat_approval_id,
+)
 from personalclaw.dashboard.chat_persistence import (
     _redact_meta,
     _rehydrate_session_from_history,
@@ -40,14 +46,7 @@ from personalclaw.dashboard.chat_utils import (
     full_session_messages,
     persisted_history_key,
 )
-from personalclaw.dashboard.state import (
-    SESSION_APPROVAL_ACTIONS,
-    STANDING_APPROVAL_ACTIONS,
-    DashboardState,
-    _ChatSession,
-    _mark_permission_resolved,
-    chat_approval_id,
-)
+from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.http_errors import json_error
 from personalclaw.loop import files as loop_files
 from personalclaw.request_validation import json_object_body
@@ -2563,6 +2562,10 @@ async def api_chat_mode(request: web.Request) -> web.Response:
         for session in state._sessions.values():
             for aid, fut in list(session._approval_futures.items()):
                 if not fut.done():
+                    # A posture switch is a door like any other: it does not approve a call
+                    # for work that has already ended (a stopped loop's worker, say).
+                    if state.refuse_ended_owner(chat_approval_id(session.key, aid)):
+                        continue
                     fut.set_result("approved")
                     # Persist resolved state into the permission message
                     _mark_permission_resolved(session.messages, aid, mode)
@@ -2570,7 +2573,7 @@ async def api_chat_mode(request: web.Request) -> web.Response:
                     # Inbox row and Home's count all read the same entry.
                     state.withdraw_approval(
                         chat_approval_id(session.key, aid),
-                        approved=True,
+                        outcome="approved",
                         request_id=aid,
                         session=session.key,
                     )
@@ -2760,6 +2763,9 @@ async def api_chat_session_approve(request: web.Request) -> web.Response:
         request_id = pending_ids[0] if pending_ids else ""
     if request_id not in pending_ids:
         return web.json_response({"error": "no pending approval"}, status=404)
+    ended = state.refuse_ended_owner(chat_approval_id(session.key, request_id))
+    if ended:
+        return json_error("approval_owner_ended", message=f"Nothing was run: {ended}.", status=409)
     grant = state.decide_session_approval(session, request_id, action)
     # Report what the grant DID. The route answered a flat `{"ok": true}`, so a client that
     # had just rendered "Saved on this agent: … in this chat and future ones" had no way to

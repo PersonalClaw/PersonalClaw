@@ -45,6 +45,7 @@ __all__ = [
     "SOURCE_DECLARABLE_KINDS",
     "make_item_id",
     "emit_attention_item",
+    "set_item_status",
     "evaluate_alert",
     "notify_inbox_alert",
     "owner_view",
@@ -597,7 +598,13 @@ class InboxStore:
         Validation is a separate pass over ALL of *kwargs* before the first `setattr`, so a
         two-field write with one bad field is refused whole rather than half-applied. The
         old single loop reached `self.save()` with the bad value already on the item.
+
+        ``status`` is refused: moving a row is not a field write but :func:`set_item_status`,
+        which also tells every open surface and reads the row's notification when it closes.
+        A status written here closed the row and left its bell notification unread.
         """
+        if "status" in kwargs:
+            raise TypeError("an inbox row's status moves through inbox.set_item_status")
         item = self.items.get(item_id)
         if not item:
             return None
@@ -871,6 +878,12 @@ def emit_attention_item(
     except Exception:
         logger.warning("attention item: inbox write failed", exc_info=True)
 
+    # The new row reaches every open surface as it lands. The Inbox page, Home and Mission
+    # Control read the Inbox on its frames rather than polling it, and a row raised here (a
+    # gate waiting, an approval asked, a proposal made) sent none, so they missed it.
+    if state is not None and item_id:
+        _announce(state, "inbox_new_item", item)
+
     if state is not None and not withheld:
         try:
             state.notify(
@@ -956,20 +969,77 @@ def resolve_attention_items(
         if target is None:
             target = InboxStore()
             target.load()
-        closed = 0
-        for item in list(target.items.values()):
-            if item.status not in OPEN_STATUSES:
-                continue
-            if any(item.refs.get(key) != value for key, value in refs.items()):
-                continue
-            item.status = ItemStatus.HANDLED.value
-            closed += 1
-        if closed:
-            target.save()
-        return closed
+        matching = [
+            item
+            for item in list(target.items.values())
+            if item.status in OPEN_STATUSES
+            and all(item.refs.get(key) == value for key, value in refs.items())
+        ]
+        return len(set_item_status(state, target, matching, ItemStatus.HANDLED))
     except Exception:
         logger.debug("could not resolve the attention rows for %r", refs, exc_info=True)
         return 0
+
+
+def set_item_status(
+    state: Any,
+    store: "InboxStore",
+    items: "Iterable[InboxItem | None]",
+    status: str,
+) -> "list[InboxItem]":
+    """Move *items* to *status*: THE status transition. Returns the rows it actually moved.
+
+    Every writer that moves a row comes through here (:meth:`InboxStore.update` refuses a
+    ``status``), because a move is three writes, not one:
+
+    1. **the row**, persisted once for the whole batch;
+    2. **every open surface**: one ``inbox_item_updated`` frame per moved row. The Inbox page,
+       Home and Mission Control read the Inbox on its frames, and most movers sent none, so a
+       gate passed, a loop resumed or a proposal answered left its row showing;
+    3. **the bell**: a row that CLOSES (leaves :data:`OPEN_STATUSES`) marks read every
+       notification that is a view of it (``meta.inbox_item``, which :func:`emit_attention_item`
+       stamps). That link ran one way, so every row closed anywhere (a note handled in the
+       Inbox, "Dismiss all", an approval answered in its chat) left its notification unread in
+       the bell, counting work that was done.
+
+    A row already at *status* is neither moved nor announced. Reading a row (PENDING → SEEN)
+    is announced and leaves the bell alone: the row keeps its own unread dot for that.
+
+    ``state`` is the dashboard to tell, or None where there is none (a CLI, a headless pass):
+    the row still moves and the file is the truth. Telling it is best-effort, because the row
+    has already moved and a failed frame must not undo or fail that.
+    """
+    target = status.value if isinstance(status, ItemStatus) else str(status)
+    moved: list[InboxItem] = []
+    closed: list[str] = []
+    for item in items:
+        if item is None or item.status == target:
+            continue
+        if item.status in OPEN_STATUSES and target not in OPEN_STATUSES:
+            closed.append(item.id)
+        item.status = target
+        moved.append(item)
+    if not moved:
+        return moved
+    store.save()
+    if state is not None:
+        for item in moved:
+            _announce(state, "inbox_item_updated", item)
+        ack = getattr(state, "ack_item_notifications", None)
+        if closed and callable(ack):
+            try:
+                ack(closed)
+            except Exception:
+                logger.warning("could not read the notifications of closed rows", exc_info=True)
+    return moved
+
+
+def _announce(state: Any, frame: str, item: "InboxItem") -> None:
+    """Send one row to every open surface, redacted like every other writer of it."""
+    try:
+        state.broadcast_ws(frame, redact_item(item.to_dict()))
+    except Exception:
+        logger.debug("inbox: could not announce %s for %s", frame, item.id, exc_info=True)
 
 
 def _find_open_by_dedup(store: "InboxStore", dedup_key: str) -> "InboxItem | None":
@@ -1003,5 +1073,7 @@ def notify_inbox_alert(state: Any, item: InboxItem, reason: str) -> None:
         notification_kinds.INBOX_ALERT,
         f"{item.sender_name} in {item.channel_name}",
         f"Alert ({reason}): {msg[:200]}",
-        meta={"session": f"inbox:{item.id}"},
+        # `inbox_item` is the link every notification about a row carries: it is how the
+        # row's closing reads this alert in the bell (`set_item_status`).
+        meta={"session": f"inbox:{item.id}", "inbox_item": item.id},
     )

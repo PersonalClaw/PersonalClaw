@@ -271,11 +271,12 @@ function AppInner() {
   // on the one Loop nav tile so autonomous runs are visible from any page (the whole
   // point of a loop is it runs while you're elsewhere). ONE poll over ALL kinds
   // (general/goal/code/design) — the union of every kind's active states — so a running
-  // General or Design loop is counted too, not just goal+code.
+  // General or Design loop is counted too, not just goal+code. Every 30s: an ambient count
+  // is not a live view, and at 8s this was one of THREE readers of `/api/loops` on Home.
   const [activeLoops, setActiveLoops] = useState(0)
   useVisiblePoll(() => {
     api.uLoops().then((ls) => setActiveLoops(ls.filter((l) => ACTIVE_LOOP_STATUSES.has(l.status)).length)).catch(() => {})
-  }, 8000)
+  }, 30_000)
 
   // Installed apps → the Apps nav section. Apps do NOT auto-register: the user
   // opts each one in from its detail panel ("Show in navigation"), persisted via

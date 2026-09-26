@@ -302,6 +302,22 @@ tamper-evident, append-only. Events carry caller, operation, outcome, and
 names). API denials, webhook auth failures, and app lifecycle events all log
 here. The dashboard Security panel reads it.
 
+**Events, not requests.** A refused authentication is a row, every time. A successful one is a
+row the first time a session is seen in a 15-minute window, and the rest of that window is one
+summary row counting the requests and the paths they reached (`token_auth._SuccessTally`, flushed
+at shutdown), so every success is accounted for at a row per session per quarter hour. An
+internal-secret grant is one tallied `internal_auth` family (it used to write two rows). On day 8
+one idle Home tab grew the log ~5 MB an hour, 94% of it `dashboard.token_auth ok`.
+
+**Size and retention.** The live file rotates by size: the write that takes it past 16 MiB
+archives it to `sel_archive/security_events.<UTC time>.jsonl` under a cross-process lock and starts
+a fresh chain (`verify_integrity` tolerates the break at a rotation), and the rotation is itself
+logged (`sel.rotated`). Retention is age: 365 days, applied by the remediation engine's SEL prune
+to the live file and to whole archives, with a 512 MiB ceiling on the archive as a backstop
+(oldest first); every archive removal is logged. The durability inventory lists `sel_archive/`
+(`security_events_archive`), so snapshots carry the rotated trail. `POST /api/sel/rotate` does
+the same rotation on demand, and keeps the live log if the archive cannot be written.
+
 ## Data-leaving-the-system rules
 
 - Session-archive reads are redacted (`history.py` via

@@ -892,13 +892,46 @@ async def _noop():
 # ── the boundary: legacy paths untouched ──
 
 
-def test_store_only_kinds_excludes_clock_and_event():
-    """🔴 The set must not claim `clock` or `event` — those belong to the schedule and event
-    backends. Claiming them here would double-list every cron and event trigger."""
-    assert "clock" not in T._STORE_ONLY_KINDS
-    assert "event" not in T._STORE_ONLY_KINDS
-    assert "file" in T._STORE_ONLY_KINDS
-    assert "web_watch" in T._STORE_ONLY_KINDS
+def test_every_store_row_is_listed_exactly_once(home, state):
+    """The schedule group lists the store's `clock` rows and the store group lists every other
+    kind, so no row is listed twice and none is listed nowhere.
+
+    🔴 `event` and `manual` store rows were listed nowhere: `automation_create` routes "when I …"
+    to `event` and takes an explicit `manual`, and both kinds were left out of the store group
+    on the theory that "`event` is the event-trigger store's". That store is `event_triggers.json`,
+    a different record; nothing migrates it into `triggers.json`. So a chat-made automation of
+    either kind existed and could not be seen, paused or deleted on its own page, while the tool
+    that made it told the user "it is active now and visible on the Automations page".
+    """
+    from personalclaw.triggers.models import KINDS
+
+    store = _store(home)
+    specs = {
+        "clock": {"kind": "interval", "every_secs": 3600},
+        "event": {"source": "session", "pattern": "SessionEnd"},
+        "file": {"paths": ["~/notes"]},
+        "web_watch": {"url": "https://example.com"},
+        "idle": {},
+        "run_completed": {},
+        "view": {},
+        "webhook": {"token_ref": "hook-token"},
+        "manual": {},
+    }
+    assert set(specs) == set(KINDS), "a new store kind must be decided here: which group lists it"
+    for kind, spec in specs.items():
+        made = Tools.create(store, name=f"a {kind} automation", kind=kind, spec=spec, message="go")
+        assert made.ok, made.text
+
+    listed = _body(_run(T.api_triggers(_req("GET", "/api/triggers", state))))["triggers"]
+    by_group: dict[str, list[str]] = {}
+    for row in listed:
+        by_group.setdefault(row["kind"], []).append(row["raw_id"])
+    raw_ids = [row["raw_id"] for row in listed]
+    assert len(raw_ids) == len(set(raw_ids)), f"a row is listed twice: {sorted(raw_ids)}"
+    assert sorted(raw_ids) == sorted(t.id for t in store.list_triggers()), "a row is listed nowhere"
+    assert all(i.startswith("clock:") for i in by_group["schedule"])
+    assert {i.split(":", 1)[0] for i in by_group["store"]} == set(KINDS) - {"clock"}
+    assert T.unified_trigger_count(state) == len(listed)
 
 
 # ── 🔴 §6's schedule re-point (S99) ──

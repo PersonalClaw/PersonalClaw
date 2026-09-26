@@ -7,13 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from personalclaw.dashboard.approval_state import chat_approval_id
 from personalclaw.dashboard.chat import run_chat
-from personalclaw.dashboard.state import (
-    DashboardState,
-    _ChatSession,
-    chat_approval_id,
-    parse_cls_meta,
-)
+from personalclaw.dashboard.state import DashboardState, _ChatSession, parse_cls_meta
 from personalclaw.history import ConversationLog
 from personalclaw.hooks import ToolHookResult
 from personalclaw.llm.base import (
@@ -399,7 +395,13 @@ class TestResolveApprovalSessionFallback:
         assert fut.result() == "approved"
         state.broadcast_ws.assert_called_with(
             "approval_resolved",
-            {"id": approval_id, "request_id": "req-42", "session": session.key, "approved": True},
+            {
+                "id": approval_id,
+                "request_id": "req-42",
+                "session": session.key,
+                "approved": True,
+                "outcome": "approved",
+            },
         )
         state.push_sessions_update.assert_called_once()
         assert state._pending_approvals == {}
@@ -574,7 +576,7 @@ class TestStateMetaAndPermissions:
     def test_mark_permission_resolved(self):
         import json
 
-        from personalclaw.dashboard.state import _mark_permission_resolved
+        from personalclaw.dashboard.approval_state import _mark_permission_resolved
 
         session = _make_session()
         cls_data = json.dumps({"request_id": "req-42"})
@@ -584,7 +586,7 @@ class TestStateMetaAndPermissions:
         assert updated["resolved"] == "rejected"
 
     def test_mark_permission_resolved_not_found(self):
-        from personalclaw.dashboard.state import _mark_permission_resolved
+        from personalclaw.dashboard.approval_state import _mark_permission_resolved
 
         session = _make_session()
         # Should not raise

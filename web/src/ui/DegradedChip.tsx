@@ -5,9 +5,9 @@ import { useVisiblePoll } from '../lib/useVisiblePoll'
 import { useIsMobile } from '../app/useIsMobile'
 import { TextLink } from './TextLink'
 
-// Prettify a surface slug for display ("search_ranking" → "Search ranking").
-function label(surface: string): string {
-  const s = surface.replace(/[_-]/g, ' ')
+// Prettify a use-case slug the map below does not know ("some_new_case" → "Some new case").
+function prettify(slug: string): string {
+  const s = slug.replace(/[_-]/g, ' ')
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
@@ -17,7 +17,7 @@ function label(surface: string): string {
  *  Not imported from that map: it is a page-local const carrying icons, descriptions and chain
  *  flags for 14 use cases, and a shell chip pulling in a settings page would be a far worse
  *  dependency than three labels. Kept minimal on purpose — only the slugs `degraded.py`'s registry
- *  actually declares (`chat`, `embedding`, `stt`), with `label()` as the fallback so a new
+ *  actually declares (`chat`, `embedding`, `stt`), with `prettify()` as the fallback so a new
  *  contract still reads sensibly instead of rendering a raw slug. */
 const USE_CASE_LABEL: Record<string, string> = {
   chat: 'Chat',
@@ -26,7 +26,7 @@ const USE_CASE_LABEL: Record<string, string> = {
 }
 
 function useCaseLabel(uc: string): string {
-  return USE_CASE_LABEL[uc] ?? label(uc)
+  return USE_CASE_LABEL[uc] ?? prettify(uc)
 }
 
 /** A compact shell chip shown when any model-dependent surface is running on its
@@ -124,7 +124,10 @@ export function DegradedChip() {
     : setupLand ? 'Set up a model'
     // Chat not answering outranks a surface on its floor: it is the failure a user hits next.
     : providerDown ? 'Chat provider not answering'
-    : down.length === 1 ? `${label(worst.surface)} degraded` : `${down.length} degraded`
+    // The surface's own name, from the contract that declares it — the same words its degraded and
+    // recovered notifications use. A prettified slug ("Assistant reasoning", "Search ranking") is
+    // the engineer's name for it, not the user's.
+    : down.length === 1 ? `${worst.label} degraded` : `${down.length} degraded`
   const detail = unknown
     ? 'Status unknown — the degraded-surfaces check could not be read, so this may be hiding a surface running without a model'
     // 🔑 ONE EXPRESSION GAVE TWO ANSWERS TO THE SAME QUESTION. `summary` on the line above already
@@ -246,7 +249,7 @@ export function DegradedChip() {
               {down.map((s) => (
                 <div key={s.surface} className="border-b border-outline-variant/30 pb-2 last:border-0 last:pb-0">
                   <div className="flex items-center justify-between gap-2">
-                    <span data-type="body-s" className="text-on-surface">{label(s.surface)}</span>
+                    <span data-type="body-s" className="text-on-surface">{s.label}</span>
                     {s.backlog > 0 && (
                       // 0.6875rem sat under the caption floor tokens.css documents;
                       // the caption role is that drift's designated on-ramp home.
@@ -260,8 +263,8 @@ export function DegradedChip() {
                       whose entire job is "a provider went away".
 
                       The backend already treats this as the headline: its own degradation notice
-                      reads `No model for {', '.join(contract.use_cases)} — {contract.floor}`. The
-                      popover was the one surface stating the second half without the first. */}
+                      reads `No {use cases} model — {floor}`. The popover was the one surface
+                      stating the second half without the first. */}
                   {/* Defaulted read, not `s.use_cases.length`: an older/partial payload can omit
                       the key entirely (the chip's own pre-existing test fixture does), and a chip
                       that crashes the shell corner because a field is absent is a worse failure

@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from personalclaw.workflows import needs_input
+from personalclaw.workflows import needs_input, ownership
 
 logger = logging.getLogger(__name__)
 
@@ -252,3 +252,27 @@ def announce_loop_end(state: Any, run: Any, status: Any) -> str:
     except Exception:
         logger.debug("workflow %s: could not announce the loop's end", run.id, exc_info=True)
     return ""
+
+
+def cancel_run_approvals(state: Any, run_id: str, ending: str) -> int:
+    """End every approval still listed for an ended run's stages. Returns how many ended.
+
+    The same promise as :func:`resolve_run_items`, for the other thing a run leaves asking: an
+    approval under the run's key space (``workflow:<run>:<node>``) belongs to work that is over,
+    and approving it would start that work anyway. *ending* is the run's own phrase ("was
+    cancelled"), worded as the decision path's owner check words it, so the audit row reads
+    the same whichever of the two ends an approval first.
+    """
+    cancel = getattr(state, "cancel_approvals", None)
+    if cancel is None:
+        return 0
+    try:
+        return int(
+            cancel(
+                session_prefix=f"{ownership.OWNED_PREFIX}{run_id}:",
+                reason=f"the workflow run that asked for it {ending}",
+            )
+        )
+    except Exception:
+        logger.warning("run %s: ending its approvals failed", run_id, exc_info=True)
+        return 0

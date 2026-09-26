@@ -11,6 +11,7 @@ from personalclaw.inbox import (
     InboxStore,
     ItemStatus,
     UserResolver,
+    set_item_status,
 )
 
 # ── InboxConfig ──
@@ -195,15 +196,16 @@ def test_inbox_update(tmp_path):
     )
     inbox.add(item)
     inbox.flush()
-    updated = inbox.update("C1_1", status=ItemStatus.SENT, draft="reply text")
+    updated = inbox.update("C1_1", draft="reply text")
     assert updated is not None
+    assert set_item_status(None, inbox, [updated], ItemStatus.SENT) == [updated]
     assert updated.status == ItemStatus.SENT
     assert updated.draft == "reply text"
 
 
 def test_inbox_update_missing(tmp_path):
     inbox = InboxStore(tmp_path / "inbox.json")
-    assert inbox.update("nope", status=ItemStatus.SENT) is None
+    assert inbox.update("nope", draft="x") is None
 
 
 def test_inbox_cleanup_by_retention(tmp_path):

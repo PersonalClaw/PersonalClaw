@@ -81,6 +81,18 @@ def _cfg(**kw):
     return SimpleNamespace(remediation=SimpleNamespace(**base))
 
 
+def _listed_schedules(handlers) -> list[dict]:
+    """What `GET /api/triggers?type=schedule` lists: the rows the Triggers page renders."""
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    app = web.Application()
+    app["state"] = SimpleNamespace(conversation_log=None)
+    req = make_mocked_request("GET", "/api/triggers?type=schedule", app=app)
+    resp = asyncio.run(handlers.api_triggers(req))
+    return json.loads(resp.body)["triggers"]
+
+
 def _patch_config(monkeypatch, **kw):
     """Pin `resilience.remediation` without writing a whole config document."""
     from personalclaw.config.loader import AppConfig
@@ -263,8 +275,7 @@ class TestTheTriggerIsRegisteredAndListED:
         P.reconcile_remediation_trigger(store)
         monkeypatch.setattr(H, "_trigger_store", lambda: store)
 
-        rows = H._schedule_rows(SimpleNamespace(conversation_log=None))
-        listed = {r["raw_id"]: r for r in rows}
+        listed = {r["raw_id"]: r for r in _listed_schedules(H)}
         assert P.REMEDIATION_TRIGGER_ID in listed, sorted(listed)
         row = listed[P.REMEDIATION_TRIGGER_ID]
         # The columns the list draws per row must be populated, not merely present.
@@ -297,8 +308,7 @@ class TestTheTriggerIsRegisteredAndListED:
         from personalclaw.dashboard.handlers import triggers as H
 
         monkeypatch.setattr(H, "_trigger_store", lambda: store)
-        rows = H._schedule_rows(SimpleNamespace(conversation_log=None))
-        assert P.REMEDIATION_TRIGGER_ID not in {r["raw_id"] for r in rows}
+        assert P.REMEDIATION_TRIGGER_ID not in {r["raw_id"] for r in _listed_schedules(H)}
 
 
 # ── clause 1c: instead of the heartbeat job ─────────────────────────────────────────────
