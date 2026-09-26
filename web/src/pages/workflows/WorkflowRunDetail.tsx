@@ -21,7 +21,7 @@ import { tokenForNode } from './surfacingMeta'
 import { reentrySummary, revalidateNotice, revalidateSummary } from './revalidate'
 import { WorkflowAsk } from './WorkflowAsk'
 import { RunToolApprovals } from './RunToolApprovals'
-import { readAttention } from './attentionMeta'
+import { readEscalations, retryWindow } from './attentionMeta'
 import { EscalationPanel } from './EscalationPanel'
 import { NodeInspectorDrawer } from './NodeInspectorDrawer'
 import { SteeringPanel } from './SteeringPanel'
@@ -250,14 +250,23 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
 
   // Retry = a NEW attempt. A finished run never runs again (`models.RESUMABLE_ENDED_RUN_STATUSES` is
   // empty by design) and rewind needs a live controller, so the verbs that apply are fork + start:
-  // the child keeps every step the parent finished and re-runs what did not. Offered only for a
-  // failure the engine itself calls retryable (`retryableFailure` below), where the same work can
-  // succeed once its cause clears. If the start is refused the user still lands on the child's
-  // draft, whose Start button is the same call, with the refusal in the notice.
+  // the child keeps every step the parent finished and re-runs what did not. Offered only for
+  // failures the engine itself calls retryable (`retryWindow`), where the same work can succeed
+  // once its cause clears. If the start is refused the user still lands on the child's draft,
+  // whose Start button is the same call, with the refusal in the notice.
+  //
+  // The run is read again first. A provider's circuit breaker can open after this page loaded,
+  // because every call to that provider counts toward it, and a Retry inside the window started a
+  // run that failed in microseconds without a call. The fresh read shows when it can run instead.
   const retry = useCallback(async () => {
     setBusy(true)
     let child = ''
     try {
+      const fresh = await api.workflowRun(runId).catch(() => null)
+      if (fresh) {
+        setRun(fresh)
+        if ((retryWindow(fresh)?.retryAt ?? 0) > Date.now() / 1000) return
+      }
       child = (await api.forkWorkflowRun(runId, { note: 'retry after a transient failure' })).child_run_id
       await api.startDraftWorkflowRun(child)
     } catch (e) {
@@ -312,24 +321,32 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
   // for a preference nobody links to.
   const [view, setView] = useState<'list' | 'graph'>('list')
 
-  // What the engine knew when it gave up (#565). `run.attention` is polymorphic — a gate ask
-  // while the run waits, an escalation once it gives up — so it is read through the one
-  // discriminator rather than by guessing a field name here. Not status-gated: an escalation
-  // makes the run terminal today, and gating on that would hide the record if it ever did not.
-  const escalation = useMemo(() => {
-    const read = readAttention(run?.attention)
-    return read?.kind === 'escalation' ? read : null
-  }, [run])
+  // What the engine knew when it gave up (#565): EVERY escalation, oldest first, from the
+  // ledger-backed `run.escalations`. `run.attention` is one slot that each escalation overwrote,
+  // so a run whose two steps both gave up explained only the second. Not status-gated: a run
+  // whose failed `foreach` items were skipped finishes with them escalated, and says so.
+  const escalations = useMemo(() => readEscalations(run?.escalations), [run])
 
-  // Did the step the run stopped at fail in a way a fresh attempt can clear? The engine's own
-  // verdict (`failure.retryable`, from `models.RETRYABLE_CLASSES`) read off the node, not a class
-  // list re-derived here that would drift from it.
-  const retryableFailure = useMemo(() => {
-    if (!run || run.status !== 'failed' || !escalation) return false
-    return (run.nodes ?? []).some(
-      (n) => n.node_id === escalation.nodeId && n.state === 'failed' && n.failure?.retryable === true,
-    )
-  }, [run, escalation])
+  // Whether Retry is offered, and from when (`retryWindow`: every escalated step's own
+  // `failure.retryable`, and `retry_at` while a provider's breaker refuses calls).
+  const retryable = useMemo(() => retryWindow(run), [run])
+
+  // The countdown to `retryAt`, ticking once a second from the moment it is known and stopping
+  // when it lapses.
+  const [clock, setClock] = useState(() => Date.now() / 1000)
+  const retryAt = retryable?.retryAt ?? 0
+  useEffect(() => {
+    if (retryAt <= 0) return
+    const tick = () => {
+      const now = Date.now() / 1000
+      setClock(now)
+      if (now >= retryAt) window.clearInterval(timer)
+    }
+    const timer = window.setInterval(tick, 1000)
+    tick()
+    return () => window.clearInterval(timer)
+  }, [retryAt])
+  const retryWaitSecs = Math.max(0, Math.ceil(retryAt - clock))
 
   // The graph's Approve/Deny reads the continuations this view ALREADY fetches on every refetch —
   // no second request. A `waiting` node is only ANSWERABLE when a live resume token exists for it:
@@ -527,11 +544,12 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                 on a run that exhausted its retries the line above is EMPTY, which is the whole
                 defect: `_finish(status)` takes no `error` on that path, so the escalation was
                 the only account and nothing read it. */}
-            {escalation && (
+            {escalations.length > 0 && (
               <EscalationPanel
-                read={escalation}
+                reads={escalations}
+                runStatus={run.status}
                 runError={run.error ?? ''}
-                retry={retryableFailure ? { onRetry: retry, busy } : undefined}
+                retry={retryable ? { onRetry: retry, busy, waitSecs: retryWaitSecs } : undefined}
               />
             )}
 

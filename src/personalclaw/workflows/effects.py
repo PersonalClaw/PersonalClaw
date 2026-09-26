@@ -38,6 +38,7 @@ from typing import Any
 
 from personalclaw.cancellation import kill_timed_out
 from personalclaw.workflows import store
+from personalclaw.workflows.models import Failure, FailureClass
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,54 @@ def idempotency_key(run_id: str, instance_path: str, epoch: int) -> str:
     """
     raw = f"{run_id}|{instance_path}|{epoch}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def effect_key(run_id: str, instance_path: str, epoch: int, records: list[EffectRecord]) -> str:
+    """The key a dispatch of this effect goes out under: its attempt's, once there is one.
+
+    The newest record at the SAME epoch names the attempt this dispatch repeats, and its key is
+    reused — across a fork too. A Retry forks the failed run, and the child's ledger opens with
+    the parent's effect records (`checkpoints._copy_journal_prefix`); minted from the child's own
+    run id instead, the re-sent effect reached its receiver as a new request it could not
+    recognise as the attempt it retries. A COMPENSATED record is skipped: it carries the key of
+    the resource it tore down. A different epoch is a deliberate re-execution, so it mints.
+    """
+    for rec in reversed(records):
+        if (
+            rec.epoch == epoch
+            and rec.idempotency_key
+            and rec.effect_status is not EffectStatus.COMPENSATED
+        ):
+            return rec.idempotency_key
+    return idempotency_key(run_id, instance_path, epoch)
+
+
+def committed_effect_refusal(node_label: str, committed_epoch: int) -> Failure:
+    """The node is refused: re-running it would fire an effect already committed (WF2-R1)."""
+    return Failure(
+        failure_class=FailureClass.USER,
+        cause_plain=(
+            f"node {node_label} has a committed external effect from epoch {committed_epoch}; "
+            "re-running would fire it again"
+        ),
+        remediation=(
+            "set `redo_effects: true` on the node to deliberately re-fire "
+            "(a declared teardown runs first), or skip the node"
+        ),
+        terminal_reason="committed_effect",
+    )
+
+
+def teardown_refusal(detail: str) -> Failure:
+    """The teardown before a redo failed, so the external state is UNKNOWN: proceeding would
+    stack a second resource on top of a live first one."""
+    return Failure(
+        failure_class=FailureClass.INTERNAL,
+        cause_plain=f"effect teardown failed: {detail}"[:500],
+        remediation="fix the teardown command, or clean up the external "
+        "resource manually and clear redo_effects",
+        terminal_reason="teardown_failed",
+    )
 
 
 @dataclass

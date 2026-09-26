@@ -80,11 +80,13 @@ from personalclaw.workflows.effects import (
     EffectRecord,
     EffectStatus,
     committed_effect,
+    committed_effect_refusal,
     effect_history,
-    idempotency_key,
+    effect_key,
     output_id_of,
     redo_blocked,
     run_teardown,
+    teardown_refusal,
 )
 from personalclaw.workflows.engine import (
     NodeResult,
@@ -96,6 +98,7 @@ from personalclaw.workflows.engine import (
     release_execution_claim,
 )
 from personalclaw.workflows.engine_support import DEFAULT_MODEL_TIERS, resolve_axis_model
+from personalclaw.workflows.failure_taxonomy import with_breaker_window
 from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
 from personalclaw.workflows.judge_contract import hints_from_dict as judge_hints_from_dict
@@ -2732,7 +2735,7 @@ class RunController:
     # ── effect ledger (WF2-R1) ──
 
     def _effect_key(self, path: str, inst: NodeInstance) -> str:
-        return idempotency_key(self.run.id, path, inst.epoch)
+        return effect_key(self.run.id, path, inst.epoch, self._effects.get(path, []))
 
     def _record_effect(
         self,
@@ -2817,18 +2820,7 @@ class RunController:
         if redo_blocked(item.node.config or {}, committed, inst.epoch):
             inst.state = InstanceState.BLOCKED
             inst.completed_at = _now()
-            inst.failure = Failure(
-                failure_class=FailureClass.USER,
-                cause_plain=(
-                    f"node {item.node.id or item.path} has a committed external effect "
-                    f"from epoch {committed.epoch}; re-running would fire it again"
-                ),
-                remediation=(
-                    "set `redo_effects: true` on the node to deliberately re-fire "
-                    "(a declared teardown runs first), or skip the node"
-                ),
-                terminal_reason="committed_effect",
-            )
+            inst.failure = committed_effect_refusal(item.node.id or item.path, committed.epoch)
             self.journal.step_failed(
                 item.path,
                 item.node.id,
@@ -2859,13 +2851,7 @@ class RunController:
                 # stack a second resource on top of a live first one.
                 inst.state = InstanceState.BLOCKED
                 inst.completed_at = _now()
-                inst.failure = Failure(
-                    failure_class=FailureClass.INTERNAL,
-                    cause_plain=f"effect teardown failed: {detail}"[:500],
-                    remediation="fix the teardown command, or clean up the external "
-                    "resource manually and clear redo_effects",
-                    terminal_reason="teardown_failed",
-                )
+                inst.failure = teardown_refusal(detail)
                 self.journal.step_failed(
                     item.path,
                     item.node.id,
@@ -3006,6 +2992,9 @@ class RunController:
             # id is durably written and invisible in the runs surface. Same `item.path` the stall
             # clock below is bound to, so a row and its progress notes agree on which instance ran.
             instance_path=item.path,
+            # The effect's identity, for an ACTION to hand its receiver: the key the ledger's
+            # ATTEMPTED record carries, so a retry is recognisable as the attempt it retries.
+            idempotency_key=self._effect_key(item.path, self._instance(item.path)),
             cwd=self.services.cwd,
             tiers=self.services.model_tiers,
             completion=self.services.completion,
@@ -3459,7 +3448,8 @@ class RunController:
         # degradation — the node did its work and produced an output the run goes on to use — and
         # reusing that field would flip the row's rendering and lose the distinction.
         inst.schema_shortfall = result.schema_shortfall
-        inst.failure = result.failure
+        # A retry cannot run while the provider's breaker is open: record when it can.
+        inst.failure = with_breaker_window(result.failure, (c.provider for c in entry.calls.calls))
         tokens, model, cost_usd = _measured_usage(result, entry.calls)
         inst.tokens = tokens if tokens is not None else result.tokens
         self._decline(inst, result.declined_edges)

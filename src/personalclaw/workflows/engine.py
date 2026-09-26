@@ -43,7 +43,11 @@ from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
 from personalclaw.workflows import engine_support, leases, longrun, ownership
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
 from personalclaw.workflows.compaction import complete_with_compaction
-from personalclaw.workflows.failure_taxonomy import classify_exception
+from personalclaw.workflows.failure_taxonomy import (
+    binding_failure,
+    classify_action_result,
+    classify_exception,
+)
 from personalclaw.workflows.judge_contract import (
     JudgeHints,
     JudgeVerdict,
@@ -367,11 +371,8 @@ async def dispatch_transform(node: Node, ctx: BindingContext) -> NodeResult:
     try:
         value = resolve(raw, ctx)
     except BindingError as exc:
-        return _fail(
-            FailureClass.USER,
-            f"transform binding failed: {exc}",
-            exc.remediation or "check the referenced node id and field exist",
-        )
+        failure = binding_failure(exc, "transform binding failed")
+        return NodeResult(state=InstanceState.FAILED, failure=failure)
     contract = (node.config or {}).get("output_contract")
     if isinstance(contract, dict):
         problem = check_output_contract(value, contract)
@@ -440,7 +441,7 @@ async def dispatch_infer(
         except Exception as exc:  # provider/transport/contract failures
             return NodeResult(
                 state=InstanceState.FAILED,
-                failure=classify_exception(exc),
+                failure=classify_exception(exc, use_case=use_case),
                 **engine_support.journalled_prompt(wire, prompt),
             )
 
@@ -497,19 +498,13 @@ async def dispatch_visualize(
         )
     hint = str(cfg.get("hint", "") or "")
     title = str(cfg.get("title", "") or "Visualization")
-    from personalclaw.visualize import GenUiDisabled
     from personalclaw.visualize import visualize as _visualize_primitive
 
     try:
         result = await _visualize_primitive(cfg["data"], hint, title=title, completion=completion)
     except asyncio.CancelledError:
         raise
-    except GenUiDisabled as exc:
-        # USER, not the transport class `classify_exception` would assign: the run is
-        # refused because the operator turned generative UI off, and only they can change
-        # it — so the failure must carry the fix rather than read as a provider fault.
-        return _fail(FailureClass.USER, str(exc), "turn on Generative UI, or drop this node")
-    except Exception as exc:  # provider/transport failures
+    except Exception as exc:  # provider/transport failures, or generative UI switched off
         return NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
     if not result.dsl.strip():
         return _fail(
@@ -999,11 +994,8 @@ async def dispatch_subworkflow(
         try:
             child_inputs[str(key)] = resolve(value, ctx)
         except BindingError as exc:
-            return _fail(
-                FailureClass.USER,
-                f"subworkflow input {key!r} did not resolve: {exc}",
-                exc.remediation or "check the referenced node id and field exist",
-            )
+            failure = binding_failure(exc, f"subworkflow input {key!r} did not resolve")
+            return NodeResult(state=InstanceState.FAILED, failure=failure)
 
     parent = store.get(run_id) if run_id else None
     child = store.create(
@@ -1096,6 +1088,7 @@ async def dispatch_action(
     project_id: str = "",
     instance_path: str = "",
     cwd: str = "",
+    idempotency_key: str = "",
 ) -> NodeResult:
     """Dispatch to an action provider — zero tokens.
 
@@ -1161,6 +1154,9 @@ async def dispatch_action(
     # for a value the engine is already holding.
     if cwd:
         payload.setdefault("workspace", cwd)
+    # The effect's identity (WF2-R1): a retry carries its attempt's key, so a receiver can dedupe.
+    if idempotency_key:
+        payload.setdefault("idempotency_key", idempotency_key)
     context = ActionContext(
         event="workflow_node", context=str(cfg.get("context", "") or ""), payload=payload
     )
@@ -1183,17 +1179,10 @@ async def dispatch_action(
             )
 
     if not getattr(result, "success", False):
-        err = getattr(result, "error", "") or getattr(result, "stderr", "") or "action failed"
-        return NodeResult(
-            state=InstanceState.FAILED,
-            output=output,
-            failure=Failure(
-                failure_class=FailureClass.TRANSIENT,
-                cause_plain=str(err)[:500],
-                remediation=_provider_fix(result),
-                recoverable=True,
-            ),
-        )
+        # Classified at the cause, never assumed TRANSIENT: that offered Retry for a rejected
+        # key, a missing model and a missing config field alike.
+        failure = classify_action_result(result)
+        return NodeResult(state=InstanceState.FAILED, output=output, failure=failure)
     if getattr(result, "outcome", "") == "launched":
         return NodeResult(
             state=InstanceState.DEGRADED,
@@ -2579,12 +2568,6 @@ def _action_output(result: Any) -> Any:
     }
 
 
-def _provider_fix(result: Any) -> str:
-    err = getattr(result, "agent_error", None)
-    fix = getattr(err, "fix", "") if err else ""
-    return str(fix) if fix else "check the action's configuration and the gateway log"
-
-
 def _estimate_tokens(prompt: str, response: str) -> int:
     """A nominal chars-per-token floor when the provider reported no usage.
 
@@ -2649,6 +2632,8 @@ async def dispatch(
     judge_hints: JudgeHints | None = None,
     #: The run's explicit UNATTENDED grant. Only the STAGE branch reads it (see `dispatch_stage`).
     unattended: bool = False,
+    #: The effect's idempotency key (`effects.effect_key`). Only the ACTION branch reads it.
+    idempotency_key: str = "",
 ) -> NodeResult:
     """Route one node to its dispatcher.
 
@@ -2679,6 +2664,7 @@ async def dispatch(
         compaction_saves=compaction_saves,
         judge_hints=judge_hints,
         unattended=unattended,
+        idempotency_key=idempotency_key,
     )
     # What the node's own work returned, BEFORE the seams below add keys to it: the only value the
     # schema notice may compare (#3545). The judge contract writes every key a judge schema
@@ -2743,6 +2729,7 @@ async def _dispatch_inner(
     compaction_saves: list[float] | None = None,
     judge_hints: JudgeHints | None = None,
     unattended: bool = False,
+    idempotency_key: str = "",
 ) -> NodeResult:
     kind = node.kind
     dispatcher = _LEAF_DISPATCHERS.get(kind)
@@ -2778,6 +2765,7 @@ async def _dispatch_inner(
             project_id=project_id,
             instance_path=instance_path,
             cwd=cwd,
+            idempotency_key=idempotency_key,
         )
     if dispatcher is dispatch_wait:
         return await dispatcher(node, ctx, now=clock)

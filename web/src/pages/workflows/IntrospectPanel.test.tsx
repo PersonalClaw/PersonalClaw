@@ -25,7 +25,7 @@ function payload(over: Partial<WorkflowIntrospection> = {}): WorkflowIntrospecti
   const stats = {
     run_id: 'r1', tokens: 1200, tokens_recorded: true, cached_tokens: 100, cost_usd: 0.0342, priced: true,
     steps_completed: 4, steps_failed: 1, steps_cached: 1, calls_cut_off: 0, duration_secs: 92.5,
-    first_byte_ms: 830, models: ['claude-sonnet'], unverified_steps: 3,
+    first_byte_ms: 4000, models: ['claude-sonnet'], unverified_steps: 3,
     verification_debt: 0.75, cache_hit_rate: 0.2,
   }
   const proof = {
@@ -71,6 +71,12 @@ beforeEach(() => {
   introspect = async () => payload()
 })
 
+/** The value beside a `<Stat>` label, read off its own `<dd>` rather than found anywhere. */
+function statValue(label: string): string {
+  const dd = screen.getByText(label).parentElement?.querySelector('dd')
+  return dd?.textContent?.trim() ?? ''
+}
+
 describe('the nine questions reach the DOM', () => {
   it('renders every checklist question', async () => {
     render(<IntrospectPanel runId="r1" onClose={() => {}} />)
@@ -99,7 +105,38 @@ describe('the nine questions reach the DOM', () => {
     // rate-table-derived number, so both carry the estimate marker or the panel contradicts itself.
     expect(await screen.findByText('~$0.0342')).toBeTruthy()
     expect(screen.getByText(/to first output/i)).toBeTruthy()
-    expect(screen.getByText('830 ms')).toBeTruthy()
+    expect(statValue('To first output')).toBe('4s')
+  })
+
+  it('says a run produced no output rather than that it arrived in 0 ms', async () => {
+    // `first_byte_ms` is null when no step produced output: rendered as `0 ms`, it claimed output
+    // arrived instantly on a run that never made any.
+    const base = payload()
+    introspect = async () => ({ ...base, stats: { ...base.stats, first_byte_ms: null } })
+    render(<IntrospectPanel runId="r1" onClose={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Duration')).toBeTruthy())
+    expect(statValue('To first output')).toBe('no output')
+  })
+
+  it('says none yet while the run is still going', async () => {
+    const base = payload()
+    introspect = async () => ({
+      ...base,
+      stats: { ...base.stats, first_byte_ms: null },
+      answers: { ...base.answers, running: { ...base.answers.running, status: 'running' } },
+    })
+    render(<IntrospectPanel runId="r1" onClose={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Duration')).toBeTruthy())
+    expect(statValue('To first output')).toBe('none yet')
+  })
+
+  it('says under 1s at the resolution the journal measures, not 0 ms', async () => {
+    // Journal stamps are whole seconds, so a first output inside the run's first second reads 0.
+    const base = payload()
+    introspect = async () => ({ ...base, stats: { ...base.stats, first_byte_ms: 0 } })
+    render(<IntrospectPanel runId="r1" onClose={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Duration')).toBeTruthy())
+    expect(statValue('To first output')).toBe('under 1s')
   })
 
   it('renders a sub-second run’s duration as 0s, not as a label with nothing after it', async () => {

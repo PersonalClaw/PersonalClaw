@@ -27,6 +27,7 @@ import asyncio
 import contextlib
 import json
 import sys
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -66,6 +67,10 @@ class FakeOllama:
 
     def __init__(self) -> None:
         self.up = False
+        #: What an UP server answers `/api/chat` with: 200, or a refusal carrying `error`, the
+        #: `{"error": …}` body Ollama itself sends.
+        self.status = 200
+        self.error = ""
         self.report_usage = True
         self.hold: asyncio.Event | None = None
         self.chats: list[dict[str, Any]] = []
@@ -111,7 +116,11 @@ class FakeOllama:
             for k, v in (h.split(":", 1) for h in lines[1:] if ":" in h)
         }
         raw = await reader.readexactly(int(headers.get("content-length", "0") or 0))
-        if path == "/api/chat":
+        if path == "/api/chat" and self.status != 200:
+            self.chats.append(json.loads(raw or b"{}"))
+            payload = json.dumps({"error": self.error}).encode()
+            status, ctype = f"{self.status} Refused", "application/json"
+        elif path == "/api/chat":
             body = json.loads(raw or b"{}")
             self.chats.append(body)
             if self.hold is not None:
@@ -237,8 +246,10 @@ async def test_an_outage_is_blamed_on_the_step_that_failed_with_its_real_class(
         assert (
             attention["node_id"] == "sample"
         ), f"the failure is attributed to {attention['node_id']!r}, not to the step that failed"
+        # The provider dropped every connection: a network failure, which a Retry can clear once
+        # it is back, and so the class the run page offers Retry for.
         classes = [a["failure_class"] for a in attention["attempts"]]
-        assert classes == ["transient"], classes
+        assert classes == ["network"], classes
         # One attempt and no retry budget: "every retry was spent" would be false.
         assert attention["reason"] == "not_retried"
 
@@ -250,6 +261,81 @@ async def test_an_outage_is_blamed_on_the_step_that_failed_with_its_real_class(
         )
         failures = [n["failure"] for n in status["nodes"] if n.get("failure")]
         assert all(f["class"] != "user" for f in failures), failures
+
+
+# ── whether a Retry can help ─────────────────────────────────────────────────
+
+
+def _failure(run_id: str, node_id: str) -> dict[str, Any]:
+    (node,) = [n for n in service.status(run_id)["nodes"] if n["node_id"] == node_id]
+    return node["failure"]
+
+
+@pytest.mark.parametrize(
+    ("status", "error", "failure_class", "where"),
+    [
+        (401, "unauthorized", "permission", "fix its key in Settings → Providers"),
+        (404, f"model '{MODEL}' not found", "user", "the Background use case in Settings → Models"),
+    ],
+)
+async def test_a_refusal_a_retry_cannot_clear_offers_none_and_says_what_to_change(
+    monkeypatch, tmp_path, status, error, failure_class, where
+):
+    """Measured on main: both were filed `transient`, so the run page offered Retry for a key the
+    provider rejects and a model it does not have, and the fix read "check the action's
+    configuration and the gateway log"."""
+    async with _wired(monkeypatch, tmp_path) as (fake, supervisor):
+        fake.up = True
+        fake.status, fake.error = status, error
+        run_id = await _start(supervisor, n=2)
+        assert await _terminal(supervisor, run_id) is RunStatus.FAILED
+        assert len(fake.chats) == 2, "the control: the provider really was asked, and refused"
+
+        failure = _failure(run_id, "sample")
+        assert failure["class"] == failure_class
+        assert failure["retryable"] is False, "a Retry sends the same request and is refused again"
+        assert where in failure["remediation"], failure["remediation"]
+        attempts = service.status(run_id)["escalations"][0]["attempts"]
+        assert [a["failure_class"] for a in attempts] == [failure_class]
+
+
+@pytest.mark.parametrize("status", [429, 500])
+async def test_a_refusal_a_retry_can_clear_still_offers_one(monkeypatch, tmp_path, status):
+    async with _wired(monkeypatch, tmp_path) as (fake, supervisor):
+        fake.up = True
+        fake.status, fake.error = status, "try again later"
+        run_id = await _start(supervisor, n=2)
+        assert await _terminal(supervisor, run_id) is RunStatus.FAILED
+        failure = _failure(run_id, "sample")
+        assert (failure["class"], failure["retryable"]) == ("transient", True)
+
+
+async def test_the_failures_that_open_the_breaker_say_when_a_retry_can_run(monkeypatch, tmp_path):
+    """Five samples against a provider that is down: the fifth failure opens its breaker, and a
+    Retry before it lapses is refused without a call. The run says when it can run instead."""
+    from personalclaw.guardrails.breaker import get_breaker
+
+    async with _wired(monkeypatch, tmp_path) as (fake, supervisor):
+        run_id = await _start(supervisor, n=5)
+        assert await _terminal(supervisor, run_id) is RunStatus.FAILED
+        breaker = get_breaker(ENTRY)
+        assert breaker.is_open(), "the control: five failures in a row open the breaker"
+
+        failure = _failure(run_id, "sample")
+        assert (failure["class"], failure["retryable"]) == ("network", True)
+        assert failure["providers"] == [ENTRY]
+        assert failure["retry_at"] == pytest.approx(time.time() + breaker.retry_after(), abs=3)
+
+        # A Retry pressed anyway: the child is refused without a single call, and says when.
+        refused_before = fake.refused
+        forked = service.fork_run(run_id, note="retry inside the window")
+        child = str(forked["child_run_id"])
+        assert (await service.start_draft_run(child, supervisor=supervisor)).get("ok")
+        assert await _terminal(supervisor, child) is RunStatus.FAILED
+        assert fake.refused == refused_before, "the breaker let a call through"
+        child_failure = _failure(child, "sample")
+        assert child_failure["retryable"] is True
+        assert child_failure["retry_at"] > time.time() + 10, child_failure
 
 
 # ── retry ────────────────────────────────────────────────────────────────────

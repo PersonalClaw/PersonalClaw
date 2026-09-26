@@ -24,6 +24,8 @@
  *  (a supervisor policy); until it exists, the honest thing to show is the diagnosis.
  */
 
+import type { WorkflowRunDetailData } from '../../lib/api'
+
 /** One try at one node, as `resilience.Attempt.to_dict` writes it. Camel-cased at this
  *  boundary so no page has to know the wire's snake_case. */
 export interface EscalationAttempt {
@@ -42,6 +44,9 @@ export interface EscalationAttempt {
 export interface EscalationRead {
   kind: 'escalation'
   nodeId: string
+  /** The instance that gave up — what tells two items of one `foreach` apart. `''` on the
+   *  `run.attention` record, which never carried it; every ledger-read escalation has one. */
+  instancePath: string
   /** The engine's raw reason token, kept so a reader can grep the source for it. */
   reason: string
   /** That token as a sentence. */
@@ -131,6 +136,7 @@ export function readAttention(raw: unknown): AttentionRead {
     return {
       kind: 'escalation',
       nodeId: str(record, 'node_id'),
+      instancePath: str(record, 'instance_path'),
       reason,
       headline: escalationHeadline(reason),
       detail: str(record, 'detail'),
@@ -144,6 +150,41 @@ export function readAttention(raw: unknown): AttentionRead {
   const prompt = str(record, 'prompt').trim()
   if (!prompt && !kind) return null
   return { kind: 'ask', askKind: kind, prompt }
+}
+
+/** Every escalation in a run's `escalations` list (oldest first), skipping anything unreadable.
+ *  The list, not `run.attention`: that is ONE slot, and each escalation overwrote the last, so a
+ *  run whose two steps both gave up used to show only the second. */
+export function readEscalations(raw: unknown): EscalationRead[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map(readAttention)
+    .filter((read): read is EscalationRead => read?.kind === 'escalation')
+}
+
+/** Can a fresh attempt clear what stopped the run, and from when? `null` when Retry must not be
+ *  offered at all.
+ *
+ *  Each escalated step's own verdict (`failure.retryable`, from `models.RETRYABLE_CLASSES`), read
+ *  off its node rather than a class list re-derived here. ALL of them: a Retry re-runs every one,
+ *  so a single failure a retry cannot fix (a rejected key, a missing model) fails the new run the
+ *  same way. `retryAt` is when the attempt can run, in epoch seconds, `0` for now: the server sets
+ *  it while a provider's circuit breaker is open, when a Retry is refused without a call. */
+export function retryWindow(
+  run: Pick<WorkflowRunDetailData, 'status' | 'escalations' | 'nodes'> | null | undefined,
+): { retryAt: number } | null {
+  if (!run || run.status !== 'failed') return null
+  const escalations = readEscalations(run.escalations)
+  if (escalations.length === 0) return null
+  const failures = escalations.map((e) =>
+    (run.nodes ?? []).find(
+      (n) =>
+        n.state === 'failed' &&
+        (e.instancePath ? n.instance_path === e.instancePath : n.node_id === e.nodeId),
+    )?.failure,
+  )
+  if (!failures.every((f) => f?.retryable === true)) return null
+  return { retryAt: Math.max(0, ...failures.map((f) => f?.retry_at ?? 0)) }
 }
 
 /** The one-line form for a glance surface (the chat card). Never empty: a run that is

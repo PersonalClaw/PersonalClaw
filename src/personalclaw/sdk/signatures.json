@@ -105,7 +105,9 @@
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "blocked"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "outcome"},
     {"annotation": "AgentError | None", "default": "None", "kind": "positional_or_keyword", "name": "agent_error"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "reversal"}
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "reversal"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "failure_class"},
+    {"annotation": "float", "default": "0.0", "kind": "positional_or_keyword", "name": "retry_after"}
    ],
    "returns": "None"
   },

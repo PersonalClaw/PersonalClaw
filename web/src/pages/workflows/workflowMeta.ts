@@ -161,3 +161,15 @@ export function elapsedStat(secs: number): string {
   if (!Number.isFinite(secs)) return 'not recorded'
   return secs > 0 ? fmtElapsed(secs) : '0s'
 }
+
+/** "To first output", said at the resolution it was measured at.
+ *
+ *  `null` is a run no step has produced output for, and the cell must say so: `0 ms` there
+ *  claimed output arrived instantly on a run that never produced any. The figure is a difference
+ *  of journal timestamps, which are whole seconds, so anything under 1000 means "within the first
+ *  second". Printed as `0 ms` for a step that answered in 400 ms, it was false precision too. */
+export function firstOutputStat(ms: number | null | undefined, finished: boolean): string {
+  if (ms == null || !Number.isFinite(ms)) return finished ? 'no output' : 'none yet'
+  if (ms < 1000) return 'under 1s'
+  return elapsedStat(ms / 1000)
+}

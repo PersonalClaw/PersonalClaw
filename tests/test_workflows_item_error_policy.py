@@ -54,8 +54,8 @@ def _isolated_home(tmp_path, monkeypatch):
 
 
 #: One item of three cannot satisfy the body's `{{item.v}}` binding, so exactly one item fails —
-#: deterministically, in the real dispatcher, with no model call and no retry (a BindingError is
-#: a USER failure, and USER is not retryable).
+#: deterministically, in the real dispatcher, with no model call and no retry (a field the
+#: definition reads and the item lacks is an INTERNAL failure, and INTERNAL is not retryable).
 ITEMS = [{"name": "alpha", "v": 1}, {"name": "bravo"}, {"name": "charlie", "v": 3}]
 
 
@@ -131,7 +131,8 @@ class TestCollectedFailuresReachTheLedger:
         (failure,) = record["failures"]
         assert failure["item_index"] == 1
         assert failure["item_label"] == "bravo"  # names its item, not just its index
-        assert failure["failure_class"] == "user"
+        # The body reads a field its item does not carry: the definition's fault, not the caller's.
+        assert failure["failure_class"] == "internal"
         assert failure["cause"]
 
     @pytest.mark.parametrize("policy", ["halt", "skip"])

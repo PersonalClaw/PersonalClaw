@@ -22,46 +22,94 @@ import type { EscalationRead } from './attentionMeta'
  *  string appears when the run failed loudly. Two copies of one sentence reads as two problems.
  *
  *  The record's five `options` are still not rendered as controls — see `attentionMeta.ts`: no
- *  endpoint accepts one back. The ONE control here is `retry`, which the page passes only when the
- *  failed step's own class is retryable, and which is built from verbs that work on a finished run
- *  (fork + start). A panel titled "needs a decision" that offered no decision it could carry out
- *  left a transient failure — a provider that was down for a minute — with no way forward but
- *  starting over from the template page. */
-export function EscalationPanel({ read, runError = '', retry }: {
-  read: EscalationRead
+ *  endpoint accepts one back. The ONE control here is `retry`, which the page passes only when
+ *  EVERY escalated step failed in a way a fresh attempt can clear, and which is built from verbs
+ *  that work on a finished run (fork + start). While a provider's circuit breaker is open it
+ *  waits and says when it can run: pressed then, the new run was refused in microseconds.
+ *
+ *  Every escalation is shown, oldest first. `run.attention` holds one, and each escalation
+ *  overwrote the last, so a run whose two steps both gave up used to explain only the second. */
+export function EscalationPanel({ reads, runStatus, runError = '', retry }: {
+  reads: EscalationRead[]
+  runStatus: string
   runError?: string
-  retry?: { onRetry: () => void; busy: boolean }
+  retry?: { onRetry: () => void; busy: boolean; waitSecs: number }
 }) {
-  const detail = read.detail.trim() && read.detail.trim() !== runError.trim() ? read.detail.trim() : ''
-
   return (
     <section
       aria-labelledby="escalation-heading"
       data-testid="escalation-panel"
       className="flex flex-col gap-s rounded-lg border border-outline-variant bg-surface-high p-m"
     >
-      <div className="flex items-start gap-s">
-        <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warning" />
-        <div className="flex min-w-0 flex-col gap-xs">
-          <h2 id="escalation-heading" data-type="label-s" className="text-on-surface">
-            This run stopped and needs a decision
-          </h2>
-          <p data-type="body-s" className="text-on-surface-var">
-            {read.headline}
-            {read.nodeId && (
-              <>
-                {' at '}
-                <span className="font-mono">{read.nodeId}</span>
-              </>
-            )}
-            .
+      <h2 id="escalation-heading" data-type="label-s" className="flex items-center gap-s text-on-surface">
+        <AlertTriangle size={14} className="shrink-0 text-warning" />
+        {escalationHeading(runStatus, reads.length)}
+      </h2>
+
+      {reads.map((read, index) => (
+        <EscalationEntry key={read.instancePath || `${read.nodeId}-${index}`} read={read} runError={runError} />
+      ))}
+
+      {retry && (
+        <div className="flex flex-wrap items-center gap-s border-outline-variant border-t pt-s">
+          <Button
+            variant="ghost-accent"
+            size="sm"
+            onClick={retry.onRetry}
+            loading={retry.busy}
+            disabled={retry.waitSecs > 0}
+            disabledReason={retry.waitSecs > 0 ? `Retry becomes available in ${retry.waitSecs}s` : undefined}
+            title="Start a new run that keeps every finished step and re-runs the rest"
+          >
+            <RotateCcw size={13} /> Retry
+          </Button>
+          <p data-type="caption" className="text-on-surface-low">
+            {retry.waitSecs > 0
+              ? `Retry becomes available in ${retry.waitSecs}s. Calls to this provider are paused after repeated failures, and a retry before then is refused without being tried.`
+              : 'A new run keeps every finished step and re-runs the rest. Retry once the cause above has cleared.'}
           </p>
-          {detail && (
-            <p data-type="body-s" className="whitespace-pre-wrap break-words text-on-surface-low">
-              {detail}
-            </p>
-          )}
         </div>
+      )}
+    </section>
+  )
+}
+
+/** The panel's heading, true for the run's own status. An escalation is not always a stop: a
+ *  `foreach` whose `on_item_error` is `skip` finishes with its failed items escalated, and a
+ *  "stopped" heading over a Completed badge contradicted the page it sat on. */
+export function escalationHeading(runStatus: string, count: number): string {
+  if (runStatus === 'failed' || runStatus === 'escalated') return 'This run stopped and needs a decision'
+  const steps = count === 1 ? '1 step' : `${count} steps`
+  if (runStatus === 'complete') return `This run finished, but ${steps} failed`
+  return `${steps} failed so far`
+}
+
+/** The item a `foreach` escalation belongs to (`…body#2` → `#2`), so two of them are told apart. */
+function itemSuffix(instancePath: string): string {
+  const match = /#(\d+)$/.exec(instancePath)
+  return match ? ` #${match[1]}` : ''
+}
+
+function EscalationEntry({ read, runError }: { read: EscalationRead; runError: string }) {
+  const detail = read.detail.trim() && read.detail.trim() !== runError.trim() ? read.detail.trim() : ''
+  return (
+    <div className="flex flex-col gap-s">
+      <div className="flex min-w-0 flex-col gap-xs">
+        <p data-type="body-s" className="text-on-surface-var">
+          {read.headline}
+          {read.nodeId && (
+            <>
+              {' at '}
+              <span className="font-mono">{read.nodeId}{itemSuffix(read.instancePath)}</span>
+            </>
+          )}
+          .
+        </p>
+        {detail && (
+          <p data-type="body-s" className="whitespace-pre-wrap break-words text-on-surface-low">
+            {detail}
+          </p>
+        )}
       </div>
 
       {read.attempts.length > 0 && (
@@ -112,24 +160,6 @@ export function EscalationPanel({ read, runError = '', retry }: {
           ))}
         </ol>
       )}
-
-      {retry && (
-        <div className="flex flex-wrap items-center gap-s border-outline-variant border-t pt-s">
-          <Button
-            variant="ghost-accent"
-            size="sm"
-            onClick={retry.onRetry}
-            loading={retry.busy}
-            title="Start a new run that keeps every finished step and re-runs the rest"
-          >
-            <RotateCcw size={13} /> Retry
-          </Button>
-          <p data-type="caption" className="text-on-surface-low">
-            A new run keeps every finished step and re-runs the rest. Retry once the cause above has
-            cleared.
-          </p>
-        </div>
-      )}
-    </section>
+    </div>
   )
 }

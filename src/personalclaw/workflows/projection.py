@@ -43,6 +43,7 @@ RUN_FIELDS: tuple[tuple[str, tuple[type, ...], bool], ...] = (
     ("spec_version", (int,), True),
     ("error", (str,), False),
     ("attention", (dict, type(None)), False),
+    ("escalations", (list,), False),
     ("tokens", (int,), False),
     ("elapsed_secs", (int, float), False),
     ("nodes", (list,), True),
