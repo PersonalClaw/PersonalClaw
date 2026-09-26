@@ -150,3 +150,65 @@ describe('api.patchConfig on the wire', () => {
     ])
   })
 })
+
+describe('an automation whose agent approves itself asks the same way', () => {
+  // `POST/PUT /api/triggers`, `POST /api/workflows`, the run-override PUT and the agent sync
+  // answer a loosening write `400 confirmation_required` (`automation_posture.py`,
+  // `supervisor_policy.POLICY_OVERRIDE_SECURITY`, `agents._sync_consent`). Each writer here must
+  // turn that into the dialog and ONE resend with `confirm: true`, never a silent failure.
+  const reply = (status: number, o: unknown) =>
+    new Response(JSON.stringify(o), { status, headers: { 'Content-Type': 'application/json' } })
+
+  function gateway(ok: unknown) {
+    const sent: Array<{ url: string; method: string; body: Record<string, unknown> }> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      const body = (init.body ? JSON.parse(String(init.body)) : {}) as Record<string, unknown>
+      sent.push({ url, method: String(init.method), body })
+      if (body.confirm !== true) {
+        return reply(400, {
+          error: {
+            code: 'confirmation_required',
+            message: 'send {"confirm": true} to confirm',
+            detail: { field: 'triggers.t.action.approval_mode', consent: CONSENT },
+          },
+        })
+      }
+      return reply(200, ok)
+    }))
+    return sent
+  }
+
+  const trigger = { id: 'schedule:t', raw_id: 't', kind: 'schedule', name: 't', action: { provider: 'invoke-agent', config: {} } }
+  const writers: Array<[string, () => Promise<unknown>, unknown]> = [
+    ['createSchedule', () => api.createSchedule({ name: 't', every: 300, approval_mode: 'auto' }), { ok: true, trigger }],
+    ['updateSchedule', () => api.updateSchedule('t', { approval_mode: 'auto' }), { ok: true, trigger }],
+    ['createEvent', () => api.createEvent({ pattern: 'AppEvent', action: { provider: 'invoke-agent', config: { approval_mode: 'auto' } } }), trigger],
+    ['updateEventTrigger', () => api.updateEventTrigger('e1', { action: { provider: 'invoke-agent', config: { approval_mode: 'auto' } } }), { ok: true, trigger }],
+    ['createHook', () => api.createHook({ name: 'h', event: 'stop', provider: 'invoke-agent', provider_config: { approval_mode: 'auto' } }), { ok: true, trigger: { ...trigger, kind: 'lifecycle' } }],
+    ['updateHook', () => api.updateHook('h', { provider: 'invoke-agent', provider_config: { approval_mode: 'auto' } }), { ok: true, trigger: { ...trigger, kind: 'lifecycle' } }],
+    ['saveWorkflowDef', () => api.saveWorkflowDef({ name: 'w', root: { kind: 'stage', id: 's', config: { approval_mode: 'auto' } }, save: true }), { saved: true, valid: true, issues: [] }],
+    ['setWorkflowRunPolicyOverrides', () => api.setWorkflowRunPolicyOverrides('r1', { max_cycles: 9 }), { run_id: 'r1', status: 'running', policy_overrides: { max_cycles: 9 } }],
+    ['syncAgents', () => api.syncAgents(), { ok: true, synced: ['helper'], skipped: [], unreadable: [], scanned: 1, message: '' }],
+  ]
+
+  it.each(writers)('%s asks once, then resends the same write with confirm: true', async (_name, write, ok) => {
+    const sent = gateway(ok)
+    await write()
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(sent).toHaveLength(2)
+    expect(sent[0].body.confirm).toBeUndefined()
+    expect(sent[1].body.confirm).toBe(true)
+    // The resend is the SAME request, only consented: same route, same verb, same payload.
+    expect(sent[1].url).toBe(sent[0].url)
+    expect(sent[1].method).toBe(sent[0].method)
+    const { confirm: _c, ...resent } = sent[1].body
+    expect(resent).toEqual(sent[0].body)
+  })
+
+  it.each(writers)('%s sends nothing more when the owner declines', async (_name, write, ok) => {
+    confirmSpy.mockImplementation(async () => false)
+    const sent = gateway(ok)
+    await expect(write()).rejects.toBeInstanceOf(ConsentDeclined)
+    expect(sent).toHaveLength(1)
+  })
+})

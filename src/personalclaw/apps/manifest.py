@@ -602,6 +602,14 @@ class Permissions:
     # (deny by default). So this one joins the permissions the gateway enforces at consent,
     # unlike ``backgroundTasks`` above, whose host still does not exist.
     eventSubscriptions: list[str] = field(default_factory=list)  # noqa: N815
+    # The owner's settings this app reads and writes through ``/api/config`` — exact dotted
+    # field paths from the editable-config registry (``voice.echo_filter_enabled``). A DOUBLE
+    # declaration like ``proposals``: ``api`` must still name ``/api/config`` for the route,
+    # and this list decides which fields it reaches, so ``GET /api/config/personalclaw`` hands
+    # an app those fields and nothing else and a write to any other is refused 403. Deny by
+    # default: an app declaring none reads and writes no setting. A security setting (a field
+    # holding a ``SecurityControl``) is an INSTALL error here — no app holds one, either way.
+    config: list[str] = field(default_factory=list)
     # Permission keys the manifest declared that this vocabulary does not contain. NOT a
     # permission and never emitted by ``to_dict`` — the same bookkeeping shape as
     # ``network_declared`` above: a fact about the RAW dict that the parsed value cannot
@@ -650,6 +658,8 @@ class Permissions:
             d["backgroundTasks"] = True
         if self.eventSubscriptions:
             d["eventSubscriptions"] = self.eventSubscriptions
+        if self.config:
+            d["config"] = self.config
         return d
 
     @classmethod
@@ -678,6 +688,7 @@ class Permissions:
             eventSubscriptions=[  # noqa: N815
                 str(e) for e in data.get("eventSubscriptions", []) if e
             ],
+            config=[str(f) for f in data.get("config", []) if f],
             unknown_keys=tuple(sorted(k for k in data if k not in PERMISSION_KEYS)),
         )
 
@@ -706,6 +717,40 @@ PERMISSION_KEYS: frozenset[str] = frozenset(
     for f in fields(Permissions)
     if f.name not in {"network_declared", "memory_declared_raw", "unknown_keys"}
 )
+
+
+def _config_permission_errors(declared: list[str]) -> list[str]:
+    """Install errors for ``permissions.config`` — each entry must name an ordinary setting.
+
+    Two refusals, both about what consent would otherwise misstate. A name that is not an
+    editable setting would render on the install screen as a grant that reaches nothing. A
+    security setting would render as one the gateway refuses on every request
+    (``config/edit_spec.app_write_refusal``), and reading one is no app's business either: the
+    posture is the owner's to see and change. The registry is ``_EDITABLE_CONFIG`` — imported
+    here, lazily, because it lives with its handler (``config/edit_spec.py`` says why).
+    """
+    if not declared:
+        return []
+    from personalclaw.config.edit_spec import security_control
+    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+    errors: list[str] = []
+    for entry in declared:
+        spec = _EDITABLE_CONFIG.get(entry)
+        if spec is None:
+            errors.append(
+                f"permissions.config entry {entry!r} is not a setting PersonalClaw lets anything "
+                "change — name an editable field such as 'voice.echo_filter_enabled'"
+            )
+        elif security_control(spec) is not None:
+            errors.append(
+                f"permissions.config entry {entry!r} is a security setting, which no app may "
+                "read or change — only the owner can, from Settings"
+            )
+    if len(set(declared)) != len(declared):
+        dupes = sorted({e for e in declared if declared.count(e) > 1})
+        errors.append(f"permissions.config has duplicate entries: {dupes}")
+    return errors
 
 
 @dataclass
@@ -1908,6 +1953,7 @@ class AppManifest:
                     f"commands ships a backend or declares permissions.desktop instead."
                 )
 
+        errors.extend(_config_permission_errors(self.permissions.config))
         return errors
 
     def _validate_sources(self) -> list[str]:

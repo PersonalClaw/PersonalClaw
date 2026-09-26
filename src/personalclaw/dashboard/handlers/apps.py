@@ -825,12 +825,47 @@ def _effective_config_schema(manifest) -> dict[str, Any]:
     return {}
 
 
+def _foreign_app_config_refusal(request: web.Request, name: str) -> web.Response | None:
+    """``403`` when an app-scoped caller names ANOTHER app's settings; ``None`` otherwise.
+
+    ``/api/apps/{name}/config`` is how an app's own settings panel reads and saves, and the
+    ``{name}`` in the path is the caller's choice — so a declared ``/api/apps`` prefix let one
+    app overwrite another's settings, its API key fields included (a write replaces the stored
+    secret; only the read masks it). The caller's identity is the app token's claim, as it is
+    for ``agent-run``. The owner (no app identity) reaches every app's settings.
+    """
+    caller = request.get("app", "")
+    if not caller or caller == name:
+        return None
+    try:
+        from personalclaw.sel import sel as _s
+
+        _s().log_api_access(
+            caller=f"app:{caller}",
+            operation="apps.config",
+            outcome="denied",
+            source="app_permissions",
+            resources=f"app:{name}",
+            error="another app's settings",
+        )
+    except Exception:
+        logger.warning("SEL audit failed for a refused cross-app config access", exc_info=True)
+    return json_error(
+        "forbidden",
+        message=f"an app reads and writes only its own settings, not {name!r}'s",
+        status=403,
+    )
+
+
 async def api_app_config_get(request: web.Request) -> web.Response:
     from personalclaw.apps.app_config import read_config
     from personalclaw.apps.app_manager import _manifest_of
     from personalclaw.apps.secret_fields import mask_secrets
 
     name = request.match_info["name"]
+    denied = _foreign_app_config_refusal(request, name)
+    if denied is not None:
+        return denied
     manifest = _manifest_of(name)
     if manifest is None:
         return web.json_response({"error": f"app {name!r} not installed"}, status=404)
@@ -854,6 +889,9 @@ async def api_app_config_put(request: web.Request) -> web.Response:
     from personalclaw.apps.secret_fields import mask_secrets, preserve_unchanged_secrets
 
     name = request.match_info["name"]
+    denied = _foreign_app_config_refusal(request, name)
+    if denied is not None:
+        return denied
     manifest = _manifest_of(name)
     if manifest is None:
         return web.json_response({"error": f"app {name!r} not installed"}, status=404)

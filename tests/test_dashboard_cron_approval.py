@@ -36,12 +36,15 @@ class TestScheduleTriggerApprovalMode:
 
     @pytest.mark.asyncio
     async def test_valid_approval_mode_auto(self):
+        # A schedule whose agent approves its own tool calls is the owner's to consent to
+        # (`test_apps_cannot_run_code_or_bypass_approvals.py` drives the refusal without it).
         request = self._make_request(
             {
                 "trigger_type": "schedule",
                 "name": "t",
                 "every": 300,
                 "action": _action(approval_mode="auto"),
+                "confirm": True,
             }
         )
         resp = await api_trigger_create(request)

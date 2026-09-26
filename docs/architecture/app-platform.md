@@ -70,7 +70,8 @@ The manifest's `permissions` block is enforced, with one documented exception
 
 | Permission | Enforcement |
 |---|---|
-| `api` | prefix-allowlist middleware over gateway API paths — pathname only, query string stripped (server and SDK agree on this) |
+| `api` | prefix-allowlist middleware over gateway API paths — pathname only, query string stripped (server and SDK agree on this). Two halves no declaration widens: the owner-only registry (`OWNER_ONLY_API_PATHS`, whole subtrees such as `/api/mcp` and `/api/terminal`), and `ROUTE_AUTHZ`, which declares each write route in a security family (`SECURITY_ROUTE_FAMILIES`: automations, apps, packs, agents, config, devices, channels…) `OwnerOnly` or `AppMay` with a reason. A write route in one of those families that has no declaration is refused to every app (`undeclared_security_write`) |
+| `config` | the exact settings (`voice.echo_filter_enabled`) `/api/config` reaches for this app. A second declaration on top of `api`, which must still name `/api/config` for the route. `GET /api/config/personalclaw` returns these fields and nothing else, and a write to any other answers `403 config_field_not_declared`. Deny by default. Naming a security setting is an install error (`manifest._config_permission_errors`) |
 | `events` | WebSocket fan-out filter — an app's socket only receives event types it declared |
 | `eventSubscriptions` | which **platform** events (`apps/app_events.py`: `session.created`, `knowledge.ingested`, `task.completed`) are delivered to the app. A DIFFERENT axis from `events` above, deliberately: `events` is the WS type allowlist, these are core-emitted facts, and holding one grants nothing about the other. `app_events.emit` is the only delivery path and is the whole gate — deny by default and **exact name only** (no prefix, no `*`), so a typo denies rather than widens. Delivered into the app's broker-owned inbox (the `appMessaging` queue, sender `@platform`, which no app can be named), drained over `GET /api/apps/message`. Payloads carry identifiers only, never prose: a subscription grants timing, not content an app's `api` scope may not cover. |
 | `mcpTools` | which MCP tools the app may invoke |
@@ -152,6 +153,12 @@ boundary lives:
   app=name)`, `_APP_TOKEN_TTL_SECS = 3600`) plus `X-PersonalClaw-App` are
   injected, so the backend has an identity bounded to its own declared
   permissions.
+
+That boundary is about what the proxy hands a backend. A backend on the host is still a
+process under the owner's account, so it can read the home directly, `session_key` (the
+token-signing key) included. A backend that names a sandbox tier runs under that tier's
+confinement instead — see
+[security/limitations.md §7](../security/limitations.md#7-an-apps-own-code-runs-as-you).
 
 ### Inbound authentication — the proxy signature (what loopback does NOT buy)
 
@@ -371,6 +378,14 @@ and removes them on disable/uninstall. Entries are namespaced
 `{app}:{server}` so apps can't collide on a server key and deregistration
 removes exactly this app's servers. App-shipped stdio servers run with
 `cwd=<app dir>` (`mcp_client.py` / `mcp_discovery.py`).
+
+The manifest is the only way an app gets an MCP server. `/api/mcp` is owner-only for
+app tokens, reads included (`apps/permissions.OWNER_ONLY_API_PATHS`): a server entry is a
+command the gateway launches as the owner, with the gateway's environment, and a remote
+server's headers carry its bearer token. So the servers an app runs through the gateway are
+the ones install (or update) consent listed from `disclosure.describe`, and an installed app
+cannot add another through the API. Its own code still can, by editing `mcp.json` as you
+([security/limitations.md §7](../security/limitations.md#7-an-apps-own-code-runs-as-you)).
 
 ## Declared quality bar (`apps/quality.py`)
 

@@ -521,7 +521,10 @@ export function permissionRows(perms: AppSummary['permissions']): string[] {
   if (perms.memory) rows.push('Memory')
   if (perms.storage) rows.push('Storage')
   if (perms.cron) rows.push('Scheduled jobs')
-  if (perms.agent) rows.push('Run background agents')
+  // An app's agent runs approve their own tool calls and hold the write grant
+  // (`handlers/apps.api_app_agent_run`), so the bullet says so rather than letting "background
+  // agents" read as agents that will ask you.
+  if (perms.agent) rows.push('Run background agents that use any tool without asking you — they can change files and run commands')
   const messaging = perms.appMessaging ?? []
   if (messaging.length) {
     rows.push(`App messaging: ${messaging.map(describeMessagingTarget).join(', ')}`)
@@ -574,6 +577,10 @@ export function permissionRows(perms: AppSummary['permissions']): string[] {
   // box would now UNDERSTATE what the gateway does — the mirror image of the D2 defect that
   // kept it out of the bullets while no host existed.
   if (perms.backgroundTasks) rows.push('Run a long-lived background worker')
+  // The settings `/api/config` reaches for this app — only these, named exactly
+  // (`permissions.can_use_config_field`).
+  const settings = perms.config ?? []
+  if (settings.length) rows.push(`Read and change your settings: ${settings.join(', ')}`)
   return rows
 }
 
