@@ -43,17 +43,17 @@ import type { RoomDetail, RoomListenPolicy, SavedAgent } from '../../lib/api'
  *  · **tool reach + spend ceiling** — `member_posture`, the RESOLVED posture. A declaration
  *    that reaches past the room's is reported as refused, with the backend's reason, because
  *    that member will not take a turn at all.
- *  · **queue position** — the members still owed a turn, in FIFO order.
+ *  · **turn** — "Answering" for the member whose turn is open while a round runs, else its place
+ *    in the queue the room owes, in FIFO order.
  *
- *  Nothing here reports "speaking". The backend publishes no such field, and the head of the
- *  queue is only PROBABLY the member whose turn is running — a failed turn advances the drain
- *  without anything saying so. A dot that is usually right about who is talking is the
- *  fabricated-value defect with a friendly face, so the row says "owed a turn", which is what
- *  the data supports. */
-export function RoomMembersPanel({ detail, owed, agents, agentsError, onRetryAgents, busy, removing, onAdd, onRemove }: {
+ *  "Answering" is a READING, not an inference: the backend publishes the open turn
+ *  (`room.speaking`) and whether a round is running it (`room.round_running`, off the live task).
+ *  It used to publish neither, and the head of a queue this tab remembered was only PROBABLY the
+ *  member talking — a failed turn advanced the drain without anything saying so — so the row said
+ *  only "owed a turn". An open turn with no round running is one a stopped gateway cut off: that
+ *  member reads as owed, first, never as answering. */
+export function RoomMembersPanel({ detail, agents, agentsError, onRetryAgents, busy, removing, onAdd, onRemove }: {
   detail: RoomDetail
-  /** The queue the room owes, in order — parked by a pause or in flight from the last message. */
-  owed: readonly string[]
   /** Every configured agent binding, for the picker. `undefined` while it is still loading. */
   agents: SavedAgent[] | undefined
   /** The `agents:list` rejection, when that read FAILED.
@@ -76,7 +76,7 @@ export function RoomMembersPanel({ detail, owed, agents, agentsError, onRetryAge
   onAdd: (body: { name: string; role_blurb: string; listen_policy: RoomListenPolicy; profile_narrowing?: Record<string, unknown> }) => void
   onRemove: (name: string) => void
 }) {
-  const views = useMemo(() => roomMemberViews(detail, owed), [detail, owed])
+  const views = useMemo(() => roomMemberViews(detail), [detail])
   const [adding, setAdding] = useState(false)
   const full = detail.room.members.length > 0 && !detail.room.archived
   // The ceiling is the number the ADD ROUTE enforces (`rooms.max_members`, published on the wire),
@@ -173,7 +173,9 @@ function MemberRow({ view, removable, removing, onRemove }: {
                 <state.icon size={11} aria-hidden /> {state.label}
               </StatusPill>
             )}
-            {view.queuePosition > 0 && (
+            {/* Not for the member that is answering: it is #1 by definition, and "Answering · #1 in
+                the queue" says one fact twice. */}
+            {view.queuePosition > 0 && view.state !== 'answering' && (
               <span data-type="caption" className="text-on-surface-low">
                 #{view.queuePosition} in the queue
               </span>

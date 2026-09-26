@@ -12,7 +12,7 @@
  *  deleted from `config.json` reports `unconfigured`, not the default agent's model. Nothing here
  *  substitutes a plausible value for a missing one.
  */
-import { AtSign, Bot, Clock, Ear, Eye, HelpCircle, ShieldAlert, Unplug } from 'lucide-react'
+import { AtSign, Bot, Clock, Ear, Eye, HelpCircle, MessageSquare, ShieldAlert, Unplug } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type {
   RoomDetail,
@@ -144,8 +144,13 @@ export function listenPolicyMeta(policy?: string): ListenPolicyMeta {
  *
  *  So `ok` renders NO badge, and `unknown` is the fallback rather than `ok`. A member with no
  *  posture row and no binding row is a member nothing is known about; saying so is the honest
- *  answer, and reading it as `ok` would present a member that may be unable to speak as fine. */
-export type RoomMemberState = 'refused' | 'unconfigured' | 'owed' | 'unknown' | 'ok'
+ *  answer, and reading it as `ok` would present a member that may be unable to speak as fine.
+ *
+ *  `answering` is the member whose turn is open WHILE a round is running — both facts the backend
+ *  publishes (`room.speaking`, `room.round_running`), so it is a reading rather than a guess. An
+ *  open turn with no round running is a turn a stopped gateway cut off: that member is `owed`,
+ *  first, not answering. */
+export type RoomMemberState = 'refused' | 'unconfigured' | 'answering' | 'owed' | 'unknown' | 'ok'
 
 export interface MemberStateMeta {
   label: string
@@ -157,6 +162,7 @@ export interface MemberStateMeta {
 const MEMBER_STATE_META: Record<Exclude<RoomMemberState, 'ok'>, MemberStateMeta> = {
   refused: { label: 'Cannot speak', tone: 'danger', icon: ShieldAlert },
   unconfigured: { label: 'Binding missing', tone: 'warn', icon: Unplug },
+  answering: { label: 'Answering', tone: 'primary', icon: MessageSquare },
   owed: { label: 'Owed a turn', tone: 'info', icon: Clock },
   // Neutral, not warn: nothing is known to be WRONG — something is simply not known. A warn tone
   // would assert a fault the read cannot support.
@@ -174,46 +180,43 @@ export interface RoomMemberView {
   posture?: RoomMemberPosture
   binding?: RoomMemberBinding
   state: RoomMemberState
-  /** True when this member is in the queue the room still owes — parked by a pause, or
-   *  queued by the message just sent. It is a separate flag as well as a possible `state`
-   *  because a member can be both owed a turn and unable to take it. */
+  /** True when this member is in `room.owed` — answering now, queued, or parked by a pause. It
+   *  is a separate flag as well as a possible `state` because a member can be both owed a turn
+   *  and unable to take it. */
   owed: boolean
   /** Its position in that queue, 1-based, or 0 when it is not in one. FIFO order is the
    *  product fact here: the parked members speak BEFORE what the new message asks for. */
   queuePosition: number
 }
 
-/** Join a room's roster against its resolved posture, its bindings and the queue it owes.
+/** Join a room's roster against its resolved posture, its bindings and the turns it owes.
  *
- *  *owedNames* is the queue, in order. The caller supplies it rather than this function
- *  reading `room.pending_queue`, because there are two sources and they are both real: the
- *  PARKED queue a pause persisted, and the in-flight queue the last human message produced
- *  (`POST /api/rooms/{id}/messages` → `speaking`). Only the caller knows whether a round is
- *  still running, so only the caller can say which one applies.
+ *  The queue is `room.owed` — the open turn, then the queue, as the BACKEND computed it — and
+ *  whether the open turn is being answered right now is `room.round_running`. Both are read off
+ *  the record rather than supplied by the caller: the caller used to pass the queue its last POST
+ *  returned, which lived only in that tab and could not see a turn a member's reply summoned.
  *
  *  Status precedence, and each step is a decision: a refused posture beats a missing binding
  *  (both stop the member, and the refusal is the one with a reason the user can act on), both
- *  beat "nothing is known" (a stated reason beats an absence), and all three beat "owed a turn"
+ *  beat "nothing is known" (a stated reason beats an absence), and all three beat the turn states
  *  — a queue position is meaningless for a member that cannot take one. */
-export function roomMemberViews(
-  detail: RoomDetail,
-  owedNames: readonly string[] = [],
-): RoomMemberView[] {
+export function roomMemberViews(detail: RoomDetail): RoomMemberView[] {
   const postures = new Map(detail.member_posture.map((p) => [p.name, p]))
   const bindings = new Map(detail.member_bindings.map((b) => [b.name, b]))
-  const queue = owedNames.filter((n) => detail.room.members.some((m) => m.name === n))
+  const { owed: queue, speaking, round_running: running } = detail.room
   return detail.room.members.map((member) => {
     const posture = postures.get(member.name)
     const binding = bindings.get(member.name)
     const position = queue.indexOf(member.name)
     const owed = position >= 0
+    const answering = running && speaking === member.name
     return {
       member,
       posture,
       binding,
       owed,
       queuePosition: owed ? position + 1 : 0,
-      state: memberState(posture, binding, owed),
+      state: memberState(posture, binding, answering ? 'answering' : owed ? 'owed' : 'ok'),
     }
   })
 }
@@ -221,14 +224,14 @@ export function roomMemberViews(
 function memberState(
   posture: RoomMemberPosture | undefined,
   binding: RoomMemberBinding | undefined,
-  owed: boolean,
+  turn: 'answering' | 'owed' | 'ok',
 ): RoomMemberState {
   if (posture?.refused) return 'refused'
   if (binding && !binding.configured) return 'unconfigured'
   // Nothing is known about this member: no resolved posture AND no binding answer. Not `ok` —
   // see the union's own note.
   if (!posture && !binding) return 'unknown'
-  return owed ? 'owed' : 'ok'
+  return turn
 }
 
 /** How a member's model reads on its row, or `''` when there is nothing truthful to say.
@@ -292,7 +295,7 @@ export function memberBudgetLabel(posture?: RoomMemberPosture): string {
 // ── the room's own state ────────────────────────────────────────────────────
 
 /** What a room row / header reports about the room itself, as opposed to a member. */
-export type RoomState = 'paused' | 'archived' | 'active'
+export type RoomState = 'paused' | 'interrupted' | 'archived' | 'active'
 
 export interface RoomStateMeta {
   label: string
@@ -302,9 +305,14 @@ export interface RoomStateMeta {
 /** `paused` is INFO and not WARN, matching the `agent/room_paused` notification row's own
  *  tone. The room reached a ceiling the user configured: nothing failed, nothing is at risk,
  *  and their next message resumes it. Warn here would make a working feature read as a fault,
- *  and it would disagree with the inbox row for the same event. */
+ *  and it would disagree with the inbox row for the same event.
+ *
+ *  `interrupted` IS warn, for the opposite reason: the human asked something and the answer
+ *  did not arrive — the gateway that was producing it stopped. Nothing is lost (the owed turns are
+ *  on disk and Continue runs them), but it is a disruption the user has to act on. */
 const ROOM_STATE_META: Record<RoomState, RoomStateMeta> = {
   paused: { label: 'Paused', tone: 'info' },
+  interrupted: { label: 'Interrupted', tone: 'warn' },
   archived: { label: 'Archived', tone: 'neutral' },
   active: { label: 'Active', tone: 'neutral' },
 }
@@ -313,7 +321,11 @@ export function roomState(room: RoomRecord): RoomState {
   // Archived wins: an archived room refuses messages, so "paused waiting for you" would be an
   // invitation to do something the backend will refuse.
   if (room.archived) return 'archived'
-  return room.paused ? 'paused' : 'active'
+  if (room.paused) return 'paused'
+  // Owed turns with no round running them: the round was cut off. Read from two backend facts —
+  // `owed` and `round_running` (the live task) — so no flag has to be cleared on the way down.
+  if (!room.round_running && room.owed.length > 0) return 'interrupted'
+  return 'active'
 }
 
 export function roomStateMeta(state: RoomState): RoomStateMeta {
@@ -329,15 +341,6 @@ export function roundBudgetLabel(room: RoomRecord): string {
   const used = Math.max(0, room.rounds_used)
   const budget = Math.max(0, room.effective_round_budget)
   return `${used} of ${budget} exchange${budget === 1 ? '' : 's'}`
-}
-
-/** Who the room still owes a turn, in order — the PARKED queue only.
- *
- *  Filtered to the current roster, the same rule the arbiter's `resume_queue` applies: a
- *  member removed while the room was paused does not speak, so it must not be listed as owed
- *  a turn either. Listing it would promise a turn the backend will skip. */
-export function parkedQueue(room: RoomRecord): string[] {
-  return room.pending_queue.filter((n) => room.members.some((m) => m.name === n))
 }
 
 /** The icon a room uses wherever one is needed. One import site, so the list row, the header

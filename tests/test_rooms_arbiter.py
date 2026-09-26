@@ -70,9 +70,20 @@ class _FakeState:
 
     def __init__(self) -> None:
         self.notified: list[tuple] = []
+        self._background_tasks: set = set()
 
     def notify(self, kind, title, body, meta=None, **kwargs):
         self.notified.append((kind, title, body, meta))
+
+
+def _round(state, sessions, room_id: str, content: str) -> list[str]:
+    """One human message's round, the way the message route runs it: queue, then drain.
+
+    The route also refills the budget first (``note_human_message``); the tests that are ABOUT
+    that reset call it themselves, so this helper does not hide it from the ones that are not.
+    """
+    arbiter.queue_human_turns(room_id, content)
+    return asyncio.run(arbiter.drain_round(state, sessions, room_id))
 
 
 def _inbox_rows(item_kind: str = arbiter.PAUSE_KIND) -> list:
@@ -270,7 +281,7 @@ def test_a_member_cannot_steer_the_queue_by_asking_to(enabled):
 
     polite = _room_with(policies, title="Polite")
     quiet = _replies(polite.id, {"analyst": "noted", "skeptic": "noted", "closer": "noted"})
-    orderly = asyncio.run(arbiter.run_round(None, quiet, polite.id, ask))
+    orderly = _round(None, quiet, polite.id, ask)
 
     steering = _room_with(policies, title="Steering")
     loud = _replies(
@@ -284,7 +295,7 @@ def test_a_member_cannot_steer_the_queue_by_asking_to(enabled):
             "analyst": "noted",
         },
     )
-    steered = asyncio.run(arbiter.run_round(None, loud, steering.id, ask))
+    steered = _round(None, loud, steering.id, ask)
 
     assert orderly == ["closer", "skeptic", "analyst"], "mentions in the order asked, then `all`"
     assert steered == orderly, "the demand changed nothing about who spoke when"
@@ -332,7 +343,7 @@ def test_one_speaker_at_a_time_never_two_in_flight(enabled):
     room = _room_with({"analyst": "all", "skeptic": "all", "closer": "all"})
     sessions = _SerialSessions()
 
-    spoke = asyncio.run(arbiter.run_round(None, sessions, room.id, "go"))
+    spoke = _round(None, sessions, room.id, "go")
 
     assert spoke == ["analyst", "skeptic", "closer"]
     assert high_water == [1, 1, 1], "never two members speaking into one transcript at once"
@@ -347,13 +358,13 @@ def test_a_members_mention_gives_its_peer_a_turn_the_human_never_asked_for(enabl
     """The agent-to-agent exchange the clause needs to exist before a budget can bound it.
 
     `AR-3` restricted the turn path to one pass over the roster BECAUSE no budget existed and
-    said so in its own docstring; this is that restriction lifted, with :func:`run_round`'s
+    said so in its own docstring; this is that restriction lifted, with :func:`drain_round`'s
     ceiling standing in its place.
     """
     room = _room_with({"analyst": "all", "skeptic": "mention"})
     sessions = _replies(room.id, {"analyst": "@skeptic you are wrong", "skeptic": "I am not wrong"})
 
-    spoke = asyncio.run(arbiter.run_round(None, sessions, room.id, "discuss"))
+    spoke = _round(None, sessions, room.id, "discuss")
 
     assert spoke == ["analyst", "skeptic"], "the human named nobody; the analyst summoned skeptic"
     assert _spoken(room.id) == ["analyst", "skeptic"]
@@ -373,7 +384,7 @@ def test_an_endless_mention_chain_stops_at_the_budget_and_pauses_to_its_human(en
     room = _room_with({"analyst": "mention", "skeptic": "mention"}, title="Endless")
     sessions = _replies(room.id, {"analyst": "@skeptic your turn", "skeptic": "@analyst no, yours"})
 
-    spoke = asyncio.run(arbiter.run_round(state, sessions, room.id, "@analyst start"))
+    spoke = _round(state, sessions, room.id, "@analyst start")
 
     assert spoke == ["analyst", "skeptic"] * 3, "six turns, strictly alternating, FIFO"
     assert _spoken(room.id) == ["analyst", "skeptic"] * 3
@@ -412,7 +423,7 @@ def test_a_pause_item_carries_no_member_text(enabled):
         },
     )
 
-    asyncio.run(arbiter.run_round(state, sessions, room.id, "@analyst start"))
+    _round(state, sessions, room.id, "@analyst start")
 
     row = _inbox_rows()[0]
     assert "Quiet room" in row.message and "6 exchanges" in row.message
@@ -457,38 +468,43 @@ def test_a_second_round_over_a_paused_room_speaks_for_nobody(enabled):
     state = _FakeState()
     room = _room_with({"analyst": "mention", "skeptic": "mention"})
     sessions = _replies(room.id, {"analyst": "@skeptic your turn", "skeptic": "@analyst no, yours"})
-    asyncio.run(arbiter.run_round(state, sessions, room.id, "@analyst start"))
+    _round(state, sessions, room.id, "@analyst start")
     before = len(_spoken(room.id))
 
-    again = asyncio.run(arbiter.run_round(state, sessions, room.id, "@analyst start"))
+    again = _round(state, sessions, room.id, "@analyst start")
 
     assert again == [] and len(_spoken(room.id)) == before
     assert store.require_room(room.id).rounds_used == 6, "nothing more was charged"
     assert len(_inbox_rows()) == 1, "and no second row was raised"
 
 
-def test_two_concurrent_rounds_share_one_budget(enabled):
-    """The counter is on disk, so it bounds the ROOM rather than one call frame.
+def test_a_second_message_mid_round_joins_the_running_round_instead_of_racing_it(enabled):
+    """One round per room, so the budget bounds the ROOM and one member speaks at a time.
 
-    Two rounds in flight over one room is reachable from the HTTP surface (two messages, two
-    background tasks), and an in-frame counter would let each spend the full budget. The
-    dedup key is what keeps both of them from stacking a pause row.
+    Two messages in quick succession are reachable from the HTTP surface. Two rounds draining
+    one room would put two members on one transcript at once and each spend the full budget;
+    instead the second message's turns join the queue the running round is draining. The
+    counter is on disk and the pause row is deduped on the room, so neither can double up.
     """
     state = _FakeState()
     room = _room_with({"analyst": "mention", "skeptic": "mention"})
     sessions = _replies(room.id, {"analyst": "@skeptic your turn", "skeptic": "@analyst no, yours"})
 
     async def both():
-        return await asyncio.gather(
-            arbiter.run_round(state, sessions, room.id, "@analyst start"),
-            arbiter.run_round(state, sessions, room.id, "@skeptic start"),
-        )
+        arbiter.queue_human_turns(room.id, "@analyst start")
+        arbiter.start_round(state, sessions, room.id)
+        arbiter.queue_human_turns(room.id, "@skeptic start")
+        arbiter.start_round(state, sessions, room.id)
+        rounds = list(state._background_tasks)
+        await asyncio.gather(*rounds)
+        return rounds
 
-    first, second = asyncio.run(both())
+    rounds = asyncio.run(both())
 
-    assert store.require_room(room.id).rounds_used == 6, "one shared ceiling, not two"
-    assert len(first) + len(second) == 6
-    assert len(_inbox_rows()) == 1, "deduped on the room, however many rounds hit the ceiling"
+    assert len(rounds) == 1, "the second message joined the running round rather than a second"
+    assert store.require_room(room.id).rounds_used == 6, "one ceiling for the room"
+    assert _spoken(room.id) == ["analyst", "skeptic"] * 3, "one speaker at a time, in FIFO order"
+    assert len(_inbox_rows()) == 1, "and one pause row"
 
 
 # ── the third clause: any human input resets the budget ────────────────────
@@ -504,7 +520,7 @@ def test_a_human_message_refills_the_budget_and_closes_the_pause_row(enabled):
     state = _FakeState()
     room = _room_with({"analyst": "mention", "skeptic": "mention"})
     sessions = _replies(room.id, {"analyst": "@skeptic your turn", "skeptic": "@analyst no, yours"})
-    asyncio.run(arbiter.run_round(state, sessions, room.id, "@analyst start"))
+    _round(state, sessions, room.id, "@analyst start")
     assert _inbox_rows()[0].status == "pending"
 
     arbiter.note_human_message(state, room.id)
@@ -513,7 +529,7 @@ def test_a_human_message_refills_the_budget_and_closes_the_pause_row(enabled):
     assert (refilled.rounds_used, refilled.paused) == (0, False)
     assert _inbox_rows()[0].status == "handled", "answered, not dismissed — they did reply"
 
-    spoke = asyncio.run(arbiter.run_round(state, sessions, room.id, "@analyst carry on"))
+    spoke = _round(state, sessions, room.id, "@analyst carry on")
     assert spoke == ["analyst", "skeptic"] * 3, "a full budget again"
 
 
@@ -578,7 +594,7 @@ def test_the_pause_parks_the_queues_remainder_on_disk(enabled):
     room = _room_with({"analyst": "mention", "skeptic": "mention", "closer": "mention"})
     sessions = _replies(room.id, {name: "noted" for name in ("analyst", "skeptic", "closer")})
 
-    spoke = asyncio.run(arbiter.run_round(state, sessions, room.id, "@analyst @skeptic @closer"))
+    spoke = _round(state, sessions, room.id, "@analyst @skeptic @closer")
 
     assert spoke == ["analyst", "skeptic"], "the budget stopped it one short"
     raw = json.loads((store.rooms_dir() / store.INDEX_FILENAME).read_text(encoding="utf-8"))
@@ -600,11 +616,11 @@ def test_resuming_continues_the_queue_instead_of_restarting_it(enabled):
     state = _FakeState()
     room = _room_with({"analyst": "mention", "skeptic": "mention", "closer": "mention"})
     sessions = _replies(room.id, {name: "noted" for name in ("analyst", "skeptic", "closer")})
-    asyncio.run(arbiter.run_round(state, sessions, room.id, "@analyst @skeptic @closer"))
+    _round(state, sessions, room.id, "@analyst @skeptic @closer")
     assert store.require_room(room.id).pending_queue == ["closer"]
 
     arbiter.note_human_message(state, room.id)
-    spoke = asyncio.run(arbiter.run_round(state, sessions, room.id, "@analyst anything else?"))
+    spoke = _round(state, sessions, room.id, "@analyst anything else?")
 
     assert spoke == ["closer", "analyst"], "the owed turn first, then the one just asked for"
     assert _spoken(room.id) == ["analyst", "skeptic", "closer", "analyst"], "one continuous thread"
@@ -616,21 +632,23 @@ def test_resuming_continues_the_queue_instead_of_restarting_it(enabled):
 def test_the_parked_queue_is_drained_once_and_never_replayed(enabled):
     """A carry-over is a once-only debt, not a standing instruction.
 
-    ``take_pending`` reads and clears in one write, so two rounds cannot both inherit it — the
-    failure it prevents is a parked member speaking again on every later message forever.
+    ``begin_turn`` takes a member off the queue as its turn opens, so the debt is paid by the
+    turn itself — the failure this prevents is a parked member speaking again on every later
+    message forever.
     """
     enabled.rooms.round_budget = 2
     state = _FakeState()
     room = _room_with({"analyst": "mention", "skeptic": "mention", "closer": "mention"})
     sessions = _replies(room.id, {name: "noted" for name in ("analyst", "skeptic", "closer")})
-    asyncio.run(arbiter.run_round(state, sessions, room.id, "@analyst @skeptic @closer"))
-
-    assert store.take_pending(room.id) == ["closer"]
-    assert store.take_pending(room.id) == [], "drained, so the second reader owes nothing"
-    assert store.require_room(room.id).pending_queue == []
+    _round(state, sessions, room.id, "@analyst @skeptic @closer")
+    assert store.require_room(room.id).pending_queue == ["closer"]
 
     arbiter.note_human_message(state, room.id)
-    spoke = asyncio.run(arbiter.run_round(state, sessions, room.id, "@analyst only you"))
+    assert _round(state, sessions, room.id, "@analyst go on") == ["closer", "analyst"]
+    assert store.require_room(room.id).pending_queue == [], "paid, so nothing is owed"
+
+    arbiter.note_human_message(state, room.id)
+    spoke = _round(state, sessions, room.id, "@analyst only you")
     assert spoke == ["analyst"], "closer was already collected; it does not speak twice"
 
 
@@ -644,7 +662,7 @@ def test_a_human_message_does_not_cancel_the_turns_the_room_still_owed(enabled):
     state = _FakeState()
     room = _room_with({"analyst": "mention", "skeptic": "mention", "closer": "mention"})
     sessions = _replies(room.id, {name: "noted" for name in ("analyst", "skeptic", "closer")})
-    asyncio.run(arbiter.run_round(state, sessions, room.id, "@analyst @skeptic @closer"))
+    _round(state, sessions, room.id, "@analyst @skeptic @closer")
 
     arbiter.note_human_message(state, room.id)
 
@@ -653,24 +671,25 @@ def test_a_human_message_does_not_cancel_the_turns_the_room_still_owed(enabled):
     assert refilled.pending_queue == ["closer"], "and the owed turn survived the reset"
 
 
-def test_a_round_that_stops_on_an_existing_pause_parks_its_own_remainder(enabled):
-    """The other break in the drain loop parks too, or a concurrent round loses its queue.
+def test_a_message_to_a_paused_room_queues_behind_what_it_already_owes(enabled):
+    """The other break in the drain loop leaves the queue parked too.
 
-    A round already draining when another paused the room hits the ``paused`` guard rather than
-    the ceiling; both exits owe the same debt, so both park.
+    A round that finds the room already paused hits the ``paused`` guard rather than the
+    ceiling, and speaks for nobody; the turns its message asked for are queued behind the ones
+    the pause parked, deduplicated, so both are owed when the human's reply lifts the pause.
     """
     enabled.rooms.round_budget = 2
     state = _FakeState()
     room = _room_with({"analyst": "mention", "skeptic": "mention", "closer": "mention"})
     sessions = _replies(room.id, {name: "noted" for name in ("analyst", "skeptic", "closer")})
-    asyncio.run(arbiter.run_round(state, sessions, room.id, "@analyst @skeptic @closer"))
+    _round(state, sessions, room.id, "@analyst @skeptic @closer")
     assert store.require_room(room.id).paused is True
 
-    second = asyncio.run(arbiter.run_round(state, sessions, room.id, "@closer @skeptic"))
+    second = _round(state, sessions, room.id, "@closer @skeptic")
 
     assert second == [], "a paused room speaks for nobody"
     parked = store.require_room(room.id).pending_queue
-    assert parked == ["closer", "skeptic"], "the first round's debt plus this round's, deduped"
+    assert parked == ["closer", "skeptic"], "the pause's debt, then this message's, deduped"
 
 
 def test_the_same_scenario_twice_produces_the_identical_speaking_order(enabled):
@@ -692,10 +711,10 @@ def test_the_same_scenario_twice_produces_the_identical_speaking_order(enabled):
             room.id,
             {"analyst": "@closer @skeptic weigh in", "skeptic": "@analyst no", "closer": "noted"},
         )
-        first = asyncio.run(arbiter.run_round(state, sessions, room.id, "@analyst start"))
+        first = _round(state, sessions, room.id, "@analyst start")
         parked = list(store.require_room(room.id).pending_queue)
         arbiter.note_human_message(state, room.id)
-        second = asyncio.run(arbiter.run_round(state, sessions, room.id, "@skeptic carry on"))
+        second = _round(state, sessions, room.id, "@skeptic carry on")
         final = store.require_room(room.id)
         return {
             "first": first,
@@ -725,13 +744,13 @@ def test_a_human_message_resets_the_budget_before_the_ceiling_too(enabled):
     room = _room_with({"analyst": "all"})
     sessions = _replies(room.id, {"analyst": "noted"})
 
-    asyncio.run(arbiter.run_round(state, sessions, room.id, "first"))
+    _round(state, sessions, room.id, "first")
     assert store.require_room(room.id).rounds_used == 1
 
     arbiter.note_human_message(state, room.id)
     assert store.require_room(room.id).rounds_used == 0
 
-    asyncio.run(arbiter.run_round(state, sessions, room.id, "second"))
+    _round(state, sessions, room.id, "second")
     assert store.require_room(room.id).rounds_used == 1, "counted from the human's last message"
     assert _inbox_rows() == []
 
@@ -748,7 +767,7 @@ def test_resolving_a_pause_row_closes_only_its_own_room(enabled):
         sessions = _replies(
             room.id, {"analyst": "@skeptic your turn", "skeptic": "@analyst no, yours"}
         )
-        asyncio.run(arbiter.run_round(state, sessions, room.id, "@analyst start"))
+        _round(state, sessions, room.id, "@analyst start")
 
     assert len(_inbox_rows()) == 2
     arbiter.note_human_message(state, "room-one")
@@ -761,19 +780,164 @@ def test_resolving_a_pause_row_closes_only_its_own_room(enabled):
 # ── the round's edges ──────────────────────────────────────────────────────
 
 
-def test_the_budget_is_charged_before_the_turn_so_a_failing_member_still_spends_it(enabled):
-    """Charging afterwards would let a member that fails every time run the room forever.
+def _notes(room_id: str) -> list[tuple[str, str]]:
+    """The lines the ROOM wrote, as ``(about, text)``."""
+    return [
+        (m.get("speaker", ""), m["content"])
+        for m in store.read_messages(room_id)
+        if m.get("role") == store.ROOM_NOTE_ROLE
+    ]
 
-    A dead binding is the cheapest possible turn, so it is also the one an unbounded room
-    would burn its budget on invisibly.
+
+def test_a_failed_turn_is_said_in_the_room_and_is_not_an_exchange(enabled):
+    """A turn that failed said nothing, so it spends nothing — and the ROOM says it failed.
+
+    This replaces the opposite rule, "charge before the turn so a failing member still spends
+    it", whose reason was that charging afterwards would let a member that fails every time run
+    the room forever. It cannot: a failed turn summons nobody, so it can only shrink the queue.
+    What the old rule DID buy was a room with one dead binding reading "3 of 6 exchanges" after
+    two replies, with the failed member nowhere on screen.
     """
     room = _room_with({"analyst": "all"})
     sessions = _StreamingSessions(dying=[f"room:{room.id}:analyst"])
 
-    spoke = asyncio.run(arbiter.run_round(None, sessions, room.id, "go"))
+    spoke = _round(None, sessions, room.id, "go")
 
     assert spoke == [] and _spoken(room.id) == []
-    assert store.require_room(room.id).rounds_used == 1, "the failed turn cost a round"
+    assert store.require_room(room.id).rounds_used == 0, "a failed turn is not an exchange"
+    assert _notes(room.id) == [
+        ("analyst", "analyst could not take its turn. the provider died mid-turn")
+    ]
+
+
+def test_a_member_that_fails_every_time_still_cannot_keep_a_round_going(enabled):
+    """The bound the old "charge first" rule claimed to be the only thing providing.
+
+    An endless mention chain with a member that fails EVERY turn: analyst names skeptic, skeptic
+    fails, and because a failure summons nobody the round ends on its own — long before the
+    budget, which is never reached. Nothing here depends on the charge.
+    """
+    room = _room_with({"analyst": "mention", "skeptic": "mention"})
+    sessions = _StreamingSessions(
+        replies={f"room:{room.id}:analyst": "@skeptic your turn"},
+        dying=[f"room:{room.id}:skeptic"],
+    )
+
+    spoke = _round(None, sessions, room.id, "@analyst start")
+
+    assert spoke == ["analyst"]
+    after = store.require_room(room.id)
+    assert (after.rounds_used, after.paused, after.owed()) == (1, False, []), "ended by itself"
+    assert [about for about, _ in _notes(room.id)] == ["skeptic"]
+
+
+def test_the_round_is_on_disk_while_it_runs(enabled):
+    """Who is answering and who is still owed are on the RECORD during a turn, not in a frame.
+
+    Observed from inside a member's turn, which is the only moment the claim is about: a queue
+    that lived in the round's memory looked exactly like this one from outside, right up until
+    the process stopped mid-turn and took the queue with it.
+    """
+    seen: list[tuple[str, list[str]]] = []
+    room = _room_with({"analyst": "all", "skeptic": "all", "closer": "all"})
+
+    class _PeekingProvider:
+        async def stream(self, message: str):
+            from personalclaw.llm.events import EVENT_TEXT_CHUNK, AgentEvent
+
+            now = store.require_room(room.id)
+            seen.append((now.speaking, list(now.pending_queue)))
+            yield AgentEvent(kind=EVENT_TEXT_CHUNK, text="noted")
+
+    class _PeekingSessions:
+        async def get_or_create(self, key, agent=None, **kwargs):
+            return _PeekingProvider(), True, False
+
+        def release(self, key, *, cleanup=False):
+            pass
+
+    _round(None, _PeekingSessions(), room.id, "go")
+
+    assert seen == [
+        ("analyst", ["skeptic", "closer"]),
+        ("skeptic", ["closer"]),
+        ("closer", []),
+    ]
+    done = store.require_room(room.id)
+    assert (done.speaking, done.pending_queue, done.rounds_used) == ("", [], 3)
+
+
+def test_a_turn_cut_off_mid_answer_is_reopened_first_and_only_once(enabled):
+    """What a stopped gateway leaves behind is exactly what the next round needs.
+
+    The record says analyst's turn was open — nothing closed it, because the process that ran it
+    is gone — and skeptic and analyst were queued behind it (analyst again, for a message that
+    arrived while its first turn ran). The reopened turn reads the WHOLE transcript, that later
+    message included, so analyst answers once, first, and then skeptic.
+    """
+    room = _room_with({"analyst": "all", "skeptic": "all"})
+    store.set_pending_queue(room.id, ["analyst", "skeptic", "analyst"])
+    assert store.begin_turn(room.id) == "analyst"  # the turn the dead round opened
+    assert store.require_room(room.id).owed() == ["analyst", "skeptic"]
+    sessions = _replies(room.id, {"analyst": "back again", "skeptic": "noted"})
+
+    spoke = asyncio.run(arbiter.drain_round(None, sessions, room.id))
+
+    assert spoke == ["analyst", "skeptic"], "the cut-off turn first, then the queue, once each"
+    assert store.require_room(room.id).owed() == []
+
+
+def test_round_running_is_the_live_task_not_a_flag(enabled):
+    """A room is interrupted exactly when it owes turns and nothing is running them.
+
+    Asked of the live task set rather than of the record, so there is no "running" bit a dying
+    round could fail to clear: a finished task, a different room's task, and no state at all all
+    answer False, and only a pending task for THIS room answers True.
+    """
+
+    async def probe():
+        state = _FakeState()
+        gate = asyncio.Event()
+
+        async def hold():
+            await gate.wait()
+
+        mine = asyncio.create_task(hold(), name=f"{arbiter.ROUND_TASK_PREFIX}room-a")
+        other = asyncio.create_task(hold(), name=f"{arbiter.ROUND_TASK_PREFIX}room-b")
+        state._background_tasks.update({mine, other})
+        await asyncio.sleep(0)
+        live = (arbiter.round_running(state, "room-a"), arbiter.round_running(state, "room-c"))
+        gate.set()
+        await asyncio.gather(mine, other)
+        return live, arbiter.round_running(state, "room-a")
+
+    (while_pending, unrelated), after_done = asyncio.run(probe())
+
+    assert (while_pending, unrelated, after_done) == (True, False, False)
+    assert arbiter.round_running(None, "room-a") is False
+
+
+def test_an_unexpected_error_ends_the_round_and_the_room_reads_interrupted(enabled, monkeypatch):
+    """Anything escaping the drain is a bug, and it must not leave a room that claims to answer.
+
+    The error is logged; the room keeps the turn it opened and the queue behind it; and because
+    no round is running, a reader sees it as interrupted — Continue picks it up — rather than as a
+    room that silently stopped.
+    """
+    room = _room_with({"analyst": "all", "skeptic": "all"})
+    sessions = _replies(room.id, {"analyst": "noted", "skeptic": "noted"})
+
+    def broken_end_turn(*args, **kwargs):
+        raise RuntimeError("bookkeeping broke")
+
+    monkeypatch.setattr(arbiter, "end_turn", broken_end_turn)
+
+    spoke = _round(None, sessions, room.id, "go")
+
+    left = store.require_room(room.id)
+    assert spoke == []
+    assert (left.speaking, left.pending_queue) == ("analyst", ["skeptic"])
+    assert arbiter.round_running(None, room.id) is False
 
 
 def test_a_member_removed_mid_round_does_not_get_one_last_word(enabled):
@@ -810,7 +974,7 @@ def test_a_member_removed_mid_round_does_not_get_one_last_word(enabled):
     room = _room_with({"analyst": "all", "skeptic": "all"}, title="Reshuffled")
     sessions = _RemovingSessions()
 
-    spoke = asyncio.run(arbiter.run_round(None, sessions, room.id, "go"))
+    spoke = _round(None, sessions, room.id, "go")
 
     assert spoke == ["analyst"], "skeptic was queued, then removed, and does not speak"
     assert _spoken(room.id) == ["analyst"]
@@ -822,7 +986,7 @@ def test_a_room_nobody_is_listening_in_charges_nothing(enabled):
     room = _room_with({"analyst": "silent"})
     sessions = _replies(room.id, {"analyst": "should not speak"})
 
-    assert asyncio.run(arbiter.run_round(None, sessions, room.id, "anyone?")) == []
+    assert _round(None, sessions, room.id, "anyone?") == []
     assert sessions.providers == {}, "no session is even minted"
     assert store.require_room(room.id).rounds_used == 0
     assert _inbox_rows() == []
@@ -837,7 +1001,7 @@ def test_the_budget_survives_a_gateway_restart(enabled):
     state = _FakeState()
     room = _room_with({"analyst": "mention", "skeptic": "mention"})
     sessions = _replies(room.id, {"analyst": "@skeptic your turn", "skeptic": "@analyst no, yours"})
-    asyncio.run(arbiter.run_round(state, sessions, room.id, "@analyst start"))
+    _round(state, sessions, room.id, "@analyst start")
 
     raw = json.loads((store.rooms_dir() / store.INDEX_FILENAME).read_text(encoding="utf-8"))
     record = next(r for r in raw["rooms"] if r["id"] == room.id)

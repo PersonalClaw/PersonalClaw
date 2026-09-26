@@ -3,8 +3,9 @@
 A **room** is a persistent shared transcript plus a member list, where the human and N
 bound agents deliberate over days. A **member** is an ordinary agent binding with a role
 blurb, a listen policy and its own declared safety posture. This module owns those records
-and the transcript's storage, plus the persistence of the round budget the arbiter enforces;
-deciding who speaks next is :mod:`personalclaw.rooms.arbiter`, the posture VOCABULARY lives in
+and the transcript's storage, plus the persistence of the round the arbiter drives — its
+budget, its speaker queue and the turn that is open; deciding who speaks next is
+:mod:`personalclaw.rooms.arbiter`, the posture VOCABULARY lives in
 :mod:`personalclaw.rooms.posture` — this module stores the declaration and never judges it —
 and the per-member transcript cursors are a later atom, deliberately absent here.
 
@@ -37,8 +38,9 @@ caller is about to do with the answer, per `AGENTS.md` §"Shared conventions":
 * :func:`list_rooms` / :func:`get_room` fail **OPEN**. They back a listing surface; an
   unreadable index answers "no rooms" and warns, because a corrupt file must not take the
   page down.
-* :func:`members_for_turn` fails **CLOSED**. The member list decides which agent may speak
-  AND what each one is permitted to do, so an unreadable index refuses the turn with an
+* :func:`require_room` fails **CLOSED**, and it is the read every turn path takes — the
+  arbiter's queue, the drain, the member's own turn. The member list decides which agent may
+  speak AND what each one is permitted to do, so an unreadable index refuses the turn with an
   explicit log rather than guessing a roster — a guessed roster is a guessed posture.
 * Every WRITE reads strictly (:func:`_read_index_strict`). A write that inherited the
   fail-open ``[]`` would persist it and silently delete every other room — the one
@@ -153,18 +155,27 @@ class Room:
 
     ``rounds_used``/``paused``/``round_budget`` are written here rather than held in
     memory so a gateway restart cannot launder the budget state the arbiter enforces —
-    written by :func:`charge_round`, :func:`pause_room` and :func:`reset_round_budget`, which
+    written by :func:`end_turn`, :func:`pause_room` and :func:`reset_round_budget`, which
     are the only three places any of them changes. ``round_budget`` of 0 means "inherit
     ``rooms.round_budget``" — resolved by :func:`effective_round_budget`, never by reading
     the field directly.
 
-    ``pending_queue`` is the speaker queue's remainder at the moment the room paused: the
-    members that were owed a turn and did not get one. It is persisted for the same reason
-    the counter is — a pause is a suspension rather than a cancellation, so resuming has to
-    continue the queue rather than mint a fresh one, and a queue held in the paused round's
-    call frame would be lost with it. Written by :func:`pause_room` and emptied by
-    :func:`take_pending`; deliberately NOT cleared by :func:`reset_round_budget`, because the
-    human message that refills the budget is precisely the event that lets the remainder run.
+    **The round itself lives here too, not in the call frame that drives it.** A round that
+    existed only in its task's memory was lost whole when that task died — a gateway restart
+    mid-round left the human's message unanswered with no queue and no notice — and it was
+    invisible to every reader, so the room view had to GUESS whether a round was running.
+
+    * ``pending_queue`` is who the room owes a turn, in FIFO order, whose turn has not begun:
+      draining while a round runs, PARKED while the room is paused (a pause suspends the queue,
+      it does not cancel it). Written by :func:`set_pending_queue` (a human message's turns,
+      queued behind what the room already owed), :func:`begin_turn` (the head leaves it) and
+      :func:`end_turn` (whoever a reply summoned joins it); deliberately NOT cleared by
+      :func:`reset_round_budget`, because the human message that refills the budget is
+      precisely the event that lets the remainder run.
+    * ``speaking`` is the member whose turn is OPEN — ``""`` between turns. Set by
+      :func:`begin_turn`, cleared by :func:`end_turn`. A ``speaking`` that no running round
+      owns is a turn that was cut off (the process stopped mid-turn), which is exactly the fact
+      the restart needs: that member is owed its turn first.
     """
 
     id: str
@@ -175,6 +186,7 @@ class Room:
     rounds_used: int = 0
     round_budget: int = 0
     pending_queue: list[str] = field(default_factory=list)
+    speaking: str = ""
     members: list[RoomMember] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -231,12 +243,26 @@ class Room:
             rounds_used=max(0, int(data.get("rounds_used", 0) or 0)),
             round_budget=max(0, int(data.get("round_budget", 0) or 0)),
             pending_queue=[str(n) for n in (data.get("pending_queue") or []) if str(n)],
+            speaking=str(data.get("speaking", "") or ""),
             members=members,
         )
 
     def member(self, name: str) -> RoomMember | None:
         """The member named *name*, or None."""
         return next((m for m in self.members if m.name == name), None)
+
+    def owed(self) -> list[str]:
+        """Everyone the room still owes a turn, in the order they will take it.
+
+        The open turn first — it began before anything still queued — then the queue, and only
+        members still on the roster: a member the human removed is owed nothing, and listing it
+        would promise a turn :func:`begin_turn`'s caller will skip.
+        """
+        out: list[str] = []
+        for name in ([self.speaking] if self.speaking else []) + self.pending_queue:
+            if name not in out and self.member(name) is not None:
+                out.append(name)
+        return out
 
 
 # ── paths ───────────────────────────────────────────────────────────────────
@@ -538,17 +564,6 @@ def remove_member(room_id: str, name: str) -> Room:
     return room
 
 
-def members_for_turn(room_id: str) -> list[RoomMember]:
-    """The roster a turn runs against. **Fails closed** — see :func:`_read_index_strict`.
-
-    Separate from ``get_room(...).members`` because the posture differs, not the data: this
-    is the read whose answer decides which agent speaks and with what capabilities, so an
-    unreadable index must refuse the turn rather than degrade to an empty roster the way the
-    listing surface does.
-    """
-    return require_room(room_id).members
-
-
 # ── the round budget ───────────────────────────────────────────────────────
 
 
@@ -575,7 +590,7 @@ def reset_round_budget(room_id: str) -> Room:
     **``pending_queue`` is deliberately left alone.** It is the queue's remainder, not budget
     state: clearing it here would make every human message silently cancel the turns their
     room still owed, which is the "resume restarts the conversation" bug this field exists to
-    prevent. :func:`take_pending` is the only reader, and it is the one that empties it.
+    prevent. Only :func:`begin_turn` takes a member off it.
 
     Idempotent, and it avoids the write when there is nothing to reset: the common case is a
     human talking to a room that never came near its ceiling, and rewriting every room record
@@ -592,58 +607,111 @@ def reset_round_budget(room_id: str) -> Room:
     return room
 
 
-def charge_round(room_id: str) -> Room:
-    """Charge one agent turn against the room's budget and persist it. Returns the room.
+def set_pending_queue(room_id: str, queue: Sequence[str]) -> Room:
+    """Replace the speaker queue with *queue* — the turns the room now owes, in order.
 
-    **Persisted, not counted in memory** — an in-memory counter would make restarting the
-    gateway the cheapest way to run a room forever, which is precisely the bound this field
-    exists to hold.
-
-    The caller charges BEFORE running the turn, deliberately. A member whose provider dies
-    still spent its round: charging afterwards would let a member that fails every time drain
-    the queue indefinitely without the counter ever reaching the ceiling, so the failure mode
-    that most needs a bound would be the one without one.
+    The arbiter's writer for a human message: it computes the new queue (what the room already
+    owed, then what the message asks for — ``arbiter.resume_queue``) and this persists it
+    BEFORE the round is handed to the background, so the queue a 201 describes is on disk
+    whether or not the round that drains it survives. De-duplicated here too, so no caller can
+    hand one member two turns by repeating its name.
     """
     rooms = _read_index_strict()
     room = _require_indexed_room(rooms, room_id)
-    room.rounds_used += 1
+    clean: list[str] = []
+    for name in queue:
+        if name and name not in clean:
+            clean.append(name)
+    if clean != room.pending_queue:
+        room.pending_queue = clean
+        _write_index(rooms)
+    return room
+
+
+def begin_turn(room_id: str) -> str:
+    """Open the next turn and return whose it is, or ``""`` when the room owes none.
+
+    One write moves the queue's head into ``speaking``, so at every instant the record says who
+    is answering and who is still waiting — the two facts a reader (the room view, a restarted
+    gateway) needs and cannot otherwise know.
+
+    **A ``speaking`` already set is a turn that was CUT OFF**, and it is reopened before anything
+    queued behind it: the caller runs one round per room at a time and :func:`end_turn` clears
+    the field, so a value found here was left by a round that died mid-turn — the process
+    stopped. That member is owed its turn first, and exactly once: a later entry for it in the
+    queue is dropped, because the reopened turn reads the whole transcript, including whatever
+    message queued it again.
+    """
+    rooms = _read_index_strict()
+    room = _require_indexed_room(rooms, room_id)
+    if room.speaking:
+        name = room.speaking
+        remaining = [n for n in room.pending_queue if n != name]
+        if remaining != room.pending_queue:
+            room.pending_queue = remaining
+            _write_index(rooms)
+        logger.info("rooms: room %s reopens %s's cut-off turn first", room_id, name)
+        return name
+    if not room.pending_queue:
+        return ""
+    name = room.pending_queue.pop(0)
+    room.speaking = name
+    _write_index(rooms)
+    return name
+
+
+def end_turn(room_id: str, *, spoke: bool, summoned: Sequence[str] = ()) -> Room:
+    """Close the open turn: clear ``speaking``, charge it if the member SPOKE, queue *summoned*.
+
+    One write for all three, so the record never says a turn is open that has ended, or charges
+    an exchange that never closed.
+
+    **Only a turn that put words on the transcript is an exchange.** The budget counts how many
+    turns the members have taken among themselves since the human last spoke; a turn that
+    failed, came back empty or was refused said nothing, and charging it made a room with one
+    broken binding read "3 of 6 exchanges" after two replies. It cannot be abused the other way:
+    a turn that said nothing summons nobody, so an uncharged turn can only ever SHRINK the queue.
+
+    **Persisted, not counted in memory** — an in-memory counter would make restarting the gateway
+    the cheapest way to run a room forever, which is precisely the bound this field exists to
+    hold.
+
+    *summoned* is who the reply ``@``-named that the arbiter's rules admit, appended in order and
+    de-duplicated against the queue.
+    """
+    rooms = _read_index_strict()
+    room = _require_indexed_room(rooms, room_id)
+    room.speaking = ""
+    if spoke:
+        room.rounds_used += 1
+    for name in summoned:
+        if name not in room.pending_queue:
+            room.pending_queue.append(name)
     _write_index(rooms)
     return room
 
 
-def pause_room(room_id: str, pending: Sequence[str] = ()) -> Room:
-    """Set ``paused`` and park *pending* — the queue's remainder. Idempotent.
+def pause_room(room_id: str) -> Room:
+    """Set ``paused``: the queue stops draining and stays PARKED where it stands. Idempotent.
 
     Distinct from :func:`archive_room`: an archived room is finished and refuses messages,
     while a paused one is mid-deliberation and is waiting for its human. The room still
     accepts a message — accepting one is how it resumes.
 
-    *pending* is the speaker queue as it stood when the ceiling was reached, stored so the
-    members still owed a turn take it after the human replies. Parking it is what makes the
-    pause a **suspension**: without it the remainder dies with the round's call frame and the
-    resume would silently be a fresh conversation that happens to reuse the same room.
-
-    The remainder is written even when the room is already paused, because a second round that
-    also reaches the ceiling is carrying its own un-spoken members, and dropping them on the
-    grounds that the flag was already set would lose exactly the queue this argument exists to
-    keep. Names are appended rather than replaced, and de-duplicated, so two rounds pausing
-    over one room owe each member one turn rather than two.
+    Nothing is parked HERE because nothing needs to be: the queue already lives on the record
+    (see :class:`Room`), so the pause is a **suspension** by construction — the members still
+    owed a turn take it after the human replies, ahead of whatever the reply asks for.
     """
     rooms = _read_index_strict()
     room = _require_indexed_room(rooms, room_id)
-    carried = list(room.pending_queue)
-    for name in pending:
-        if name not in carried:
-            carried.append(name)
-    if not room.paused or carried != room.pending_queue:
+    if not room.paused:
         room.paused = True
-        room.pending_queue = carried
         _write_index(rooms)
         logger.info(
-            "rooms: paused room %s at %d agent rounds, %d member(s) still queued",
+            "rooms: paused room %s at %d agent rounds, %d member(s) still owed a turn",
             room_id,
             room.rounds_used,
-            len(carried),
+            len(room.owed()),
         )
     return room
 
@@ -683,25 +751,6 @@ def set_round_budget(room_id: str, budget: int) -> Room:
         _write_index(rooms)
         logger.info("rooms: room %s round budget set to %d (0 = inherit)", room_id, budget)
     return room
-
-
-def take_pending(room_id: str) -> list[str]:
-    """Read AND clear the parked speaker queue. The only reader of ``pending_queue``.
-
-    Read-and-clear in one indexed write, because the alternative — read here, clear later —
-    lets two concurrent rounds over one room both inherit the same remainder and give every
-    parked member two turns. Draining it makes the carry-over a once-only debt: whoever starts
-    the next round owes those turns, and a round that then pauses parks its own remainder
-    again through :func:`pause_room`.
-    """
-    rooms = _read_index_strict()
-    room = _require_indexed_room(rooms, room_id)
-    parked = list(room.pending_queue)
-    if parked:
-        room.pending_queue = []
-        _write_index(rooms)
-        logger.info("rooms: room %s resumes owing %d queued turn(s)", room_id, len(parked))
-    return parked
 
 
 # ── the shared transcript ──────────────────────────────────────────────────

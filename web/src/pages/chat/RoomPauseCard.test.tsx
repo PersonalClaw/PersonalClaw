@@ -7,10 +7,12 @@
  *
  *  · `rounds_used` against `effective_round_budget` — never the declared `round_budget`, which is 0
  *    for a room that inherits the configured default. "0 of 0" is the inert reading;
- *  · `pending_queue` LISTED, in order — a pause suspends the queue rather than cancelling it, and a
+ *  · `room.owed` LISTED, in order — a pause suspends the queue rather than cancelling it, and a
  *    bare count cannot tell "my analyst never answered" from "the room just stopped";
- *  · only the actions the backend supports — there IS no resume route, so there must be no Resume
- *    button: any human message resets the budget, which is why the primary action is to write one.
+ *  · only the actions the backend supports — a budget pause has no resume route, so it has no
+ *    Resume button: any human message resets the budget, which is why its primary action is to
+ *    write one. An INTERRUPTED round is the other case: its human already spoke and nobody
+ *    answered, so Continue is its primary action and it answers the message already sent.
  */
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
@@ -28,6 +30,9 @@ function room(extra: Partial<RoomRecord> = {}): RoomRecord {
     rounds_used: 6,
     round_budget: 0,
     pending_queue: [],
+    speaking: '',
+    owed: [],
+    round_running: false,
     members: [],
     effective_round_budget: 6,
     max_round_budget: 100,
@@ -58,7 +63,7 @@ describe('the round-budget pause card', () => {
     render(<RoomPauseCard room={room({ members: [
       { name: 'analyst', role_blurb: '', listen_policy: 'all', profile_narrowing: {} },
       { name: 'skeptic', role_blurb: '', listen_policy: 'mention', profile_narrowing: {} },
-    ], pending_queue: ['skeptic', 'analyst'] })} onReply={() => {}} onArchive={() => {}} />)
+    ], owed: ['skeptic', 'analyst'] })} onReply={() => {}} onArchive={() => {}} />)
     const items = screen.getAllByRole('listitem')
     expect(items).toHaveLength(2)
     // FIFO order is the product fact: these two were enqueued before the reply the user is about
@@ -68,20 +73,10 @@ describe('the round-budget pause card', () => {
     expect(items[0].textContent).toContain('1.')
   })
 
-  it('drops a parked member who has left the room, rather than promising it a turn', () => {
-    // The arbiter's `resume_queue` filters the park to the current roster, so a member removed
-    // while the room was paused does not speak.
-    render(<RoomPauseCard room={room({ members: [
-      { name: 'analyst', role_blurb: '', listen_policy: 'all', profile_narrowing: {} },
-    ], pending_queue: ['departed', 'analyst'] })} onReply={() => {}} onArchive={() => {}} />)
-    expect(screen.getAllByRole('listitem')).toHaveLength(1)
-    expect(screen.queryByText('departed')).toBeNull()
-  })
-
   it('says the queue will run, when there is one', () => {
     const { rerender } = render(<RoomPauseCard room={room({ members: [
       { name: 'analyst', role_blurb: '', listen_policy: 'all', profile_narrowing: {} },
-    ], pending_queue: ['analyst'] })} onReply={() => {}} onArchive={() => {}} />)
+    ], owed: ['analyst'] })} onReply={() => {}} onArchive={() => {}} />)
     expect(screen.getByText(/the members below speak first/)).toBeTruthy()
     // With nothing parked the copy must NOT claim a queue exists.
     rerender(<RoomPauseCard room={room()} onReply={() => {}} onArchive={() => {}} />)
@@ -117,5 +112,53 @@ describe('the round-budget pause card', () => {
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.queryByRole('status')).toBeNull()
     expect(screen.getByRole('group', { name: 'Should we raise prices? is paused' })).toBeTruthy()
+  })
+})
+
+describe('the interrupted-round card', () => {
+  const cutOff = () => room({
+    paused: false, rounds_used: 1, speaking: 'analyst', owed: ['analyst', 'skeptic'],
+    members: [
+      { name: 'analyst', role_blurb: '', listen_policy: 'all', profile_narrowing: {} },
+      { name: 'skeptic', role_blurb: '', listen_policy: 'all', profile_narrowing: {} },
+    ],
+  })
+
+  it('says the round stopped, and lists who is owed — the cut-off member first', () => {
+    render(<RoomPauseCard room={cutOff()} interrupted onContinue={() => {}} onReply={() => {}} onArchive={() => {}} />)
+    const card = screen.getByRole('group', { name: 'Should we raise prices? was interrupted' })
+    expect(card.querySelector('h2')?.textContent).toBe('This round stopped before everyone answered.')
+    expect(screen.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['1.analyst', '2.skeptic'])
+    // Not the budget sentence, and not the budget count: nothing here was the agents talking among
+    // themselves, and a count on this card read as if the budget were why the round stopped.
+    expect(screen.queryByText('Your agents have been talking for a while.')).toBeNull()
+    expect(screen.queryByText(/exchanges?$/)).toBeNull()
+  })
+
+  it('offers Continue as the primary action, and it runs', async () => {
+    // Its human already spoke and nobody answered, so Continue answers THAT message — replying
+    // would make them re-ask it.
+    const onContinue = vi.fn()
+    const onReply = vi.fn()
+    render(<RoomPauseCard room={cutOff()} interrupted onContinue={onContinue} onReply={onReply} onArchive={() => {}} />)
+    await userEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    expect(onContinue).toHaveBeenCalledOnce()
+    await userEvent.click(screen.getByRole('button', { name: /Write a reply/ }))
+    expect(onReply).toHaveBeenCalledOnce()
+  })
+
+  it('says the Continue it started is working, on that button', () => {
+    // `Button`'s loading contract: the name stays "Continue" and `aria-busy` carries "working";
+    // the visible "Continuing the round" is the sighted twin. Only THIS button is busy.
+    render(<RoomPauseCard room={cutOff()} interrupted continuing onContinue={() => {}} onReply={() => {}} onArchive={() => {}} />)
+    expect(screen.getByRole('button', { name: /^Continue/ }).getAttribute('aria-busy')).toBe('true')
+    expect(screen.getByText('Continuing the round')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Write a reply/ }).getAttribute('aria-busy')).toBeNull()
+  })
+
+  it('is a named group and NOT an alert, like the pause card', () => {
+    render(<RoomPauseCard room={cutOff()} interrupted onContinue={() => {}} onReply={() => {}} onArchive={() => {}} />)
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('status')).toBeNull()
   })
 })

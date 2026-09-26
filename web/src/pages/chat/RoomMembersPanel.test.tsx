@@ -33,6 +33,9 @@ function room(extra: Partial<RoomRecord> = {}): RoomRecord {
     rounds_used: 0,
     round_budget: 0,
     pending_queue: [],
+    speaking: '',
+    owed: [],
+    round_running: false,
     members: [],
     effective_round_budget: 6,
     max_round_budget: 100,
@@ -48,9 +51,9 @@ const AGENTS: SavedAgent[] = [
   { name: 'writer', provider: 'native', model: 'gpt-5' },
 ]
 
-function panel(detail: RoomDetail, owed: string[] = [], onAdd = vi.fn(), onRemove = vi.fn()) {
+function panel(detail: RoomDetail, onAdd = vi.fn(), onRemove = vi.fn()) {
   render(
-    <RoomMembersPanel detail={detail} owed={owed} agents={AGENTS} busy={false} removing=""
+    <RoomMembersPanel detail={detail} agents={AGENTS} busy={false} removing=""
       onAdd={onAdd} onRemove={onRemove} />,
   )
 }
@@ -129,7 +132,7 @@ describe('a member row reports what that member IS', () => {
 
   it('says which member is owed a turn, and where in the queue', () => {
     panel({
-      room: room({ members: [member('analyst'), member('skeptic')] }),
+      room: room({ members: [member('analyst'), member('skeptic')], owed: ['skeptic', 'analyst'] }),
       member_posture: [
         { name: 'analyst', declared: {}, tool_grants: 'read', tool_allowlist: [] },
         { name: 'skeptic', declared: {}, tool_grants: 'read', tool_allowlist: [] },
@@ -139,30 +142,57 @@ describe('a member row reports what that member IS', () => {
         { name: 'skeptic', configured: true, model: 'b', provider: 'native' },
       ],
       messages: [],
-    }, ['skeptic', 'analyst'])
+    })
     expect(screen.getAllByText('Owed a turn')).toHaveLength(2)
     expect(screen.getByText('#1 in the queue')).toBeTruthy()
     expect(screen.getByText('#2 in the queue')).toBeTruthy()
   })
 
-  it('never claims a member is SPEAKING — the backend publishes no such field', () => {
-    panel({
-      room: room({ members: [member('analyst')] }),
-      member_posture: [{ name: 'analyst', declared: {}, tool_grants: 'read', tool_allowlist: [] }],
-      member_bindings: [{ name: 'analyst', configured: true, model: 'a', provider: 'native' }],
+  /** Two members, analyst's turn open — the only difference between the two tests below is whether
+   *  a round is running it, which is the whole difference between "answering" and "cut off". */
+  function openTurn(roundRunning: boolean): RoomDetail {
+    return {
+      room: room({
+        members: [member('analyst'), member('skeptic')],
+        speaking: 'analyst', owed: ['analyst', 'skeptic'], round_running: roundRunning,
+      }),
+      member_posture: [
+        { name: 'analyst', declared: {}, tool_grants: 'read', tool_allowlist: [] },
+        { name: 'skeptic', declared: {}, tool_grants: 'read', tool_allowlist: [] },
+      ],
+      member_bindings: [
+        { name: 'analyst', configured: true, model: 'a', provider: 'native' },
+        { name: 'skeptic', configured: true, model: 'b', provider: 'native' },
+      ],
       messages: [],
-    }, ['analyst'])
-    // The head of the queue is only PROBABLY the member whose turn is running: a failed turn
-    // advances the drain with nothing saying so. A badge that is usually right about who is
-    // talking is a fabricated value with a friendly face.
-    expect(screen.queryByText(/speaking/i)).toBeNull()
+    }
+  }
+
+  it('says ANSWERING for the member whose turn is open while a round runs — a reading, not a guess', () => {
+    // Both facts are the backend's: the open turn (`speaking`) and the live round
+    // (`round_running`). The head of a queue the tab remembered was only PROBABLY the member
+    // talking, which is why this badge did not exist until the backend said so.
+    panel(openTurn(true))
+    expect(screen.getByText('Answering')).toBeTruthy()
+    expect(screen.getAllByText('Owed a turn')).toHaveLength(1)
+    expect(screen.getByText('#2 in the queue')).toBeTruthy()
+    // The answering member is not ALSO "#1 in the queue": one fact, said once.
+    expect(screen.queryByText('#1 in the queue')).toBeNull()
+  })
+
+  it('says a cut-off turn is OWED, first — never answering — when no round is running', () => {
+    // An open turn with nothing running it is the one a stopped gateway cut off.
+    panel(openTurn(false))
+    expect(screen.queryByText('Answering')).toBeNull()
+    expect(screen.getAllByText('Owed a turn')).toHaveLength(2)
+    expect(screen.getByText('#1 in the queue')).toBeTruthy()
   })
 })
 
 describe('the roster controls', () => {
   it('offers an on-ramp when the room has no members, naming what a member is', () => {
     const onAdd = vi.fn()
-    panel({ room: room(), member_posture: [], member_bindings: [], messages: [] }, [], onAdd)
+    panel({ room: room(), member_posture: [], member_bindings: [], messages: [] }, onAdd)
     expect(screen.getByText('No members yet')).toBeTruthy()
     expect(screen.getByRole('button', { name: /Add a member/ })).toBeTruthy()
   })
@@ -181,7 +211,7 @@ describe('the roster controls', () => {
       member_posture: [{ name: 'analyst', declared: {}, tool_grants: 'read', tool_allowlist: [] }],
       member_bindings: [{ name: 'analyst', configured: true, model: 'a', provider: 'native' }],
       messages: [],
-    }, [], onAdd)
+    }, onAdd)
     await userEvent.click(screen.getByRole('button', { name: /Add/ }))
     const select = screen.getByRole('combobox', { name: 'Agent' })
     // Already-added agents are present but disabled, which answers "why is my analyst not in the
@@ -240,7 +270,7 @@ describe('the roster controls', () => {
       member_posture: [{ name: 'analyst', declared: {}, tool_grants: 'read', tool_allowlist: [] }],
       member_bindings: [{ name: 'analyst', configured: true, model: 'a', provider: 'native' }],
       messages: [],
-    }, [], vi.fn(), onRemove)
+    }, vi.fn(), onRemove)
     await userEvent.click(screen.getByRole('button', { name: 'Remove analyst from this room' }))
     expect(onRemove).toHaveBeenCalledWith('analyst')
   })
@@ -262,7 +292,7 @@ describe('🔴 the member ceiling is refused in the panel, not offered and then 
           member_bindings: members.map((m) => ({ name: m.name, configured: true, model: 'x', provider: 'native' })),
           messages: [],
         }}
-        owed={[]} agents={FOUR} busy={false} removing="" onAdd={vi.fn()} onRemove={vi.fn()} />,
+        agents={FOUR} busy={false} removing="" onAdd={vi.fn()} onRemove={vi.fn()} />,
     )
   }
 
@@ -300,7 +330,7 @@ describe('🔴 the member ceiling is refused in the panel, not offered and then 
       member_bindings: ms.map((m) => ({ name: m.name, configured: true, model: 'x', provider: 'native' })),
       messages: [],
     })
-    const props = { owed: [], agents: FOUR, busy: false, removing: '', onAdd: vi.fn(), onRemove: vi.fn() }
+    const props = { agents: FOUR, busy: false, removing: '', onAdd: vi.fn(), onRemove: vi.fn() }
     const { rerender } = render(<RoomMembersPanel detail={d(members)} {...props} />)
     await userEvent.click(screen.getByRole('button', { name: /Add/ }))
     expect(screen.getByRole('combobox', { name: 'Agent' })).toBeTruthy()

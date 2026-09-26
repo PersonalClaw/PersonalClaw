@@ -131,6 +131,11 @@ def test_every_route_refuses_while_rooms_is_disabled(monkeypatch):
                 _json_request("PATCH", "/api/rooms/x", {"round_budget": 3}, room_id="x")
             )
         ),
+        # Continuing an interrupted room RUNS a round, so it is the last route that may be
+        # exempted by omission.
+        asyncio.run(
+            h.api_room_continue(_json_request("POST", "/api/rooms/x/continue", None, room_id="x"))
+        ),
     ):
         assert response.status == 403
         assert _body(response)["error"]["code"] == "rooms_disabled"
@@ -511,14 +516,14 @@ def test_room_routes_sit_under_the_app_scoped_prefixes():
 
 
 def test_the_room_id_route_is_registered_after_its_siblings():
-    """`/api/rooms/{room_id}` would swallow `/archive`, `/members`, `/messages`, `/export`
-    if it came first — aiohttp resolves in registration order, and this is the failure
+    """`/api/rooms/{room_id}` would swallow `/archive`, `/members`, `/messages`, `/continue`,
+    `/export` if it came first — aiohttp resolves in registration order, and this is the failure
     `/api/channels/trust` already shipped once."""
     from personalclaw.dashboard import server
 
     source = open(server.__file__, encoding="utf-8").read()
     catch_all = source.index('"/api/rooms/{room_id}", api_room_get')
-    for sibling in ("/archive", "/members", "/messages", "/export"):
+    for sibling in ("/archive", "/members", "/messages", "/continue", "/export"):
         assert source.index(f'"/api/rooms/{{room_id}}{sibling}"') < catch_all, sibling
     # AR-8's PATCH shares the catch-all's PATH and differs only in method, so ordering does not
     # apply to it — but it must still be registered, or the write path this atom added is a
@@ -530,18 +535,18 @@ def test_the_room_id_route_is_registered_after_its_siblings():
 
 
 class _RecordingRoomTurn:
-    """Captures the ``(room_id, content)`` the route hands to ``rooms.arbiter``.
+    """Captures the room the route hands to ``rooms.arbiter``, and the queue it found there.
 
     The round itself is exercised against real providers in `test_rooms_arbiter.py`; what only
-    the HTTP layer can get wrong is WHETHER it hands the round over, with which arguments,
-    and whether the task outlives the request — which is what this records.
+    the HTTP layer can get wrong is WHETHER it hands the round over, with the queue already on
+    disk, and whether the task outlives the request — which is what this records.
     """
 
     def __init__(self) -> None:
-        self.rounds: list[tuple[str, str]] = []
+        self.rounds: list[tuple[str, list[str]]] = []
 
-    async def __call__(self, state, sessions, room_id, content):
-        self.rounds.append((room_id, content))
+    async def __call__(self, state, sessions, room_id):
+        self.rounds.append((room_id, store.require_room(room_id).pending_queue))
         return []
 
 
@@ -570,7 +575,7 @@ def _post_message_with_state(room_id, payload, state):
 def test_posting_a_message_starts_the_round_for_the_listening_members(cfg, monkeypatch):
     """AR-3's residual, at the route: the human's line is what puts members on a session."""
     recorder = _RecordingRoomTurn()
-    monkeypatch.setattr(h.arbiter, "run_round", recorder)
+    monkeypatch.setattr(h.arbiter, "drain_round", recorder)
 
     room_id = _body(_create("Round"))["room"]["id"]
     _add_member(room_id, {"name": "analyst"})
@@ -580,15 +585,17 @@ def test_posting_a_message_starts_the_round_for_the_listening_members(cfg, monke
     response = _post_message_with_state(room_id, {"content": "what should we charge?"}, state)
 
     assert response.status == 201
-    assert _body(response)["speaking"] == ["analyst"], "the mention-only member was not named"
-    assert recorder.rounds == [(room_id, "what should we charge?")]
+    room = _body(response)["room"]
+    assert room["owed"] == ["analyst"], "the mention-only member was not named"
+    assert room["round_running"] is True, "and the round answering it is already running"
+    assert recorder.rounds == [(room_id, ["analyst"])], "the queue was on disk before it started"
     assert state._background_tasks == set(), "the finished task is discarded, not retained"
 
 
 def test_a_room_with_no_listening_member_starts_no_round(cfg, monkeypatch):
     """A room of observers costs nothing: no provider is opened and no task is created."""
     recorder = _RecordingRoomTurn()
-    monkeypatch.setattr(h.arbiter, "run_round", recorder)
+    monkeypatch.setattr(h.arbiter, "drain_round", recorder)
 
     room_id = _body(_create("Observers"))["room"]["id"]
     _add_member(room_id, {"name": "analyst", "listen_policy": "silent"})
@@ -596,7 +603,8 @@ def test_a_room_with_no_listening_member_starts_no_round(cfg, monkeypatch):
 
     response = _post_message_with_state(room_id, {"content": "anyone?"}, state)
 
-    assert _body(response)["speaking"] == []
+    room = _body(response)["room"]
+    assert (room["owed"], room["round_running"]) == ([], False)
     assert recorder.rounds == [], "nobody was listening, so nothing was started"
 
 
@@ -604,10 +612,12 @@ def test_the_humans_message_is_durable_even_when_no_session_manager_exists(
     cfg, monkeypatch, caplog
 ):
     """The human's words are the part they cannot re-derive, so the 201 does not depend on
-    the round being startable — but the dropped round is logged at ERROR, never swallowed."""
+    the round being startable — but the dropped round is logged at ERROR, never swallowed, and
+    the room says so too: it owes analyst a turn and nothing is running it, which is what
+    "interrupted" means on the wire."""
     import logging
 
-    monkeypatch.setattr(h.arbiter, "run_round", _RecordingRoomTurn())
+    monkeypatch.setattr(h.arbiter, "drain_round", _RecordingRoomTurn())
     room_id = _body(_create("No manager"))["room"]["id"]
     _add_member(room_id, {"name": "analyst"})
 
@@ -617,6 +627,325 @@ def test_the_humans_message_is_durable_even_when_no_session_manager_exists(
     assert response.status == 201
     assert store.read_messages(room_id)[0]["content"] == "still recorded"
     assert "takes no turn" in caplog.text
+    room = _body(response)["room"]
+    assert (room["owed"], room["round_running"]) == (["analyst"], False)
+
+
+# ── a round the user can follow, and one a restart cannot lose ──────────────
+#
+# Driven through the routes with the SHIPPED round behind them — real `rooms.arbiter`, real
+# `rooms.turn`, provider doubles that stream `LLMEvent` frames — because every defect here was a
+# gap between what the room did and what the room SAID it did, and only the wire can show that.
+
+
+class _LiveState:
+    """A dashboard state with a real session manager behind it: the round actually runs."""
+
+    def __init__(self, sessions) -> None:
+        self.sessions = sessions
+        self._background_tasks: set = set()
+
+
+def _live_request(method, path, payload, state, **match_info):
+    req = _json_request(method, path, payload, **match_info)
+    req.app["state"] = state
+    return req
+
+
+async def _post_live(room_id, content, state):
+    return await h.api_room_message_post(
+        _live_request(
+            "POST", f"/api/rooms/{room_id}/messages", {"content": content}, state, room_id=room_id
+        )
+    )
+
+
+async def _get_live(room_id, state):
+    return _body(
+        await h.api_room_get(
+            _live_request("GET", f"/api/rooms/{room_id}", None, state, room_id=room_id)
+        )
+    )
+
+
+async def _settle(state):
+    """Let every round this state started run to its end."""
+    await asyncio.gather(*list(state._background_tasks))
+
+
+def _notes(room_id):
+    """The lines the ROOM wrote, as ``(about, text)``."""
+    return [
+        (m.get("speaker", ""), m["content"])
+        for m in store.read_messages(room_id)
+        if m.get("role") == store.ROOM_NOTE_ROLE
+    ]
+
+
+class _HangingProvider:
+    """A member whose turn never ends by itself — the turn a restart cuts off."""
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+
+    async def stream(self, message: str):
+        from personalclaw.llm.events import EVENT_TEXT_CHUNK, AgentEvent
+
+        self.entered.set()
+        await asyncio.Event().wait()  # never set: only a cancellation ends this turn
+        yield AgentEvent(kind=EVENT_TEXT_CHUNK, text="unreachable")
+
+
+class _HangingSessions:
+    """Every member's provider hangs, like a local model that has not answered yet."""
+
+    def __init__(self) -> None:
+        self.providers: dict[str, _HangingProvider] = {}
+
+    async def get_or_create(self, key, agent=None, **kwargs):
+        return self.providers.setdefault(key, _HangingProvider()), True, False
+
+    def release(self, key, *, cleanup=False):
+        pass
+
+
+def test_a_failed_turn_is_said_in_the_room_and_spends_no_exchange(cfg):
+    """A member whose turn fails used to VANISH: the log said "the round continues", the room
+    showed nothing, and the counter read as if it had spoken.
+
+    Both halves at once, because they are one defect seen from two sides — the budget counts
+    exchanges, and a turn that produced nothing is not one.
+    """
+    from tests.test_rooms_store import _StreamingSessions
+
+    room_id = _body(_create("Failing"))["room"]["id"]
+    _add_member(room_id, {"name": "analyst"})
+    _add_member(room_id, {"name": "skeptic"})
+    state = _LiveState(
+        _StreamingSessions(
+            replies={f"room:{room_id}:skeptic": "still here"},
+            dying=[f"room:{room_id}:analyst"],
+        )
+    )
+
+    async def drive():
+        await _post_live(room_id, "go", state)
+        await _settle(state)
+        return await _get_live(room_id, state)
+
+    payload = asyncio.run(drive())
+
+    notes = _notes(room_id)
+    assert len(notes) == 1, notes
+    about, text = notes[0]
+    assert about == "analyst", "the note is ABOUT the member that failed"
+    assert text.startswith("analyst could not take its turn."), text
+    assert "the provider died mid-turn" in text, "and it says why"
+    assert payload["room"]["rounds_used"] == 1, "only skeptic's reply was an exchange"
+
+
+def test_an_addressed_members_failure_is_said_before_anyone_answers_for_it(cfg):
+    """`@skeptic …` with skeptic's turn failing: the others used to answer in its place, with
+    nothing on screen saying skeptic never spoke.
+
+    The note lands in skeptic's slot — BEFORE the member who speaks next — so the human reads the
+    failure where the answer should have been, and the next member is fed it rather than a gap.
+    """
+    from tests.test_rooms_store import _StreamingSessions
+
+    room_id = _body(_create("Addressed"))["room"]["id"]
+    _add_member(room_id, {"name": "analyst"})
+    _add_member(room_id, {"name": "skeptic"})
+    sessions = _StreamingSessions(
+        replies={f"room:{room_id}:analyst": "the risk is the venue"},
+        dying=[f"room:{room_id}:skeptic"],
+    )
+    state = _LiveState(sessions)
+
+    async def drive():
+        await _post_live(room_id, "@skeptic what is the single biggest risk?", state)
+        await _settle(state)
+
+    asyncio.run(drive())
+
+    lines = [(m["role"], m.get("speaker", "")) for m in store.read_messages(room_id)]
+    assert lines == [
+        ("user", ""),
+        (store.ROOM_NOTE_ROLE, "skeptic"),
+        ("assistant", "analyst"),
+    ], lines
+    fed = sessions.providers[f"room:{room_id}:analyst"].prompts[0]
+    assert "[room]: skeptic could not take its turn." in fed, "analyst knows skeptic did not answer"
+
+
+def test_a_member_that_writes_nothing_is_said_in_the_room_and_spends_no_exchange(cfg):
+    """The same vanishing turn by another road: a model that returns no text.
+
+    An empty ASSISTANT line would put a position in the member's mouth, so none is written — but a
+    ROOM note saying the turn came back empty is the room's own words, and without it the member
+    was queued, "answered", and left no trace.
+    """
+    from tests.test_rooms_store import _StreamingSessions
+
+    room_id = _body(_create("Blank"))["room"]["id"]
+    _add_member(room_id, {"name": "analyst"})
+    state = _LiveState(_StreamingSessions(replies={f"room:{room_id}:analyst": "   "}))
+
+    async def drive():
+        await _post_live(room_id, "go", state)
+        await _settle(state)
+        return await _get_live(room_id, state)
+
+    payload = asyncio.run(drive())
+
+    assert _notes(room_id) == [("analyst", "analyst took its turn but wrote nothing.")]
+    assert [m["role"] for m in store.read_messages(room_id)] == ["user", store.ROOM_NOTE_ROLE]
+    assert payload["room"]["rounds_used"] == 0
+
+
+def test_the_room_says_a_round_is_running_while_it_is_and_who_is_answering(cfg):
+    """What the surface follows a round BY. The view used to guess — subtracting everyone who had
+    EVER spoken from the queue — so once every member had spoken once it concluded that nobody was
+    owed anything and stopped updating. The backend is the one that knows, so it says.
+    """
+    room_id = _body(_create("Live"))["room"]["id"]
+    _add_member(room_id, {"name": "analyst"})
+    _add_member(room_id, {"name": "skeptic"})
+    sessions = _HangingSessions()
+    state = _LiveState(sessions)
+
+    async def drive():
+        posted = _body(await _post_live(room_id, "go", state))
+        provider = await _wait_for_turn(sessions, f"room:{room_id}:analyst")
+        during = await _get_live(room_id, state)
+        for task in list(state._background_tasks):
+            task.cancel()
+        await asyncio.gather(*list(state._background_tasks), return_exceptions=True)
+        return posted, provider, during
+
+    posted, _provider, during = asyncio.run(drive())
+
+    room = during["room"]
+    assert room.get("round_running") is True
+    assert room.get("speaking") == "analyst", "the member whose turn is open, by name"
+    assert room["pending_queue"] == ["skeptic"], "and who is still owed one, in order"
+    assert posted["room"]["pending_queue"] == ["analyst", "skeptic"], "the queue it just built"
+
+
+async def _wait_for_turn(sessions, key):
+    for _ in range(200):
+        provider = sessions.providers.get(key)
+        if provider is not None and provider.entered.is_set():
+            return provider
+        await asyncio.sleep(0)
+    raise AssertionError(f"{key}'s turn never started")
+
+
+def test_a_round_cut_off_by_a_restart_is_interrupted_not_lost_and_continue_finishes_it(cfg):
+    """🔴 The restart defect, end to end. A gateway that stops mid-round kills the round's task;
+    the human's message then sat unanswered with no queue and no notice, because the queue lived
+    in that task's memory.
+
+    Now the queue and the open turn are on disk, so a NEW gateway (a fresh state with no task in
+    it) reads the room as interrupted — owing the cut-off member first — and Continue runs it to
+    the end without the human re-sending anything.
+    """
+    from tests.test_rooms_store import _StreamingSessions
+
+    room_id = _body(_create("Restarted"))["room"]["id"]
+    _add_member(room_id, {"name": "analyst"})
+    _add_member(room_id, {"name": "skeptic"})
+    before = _HangingSessions()
+    dying_gateway = _LiveState(before)
+
+    async def crash_mid_turn():
+        await _post_live(room_id, "what should we charge?", dying_gateway)
+        await _wait_for_turn(before, f"room:{room_id}:analyst")
+        for task in list(dying_gateway._background_tasks):
+            task.cancel()  # what shutdown does to an in-flight round
+        await asyncio.gather(*list(dying_gateway._background_tasks), return_exceptions=True)
+
+    asyncio.run(crash_mid_turn())
+
+    after = _StreamingSessions(
+        replies={
+            f"room:{room_id}:analyst": "charge more",
+            f"room:{room_id}:skeptic": "charge less",
+        }
+    )
+    new_gateway = _LiveState(after)
+
+    room = asyncio.run(_get_live(room_id, new_gateway))["room"]
+    assert (room.get("speaking"), room["pending_queue"]) == (
+        "analyst",
+        ["skeptic"],
+    ), "the cut-off turn and the one behind it survived the restart"
+    assert room["round_running"] is False, "and nothing is running them — that is 'interrupted'"
+    assert room["rounds_used"] == 0, "the cut-off turn spoke no words, so it spent no exchange"
+
+    async def continue_it():
+        continued = await h.api_room_continue(
+            _live_request(
+                "POST", f"/api/rooms/{room_id}/continue", None, new_gateway, room_id=room_id
+            )
+        )
+        await _settle(new_gateway)
+        return continued, await _get_live(room_id, new_gateway)
+
+    continued, done = asyncio.run(continue_it())
+
+    assert continued.status == 200
+    spoken = [
+        (m.get("speaker", ""), m["content"])
+        for m in store.read_messages(room_id)
+        if m["role"] == "assistant"
+    ]
+    assert spoken == [("analyst", "charge more"), ("skeptic", "charge less")]
+    assert [m["role"] for m in store.read_messages(room_id)].count(
+        "user"
+    ) == 1, "nothing was re-sent: Continue answers the message already on the transcript"
+    final = done["room"]
+    assert (final["speaking"], final["pending_queue"], final["round_running"]) == ("", [], False)
+    assert final["rounds_used"] == 2
+
+
+def test_continue_starts_nothing_on_a_room_that_is_not_interrupted(cfg):
+    """Continue finishes an INTERRUPTED round and nothing else.
+
+    A room that owes nothing, and a room PAUSED at its budget, are both answered as they stand:
+    a double click wants a room that is not interrupted, which is already true, and a budget
+    pause's only resume is a human message — continuing it without one is the very thing the
+    budget exists to stop. An archived room refuses outright: nobody may speak in it.
+    """
+    room_id = _body(_create("Not interrupted"))["room"]["id"]
+    _add_member(room_id, {"name": "analyst"})
+    state = _LiveState(object())
+
+    def _continue():
+        async def go():
+            return await h.api_room_continue(
+                _live_request(
+                    "POST", f"/api/rooms/{room_id}/continue", None, state, room_id=room_id
+                )
+            )
+
+        return asyncio.run(go())
+
+    idle = _continue()
+    assert idle.status == 200 and _body(idle)["room"]["round_running"] is False
+    assert state._background_tasks == set(), "an idle room owes nothing, so nothing started"
+
+    store.set_pending_queue(room_id, ["analyst"])
+    store.pause_room(room_id)
+    paused = _continue()
+    assert paused.status == 200
+    assert (_body(paused)["room"]["paused"], _body(paused)["room"]["owed"]) == (True, ["analyst"])
+    assert state._background_tasks == set(), "a budget pause resumes on a human message only"
+
+    store.archive_room(room_id)
+    archived = _continue()
+    assert archived.status == 409
+    assert _body(archived)["error"]["code"] == "room_archived"
 
 
 # ── AR-8: the per-room budget write path, and the member facts its UI renders ────
@@ -807,4 +1136,8 @@ def test_the_room_payload_carries_everything_one_poll_needs(cfg):
     room = payload["room"]
     # The three the pause card renders, plus the queue it lists.
     for field in ("paused", "rounds_used", "effective_round_budget", "pending_queue"):
+        assert field in room, field
+    # And the three the view follows a round by: who is answering, who is owed, and whether a
+    # round is running at all — answers the view cannot compute, so the payload carries them.
+    for field in ("speaking", "owed", "round_running"):
         assert field in room, field

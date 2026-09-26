@@ -23,7 +23,6 @@ import { RoomPauseCard } from './RoomPauseCard'
 import { RoomMembersPanel } from './RoomMembersPanel'
 import {
   ROOM_ICON,
-  parkedQueue,
   roomLines,
   roomState,
   roomStateMeta,
@@ -32,19 +31,21 @@ import {
 } from './roomMeta'
 import type { RouteProps } from '../../app/useQueryState'
 
-/** The DOM id of the room composer. A constant because the pause card's primary action focuses
- *  it, which is the shipped pattern (`settings/SecretsPanel` does exactly this): there is no
- *  resume endpoint — ANY human message resets the budget — so "resume" is "write something",
- *  and the honest affordance is to put the cursor where the user has to type. */
+/** The DOM id of the room composer. A constant because the budget pause card's primary action
+ *  focuses it, which is the shipped pattern (`settings/SecretsPanel` does exactly this): a budget
+ *  pause has no resume endpoint — ANY human message resets the budget — so "resume" is "write
+ *  something", and the honest affordance is to put the cursor where the user has to type. */
 const COMPOSER_ID = 'room-composer'
 
-/** How often a room re-reads itself while a round is in flight.
+/** How often a room re-reads itself while a round is running.
  *
  *  A room answers in the BACKGROUND: `POST .../messages` returns as soon as the human's line is
- *  durable, and each member's reply lands on the transcript seconds later. There is no room WS
- *  frame to subscribe to, so the surface polls — and ONLY while a round is outstanding, which is
- *  the whole mechanism: an idle room costs nothing, and the poll stops the moment the queue the
- *  backend published has drained. */
+ *  durable, and each member's reply lands on the transcript seconds later. The surface polls
+ *  while — and ONLY while — the ROOM says a round is running (`room.round_running`, which the
+ *  backend reads off the live task). That is the whole mechanism: an idle room costs nothing, the
+ *  poll stops when the round ends, and it survives a reload because it is the room's state, not
+ *  this tab's. The room emits no push frame to follow instead; a page-scoped feed like this one
+ *  would be its own per-room SSE stream under the transport doctrine, not a WS frame. */
 const ACTIVE_POLL_MS = 2500
 
 /** One room (`AGENT-ROOMS` C9 / `AR-8`) — the attributed transcript, the pause card, and
@@ -105,30 +106,26 @@ export function RoomView({ roomId, navigate, setQuery }: {
   // for a refusal (`room_member_limit` at 8/8) no retry of anything could succeed.
   const [actionError, setActionError] = useState<{ error: unknown; retry?: () => void } | null>(null)
   const [membersOpen, setMembersOpen] = useState(false)
-  // The queue the LAST message produced, held client-side. It is not room state: the backend
-  // persists only the queue a PAUSE parked, so while a round is running this is the one record
-  // of who is still owed a turn. Emptied as each of those members lands a line.
-  const [inFlight, setInFlight] = useState<string[]>([])
   const endRef = useRef<HTMLDivElement>(null)
 
   const room = data?.room
   const lines = useMemo(() => (data ? roomLines(data) : []), [data])
 
-  // Who the room owes, in order: the PARKED queue when it is paused, else whatever the last
-  // message queued and has not yet answered. Never both — a paused room's in-flight queue was
-  // parked by the pause, so adding them would double-count every member.
-  const owed = useMemo(() => {
-    if (!room) return []
-    if (room.paused) return parkedQueue(room)
-    const spoken = new Set(lines.filter((l) => l.kind === 'member').map((l) => l.speaker))
-    return inFlight.filter((n) => !spoken.has(n) && room.members.some((m) => m.name === n))
-  }, [room, lines, inFlight])
-
-  const roundRunning = !room?.paused && owed.length > 0
+  // 🔴 WHO THE ROOM OWES, AND WHETHER A ROUND IS ANSWERING THEM — both read off the room.
+  //
+  // This used to be derived here: the queue the last POST returned, minus every member that had
+  // EVER spoken. So once every member had spoken once, the next message's queue subtracted to
+  // nothing, `roundRunning` went false, the poll never started, and new replies stayed invisible
+  // until a reload — measured, the first conversation refreshed 141 times and the third twice.
+  // The queue also lived only in this tab, so a reload lost it and a member's `@`-summons never
+  // reached it. The backend owns both answers now: `owed` is its queue (the open turn first) and
+  // `round_running` is whether its round task is alive.
+  const owed = room?.owed ?? []
+  const roundRunning = !!room && room.round_running && !room.archived
 
   // Poll while a round is running. A plain interval rather than `useVisiblePoll`, because this
-  // one must also STOP when the queue drains — the hook's `null` off-switch is per-render, and
-  // pairing it with the drain condition is the whole mechanism.
+  // one must also STOP when the round ends — the hook's `null` off-switch is per-render, and
+  // pairing it with the room's own running flag is the whole mechanism.
   useEffect(() => {
     if (!roundRunning) return
     const t = window.setInterval(refresh, ACTIVE_POLL_MS)
@@ -153,12 +150,10 @@ export function RoomView({ roomId, navigate, setQuery }: {
     setSending(true)
     setActionError(null)
     try {
-      const res = await api.postRoomMessage(roomId, content)
+      await api.postRoomMessage(roomId, content)
       setDraft('')
-      // The queue the backend actually built, in the order it will speak — including the turns
-      // the room already OWED, because `resume_queue` puts those first. Replacing rather than
-      // appending: this response is the authoritative queue for everything outstanding.
-      setInFlight(res.speaking)
+      // Re-read the room: it now owes this message's turns (behind any it already owed) and says
+      // a round is running them, which is what starts the poll above.
       refresh()
     } catch (e) {
       // No banner Retry: the draft is kept, so Send right below IS the retry, and it sends what
@@ -195,6 +190,15 @@ export function RoomView({ roomId, navigate, setQuery }: {
     }))) return
     await act(() => api.archiveRoom(roomId), 'archive the room')
   }, [room, roomId, act])
+
+  // Finish an interrupted round: the members it still owes answer the message already on the
+  // transcript. Through `act`, so a transient failure offers a Retry that re-runs THIS call; with
+  // its own in-flight flag, so it is the Continue button that says "working", not every control.
+  const [continuing, setContinuing] = useState(false)
+  const continueRound = useCallback(() => {
+    setContinuing(true)
+    void act(() => api.continueRoom(roomId), 'continue the round').finally(() => setContinuing(false))
+  }, [roomId, act])
 
   // ── the load states, as ONE ladder ──
   // `rooms_disabled` first, and it is not a failure: the feature ships off and the backend refuses
@@ -282,7 +286,6 @@ export function RoomView({ roomId, navigate, setQuery }: {
           <div className="flex flex-col gap-2xl p-s">
             <RoomMembersPanel
               detail={data}
-              owed={owed}
               agents={agentData?.agents}
               agentsError={agentsError}
               onRetryAgents={refreshAgents}
@@ -336,9 +339,12 @@ export function RoomView({ roomId, navigate, setQuery }: {
             ) : (
               lines.map((line, i) => <RoomTranscriptLine key={`${line.ts}-${i}`} line={line} />)
             )}
-            {room.paused && (
+            {(state === 'paused' || state === 'interrupted') && (
               <RoomPauseCard
                 room={room}
+                interrupted={state === 'interrupted'}
+                continuing={continuing}
+                onContinue={continueRound}
                 onReply={() => document.getElementById(COMPOSER_ID)?.focus()}
                 onArchive={archive} />
             )}
@@ -349,9 +355,10 @@ export function RoomView({ roomId, navigate, setQuery }: {
         {/* The one live region for the round. `role="status"` and polite: a member answering is
             progress, not news that changes what the screen means. Always mounted, empty when
             idle, so the announcement is a CONTENT change — an `aria-label` on a live region is a
-            name, not an announcement. */}
+            name, not an announcement. Only while a round RUNS: a paused or interrupted room is
+            not answering, and its card already names who it owes. */}
         <div role="status" aria-live="polite" className="sr-only">
-          {owed.length > 0
+          {roundRunning && owed.length > 0
             ? `${owed.length} member${owed.length === 1 ? '' : 's'} still to answer: ${owed.join(', ')}`
             : ''}
         </div>
@@ -363,12 +370,12 @@ export function RoomView({ roomId, navigate, setQuery }: {
             )}
             <div className="flex flex-wrap items-center justify-between gap-s">
               <Eyebrow as="span">{roundBudgetLabel(room)} since your last message</Eyebrow>
-              {owed.length > 0 && (
+              {roundRunning && owed.length > 0 && (
                 <span data-type="caption" className="text-on-surface-low">
                   Answering: {owed.join(' → ')}
                 </span>
               )}
-              {revalidating && owed.length === 0 && (
+              {revalidating && !roundRunning && (
                 <span data-type="caption" className="text-on-surface-low">Re-reading the room…</span>
               )}
             </div>
