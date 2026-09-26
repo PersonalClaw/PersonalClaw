@@ -43,6 +43,7 @@ from personalclaw.browse.credentials import (
 )
 from personalclaw.browse.extraction import extract_page, render_links_dsl
 from personalclaw.browse.handoff import (
+    _REASON_BLOCKER,
     AUTH_STATE_ACTIVE,
     AUTH_STATE_EXPIRED,
     PARK_LOGIN_REQUIRED,
@@ -64,6 +65,7 @@ from personalclaw.browse.handoff import (
     site_slug,
 )
 from personalclaw.browse.loop import run_browse_loop
+from personalclaw.workflows.needs_input import OUTCOME_ABSENT
 
 # ── the planted credentials ───────────────────────────────────────────────────
 #
@@ -509,6 +511,33 @@ class TestThePark:
         assert OAUTH_CODE not in blob
         assert handoff.item["block_kind"]
         assert handoff.item["choices"], "a card with no choices is not answerable"
+
+    def test_the_card_RENDERS_the_reason_blocker_wording_it_composed(self):
+        """The wording table has to reach `attempted`, not just be built.
+
+        This is the assertion whose absence let the table be composed and then discarded for a
+        whole atom: `request_login` spelled its attempt key `summary`, `summarize_attempts` reads
+        the ledger row's `outcome`/`note`, nothing matched, and every card rendered one
+        placeholder line. Every field around it survived, so the payload path looked healthy.
+
+        Asserted over the WHOLE closed reason set rather than one reason, because the defect was
+        per-key and not per-reason — one sampled reason would have passed just as falsely.
+        """
+        for reason, blocker in _REASON_BLOCKER.items():
+            handoff = request_login(HOME_URL, reason=reason, run_id="r1")
+            attempted = handoff.item["attempted"]
+            assert attempted, f"{reason}: the card must account for what was tried"
+            line = attempted[0]
+            assert blocker in line, (
+                f"{reason}: the card dropped its own blocker wording. Expected {blocker!r} "
+                f"in {line!r} — the producer's attempt keys and `summarize_attempts`' keys "
+                f"have drifted apart."
+            )
+            assert OUTCOME_ABSENT not in line, (
+                f"{reason}: degraded to the placeholder, which is exactly how this stayed "
+                f"invisible — the card reads plausible while saying nothing."
+            )
+            assert site_slug(HOME_URL) in line, "the line must name the site that was opened"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
