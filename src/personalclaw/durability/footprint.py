@@ -354,25 +354,57 @@ def growth(samples: list[Sample]) -> Growth | None:
 
 @dataclass
 class ReclaimResult:
-    """What one reclaim pass actually moved. ``freed_bytes`` is measured, not estimated."""
+    """What one reclaim pass actually moved, with unambiguous signs.
+
+    ``net_change_bytes`` follows the footprint's direction: positive means the measured
+    footprint grew and negative means it shrank. ``freed_bytes`` and ``growth_bytes`` are
+    non-negative magnitudes derived from that net change, so a caller can never publish
+    "freed -N bytes". Per-store net changes follow the same sign convention.
+    """
 
     before_bytes: int = 0
     after_bytes: int = 0
     stores: int = 0
-    per_store: dict[str, int] = field(default_factory=dict)
+    per_store_net_change: dict[str, int] = field(default_factory=dict)
     skipped: dict[str, str] = field(default_factory=dict)
 
     @property
+    def net_change_bytes(self) -> int:
+        return self.after_bytes - self.before_bytes
+
+    @property
     def freed_bytes(self) -> int:
-        return self.before_bytes - self.after_bytes
+        return max(-self.net_change_bytes, 0)
+
+    @property
+    def growth_bytes(self) -> int:
+        return max(self.net_change_bytes, 0)
+
+    @property
+    def per_store_freed(self) -> dict[str, int]:
+        return {
+            store_id: -change
+            for store_id, change in self.per_store_net_change.items()
+            if change < 0
+        }
+
+    @property
+    def per_store_growth(self) -> dict[str, int]:
+        return {
+            store_id: change for store_id, change in self.per_store_net_change.items() if change > 0
+        }
 
     def to_dict(self) -> dict:
         return {
             "before_bytes": self.before_bytes,
             "after_bytes": self.after_bytes,
+            "net_change_bytes": self.net_change_bytes,
             "freed_bytes": self.freed_bytes,
+            "growth_bytes": self.growth_bytes,
             "stores": self.stores,
-            "per_store_freed": dict(self.per_store),
+            "per_store_net_change_bytes": dict(self.per_store_net_change),
+            "per_store_freed": self.per_store_freed,
+            "per_store_growth": self.per_store_growth,
             "skipped": dict(self.skipped),
         }
 
@@ -455,7 +487,7 @@ def reclaim(home: Path) -> ReclaimResult:
         result.before_bytes += before
         result.after_bytes += after
         if before != after:
-            result.per_store[entry.id] = before - after
+            result.per_store_net_change[entry.id] = after - before
     return result
 
 
@@ -598,6 +630,14 @@ def footprint_cmd(args) -> int:  # noqa: ANN001
                 f"Reclaimed {human_bytes(reclaimed.freed_bytes)} "
                 f"across {reclaimed.stores} database(s)."
             )
+        elif reclaimed.growth_bytes > 0:
+            print(
+                f"No net space reclaimed — measured footprint grew "
+                f"{human_bytes(reclaimed.growth_bytes)} while compacting "
+                f"{reclaimed.stores} database(s)."
+            )
+        elif reclaimed.per_store_net_change:
+            print(f"No net footprint change after compacting {reclaimed.stores} database(s).")
         else:
             print(f"Nothing to reclaim — {reclaimed.stores} database(s) already compact.")
         for store_id, reason in sorted(reclaimed.skipped.items()):

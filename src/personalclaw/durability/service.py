@@ -756,11 +756,18 @@ async def _tick_footprint_maintenance() -> None:
                 None, lambda: footprint.reclaim(home)
             )
         footprint.stamp_reclaim(home)
-        if result.freed_bytes:
+        if result.freed_bytes > 0:
             logger.info(
                 "footprint reclaim freed %s across %d store(s)",
                 footprint.human_bytes(result.freed_bytes),
                 result.stores,
+            )
+        elif result.growth_bytes > 0:
+            logger.info(
+                "footprint reclaim completed across %d store(s); no disk space freed "
+                "(measured footprint grew %s during compaction)",
+                result.stores,
+                footprint.human_bytes(result.growth_bytes),
             )
         for store_id, reason in result.skipped.items():
             logger.debug("footprint reclaim skipped %s: %s", store_id, reason)
