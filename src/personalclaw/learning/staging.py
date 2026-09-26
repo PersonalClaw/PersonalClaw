@@ -44,6 +44,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Iterator
 
+from personalclaw.config import loader as config_loader
 from personalclaw.learning.hygiene import fingerprint
 
 logger = logging.getLogger(__name__)
@@ -106,7 +107,7 @@ class StagingStore:
     """
 
     def __init__(self, base_dir: Path | str | None = None) -> None:
-        self._base = Path(base_dir) if base_dir else _default_home()
+        self._base = Path(base_dir) if base_dir else config_loader.config_dir()
         self._path = self._base / DB_FILE
         self._lock = threading.RLock()
         self._conn: sqlite3.Connection | None = None
@@ -746,15 +747,6 @@ def reset_store() -> None:
         if _INSTANCE is not None:
             _INSTANCE.close()
         _INSTANCE = None
-
-
-def _default_home() -> Path:
-    try:
-        from personalclaw.config.loader import config_dir
-
-        return Path(config_dir())
-    except Exception:  # pragma: no cover - config import is exercised elsewhere
-        return Path.home() / ".personalclaw"
 
 
 def _today() -> str:

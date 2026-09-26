@@ -5,7 +5,6 @@ import asyncio
 import json
 import logging
 import time
-from pathlib import Path
 
 from aiohttp import web
 
@@ -20,16 +19,6 @@ def _sel():
     import personalclaw.dashboard.handlers as _pkg  # noqa: F811
 
     return _pkg.sel()
-
-
-def _path_home_pclaw() -> Path:
-    """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
-    try:
-        from personalclaw.config.loader import config_dir as _cd
-
-        return _cd()
-    except Exception:
-        return Path.home() / ".personalclaw"
 
 
 # ── Script Hooks ──
@@ -154,7 +143,6 @@ async def api_agent_hooks(request: web.Request) -> web.Response:
 _HOOK_SESSION_PREFIX = "hook:"
 _HOOK_TIMEOUT_DEFAULT = 599  # ~10 min — prime to avoid thundering herd with cron intervals
 _HOOK_TIMEOUT_MAX = 3593  # ~1 hour — prime for same reason
-_HOOK_STORE_PATH = _path_home_pclaw() / "hooks.json"
 _HOOK_MESSAGE_MAX_LEN = 49_999  # ~50K chars — leave 1 char headroom
 _HOOK_MAX_CONCURRENT = 6
 _hook_semaphore = asyncio.Semaphore(_HOOK_MAX_CONCURRENT)
@@ -168,10 +156,13 @@ def _load_hook_context(hook_id: str) -> str:
     Horizon 2 (1-24h): context injected with staleness warning
     Horizon 3 (> 24h): context skipped (too stale to be useful)
     """
-    if not _HOOK_STORE_PATH.exists():
+    from personalclaw.config.loader import config_dir
+
+    store = config_dir() / "hooks.json"
+    if not store.exists():
         return ""
     try:
-        hooks = json.loads(_HOOK_STORE_PATH.read_text(encoding="utf-8"))
+        hooks = json.loads(store.read_text(encoding="utf-8"))
         entry = hooks.get(hook_id, {})
         ctx = entry.get("context_summary", "") or entry.get("summary", "")
         if not ctx:

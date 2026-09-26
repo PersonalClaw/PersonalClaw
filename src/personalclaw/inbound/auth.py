@@ -16,7 +16,6 @@ import hmac
 import logging
 import os
 import secrets
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +107,7 @@ def _forbidden_token_values(surface: str = "") -> set[str]:
     try:
         from personalclaw.config.loader import config_dir
 
-        home = Path(os.environ.get("PERSONALCLAW_HOME", config_dir()))
+        home = config_dir()
         for name in (".local_secret",):
             try:
                 raw = (home / name).read_text(encoding="utf-8").strip()

@@ -163,8 +163,6 @@ def home(monkeypatch, tmp_path):
     # Claude Code's own file is never the real one, whatever a code path under test reads.
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config"))
     home = config_loader.config_dir()
-    # `rebuild_agent_config` reads `agent._USER_DIR / "mcp.json"`, frozen at import.
-    monkeypatch.setattr("personalclaw.agent._USER_DIR", home)
     agents = home / "agents"
     agents.mkdir(parents=True, exist_ok=True)
     (agents / "personalclaw.json").write_text(

@@ -567,10 +567,10 @@ class SkillsLoader:
         results.extend(iter_skill_files(self._dir))
         if self._scoped:
             return results
-        from personalclaw.skills.marketplace import SKILL_DISCOVERY_PATHS
+        from personalclaw.skills.marketplace import skill_discovery_paths
 
         seen = {name for name, _ in results}
-        for extra_dir in SKILL_DISCOVERY_PATHS:
+        for extra_dir in skill_discovery_paths():
             if extra_dir.is_dir() and extra_dir != self._dir:
                 for name, path in iter_skill_files(extra_dir):
                     if name not in seen:
@@ -656,11 +656,11 @@ class SkillsLoader:
         """
         if self._scoped:
             return [self._dir]
-        from personalclaw.skills.marketplace import SKILL_DISCOVERY_PATHS
+        from personalclaw.skills.marketplace import skill_discovery_paths
 
         # Agent-local dir leads so an agent's own skill overrides a global one.
         agent_dirs = [self._agent_dir] if self._agent_dir is not None else []
-        return agent_dirs + [self._dir] + SKILL_DISCOVERY_PATHS
+        return agent_dirs + [self._dir] + skill_discovery_paths()
 
     def skill_file(self, name: str) -> Path | None:
         """The ``SKILL.md`` this loader resolves *name* to, or None.

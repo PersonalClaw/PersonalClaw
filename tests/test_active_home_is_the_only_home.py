@@ -1,12 +1,14 @@
-"""Every PersonalClaw-home path in `src/` follows the ACTIVE home (issue 287).
+"""The PersonalClaw home has ONE resolver, and every path in `src/` follows it (issue 287).
 
 `PERSONALCLAW_HOME` is the isolation boundary the whole project rests on: `make serve`
 defaults it to `./.dev-home`, every destructive test is required to point it at `tmp_path`,
-and `--seed` refuses to run against the real home. A site that spells
-`Path.home() / ".personalclaw"` outright opts out of all of that.
+and `--seed` refuses to run against the real home. `config.loader` answers where the home is —
+`resolve_config_dir()` (where it is) and `config_dir()` (that, created) — and a module that works
+the answer out itself opts out of every guarantee built on the resolver: the system-directory
+refusal, `~` expansion, and a test's `config_dir` isolation.
 
-**This has now been found and fixed FOUR times, in four different modules, and each fix left
-a comment instead of a check.** The comments are still in the tree:
+**This was found and fixed FOUR times, in four modules, each fix leaving a comment instead of a
+check.** The comments are still in the tree:
 
 * `agent.py:_bundled_hooks` — the bundled `postToolUse` hook wrote to a literal
   `~/.personalclaw/audit.log`, so *"every isolated-home session appends to the operator's
@@ -17,18 +19,20 @@ a comment instead of a check.** The comments are still in the tree:
   it"*.
 * `subagent_persistence.py` — a module-level `config_dir()` constant, converted to a call.
 
-And the fourth comment says out loud what kept happening:
+The ratchet this file carried next — a regex for the literal spelling that EXCUSED it when the
+enclosing function also mentioned `config_dir` — kept the shape it was meant to stop: thirteen
+`_path_home_pclaw()` helpers each answered `config_dir()` and, on any exception, fell back to
+`Path.home() / ".personalclaw"` — a different home from the one `PERSONALCLAW_HOME` named. It
+also could not see the other shape at all: ten `Path(os.environ.get("PERSONALCLAW_HOME",
+config_dir()))` readers, which bypass `~` expansion, the system-directory refusal and a
+`config_dir` patch, and `sel.py`'s own resolver, which is why code that isolated `config_dir`
+still wrote the real security log. Measured on `origin/main` before the resolver was made the
+only one: 35 sites across 30 modules.
 
-    NO `_canonical_mcp_json()` constant here: it was `Path.home() / ".personalclaw" /
-    "mcp.json"`, computed at import time, so it ignored PERSONALCLAW_HOME exactly as the
-    comment on `_canonical_mcp_json()` (above) says the old hardcode did — **the same bug,
-    fixed in one function and left in three siblings.**
-
-Measured on `origin/main` when this rail was written: five live sites still ignored the env
-var — two in `handlers/mcp.py` (including `_remove_from_agent_file`, which DELETES an entry
-from the file it resolves), two in `mcp_core.py` (one of them the only *write*, with an
-unconditional `mkdir`), and one in `mcp_discovery.py`. So a comment naming the pattern, four
-times over, did not stop the fifth. A ratchet does.
+So the rule is now absolute and the scan is an AST, not a spelling: outside `config/loader.py`
+nothing reads `$PERSONALCLAW_HOME`'s value, and nothing builds `~/.personalclaw` from the user's
+home. A rail that needs the DEFAULT home asks `default_config_dir()`; one that must know whether
+the home in use is that default asks `uses_default_home()`.
 
 ARCC was queried first (file access + infrastructure are trigger domains). The applicable
 guidance is the *isolate data from other processes* recommendation — write "to disk under a
@@ -39,197 +43,317 @@ documents is cloud infrastructure and does not apply to a local file; noted, not
 
 from __future__ import annotations
 
+import argparse
 import ast
 import pathlib
-import re
 
 import pytest
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
-#: A literal spelling of the real PersonalClaw home. Deliberately matches only
-#: `.personalclaw`: `Path.home() / ".claude.json"` and `~/.claude/agents/…` are the
-#: claude-code CLI's OWN global config, which genuinely lives at the user's real home and
-#: must not follow `PERSONALCLAW_HOME`.
-_LITERAL_HOME = re.compile(
-    r"""Path\.home\(\)\s*/\s*["']\.personalclaw|expanduser\(\s*["']~/\.personalclaw"""
-)
+#: The one module allowed to work the home out.
+_RESOLVER = "config/loader.py"
 
-#: Tokens that make a literal spelling legitimate: the enclosing function consults the env
-#: var or the canonical resolver, so the literal is the *documented fallback* rather than the
-#: answer. `config_dir()` is that resolver (env-first, with a system-directory guard).
-_RESOLVER_TOKENS = ("PERSONALCLAW_HOME", "config_dir", "workspace_root")
-
-#: How many GUARDED sites exist. A CEILING (may only shrink), and it is what makes this rail
-#: honest about its own blind spot.
-#:
-#: The classification above is a scope heuristic: it asks whether the enclosing function
-#: MENTIONS a resolver, not whether *this* expression is the fallback. Telling those apart
-#: needs real dataflow. So a second hardcode added inside a function that already resolves
-#: the home correctly elsewhere would read as "guarded" and pass — which is precisely the
-#: "fixed in one function and left in a sibling" shape this rail exists to stop, one level in.
-#:
-#: Measured by mutation: reverting `mcp_core._current_session_thread_ts` to the real home
-#: left the `config_dir` import in scope, so the heuristic alone stayed green. The count
-#: closes that hole — a NEW literal anywhere raises it, wherever it hides.
-_GUARDED_CEILING = 12
-
-#: The sites that legitimately mean the REAL home, with the reason each one does.
-#:
-#: A CEILING, not a floor: shrinking it is always allowed, and adding to it requires stating
-#: why the active home is the wrong answer for that site. Both entries below want the real
-#: home precisely BECAUSE it is the real one — they exist to protect it.
-_REAL_HOME_IS_CORRECT: dict[str, str] = {
-    "seed.py": (
-        "`real_home()` exists so `--seed` can REFUSE to seed the operator's real home. "
-        "Resolving the active home here would defeat the guard it implements."
-    ),
-    "cli.py": (
-        "`main_home` is compared AGAINST the active home to detect that a command is "
-        "pointed at the real installation. It is the comparand, not a destination."
-    ),
-}
+_ENV = "PERSONALCLAW_HOME"
+_HOME_NAME = ".personalclaw"
 
 
-def _sites() -> list[tuple[str, int, str, bool]]:
-    """Every literal-home spelling in `src/`, with whether its scope resolves the home.
+def _text(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
 
-    Comments and docstrings are excluded: this rail must red on *code*, and the four
-    historical comments quoted above all contain the literal pattern they warn about. A
-    scanner that read those as violations would be unrunnable, and one that "fixed" them by
-    deleting the explanation would erase the record of why the rail exists.
+
+def _call_name(node: ast.Call) -> str:
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    if isinstance(func, ast.Name):
+        return func.id
+    return ""
+
+
+def _reads_the_variable(node: ast.AST, aliases: frozenset[str]) -> bool:
+    """``os.environ.get(…)``, ``os.getenv(…)`` or ``os.environ[…]`` of the variable: its VALUE.
+
+    Setting it (a child process's env) and testing whether it is set (``in``) are not reads, and
+    neither can produce a path."""
+
+    def names_it(arg: ast.AST) -> bool:
+        return _text(arg) == _ENV or (isinstance(arg, ast.Name) and arg.id in aliases)
+
+    if isinstance(node, ast.Call) and _call_name(node) in ("get", "getenv") and node.args:
+        return names_it(node.args[0])
+    if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
+        return names_it(node.slice)
+    return False
+
+
+def _user_home(node: ast.AST) -> bool:
+    """An expression answering the USER's home directory: ``Path.home()``, ``expanduser(…)``,
+    ``$HOME``."""
+    if isinstance(node, ast.Call):
+        name = _call_name(node)
+        if name in ("home", "expanduser"):
+            return True
+        if name in ("get", "getenv") and node.args and _text(node.args[0]) == "HOME":
+            return True
+    return isinstance(node, ast.Subscript) and _text(node.slice) == "HOME"
+
+
+def _home_name(node: ast.AST) -> bool:
+    text = _text(node)
+    if text is not None:
+        return text == _HOME_NAME or text.startswith(f"~/{_HOME_NAME}")
+    return (isinstance(node, ast.Name) and node.id == "CONFIG_DIR_NAME") or (
+        isinstance(node, ast.Attribute) and node.attr == "CONFIG_DIR_NAME"
+    )
+
+
+def resolutions(source: str) -> list[tuple[int, str]]:
+    """Every place ``source`` works the home out itself, as ``(line, what)``.
+
+    Two shapes, which between them are every independent resolver the census found:
+
+    * **reading the variable** — including through a module-level alias
+      (``HOME_ENV_VAR = "PERSONALCLAW_HOME"`` in ``llm/scripted.py``);
+    * **building the default home** — the user's home and the home's name in ONE expression.
+      A skip-list naming ``.personalclaw`` directories, or a project's own ``.personalclaw/``
+      config dir, has the name without the user's home, and is not a resolver.
+
+    Comments are not in the AST and a docstring is a bare string statement, so an explanation
+    that spells the old code out is never mistaken for it.
     """
-    found: list[tuple[str, int, str, bool]] = []
+    tree = ast.parse(source)
+    aliases: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and _text(node.value) == _ENV:
+            aliases |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            if _text(node.value) == _ENV and isinstance(node.target, ast.Name):
+                aliases.add(node.target.id)
+    frozen_aliases = frozenset(aliases)
+    found: set[tuple[int, str]] = set()
+    composed: list[ast.AST] = []
+    for node in ast.walk(tree):
+        if _reads_the_variable(node, frozen_aliases):
+            found.add((node.lineno, f"reads ${_ENV}"))
+        if isinstance(node, (ast.BinOp, ast.Call)):
+            inner = list(ast.walk(node))
+            if any(_user_home(n) for n in inner) and any(_home_name(n) for n in inner):
+                composed.append(node)
+    # The innermost expression only: `str(Path.home() / ".personalclaw")` is one site, not two.
+    for node in composed:
+        below = set(ast.walk(node)) - {node}
+        if not any(other in below for other in composed):
+            found.add((node.lineno, f"builds ~/{_HOME_NAME}"))
+    return sorted(found)
+
+
+def _tree_resolutions() -> dict[str, list[tuple[int, str]]]:
+    out: dict[str, list[tuple[int, str]]] = {}
     for path in sorted(SRC.rglob("*.py")):
-        text = path.read_text(encoding="utf-8")
-        if not _LITERAL_HOME.search(text):
-            continue
-        tree = ast.parse(text)
-        lines = text.splitlines()
-        # Every line covered by a docstring, so a warning ABOUT the pattern is not a use.
-        doc_lines: set[int] = set()
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Expr)
-                and isinstance(node.value, ast.Constant)
-                and isinstance(node.value.value, str)
-            ):
-                doc_lines.update(range(node.lineno, (node.end_lineno or node.lineno) + 1))
-        funcs = [
-            n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-        ]
-        for match in _LITERAL_HOME.finditer(text):
-            lineno = text[: match.start()].count("\n") + 1
-            line = lines[lineno - 1]
-            if lineno in doc_lines or line.lstrip().startswith("#"):
-                continue
-            owner = None
-            for fn in funcs:
-                if fn.lineno <= lineno <= (fn.end_lineno or fn.lineno):
-                    if owner is None or fn.lineno > owner.lineno:
-                        owner = fn
-            scope = (ast.get_source_segment(text, owner) if owner else text) or ""
-            resolves = any(tok in scope for tok in _RESOLVER_TOKENS)
-            found.append((str(path.relative_to(SRC)), lineno, line.strip(), resolves))
-    return found
+        rel = path.relative_to(SRC).as_posix()
+        hits = resolutions(path.read_text(encoding="utf-8"))
+        if hits:
+            out[rel] = hits
+    return out
 
 
-def test_no_module_resolves_the_personalclaw_home_by_hardcoding_it():
-    """🪤 The ratchet. A literal real-home spelling is allowed only when its own scope
-    consults `PERSONALCLAW_HOME` / `config_dir()` first — i.e. it is the fallback — or when
-    the module is on the allowlist because the real home is genuinely what it means.
-
-    A new unguarded site fails here with its own file and line, which is the thing four
-    prose comments could not do.
-    """
+def test_no_module_but_the_loader_resolves_the_home():
+    """🪤 The rail. A second resolver fails here with its file and line."""
     offenders = [
-        f"{path}:{lineno}  {code}"
-        for path, lineno, code, resolves in _sites()
-        if not resolves and path not in _REAL_HOME_IS_CORRECT
+        f"{rel}:{line}  {what}"
+        for rel, hits in _tree_resolutions().items()
+        if rel != _RESOLVER
+        for line, what in hits
     ]
     assert offenders == [], (
-        "these sites resolve the PersonalClaw home by hardcoding the real one, so they "
-        "ignore PERSONALCLAW_HOME and reach outside the active home:\n  "
+        "these sites work out the PersonalClaw home themselves instead of asking "
+        "`config.loader`, so they can disagree with it — about `~`, about a refused system "
+        "directory, and about a test's `config_dir` isolation:\n  "
         + "\n  ".join(offenders)
-        + "\n\nUse `config_dir()` (or `agents_dir()`/`_canonical_mcp_json()` where the "
-        "codebase already has a resolver for that specific file). If the REAL home is "
-        "genuinely what you mean, add the module to `_REAL_HOME_IS_CORRECT` with a reason."
+        + "\n\nUse `config_dir()` (or `resolve_config_dir()` where creating the home would be "
+        "wrong). A rail that must refuse the DEFAULT home asks `uses_default_home()`."
     )
 
 
-def test_the_guarded_population_only_shrinks():
-    """🪤 The half the scope heuristic cannot see (see `_GUARDED_CEILING`).
+def test_the_scan_sees_the_resolvers_own_rule():
+    """🪤 Vacuity floor, on real code: the loader DOES read the variable and DOES build the
+    default home — that is its job — so a scan that stopped seeing either would find them gone
+    here, instead of reporting a clean tree forever."""
+    kinds = {what for _, what in _tree_resolutions().get(_RESOLVER, [])}
+    assert kinds == {f"reads ${_ENV}", f"builds ~/{_HOME_NAME}"}, kinds
 
-    A new hardcode inside a function that already calls `config_dir()` somewhere else passes
-    the classifier. It cannot pass this: the total goes up.
 
-    Lowering the ceiling when a site is genuinely removed is always correct. Raising it means
-    a literal real-home spelling was ADDED, which needs the argument written down, not a
-    bumped number.
-    """
-    guarded = [f"{path}:{lineno}  {code}" for path, lineno, code, resolves in _sites() if resolves]
-    assert len(guarded) <= _GUARDED_CEILING, (
-        f"{len(guarded)} guarded literal-home sites, ceiling is {_GUARDED_CEILING}. A new one "
-        "was added inside a function that already resolves the home, which the classifier "
-        "cannot distinguish from a fallback:\n  " + "\n  ".join(guarded)
+@pytest.mark.parametrize(
+    "code",
+    [
+        'x = Path(os.environ.get("PERSONALCLAW_HOME", config_dir()))',
+        'x = os.getenv("PERSONALCLAW_HOME")',
+        'x = os.environ["PERSONALCLAW_HOME"]',
+        'HOME_ENV_VAR = "PERSONALCLAW_HOME"\nx = os.environ.get(HOME_ENV_VAR, "").strip()',
+        'x = Path.home() / ".personalclaw"',
+        'x = _P.home() / ".personalclaw" / "sessions"',
+        "x = (Path.home() / CONFIG_DIR_NAME).resolve()",
+        'x = os.path.expanduser("~/.personalclaw/workspace")',
+        'x = Path("~/.personalclaw").expanduser()',
+        'x = os.path.join(os.path.expanduser("~"), ".personalclaw")',
+        'x = Path(os.environ["HOME"]) / ".personalclaw"',
+    ],
+)
+def test_the_scan_finds_every_shape_the_census_found(code):
+    assert resolutions(code), f"the scan missed a resolver: {code!r}"
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        'chosen = "PERSONALCLAW_HOME" in os.environ',
+        'env = {**os.environ, "PERSONALCLAW_HOME": str(config_dir())}',
+        'env["PERSONALCLAW_HOME"] = str(home)',
+        'f = Path(project) / ".personalclaw" / "projection_rules.json"',
+        'SKIP = frozenset({".git", "node_modules", ".personalclaw"})',
+        'x = Path.home() / ".agents" / "skills"',
+        'x = Path.home() / ".claude.json"',
+        'x = Path.home() / ".claude" / "agents"',
+        'def f():\n    """Was `Path.home() / ".personalclaw"`, frozen at import."""\n',
+    ],
+)
+def test_the_scan_passes_what_does_not_resolve_the_home(code):
+    """The claude-code CLI's own config (``~/.claude.json``, ``~/.claude/agents``) genuinely
+    lives at the user's real home and must NOT follow ``PERSONALCLAW_HOME`` — a rail that forced
+    it into the active home would break MCP sync against that backend."""
+    assert resolutions(code) == [], f"not a resolver, but the scan flagged it: {code!r}"
+
+
+# ── the rails that ask "is this the default home?" ────────────────────────────────────────
+#
+# A system directory is what `resolve_config_dir()` REFUSES: the process runs on the default home
+# instead. Every rail below re-derived the home itself and so took the override at its word — it
+# let the operation through while the product ran on `~/.personalclaw`. `/usr/<name>` is used
+# because it is refused on every platform (`/etc` resolves to `/private/etc` on macOS, which the
+# resolver does not refuse) and cannot be written by the test runner.
+
+_REFUSED = "/usr/pclaw-rail-probe-home"
+
+
+def test_yolo_is_refused_when_the_override_is_a_directory_the_home_cannot_be(monkeypatch, capsys):
+    from personalclaw.cli import _resolve_gateway_args
+
+    monkeypatch.setenv("PERSONALCLAW_HOME", _REFUSED)
+    ns = argparse.Namespace(
+        command="gateway",
+        headless=False,
+        no_crons=False,
+        seed=None,
+        seed_replace=False,
+        no_open=False,
+        port=None,
+        json_ready=False,
+        approval="yolo",
+        test_mode=False,
+    )
+    with pytest.raises(SystemExit) as exc:
+        _resolve_gateway_args(ns)
+    assert exc.value.code == 2
+    assert "main gateway home" in capsys.readouterr().err
+
+
+def test_seed_refuses_an_override_the_home_cannot_be(monkeypatch):
+    """Before: the rail compared the override with the main home, found them different, and
+    went on to ``copytree`` into ``/usr`` — while the gateway it seeded for ran on the main home.
+    ``copytree``/``rmtree`` are replaced so no run of this test can write anywhere."""
+    import personalclaw.seed as seed_mod
+
+    writes: list[tuple] = []
+    monkeypatch.setattr(seed_mod.shutil, "copytree", lambda *a, **k: writes.append(a))
+    monkeypatch.setattr(seed_mod.shutil, "rmtree", lambda *a, **k: writes.append(a))
+    monkeypatch.setenv("PERSONALCLAW_HOME", _REFUSED)
+    with pytest.raises(seed_mod.SeedError) as excinfo:
+        seed_mod.seed("empty", replace=True)
+    assert excinfo.value.rail == seed_mod.SeedError.RAIL_MAIN_HOME
+    assert writes == []
+
+
+def test_an_ablation_overlay_refuses_an_override_the_home_cannot_be(monkeypatch):
+    from personalclaw.evals.overlay import OverlayRefusedError, throwaway_home
+
+    monkeypatch.setenv("PERSONALCLAW_HOME", _REFUSED)
+    with pytest.raises(OverlayRefusedError):
+        throwaway_home()
+
+
+def test_the_scripted_provider_refuses_an_override_the_home_cannot_be(tmp_path, monkeypatch):
+    from personalclaw.llm.scripted import (
+        SCRIPT_ENV_VAR,
+        ScriptedProviderRefused,
+        resolve_script_path,
     )
 
-
-def test_the_allowlist_has_no_stale_entries():
-    """A ceiling that keeps entries for modules that no longer have a site is how an
-    allowlist stops describing the code. Each entry must still be earning its exemption."""
-    paths = {path for path, _, _, _ in _sites()}
-    stale = sorted(set(_REAL_HOME_IS_CORRECT) - paths)
-    assert stale == [], f"allowlisted modules with no literal-home site left: {stale}"
-
-
-def test_every_allowlist_entry_states_a_reason():
-    """The exemption is the reason, not the entry. A bare path would let the next author
-    add one without arguing that the active home is the wrong answer."""
-    for module, reason in _REAL_HOME_IS_CORRECT.items():
-        assert len(reason) > 40, f"{module}: exemption needs a real reason, got {reason!r}"
+    script = tmp_path / "script.json"
+    script.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv(SCRIPT_ENV_VAR, str(script))
+    monkeypatch.setenv("PERSONALCLAW_HOME", _REFUSED)
+    with pytest.raises(ScriptedProviderRefused):
+        resolve_script_path()
 
 
-def test_the_scanner_actually_finds_sites():
-    """🪤 Vacuity floor, and the one that matters most here.
+def test_the_secret_path_guard_protects_the_home_in_use(monkeypatch):
+    """The guard listed ``$PERSONALCLAW_HOME/<secret>`` for whatever the variable said — so with
+    an override the home cannot be, it guarded a directory nothing used and left the default
+    home's credentials to the other tiers."""
+    from personalclaw.security import _pclaw_home_sensitive_paths
 
-    A ratchet whose scanner silently matches nothing is worse than no ratchet: it reports
-    green forever while the class returns. A regex typo, a moved `src/` layout, or an
-    `ast.parse` failure would all present as "no offenders". So the scan must keep finding
-    the *guarded* sites, which are real and numerous.
-    """
-    sites = _sites()
-    assert len(sites) >= 10, f"the scanner found only {len(sites)} sites — it has gone blind"
-    assert any(resolves for *_, resolves in sites), "no guarded site found; classifier broke"
+    monkeypatch.setenv("PERSONALCLAW_HOME", _REFUSED)
+    guarded = _pclaw_home_sensitive_paths()
+    in_use = str(pathlib.Path.home() / ".personalclaw")  # where the resolver sends a refused one
+    assert guarded, "the guard lists no paths"
+    assert all(p.startswith(in_use + "/") for p in guarded), guarded
 
 
-def test_the_scanner_ignores_the_historical_comments_and_docstrings():
-    """The fix comments quoted in this module's docstring contain the literal pattern they
-    warn about. Excluding comments and docstrings is what lets the codebase keep explaining
-    itself without the rail treating the explanation as the offence.
+# ── one answer, wherever it is asked ──────────────────────────────────────────────────────
 
-    🪤 Asserted against modules that DEMONSTRABLY carry a matching literal in prose, which is
-    the second version of this test. The first asserted `agent.py` reported no sites — true,
-    but for an unrelated reason (its docstring writes `~/.personalclaw/` without
-    `expanduser(`, so the regex never matched it). It passed with the exclusion deleted,
-    proving nothing. Found by mutation.
-    """
-    sites = _sites()
 
-    # `seed.py` has the literal in BOTH its docstring (`real_home`'s, explaining the rule)
-    # and its code. Exactly one site — the code — must be reported.
-    seed = [s for s in sites if s[0] == "seed.py"]
-    assert len(seed) == 1, f"seed.py should report only its code line, got {seed}"
-    assert "return" in seed[0][2], f"the reported seed.py line is not the code: {seed[0]}"
+def test_the_security_log_follows_a_config_dir_isolation(tmp_path, monkeypatch):
+    """The defect as reported: isolating ``config_dir`` did not move the security log, because
+    ``sel.py`` read ``PERSONALCLAW_HOME`` itself. The variable is set to a DIFFERENT directory so
+    the two answers are distinguishable."""
+    from personalclaw.sel import SecurityEventLog
 
-    # `handlers/mcp.py`'s comment spells out the old hardcode across two lines. Neither is a
-    # site now that both real ones are fixed.
-    mcp_text = (SRC / "dashboard" / "handlers" / "mcp.py").read_text(encoding="utf-8")
-    assert 'Path.home() / ".personalclaw" /' in mcp_text, (
-        "the comment recording the original bug was deleted — it is the record of why this "
-        "rail exists"
-    )
-    assert [s for s in sites if s[0] == "dashboard/handlers/mcp.py"] == []
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "the-variable"))
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path / "isolated")
+    (tmp_path / "isolated").mkdir()
+    assert SecurityEventLog()._dir == tmp_path / "isolated"
+
+
+@pytest.mark.parametrize(
+    "reader",
+    [
+        "personalclaw.session_search:db_path",
+        "personalclaw.inbound.clients:clients_path",
+        "personalclaw.inbound.audit:_audit_path",
+        "personalclaw.codegraph.index:default_db_path",
+        "personalclaw.snapshot:_default_snapshot_dir",
+    ],
+)
+def test_a_home_reader_answers_what_config_dir_answers(reader, tmp_path, monkeypatch):
+    """``PERSONALCLAW_HOME=~/…`` as a service file or a quoted shell writes it: ``config_dir()``
+    expands it, and every reader that went ``Path(os.environ.get(…))`` instead used a directory
+    literally named ``~`` under whatever the working directory was."""
+    import importlib
+
+    from personalclaw.config.loader import config_dir
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PERSONALCLAW_HOME", "~/iso-home")
+    monkeypatch.chdir(tmp_path)
+    module, _, name = reader.partition(":")
+    fn = getattr(importlib.import_module(module), name)
+    answer = pathlib.Path(fn("workspace") if name == "default_db_path" else fn())
+    assert config_dir() == tmp_path / "iso-home"
+    assert answer.is_absolute() and answer.is_relative_to(tmp_path / "iso-home"), answer
+    assert not (tmp_path / "~").exists(), "a directory named `~` appeared in the cwd"
 
 
 # ── the five sites, driven ────────────────────────────────────────────────────────────────
@@ -250,14 +374,9 @@ def sealed_home(tmp_path, monkeypatch):
     instead of preventing it.
 
     Patching only `config_dir` is not enough for exactly the sites this module targets: the
-    bug being tested IS "ignores `config_dir`". So the escape hatch has to be sealed too.
-
-    The env var is what is set, not the resolver function — because several modules
-    deliberately carry their OWN env-var-first resolver rather than importing `config_dir`
-    (`sel.py`, `security.py`). Patching `loader.config_dir` alone left `sel()` — which
-    `_call_tool_inner` calls to audit every invocation — resolving through `Path.home()` and
-    creating `.personalclaw` under the fake user. Setting `PERSONALCLAW_HOME` moves all of
-    them together, which is the isolation the product actually ships.
+    bug being tested IS "ignores `config_dir`". So the escape hatch has to be sealed too, and
+    the env var is what is set — it is the isolation the product actually ships, and it moves
+    every reader of the home at once.
     """
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     monkeypatch.setattr(pathlib.Path, "home", classmethod(lambda cls: tmp_path / "fake-user"))
@@ -330,15 +449,3 @@ def test_mcp_discovery_reads_the_active_homes_agent_config(sealed_home, monkeypa
     assert "only-in-temp-home" in merged.get(
         "mcpServers", {}
     ), "discovery did not read the active home's installed agent config"
-
-
-def test_the_claude_cli_paths_are_not_swept_up():
-    """`~/.claude.json` and `~/.claude/agents/…` are the claude-code CLI's own global
-    config. They genuinely live at the user's real home and must NOT follow
-    PERSONALCLAW_HOME — a rail that forced them into the active home would break MCP sync
-    against that backend. Asserted so a future widening of the pattern has to notice.
-    """
-    mcp_py = (SRC / "dashboard" / "handlers" / "mcp.py").read_text(encoding="utf-8")
-    assert 'Path.home() / ".claude.json"' in mcp_py
-    assert not _LITERAL_HOME.search('Path.home() / ".claude.json"')
-    assert not _LITERAL_HOME.search('Path.home() / ".claude" / "agents"')

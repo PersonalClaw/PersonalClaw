@@ -400,7 +400,6 @@ def test_the_mcp_edit_form_does_not_turn_another_owners_key_into_plaintext(home,
     """Keeping a stored variable and marking it plain moves its value into ``mcp.json``. For a
     reference to another owner's key, that wrote the other owner's token in plaintext into core's
     file. It is refused, and the file is left as it was."""
-    monkeypatch.setattr("personalclaw.agent._USER_DIR", home)
     (home / "agents").mkdir(parents=True, exist_ok=True)
     (home / "agents" / "personalclaw.json").write_text(
         json.dumps({"mcpServers": {}, "tools": [], "allowedTools": []}), encoding="utf-8"

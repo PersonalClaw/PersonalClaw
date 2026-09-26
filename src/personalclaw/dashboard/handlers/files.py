@@ -21,6 +21,7 @@ from aiohttp.client_exceptions import ClientConnectionResetError
 from aiohttp.multipart import BodyPartReader
 
 from personalclaw.cancellation import kill_timed_out
+from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_download import attachment_disposition
@@ -176,16 +177,6 @@ def _app_path_refusal_message(raw: str, *, tool: str, reach: str = _EXPLORER_REA
     except Exception:
         logger.warning("SEL audit failed for a refused app file access", exc_info=True)
     return f"{reach} — not {raw}"
-
-
-def _path_home_pclaw() -> Path:
-    """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
-    try:
-        from personalclaw.config.loader import config_dir as _cd
-
-        return _cd()
-    except Exception:
-        return Path.home() / ".personalclaw"
 
 
 def _in_app_data_folder(app_name: str, path: str) -> bool:
@@ -817,7 +808,7 @@ def _screenshot_dir() -> Path:
     begin with, the capture handler created the developer's real home just by resolving
     this path — the suite's real-home rail caught it as `dir-entries-changed screenshots`.
     """
-    return _path_home_pclaw() / "screenshots"
+    return config_loader.config_dir() / "screenshots"
 
 
 def _upload_dir() -> Path:
@@ -827,7 +818,7 @@ def _upload_dir() -> Path:
     constants sat on adjacent lines, so leaving one frozen would have left the same bug
     waiting for whichever test writes an upload first.
     """
-    return _path_home_pclaw() / "uploads"
+    return config_loader.config_dir() / "uploads"
 
 
 _MAX_UPLOAD_FILES = 20  # max files per request
@@ -3195,10 +3186,10 @@ async def api_file_search(request: web.Request) -> web.Response:
             ws = str(workspace_root())
             if os.path.isdir(ws) and ws not in search_roots:
                 search_roots.append(ws)
-        except Exception:
-            pc_workspace = os.path.expanduser("~/.personalclaw/workspace")
-            if os.path.isdir(pc_workspace):
-                search_roots.append(pc_workspace)
+        except (OSError, ValueError):
+            # No guessed fallback: `~/.personalclaw/workspace` is the MEMORY root, not the
+            # workspace root, and it ignored `PERSONALCLAW_HOME` besides.
+            logger.warning("file search: the workspace root cannot be resolved", exc_info=True)
 
     # Filter out sensitive roots
     safe_roots: list[str] = []

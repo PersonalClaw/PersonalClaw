@@ -106,15 +106,12 @@ async def _client(tmp_path: Path):
 
     # 🪤 A multi-instance TOOL fake reaches `_rebuild_agent_config_safe()`: every
     # `_create()` call in this file runs `instance_routes._refresh_multi_instance_provider_safe`
-    # → `rebuild_agent_config()`, which writes through `agent.agents_dir()` / `agent._USER_DIR`,
-    # module-level constants frozen at import (`agent.py:93`/`:135`). Patching `config_dir`
-    # alone leaves them pointing at the real home, so the write escapes tmp_path and the
-    # real-home guard refuses it and fails the test (`agents/personalclaw.json`).
+    # → `rebuild_agent_config()`, which writes through `agent.agents_dir()` and reads the home
+    # per call, so patching `config_dir` keeps the write inside tmp_path.
     with (
         patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
         patch("personalclaw.providers.registry.get_provider_registry", lambda: _FakeRegistry()),
         patch("personalclaw.agent.agents_dir", lambda: tmp_path / "agents"),
-        patch("personalclaw.agent._USER_DIR", tmp_path),
     ):
         app = web.Application()
         instance_routes.register_instance_routes(app)

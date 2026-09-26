@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 from aiohttp import web
 
+from personalclaw.config import loader as config_loader
 from personalclaw.dashboard.approval_state import APP_OWN_APPROVAL_REFUSAL
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.history import SEARCH_MIN_CHARS
@@ -184,18 +185,6 @@ async def api_sessions_search(request: web.Request) -> web.Response:
             snippet, _ = _h.redact_credentials(snippet)
             s["snippet"] = snippet
     return web.json_response({"sessions": sessions, "source": source})
-
-
-def _path_home_pclaw():
-    """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
-    try:
-        from personalclaw.config.loader import config_dir as _cd
-
-        return _cd()
-    except Exception:
-        from pathlib import Path as _P
-
-        return _P.home() / ".personalclaw"
 
 
 async def api_session_detail(request: web.Request) -> web.Response:
@@ -501,7 +490,7 @@ async def api_session_tool_policy(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid agent name"}, status=400)
 
     # Read agent config from disk
-    agent_path = _path_home_pclaw() / "agents" / f"{agent_name}.json"
+    agent_path = config_loader.config_dir() / "agents" / f"{agent_name}.json"
     if not agent_path.is_file():
         return web.json_response({})
 

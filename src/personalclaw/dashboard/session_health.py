@@ -13,7 +13,6 @@ sees no interruption.
 """
 
 import datetime as _dt
-import os
 import re
 import time
 from pathlib import Path
@@ -81,8 +80,9 @@ def compute_session_health(
 ) -> dict[str, dict]:
     """Return ``{session_name: {reason, since_ts}}`` for sessions flagged as stalled."""
     if log_path is None:
-        home = Path(os.environ.get("PERSONALCLAW_HOME") or Path.home() / ".personalclaw")
-        log_path = home / "gateway.log"
+        from personalclaw.config.loader import config_dir
+
+        log_path = config_dir() / "gateway.log"
     if not log_path.exists():
         return {}
     if now is None:

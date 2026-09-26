@@ -20,18 +20,6 @@ def config_dir():
     return config_loader.config_dir()
 
 
-def _path_home_pclaw():
-    """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
-    try:
-        from personalclaw.config.loader import config_dir as _cd
-
-        return _cd()
-    except Exception:
-        from pathlib import Path as _P
-
-        return _P.home() / ".personalclaw"
-
-
 logger = logging.getLogger(__name__)
 
 _SESSION_MAP_FILE = "session_map.json"
@@ -52,7 +40,7 @@ def transcript_path(session_id: str):
     sid = (session_id or "").strip()
     if not sid or "/" in sid or "\\" in sid or sid.startswith("."):
         return None
-    path = _path_home_pclaw() / "sessions" / f"{sid}.jsonl"
+    path = config_loader.config_dir() / "sessions" / f"{sid}.jsonl"
     return path if path.exists() else None
 
 

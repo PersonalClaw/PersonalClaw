@@ -835,8 +835,7 @@ def seeded(home, ws, monkeypatch):
     """Two commits on the config root, reachable through `active_home()`.
 
     `config_dir` is pinned as well as the env var: the handlers resolve the home
-    through `service.active_home()`, and a route test that only sets the env var
-    would still let a fallback read the developer's real home.
+    through `service.active_home()`, which is `config_dir()`.
     """
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: home)
     root = _root(home, ws, "config")

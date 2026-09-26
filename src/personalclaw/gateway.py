@@ -4604,7 +4604,7 @@ class GatewayOrchestrator:
                 "port": self._dashboard_port,
                 "token": ready_token,
                 "pid": os.getpid(),
-                "home": os.environ.get("PERSONALCLAW_HOME", str(Path.home() / ".personalclaw")),
+                "home": str(config_dir()),
             }
             print(f"PERSONALCLAW_READY:{json.dumps(ready_payload)}", flush=True)
 

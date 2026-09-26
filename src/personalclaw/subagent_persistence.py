@@ -26,18 +26,6 @@ def config_dir() -> Path:
     return config_loader.config_dir()
 
 
-def _path_home_pclaw():
-    """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
-    try:
-        from personalclaw.config.loader import config_dir as _cd
-
-        return _cd()
-    except Exception:
-        from pathlib import Path as _P
-
-        return _P.home() / ".personalclaw"
-
-
 logger = logging.getLogger(__name__)
 
 
@@ -264,7 +252,7 @@ def _cleanup_session_files_sync(session_id: str) -> None:
     if not session_id or session_id in (".", ".."):
         return
     try:
-        sessions_dir = _path_home_pclaw() / "sessions"
+        sessions_dir = config_loader.config_dir() / "sessions"
         for suffix in (".json", ".jsonl"):
             target = sessions_dir / f"{session_id}{suffix}"
             if not _is_safe_path(target, sessions_dir):

@@ -28,8 +28,9 @@ because "we checked and it is correctly silent" and "we forgot" look identical i
 report that only lists non-zero numbers.
 
 The SEL these tests read is the per-test temp one — ``tests/conftest.py`` reroutes
-``sel._default_dir`` and resets the singleton, so ``sel().recent()`` sees only events this
-test produced. A leak into the real ``~/.personalclaw`` would fail conftest's own rail.
+``config_dir`` (where the SEL lives) and resets the singleton, so ``sel().recent()`` sees
+only events this test produced. A leak into the real ``~/.personalclaw`` would fail
+conftest's own rail.
 """
 
 from __future__ import annotations

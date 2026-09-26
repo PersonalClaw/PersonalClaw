@@ -138,7 +138,7 @@ def test_residual_jsonl_backfill_is_idempotent(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     # migrate_from_markdown resolves the JSONL under the resolved config home.
-    monkeypatch.setattr("personalclaw.vector_memory._path_home_pclaw", lambda: home)
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: home)
     (home / "lessons.jsonl").write_text(
         json.dumps({"ts": "seed", "rule": "use snake_case", "category": "tool"})
         + "\n"

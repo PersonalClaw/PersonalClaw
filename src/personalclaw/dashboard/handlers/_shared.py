@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from personalclaw.config import loader as config_loader
 from personalclaw.dashboard.state import DashboardState
 
 logger = logging.getLogger(__name__)
@@ -64,7 +65,7 @@ def _get_skills(state: DashboardState):
 
 def _resolve_skill_path(name: str) -> Path | None:
     """Find SKILL.md for a marketplace skill by name (supports nested paths)."""
-    skills_dir = _path_home_pclaw() / "skills"
+    skills_dir = config_loader.config_dir() / "skills"
     for pattern in (f"*/{name}/SKILL.md", f"packages/*/skills/*/{name}/SKILL.md"):
         for p in skills_dir.glob(pattern):
             return p
@@ -173,18 +174,6 @@ def _blocks_reads_session(state: DashboardState, request: "Any") -> bool:
     return False
 
 
-def _path_home_pclaw():
-    """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
-    try:
-        from personalclaw.config.loader import config_dir as _cd
-
-        return _cd()
-    except Exception:
-        from pathlib import Path as _P
-
-        return _P.home() / ".personalclaw"
-
-
 def _session_has_persisted_history(session_name: str) -> bool:
     """Return True iff the session has a JSONL file in ~/.personalclaw/sessions/.
 
@@ -223,7 +212,7 @@ def _session_has_persisted_history(session_name: str) -> bool:
         # path parsing, and leading dots that could target hidden
         # per-directory files outside the intended session namespace.
         return False
-    sess_dir = _path_home_pclaw() / "sessions"
+    sess_dir = config_loader.config_dir() / "sessions"
     if not sess_dir.exists():
         return False
     # Match the resolution order used by the channel app's interactions

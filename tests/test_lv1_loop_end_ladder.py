@@ -43,7 +43,7 @@ def home(monkeypatch, tmp_path):
     monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: tmp_path / "config.json")
     import personalclaw.skills.marketplace as mp
 
-    monkeypatch.setattr(mp, "SKILL_DISCOVERY_PATHS", [])
+    monkeypatch.setattr(mp, "skill_discovery_paths", lambda: [])
     return tmp_path
 
 

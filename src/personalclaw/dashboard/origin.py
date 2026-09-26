@@ -445,6 +445,18 @@ def format_dashboard_urls(
 # ---------------------------------------------------------------------------
 
 
+def _runs_on_a_dev_home() -> bool:
+    """Whether this gateway runs on a home other than the owner's default one — a dev or
+    isolated home, where a local frontend dev server is expected. An unresolvable home answers
+    ``False``: an origin allowlist fails closed."""
+    from personalclaw.config.loader import uses_default_home
+
+    try:
+        return not uses_default_home()
+    except OSError:
+        return False
+
+
 def build_allowed_origins(
     port: int, local_only: bool, configured_host: str = "", dashboard_url: str = ""
 ) -> set[str]:
@@ -459,7 +471,7 @@ def build_allowed_origins(
         f"http://localhost:{port}",
         f"http://personalclaw.localhost:{port}",
     }
-    if os.environ.get("PERSONALCLAW_HOME"):
+    if _runs_on_a_dev_home():
         origins.add("http://localhost:3000")
     if configured_host:
         origins.add(f"http://{configured_host}:{port}")
