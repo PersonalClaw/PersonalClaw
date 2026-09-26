@@ -805,14 +805,18 @@ async def test_a_bad_days_parameter_is_a_400_not_a_500(home, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_both_endpoints_404_when_learning_is_disabled(home, tmp_path, monkeypatch):
-    """Learning off ⇒ ABSENT, not a page of honest-looking zeros."""
+async def test_learning_off_answers_the_read_and_refuses_the_delivery(home, tmp_path, monkeypatch):
+    """Learning off ⇒ the read answers the decided ``{"enabled": false}`` (not a page of
+    honest-looking zeros, and not a 404 the Learning page logged on every visit), while the
+    delivery — a model call and two durable writes — still refuses."""
     import personalclaw.dashboard.handlers.learning as mod
 
     state, _vs = _state(tmp_path)
     monkeypatch.setattr(mod, "_enabled", lambda: False)
 
-    assert (await mod.api_learning_identity_report(_req(state))).status == 404
+    read = await mod.api_learning_identity_report(_req(state))
+    assert read.status == 200
+    assert json.loads(read.body) == {"enabled": False}
     assert (await mod.api_learning_identity_report_deliver(_req(state))).status == 404
 
 

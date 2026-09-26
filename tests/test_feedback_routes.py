@@ -102,12 +102,26 @@ class TestRecordRoute:
         assert rec.source_app == "weather"
 
     @pytest.mark.asyncio
-    async def test_kill_switch_404s_every_route(self, isolated):
+    async def test_kill_switch_answers_the_reads_and_refuses_the_writes(self, isolated):
+        """The two reads a page makes to render answer the decided ``{"enabled": false}`` — as
+        404s, every Settings visit and every card with thumbs logged a failed request for a switch
+        that was merely off. The three writes still refuse: nothing lands on a switched-off
+        surface."""
         (isolated / "config.json").write_text(json.dumps({"feedback": {"enabled": False}}))
         async with TestClient(TestServer(_make_app())) as c:
-            assert (await c.post("/api/feedback", json=BODY)).status == 404
-            assert (await c.get("/api/feedback/target/inbox_classification/x")).status == 404
-            assert (await c.get("/api/feedback/producers")).status == 404
+            for path in ("/api/feedback/target/inbox_classification/x", "/api/feedback/producers"):
+                resp = await c.get(path)
+                assert resp.status == 200, path
+                assert await resp.json() == {"enabled": False}, path
+            producer = {"producer_kind": "prompt", "producer_id": "p"}
+            for path, body in (
+                ("/api/feedback", BODY),
+                ("/api/feedback/producers/snooze", producer),
+                ("/api/feedback/producers/clear", producer),
+            ):
+                resp = await c.post(path, json=body)
+                assert resp.status == 404, path
+                assert (await resp.json())["error"]["code"] == "disabled", path
 
 
 class TestProducersRoute:

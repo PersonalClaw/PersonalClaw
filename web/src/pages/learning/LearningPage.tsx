@@ -7,7 +7,7 @@ import { Segmented } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { useQuery } from '../../lib/data'
-import { api, isEvalsOff, type AblationView, type AttentionScope, type BenchmarkView, type EvalsOffView, type FieldMetricsRow, type IdentityReportView, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type RetrievalBenchView, type StagingWeek, type StudyRow } from '../../lib/api'
+import { api, isSwitchedOff, type AblationView, type AttentionScope, type BenchmarkView, type SwitchedOffView, type FieldMetricsRow, type IdentityReportView, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type NotRunView, type RetrievalBenchView, type StagingWeek, type StudyRow } from '../../lib/api'
 import { AblationPanel } from './AblationPanel'
 import { AttentionPanel } from './AttentionPanel'
 import { FIELD_METRICS_KEY, FieldMetricsPanel, fetchFieldMetrics } from './FieldMetricsPanel'
@@ -15,6 +15,7 @@ import { BenchmarkPanel } from './BenchmarkPanel'
 import { HealthPanel } from './HealthPanel'
 import { IdentityReportPanel } from './IdentityReportPanel'
 import { JudgeBenchPanel } from './JudgeBenchPanel'
+import { LearningOff } from './LearningOff'
 import { RetrievalBenchPanel } from './RetrievalBenchPanel'
 import { StudiesPanel } from './StudiesPanel'
 import { fvs } from '../../design/fontWeight'
@@ -62,18 +63,23 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState('')
 
-  const { data: inbox, loading, error: inboxError, refresh: refreshProposals } = useQuery<LearningInbox>(
+  // 🔑 THE FOUR LEARNING READS BELOW CAN ANSWER `{"enabled": false}` (a 200) — the proposals, the
+  // capture week, the health panel and the identity report — while `learning.enabled` is off. They
+  // used to 404, so the page drew four "Couldn't load" alerts, each with a Retry that could never
+  // succeed, for a switch that was merely off. It is one fact about one switch, so it is said once
+  // (`learningOff` below) with the way back on, and the four panels it covers are not drawn.
+  const { data: inbox, loading, error: inboxError, refresh: refreshProposals } = useQuery<LearningInbox | SwitchedOffView>(
     proposalsKey(kind),
     () => api.learningProposals(kind ? { kind } : undefined),
   )
-  const { data: week, error: weekError, refresh: refreshWeek } = useQuery<StagingWeek>(
+  const { data: week, error: weekError, refresh: refreshWeek } = useQuery<StagingWeek | SwitchedOffView>(
     WEEK_KEY,
     () => api.learningStagingWeek(7),
   )
   // `error` is READ, not discarded. This panel's subject is "is the flywheel working?", so a
   // swallowed fetch failure would render as "nothing has happened" — the one answer that is
   // never true and never actionable.
-  const { data: health, error: healthError, refresh: refreshHealth } = useQuery<LearningHealth>(
+  const { data: health, error: healthError, refresh: refreshHealth } = useQuery<LearningHealth | SwitchedOffView>(
     HEALTH_KEY,
     () => api.learningHealth(7),
   )
@@ -92,28 +98,28 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
   // itself. With `evals.enabled` off — a default install — these six reads used to 404
   // `evals_disabled`, one console error per panel per visit, for a feature nobody had turned on.
   // The switch stays the backend's judgement: the page asks, the route answers "off".
-  const { data: fieldMetrics, error: fieldMetricsError, refresh: refreshFieldMetrics } = useQuery<{ subjects: FieldMetricsRow[] } | EvalsOffView>(
+  const { data: fieldMetrics, error: fieldMetricsError, refresh: refreshFieldMetrics } = useQuery<{ subjects: FieldMetricsRow[] } | SwitchedOffView>(
     FIELD_METRICS_KEY,
     fetchFieldMetrics,
   )
-  // The judge tier table (ES-4). `error` is read for the same reason the health panel's is, plus
-  // one more: its ORDINARY state is a 404 ("no benchmark has run"), and the panel needs the error
-  // to tell that apart from a real failure. Swallowing it would render both as nothing at all.
-  const { data: judgeBench, error: judgeBenchError, refresh: refreshJudgeBench } = useQuery<JudgeBenchView | EvalsOffView>(
+  // The judge tier table (ES-4). `error` is read for the same reason the health panel's is. Its
+  // ORDINARY state is "no benchmark has run", a decided `{"ran": false}` the panel renders as the
+  // command to run, so what is left in `error` is only ever a real failure.
+  const { data: judgeBench, error: judgeBenchError, refresh: refreshJudgeBench } = useQuery<JudgeBenchView | SwitchedOffView | NotRunView>(
     JUDGE_BENCH_KEY,
     () => api.judgeBench(),
   )
   // Pre-registered studies (ES-5). `error` is read for the judge table's reason: a swallowed
   // failure would render an unreadable study tree as "no study has been graduated" — the
   // opposite claim.
-  const { data: studies, error: studiesError, refresh: refreshStudies } = useQuery<{ studies: StudyRow[] } | EvalsOffView>(
+  const { data: studies, error: studiesError, refresh: refreshStudies } = useQuery<{ studies: StudyRow[] } | SwitchedOffView>(
     STUDIES_KEY,
     () => api.evalStudies(),
   )
-  // Per-arm retrieval ablation (ES-3). `error` is read for the same two reasons again: a 404
-  // ("no retrieval benchmark yet") is the ORDINARY state, and it is the state where the panel
-  // still has something useful to offer — the hand-label card.
-  const { data: retrievalBench, error: retrievalError, refresh: refreshRetrieval } = useQuery<RetrievalBenchView | EvalsOffView>(
+  // Per-arm retrieval ablation (ES-3). `error` is read for the judge table's reason. Its ORDINARY
+  // state is "no retrieval benchmark yet" (`{"ran": false}`), and that is the state where the
+  // panel still has something useful to offer — the hand-label card.
+  const { data: retrievalBench, error: retrievalError, refresh: refreshRetrieval } = useQuery<RetrievalBenchView | SwitchedOffView | NotRunView>(
     RETRIEVAL_BENCH_KEY,
     () => api.retrievalBench(),
   )
@@ -123,17 +129,17 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
   // weekly install's panel disagree with its own cron. `error` is read for the same reason every
   // panel above reads its own — an unread failure renders as "nothing was learned", which is the
   // one answer this panel must never give by accident.
-  const { data: identityReport, error: identityError, refresh: refreshIdentity } = useQuery<IdentityReportView>(
+  const { data: identityReport, error: identityError, refresh: refreshIdentity } = useQuery<IdentityReportView | SwitchedOffView>(
     IDENTITY_REPORT_KEY,
     () => api.identityReport(),
   )
 
-  // The keep/remove/lighten ablation report (ES-7). `error` is read for the judge table's two
-  // reasons and a third: this route mints THREE distinct codes (evals off / nothing has run /
-  // unreadable artifacts), and the panel needs the error to tell them apart. Swallowing it would
-  // render all three as nothing at all — and "no ablation has run" is the state a user is in
-  // for months, so it is precisely the one that must not look like a bug or like silence.
-  const { data: ablation, error: ablationError, refresh: refreshAblation } = useQuery<AblationView | EvalsOffView>(
+  // The keep/remove/lighten ablation report (ES-7). `error` is read for the judge table's reason,
+  // and this route answers THREE distinct non-reports (evals off / nothing has run / unreadable
+  // artifacts) that the panel tells apart. Swallowing the error would render the third as nothing
+  // at all — and "no ablation has run" is the state a user is in for months, so a broken read must
+  // not look like it.
+  const { data: ablation, error: ablationError, refresh: refreshAblation } = useQuery<AblationView | SwitchedOffView | NotRunView>(
     ABLATION_KEY,
     () => api.ablation(),
   )
@@ -142,19 +148,31 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
   // run is 100 real model calls, so most users will be in that state permanently. Swallowing the
   // error would make an unreachable gateway look identical to a benchmark nobody chose to run —
   // and this is the one panel whose whole subject is not overclaiming a measurement.
-  const { data: benchmark, error: benchmarkError, refresh: refreshBenchmark } = useQuery<BenchmarkView | EvalsOffView>(
+  const { data: benchmark, error: benchmarkError, refresh: refreshBenchmark } = useQuery<BenchmarkView | SwitchedOffView | NotRunView>(
     BENCHMARK_KEY,
     () => api.learningBenchmark(),
   )
 
+  // Any of the four says it: they read one switch. An off answer counts only while it is that read's
+  // latest word — a refetch that fails keeps the previous value as `data`, and "off" must not outlive
+  // the switch being turned back on. The views are narrowed here so no panel below has to know the
+  // off body exists.
+  const saysOff = (v: unknown, err: unknown) => !err && isSwitchedOff(v)
+  const learningOff = saysOff(inbox, inboxError) || saysOff(week, weekError)
+    || saysOff(health, healthError) || saysOff(identityReport, identityError)
+  const proposals = isSwitchedOff(inbox) ? undefined : inbox
+  const weekView = isSwitchedOff(week) ? undefined : week
+  const healthView = isSwitchedOff(health) ? undefined : health
+  const identityView = isSwitchedOff(identityReport) ? undefined : identityReport
+
   // Kind chips carry their counts, so a filter never has to be clicked to discover it is empty.
   const kindChips = useMemo(() => {
-    const counts = inbox?.by_kind ?? {}
+    const counts = proposals?.by_kind ?? {}
     return [
-      { key: '', label: `All ${inbox ? `(${inbox.total})` : ''}`.trim() },
+      { key: '', label: `All ${proposals ? `(${proposals.total})` : ''}`.trim() },
       ...Object.entries(counts).map(([k, n]) => ({ key: k, label: `${kindLabel(k)} (${n})` })),
     ]
-  }, [inbox])
+  }, [proposals])
 
   async function decide(row: LearningRow, verb: 'accept' | 'reject') {
     setBusy(row.id)
@@ -172,10 +190,26 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
     }
   }
 
-  const rows = inbox?.rows ?? []
+  const rows = proposals?.rows ?? []
   // `?? 0`, so an older gateway that does not send the field reads as "none pending" and the
   // original empty state renders — a missing count must not claim proposals exist.
-  const skillPending = inbox?.skill_proposals_pending ?? 0
+  const skillPending = proposals?.skill_proposals_pending ?? 0
+
+  const refreshAll = () => {
+    refreshEverything(refreshProposals, refreshWeek, refreshHealth, refreshJudgeBench, refreshStudies, refreshRetrieval, refreshIdentity)
+    // The ablation report moves only when `personalclaw ablation` or the monthly cadence
+    // runs — terminal-side, so its staleness is invisible to the page, exactly like the
+    // judge and retrieval tables. It refreshes here rather than inside
+    // `refreshEverything` because its key has a single reader, so the refetch is the
+    // whole invalidation, not because the parameter list is full.
+    refreshAblation()
+    // Same reasoning, same shape: the benchmark report moves only when someone runs
+    // `scripts/learning_benchmark.py --run`, so its staleness is invisible to the page.
+    refreshBenchmark()
+    // One reader again — and the field half moves on every thumb/edit/approval,
+    // so Refresh is exactly the moment to recompute it.
+    refreshFieldMetrics()
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -189,21 +223,7 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
         right={
           <QuietButton
             title="Refresh"
-            onClick={() => {
-              refreshEverything(refreshProposals, refreshWeek, refreshHealth, refreshJudgeBench, refreshStudies, refreshRetrieval, refreshIdentity)
-              // The ablation report moves only when `personalclaw ablation` or the monthly cadence
-              // runs — terminal-side, so its staleness is invisible to the page, exactly like the
-              // judge and retrieval tables. It refreshes here rather than inside
-              // `refreshEverything` because its key has a single reader, so the refetch is the
-              // whole invalidation, not because the parameter list is full.
-              refreshAblation()
-              // Same reasoning, same shape: the benchmark report moves only when someone runs
-              // `scripts/learning_benchmark.py --run`, so its staleness is invisible to the page.
-              refreshBenchmark()
-              // One reader again — and the field half moves on every thumb/edit/approval,
-              // so Refresh is exactly the moment to recompute it.
-              refreshFieldMetrics()
-            }}
+            onClick={refreshAll}
           >
             <RefreshCw size={14} /> Refresh
           </QuietButton>
@@ -229,29 +249,33 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
         <div className="mx-auto flex flex-col gap-xl px-l py-l pb-2xl" style={{ maxWidth: 'var(--content-width)' }}>
           {err && <InlineError icon onDismiss={() => setErr('')}>{err}</InlineError>}
 
+          {learningOff && <LearningOff onTurnedOn={refreshAll} />}
+
           {/* A failed fetch is not a quiet week. Without this the panel simply VANISHED, and the
               page's whole reason for existing — showing the days capture never ran — disappeared
               silently along with it. */}
-          {week === undefined && weekError
+          {!learningOff && (week === undefined && weekError
             ? <LoadError what="capture week" error={weekError} onRetry={refreshWeek} />
-            : week && <WeekPanel week={week} />}
+            : weekView && <WeekPanel week={weekView} />)}
 
-          <IdentityReportPanel
-            report={identityReport}
-            error={identityError}
-            onRetry={refreshIdentity}
-            onDelivered={refreshIdentity}
-          />
+          {!learningOff && (
+            <IdentityReportPanel
+              report={identityView}
+              error={identityError}
+              onRetry={refreshIdentity}
+              onDelivered={refreshIdentity}
+            />
+          )}
 
-          <HealthPanel health={health} error={healthError} onRetry={refreshHealth} />
+          {!learningOff && <HealthPanel health={healthView} error={healthError} onRetry={refreshHealth} />}
 
           <AttentionPanel scopes={attention?.scopes} error={attentionError} onRetry={refreshAttention} />
 
-          <FieldMetricsPanel rows={isEvalsOff(fieldMetrics) ? fieldMetrics : fieldMetrics?.subjects} error={fieldMetricsError} onRetry={refreshFieldMetrics} />
+          <FieldMetricsPanel rows={isSwitchedOff(fieldMetrics) ? fieldMetrics : fieldMetrics?.subjects} error={fieldMetricsError} onRetry={refreshFieldMetrics} />
 
           <JudgeBenchPanel bench={judgeBench} error={judgeBenchError} onRetry={refreshJudgeBench} />
 
-          <StudiesPanel studies={isEvalsOff(studies) ? studies : studies?.studies} error={studiesError} onRetry={refreshStudies} />
+          <StudiesPanel studies={isSwitchedOff(studies) ? studies : studies?.studies} error={studiesError} onRetry={refreshStudies} />
 
           <RetrievalBenchPanel bench={retrievalBench} error={retrievalError} onRetry={refreshRetrieval} />
 
@@ -260,16 +284,16 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
           <BenchmarkPanel view={benchmark} error={benchmarkError} onRetry={refreshBenchmark} />
 
 
-          <div className="flex flex-col gap-m">
+          {!learningOff && <div className="flex flex-col gap-m">
             <div className="flex flex-wrap items-center gap-s">
               <span data-type="title-m" className="text-on-surface">Proposals</span>
-              {!!inbox?.flagged && (
+              {!!proposals?.flagged && (
                 <span
                   className="inline-flex items-center gap-1.5 rounded-pill px-m h-6 text-[0.75rem]"
                   style={{ background: 'color-mix(in srgb, var(--color-warn) 14%, transparent)', color: 'var(--color-warn)' }}
                   title="These carry an invalid change manifest. They are shown, not dropped — hiding them would bury a proposer bug."
                 >
-                  <AlertTriangle size={12} /> {inbox.flagged} flagged
+                  <AlertTriangle size={12} /> {proposals.flagged} flagged
                 </span>
               )}
             </div>
@@ -288,7 +312,7 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
                 possible way to say the opposite of what happened. */}
             {inbox === undefined && inboxError ? (
               <LoadError what="proposals" error={inboxError} onRetry={refreshProposals} />
-            ) : loading && !inbox ? (
+            ) : loading && !proposals ? (
               <ListSkeleton rows={4} what="proposals" />
             ) : rows.length === 0 ? (
               /* 🔴 The empty state must not DENY what another store holds (#321). This said
@@ -325,7 +349,7 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
                 ))}
               </div>
             )}
-          </div>
+          </div>}
         </div>
       </div>
     </div>

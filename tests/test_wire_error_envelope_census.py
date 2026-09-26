@@ -873,7 +873,10 @@ def test_the_evals_surface_hides_no_flat_envelope_in_its_unresolved_rows():
 
 #: The learning surface's flat-envelope rows at the time LV-3 bought its slack. Unlike the
 #: evals surface this module is NOT flat-free, so the ES-3 pin's shape does not transfer.
-_LEARNING_FLAT_BASELINE = 14
+#: 14 → **10**: the four "learning is disabled" 404s on the reads the Learning page loads to
+#: render (the proposal list, the staging week, health, the summary) now answer the decided
+#: ``_off()`` 200, which carries no error envelope at all. A shrink, so the pin moves down with it.
+_LEARNING_FLAT_BASELINE = 10
 
 
 def test_the_learning_surfaces_new_unresolved_row_cannot_become_a_flat_envelope():
@@ -887,7 +890,8 @@ def test_the_learning_surfaces_new_unresolved_row_cannot_become_a_flat_envelope(
     emits NO flat envelope at all, which is what makes its slack unspendable. Measured here,
     that claim is simply false: ``handlers/learning.py`` already carries **14** flat rows
     (its proposal-inbox and staging refusals predate LV-3 and are counted against the flat
-    ceiling, not this one). Copying the evals assertion would have produced a test that reds
+    ceiling, not this one; four of them have since become decided 200s, see the baseline).
+    Copying the evals assertion would have produced a test that reds
     for a reason unrelated to the slack — so the pin instead fixes the flat COUNT, which reds
     on a NEW flat envelope while tolerating the existing ones.
 

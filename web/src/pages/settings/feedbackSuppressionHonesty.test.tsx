@@ -20,7 +20,9 @@ import { FeedbackPanel } from './FeedbackPanel'
 // `tests/test_feedback_suppression_enforcement.py`.
 
 const feedbackProducers = vi.fn()
-vi.mock('../../lib/api', () => ({
+vi.mock('../../lib/api', async (importOriginal) => ({
+  // The real module under the stubbed `api`: the panel imports `isSwitchedOff` from it too.
+  ...(await importOriginal<typeof import('../../lib/api')>()),
   api: {
     feedbackProducers: (...a: unknown[]) => feedbackProducers(...a),
     feedbackSnooze: vi.fn(),

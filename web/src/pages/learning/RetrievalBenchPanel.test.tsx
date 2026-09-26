@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { RetrievalBenchPanel } from './RetrievalBenchPanel'
-import { api, ApiError, type RetrievalArmContribution, type RetrievalBenchView, type RetrievalMaskRow, type RetrievalStoreReport } from '../../lib/api'
+import { api, type RetrievalArmContribution, type RetrievalBenchView, type RetrievalMaskRow, type RetrievalStoreReport } from '../../lib/api'
 
 /** ES-3's per-arm retrieval table, on what a table of measurements gets wrong.
  *
@@ -14,7 +14,8 @@ import { api, ApiError, type RetrievalArmContribution, type RetrievalBenchView, 
  *     model with an expired credential produces exactly this state.
  *  3. Saving an EMPTY hand-label selection is a real judgement and must be SUBMITTED — the
  *     bug being pinned is a card that drops it and lets the mined weak label survive.
- *  4. A 404 is the ORDINARY state, and it is the state where the card is still useful. */
+ *  4. `{"ran": false}` is the ORDINARY state, and it is the state where the card is still
+ *     useful. */
 
 function maskRow(over: Partial<RetrievalMaskRow> = {}): RetrievalMaskRow {
   return {
@@ -181,7 +182,7 @@ describe('the per-arm retrieval ablation table', () => {
   })
 
   it('renders "no benchmark yet" as guidance AND still offers the label card', () => {
-    render(<RetrievalBenchPanel bench={undefined} error={new ApiError('No retrieval benchmark has run yet. Run `personalclaw retrieval-eval` to score both stores.', 404, 'retrieval_absent')} onRetry={() => {}} />)
+    render(<RetrievalBenchPanel bench={{ ran: false }} error={null} onRetry={() => {}} />)
     expect(screen.getByText(/personalclaw retrieval-eval/)).toBeTruthy()
     expect(screen.getByRole('button', { name: /Label knowledge/ })).toBeTruthy()
     expect(screen.queryByText(/Retry/)).toBeNull()

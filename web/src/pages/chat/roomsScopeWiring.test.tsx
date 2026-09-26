@@ -96,9 +96,11 @@ describe('the rooms list', () => {
     expect(screen.getByRole('textbox', { name: 'Room title' })).toBeTruthy()
   })
 
-  it("reads `rooms_disabled` as the feature being off, and routes to the switch", async () => {
+  it('reads the list\'s `{"enabled": false}` as the feature being off, and routes to the switch', async () => {
+    // A decided 200 now, not the 403 `rooms_disabled` it used to be — which logged a failed request
+    // on every chat visit of a default install, where the feature ships off.
     const navigate = vi.fn()
-    render(<RoomsScope rooms={undefined} error={new ApiError('off', 403, 'rooms_disabled')}
+    render(<RoomsScope rooms={{ enabled: false }} error={null}
       loading={false} onRefresh={() => {}} navigate={navigate} />)
     expect(screen.getByText('Agent Rooms is switched off')).toBeTruthy()
     expect(screen.queryByText(/Couldn't load/)).toBeNull()
@@ -134,6 +136,14 @@ describe('🔴 the wiring that makes a room reachable at all', () => {
     expect(chat, 'and the whole control strip survives an empty chat list for the same reason')
       .toMatch(/sessions\.length > 0 \|\| roomsAvailable\)/)
     expect(chat, 'the tab option itself').toMatch(/key: 'room', label: `Rooms\$\{roomCount/)
+  })
+
+  it('and it does NOT appear while rooms are off — the list answering is not the feature being on', () => {
+    // Off answers `{"enabled": false}`, a 200, so "the read succeeded" stopped meaning "rooms are
+    // on". Availability is a LIST having arrived; a default install, where rooms ship off, must not
+    // grow a Rooms tab it cannot use.
+    expect(chat).toMatch(/const roomsAvailable = Array\.isArray\(roomsData\)/)
+    expect(chat).toMatch(/const roomCount = Array\.isArray\(roomsData\) \? roomsData\.length : 0/)
   })
 
   it('the Rooms scope swaps the list BODY rather than filtering sessions', () => {

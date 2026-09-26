@@ -80,14 +80,14 @@ const WEEK: StagingWeek = {
 const learningProposals = vi.fn<() => Promise<LearningInbox>>()
 const learningStagingWeek = vi.fn<() => Promise<StagingWeek>>()
 const learningHealth = vi.fn<() => Promise<never>>()
-const judgeBench = vi.fn<() => Promise<never>>()
+const judgeBench = vi.fn<() => Promise<{ ran: false }>>()
 const evalStudies = vi.fn<() => Promise<never>>()
-const retrievalBench = vi.fn<() => Promise<never>>()
-const ablation = vi.fn<() => Promise<never>>()
+const retrievalBench = vi.fn<() => Promise<{ ran: false }>>()
+const ablation = vi.fn<() => Promise<{ ran: false }>>()
 const acceptLearningProposal = vi.fn((_id: string) => Promise.resolve({ ok: true }))
 
 // PARTIAL mock via `importOriginal`, for the reason `evidenceGrade.test.tsx` records: the five side
-// panels branch on the REAL `hasApiCode`, so a factory returning only `api` throws from inside the
+// panels branch on the REAL `isSwitchedOff`/`isNotRun`, so a factory returning only `api` throws from inside the
 // render and every assertion below would die before it ran.
 vi.mock('../../lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/api')>()
@@ -108,9 +108,7 @@ vi.mock('../../lib/api', async (importOriginal) => {
       retrievalBench: () => retrievalBench(),
       ablation: () => ablation(),
       identityReport: () => Promise.reject(new Error('not under test')),
-      learningBenchmark: () => Promise.reject(
-        new ApiError('No skill-impact benchmark has run yet.', 404, 'learning_benchmark_absent'),
-      ),
+      learningBenchmark: () => Promise.resolve({ ran: false }),
     },
   }
 })
@@ -220,10 +218,10 @@ describe('LearningPage RENDERS the replay clause (the call site)', () => {
     vi.clearAllMocks()
     learningStagingWeek.mockResolvedValue(WEEK)
     learningHealth.mockRejectedValue(new Error('not under test'))
-    judgeBench.mockRejectedValue(new ApiError('No judge benchmark has run yet.', 404, 'judge_bench_absent'))
+    judgeBench.mockResolvedValue({ ran: false })
     evalStudies.mockRejectedValue(new ApiError('No study is registered under that id.', 404, 'study_absent'))
-    retrievalBench.mockRejectedValue(new ApiError('No retrieval benchmark has run yet.', 404, 'retrieval_absent'))
-    ablation.mockRejectedValue(new ApiError('No ablation has run yet.', 404, 'ablation_absent'))
+    retrievalBench.mockResolvedValue({ ran: false })
+    ablation.mockResolvedValue({ ran: false })
   })
 
   /** 🔑 THE RAIL THAT KEEPS THE CLAUSE ON SCREEN.

@@ -12,7 +12,7 @@ import { notify } from '../../app/appSdk'
 // `.catch(() => null as MemoryStats | null)`. A substitute has to be typed; a rejection does not.
 // So the import list shrinking by fourteen names is not tidying, it is the measure of how much of
 // this file existed to describe data the server never sent.
-import { api, type SavedAgent } from '../../lib/api'
+import { api, isSwitchedOff, type SavedAgent } from '../../lib/api'
 import { modelIdOf } from '../../lib/modelRef'
 // One spelling for a poll cadence: `#/knowledge/sources` renders every source row's cadence
 // through THIS function (`SourcesPage.tsx:177`, `· every {fmtInterval(poll_interval_secs)}`), and
@@ -1095,14 +1095,21 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     // Run now; "read-only" is true of the PROBING and of nothing else here.
     description: 'Health probes across every subsystem — memory, channels, models, apps, the SPA symlink — plus the confirm-gated repairs a failed probe offers.',
     useSearchText() {
-      const { data: d } = useDoctor()
+      const { data } = useDoctor()
+      const d = isSwitchedOff(data) ? undefined : data
       const failed = d ? Object.entries(d.capabilities).filter(([, c]) => !c.ok).map(([k]) => k).join(' ') : ''
-      return `doctor health probes diagnostics memory channels local models apps serving symlink breakers ${d ? (d.ok ? 'healthy ok' : `degraded ${failed}`) : ''}`
+      return `doctor health probes diagnostics memory channels local models apps serving symlink breakers ${isSwitchedOff(data) ? 'off disabled' : d ? (d.ok ? 'healthy ok' : `degraded ${failed}`) : ''}`
     },
     render(query, go) {
-      const { data: d, error: dErr, stale: dStale, status: dStatus, refresh: dRefresh } = useDoctor()
+      const { data, error: dErr, stale: dStale, status: dStatus, refresh: dRefresh } = useDoctor()
+      // `{"enabled": false}` while `resilience.doctor_enabled` is off: a decided 200 (it used to
+      // 404, which this tile drew as a failed read with a Retry that could never succeed). The
+      // Doctor page is where it turns back on, and the tile opens it.
+      const off = isSwitchedOff(data)
+      const d = off ? undefined : data
       return (
-        <BentoCard icon={Stethoscope} title="Doctor" query={query} onClick={() => go('doctor')} loading={d === undefined} stale={dStale} failed={dStatus === 'error'} error={dErr} onRetry={dRefresh}>
+        <BentoCard icon={Stethoscope} title="Doctor" query={query} onClick={() => go('doctor')} loading={data === undefined} stale={dStale} failed={dStatus === 'error'} error={dErr} onRetry={dRefresh}>
+          {off && <div data-type="body-s" className="text-on-surface-low">Off — nothing is probing health. Open the Doctor to turn it on.</div>}
           {d && (d.ok
             ? <StatusPill label="All systems healthy" tone="ok" />
             : !d.core_ok
@@ -1308,17 +1315,29 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     description: 'Per-source accuracy from your 👍/👎 on AI judgments — a source that keeps missing asks to be reviewed.',
     useSearchText() {
       const { data } = useFeedbackProducers()
-      const rows = data?.producers ?? []
-      return `feedback thumbs accuracy judgment verdict up down retire suppress ${rows.map((r) => r.producer_id).join(' ')}`
+      const rows = (isSwitchedOff(data) ? undefined : data)?.producers ?? []
+      return `feedback thumbs accuracy judgment verdict up down retire suppress collect ${isSwitchedOff(data) ? 'off disabled' : ''} ${rows.map((r) => r.producer_id).join(' ')}`
     },
     render(query, go) {
       const { data, stale: isStalePaint, status, error, refresh } = useFeedbackProducers()
-      const rows = data?.producers ?? []
+      // `{"enabled": false}` while "Collect feedback" is off: a decided 200 (it used to 404, so every
+      // visit to the hub with feedback off logged a failed request). The tile then carries the
+      // switch itself, as the Evaluations tile does, so turning it back on is one click here.
+      const off = isSwitchedOff(data)
+      const rows = (off ? undefined : data)?.producers ?? []
       const rated = rows.filter((r) => !r.collecting)
       const suppressed = rows.filter((r) => r.suppressed).length
+      const turnOn = () => mutate(
+        () => api.patchConfig('feedback.enabled', true), 'settings:feedback-producers', 'settings:feedback',
+      )
       return (
         <BentoCard icon={ThumbsUp} title="AI feedback" query={query} onClick={() => go('feedback')} loading={data === undefined} stale={isStalePaint} failed={status === 'error'} error={error} onRetry={refresh}>
-          {rows.length === 0
+          {off
+            ? <><KVList query={query} rows={[
+                { k: 'Collect feedback', control: true, v: <Switch on={false} label="Collect feedback" onToggle={turnOn} /> },
+              ]} />
+                <div data-type="caption" className="mt-1.5 text-on-surface-low">Off — no 👍/👎 are shown on AI judgments</div></>
+            : rows.length === 0
             ? <div data-type="body-s" className="text-on-surface-low">👍/👎 on inbox triage, drafts, digests, and loop findings collect here per judgment source. A source that keeps missing asks to be reviewed; where that kind of source has a surfacing gate (today, skills) it also stops surfacing.</div>
             : <><BigStat value={rows.length} caption={rows.length === 1 ? 'judgment source' : 'judgment sources'} />
                 <div data-type="body-s" className="mt-1 text-on-surface-low">

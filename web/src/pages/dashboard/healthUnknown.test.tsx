@@ -79,6 +79,17 @@ describe('the dashboard health strip cannot mistake "could not probe" for "healt
     expect(screen.queryByText(/degraded/)).toBeNull()
   })
 
+  it('says the Doctor is off when it is switched off — neither quiet nor a fault', async () => {
+    // `{"enabled": false}` is a third answer. Quiet reads as healthy on this strip, and "Health
+    // unknown" says a probe failed when none was asked to run. It used to 404 (drawn as unknown);
+    // read as a report, it would have drawn "Core failing".
+    mockApi({ doctor: () => Promise.resolve({ enabled: false }) })
+    await mountStrip()
+    const row = await waitFor(() => screen.getByTitle(/Doctor is switched off/i))
+    expect(row.textContent).toMatch(/Doctor off/)
+    expect(screen.queryByText(/Health unknown|degraded|Core failing/), 'no invented state').toBeNull()
+  })
+
   it('still reports a real degradation as a fault', async () => {
     mockApi({ doctor: () => Promise.resolve(sickReport) })
     await mountStrip()

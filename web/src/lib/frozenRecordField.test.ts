@@ -106,6 +106,8 @@ const OPERATION_FLAGS: Record<string, string> = {
     'Same per-save versioning flag as the viewer: a widget save always snapshots.',
   'pages/ChatPage.tsx  writeCachedDetail  running: false':
     'A synthetic seed for a just-created session in the CLIENT query cache, not a stored record — and a fact about it (nothing is running yet). `writeCachedDetail` refuses running details outright.',
+  'pages/settings/FeedbackPanel.tsx  writeQuery  enabled: false':
+    'The CLIENT query cache, not a stored record: the producers read\'s own answer (`{"enabled": false}`) right after the user switched "Collect feedback" off, written instead of asked for. The stored field is the switch they just flipped, through its control.',
 }
 
 describe('no api write freezes a record field at a literal', () => {

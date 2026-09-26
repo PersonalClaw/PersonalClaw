@@ -392,10 +392,12 @@ async def test_endpoint_serves_the_block_with_real_counts(home, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_endpoint_404s_when_learning_is_disabled(home, tmp_path, monkeypatch):
-    """Learning off ⇒ 404, so the block is ABSENT rather than four honest-looking zeros.
+async def test_endpoint_answers_off_when_learning_is_disabled(home, tmp_path, monkeypatch):
+    """Learning off ⇒ the decided ``{"enabled": false}``, so the block is ABSENT rather than four
+    honest-looking zeros — and not a 404, which logged a failed request on every Skills visit.
 
-    Zeros there would assert "nothing was learned"; the truth is "nothing is tracked".
+    Zeros there would assert "nothing was learned"; the truth is "nothing is tracked". The body
+    is the flag alone, so it carries no zero for a client to misread.
     """
     import personalclaw.dashboard.handlers.learning as mod
 
@@ -404,7 +406,8 @@ async def test_endpoint_404s_when_learning_is_disabled(home, tmp_path, monkeypat
     monkeypatch.setattr(mod, "_enabled", lambda: False)
 
     resp = await mod.api_learning_summary(_req(state))
-    assert resp.status == 404
+    assert resp.status == 200
+    assert json.loads(resp.body) == {"enabled": False}
 
 
 @pytest.mark.asyncio

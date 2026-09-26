@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, FlaskConical, ShieldAlert } from 'lucide-rea
 import { LoadError } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
 import { useQuery } from '../../lib/data'
-import { api, isEvalsOff, type EvalsOffView, type StudyPair, type StudyRow, type StudyView } from '../../lib/api'
+import { api, isSwitchedOff, type SwitchedOffView, type StudyPair, type StudyRow, type StudyView } from '../../lib/api'
 import { EvalsOff } from './EvalsOff'
 import { studyDetailKey } from './proposalCache'
 
@@ -32,7 +32,7 @@ import { studyDetailKey } from './proposalCache'
  *  server does not serve them (§2.2), so there is nothing here to render. The rubric's hash
  *  is shown instead: enough to prove the pin, not enough to satisfy it. */
 export function StudiesPanel({ studies, error, onRetry }: {
-  studies: StudyRow[] | EvalsOffView | undefined
+  studies: StudyRow[] | SwitchedOffView | undefined
   error: unknown
   onRetry: () => void
 }) {
@@ -45,7 +45,7 @@ export function StudiesPanel({ studies, error, onRetry }: {
   // 🪤 An empty register is a 200 `{"studies": []}`, handled by the `length === 0` line below.
   // `study_absent` used to be OR'd into the error predicate; `api_evals_studies` cannot return it
   // (it belongs to `/api/evals/studies/{id}`), so that arm was unreachable twice over and is gone.
-  if (isEvalsOff(studies)) {
+  if (isSwitchedOff(studies)) {
     return (
       <section className="flex flex-col gap-s" aria-labelledby="studies-heading">
         <Heading />

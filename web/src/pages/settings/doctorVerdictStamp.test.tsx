@@ -29,7 +29,9 @@ const REPORT = (over: Record<string, unknown> = {}) => ({
 
 async function mount(over: Record<string, unknown> = {}) {
   vi.resetModules()
-  vi.doMock('../../lib/api', () => ({
+  vi.doMock('../../lib/api', async () => ({
+    // The real module under the stubbed `api`: the panel imports `isSwitchedOff` from it too.
+    ...(await vi.importActual<typeof import('../../lib/api')>('../../lib/api')),
     api: {
       doctor: () => Promise.resolve(REPORT(over)),
       doctorRemediation: () => Promise.resolve({ score: 100, target_score: 90, deficits: [], plan: [], recent_runs: [] }),

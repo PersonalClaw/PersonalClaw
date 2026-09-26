@@ -20,11 +20,10 @@ import { ModelsPanel } from './ModelsPanel'
 const patchConfig = vi.fn((_path: string, _value: unknown) => Promise.resolve({}))
 const personalclawConfig = vi.fn()
 
-// 🪤 PARTIAL mock, via `importOriginal`: the REAL `ApiError`/`hasApiCode` are kept. The four eval
-// panels branch on `hasApiCode(error, '<code>')`, so a factory that returned only `api` made the
-// mocked module throw "No \"hasApiCode\" export is defined" from inside the render — and a fixture
-// that rejected with a bare `Error` would carry no `.code`, so the branch under test would never
-// fire and the test would pass by rendering the generic failure instead.
+// 🪤 PARTIAL mock, via `importOriginal`: the REAL `ApiError` and answer guards are kept. The eval
+// panels branch on `isSwitchedOff`/`isNotRun`, so a factory that returned only `api` made the mocked
+// module throw "No export is defined" from inside the render — and a double that rejected where the
+// wire answers `{"ran": false}` would render the generic failure instead of the state under test.
 vi.mock('../../lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/api')>()
   return {
@@ -38,9 +37,9 @@ vi.mock('../../lib/api', async (importOriginal) => {
       // The panel's HuggingFace-token section (LMMV-4) fetches on mount too.
       hfTokenStatus: () => Promise.resolve({ sources: [] }),
       // ES-4: the panel reads the judge benchmark's tier recommendations on mount to offer
-      // the one-click rebind. 404 (no benchmark yet) is the ordinary case, so a reject here
-      // is what the panel really sees on a fresh install.
-      judgeBench: () => Promise.reject(new actual.ApiError('No judge benchmark has run yet. Run `personalclaw judge-bench` to produce one.', 404, 'judge_bench_absent')),
+      // the one-click rebind. `{"ran": false}` (no benchmark yet) is the ordinary case, so it is
+      // what the panel really sees on a fresh install.
+      judgeBench: () => Promise.resolve({ ran: false }),
       modelDownloadCleanupCandidates: () => Promise.resolve({ candidates: [], reclaimable_bytes: 0 }),
       // The panel's loaded-models section (LMMV-5) fetches on mount too; an unmocked call
       // here would make this test fail for a reason that has nothing to do with caching.

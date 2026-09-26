@@ -52,6 +52,15 @@ one outright. A route that refuses an app token says so in its handler docstring
   predate that convention and return their own shapes; the honest rule is to branch on
   `code` where it is present and on the HTTP status otherwise, and not to assume a single
   envelope across the whole surface.
+- **A switched-off feature is an answer, not an error.** While a feature's switch is off,
+  the reads a page loads to render it answer `200 {"enabled": false}`: the flag alone, with
+  no empty collection beside it that a client could misread as "none". That covers the eval
+  reports, the feedback producers and a thumbs pair's verdict, the Doctor's report, fix
+  catalog and remediation snapshot, the Learning page's five reads, and the rooms list. An
+  eval report whose command has not run yet answers `200 {"ran": false}` the same way
+  (judge bench, ablation, learning benchmark, retrieval). A drill-down, an action or a write
+  on a switched-off feature still refuses with its code (`evals_disabled`,
+  `doctor_disabled`, `rooms_disabled`, …): it addresses something of a surface that is off.
 - **Read back after a write.** The API does not promise that a mutating response body is
   the full post-write state. After a `POST`/`PUT`/`PATCH`/`DELETE`, `GET` the entity to
   confirm the change took. This is the single most useful habit when driving the gateway
