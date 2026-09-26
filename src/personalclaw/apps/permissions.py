@@ -544,14 +544,23 @@ SECURITY_ROUTE_FAMILIES: dict[str, str] = {
 }
 
 #: The families whose READS are declared route by route as well as their writes — your
-#: conversations. A read here answers with a transcript, or with a list of whose conversations
-#: exist, so it is refused to every app until :data:`ROUTE_AUTHZ` declares it
-#: (:func:`undeclared_security_route`): default-deny, where a read anywhere else is the ordinary
-#: allowlist's business. A read that names one conversation carries ``owns`` and reaches only a
-#: conversation the calling app started; a list is ``AppMay`` because its handler answers an app
-#: with the app's own conversations and nothing else; the rest are the owner's.
+#: conversations, and what reached you. A read here answers with a transcript, a list of whose
+#: conversations exist, or the notifications that reached you, so it is refused to every app until
+#: :data:`ROUTE_AUTHZ` declares it (:func:`undeclared_security_route`): default-deny, where a read
+#: anywhere else is the ordinary allowlist's business. A read that names one conversation carries
+#: ``owns`` and reaches only a conversation the calling app started; a list is ``AppMay`` because
+#: its handler answers an app with the app's own conversations (or notifications) and nothing
+#: else; the rest are the owner's.
 READ_DECLARED_FAMILIES: frozenset[str] = frozenset(
-    {"/api/chat", "/api/sessions", "/api/session", "/api/rooms", "/api/inbox", "/api/reveal"}
+    {
+        "/api/chat",
+        "/api/sessions",
+        "/api/session",
+        "/api/rooms",
+        "/api/inbox",
+        "/api/reveal",
+        "/api/notifications",
+    }
 )
 
 _INSTALLS_APP = "installing an app — its backend, MCP servers and setup hooks run as you"
@@ -1172,6 +1181,19 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "GET /api/inbox/settings": OwnerOnly(_YOUR_INBOX),
     "GET /api/inbox/status": OwnerOnly(_YOUR_INBOX),
     # ── notifications ──
+    # The log is what reached you from everything that can reach you. The handler answers an app
+    # with what the app raised and what is about a conversation it started
+    # (`DashboardState.notification_reaches`); your mute, quiet hours and rules are yours.
+    "GET /api/notifications": AppMay(
+        "lists only the notifications the app raised and those about a conversation it started "
+        "— the handler leaves out every other"
+    ),
+    "GET /api/notifications/settings": OwnerOnly(
+        "your notification settings — whether they are muted, and when they stay quiet"
+    ),
+    "GET /api/notifications/rules": OwnerOnly(
+        "your notification rules — which notifications reach you, and how loudly"
+    ),
     "DELETE /api/notifications": OwnerOnly(_HIDES_NOTIFICATIONS),
     "POST /api/notifications/clear": OwnerOnly(_HIDES_NOTIFICATIONS),
     "POST /api/notifications/ack": OwnerOnly(_HIDES_NOTIFICATIONS),

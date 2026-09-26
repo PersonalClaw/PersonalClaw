@@ -274,7 +274,14 @@ Unread counts are *derived* from unacked log entries; deletes broadcast
 `notification_removed`. A note that is recorded without being fired (a `badge`, a foreign
 addressee) sends a quiet `notification_logged` frame, so the bell and Home count it at once
 without a toast; the bell, Home and the feed re-read on any `notification*` frame and poll only
-as a once-a-minute safety net. Notification metadata may carry a `channel_link` —
+as a once-a-minute safety net. An app reads back only what it raised (`raised_by_app`, which the proposal
+door `POST /api/inbox/proposals` names through `emit_attention_item`, and which meta cannot
+supply) and what is about a conversation it started: `GET /api/notifications` answers an app with those, and its socket gets
+a `notification*` frame cut to them (`DashboardState.notification_reaches`). The raiser is named
+by the producer, never read off the request: an app's request scope is copied into every task
+the request starts, so a platform worker one of its requests happened to start would raise your
+notes as the app's. A removal is announced before its note leaves the log, because an app's frame
+is decided on the note. Notification metadata may carry a `channel_link` —
 built via `ChannelDelivery.build_thread_link`, never by core string-formatting
 a vendor URL.
 

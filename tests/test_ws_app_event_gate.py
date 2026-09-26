@@ -250,7 +250,8 @@ async def test_owner_socket_still_gets_sessions_the_ring_replay_and_live_logs(st
                 first = await _drain(sock)
                 assert _types(first) == ["sessions"]
                 assert first[0]["data"] == [{"key": "chat-1", "title": "quarterly board notes"}]
-                assert first[0]["yolo"] is False  # the top-level envelope key is preserved
+                # The rows and nothing beside them: no approval posture rides the frame.
+                assert set(first[0]) == {"type", "data"}, first[0]
 
                 await sock.send_json({"type": "subscribe_logs"})
                 replay = await _drain(sock)

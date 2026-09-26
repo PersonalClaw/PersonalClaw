@@ -131,8 +131,14 @@ one exception there too: it hears your approvals, which it already reads through
 `/api/approvals`. An app also may not clear your notifications, mark
 them read or change what reaches you.
 
-Every write route in these families, and every read in your conversation families, has to
-be declared one way or the other: one that is not is refused to every app until someone
+What reached you is yours the same way. An app reads the notifications it raised and the
+ones about a conversation it started, in `GET /api/notifications` and on its websocket, and
+nothing else in your log: not what your automations, loops, inbox, channels or other apps
+raised, and not your notification settings or rules. Its session list says nothing about
+whether your tool calls run without asking.
+
+Every write route in these families, and every read in your conversation families and your
+notification log, has to be declared one way or the other: one that is not is refused to every app until someone
 declares it, and `tests/test_security_posture_rail.py` fails the build on it.
 
 The security settings that live in `config.json` are refused field by field instead,

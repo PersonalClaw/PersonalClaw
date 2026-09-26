@@ -788,6 +788,7 @@ def emit_attention_item(
     item_kind: str = "",
     store: "InboxStore | None" = None,
     dedup_key: str = "",
+    raised_by_app: str = "",
 ) -> str:
     """Raise a standing attention item AND deliver one notification for it.
 
@@ -805,10 +806,17 @@ def emit_attention_item(
     same key is returned untouched and **no second notification fires** — the user was
     already told.
 
+    ``raised_by_app`` names the app the item is raised for (its proposal), which the
+    notification carries so that app may read it back (``DashboardState.notification_reaches``).
+    Only the door an app raises an item through passes it.
+
     Returns the inbox item id ("" only if the store could not be reached, which is logged;
     a failure to persist must not also lose the notification, so delivery still happens).
     """
     resolved_kind = item_kind or kind
+    # Handed to `notify` only for an app's item. `state` is any object with a `notify` (the
+    # channel conformance kit's `CapturingState` is one), and only DashboardState's takes it.
+    raiser: dict[str, str] = {"raised_by_app": raised_by_app} if raised_by_app else {}
     target = store or live_store(state)
     if target is None:
         target = InboxStore()
@@ -871,6 +879,7 @@ def emit_attention_item(
                 "title": title,
                 "body": body,
                 "item_kind": resolved_kind,
+                **raiser,
             }
             withheld = True
 
@@ -911,6 +920,7 @@ def emit_attention_item(
                     notification_addressing.ADDRESSEE_KEY: item.owner_username,
                     **dict(refs or {}),
                 },
+                **raiser,
             )
         except Exception:
             logger.warning("attention item: notify failed", exc_info=True)
