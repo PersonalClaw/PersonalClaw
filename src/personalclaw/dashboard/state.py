@@ -173,6 +173,13 @@ SESSION_APPROVAL_ACTIONS = frozenset(
     {"approved", "rejected", "trust", "trust_agent", "trust_reads", "yolo"}
 )
 
+#: The verbs above that do more than answer THIS call: each raises a standing posture — the
+#: chat's (``trust``, ``trust_reads``), the bound agent's for every future chat
+#: (``trust_agent``), or every session's (``yolo``). An app-scoped caller may answer a pending
+#: approval once, which is what a companion that relays the owner's decision needs, and never
+#: with one of these (``chat_handlers.api_chat_session_approve``).
+STANDING_APPROVAL_ACTIONS = SESSION_APPROVAL_ACTIONS - {"approved", "rejected"}
+
 
 def chat_approval_id(session_key: str, request_id: str | int) -> str:
     """The registry id of an approval a chat is waiting on — derived here, and only here.

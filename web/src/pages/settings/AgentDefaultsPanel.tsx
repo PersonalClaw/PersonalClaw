@@ -95,10 +95,12 @@ export function AgentDefaultsPanel() {
   // `agent.enabled` — a path the server's allowlist rejects, so the control would appear to work
   // and then quietly revert.
   const selfQa = (cfg.self_qa ?? {}) as Record<string, unknown>
-  const patchSelfQa = (key: string, value: unknown, onSaved: () => void, label?: string) => {
+  // `confirmed` is `ToggleRow`'s own "Let the companion propose fix branches?" dialog, forwarded so
+  // the gateway, which asks consent for that loosening itself, does not ask a second time.
+  const patchSelfQa = (key: string, value: unknown, onSaved: () => void, label?: string, confirmed?: boolean) => {
     const prev = selfQa[key]
     setCfg((c) => ({ ...c, self_qa: { ...((c?.self_qa ?? {}) as object), [key]: value } }))
-    api.patchConfig(`agent.self_qa.${key}`, value).then(onSaved).catch((e) => {
+    api.patchConfig(`agent.self_qa.${key}`, value, confirmed === true).then(onSaved).catch((e) => {
       setCfg((c) => ({ ...c, self_qa: { ...((c?.self_qa ?? {}) as object), [key]: prev } }))
       notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
     })

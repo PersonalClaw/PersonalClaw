@@ -90,7 +90,18 @@ Installed apps extend the gateway but must not reach the owner's full authority:
   owner's cookie/Authorization — a fresh 1-hour app-scoped token is injected.
 - **Permission middleware** holds in every auth mode — including `none`, where
   `dashboard/server.py`'s `_dev_user_middleware` re-adopts the app claim via
-  `validate_token_with_app` so an app token only ever *narrows* reach.
+  `validate_token_with_app` so an app token only ever *narrows* reach. The internal
+  routes' cookie/`?token=` fallback records the claim too
+  (`dashboard/token_auth.py::_extract_and_validate_token`): it used to validate an app
+  token and drop its identity, so `/api/tools/invoke` reached the handler as the owner.
+- **The owner's security posture is not an app's to change.** A config field whose
+  `_EDITABLE_CONFIG` entry declares a `SecurityControl` (`config/edit_spec.py`) refuses an
+  app-scoped write `403`, in either direction, with a Security Event Log row naming the
+  app and the field; so does an agent's `approval_mode` and a standing approval verb
+  (`yolo`, `trust_agent`). The routes that exist only to change the posture are in the
+  owner-only registry (`apps/permissions.py::OWNER_ONLY_API_PATHS`). The owner's own write
+  that loosens a security setting needs `"confirm": true` — a record that the owner was
+  asked, not authorization.
 
 ### 3. Gateway ↔ channels / inbound
 

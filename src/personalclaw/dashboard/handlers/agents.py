@@ -12,7 +12,14 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.config import loader as config_loader
-from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
+from personalclaw.config.edit_spec import (
+    ConfigValueError,
+    SecurityControl,
+    app_write_refusal,
+    coerce_edit_value,
+    loosens_toward,
+    unconsented_loosening,
+)
 from personalclaw.config.loader import AgentProfile, AppConfig, resolve_agent_config_path
 from personalclaw.config.schema import SCHEMA_REGISTRY, config_entry_to_dict
 from personalclaw.dashboard.chat_utils import _SLASH_COMMAND_HINTS
@@ -562,6 +569,9 @@ async def api_agent_detail(request: web.Request) -> web.Response:
         #
         # Before the file loop, so a malformed body is refused whether or not the agent
         # exists, and so nothing is read or written before the refusal.
+        denied = _app_security_refusal(request, name, patch_body)
+        if denied is not None:
+            return denied
         try:
             patch_staged = _staged_agent_fields(patch_body, _AGENT_DETAIL_PATCH_KEYS)
         except ConfigValueError as exc:
@@ -610,6 +620,14 @@ async def api_agent_detail(request: web.Request) -> web.Response:
                 if request.method == "PATCH" and patch_body is not None:
                     async with _get_config_lock():
                         data = json.loads(f.read_text(encoding="utf-8"))
+                        unconsented = _unconsented_agent_loosening(
+                            name,
+                            patch_staged,
+                            {**_PROFILE_DEFAULTS, **data},
+                            patch_body,
+                        )
+                        if unconsented is not None:
+                            return unconsented
                         for key in ("model", "description", "system_prompt", "approval_mode"):
                             if key in patch_staged:
                                 val = patch_staged[key]
@@ -753,7 +771,20 @@ _AGENT_FIELD_SPECS: dict[str, dict] = {
     # defect `config/edit_spec.py` was created to stop re-deriving.
     "natural_voice": {"type": "bool"},
     "model": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
-    "approval_mode": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
+    # The agent's own approval floor — `auto` is "Always allow for this agent", seeded into
+    # every chat with it (`chat_runner`), so it is the approval policy stored per agent and the
+    # same security control as the global `agent.approval_mode`. `""` inherits: never full
+    # auto-approve in chat, and read-only auto-approve only when the global mode says so — hence
+    # its place between `interactive` and `trust_reads`.
+    "approval_mode": {
+        "type": "str",
+        "max_len": _AGENT_TEXT_MAX_LEN,
+        "security": SecurityControl(
+            loosens_toward("interactive", "", "trust_reads", "auto"),
+            "A looser approval mode for this agent lets its chats run tools without asking you "
+            "first — 'trust_reads' for read-only tools, 'auto' for every tool.",
+        ),
+    },
     "skills": {"type": "str_list", "max_items": _AGENT_LIST_MAX_ITEMS},
     "tools": {"type": "str_list", "max_items": _AGENT_LIST_MAX_ITEMS},
     "triggers": {"type": "str_list", "max_items": _AGENT_LIST_MAX_ITEMS},
@@ -761,6 +792,10 @@ _AGENT_FIELD_SPECS: dict[str, dict] = {
     "specialty": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
     "route_hints": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
 }
+
+#: What a profile holds before anything is written — the "current" a created profile, or a
+#: per-file one that omits a key, is compared against when a write could loosen it.
+_PROFILE_DEFAULTS: dict[str, Any] = dataclasses.asdict(AgentProfile())
 
 #: The keys ``PATCH /api/agents/detail/{name}`` applies to the per-file runtime config.
 #: A subset of :data:`_AGENT_FIELD_SPECS`, so that path validates with the same table
@@ -848,6 +883,61 @@ def _agent_write_refusal(exc: ConfigValueError) -> web.Response:
     ``coerce_edit_value``'s 500 branch (an unrecognised spec ``type``) unreachable from here.
     """
     return json_error("invalid_request", message=str(exc), status=exc.status)
+
+
+def _app_security_refusal(request: web.Request, name: str, body: dict) -> web.Response | None:
+    """Refuse an app-scoped write that names a security field of agent *name*, or ``None``.
+
+    The same rule the config PATCH applies (`edit_spec.app_write_refusal`): an app never writes
+    the owner's approval policy, whichever way. Checked on the BODY's keys, before staging, so
+    the decision depends on who asks and which field only.
+    """
+    app_name = request.get("app", "")
+    for key in body:
+        spec = _AGENT_FIELD_SPECS.get(key)
+        if spec is None:
+            continue
+        field = f"agents.{name}.{key}"
+        refused = app_write_refusal(field, spec, app_name)
+        if refused:
+            _sel().log_api_access(
+                caller=f"app:{app_name}",
+                operation="agent.write",
+                outcome="denied",
+                source="app_permissions",
+                resources=field,
+                error="security setting is owner-only",
+            )
+            return json_error("security_setting_owner_only", message=refused, status=403)
+    return None
+
+
+def _unconsented_agent_loosening(
+    name: str, staged: dict[str, Any], current: dict[str, Any], body: dict
+) -> web.Response | None:
+    """``400 confirmation_required`` when a staged field loosens agent *name*'s security
+    setting without ``confirm: true``, or ``None``. *current* maps each field to its value in
+    effect before the write — the stored value, or the profile default for a new agent."""
+    for key, new in staged.items():
+        field = f"agents.{name}.{key}"
+        consent = unconsented_loosening(
+            field, _AGENT_FIELD_SPECS[key], current=current.get(key), new=new, body=body
+        )
+        if consent:
+            _sel().log_api_access(
+                caller="dashboard",
+                operation="agent.write",
+                outcome="denied",
+                source="dashboard",
+                resources=f"{field}: loosening without confirm",
+            )
+            return json_error(
+                "confirmation_required",
+                message=f'send {{"confirm": true}} to confirm — {consent}',
+                status=400,
+                error_extra={"detail": {"field": field, "consent": consent}},
+            )
+    return None
 
 
 def _unavailable_agent_name(name: str) -> str | None:
@@ -1174,10 +1264,18 @@ async def api_personalclaw_agents_create(request: web.Request) -> web.Response:
     # Validate BEFORE taking the lock: this depends only on the request body and the spec
     # table, so holding the lock across it would serialise every rejected request behind
     # whoever is writing, for no benefit. Same placement as `PUT /api/config/personalclaw`.
+    denied = _app_security_refusal(request, name, body)
+    if denied is not None:
+        return denied
     try:
         staged = _staged_agent_fields(body)
     except ConfigValueError as exc:
         return _agent_write_refusal(exc)
+    # A new profile starts from the dataclass defaults, so those are the values in effect that a
+    # created `approval_mode` is compared against — no stored state is involved, so no lock.
+    unconsented = _unconsented_agent_loosening(name, staged, _PROFILE_DEFAULTS, body)
+    if unconsented is not None:
+        return unconsented
 
     async with _get_config_lock():
         cfg = AppConfig.load()
@@ -1237,6 +1335,9 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
     # `skills`/`tools`/`triggers` used to answer 200 having changed nothing, and being told a
     # write succeeded when it did not is the failure `config/edit_spec.py` exists to stop.
     # Clearing a list stays expressible, by sending `[]`.
+    denied = _app_security_refusal(request, name, body)
+    if denied is not None:
+        return denied
     try:
         staged = _staged_agent_fields(body)
     except ConfigValueError as exc:
@@ -1247,6 +1348,9 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
         if name not in cfg.agents:
             return web.json_response({"error": f"Agent '{name}' not found"}, status=404)
         agent = cfg.agents[name]
+        unconsented = _unconsented_agent_loosening(name, staged, dataclasses.asdict(agent), body)
+        if unconsented is not None:
+            return unconsented
         # `_staged_agent_fields` walks `_AGENT_FIELD_SPECS` in order, so this audit list is
         # deterministic rather than request-order dependent.
         changed: list[str] = []

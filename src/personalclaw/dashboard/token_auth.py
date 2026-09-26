@@ -923,18 +923,49 @@ def token_auth_middleware(
         )
         return forwarded if is_proxy else raw
 
-    def _extract_and_validate_token(request: web.Request, _port: int) -> tuple[bool, str, str]:
+    def _layered_app(request: web.Request, token: str, user_id: str) -> str:
+        """The ``app`` claim of an app-scoped token layered over the owner's credential, or ``""``.
+
+        An app's SDK sends the owner cookie (browser-attached) PLUS its own app-scoped token — as
+        an ``Authorization: Bearer`` header (fetch) or an ``?app_token=`` query param (the
+        ``/api/ws`` handshake, which cannot set headers). The claim is adopted only for a token
+        that validates for the SAME owner user, so it can only ever NARROW the request.
+        """
+        app_token = ""
+        _auth = request.headers.get("Authorization", "")
+        if _auth.startswith("Bearer "):
+            app_token = _auth[7:].strip()
+        if not app_token:
+            app_token = request.query.get("app_token", "")
+        if app_token and app_token != token:
+            a_valid, a_user, _reason, a_app = validate_token_with_app(app_token)
+            if a_valid and a_app and a_user == user_id:
+                return a_app
+        return ""
+
+    def _extract_and_validate_token(request: web.Request, _port: int) -> tuple[bool, str, str, str]:
         """Extract token from query param or cookie and validate it.
 
         Used by internal-path browser auth (no secret header).  The main
         auth flow has its own extraction with IP-binding and from_cookie
         tracking that this helper intentionally does not replicate.
+
+        Returns ``(valid, user_id, reason, app)``. 🔴 ``app`` is the app the request is scoped
+        to — the token's own claim, or an app token layered over the owner's — and the caller
+        MUST record it as ``request["app"]``. This helper used to validate an app token like any
+        other and drop the claim, so ``/api/tools/invoke?token=<an app's token>`` from loopback
+        reached the handler as the OWNER: the app permission middleware and every handler-level
+        app check (``can_use_mcp_tool`` on that very route) key on ``request["app"]`` and saw
+        none. The identity the token carries is not optional on the internal paths either.
         """
         cookie_name = f"pc_token_{_port}"
         token = request.query.get("token") or request.cookies.get(cookie_name, "")
         if not token:
-            return False, "", "no token"
-        return validate_token(token, use_session_exp=True)
+            return False, "", "no token", ""
+        valid, user_id, reason, app = validate_token_with_app(token, use_session_exp=True)
+        if valid and not app:
+            app = _layered_app(request, token, user_id)
+        return valid, user_id, reason, app
 
     @web.middleware
     async def middleware(request: web.Request, handler: object) -> web.StreamResponse:
@@ -1022,7 +1053,7 @@ def token_auth_middleware(
             # at the decision point rather than deferring to downstream.
             # NOTE: uses _extract_and_validate_token helper (defined above)
             # for cookie/query-param validation.
-            _valid, _uid, _reason = _extract_and_validate_token(request, port)
+            _valid, _uid, _reason, _app = _extract_and_validate_token(request, port)
             if not _valid:
                 _sel = _sel_fn()
                 _sel.log_api_access(
@@ -1045,6 +1076,8 @@ def token_auth_middleware(
                 metadata={"reason": "cookie auth (no secret header)"},
             )
             _log_auth(request, "internal", "granted", f"cookie auth for {_uid}")
+            if _app:
+                request["app"] = _app
             return await handler(request)  # type: ignore[operator]
         elif _matches_internal:
             if _matches_mixed:
@@ -1072,7 +1105,7 @@ def token_auth_middleware(
                             request, "internal", "denied", "wrong secret (non-loopback mixed)"
                         )
                         return _deny(request, "Forbidden")
-                _valid, _uid, _reason = _extract_and_validate_token(request, port)
+                _valid, _uid, _reason, _app = _extract_and_validate_token(request, port)
                 if not _valid:
                     _sel = _sel_fn()
                     _sel.log_api_access(
@@ -1102,6 +1135,8 @@ def token_auth_middleware(
                 _log_auth(
                     request, "internal", "granted", f"mixed non-loopback cookie auth for {_uid}"
                 )
+                if _app:
+                    request["app"] = _app
                 return await handler(request)  # type: ignore[operator]
             else:
                 # INVARIANT: non-loopback access to strict internal paths is
@@ -1177,24 +1212,14 @@ def token_auth_middleware(
         # thing that can vouch for an origin-less upgrade.
         request["session_nonce"] = token_nonce(token)
 
-        # Layered app identity (untrusted-app sandbox, P1): an app's SDK sends the
-        # owner cookie (browser-attached) PLUS an app-scoped token — as an
-        # ``Authorization: Bearer`` header (fetch) or a ``?app_token=`` query param
-        # (the /api/ws handshake, which can't set headers). When present and valid
-        # for the SAME owner user, adopt its ``app`` claim so the app-permission
-        # middleware + WS event filter scope this request to that app. Owner auth
-        # (above) is unchanged — the app token only NARROWS, never widens.
+        # Layered app identity (untrusted-app sandbox, P1): adopt the claim of an app-scoped
+        # token presented beside the owner's credential (`_layered_app`), so the app-permission
+        # middleware + WS event filter scope this request to that app. Owner auth (above) is
+        # unchanged — the app token only NARROWS, never widens.
         if not app_name:
-            app_token = ""
-            _auth = request.headers.get("Authorization", "")
-            if _auth.startswith("Bearer "):
-                app_token = _auth[7:].strip()
-            if not app_token:
-                app_token = request.query.get("app_token", "")
-            if app_token and app_token != token:
-                a_valid, a_user, _reason, a_app = validate_token_with_app(app_token)
-                if a_valid and a_app and a_user == user_id:
-                    request["app"] = a_app
+            layered = _layered_app(request, token, user_id)
+            if layered:
+                request["app"] = layered
 
         # Proceed to handler
         resp = await handler(request)  # type: ignore[operator]

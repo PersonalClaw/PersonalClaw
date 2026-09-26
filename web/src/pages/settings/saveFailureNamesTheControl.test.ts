@@ -46,7 +46,9 @@ describe('a rejected settings save names the control', () => {
     // of waiting for someone to notice the count is stale.
     const rows = [...UI.matchAll(/export function (\w+)(?:<[^>]*>)?\(\{[^}]*\bpatch\b/g)].map((m) => m[1])
     expect(rows.length, 'the shared-row matcher must find the rows').toBeGreaterThanOrEqual(6)
-    const sigs = [...UI.matchAll(/patch: \(k: string, v: never, cb: \(\) => void, label\?: string\) => void/g)]
+    // `ToggleRow` alone adds an optional FIFTH argument after the label — `confirmed`, set when its
+    // `confirmOn` dialog was accepted so the panel can forward the owner's consent to the gateway.
+    const sigs = [...UI.matchAll(/patch: \(k: string, v: never, cb: \(\) => void, label\?: string(?:, confirmed\?: boolean)?\) => void/g)]
     expect(sigs.length, `every shared row carries the 4th argument (rows: ${rows.join(', ')})`)
       .toBe(rows.length)
   })

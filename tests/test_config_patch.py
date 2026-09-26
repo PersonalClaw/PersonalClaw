@@ -303,10 +303,13 @@ class TestStrValidator:
 
 
 class TestEgressValidator:
+    # The cases that ADD an allow host or allow private addresses widen the guard, which is the
+    # consented direction (`edit_spec.loosens_egress`), so they send `confirm: true` — what they
+    # pin is how a valid value is stored, not the consent (tests/test_apps_cannot_relax_security).
     @pytest.mark.asyncio
     async def test_valid_egress_persists(self, tmp_config) -> None:
         async with TestClient(TestServer(_make_app())) as c:
-            resp = await _patch(
+            resp = await _patch_consented(
                 c,
                 "security.egress",
                 {
@@ -375,7 +378,7 @@ class TestEgressValidator:
         raw value would leave `config.json` and the Settings panel showing something other than
         what is enforced — the split-brain this module's `sanitize` hook exists to prevent."""
         async with TestClient(TestServer(_make_app())) as c:
-            resp = await _patch(
+            resp = await _patch_consented(
                 c,
                 "security.egress",
                 {
@@ -394,7 +397,7 @@ class TestEgressValidator:
         """The documented homelab case. `net.guard` matches against `urlparse().hostname`, so a
         literal address is a legitimate entry and the new host rule must not close it."""
         async with TestClient(TestServer(_make_app())) as c:
-            resp = await _patch(
+            resp = await _patch_consented(
                 c,
                 "security.egress",
                 {"allow_hosts": ["192.168.1.5", "nas"], "deny_hosts": [], "allow_private": False},

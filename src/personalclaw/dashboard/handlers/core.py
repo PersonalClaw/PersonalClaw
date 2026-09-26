@@ -14,7 +14,23 @@ from aiohttp.client_exceptions import ClientConnectionResetError
 import personalclaw.validation as _validation_mod
 from personalclaw import self_update
 from personalclaw.atomic_write import atomic_write
-from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
+from personalclaw.config.edit_spec import (
+    ConfigValueError,
+    NotASecurityControl,
+    SecurityControl,
+    app_write_refusal,
+    coerce_edit_value,
+    loosens_egress,
+    loosens_toward,
+    loosens_when,
+    loosens_when_added,
+    loosens_when_changed,
+    loosens_when_longer,
+    loosens_when_raised,
+    loosens_when_removed,
+    loosens_when_shorter,
+    unconsented_loosening,
+)
 from personalclaw.config.loader import (
     MEMORY_VAULT_MODES,
     PUSH_BACKENDS,
@@ -480,6 +496,14 @@ async def api_security_egress(_request: web.Request) -> web.Response:
 
 
 # ── PersonalClaw Config API ──
+#: The three `agent.*` fields `PUT /api/config/personalclaw` owns. Their bounds are NOT restated
+#: here: all three are declared in `_EDITABLE_CONFIG`, so this used to be a second copy of the
+#: same numbers — identical, one edit away from disagreeing. None is a security control, and
+#: `tests/test_security_posture_rail.py` keeps it that way: this path carries neither the app
+#: refusal nor the consent check, which live on the PATCH, the one writer of those fields.
+_AGENT_PUT_FIELDS = ("subagent_max_turns", "max_subagents", "orchestrator_skill")
+
+
 async def api_personalclaw_config(request: web.Request) -> web.Response:
     """GET/PUT /api/config/personalclaw — read or update PersonalClaw config."""
     from personalclaw.config.loader import config_path  # noqa: F811
@@ -505,11 +529,7 @@ async def api_personalclaw_config(request: web.Request) -> web.Response:
         agent_settings = body.get("agent")
         if not isinstance(agent_settings, dict):
             return _deny("agent must be an object")
-        # The three `agent.*` fields this endpoint owns. Their bounds are NOT restated here:
-        # all three are already declared in `_EDITABLE_CONFIG`, so this used to be a second
-        # copy of the same numbers — identical today, one edit away from disagreeing, and
-        # nothing would have caught the divergence because each path tested its own copy.
-        agent_fields = ("subagent_max_turns", "max_subagents", "orchestrator_skill")
+        agent_fields = _AGENT_PUT_FIELDS
         # An unrecognised key used to be dropped in silence whenever at least one recognised
         # key rode along, so `{"max_subagents": 4, "subagent_max_tunrs": 999}` returned 200
         # and applied half of what was asked.
@@ -693,30 +713,117 @@ def _scratchpad_path_sanitizer(value: str) -> str:
     return canonicalize(value.strip())
 
 
+_AUTONOMY_OFFER_ONLY = (
+    "decides when a promotion is OFFERED; granting one is still the owner's click on the "
+    "owner-only POST /api/autonomy/grant"
+)
+
+
+def _external_surface(label: str) -> dict:
+    """The spec for one inbound surface's kill switch — a security control in its own right,
+    because a surface that is on accepts requests from any client holding its token."""
+    return {
+        "type": "bool",
+        "security": SecurityControl(
+            loosens_when(True),
+            f"The external {label} surface turns on: a client holding one of its tokens can "
+            "reach this gateway through it.",
+        ),
+    }
+
+
+#: 🔴 A `"security"` key makes a field part of the owner's security posture — the ONE list of
+#: security-sensitive config fields is the set of entries here holding a `SecurityControl`.
+#: Being on it means an app-scoped caller can never write the field, and the owner's write that
+#: LOOSENS it needs `"confirm": true` (both decided in `config/edit_spec.py`, which also says
+#: why). Every field in `edit_spec.SECURITY_SECTIONS` must declare one or the other, and
+#: `tests/test_security_posture_rail.py` enumerates the list and drives both refusals for each.
+#: The `consent` sentence is shown in a consent dialog, so it must be true of the looser value.
 _EDITABLE_CONFIG: dict[str, dict] = {
-    "agent.approval_mode": {"type": "enum", "values": ["auto", "interactive", "trust_reads"]},
-    "agent.yolo": {"type": "bool"},
+    "agent.approval_mode": {
+        "type": "enum",
+        "values": ["auto", "interactive", "trust_reads"],
+        "security": SecurityControl(
+            loosens_toward("interactive", "trust_reads", "auto"),
+            "A looser approval mode lets tools run without asking you first — 'trust_reads' "
+            "approves read-only tools, and 'auto' approves every tool a subagent calls.",
+        ),
+    },
+    "agent.yolo": {
+        "type": "bool",
+        "security": SecurityControl(
+            loosens_when(True),
+            "Turning YOLO on skips every tool-approval confirmation, for every session, until "
+            "it is turned off.",
+        ),
+    },
     "agent.soft_stop_budget_secs": {"type": "float", "min": 0.5, "max": 60.0},
     "agent.max_subagents": {"type": "int", "min": 0, "max": 16},
     "agent.subagent_max_turns": {"type": "int", "min": 1, "max": 200},
     "agent.subagent_timeout_secs": {"type": "int", "min": 60, "max": 7200},
     "agent.spawn_min_memory_gb": {"type": "float", "min": 0.0, "max": 64.0},
-    "agent.subagent_cwd_allowed_roots": {"type": "str_list", "max_items": 20},
+    "agent.subagent_cwd_allowed_roots": {
+        "type": "str_list",
+        "max_items": 20,
+        "security": SecurityControl(
+            loosens_when_added(),
+            "Subagents may be started with their working directory inside the added folders.",
+        ),
+    },
     # PLATFORM-HARDENING-FLOORS §1 — resource ceilings for agent-influenced child
     # processes, delivered post-exec by the ceiling shim. 0 disables an individual
     # limit. session_host (ACP) is exempt from the NOFILE cap by profile, not config.
-    "sandbox.nofile": {"type": "int", "min": 0, "max": 1_048_576},
-    "sandbox.max_pids": {"type": "int", "min": 0, "max": 100_000},
-    "sandbox.max_rss_mb": {"type": "int", "min": 0, "max": 1_048_576},
+    "sandbox.nofile": {
+        "type": "int",
+        "min": 0,
+        "max": 1_048_576,
+        "security": SecurityControl(
+            loosens_when_raised(unlimited=0),
+            "A process the agent starts may hold more open files — 0 removes the limit.",
+        ),
+    },
+    "sandbox.max_pids": {
+        "type": "int",
+        "min": 0,
+        "max": 100_000,
+        "security": SecurityControl(
+            loosens_when_raised(unlimited=0),
+            "A process the agent starts may start more processes — 0 removes the limit.",
+        ),
+    },
+    "sandbox.max_rss_mb": {
+        "type": "int",
+        "min": 0,
+        "max": 1_048_576,
+        "security": SecurityControl(
+            loosens_when_raised(unlimited=0),
+            "A process the agent starts may use more memory — 0 removes the limit.",
+        ),
+    },
     # PHF-2 — opt into the Linux-only second enforcement tier (a transient systemd user
     # scope carrying TasksMax/MemoryMax derived from the ceilings above, so they bound the
     # whole child subtree). Editable because it is the one knob that changes HOW the
     # ceilings are delivered; it is a no-op where systemd user scopes are unavailable.
-    "sandbox.cgroup_scopes": {"type": "bool"},
+    "sandbox.cgroup_scopes": {
+        "type": "bool",
+        "security": SecurityControl(
+            loosens_when(False),
+            "Processes the agent starts stop being wrapped in a cgroup scope, so their limits "
+            "no longer cover the processes they start in turn.",
+        ),
+    },
     # PHF-4 — the declared-needs seam for the child-env allowlist. Names only; the
     # credential floor still refuses a sensitive name at spawn, so a write here cannot
     # hand a hook the gateway's AWS session.
-    "sandbox.env_passthrough": {"type": "str_list", "max_items": 40},
+    "sandbox.env_passthrough": {
+        "type": "str_list",
+        "max_items": 40,
+        "security": SecurityControl(
+            loosens_when_added(),
+            "Processes the agent starts inherit the added environment variables (names on "
+            "the credential floor are still withheld).",
+        ),
+    },
     # EXECUTION-ISOLATION §6 — bounds on the turn-bound file checkpoint store. Only the
     # BOUNDS are editable: which files may never be copied is a code-level floor
     # (turn_checkpoints.NEVER_CAPTURE_GLOBS) with no config field, so no PATCH can widen it.
@@ -724,32 +831,117 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "checkpoints.max_mb": {"type": "int", "min": 0, "max": 100_000},
     "checkpoints.max_turns": {"type": "int", "min": 1, "max": 1_000},
     "checkpoints.max_file_mb": {"type": "int", "min": 0, "max": 10_000},
-    "security.denied_commands": {"type": "str_list", "max_items": 100, "each_regex": True},
-    "security.egress": {"type": "egress"},
+    "security.denied_commands": {
+        "type": "str_list",
+        "max_items": 100,
+        "each_regex": True,
+        "security": SecurityControl(
+            loosens_when_removed(),
+            "The agent may run commands the removed pattern used to block (the built-in "
+            "denylist still applies).",
+        ),
+    },
+    "security.egress": {
+        "type": "egress",
+        "security": SecurityControl(
+            loosens_egress,
+            "The agent's outbound fetches, scrapes and webhooks can reach an address the egress "
+            "guard blocked before — a private or LAN address, or a host you had denied.",
+        ),
+    },
     # SH-2. Flipping this changes where NEW credentials are written; it deliberately does
     # NOT move the secrets already in `.env` — that is the separate, snapshot-backed,
     # consented `credentials_to_keychain` action (`/api/security/credentials/migrate`). A
     # PATCH that silently rewrote the credential store would be an unconfirmed data move.
-    "security.credential_keychain": {"type": "bool"},
+    "security.credential_keychain": {
+        "type": "bool",
+        "security": SecurityControl(
+            loosens_when(False),
+            "New credentials will be saved to the .env file (mode 0600) instead of the OS "
+            "keychain.",
+        ),
+    },
     # MBR-1. The per-server elicitation grant. A `str_list` and not a bool, because the
     # whole point is that consent is per SERVER: one boolean here would be the global
     # "MCP can interrupt me" switch the plan forbids. `max_items` is generous rather than
     # tight — it bounds the list, and a home with 60 configured MCP servers is a real
     # shape, so a low cap would refuse a legitimate grant.
-    "security.mcp_elicitation_servers": {"type": "str_list", "max_items": 100},
+    "security.mcp_elicitation_servers": {
+        "type": "str_list",
+        "max_items": 100,
+        "security": SecurityControl(
+            loosens_when_added(),
+            "The added MCP server will be able to interrupt its own tool calls to ask you "
+            "questions.",
+        ),
+    },
     # AUTONOMY-GUARDRAILS: the runtime-editable guardrail subset (§7). Incident is
     # NOT here — it's its own endpoint (a later session). Budgets/breaker/scan are
     # plain scalars edited via Settings.
-    "guardrails.budgets.max_tokens_per_run": {"type": "int", "min": 0, "max": 100_000_000},
-    "guardrails.budgets.max_tokens_per_day": {"type": "int", "min": 0, "max": 1_000_000_000},
-    "guardrails.budgets.max_dollars_per_day": {"type": "float", "min": 0.0, "max": 100_000.0},
-    "guardrails.breaker.failure_threshold": {"type": "int", "min": 1, "max": 100},
-    "guardrails.breaker.recovery_secs": {"type": "float", "min": 0.0, "max": 3600.0},
+    "guardrails.budgets.max_tokens_per_run": {
+        "type": "int",
+        "min": 0,
+        "max": 100_000_000,
+        "security": SecurityControl(
+            loosens_when_raised(unlimited=0),
+            "A single run may spend more tokens — 0 removes the limit.",
+        ),
+    },
+    "guardrails.budgets.max_tokens_per_day": {
+        "type": "int",
+        "min": 0,
+        "max": 1_000_000_000,
+        "security": SecurityControl(
+            loosens_when_raised(unlimited=0),
+            "The agent may spend more tokens per day — 0 removes the limit.",
+        ),
+    },
+    "guardrails.budgets.max_dollars_per_day": {
+        "type": "float",
+        "min": 0.0,
+        "max": 100_000.0,
+        "security": SecurityControl(
+            loosens_when_raised(unlimited=0),
+            "The agent may spend more money per day — 0 removes the limit.",
+        ),
+    },
+    "guardrails.breaker.failure_threshold": {
+        "type": "int",
+        "min": 1,
+        "max": 100,
+        "security": NotASecurityControl(
+            "fails a model PROVIDER over fast: it decides reliability, not what the agent may do"
+        ),
+    },
+    "guardrails.breaker.recovery_secs": {
+        "type": "float",
+        "min": 0.0,
+        "max": 3600.0,
+        "security": NotASecurityControl(
+            "fails a model PROVIDER over fast: it decides reliability, not what the agent may do"
+        ),
+    },
     # The TOOL-loop breaker's abort ceiling (ACP-AGENT-PARITY §2.3) — a different breaker
     # from the two rows above, which fail a model PROVIDER fast. `min: 1` mirrors
     # `load()`'s floor: at 0 the `>` comparison aborts a run on its first failed call.
-    "guardrails.loop_breaker.circuit_threshold": {"type": "int", "min": 1, "max": 1000},
-    "guardrails.scan_mode": {"type": "enum", "values": ["warn", "redact", "block"]},
+    "guardrails.loop_breaker.circuit_threshold": {
+        "type": "int",
+        "min": 1,
+        "max": 1000,
+        "security": SecurityControl(
+            loosens_when_raised(),
+            "A run may fail more tool calls in a row before it is stopped.",
+        ),
+    },
+    "guardrails.scan_mode": {
+        "type": "enum",
+        "values": ["warn", "redact", "block"],
+        "security": SecurityControl(
+            loosens_toward("block", "redact", "warn"),
+            "Secrets or personal data found in a prompt bound for a remote model provider get "
+            "less protection — 'redact' replaces them, 'warn' only logs them.",
+        ),
+    },
     # Model routing (MODEL-ROUTING-TELEMETRY §7 wiring point (d)) — the runtime-editable
     # subset: the master switch plus the tuning numbers a user reaches for after watching
     # what routing actually did. Per-use-case mode/pin are NOT here: they live in
@@ -765,11 +957,39 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # user reaches for after seeing what the ladder actually proposed. Bounded on both
     # sides: `clean_approvals` floors at 1 (a bar of zero would offer a promotion to a
     # type with no record), and every ceiling keeps a typo from budgeting a decade.
-    "guardrails.autonomy.clean_approvals": {"type": "int", "min": 1, "max": 1000},
-    "guardrails.autonomy.min_days": {"type": "int", "min": 0, "max": 365},
-    "guardrails.autonomy.max_rejections": {"type": "int", "min": 0, "max": 100},
-    "guardrails.autonomy.cooldown_days": {"type": "int", "min": 0, "max": 365},
-    "guardrails.autonomy.evidence_window_days": {"type": "int", "min": 1, "max": 365},
+    #
+    # None of the five is a security control: they decide when a promotion is OFFERED. Granting
+    # one is still the owner's click on `POST /api/autonomy/grant`, which is owner-only.
+    "guardrails.autonomy.clean_approvals": {
+        "type": "int",
+        "min": 1,
+        "max": 1000,
+        "security": NotASecurityControl(_AUTONOMY_OFFER_ONLY),
+    },
+    "guardrails.autonomy.min_days": {
+        "type": "int",
+        "min": 0,
+        "max": 365,
+        "security": NotASecurityControl(_AUTONOMY_OFFER_ONLY),
+    },
+    "guardrails.autonomy.max_rejections": {
+        "type": "int",
+        "min": 0,
+        "max": 100,
+        "security": NotASecurityControl(_AUTONOMY_OFFER_ONLY),
+    },
+    "guardrails.autonomy.cooldown_days": {
+        "type": "int",
+        "min": 0,
+        "max": 365,
+        "security": NotASecurityControl(_AUTONOMY_OFFER_ONLY),
+    },
+    "guardrails.autonomy.evidence_window_days": {
+        "type": "int",
+        "min": 1,
+        "max": 365,
+        "security": NotASecurityControl(_AUTONOMY_OFFER_ONLY),
+    },
     # MULTIMODAL-IO §4.5 — the hands-free voice loop. All six are convenience
     # knobs (comfort, not safety): the phrase lists drive frontend gating, the
     # booleans switch echo filtering, mute-during-playback, pre-speech cleaning
@@ -817,14 +1037,40 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # DURABILITY-AND-SYNC §4 — sync knobs. sync_enabled is fail-closed in load(); the
     # transport is a free-text provider name (validated against installed transports at
     # cycle time, not here — an unknown name simply leaves sync idle).
-    "durability.sync_enabled": {"type": "bool"},
-    "durability.sync_transport": {"type": "str", "max_len": 64},
+    #
+    # All three sync fields decide where a copy of the whole home goes, so all three are
+    # security controls: an app that could point sync at a transport it ships, switch it on and
+    # turn encryption off would receive the home in the clear.
+    "durability.sync_enabled": {
+        "type": "bool",
+        "security": SecurityControl(
+            loosens_when(True),
+            "Your home starts syncing off this machine through the configured transport.",
+        ),
+    },
+    "durability.sync_transport": {
+        "type": "str",
+        "max_len": 64,
+        "security": SecurityControl(
+            loosens_when_changed(),
+            "Sync will send your home through a different transport.",
+        ),
+    },
     "durability.sync_stale_after_secs": {"type": "int", "min": 30, "max": 86400},
     # §4.4 — the encryption tri-state. `values` is closed, so an out-of-scale value is
     # REFUSED at the boundary rather than silently landing as the safe default: a user who
     # mistypes a security control should be told, not quietly overruled. (load() still
     # falls back to "auto" for a hand-edited file, which this endpoint never produces.)
-    "durability.sync_encrypt": {"type": "str", "max_len": 8, "values": ("auto", "on", "off")},
+    "durability.sync_encrypt": {
+        "type": "str",
+        "max_len": 8,
+        "values": ("auto", "on", "off"),
+        "security": SecurityControl(
+            loosens_toward("on", "auto", "off"),
+            "Synced data may leave this machine unencrypted — 'auto' leaves a private git "
+            "repository readable, and 'off' leaves every transport readable.",
+        ),
+    },
     # EVALUATION-SUBSTRATE §10 — the runtime-editable evals subset. These are the
     # knobs a user reaches for from Settings; each is a plain scalar. Deliberately
     # EXCLUDED: `evals.bakeoff_capture_enabled` — a privacy-sensitive input-capture
@@ -850,8 +1096,23 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # capability set, the per-run cap, the guardrails budget floor), not by hiding it.
     "proactive.triage_enabled": {"type": "bool"},
     "proactive.digest_schedule": {"type": "str", "max_len": 64},
-    "proactive.auto_execute_enabled": {"type": "bool"},
-    "proactive.max_auto_actions_per_run": {"type": "int", "min": 0, "max": 50},
+    "proactive.auto_execute_enabled": {
+        "type": "bool",
+        "security": SecurityControl(
+            loosens_when(True),
+            "The triage digest may act on items by itself, up to its per-run cap, without "
+            "asking you first.",
+        ),
+    },
+    "proactive.max_auto_actions_per_run": {
+        "type": "int",
+        "min": 0,
+        "max": 50,
+        "security": SecurityControl(
+            loosens_when_raised(),
+            "The triage digest may take more actions by itself in each run.",
+        ),
+    },
     "proactive.classifier_gate_enabled": {"type": "bool"},
     "proactive.decision_default_horizon_days": {"type": "int", "min": 1, "max": 3650},
     "tools.projection_rules": {"type": "projection_rules"},
@@ -875,16 +1136,56 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     #   · the per-surface TOKENS — they are not in `config.json` at all (they live in
     #     the credential store via `save_credential`), so there is no path here even in
     #     principle; token lifecycle is `personalclaw inbound token create <surface>`.
-    "external_access.enabled": {"type": "bool"},
-    "external_access.openai.enabled": {"type": "bool"},
-    "external_access.mcp.enabled": {"type": "bool"},
-    "external_access.a2a.enabled": {"type": "bool"},
-    "external_access.capture.enabled": {"type": "bool"},
-    "external_access.bridge.enabled": {"type": "bool"},
-    "external_access.rate_rps": {"type": "float", "min": 0.01, "max": 1000.0},
-    "external_access.rate_burst": {"type": "int", "min": 1, "max": 10000},
-    "external_access.rate_concurrent": {"type": "int", "min": 1, "max": 256},
-    "external_access.auto_disable_after_breaches": {"type": "int", "min": 0, "max": 10000},
+    "external_access.enabled": {
+        "type": "bool",
+        "security": SecurityControl(
+            loosens_when(True),
+            "External access turns on: every surface that is switched on accepts requests "
+            "from clients holding one of its tokens.",
+        ),
+    },
+    "external_access.openai.enabled": _external_surface("OpenAI-compatible API"),
+    "external_access.mcp.enabled": _external_surface("MCP"),
+    "external_access.a2a.enabled": _external_surface("agent-to-agent (A2A)"),
+    "external_access.capture.enabled": _external_surface("capture"),
+    "external_access.bridge.enabled": _external_surface("bridge"),
+    "external_access.rate_rps": {
+        "type": "float",
+        "min": 0.01,
+        "max": 1000.0,
+        "security": SecurityControl(
+            loosens_when_raised(),
+            "External clients may send more requests per second before they are limited.",
+        ),
+    },
+    "external_access.rate_burst": {
+        "type": "int",
+        "min": 1,
+        "max": 10000,
+        "security": SecurityControl(
+            loosens_when_raised(),
+            "External clients may send a larger burst of requests before they are limited.",
+        ),
+    },
+    "external_access.rate_concurrent": {
+        "type": "int",
+        "min": 1,
+        "max": 256,
+        "security": SecurityControl(
+            loosens_when_raised(),
+            "External clients may keep more requests running at once.",
+        ),
+    },
+    "external_access.auto_disable_after_breaches": {
+        "type": "int",
+        "min": 0,
+        "max": 10000,
+        "security": SecurityControl(
+            loosens_when_raised(unlimited=0),
+            "An external surface tolerates more breaches before it switches itself off — 0 "
+            "means it never does.",
+        ),
+    },
     # EXTERNAL-ACCESS §7.2 — the capture surface's two operator knobs. Both are
     # runtime-editable: the pruner reads retention on each curator tick and the
     # streaming client reads the allow-list per forward, so neither needs a restart.
@@ -896,11 +1197,25 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # stays on the dataclass as a read-only mirror (older external readers may still
     # look at it); it is deliberately absent from this allowlist so there is exactly
     # one name to write.
-    "external_access.capture.retention_days": {"type": "int", "min": 0, "max": 3650},
+    "external_access.capture.retention_days": {
+        "type": "int",
+        "min": 0,
+        "max": 3650,
+        "security": NotASecurityControl(
+            "how long captured traffic is kept: it changes what is stored, not who may connect"
+        ),
+    },
     # Operator-visible by requirement (§7.1): upstream forwarding must be guarded
     # against an explicit host list rather than hand-rolled unguarded egress, which
     # means the operator has to be able to SEE and edit the list.
-    "external_access.capture.upstream_allowlist": {"type": "str_list", "max_items": 40},
+    "external_access.capture.upstream_allowlist": {
+        "type": "str_list",
+        "max_items": 40,
+        "security": SecurityControl(
+            loosens_when_added(),
+            "The capture surface may forward requests to the added upstream hosts.",
+        ),
+    },
     # MEMORY-GRAPH-AND-VAULT §1 — entity linking. Runtime-editable: turning it off
     # stops new links immediately (existing links are kept, so re-enabling doesn't
     # need a backfill).
@@ -974,7 +1289,14 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # posture choice, not a floor: which provenance counts as verified is code
     # (agents/runners.verify_adapter), so a PATCH here can only turn the requirement
     # on or off, never widen what "verified" means.
-    "agent.unattended_requires_verified_adapter": {"type": "bool"},
+    "agent.unattended_requires_verified_adapter": {
+        "type": "bool",
+        "security": SecurityControl(
+            loosens_when(False),
+            "Unattended runs may start on an external runner whose adapter has not been "
+            "verified.",
+        ),
+    },
     # EI-5 — how long a runner's measured health evidence counts as current. Bounded
     # below at a minute (a shorter window would mark every row overdue between two
     # clicks) and above at a day.
@@ -999,7 +1321,15 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # [1, 20] window ``AppConfig.load()`` applies, so the file and the dashboard agree.
     "agent.self_qa.enabled": {"type": "bool"},
     "agent.self_qa.watched_repo": {"type": "str", "max_len": 512},
-    "agent.self_qa.fix_branch_enabled": {"type": "bool"},
+    "agent.self_qa.fix_branch_enabled": {
+        "type": "bool",
+        "security": SecurityControl(
+            loosens_when(True),
+            "On every confirmed failure, the companion will open a pclaw/selfqa-<sha> branch "
+            "in your watched repository carrying a proposed diff — with no further "
+            "confirmation.",
+        ),
+    },
     "agent.self_qa.max_scenarios_per_fire": {"type": "int", "min": 1, "max": 20},
     "session.timeout_secs": {"type": "int", "min": 0, "max": 86400},
     "session.autocompact_pct": {"type": "float", "min": 5.0, "max": 90.0},
@@ -1247,11 +1577,52 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # not a setting, it goes through `personalclaw auth set-password` / the enroll flow so
     # the plaintext never rides in a PATCH body that lands in a request log. `public_url`
     # is likewise excluded — widening a network surface should be a deliberate file edit.
-    "auth.login_enabled": {"type": "bool"},
-    "auth.require_totp": {"type": "bool"},
-    "auth.session_ttl": {"type": "duration"},
-    "auth.lockout_threshold": {"type": "int", "min": 1, "max": 100},
-    "auth.lockout_window": {"type": "duration"},
+    #
+    # Which way LOOSENS `login_enabled` is not the obvious way. Login "ADDS a second issuer of
+    # the same session token" (`AuthConfig`): turning it ON is a new way in that anyone who can
+    # reach the page may try, so ON is the consented direction. Turning it OFF removes that way
+    # in; the token link keeps working, and the Account panel's dialog for OFF is a lockout
+    # warning for the owner, not a security consent.
+    "auth.login_enabled": {
+        "type": "bool",
+        "security": SecurityControl(
+            loosens_when(True),
+            "Password sign-in becomes a way in: anyone who can reach this dashboard can try a "
+            "username and password, up to the lockout limit.",
+        ),
+    },
+    "auth.require_totp": {
+        "type": "bool",
+        "security": SecurityControl(
+            loosens_when(False),
+            "Signing in with just a username and password will be enough — the authenticator "
+            "code will no longer be required.",
+        ),
+    },
+    "auth.session_ttl": {
+        "type": "duration",
+        "security": SecurityControl(
+            loosens_when_longer(),
+            "A signed-in browser stays signed in longer before it must sign in again.",
+        ),
+    },
+    "auth.lockout_threshold": {
+        "type": "int",
+        "min": 1,
+        "max": 100,
+        "security": SecurityControl(
+            loosens_when_raised(),
+            "More wrong passwords are allowed before sign-in is locked.",
+        ),
+    },
+    "auth.lockout_window": {
+        "type": "duration",
+        "security": SecurityControl(
+            loosens_when_shorter(),
+            "A lockout ends sooner and failed attempts are forgotten sooner, so more guesses "
+            "fit into the same time.",
+        ),
+    },
     # Platform-legibility toggles (§6 Discover tips, §7 context adapters).
     # discover_tips gates the propose-don't-write Discover section + hub;
     # context_adapters gates writing adapter files into opted-in project workspaces.
@@ -1273,7 +1644,14 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # BROWSE-AUTOMATION BA-7 — the connector toggle for the `user_browser` execution target.
     # Editable here so the Settings control has a write path; there is deliberately no knob for
     # the `gateway` target, which needs no permission to drive this machine's own profile.
-    "browse.user_browser_enabled": {"type": "bool"},
+    "browse.user_browser_enabled": {
+        "type": "bool",
+        "security": SecurityControl(
+            loosens_when(True),
+            "The agent may drive your own browser through the connector, with the sites you "
+            "are signed in to.",
+        ),
+    },
     # Mobile push (MOBILE-COMPANION MC-5 §C3) — which transport carries a CONTENT-FREE
     # {kind,item_id} ping to the phone. WHETHER a notification pushes at all is plan 42's
     # rules matrix, not this; these two only pick the pipe. The enum values are read from
@@ -1327,6 +1705,22 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # network before the user has configured anything needs an off switch to point at.
     "apps.bundled_source_enabled": {"type": "bool"},
 }
+
+
+def _value_in_effect(path_key: str) -> object:
+    """What *path_key* holds right now as the runtime reads it — defaults included.
+
+    Read through `AppConfig.load()` rather than off the raw file, because "does this write
+    loosen the control?" is a question about the value in effect: an absent key IS its default,
+    and a hand-edited value `load()` normalises is the normalised one. ``None`` when the path
+    does not resolve, which every `loosens` rule reads as "cannot prove this is not looser".
+    """
+    node: object = AppConfig.load().to_dict()
+    for part in path_key.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return None
+        node = node[part]
+    return node
 
 
 async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
@@ -1386,37 +1780,30 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
     if not spec:
         return _deny(f"field not editable: {path_key}", f"{path_key}={value}")
 
+    # 🔴 AN APP CAN NEVER WRITE A SECURITY SETTING. `permissions.api: ["/api/config"]` is a path
+    # prefix: it let an app PATCH `agent.yolo: true` — every tool call auto-approved — or turn the
+    # 2FA requirement off, and `confirm: true` did not stop it, because anything holding a session
+    # can send the flag. Decided on WHO asks and WHICH field only (`edit_spec.app_write_refusal`),
+    # before the value is validated, so a refused app learns nothing about either.
+    app_name = request.get("app", "")
+    refused = app_write_refusal(path_key, spec, app_name)
+    if refused:
+        _sel().log_api_access(
+            caller=f"app:{app_name}",
+            operation="config.patch",
+            outcome="denied",
+            source="app_permissions",
+            resources=path_key,
+            error="security setting is owner-only",
+        )
+        return json_error("security_setting_owner_only", message=refused, status=403)
+
     # Validate value. The rules live in `config/edit_spec.py` because three other write
     # paths need exactly these ones — see that module for why they are one function.
     try:
         value = coerce_edit_value(path_key, value, spec)
     except ConfigValueError as exc:
         return _deny(str(exc), exc.resources, exc.status)
-
-    # 🔴 TURNING YOLO ON NEEDS THE OWNER'S CONSENT ON THE WIRE, not only in a dialog. `true`
-    # skips every tool-approval confirmation, for every session, with no expiry, so the Agent
-    # defaults panel asks first (#753). The Settings hub's tile switch did not: one click sent
-    # this PATCH ~40 ms later and the bypass was live, because the dialog was the only gate and
-    # a second writer that never called it skipped it. So the core refuses without
-    # `confirm: true` — the reasoning `security_credentials` gives for its own flag: a future
-    # caller cannot skip the consent by not knowing about it; it gets this 400 instead.
-    #
-    # OFF never needs it. Revoking the bypass is the direction a broken or confused client must
-    # always be able to take (#672 made it apply live for exactly that reason).
-    #
-    # A protocol record, not an authorization control: anything holding the owner's session can
-    # send the flag. What it guarantees is that the flag is SENT, and the one frontend writer
-    # (`web/src/pages/settings/agentYolo.ts`) sends it only after the owner confirms.
-    if path_key == "agent.yolo" and value is True and not confirm_granted(body):
-        _log_sel("denied", "agent.yolo=True without confirm")
-        return json_error(
-            "confirmation_required",
-            message=(
-                'send {"confirm": true} — turning YOLO on skips every tool-approval '
-                "confirmation, for every session, until it is turned off"
-            ),
-            status=400,
-        )
 
     # Read, update, write
     cfg_path = config_path()
@@ -1428,6 +1815,33 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         except Exception:
             _log_sel("error", f"{path_key}=read_failed")
             return web.json_response({"error": "failed to read config file"}, status=500)
+
+        # 🔴 A WRITE THAT LOOSENS A SECURITY SETTING NEEDS THE OWNER'S CONSENT ON THE WIRE, not
+        # only in a dialog. The Settings hub's YOLO tile turned YOLO on ~40 ms after one click
+        # because the panel's dialog was the only gate and a second writer never called it (#3596,
+        # which closed that for YOLO alone). Any field holding a `SecurityControl` answers
+        # `400 confirmation_required` without `confirm: true`, and the refusal carries the consent
+        # sentence, so a surface that never heard the field was sensitive still asks the right
+        # question. Tightening never needs it: revoking a grant is the direction a broken or
+        # confused client must always be able to take.
+        #
+        # Under the lock, and against the value IN EFFECT (defaults included): "is this looser?"
+        # is a question about what is stored at the moment of the write, and a check before the
+        # lock could compare against a value a concurrent write has already replaced.
+        #
+        # A record that the owner was asked, not authorization — anything holding the owner's
+        # session can send the flag. The authorization half is `app_write_refusal` above.
+        consent = unconsented_loosening(
+            path_key, spec, current=_value_in_effect(path_key), new=value, body=body
+        )
+        if consent:
+            _log_sel("denied", f"{path_key}: loosening without confirm")
+            return json_error(
+                "confirmation_required",
+                message=f'send {{"confirm": true}} to confirm — {consent}',
+                status=400,
+                error_extra={"detail": {"field": path_key, "consent": consent}},
+            )
 
         # Walk the dotted path, creating intermediate objects — supports any depth
         # (e.g. the 1-part `auto_update`, 2-part `agent.yolo`, 3-part

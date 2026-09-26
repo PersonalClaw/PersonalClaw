@@ -199,11 +199,11 @@ non-enforcements matter most here:
 - ACP agents under auto-approve rely on system-prompt framing, not rails.
 
 The real control is the supply-chain scanner — quarantine → scan → consent → install,
-with a `dangerous` terminal verdict — plus a closed owner-only API registry that no
+with a `dangerous` terminal verdict — plus a closed set of owner-only capabilities that no
 manifest can reach (the terminal, computer-use, the credential store, the audit log,
-your password and second factor). That is meaningful, and it is also *vetting what you
-choose to install*, not confinement afterwards. Treat installing an app as running a
-program as yourself, because that is what it is.
+your password and second factor, and your security settings). That is meaningful, and it
+is also *vetting what you choose to install*, not confinement afterwards. Treat installing
+an app as running a program as yourself, because that is what it is.
 
 ## 10. You want a hosted service, or to run one install for other people
 

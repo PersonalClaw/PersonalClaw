@@ -328,13 +328,18 @@ class TestTheCircuitCeilingIsConfigurable:
     def test_the_write_path_is_allowlisted_with_the_same_floor_load_enforces(self):
         """Contract point 4. Without this the Settings control 400s while every backend test
         stays green — the exact gap ``test_config_section_modules``' docstring names."""
+        from personalclaw.config.edit_spec import security_control
         from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
-        assert _EDITABLE_CONFIG["guardrails.loop_breaker.circuit_threshold"] == {
+        spec = _EDITABLE_CONFIG["guardrails.loop_breaker.circuit_threshold"]
+        # The validation shape, exactly; `security` is the field's place on the security list
+        # (a higher ceiling loosens it — tests/test_security_posture_rail.py).
+        assert {k: v for k, v in spec.items() if k != "security"} == {
             "type": "int",
             "min": 1,
             "max": 1000,
         }
+        assert security_control(spec) is not None
 
     def test_the_settings_control_exists_and_patches_that_path(self):
         """Contract point 5. The ceiling is user-facing: its abort lands in the user's own

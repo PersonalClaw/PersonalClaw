@@ -321,8 +321,12 @@ export function ToggleRow({ label, hint, cfg, field, patch, danger, confirmOn }:
    *  control's visible name and its config key, and used to hand the patch only the key — so a
    *  rejected save said "Couldn't save soft_stop_budget_secs" about a control the UI calls "Subagent
    *  timeout". The user has never seen that string anywhere on screen. Optional, so a panel that has
-   *  not adopted it still type-checks and still shows the key. */
-  patch: (k: string, v: never, cb: () => void, label?: string) => void
+   *  not adopted it still type-checks and still shows the key.
+   *
+   *  The FIFTH argument is `true` exactly when this row's `confirmOn` dialog was just accepted: the
+   *  panel forwards it to `api.patchConfig(…, confirmed)` so the gateway, which asks its own consent
+   *  for a loosening write, does not ask the owner a second time. */
+  patch: (k: string, v: never, cb: () => void, label?: string, confirmed?: boolean) => void
   /** Show a warning glyph while ON — for a switch that relaxes a safety default. */
   danger?: boolean
   /** Confirm before turning this switch ON — for the one direction that relaxes a security/safety
@@ -335,10 +339,12 @@ export function ToggleRow({ label, hint, cfg, field, patch, danger, confirmOn }:
   const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
   const on = Boolean(cfg[field])
   const onChange = async (next: boolean) => {
-    if (next && confirmOn && !(await confirm({
+    const asks = next && confirmOn !== undefined
+    if (asks && !(await confirm({
       title: confirmOn.title, body: confirmOn.body, confirmLabel: confirmOn.confirmLabel ?? 'Turn on', danger: true,
     }))) return
-    patch(field, next as never, flash, label)
+    if (asks) patch(field, next as never, flash, label, true)
+    else patch(field, next as never, flash, label)
   }
   return (
     <Row label={label} hint={hint}>

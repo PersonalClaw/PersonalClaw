@@ -42,6 +42,7 @@ from personalclaw.dashboard.chat_utils import (
 )
 from personalclaw.dashboard.state import (
     SESSION_APPROVAL_ACTIONS,
+    STANDING_APPROVAL_ACTIONS,
     DashboardState,
     _ChatSession,
     _mark_permission_resolved,
@@ -2720,6 +2721,31 @@ async def api_chat_session_approve(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": f"unknown action {action!r}", "allowed": sorted(SESSION_APPROVAL_ACTIONS)},
             status=400,
+        )
+    # 🔴 An app answers ONE call. `yolo` here turns auto-approve on for every session and
+    # `trust_agent` persists it onto the agent for every future chat — the posture an app is
+    # refused in `/api/chat/mode` and in the config PATCH, reached through the approval card
+    # instead. A companion relaying the owner's approve/reject needs nothing more.
+    app_name = request.get("app", "")
+    if app_name and action in STANDING_APPROVAL_ACTIONS:
+        try:
+            sel().log_api_access(
+                caller=f"app:{app_name}",
+                operation="chat.approval_resolve",
+                outcome="denied",
+                source="app_permissions",
+                resources=f"{name}:{action}",
+                error="standing approval grant is owner-only",
+            )
+        except Exception:
+            logger.warning("SEL audit failed for a refused app approval grant", exc_info=True)
+        return json_error(
+            "security_setting_owner_only",
+            message=(
+                f"an app may answer this approval once, with 'approved' or 'rejected' — "
+                f"'{action}' changes the approval posture, which only the owner can do"
+            ),
+            status=403,
         )
     # Name the target BEFORE anything is granted: a trust/yolo verb aimed at an approval that is
     # no longer pending must not raise the session's posture behind a 404.
