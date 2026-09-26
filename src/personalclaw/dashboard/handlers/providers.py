@@ -14,6 +14,7 @@ Routes:
 
 import asyncio
 import contextlib
+import functools
 import logging
 from typing import Any
 
@@ -26,35 +27,168 @@ from personalclaw.request_validation import RequestValidationError, require_stri
 
 logger = logging.getLogger(__name__)
 
-# Readiness-probe cache for ``/api/agent-providers``. A runtime warmed in the
-# connection pool is answered instantly from the pool; runtimes NOT in the pool
-# (e.g. codex, whose engine is absent → a 45s npx-fetch probe that always fails)
-# would otherwise be re-probed on every call. Cache their probe result with a
-# short TTL so the endpoint stays fast after the first hit. Process-local; keyed
-# by runtime id → (monotonic_ts, status_dict).
-_READINESS_TTL_SECS = 300.0
+# Readiness answers for ``/api/agent-providers``, keyed by runtime id →
+# (monotonic_ts, status_dict). A probe SPAWNS the runtime's CLI and opens a session on it, so
+# a plain read never probes: it serves the pool's live connection, else this cache however old
+# it is. It is filled at boot (``warm_readiness_cache``), by ``?refresh=1`` (the card's "Check
+# availability" and the post-sign-in poll), and once in the background for a runtime nothing
+# has measured yet. It used to expire after 5 minutes and re-probe INLINE on the next read,
+# which is how a Settings → Providers visit started a new Claude Code session each time.
 _readiness_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+# The one background probe per never-measured runtime (dedup across concurrent reads).
+_readiness_probes: dict[str, "asyncio.Task[dict[str, Any]]"] = {}
+
+#: What a never-measured runtime reads while its background probe runs.
+_READINESS_CHECKING: dict[str, Any] = {
+    "ready": False,
+    "state": "checking",
+    "detail": "Checking whether this runtime is installed and signed in…",
+    "login_command": None,
+}
+
+
+async def _probe_and_cache(entry: Any) -> dict[str, Any]:
+    """Probe one ACP runtime entry and cache the answer. Never raises."""
+    import time as _time
+
+    from personalclaw.agents.registry import get_agent_provider_class
+
+    family = "acp" if entry.type == "acp_agent" else entry.type
+    cls = get_agent_provider_class(family)
+    if cls is None:
+        status_d: dict[str, Any] = {
+            "ready": False,
+            "state": "error",
+            "detail": f"no agent provider registered for family {family!r}",
+            "login_command": None,
+        }
+    else:
+        try:
+            status = await cls.probe_readiness(dict(entry.options or {}))
+            status_d = {
+                "ready": status.ready,
+                "state": status.state,
+                "detail": status.detail,
+                "login_command": status.login_command,
+            }
+        except Exception as exc:  # noqa: BLE001 - never fail the listing
+            logger.debug("agent-provider probe failed for %s: %s", entry.name, exc)
+            status_d = {
+                "ready": False,
+                "state": "error",
+                "detail": f"probe failed: {exc}",
+                "login_command": None,
+            }
+    _readiness_cache[entry.name] = (_time.monotonic(), status_d)
+    return status_d
+
+
+def _schedule_readiness_probe(entry: Any) -> None:
+    """Measure a never-measured runtime once, in the background (deduplicated)."""
+    loop = asyncio.get_running_loop()
+    running = _readiness_probes.get(entry.name)
+    # A probe stranded on a loop that has since closed never reports done.
+    if running is not None and not running.done() and running.get_loop() is loop:
+        return
+    _readiness_probes[entry.name] = loop.create_task(_probe_and_cache(entry))
 
 
 # ── /api/model-providers ────────────────────────────────────────────────────────────
 
 
-async def api_providers_list(request: web.Request) -> web.Response:
-    """GET /api/model-providers — list configured model-provider entries.
+def _model_type_apps() -> dict[str, Any]:
+    """Installed model-provider apps by the provider TYPE each registers.
 
-    Returns ``{providers: [{name, type, model, capabilities, credential_status,
-    stored_secrets}]}``. ``credential_status`` is ``"ok"``, ``"missing"``, or
-    ``"unconfigured"`` (when no credential is declared). ``stored_secrets`` names the
-    option fields whose value this instance keeps in the credential store — by NAME, so
-    the delete dialog can say the key goes with it. No secret values are included.
+    The concrete type an app registers into the LLM registry is its manifest's
+    ``providerType`` — NOT ``provider.type``, which is the entity CLASS "model" — with the
+    app-name stem as the fallback for a manifest that declares none. The one type→app
+    mapping, shared by the Add-instance type list and each instance's settings schema.
+    """
+    from personalclaw.providers.registry import get_provider_registry, model_provider_type
+
+    apps: dict[str, Any] = {}
+    for ext in get_provider_registry().list_by_type("model"):
+        ptype = model_provider_type(ext)
+        if ptype and ptype != "acp_agent":
+            apps.setdefault(ptype, ext)
+    return apps
+
+
+def _declared_type(entry: Any) -> str:
+    """The type an instance was created as (a branded alias survives in ``_original_type``)."""
+    return str((entry.options or {}).get("_original_type") or entry.type)
+
+
+def _sensitive_settings(schema: dict[str, Any], names: Any) -> set[str]:
+    """Settings that hold a secret: declared ``x-meta.sensitive``, or credential-named."""
+    from personalclaw.apps.secret_fields import is_credential_field_name, sensitive_field_names
+
+    return sensitive_field_names(schema) | {n for n in names if is_credential_field_name(n)}
+
+
+def _wire_settings(options: dict[str, Any] | None, schema: dict[str, Any]) -> tuple[dict, list]:
+    """An instance's settings for the wire: secrets masked, core bookkeeping dropped.
+
+    Returns ``(settings, secret_set)`` — ``secret_set`` names the secret settings that hold
+    a value, so the edit form can say "a key is saved" without being handed it.
+    """
+    from personalclaw.apps.secret_fields import SECRET_MASK
+
+    settings = {k: v for k, v in (options or {}).items() if not str(k).startswith("_")}
+    secret_set: list[str] = []
+    for key in _sensitive_settings(schema, settings):
+        if key in settings and str(settings[key] or ""):
+            settings[key] = SECRET_MASK
+            secret_set.append(key)
+    return settings, sorted(secret_set)
+
+
+def _key_in_store(entry: Any) -> bool:
+    """Whether the instance authenticates with a credential from Settings → Secrets.
+
+    That is the instance's declared ``credential`` — a reference to a stored credential the
+    instance does NOT own, so removing the instance leaves it for whatever else uses it (the
+    keys the instance itself saved are ``stored_secrets``, and they go with it).
+    """
+    if not entry.credential:
+        return False
+    try:
+        from personalclaw.config.loader import config_dir
+        from personalclaw.llm.credentials import CredentialStore
+
+        # The HOME, not the file: `CredentialStore.__init__` takes a home and derives
+        # `<home>/credentials.json` + `<home>/.env` itself. Passing the file made it read
+        # `credentials.json/credentials.json`, load no descriptors, and raise `KeyError`
+        # from `resolve` for every name — swallowed below, so every correctly configured
+        # provider reported its credential as absent (#2217).
+        return bool(CredentialStore(config_dir()).resolve(entry.credential).secret)
+    except Exception:
+        return False
+
+
+async def api_providers_list(request: web.Request) -> web.Response:
+    """GET /api/model-providers — every configured model-provider instance.
+
+    Returns ``{providers: [{name, type, declared_type, model, capabilities, connection,
+    options, secret_set, stored_secrets, key_in_store}]}``:
+
+    * ``connection`` is MEASURED (``providers/connection.py``) — ``checking`` until the
+      instance's first background test lands. It replaced a badge derived from whether a
+      credential was present, which read "Configured" for an instance with no key at all.
+    * ``options`` are the instance's settings with every secret masked; ``secret_set``
+      names the secret settings that hold a value.
+    * ``stored_secrets`` names the option fields whose value this instance keeps in the
+      credential store — by NAME, so the delete dialog can say the key goes with it.
+    * ``key_in_store`` is True when the instance authenticates with a Settings → Secrets
+      credential it references — one removing the instance leaves in place.
     """
     import json as _json
 
     from personalclaw.config.loader import config_path
     from personalclaw.llm.registry import get_default_registry
+    from personalclaw.providers.connection import entry_fingerprint, get_connection_board
 
     registry = get_default_registry()
-    entries = registry.list_entries()
     try:
         document = _json.loads(config_path().read_text(encoding="utf-8"))
         records = document.get("providers") if isinstance(document, dict) else None
@@ -65,9 +199,11 @@ async def api_providers_list(request: web.Request) -> web.Response:
         for p in (records if isinstance(records, list) else [])
         if isinstance(p, dict)
     }
+    board = get_connection_board()
+    type_apps = _model_type_apps()
 
     result: list[dict[str, Any]] = []
-    for entry in entries:
+    for entry in registry.list_entries():
         # Agent-runtime entries (acp_agent / acp:<cli>) are NOT model providers —
         # they have no model catalog and no endpoint, so they belong only under
         # "Agent Providers" (/api/agent-providers). Listing them here surfaced a
@@ -83,24 +219,10 @@ async def api_providers_list(request: web.Request) -> web.Response:
         # names no app.
         if getattr(entry, "floor", False):
             continue
-        # Resolve credential status without exposing the secret
-        if not entry.credential:
-            cred_status = "ok"
-        else:
-            try:
-                from personalclaw.config.loader import config_dir
-                from personalclaw.llm.credentials import CredentialStore
-
-                # The HOME, not the file: `CredentialStore.__init__` takes a home and derives
-                # `<home>/credentials.json` + `<home>/.env` itself. Passing the file made it read
-                # `credentials.json/credentials.json`, load no descriptors, and raise `KeyError`
-                # from `resolve` for every name — swallowed below into "missing", so every
-                # correctly configured provider reported its credential as absent (#2217).
-                store = CredentialStore(config_dir())
-                cred = store.resolve(entry.credential)
-                cred_status = "ok" if cred.secret else "missing"
-            except Exception:
-                cred_status = "missing"
+        declared = _declared_type(entry)
+        app = type_apps.get(declared) or type_apps.get(entry.type)
+        schema = (app.provider_config.settingsSchema or {}) if app is not None else {}
+        settings, secret_set = _wire_settings(entry.options, schema)
 
         # Get static capability descriptor for this type
         try:
@@ -109,16 +231,23 @@ async def api_providers_list(request: web.Request) -> web.Response:
         except Exception:
             capabilities = sorted(c.value for c in entry.declared_capabilities)
 
+        connection = board.read(
+            entry.name, entry_fingerprint(entry), functools.partial(registry.build_catalog, entry)
+        )
         result.append(
             {
                 "name": entry.name,
                 "type": entry.type,
+                "declared_type": declared,
                 "model": entry.model,
                 "capabilities": capabilities,
-                "credential_status": cred_status,
+                "connection": connection.to_wire(),
+                "options": settings,
+                "secret_set": secret_set,
                 "stored_secrets": secret_refs.owned_field_names(
                     stored_options.get(entry.name), secret_refs.provider_owner(entry.name)
                 ),
+                "key_in_store": _key_in_store(entry),
             }
         )
 
@@ -137,17 +266,9 @@ async def api_provider_types(request: web.Request) -> web.Response:
     (JSON Schema + x-meta) so the form renders the right fields (api_key / region /
     endpoint enum / …) without the frontend knowing the provider.
     """
-    from personalclaw.providers.registry import get_provider_registry, model_provider_type
-
-    reg = get_provider_registry()
-    seen: set[str] = set()
     types: list[dict[str, Any]] = []
-    for ext in reg.list_by_type("model"):
+    for ptype, ext in _model_type_apps().items():
         cfg = ext.provider_config
-        ptype = model_provider_type(ext)
-        if not ptype or ptype in seen or ptype == "acp_agent":
-            continue
-        seen.add(ptype)
         manifest = ext.manifest
         types.append(
             {
@@ -172,22 +293,26 @@ async def api_agent_providers_list(request: web.Request) -> web.Response:
     This is the one source of truth for the "Agent Providers" UI section: the
     AgentProvider *runtime* axis, spanning the in-process ``native`` runtime
     and every ``acp:<cli>`` runtime registered by a removable bundle
-    (claude-code / codex / future). Each runtime is probed so the UI
-    can show a readiness chip and offer the Sign-in terminal when a runtime
-    reports ``needs_login``.
+    (claude-code / codex / future). Each row carries the runtime's measured
+    readiness so the UI can show a readiness chip and offer the Sign-in terminal
+    when a runtime reports ``needs_login``.
 
     Returns ``{agent_providers: [{name, provider_id, type, extension, ready,
     state, detail, login_command}]}`` where ``extension`` (when present) is the
     bundle name the row's enable/config card is keyed by, so the frontend can
     merge readiness onto the extension card instead of rendering two sections.
+
+    A plain read spawns nothing (see ``_readiness_cache``); a runtime nothing has
+    measured yet reads ``state: "checking"`` while one background probe runs.
     """
     from personalclaw.agents.registry import get_agent_provider_class
     from personalclaw.llm.registry import get_default_registry
 
-    # ?refresh=1 forces a fresh readiness probe — used right after a sign-in (and by
-    # the manual "Check availability" action) so a newly-authed CLI is re-detected
-    # instead of being answered from the 5-minute cache.
+    # ?refresh=1 probes now — the card's "Check availability" and the post-sign-in poll, so
+    # a newly-authed CLI is re-detected. ?runtime=<id> scopes that to one runtime: a sign-in
+    # poll re-probing EVERY runtime would spawn every CLI a dozen times.
     force_refresh = request.query.get("refresh") in ("1", "true", "yes")
+    only_runtime = request.query.get("runtime", "")
 
     registry = get_default_registry()
     entries = registry.list_entries()
@@ -230,18 +355,16 @@ async def api_agent_providers_list(request: web.Request) -> web.Response:
 
     _pool = get_acp_pool()
 
-    async def _probe(entry: Any) -> dict[str, Any]:
-        family = "acp" if entry.type == "acp_agent" else entry.type
-        cls = get_agent_provider_class(family)
-        options = dict(entry.options or {})
-        import time as _time
-
+    async def _row_for(entry: Any) -> dict[str, Any]:
         def _row(status_d: dict[str, Any]) -> dict[str, Any]:
+            # entry.name is already the canonical runtime id ("acp:<cli>") — used directly
+            # rather than re-derived from the command basename (which would mislabel an
+            # adapter like claude-agent-acp).
             return {
                 "name": entry.name,
                 "provider_id": entry.name,
                 "type": entry.type,
-                "extension": options.get("extension"),
+                "extension": dict(entry.options or {}).get("extension"),
                 **status_d,
             }
 
@@ -255,51 +378,20 @@ async def api_agent_providers_list(request: web.Request) -> web.Response:
                     "login_command": None,
                 }
             )
-        # 2. Cached probe result (covers not-pooled runtimes like codex without
-        #    re-paying their slow handshake on every call). Skipped on ?refresh=1 so
-        #    a just-signed-in CLI is re-probed instead of returning the stale state.
-        if not force_refresh:
-            hit = _readiness_cache.get(entry.name)
-            if hit and (_time.monotonic() - hit[0]) < _READINESS_TTL_SECS:
-                return _row(hit[1])
-        # 3. Live probe (first hit / cache miss).
-        if cls is None:
-            return _row(
-                {
-                    "ready": False,
-                    "state": "error",
-                    "detail": f"no agent provider registered for family {family!r}",
-                    "login_command": None,
-                }
-            )
-        try:
-            status = await cls.probe_readiness(options)
-            status_d = {
-                "ready": status.ready,
-                "state": status.state,
-                "detail": status.detail,
-                "login_command": status.login_command,
-            }
-        except Exception as exc:  # noqa: BLE001 - never fail the listing
-            logger.debug("agent-provider probe failed for %s: %s", entry.name, exc)
-            status_d = {
-                "ready": False,
-                "state": "error",
-                "detail": f"probe failed: {exc}",
-                "login_command": None,
-            }
-        _readiness_cache[entry.name] = (_time.monotonic(), status_d)
-        # entry.name is already the canonical runtime id ("acp:<cli>") — _row uses
-        # it directly rather than re-deriving from the command basename (which
-        # would mislabel an adapter like claude-agent-acp).
-        return _row(status_d)
+        # 2. An explicit re-check probes now.
+        if force_refresh and only_runtime in ("", entry.name):
+            return _row(await _probe_and_cache(entry))
+        # 3. Whatever was last measured, however old — a read spawns nothing.
+        hit = _readiness_cache.get(entry.name)
+        if hit is not None:
+            return _row(hit[1])
+        # 4. Never measured: measure once in the background, and say so.
+        _schedule_readiness_probe(entry)
+        return _row(dict(_READINESS_CHECKING))
 
-    # Probe in parallel — each probe can block up to its handshake timeout, so
-    # serial probing would make the Settings list wait on their sum.
+    # Parallel — an explicit re-check of several runtimes must not wait on their sum.
     if runtime_entries:
-        import asyncio as _asyncio
-
-        result.extend(await _asyncio.gather(*(_probe(e) for e in runtime_entries)))
+        result.extend(await asyncio.gather(*(_row_for(e) for e in runtime_entries)))
 
     return web.json_response({"agent_providers": result})
 
@@ -314,10 +406,8 @@ async def warm_readiness_cache() -> int:
     slowest probe. Pool-warmed runtimes are answered from the pool and skipped
     here. Best-effort; never raises. Returns the number of runtimes probed."""
     import asyncio as _asyncio
-    import time as _time
 
     from personalclaw.acp.connection_pool import get_acp_pool
-    from personalclaw.agents.registry import get_agent_provider_class
     from personalclaw.llm.registry import get_default_registry
 
     pool = get_acp_pool()
@@ -327,25 +417,7 @@ async def warm_readiness_cache() -> int:
         return 0
 
     async def _probe_one(entry: Any) -> None:
-        cls = get_agent_provider_class("acp")
-        if cls is None:
-            return
-        try:
-            status = await cls.probe_readiness(dict(entry.options or {}))
-            status_d = {
-                "ready": status.ready,
-                "state": status.state,
-                "detail": status.detail,
-                "login_command": status.login_command,
-            }
-        except Exception as exc:  # noqa: BLE001
-            status_d = {
-                "ready": False,
-                "state": "error",
-                "detail": f"probe failed: {exc}",
-                "login_command": None,
-            }
-        _readiness_cache[entry.name] = (_time.monotonic(), status_d)
+        status_d = await _probe_and_cache(entry)
         # A ready runtime's FIRST discovery is a cold session/new (~15-20s). If we
         # only warm readiness, the chat picker's discovered section is still empty
         # on first open until that slow fetch lands ("No agents available" right
@@ -857,6 +929,11 @@ async def api_provider_create(request: web.Request) -> web.Response:
         return web.json_response({"error": exc.message}, status=exc.status)
     model = body.get("model", "")
     options = body.get("options", {})
+    if not isinstance(options, dict):
+        return web.json_response({"error": "options must be a JSON object"}, status=400)
+    problem = _endpoint_refusal(options)
+    if problem:
+        return web.json_response({"error": problem}, status=400)
 
     # A provider type is valid iff SOME installed model app registered it — either
     # an inference factory (register_type) or a discovery catalog (register_catalog).
@@ -901,7 +978,7 @@ async def api_provider_create(request: web.Request) -> web.Response:
         try:
             stored = secret_refs.store_provider_options(name, ptype, options)
         except ValueError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
+            return web.json_response({"error": relayed_failure_copy(exc)}, status=400)
         entry: dict = {"name": name, "type": ptype, "model": model}
         if stored:
             entry["options"] = stored
@@ -942,8 +1019,33 @@ async def api_provider_create(request: web.Request) -> web.Response:
     except Exception:
         pass
 
+    from personalclaw.providers.connection import get_connection_board
+
+    get_connection_board().forget(name)
     _refresh_media_registries()
     return web.json_response({"ok": True, "name": name})
+
+
+#: The option keys that carry an endpoint URL — the two spellings core's own protocol
+#: clients read (``sdk.provider_helpers`` pops both, ``base_url`` winning).
+_ENDPOINT_OPTIONS = ("endpoint", "base_url")
+
+
+def _endpoint_refusal(options: dict[str, Any]) -> str | None:
+    """Why the endpoint in ``options`` cannot be saved, or ``None``.
+
+    Refused at write time: a malformed endpoint used to be saved and only fail later, as
+    ``not%20a%20url/api/tags`` — the HTTP client's percent-encoded echo of it.
+    """
+    from personalclaw.providers.failure_copy import endpoint_problem
+
+    for key in _ENDPOINT_OPTIONS:
+        value = options.get(key)
+        if isinstance(value, str) and value.strip():
+            problem = endpoint_problem(value)
+            if problem:
+                return problem
+    return None
 
 
 def _refresh_media_registries() -> None:
@@ -988,6 +1090,14 @@ async def api_provider_update(request: web.Request) -> web.Response:
         return web.json_response({"error": "Invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
+    incoming = body.get("options", {})
+    if not isinstance(incoming, dict):
+        return web.json_response({"error": "options must be a JSON object"}, status=400)
+    problem = _endpoint_refusal(incoming)
+    if problem:
+        return web.json_response({"error": problem}, status=400)
+
+    from personalclaw.apps.secret_fields import SECRET_MASK
 
     async with _get_config_lock():
         path = config_path()
@@ -1023,24 +1133,27 @@ async def api_provider_update(request: web.Request) -> web.Response:
             # The merge runs on the LOGICAL options (references resolved), and the result is
             # stored back through the credential store: a rotated key replaces the stored one,
             # a cleared key is deleted from the store, an untouched one is left where it is.
+            # The list route hands secrets out MASKED, so the mask arriving back is the other
+            # spelling of "unchanged" — storing it would replace a working key with eight dots.
             previous = target.get("options") or {}
             logical = secret_refs.resolve(previous)
-            for key, value in body["options"].items():
+            for key, value in incoming.items():
                 if value is None:
                     logical.pop(key, None)
-                else:
+                elif value != SECRET_MASK:
                     logical[key] = value
             try:
                 target["options"] = secret_refs.store_provider_options(
                     name, str(target.get("type") or ""), logical, previous
                 )
             except ValueError as exc:
-                return web.json_response({"error": str(exc)}, status=400)
+                return web.json_response({"error": relayed_failure_copy(exc)}, status=400)
 
         atomic_write(path, _json.dumps(data, indent=2) + "\n", fsync=True)
         logical_options = secret_refs.resolve(target["options"]) if "options" in target else None
 
     from personalclaw.llm.registry import get_default_registry
+    from personalclaw.providers.connection import get_connection_board
 
     registry = get_default_registry()
     try:
@@ -1048,16 +1161,23 @@ async def api_provider_update(request: web.Request) -> web.Response:
         # ProviderEntry is a frozen dataclass — build a replacement and re-register
         # (register_entry is idempotent-by-name, so drop the old one first). The entry
         # carries the LOGICAL options: a factory reads `api_key` from it, not a reference.
+        # Core's own bookkeeping keys (``_original_type``) live only on the entry, never in
+        # config.json, so they are carried over rather than dropped with the old entry.
+        bookkeeping = {k: v for k, v in (existing.options or {}).items() if str(k).startswith("_")}
         updated = _dataclasses.replace(
             existing,
             model=target.get("model", existing.model),
-            options=existing.options if logical_options is None else logical_options,
+            options=(
+                existing.options if logical_options is None else {**bookkeeping, **logical_options}
+            ),
         )
         registry.unregister_entry(name)
         registry.register_entry(updated)
     except Exception:
         pass
 
+    # What was measured belongs to the settings that were just replaced.
+    get_connection_board().forget(name)
     _refresh_media_registries()
     return web.json_response({"ok": True, "name": name})
 
@@ -1101,6 +1221,9 @@ async def api_provider_delete(request: web.Request) -> web.Response:
     # ghost in the Settings count, the app-wide model dropdowns, and routing.
     # Reads prune defensively too, but this self-heals the file at removal time.
     _drop_provider_active_models(name)
+    from personalclaw.providers.connection import get_connection_board
+
+    get_connection_board().forget(name)
     _refresh_media_registries()
 
     return web.json_response({"ok": True})
@@ -1161,31 +1284,30 @@ async def api_provider_test(request: web.Request) -> web.Response:
         except Exception:
             return web.json_response({"error": "not found"}, status=404)
 
-    catalog = registry.build_catalog(entry)
-    if catalog is None:
-        # No discovery/connectivity probe for this provider (e.g. its app isn't
-        # loaded, or it authenticates purely via environment/SDK chain).
-        return web.json_response(
-            {
-                "ok": True,
-                "status": "no_probe",
-                "message": "No connectivity probe available for this provider type",
-            }
-        )
+    from personalclaw.providers.connection import (
+        CONNECTED,
+        UNTESTABLE,
+        entry_fingerprint,
+        get_connection_board,
+        measure,
+    )
 
-    result = await catalog.test_connection()
-    if result.ok:
-        msg = result.detail or (
-            f"Connected — {result.model_count} model(s) available"
-            if result.model_count is not None
-            else "Connected"
-        )
-        return web.json_response({"ok": True, "status": "connected", "message": msg})
+    # The one inline connection test: the same measurement the background checks run, and its
+    # answer is RECORDED, so the card, the Models picker and the next list all agree with it.
+    # No catalog registered = no connectivity probe for this type (its app isn't loaded, or it
+    # authenticates purely via the environment/SDK chain) — reported as such, never as a pass.
+    connection = await measure(registry.build_catalog(entry))
+    get_connection_board().record(name, entry_fingerprint(entry), connection)
+    if connection.state == UNTESTABLE:
+        status = "no_probe"
+    else:
+        status = "connected" if connection.state == CONNECTED else "error"
     return web.json_response(
         {
-            "ok": False,
-            "status": "error",
-            "message": result.detail or "Connection test failed",
+            "ok": connection.state in (CONNECTED, UNTESTABLE),
+            "status": status,
+            "message": connection.detail,
+            "connection": connection.to_wire(),
         }
     )
 

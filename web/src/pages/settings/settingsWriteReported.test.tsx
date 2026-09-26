@@ -142,8 +142,9 @@ describe('the shared settings mutation reports as well as reconciles', () => {
     //     ux-672 doctrine, not a swallow.
     //   • identity.tsx — belongs to the recorded owner taste call about that file.
     expect(codeOf('ui/FeedbackThumbs.tsx'), 'still optimistic on purpose').toMatch(/catch \{/)
+    // (Scoped to the one runtime whose card asked since a plain read stopped spawning runtimes.)
     expect(codeOf('pages/settings/ProvidersPanel.tsx'), 'still keeps the last known runtimes')
-      .toMatch(/setRuntimeOverride\(await api\.agentRuntimes\(true\)\)/)
+      .toMatch(/setRuntimeOverride\(await api\.agentRuntimes\(true, runtime \?\? ''\)\)/)
   })
 
   it('NO source file anywhere in the tree still swallows a write into silence', () => {

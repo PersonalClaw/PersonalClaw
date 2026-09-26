@@ -28,6 +28,12 @@ from personalclaw.net import (  # noqa: F401
     fetch,
     sync_egress_policy,
 )
+
+# One vocabulary for what a failure to reach an endpoint SAYS (what failed, the likely cause,
+# the fix — the container-localhost case included). Exported so a provider app composes its
+# connection-test and discovery failures in core's words instead of relaying `str(exc)`,
+# which is how a bare `[Errno 111]` reached the Providers page (ollama-models reads it).
+from personalclaw.providers.failure_copy import relayed_failure_copy  # noqa: F401
 from personalclaw.web.fetch import (  # noqa: F401
     ExtractOutcome,
     FetchOutcome,
@@ -72,4 +78,5 @@ __all__ = [
     # EA-8: see the import comment above — exported so `a2a-action` consumes core's
     # deny-by-default posture instead of composing its own.
     "a2a_outbound_policy",
+    "relayed_failure_copy",
 ]

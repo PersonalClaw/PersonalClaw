@@ -649,6 +649,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "A provider instance's connection test failed unexpectedly; the underlying error is "
         "in the server log."
     ),
+    # A MODEL provider's instances are config.json `providers[]` entries (/api/model-providers)
+    # — the store chat resolves. The generic instance store refuses them rather than keep a
+    # second, unread copy of an instance's settings (400: the request named the wrong store).
+    "model_instances_elsewhere": (
+        "A model provider's instances are managed through /api/model-providers, not the "
+        "generic provider-instance store."
+    ),
     # ── per-run policy overrides (workflows/handlers.py — PP-16 seam 4f) ──
     # Emitted through the workflows `_STATUS_MAP`/`_fail` translation rather than a
     # `json_error` call site, but registered here all the same: these are wire codes a

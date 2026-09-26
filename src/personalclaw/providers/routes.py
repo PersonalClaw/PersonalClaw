@@ -5,6 +5,7 @@ Provides endpoints for:
 - Reading/writing per-extension config
 - Fetching settings schemas for dynamic UI rendering
 - Enabling/disabling extensions at runtime
+- Re-checking whether an extension can run on this machine
 """
 
 import logging
@@ -13,6 +14,8 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.apps.secret_fields import mask_secrets, preserve_unchanged_secrets
+from personalclaw.http_errors import json_error
+from personalclaw.providers.availability import AVAILABLE, Availability, get_availability_board
 from personalclaw.providers.registry import get_provider_registry
 from personalclaw.providers.settings import ProviderSettings
 
@@ -27,6 +30,7 @@ def register_routes(app: web.Application) -> None:
     app.router.add_patch("/api/providers/{name}/config", handle_patch_config)
     app.router.add_post("/api/providers/{name}/enable", handle_enable)
     app.router.add_post("/api/providers/{name}/disable", handle_disable)
+    app.router.add_post("/api/providers/{name}/availability", handle_recheck_availability)
 
 
 async def handle_list_extensions(request: web.Request) -> web.Response:
@@ -37,19 +41,13 @@ async def handle_list_extensions(request: web.Request) -> web.Response:
     if type_filter:
         extensions = [e for e in extensions if e.provider_config.type == type_filter]
 
-    from personalclaw.providers.loader import load_availability
-
+    # A bundle may declare itself unusable on this machine (e.g. its binary isn't
+    # installed). The answer comes from the availability board, which measures it in a
+    # child process: this route runs no app code, so no hook can stall the gateway.
+    board = get_availability_board()
     result: list[dict[str, Any]] = []
     for ext in extensions:
-        # A bundle may declare itself unusable on this machine (e.g. its binary
-        # isn't installed). Default available=True when no hook is exported.
-        available, unavailable_reason = True, ""
-        probe = load_availability(ext)
-        if probe is not None:
-            try:
-                available, unavailable_reason = probe()
-            except Exception:
-                logger.debug("availability() raised for %s", ext.name, exc_info=True)
+        availability = board.read(ext.name, ext.provider_config.implementation)
         result.append(
             {
                 "name": ext.name,
@@ -59,8 +57,7 @@ async def handle_list_extensions(request: web.Request) -> web.Response:
                 "author": ext.manifest.author,
                 "enabled": ext.enabled,
                 "error": ext.error,
-                "available": available,
-                "unavailableReason": unavailable_reason,
+                "availability": availability.to_wire(),
                 # A "managed" provider is a user-lifecycle app (first/third-party: install/
                 # uninstall is its on/off); a native app is locked-on (no
                 # toggle — mandatory). Lets Settings>Providers show the right control:
@@ -71,12 +68,12 @@ async def handle_list_extensions(request: web.Request) -> web.Response:
                     "entity": ext.provider_config.entity,
                     "capabilities": ext.provider_config.capabilities,
                     "multiInstance": ext.provider_config.multiInstance,
-                    # True only when the provider declares configurable fields, so the UI
-                    # can hide the "Configure" expander for schema-less providers (which
-                    # would otherwise open to an empty form and look broken).
-                    "hasConfigSchema": bool(
-                        (ext.provider_config.settingsSchema or {}).get("properties")
-                    ),
+                    # True only when the provider has APP-level settings, so the UI can
+                    # hide the "Configure" expander for a schema-less provider (it would
+                    # open to an empty form) and for a multi-instance one, whose schema
+                    # describes its instances — those are edited on the instance cards.
+                    "hasConfigSchema": not ext.provider_config.multiInstance
+                    and bool((ext.provider_config.settingsSchema or {}).get("properties")),
                 },
                 "tags": ext.manifest.tags,
             }
@@ -99,8 +96,7 @@ async def handle_list_extensions(request: web.Request) -> web.Response:
                 "author": "PersonalClaw",
                 "enabled": True,
                 "error": "",
-                "available": True,
-                "unavailableReason": "",
+                "availability": Availability(AVAILABLE).to_wire(),
                 "managed": False,
                 "platform": True,  # non-removable, non-disableable platform provider
                 "provider": {
@@ -154,12 +150,35 @@ async def handle_get_schema(request: web.Request) -> web.Response:
     )
 
 
+def _configured_per_instance(ext: Any) -> web.Response | None:
+    """409 for app-level config on a provider whose settings live on its INSTANCES.
+
+    A multi-instance provider's ``settingsSchema`` describes one instance; no factory reads
+    an app-level copy of it (``ModelTypeHandler``/``ToolTypeHandler`` build from the
+    instances). Saving one answered 200 and changed nothing — the Ollama half of this was
+    measured: the endpoint chat used stayed at localhost after a "successful" save.
+    """
+    if not ext.provider_config.multiInstance:
+        return None
+    who = ext.manifest.displayName or ext.name
+    return web.json_response(
+        {
+            "error": f"{who} keeps its settings on each instance, not on the app. Add, edit, "
+            "test or remove its instances in Settings → Providers."
+        },
+        status=409,
+    )
+
+
 async def handle_get_config(request: web.Request) -> web.Response:
     name = request.match_info["name"]
     registry = get_provider_registry()
     ext = registry.get(name)
     if not ext:
         return web.json_response({"error": f"Extension {name!r} not found"}, status=404)
+    refusal = _configured_per_instance(ext)
+    if refusal is not None:
+        return refusal
 
     # Sensitive fields are WRITE-ONLY: masked out, never handed back. This route returned
     # them verbatim while ``/api/apps/{name}/config`` — reading the SAME file and honouring
@@ -179,6 +198,9 @@ async def handle_patch_config(request: web.Request) -> web.Response:
     ext = registry.get(name)
     if not ext:
         return web.json_response({"error": f"Extension {name!r} not found"}, status=404)
+    refusal = _configured_per_instance(ext)
+    if refusal is not None:
+        return refusal
 
     try:
         body = await request.json()
@@ -246,3 +268,26 @@ async def handle_disable(request: web.Request) -> web.Response:
 
     registry.disable(name)
     return web.json_response({"name": name, "enabled": False})
+
+
+async def handle_recheck_availability(request: web.Request) -> web.Response:
+    """POST /api/providers/{name}/availability — measure again whether it can run here.
+
+    Answers 202 at once: the check runs in the availability child process, and the card
+    reads ``checking`` from the list route until the new answer lands.
+    """
+    name = request.match_info["name"]
+    ext = get_provider_registry().get(name)
+    if not ext:
+        return json_error(
+            "not_found", message="No provider is registered under that name.", status=404
+        )
+    board = get_availability_board()
+    board.recheck(name)
+    return web.json_response(
+        {
+            "name": name,
+            "availability": board.read(name, ext.provider_config.implementation).to_wire(),
+        },
+        status=202,
+    )

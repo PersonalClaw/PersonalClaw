@@ -49,6 +49,7 @@ from personalclaw.llm.branded_specs import (  # noqa: E402,F401
 )
 from personalclaw.llm.capabilities import Capability, ProviderCapability  # noqa: F401
 from personalclaw.llm.catalog import (  # noqa: F401
+    FAILURE_DETAIL_CHARS,
     ConnectionResult,
     ModelCatalog,
     ModelDiscoveryError,
@@ -56,6 +57,7 @@ from personalclaw.llm.catalog import (  # noqa: F401
     infer_capabilities,
     openai_compatible_discover_models,
     openai_compatible_list_models,
+    record_swallowed_discovery_failure,
 )
 from personalclaw.llm.credentials import Credential  # noqa: F401
 from personalclaw.llm.openai import OpenAIProvider  # noqa: F401
@@ -177,8 +179,11 @@ class BrandedCatalog(ModelCatalog):
             )
         except ModelDiscoveryError as exc:
             fallback = self._fallback()
-            if not fallback:
+            # A REJECTED key is not a stale list: every model in the curated fallback would
+            # fail its first turn with the same 401, so offering them is offering nothing.
+            if not fallback or exc.rejected_credential:
                 raise
+            record_swallowed_discovery_failure(exc)
             logger.warning(
                 "%s: model discovery failed, offering the configured/curated list instead: %s",
                 self._spec.type,
@@ -210,7 +215,11 @@ class BrandedCatalog(ModelCatalog):
                 self._endpoint, api_key, default_base=self._spec.default_base_url
             )
         except ModelDiscoveryError as exc:
-            return ConnectionResult(ok=False, detail=str(exc)[:300])
+            return ConnectionResult(
+                ok=False,
+                detail=str(exc)[:FAILURE_DETAIL_CHARS],
+                rejected_credential=exc.rejected_credential,
+            )
         models = live or self._fallback()
         if not models:
             return ConnectionResult(
@@ -259,7 +268,9 @@ class BrandedCatalog(ModelCatalog):
                 )
             ):
                 return ConnectionResult(
-                    ok=False, detail=f"Auth failed — check the API key ({str(exc)[:80]})"
+                    ok=False,
+                    detail=f"Auth failed — check the API key ({str(exc)[:80]})",
+                    rejected_credential=True,
                 )
             # A model-not-found / bad-request still proves the endpoint authenticated.
             if any(

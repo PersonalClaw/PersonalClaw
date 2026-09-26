@@ -464,19 +464,6 @@ describe('four more bodies, all already true — pinned so they stay that way', 
     expect(pyMethod(py('skills/loader.py'), '    def delete_skill'), 'rmtree, not a registry flag')
       .toMatch(/shutil\.rmtree\(skill_dir\)/)
   })
-
-  it('the Ollama delete really reaches the host — across the app boundary', () => {
-    // 🪤 A CROSS-REPO CLAIM, and the reason it is worth pinning: nothing in core implements this. The
-    // handler calls `catalog.delete_model`, and the only implementation lives in the REMOVABLE
-    // `ollama-models` app bundle, which is exactly where provider logic is supposed to live. A grep of
-    // core alone says the promise is unimplemented; it is not.
-    expect(web('pages/settings/OllamaModelManager.tsx')).toContain(
-      "This frees disk on the Ollama host and can't be undone.",
-    )
-    const h = py('dashboard/handlers/providers.py')
-    expect(h, 'core delegates to the catalog').toMatch(/await catalog\.delete_model\(model\)/)
-    expect(h, 'and only for a provider whose catalog can do it').toMatch(/isinstance\(catalog, ModelManager\)/)
-  })
 })
 
 describe('the stop-project dialog, and the file delete', () => {
@@ -603,8 +590,9 @@ describe('the last three bodies, and what this sweep does NOT claim', () => {
     //                      surviving sibling instance keeps the name known and the ref lingers instead.
     //                      Either outcome deserves copy — but which one it is needs tracing that ref
     //                      format end to end, not a plausible sentence.
-    //   LocalModelManager  its sibling (Ollama) says "This frees disk on the Ollama host"; this one says
-    //                      nothing about disk. The delete delegates through `local_models.registry` to a
+    //   LocalModelManager  says nothing about disk — and it is now the Ollama card too (the separate
+    //                      Ollama manager that said "This frees disk on the Ollama host" was unreachable
+    //                      and is gone). The delete delegates through `local_models.registry` to a
     //                      runtime manager that lives outside core, so the disk claim is not core's to
     //                      make until that manager is read.
     //
@@ -625,7 +613,7 @@ describe('three more bodies, checked against their handlers', () => {
     const ui = web('pages/settings/ModelBackends.tsx')
     expect(ui, 'the clause exists').toContain('Any use case set to one of its models loses that selection.')
     expect(ui, 'and the body composes it').toMatch(
-      /body: `Models it provides will no longer be available\.\$\{selections\}\$\{key\}`/,
+      /body: `Models it provides will no longer be available\.\$\{selections\}\$\{key\}\$\{referenced\}`/,
     )
     const h = py('dashboard/handlers/providers.py')
     const del = h.slice(h.indexOf('async def api_provider_delete'), h.indexOf('async def api_provider_test'))
@@ -641,6 +629,13 @@ describe('three more bodies, checked against their handlers', () => {
       /const saved = provider\.stored_secrets\?\.length \?\? 0/,
     )
     expect(ui).toContain(' The key saved for it is deleted too.')
+    // …and the other half: a Settings → Secrets credential the instance only REFERENCES is not
+    // purged, so the dialog says it stays — gated on the flag that reads exactly that reference.
+    expect(ui, 'the referenced credential stays, and says so').toMatch(
+      /provider\.key_in_store \? ' The credential it uses from Settings → Secrets stays saved\.'/,
+    )
+    const referenced = pyMethod(py('dashboard/handlers/providers.py'), 'def _key_in_store')
+    expect(referenced, 'read from the credential store').toMatch(/CredentialStore\(config_dir\(\)\)\.resolve\(entry\.credential\)\.secret/)
     const h = py('dashboard/handlers/providers.py')
     const del = h.slice(h.indexOf('async def api_provider_delete'), h.indexOf('async def api_provider_test'))
     // 🪤 THE CLAIM IS A DELETION, so it is pinned as one. This rail used to pin the opposite ("the

@@ -68,17 +68,17 @@ def test_probe_timeout_is_timeout_not_needs_login(monkeypatch, tmp_path):
     login_command rides along only as an optional fallback action."""
     import stat
 
-    # Fake present binary so the which() gate passes and start() is attempted.
+    # Fake present binary so the which() gate passes and the handshake is attempted.
     bindir = tmp_path / "bin"
     bindir.mkdir()
     fake = bindir / "claude-agent-acp"
     fake.write_text("#!/bin/sh\nexit 0\n")
     fake.chmod(fake.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
-    async def _hang(self):  # start() never completes → wait_for times out
+    async def _hang(self):  # the handshake never completes → wait_for times out
         await asyncio.sleep(60)
 
-    monkeypatch.setattr(AcpAgentProvider, "start", _hang)
+    monkeypatch.setattr(AcpAgentProvider, "probe_handshake", _hang)
     monkeypatch.setattr(AcpAgentProvider, "shutdown", lambda self: asyncio.sleep(0))
     # Shrink the probe timeout so the test is fast.
     import personalclaw.llm.acp_agent as _m
@@ -116,7 +116,7 @@ def test_probe_timeout_without_declared_login_is_timeout(monkeypatch, tmp_path):
     async def _hang(self):
         await asyncio.sleep(60)
 
-    monkeypatch.setattr(AcpAgentProvider, "start", _hang)
+    monkeypatch.setattr(AcpAgentProvider, "probe_handshake", _hang)
     monkeypatch.setattr(AcpAgentProvider, "shutdown", lambda self: asyncio.sleep(0))
     import personalclaw.llm.acp_agent as _m
 
@@ -148,7 +148,7 @@ def test_probe_auth_signal_is_needs_login(monkeypatch, tmp_path):
     async def _auth_fail(self):
         raise RuntimeError("Authentication required: please log in")
 
-    monkeypatch.setattr(AcpAgentProvider, "start", _auth_fail)
+    monkeypatch.setattr(AcpAgentProvider, "probe_handshake", _auth_fail)
     monkeypatch.setattr(AcpAgentProvider, "shutdown", lambda self: asyncio.sleep(0))
 
     options = {
@@ -191,3 +191,48 @@ def test_agent_provider_abc_stateless_defaults_are_total():
     # Unknown, NOT 0.0: a provider that measures nothing must not report a number
     # a consumer would then render as "context 0%".
     assert t.context_usage_pct() is None
+
+
+def test_the_readiness_probe_opens_one_bare_session(monkeypatch, tmp_path):
+    """The probe's handshake is initialize + ONE ``session/new`` with no MCP servers, and
+    nothing else a chat session sets up. It used to run the whole chat-session setup: core
+    MCP servers (each spawning a ``personalclaw mcp-core`` child), agent activation, model /
+    mode / effort verbs and a 10 s MCP-init drain — for a probe that sends no prompt.
+
+    Only the process spawn is faked (a recording connection); ``probe_readiness`` and the
+    client's handshake are the real code."""
+    import stat
+    from unittest.mock import AsyncMock, MagicMock
+
+    from personalclaw.acp.client import AcpClient
+
+    fake = tmp_path / "claude-agent-acp"
+    fake.write_text("#!/bin/sh\nexit 0\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+
+    conn = MagicMock()
+    conn.initialize = AsyncMock(return_value={})
+    conn.agent_capabilities = {"loadSession": True}
+    session = MagicMock()
+    session.session_id = "probe-1"
+    conn.new_session = AsyncMock(return_value=session)
+    conn.last_session_new_snapshot = {"sessionId": "probe-1"}
+    conn.send_request = AsyncMock(return_value=(1, MagicMock()))
+    conn.drain_init_notifications = AsyncMock()
+    conn.close = AsyncMock()
+
+    async def _connect(self):
+        self._connection = conn
+
+    monkeypatch.setattr(AcpClient, "_open_connection", _connect)
+
+    status = asyncio.run(
+        AcpAgentProvider.probe_readiness({"command": [str(fake)], "dialect": "claude-code"})
+    )
+
+    assert status.state == "ready", status.detail
+    conn.new_session.assert_awaited_once()
+    params = conn.new_session.await_args.args[0]
+    assert params["mcpServers"] == [], "a readiness probe spawned MCP servers"
+    assert conn.send_request.await_count == 0, "the probe ran session-setup verbs"
+    conn.drain_init_notifications.assert_not_awaited()

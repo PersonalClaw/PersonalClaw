@@ -672,8 +672,9 @@ async def api_onboarding(request: web.Request) -> web.Response:
     provider configured, chat cannot work and we surface a setup prompt.
 
     Returns the readiness set ``{needs_model, has_model_provider, has_chat_binding,
-    chat_model_refs, chat_is_bundled_floor, chat_download_offer}`` — computed live, never
-    stored — plus the persisted first-run progress from ``entity_settings/onboarding.json``
+    chat_model_refs, chat_is_bundled_floor, chat_download_offer, chat_provider_connection}``
+    — computed live, never stored — plus the persisted first-run progress from
+    ``entity_settings/onboarding.json``
     (``step``, ``essentials``, ``first_success``; see :mod:`personalclaw.onboarding`), which
     is what lets a mid-flow reload resume. The progress fields are purely additive: a client
     that only reads the readiness fields is unaffected. No secrets.
@@ -816,6 +817,17 @@ async def api_onboarding(request: web.Request) -> web.Response:
     except Exception:
         logger.debug("onboarding: download-offer probe failed", exc_info=True)
 
+    # ``chat_provider_connection`` — is the instance chat is bound to ANSWERING? Readiness above
+    # makes no network calls by design, so a configured provider that is down read as set up.
+    # This is the last MEASURED answer (``providers/connection.py``), read and never probed.
+    chat_connection: dict[str, object] | None = None
+    try:
+        from personalclaw.providers.connection import chat_provider_status
+
+        chat_connection = chat_provider_status()
+    except Exception:
+        logger.debug("onboarding: chat-provider connection read failed", exc_info=True)
+
     from personalclaw.onboarding import load_onboarding_state
 
     return web.json_response(
@@ -826,6 +838,7 @@ async def api_onboarding(request: web.Request) -> web.Response:
             "chat_model_refs": chat_refs,
             "chat_is_bundled_floor": chat_is_floor,
             "chat_download_offer": chat_offer,
+            "chat_provider_connection": chat_connection,
             **load_onboarding_state(),
         }
     )

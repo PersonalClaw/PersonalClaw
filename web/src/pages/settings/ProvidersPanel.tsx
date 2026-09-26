@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { api, type SettingsProvider, type AgentRuntime, type ChannelRuntime } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
+import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { requestRunInTerminal } from '../terminal/terminalBridge'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Section, PanelHeader } from './settingsUI'
@@ -14,14 +15,13 @@ import { MultiInstanceCard } from './MultiInstanceCard'
 import { RemoteModelProviders } from './ModelBackends'
 import { LocalModelManager } from './LocalModelManager'
 import type { ProviderModels } from '../../lib/api'
-import { fvs } from '../../design/fontWeight'
 
 // One section per provider ENTITY (VISION §"The entities"). Order is intentional:
 // the entities a user touches most (what backs a chat, what models are available)
 // come first. Each section's `hint` says what plugging into it means.
 const ENTITY_META: Record<string, { label: string; icon: LucideIcon; hint: string }> = {
   agent: { label: 'Agent providers', icon: Bot, hint: 'Runtimes that drive a chat — the in-process native agent and external agent CLIs (Claude Code, Codex). Enable one, then sign in to any CLI that needs it.' },
-  model: { label: 'Model providers', icon: Cpu, hint: 'Contribute models to the pool you bind to use cases in Models. Native bundled models run in-process; remote providers are multi-instance connections.' },
+  model: { label: 'Model providers', icon: Cpu, hint: 'Contribute models to the pool you bind to use cases in Models. Native bundled models run in-process; every other provider is an instance you add, test, edit and remove here.' },
   search: { label: 'Search providers', icon: Search, hint: 'Web-search backends you bind to use cases in Search. Configure a provider (endpoint / API key) here, then assign it per use case.' },
   channel: { label: 'Channel providers', icon: Hash, hint: 'Interaction surfaces you reach the system through — initiate sessions and talk to agents from each channel.' },
   inbox: { label: 'Inbox providers', icon: Inbox, hint: 'Each contributes its own items into the unified inbox you pull into chats.' },
@@ -41,6 +41,10 @@ const ENTITY_META: Record<string, { label: string; icon: LucideIcon; hint: strin
   sync: { label: 'Sync transports', icon: RefreshCw, hint: 'Storage you own that more than one machine syncs through — a git repo, a synced folder, a bucket. Configure one here, then choose it under Backups → Sync.' },
 }
 const ENTITY_ORDER = ['agent', 'model', 'search', 'channel', 'inbox', 'notification', 'tool', 'task', 'action', 'skills', 'knowledge', 'memory', 'prompt', 'workflow', 'sync']
+
+/** How often the panel re-reads a list that still holds a `checking` answer. The gateway serves
+ *  those answers from memory, so this polls a cache — it never re-runs a check. */
+const CHECKING_POLL_MS = 2500
 
 // Within Actions, sub-group cards by the entity each action acts on (manifest entity).
 const ACTION_ENTITY_LABELS: Record<string, string> = {
@@ -117,11 +121,22 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
   // read revalidates against the changed state instead of a stale snapshot.
   const reload = () => { invalidateKeys('settings:providers'); invalidateKeys('settings:models-available'); refreshProviders(); refreshRuntimes(); refreshAvailable() }
 
-  // Re-probe agent-runtime readiness, forcing a fresh probe (bypassing the 5-min
-  // readiness cache). Used by the manual "Check availability" action + post-sign-in.
-  const recheckRuntimes = async () => {
-    try { setRuntimeOverride(await api.agentRuntimes(true)) } catch { /* keep current */ }
+  // Re-probe agent-runtime readiness NOW. A plain read never spawns a runtime (it answers from
+  // the live connection or the last measurement), so this is the one way to re-measure — and it
+  // is scoped to the ONE runtime whose card asked: probing every runtime spawned every CLI.
+  const recheckRuntimes = async (runtime?: string) => {
+    try { setRuntimeOverride(await api.agentRuntimes(true, runtime ?? '')) } catch { /* keep current */ }
   }
+
+  // A card the gateway has not measured yet reads `checking` (availability measured in a child
+  // process, a runtime's first readiness probe running in the background). Re-read until each
+  // has its answer; nothing polls once no card is left checking.
+  const providersChecking = (providers ?? []).some((p) => p.availability?.state === 'checking')
+  useVisiblePoll(() => { if (providersChecking) refreshProviders() }, providersChecking ? CHECKING_POLL_MS : null)
+  const runtimesChecking = runtimes.some((r) => r.state === 'checking')
+  useVisiblePoll(() => {
+    if (runtimesChecking) { setRuntimeOverride(null); refreshRuntimes() }
+  }, runtimesChecking ? CHECKING_POLL_MS : null)
 
   // After kicking off a sign-in, the CLI auth (often a browser OAuth flow) takes a
   // few seconds — a single fixed delay misses it. Poll a fresh probe a handful of
@@ -130,7 +145,7 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
     for (let i = 0; i < 12; i++) {
       await new Promise((r) => setTimeout(r, 2500))
       let rts: AgentRuntime[] = []
-      try { rts = await api.agentRuntimes(true) } catch { continue }
+      try { rts = await api.agentRuntimes(true, id) } catch { continue }
       setRuntimeOverride(rts)
       const rt = rts.find((r) => r.provider_id === id || r.name === id)
       if (rt && rt.state !== 'needs_login') return  // signed in (ready) or a new state
@@ -178,7 +193,8 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
         return (
           <EntitySection key={type} icon={meta.icon} label={meta.label} hint={meta.hint} count={exts.length}>
             {type === 'agent' && exts.map((ext) => (
-              <ProviderCard key={ext.name} ext={ext} runtime={runtimeByExt.get(ext.name)} open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={reload} onSignIn={onSignIn} onRecheck={recheckRuntimes} />
+              <ProviderCard key={ext.name} ext={ext} runtime={runtimeByExt.get(ext.name)} open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={reload} onSignIn={onSignIn}
+                onRecheck={() => recheckRuntimes(runtimeByExt.get(ext.name)?.name)} />
             ))}
 
             {type === 'model' && <ModelEntitySection exts={exts} availableByProvider={availableByProvider} openProvider={openProvider} openCfg={openCfg} onChanged={reload} />}
@@ -262,20 +278,26 @@ function EntitySection({ icon: Icon, label, hint, count, children }: {
 // single-open accordion (?open=<provider>).
 type OpenCfg = { openProvider: string; openCfg: (name: string) => (v: boolean) => void }
 
-/** Model entity: LOCAL downloadable providers (each with a uniform download-management
- *  card) + remote multi-instance connections. "Local" is the `local: true` flag on the
- *  /api/models/available card — the one signal from the core local-model registry (no
- *  hardcoded names). Every local provider renders the SAME LocalModelManager card,
- *  including ollama (searchable → gets a library search box), so the download UX is
- *  uniform. A local provider backed by a bundled ext also shows its enable/config card;
- *  a config-backed local provider (ollama) shows just the manager. */
+/** Model entity: the BUNDLED local downloadable providers (each with a uniform
+ *  download-management card) + every configured instance. "Local" is the `local: true` flag
+ *  on the /api/models/available card — the one signal from the core local-model registry (no
+ *  hardcoded names). Every local provider renders the SAME LocalModelManager card, so the
+ *  download UX is uniform.
+ *
+ *  A local provider that is a configured INSTANCE (an Ollama endpoint — no bundled ext of its
+ *  own) is not rendered here: it is an instance like any other, so it renders in the instance
+ *  list with its Test, Edit and Remove, and its download card inside it. Rendering it here, as
+ *  this used to, left it with none of the three. */
 function ModelEntitySection({ exts, availableByProvider, openProvider, openCfg, onChanged }: {
   exts: SettingsProvider[]; availableByProvider: Map<string, ProviderModels>; onChanged: () => void
 } & OpenCfg) {
   const extByName = new Map(exts.map((e) => [e.name, e]))
-  // Local providers come from the registry (available cards flagged local), NOT from
-  // exts — so a config-backed searchable provider (ollama) appears here too.
-  const localCards = [...availableByProvider.values()].filter((a) => a.local)
+  // A bundled local provider is a registry card flagged local whose name is one of these exts;
+  // a local card with no ext of its own is a configured instance (see above).
+  const localCards = [...availableByProvider.values()].flatMap((av) => {
+    const ext = av.local ? extByName.get(av.name) : undefined
+    return ext ? [{ av, ext }] : []
+  })
   const otherNative = exts.filter((e) => !availableByProvider.get(e.name)?.local && !e.provider?.multiInstance)
   return (
     <div className="flex flex-col gap-4">
@@ -283,28 +305,22 @@ function ModelEntitySection({ exts, availableByProvider, openProvider, openCfg, 
         <div>
           <div data-type="caption" className="mb-2 text-on-surface-low uppercase tracking-wide">Native (bundled)</div>
           <div className="flex flex-col gap-2">
-            {localCards.map((av) => {
-              const ext = extByName.get(av.name)
-              const enabled = ext ? ext.enabled : true  // config-backed (ollama) → always show
-              return (
-                <div key={av.name}>
-                  {ext
-                    ? <ProviderCard ext={ext} open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={onChanged} />
-                    : <div data-type="label-s" className="text-on-surface" style={fvs(600)}>{av.displayName || av.name}</div>}
-                  {enabled && (
-                    <div className={ext ? 'mt-2 pl-4' : 'mt-2'}>
-                      <LocalModelManager provider={av.name} models={av.models ?? []} searchable={av.searchable} onChanged={onChanged} />
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+            {localCards.map(({ av, ext }) => (
+              <div key={av.name}>
+                <ProviderCard ext={ext} open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={onChanged} />
+                {ext.enabled && (
+                  <div className="mt-2 pl-4">
+                    <LocalModelManager provider={av.name} models={av.models ?? []} searchable={av.searchable} error={av.error} onChanged={onChanged} />
+                  </div>
+                )}
+              </div>
+            ))}
             {otherNative.map((ext) => <ProviderCard key={ext.name} ext={ext} open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={onChanged} />)}
           </div>
         </div>
       )}
       <div>
-        <div data-type="caption" className="mb-2 text-on-surface-low uppercase tracking-wide">Remote (multi-instance)</div>
+        <div data-type="caption" className="mb-2 text-on-surface-low uppercase tracking-wide">Instances</div>
         <RemoteModelProviders onChanged={onChanged} />
       </div>
     </div>

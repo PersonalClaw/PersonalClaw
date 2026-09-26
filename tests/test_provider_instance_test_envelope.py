@@ -2,7 +2,8 @@
 envelope (``{"error": {"code", "message"}}``) at a real 4xx/5xx status — never an
 HTTP 200 carrying a raw Python exception string.
 
-Regression for the defect where ``handle_test_instance`` / ``_test_model_connectivity``
+Regression for the defect where ``handle_test_instance`` (and a model-endpoint probe it
+used to carry, since removed with model instances in this store)
 returned ``{"ok": false, "message": str(exc)[:200]}`` with no ``status=`` (so HTTP 200):
 the frontend's shared error funnel only fires on ``!response.ok``, so a failed test was
 a 200 it never saw, and the user read a truncated ``ConnectionRefusedError(...)`` during
@@ -13,28 +14,16 @@ and that the raw exception text never reaches the user.
 
 from __future__ import annotations
 
-import asyncio
 import json
-import socket
 
 from personalclaw.http_errors import HTTP_ERROR_CODES
-from personalclaw.providers.instance_routes import _probe_failure, _test_model_connectivity
+from personalclaw.providers.instance_routes import _probe_failure
 
 
 def _body(resp) -> dict:
     """The decoded JSON body of a ``web.Response`` (json_response sets ``.body``)."""
     assert resp.body is not None
     return json.loads(resp.body)
-
-
-def _closed_loopback_port() -> int:
-    """A loopback port with nothing listening — a connect there is refused, fast."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
-    finally:
-        s.close()
 
 
 def _assert_wire_envelope(resp, *, code: str, status: int) -> str:
@@ -47,17 +36,6 @@ def _assert_wire_envelope(resp, *, code: str, status: int) -> str:
     assert err["code"] == code, err
     assert isinstance(err["message"], str) and err["message"].strip(), err
     return err["message"]
-
-
-def test_model_endpoint_connection_refused_is_a_502_envelope() -> None:
-    """A real connect to a closed loopback port → 502 with the standard envelope."""
-    resp = asyncio.run(_test_model_connectivity(f"http://127.0.0.1:{_closed_loopback_port()}"))
-    message = _assert_wire_envelope(resp, code="provider_unreachable", status=502)
-    # Human guidance, not a raw exception.
-    raw = resp.body.decode()
-    for leak in ("Traceback", "ConnectionRefusedError", "ClientConnectorError", "Errno"):
-        assert leak not in raw, f"raw exception text leaked to the user: {leak!r} in {raw!r}"
-    assert "refused" in message.lower()
 
 
 def test_probe_failure_bad_config_is_400_and_leaks_nothing() -> None:

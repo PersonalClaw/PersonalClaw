@@ -221,7 +221,15 @@ _CEILING_WRAPPED: dict[str, str] = {
 # gateway itself).
 _OPERATOR_EXEMPT: dict[str, str] = {
     # ACP CLI resolution / provisioning — operator setup, host-fact probes.
-    "acp/cli_resolve.py::_npm_root_global_bin::subprocess.run": "operator: npm prefix probe",
+    "acp/cli_resolve.py::_npm_global_root::subprocess.run": "operator: npm prefix probe",
+    # Provider availability probe — the gateway's OWN CLI (`personalclaw availability-probe`)
+    # run with the names of installed apps from the provider registry; no model, turn or
+    # workflow input reaches the argv. It exists to keep installed apps' availability() hooks
+    # OUT of the gateway process (a hook importing torch held the event loop for minutes), and
+    # it runs the same app code the gateway already imports in-process.
+    "providers/availability.py::AvailabilityBoard._probe::asyncio.create_subprocess_exec": (
+        "host-fact: provider availability probe child"
+    ),
     "acp/cli_resolve.py::resolve_node_ge::subprocess.run": "operator: node version probe",
     "acp/cli_resolve.py::provision_acp_adapter::subprocess.run": "operator: ACP adapter install",
     # ACP PID-tree host-fact probes (ps/proc reads, not spawns of agent code).

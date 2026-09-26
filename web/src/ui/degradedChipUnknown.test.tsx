@@ -110,6 +110,12 @@ describe('the source keeps the two states apart', () => {
   })
 
   it('an empty-but-known result still renders nothing', () => {
-    expect(code).toMatch(/if \(down\.length === 0 && !unknown\) return null/)
+    // …unless the one thing a surface's `available` cannot see is known to be wrong: chat's bound
+    // provider failed its last connection test (`providerDown`, read from the report's cache field).
+    // That is a KNOWN fault, not an unknown, so it is the only other way past this line.
+    expect(code).toMatch(/if \(down\.length === 0 && !unknown && !providerDown\) return null/)
+    expect(code, 'and only a MEASURED failure counts').toMatch(
+      /const providerDown = !unknown && chatProvider\?\.state === 'failed' \? chatProvider : null/,
+    )
   })
 })

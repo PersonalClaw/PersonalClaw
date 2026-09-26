@@ -131,11 +131,17 @@ def load_availability(ext: "RegisteredProvider") -> "Callable[[], tuple[bool, st
 
     A bundle whose provider can be unusable on a given machine (e.g. it wraps a
     binary that isn't installed) may export a module-level ``availability()``
-    returning ``(available: bool, reason: str)``. The extension-list API calls
-    it so the UI can grey out + block-enable a provider that would only ever
-    fail — without the core knowing anything vendor-specific. Resolved from the
-    same ``module.path`` as the ``implementation`` entry-point; ``None`` when the
-    module defines no such hook (the common case).
+    returning ``(available: bool, reason: str)``, so the UI can grey out +
+    block-enable a provider that would only ever fail — without the core knowing
+    anything vendor-specific. Resolved from the same ``module.path`` as the
+    ``implementation`` entry-point; ``None`` when the module defines no such hook
+    (the common case).
+
+    Called ONLY by the availability probe child (``providers/availability_probe.py``):
+    resolving a hook imports the app's module, and running one is app code of
+    unbounded cost, so neither ever happens inside the gateway. The hook's
+    cheapness rule — and the check to build it from — is
+    :mod:`personalclaw.sdk.availability`.
 
     A branded model app that rides an agent CLI's subscription login has exactly
     one way to be unusable — that CLI is not signed in — so it does not have to

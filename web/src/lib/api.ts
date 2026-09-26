@@ -468,6 +468,11 @@ export interface DurabilityJobResult {
 export interface DegradedReport {
   surfaces: DegradedSurface[]
   degraded: string[]
+  /** The last MEASURED connection of the instance chat is bound to — read from the gateway's
+   *  cache, never probed by this report — or `null` when nothing has been measured. `available`
+   *  on a surface only says a model RESOLVES, which makes no network call, so a bound provider
+   *  that is down still reads available there; this is the field that knows. */
+  chat_provider?: ChatProviderConnection | null
 }
 
 // Confirm-gated fixes + surfacing simulator (PLATFORM-RESILIENCE §2/§3.1).
@@ -796,6 +801,9 @@ export interface AppSummary {
    *  `providerType` alone cannot tell a chat model from a speech one (faster-whisper is `model` +
    *  `stt`). `[]` for an app that provides nothing. */
   providerCapabilities?: string[]
+  /** A multi-instance provider: it has NO app-level settings — its settings live on each of its
+   *  instances, which are added, edited, tested and removed in Settings → Providers. */
+  configuredPerInstance?: boolean
   permissions: AppPermissionsWire
   tags: string[]
   installedAt?: string; updatedAt?: string
@@ -4587,9 +4595,32 @@ export interface DashboardStatus {
   stats?: SystemAgentStats
 }
 
+/** Whether a provider app can run on THIS machine, measured by the gateway in a child process
+ *  (`providers/availability.py`) and never on the request. `checking` = not measured yet (the
+ *  list answers at once rather than waiting); `unknown` = the check itself failed or did not
+ *  finish, which is not the app's "no" (`unavailable`). `checkedAt` is epoch seconds. */
+export interface ProviderAvailability {
+  state: 'checking' | 'available' | 'unavailable' | 'unknown'
+  reason: string
+  checkedAt: number | null
+}
+/** A model-provider instance's connection, MEASURED by its connection test
+ *  (`providers/connection.py`) — never inferred from whether a key is present. `checking` =
+ *  its first background test has not landed; `untestable` = its type has no test.
+ *  `rejected_credential` = the endpoint answered and refused the key (HTTP 401/403). */
+export interface ModelConnection {
+  state: 'checking' | 'connected' | 'failed' | 'untestable'
+  detail: string
+  rejected_credential: boolean
+  checked_at: number | null
+}
+/** The connection of the instance chat is bound to (`provider`), as last measured. */
+export interface ChatProviderConnection extends ModelConnection { provider: string }
 export interface SettingsProvider {
   name: string; displayName?: string; description?: string; version?: string; author?: string
-  enabled: boolean; error?: string; available?: boolean; unavailableReason?: string
+  enabled: boolean; error?: string
+  /** Absent only from a gateway that predates the availability board — read as available. */
+  availability?: ProviderAvailability
   // managed = a lifecycle app provider (installByDefault: install/uninstall is its
   // on/off). false = an always-on native built-in (mandatory, no toggle).
   managed?: boolean
@@ -4653,9 +4684,23 @@ export interface ProviderSchema { type?: string; properties?: Record<string, Pro
 // of bullets for editing. Per-instance, not per-response: a list carries N configs, so a
 // single top-level list could not say which instance a named field belongs to.
 export interface ProviderInstance { id: string; extension_name: string; display_name: string; config: Record<string, unknown>; enabled: boolean; _secret_set?: string[] }
-/** `stored_secrets` names the option fields (e.g. `api_key`) this instance keeps in the
- *  credential store — by name only. Deleting the instance deletes them. */
-export interface ModelProvider { name: string; type: string; model?: string; capabilities: string[]; credential_status: string; stored_secrets?: string[] }
+/** One configured model-provider instance (`config.json` `providers[]` — the one store chat
+ *  resolves). `options` are its settings with every secret MASKED; `secret_set` names the
+ *  secret settings that hold a value (so the editor can say "saved — leave blank to keep"
+ *  without being handed it). `stored_secrets` names the option fields (e.g. `api_key`) this
+ *  instance keeps in the credential store — by name only; deleting the instance deletes them.
+ *  `key_in_store` is true when it authenticates with a Settings → Secrets credential it
+ *  REFERENCES, which removing the instance leaves in place. */
+export interface ModelProvider {
+  name: string; type: string; model?: string; capabilities: string[]
+  /** The type it was created as (a branded alias survives here); `type` is the registry's. */
+  declared_type?: string
+  connection: ModelConnection
+  options?: Record<string, unknown>
+  secret_set?: string[]
+  stored_secrets?: string[]
+  key_in_store?: boolean
+}
 /** An installable model-provider type, from an installed model app's manifest.
  *  ``settingsSchema`` is JSON Schema (+ x-meta) describing the instance config
  *  form (api_key / region / endpoint enum / …). Drives the Add-instance dropdown.
@@ -4675,16 +4720,6 @@ export interface ModelProviderType {
 /** One provider option as it is SAVED: the settingsSchema's own JSON type, or `null` for an
  *  explicit "clear this stored field" (#3554). */
 export type ProviderOptionValue = string | number | boolean | null | unknown[] | Record<string, unknown>
-// Ollama model management (#48). Local = downloaded on the host; search = library candidates.
-export interface OllamaLocalModel {
-  name: string; size: number; size_human?: string; modified_at?: string
-  parameter_size?: string; quantization?: string; family?: string
-}
-export interface OllamaSearchResult { name: string; description?: string; pulls?: number; tags?: string[] }
-export interface OllamaModelInfo {
-  model: string; family?: string; parameter_size?: string; quantization?: string
-  format?: string; context_length?: number; capabilities?: string[]; license_short?: string; error?: string
-}
 // A registered Search provider (the Search entity) + its disclosed capabilities,
 // the unit you bind to a search use-case in Settings → Search.
 export interface SearchCapabilitiesInfo {
@@ -4761,14 +4796,18 @@ export interface HostModelFit {
 }
 export interface ProviderModels {
   name: string; displayName?: string; type: string; models: AvailableModel[]
+  /** Why this row lists nothing when it could not be listed — "models: []" alone means the
+   *  provider lists none. An instance whose last connection test failed is not asked again. */
   error?: string; searchable?: boolean; local?: boolean
+  /** A configured instance's measured connection (absent for a bundled provider). */
+  connection?: ModelConnection
   // Denormalized from the response top level, like `AvailableModel.host_fit`.
   host_fit?: HostModelFit
 }
 // The raw /api/models/available envelope. `fit` is absent on a host that predates LMMV-8's
 // budget probe, which reads as "unknown" everywhere downstream.
 export interface AvailableModelsResponse { providers: ProviderModels[]; fit?: HostModelFit }
-export interface ProviderTestResult { ok: boolean; status?: string; message: string }
+export interface ProviderTestResult { ok: boolean; status?: string; message: string; connection?: ModelConnection }
 // One HF-token cascade source's status (LMMV §5). The token VALUE never crosses the wire —
 // only `masked` (hf_…abcd). `active` marks the single winning source (first whoami-valid).
 export interface HfTokenSource {
@@ -4920,6 +4959,9 @@ export interface OnboardingState {
    *  Present whenever that model is not on disk, whatever else is set up — `needs_model` is
    *  what says whether anything answers. */
   chat_download_offer?: BundledModelOffer | null
+  /** The last MEASURED connection of the instance chat is bound to, or `null` when nothing has
+   *  been measured. Read from the gateway's cache — this route never probes the provider. */
+  chat_provider_connection?: ChatProviderConnection | null
   step?: OnboardingStep
   essentials?: OnboardingEssentials
   first_success?: { knowledge: boolean; trigger: boolean; loop: boolean }
@@ -6589,11 +6631,18 @@ export const api = {
   saveProviderConfig: (name: string, config: Record<string, unknown>) =>
     patch<{ config: Record<string, unknown> }>(`/api/providers/${encodeURIComponent(name)}/config`, config),
   enableProvider: (name: string) => post<{ enabled: boolean }>(`/api/providers/${encodeURIComponent(name)}/enable`),
+  // Measure again whether a provider can run here (answers 202 at once: the check runs in the
+  // gateway's availability child, and the card reads `checking` until the answer lands).
+  recheckProviderAvailability: (name: string) =>
+    post<{ name: string; availability: ProviderAvailability }>(`/api/providers/${encodeURIComponent(name)}/availability`),
   disableProvider: (name: string) => post<{ enabled: boolean }>(`/api/providers/${encodeURIComponent(name)}/disable`),
-  // agent runtimes (native + acp:<cli>) with readiness — merged onto agent cards.
-  // refresh=true forces a fresh readiness probe (post-sign-in / manual re-check),
-  // bypassing the 5-minute readiness cache.
-  agentRuntimes: (refresh = false) => get<{ agent_providers: AgentRuntime[] }>(`/api/agent-providers${refresh ? '?refresh=1' : ''}`).then((d) => d.agent_providers),
+  // agent runtimes (native + acp:<cli>) with readiness — merged onto agent cards. A plain read
+  // never spawns a runtime: it answers from the live connection or the last measurement, and a
+  // never-measured runtime reads `checking`. refresh=true measures now (post-sign-in / manual
+  // re-check); `runtime` scopes that to one runtime instead of every one.
+  agentRuntimes: (refresh = false, runtime = '') =>
+    get<{ agent_providers: AgentRuntime[] }>(`/api/agent-providers${refresh ? `?refresh=1${runtime ? `&runtime=${encodeURIComponent(runtime)}` : ''}` : ''}`)
+      .then((d) => d.agent_providers),
   // BYO runner catalog rows. A plain read returns the last PERSISTED evidence (no
   // spawns); probe=true re-measures every runner's `--version` handshake first, which
   // is what the panel's "Re-check runners" action calls.
@@ -6641,45 +6690,6 @@ export const api = {
   searchProviders: () => get<{ providers: SearchProviderInfo[] }>('/api/search/providers').then((d) => d.providers),
   searchActive: () => get<{ use_cases: Record<string, string[]> }>('/api/search/active').then((d) => d.use_cases),
   setActiveSearchProvider: (useCase: string, providers: string[]) => put<{ ok?: boolean }>(`/api/search/active/${encodeURIComponent(useCase)}`, { providers }),
-  // ── Ollama model management (first-class provider card, #48) ──
-  // Downloaded models on the provider's Ollama host (size + metadata).
-  ollamaModels: (provider: string) =>
-    get<{ models: OllamaLocalModel[]; error?: string }>(`/api/model-providers/${encodeURIComponent(provider)}/models`),
-  // Search the Ollama library (library:tag candidates to pull).
-  ollamaSearch: (provider: string, q: string) =>
-    get<{ results: OllamaSearchResult[]; error?: string }>(`/api/model-providers/${encodeURIComponent(provider)}/search?q=${encodeURIComponent(q)}`),
-  // Per-model metadata (family/params/quant/context) for an informed choice.
-  ollamaShow: (provider: string, model: string) =>
-    get<OllamaModelInfo>(`/api/model-providers/${encodeURIComponent(provider)}/show?model=${encodeURIComponent(model)}`),
-  // Delete a downloaded model to reclaim disk.
-  ollamaDeleteModel: (provider: string, model: string) =>
-    post<{ ok: boolean; model: string }>(`/api/model-providers/${encodeURIComponent(provider)}/models/delete`, { model }),
-  // Pull (download) an Ollama model via the named provider, streaming NDJSON
-  // progress frames ({status, completed?, total?} or {error}) to onFrame until
-  // the stream ends. Resolves when complete; rejects on transport error (#45).
-  // Pass an AbortSignal to let the user STOP the download: aborting the fetch
-  // closes the connection, which the backend detects and cancels the pull (#48).
-  pullOllamaModel: async (provider: string, model: string, onFrame: (f: Record<string, unknown>) => void, signal?: AbortSignal) => {
-    const r = await fetch(`/api/model-providers/${encodeURIComponent(provider)}/pull`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ model }), signal,
-    })
-    if (!r.ok || !r.body) throw new Error(await errText(r))
-    const reader = r.body.getReader()
-    const dec = new TextDecoder()
-    let buf = ''
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buf += dec.decode(value, { stream: true })
-      let nl: number
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, nl).trim()
-        buf = buf.slice(nl + 1)
-        if (line) { try { onFrame(JSON.parse(line)) } catch { /* skip partial */ } }
-      }
-    }
-    if (buf.trim()) { try { onFrame(JSON.parse(buf.trim())) } catch { /* ignore */ } }
-  },
   // Local downloadable models — ONE uniform provider-scoped surface for every local
   // provider (faster-whisper/piper/sentence-transformers/diarization/ollama). The
   // catalog comes from /api/models/available (per-provider `models`); these drive the

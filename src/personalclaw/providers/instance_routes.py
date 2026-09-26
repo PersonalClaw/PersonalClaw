@@ -25,25 +25,27 @@ particular is a real 4xx/5xx so the frontend's shared error funnel (which fires 
 ``to_dict()`` is the store's DISK serializer, and each of the four config-bearing routes
 handed it straight to a response body — so an ``x-meta.sensitive`` field came back in
 cleartext on create, on update, on read, and on every list. Measured against a live
-gateway with ``openai-models`` (``multiInstance: true``, ``api_key`` sensitive): all four
-returned the stored key verbatim, and the list route returned EVERY configured instance's
-key in one body. Eleven bundled model apps have exactly that shape.
+gateway with ``openai-models`` (``multiInstance: true``, ``api_key`` sensitive), back when a
+model app's instances could live here: all four returned the stored key verbatim, and the
+list route returned EVERY configured instance's key in one body. ``openai-tools`` has
+exactly that shape today.
 
 **Who reaches these routes — measured, not assumed.** A cold Settings → Providers load calls
 ``GET .../instances`` once per enabled multi-instance provider; measured, that is
-``mcp-tools`` and ``openai-tools``. It does NOT call them for a **model** provider, which
-renders through ``ModelBackends.tsx`` off ``/api/model-providers`` and never asks for an
-instance config. So the eleven model apps leaked to any API client holding a token (CLI,
-script, another app) rather than through the shipped dashboard page. That changes who was
-exposed, not whether the routes leak — which is why the mask belongs at the route rather
-than in a view. The masking policy is
+``mcp-tools`` and ``openai-tools``. The masking policy is
 :mod:`personalclaw.apps.secret_fields` — the same one the two single-config routes use, not
 a second copy — reached here through :func:`~personalclaw.apps.secret_fields.mask_instance`.
+
+**A model provider's instances are not here.** They are ``config.json`` ``providers[]``
+entries (``/api/model-providers``) — what chat resolves, what discovery lists, and what
+Settings → Providers edits. This generic store used to hold a second copy of a model
+instance's settings too: reachable only through these routes, invisible to chat, and shown
+on the Providers page with no Test, Edit or Remove. Every route below refuses a model app
+with ``model_instances_elsewhere``.
 """
 
 import logging
 
-import aiohttp
 from aiohttp import web
 
 from personalclaw.apps.secret_fields import mask_instance, preserve_unchanged_secrets
@@ -66,26 +68,19 @@ def _rebuild_agent_config_safe() -> None:
 
 
 def _refresh_multi_instance_provider_safe(name: str) -> None:
-    """Re-register a generic multiInstance TOOL or MODEL provider after its
-    instance set changed, so newly-added/edited/removed instances become live
-    providers without a restart. mcp-tools has its own path (live mcp.json
-    registry); this covers the other multiInstance apps (e.g. openai-tools,
-    ollama-models) whose type handler rebuilds one provider per enabled
-    instance. disable→enable re-runs create() against the current on-disk
-    instance set (disk = source of truth) — for a model provider that also
-    updates ``local_models.registry``, which is what ``_known_provider_names()``
-    reads to accept a binding. Then the agent config is rebuilt. Best-effort;
+    """Re-register a generic multiInstance TOOL provider after its instance set changed,
+    so newly-added/edited/removed instances become live providers without a restart.
+    mcp-tools has its own path (live mcp.json registry); this covers the other
+    multiInstance tool apps (e.g. openai-tools), whose type handler rebuilds one provider
+    per enabled instance. disable→enable re-runs create() against the current on-disk
+    instance set (disk = source of truth). Then the agent config is rebuilt. Best-effort;
     never raises."""
     try:
         from personalclaw.providers.registry import get_provider_registry
 
         registry = get_provider_registry()
         ext = registry.get(name)
-        if (
-            not ext
-            or ext.provider_config.type not in ("tool", "model")
-            or not ext.provider_config.multiInstance
-        ):
+        if not ext or ext.provider_config.type != "tool" or not ext.provider_config.multiInstance:
             return
         if ext.enabled:
             registry.disable(name)
@@ -115,6 +110,18 @@ def register_instance_routes(app: web.Application) -> None:
     app.router.add_put("/api/models/use-cases/{use_case}/settings", handle_set_use_case_settings)
 
 
+def _model_instances_elsewhere(ext: object) -> web.Response | None:
+    """400 for a MODEL app: its instances live in ``config.json`` ``providers[]``, not here."""
+    if getattr(getattr(ext, "provider_config", None), "type", "") != "model":
+        return None
+    return json_error(
+        "model_instances_elsewhere",
+        message="A model provider's instances are added, edited, tested and removed in "
+        "Settings → Providers → Model providers (/api/model-providers), not in this store.",
+        status=400,
+    )
+
+
 # ── Instance Management ──────────────────────────────────────────────────────
 
 
@@ -136,14 +143,15 @@ async def handle_list_instances(request: web.Request) -> web.Response:
             message="This provider does not support multiple instances.",
             status=400,
         )
+    elsewhere = _model_instances_elsewhere(ext)
+    if elsewhere is not None:
+        return elsewhere
 
     # Every instance is serialized for the WIRE, not for disk: `mask_instance` withholds
     # each `x-meta.sensitive` field. This route is the worst of the four because it is the
     # only one that needs no operator action: N instances' secrets in ONE body, and a cold
     # Settings → Providers load calls it once per enabled multi-instance provider (measured:
-    # `mcp-tools`, `openai-tools`). A model app's instances are NOT fetched here by the
-    # dashboard — see the module docstring — so for those the exposure is to any
-    # token-holding API client rather than to the browser.
+    # `mcp-tools`, `openai-tools`).
     schema = ext.provider_config.settingsSchema
 
     # The mcp-tools card reads/writes the ONE store the native loop consumes
@@ -180,6 +188,9 @@ async def handle_create_instance(request: web.Request) -> web.Response:
             message="This provider does not support multiple instances.",
             status=400,
         )
+    elsewhere = _model_instances_elsewhere(ext)
+    if elsewhere is not None:
+        return elsewhere
 
     try:
         body = await request.json()
@@ -258,6 +269,9 @@ async def handle_get_instance(request: web.Request) -> web.Response:
         return json_error(
             "not_found", message="No provider is registered under that name.", status=404
         )
+    elsewhere = _model_instances_elsewhere(ext)
+    if elsewhere is not None:
+        return elsewhere
     schema = ext.provider_config.settingsSchema
 
     if name == _mcp.MCP_TOOLS_EXTENSION:
@@ -286,6 +300,9 @@ async def handle_update_instance(request: web.Request) -> web.Response:
         return json_error(
             "not_found", message="No provider is registered under that name.", status=404
         )
+    elsewhere = _model_instances_elsewhere(ext)
+    if elsewhere is not None:
+        return elsewhere
 
     try:
         body = await request.json()
@@ -345,9 +362,13 @@ async def handle_update_instance(request: web.Request) -> web.Response:
 async def handle_delete_instance(request: web.Request) -> web.Response:
     """DELETE /api/providers/{name}/instances/{id}"""
     from personalclaw.providers.instances import delete_instance
+    from personalclaw.providers.registry import get_provider_registry
 
     name = request.match_info["name"]
     instance_id = request.match_info["id"]
+    elsewhere = _model_instances_elsewhere(get_provider_registry().get(name))
+    if elsewhere is not None:
+        return elsewhere
     if name == _mcp.MCP_TOOLS_EXTENSION:
         if not _mcp.delete_instance(instance_id):
             return json_error("not_found", message="No instance exists with that id.", status=404)
@@ -403,6 +424,9 @@ async def handle_test_instance(request: web.Request) -> web.Response:
         return json_error(
             "not_found", message="No provider is registered under that name.", status=404
         )
+    elsewhere = _model_instances_elsewhere(ext)
+    if elsewhere is not None:
+        return elsewhere
 
     # mcp-tools instances live in ~/.personalclaw/mcp.json — probe the real
     # server (spawn → initialize → tools/list) for a true connectivity check.
@@ -437,12 +461,6 @@ async def handle_test_instance(request: web.Request) -> web.Response:
     if not inst:
         return json_error("not_found", message="No instance exists with that id.", status=404)
 
-    # For model-type extensions with an endpoint, do HTTP connectivity check
-    endpoint = inst.config.get("endpoint", "")
-    if endpoint and ext.provider_config.type == "model":
-        return await _test_model_connectivity(endpoint)
-
-    # For other types, try the extension factory
     try:
         from personalclaw.providers.loader import load_factory
 
@@ -461,35 +479,6 @@ async def handle_test_instance(request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "message": "Provider created successfully"})
     except Exception as exc:
         return _probe_failure(exc, context=f"{name}/{instance_id}")
-
-
-async def _test_model_connectivity(endpoint: str) -> web.Response:
-    """Test connectivity to a model endpoint (Ollama, vLLM, etc.)."""
-    endpoint = endpoint.rstrip("/")
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{endpoint}/api/tags",
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as r:
-                if r.status == 200:
-                    data = await r.json()
-                    models = data.get("models", [])
-                    return web.json_response(
-                        {
-                            "ok": True,
-                            "message": f"Connected — {len(models)} model(s) available",
-                        }
-                    )
-                logger.warning("model endpoint probe returned HTTP %s", r.status)
-                return json_error(
-                    "provider_test_failed",
-                    message=f"The endpoint is reachable but returned HTTP {r.status}. Check "
-                    "the URL and that it is a compatible model server.",
-                    status=502,
-                )
-    except Exception as exc:
-        return _probe_failure(exc, context="model-endpoint")
 
 
 # ── Per-Use-Case Settings (provider-agnostic behavior) ───────────────────────

@@ -55,6 +55,7 @@ from personalclaw.sdk.model import (  # noqa: F401
     ContextGauge,
     Credential,
     LLMEvent,
+    ModelDiscoveryError,
     ModelInfo,
     ModelManager,
     ModelProvider,
@@ -1121,30 +1122,64 @@ class OllamaCatalog(ModelManager):
     """Discovery + full local model management for an Ollama endpoint.
 
     Pure function of the entry's ``endpoint`` option — never opens a chat
-    session. All network calls are fail-soft for the read paths (list/search
-    return ``[]`` on error); the write paths (pull/delete/show) surface errors so
-    the UI can report them.
+    session. Listing RAISES when the endpoint could not be asked (see
+    :meth:`_tags`) — "no models installed" and "nothing answered" are different
+    answers; the library search stays fail-soft, and the write paths
+    (pull/delete/show) surface errors so the UI can report them.
     """
 
     def __init__(self, endpoint: str = _DEFAULT_ENDPOINT) -> None:
         self._endpoint = (endpoint or _DEFAULT_ENDPOINT).rstrip("/")
 
-    # ── Discovery ──────────────────────────────────────────────────────
-    async def list_models(self) -> list[ModelInfo]:
-        """List locally-installed models via ``GET /api/tags``."""
+    async def _tags(self) -> dict[str, Any]:
+        """``GET /api/tags`` — the installed-model list, and the reachability proof.
+
+        Raises :class:`ModelDiscoveryError` in words a user can act on: the endpoint, what
+        went wrong, and what to do (core's failure vocabulary, container-localhost case
+        included). This used to return ``[]`` for every failure and relay ``str(exc)``,
+        which put ``not%20a%20url/api/tags`` and a bare ``[Errno 111] Connect call failed``
+        on the Providers page, and let an unreachable Ollama read "No downloadable models
+        listed."
+        """
         import aiohttp
 
+        from personalclaw.sdk.net import relayed_failure_copy
+
+        url = f"{self._endpoint}/api/tags"
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    f"{self._endpoint}/api/tags",
-                    timeout=aiohttp.ClientTimeout(total=_CATALOG_TIMEOUT),
+                    url, timeout=aiohttp.ClientTimeout(total=_CATALOG_TIMEOUT)
                 ) as r:
-                    if r.status != 200:
-                        return []
-                    data = await r.json()
-        except Exception:  # noqa: BLE001 — discovery is fail-soft
-            return []
+                    status = r.status
+                    body = await r.text()
+        except Exception as exc:  # noqa: BLE001 — every transport failure, stated in words
+            raise ModelDiscoveryError(
+                relayed_failure_copy(exc, endpoint=self._endpoint), url=url
+            ) from exc
+        not_ollama = (
+            f"{self._endpoint} answered, but not with Ollama's model list — check that this "
+            "is an Ollama server's address."
+        )
+        if status != 200:
+            raise ModelDiscoveryError(
+                f"{self._endpoint} answered HTTP {status} for the model list — check that this "
+                "is an Ollama server's address.",
+                url=url,
+                status=status,
+            )
+        try:
+            data = json.loads(body)
+        except ValueError as exc:
+            raise ModelDiscoveryError(not_ollama, url=url, status=status) from exc
+        if not isinstance(data, dict) or not isinstance(data.get("models", []), list):
+            raise ModelDiscoveryError(not_ollama, url=url, status=status)
+        return data
+
+    # ── Discovery ──────────────────────────────────────────────────────
+    async def list_models(self) -> list[ModelInfo]:
+        """List locally-installed models via ``GET /api/tags``. Raises when it cannot."""
+        data = await self._tags()
 
         out: list[ModelInfo] = []
         for m in data.get("models", []):
@@ -1177,19 +1212,10 @@ class OllamaCatalog(ModelManager):
 
     async def test_connection(self) -> ConnectionResult:
         """Probe reachability via ``/api/tags`` (a cheap local call)."""
-        import aiohttp
-
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"{self._endpoint}/api/tags",
-                    timeout=aiohttp.ClientTimeout(total=_CATALOG_TIMEOUT),
-                ) as r:
-                    if r.status != 200:
-                        return ConnectionResult(ok=False, detail=f"Ollama returned {r.status}")
-                    data = await r.json()
-        except Exception as exc:  # noqa: BLE001
-            return ConnectionResult(ok=False, detail=str(exc)[:200])
+            data = await self._tags()
+        except ModelDiscoveryError as exc:
+            return ConnectionResult(ok=False, detail=str(exc))
         return ConnectionResult(ok=True, model_count=len(data.get("models", [])))
 
     # ── Management ─────────────────────────────────────────────────────

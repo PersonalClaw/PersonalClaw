@@ -212,7 +212,7 @@ backend has no access to the gateway's SecurityEventLog).
 
 ## The App SDK
 
-- **Python**: `sdk/` (33 modules) is THE stable app-facing import surface —
+- **Python**: `sdk/` is THE stable app-facing import surface —
   apps import core **only** via `personalclaw.sdk.*`
   (boundary-lint-enforced by `tests/test_apps_import_boundary.py`). Modules
   cover models, channels, tools, search, memory, knowledge, STT/TTS,
@@ -445,6 +445,17 @@ A tool provider is registered under its app's name, and every tool it lists pass
 seam before a model request carries it: a schema outside the portable profile is repaired or
 left out, with one log line naming the app and the tool — see
 [tool-schema-wire.md](tool-schema-wire.md).
+
+**Availability is measured out of process.** A provider module may export
+`availability() -> (bool, str)` — "can this provider run on this machine?". The gateway never
+calls it: `providers/availability.py` runs every hook in a child process
+(`personalclaw availability-probe <app>…`, killed at a 180 s deadline) at boot, when a
+15-minute-old answer is read, and when the user presses **Check again**
+(`POST /api/providers/{name}/availability`). `GET /api/providers` only reads the cached answer,
+`availability: {state: checking | available | unavailable | unknown, reason, checkedAt}`.
+Measured before this existed: one hook imported torch, and the list and `/api/healthz` both
+passed 120 s. A hook must still be cheap — answer from metadata, never import the library it
+checks for; the rule and the check to build it from are `personalclaw.sdk.availability`.
 
 ## Related docs
 

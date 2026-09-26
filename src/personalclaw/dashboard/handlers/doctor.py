@@ -14,6 +14,7 @@ Both surfaces are guard-class gated: ``resilience.doctor_enabled`` and
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Any, Optional
 
@@ -24,6 +25,8 @@ from personalclaw.request_validation import json_object_body
 from personalclaw.resilience import degraded
 from personalclaw.resilience.doctor import DoctorContext, run_capability, run_doctor
 from personalclaw.safety_flags import confirm_granted
+
+logger = logging.getLogger(__name__)
 
 # Full-report cache (§11 risk mitigation: 30s TTL so the dashboard rollup poll
 # reuses one run instead of re-probing every capability each tick).
@@ -85,14 +88,30 @@ async def api_degraded(request: web.Request) -> web.Response:
     Re-evaluates live each call (cheap, no-instantiate ``can_resolve_use_case``
     probes) and fires a down/recovery notification on a surface changing state, via
     the live dashboard state. Returns ``{surfaces: [{surface, available, floor,
-    backlog, use_cases}], degraded: [surface, ...]}``.
+    backlog, use_cases}], degraded: [surface, ...], chat_provider}``.
+
+    ``available`` answers "does a model resolve", which makes no network call — so a bound
+    provider that is DOWN still reads available. ``chat_provider`` is the other half: the last
+    MEASURED connection of the instance chat is bound to (``providers/connection.py``), read
+    from the board and never probed here, or ``null`` when nothing has been measured.
     """
     if not _resilience_cfg().degraded_indicator:
-        return web.json_response({"surfaces": [], "degraded": []})
+        return web.json_response({"surfaces": [], "degraded": [], "chat_provider": None})
     state = request.app.get("state")
     rows = await _run_degraded(state)
+    try:
+        from personalclaw.providers.connection import chat_provider_status
+
+        chat_provider = chat_provider_status()
+    except Exception:  # noqa: BLE001 — a status read never fails the report it decorates
+        logger.debug("degraded: chat-provider connection read failed", exc_info=True)
+        chat_provider = None
     return web.json_response(
-        {"surfaces": rows, "degraded": [r["surface"] for r in rows if not r["available"]]}
+        {
+            "surfaces": rows,
+            "degraded": [r["surface"] for r in rows if not r["available"]],
+            "chat_provider": chat_provider,
+        }
     )
 
 
