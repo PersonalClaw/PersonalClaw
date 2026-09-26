@@ -47,7 +47,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.dashboard.handlers import triggers as T
-from personalclaw.event_triggers import EventTrigger, EventTriggerStore
+from personalclaw.event_triggers import MEMORY_UPDATE, event_spec
 from personalclaw.hooks import ScriptHookStore
 from personalclaw.schedule_history import ScheduleRun, ScheduleRunStore
 from personalclaw.triggers.models import Trigger
@@ -76,7 +76,7 @@ NOT_WIRE_FIELDS: dict[str, str] = {}
 
 @pytest.fixture
 def history_app(tmp_path, monkeypatch):
-    """A real app on the real route, with all three kinds contributing rows.
+    """A real app on the real route, with every source of the feed contributing rows.
 
     Seeded so no branch of the response is empty: an empty `runs` list derives no row field names
     at all, which would let this census pass while checking nothing. Both home seams are redirected
@@ -95,21 +95,6 @@ def history_app(tmp_path, monkeypatch):
     live.run_count, live.last_run, live.last_status = 7, NOW - 300, "ok"
     hooks._save()
 
-    # No `name=` — an `EventTrigger` genuinely has no name field, which is why the projection uses
-    # its id (the same answer `_serialize_event` gives the Triggers list).
-    EventTriggerStore(cfg / "event_triggers.json").save(
-        [
-            EventTrigger(
-                id="memory-watcher",
-                pattern="memory",
-                action_provider="run-prompt",
-                action_config={},
-                fire_count=5,
-                last_fired_at=NOW - 600,
-            )
-        ]
-    )
-
     # The NAME JOIN's real source. `_trigger_names` reads the unified TriggerStore, not
     # `state.crons` — S110 made it store-only — so a fixture that only faked `list_jobs` would leave
     # every schedule row nameless and this rail would "pass" against a blank it created itself.
@@ -121,6 +106,18 @@ def history_app(tmp_path, monkeypatch):
             kind="clock",
             enabled=True,
             spec={"kind": "interval", "interval_secs": 3600},
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+    # A data-event trigger is a row in the same store, and its fires are ordinary rows in the same
+    # run ledger a cron's are — so it contributes a run (`r3`) like any store trigger.
+    TriggerStore(base_dir=cfg).upsert(
+        Trigger(
+            id="event:memory-watcher",
+            name="Memory watcher",
+            kind="event",
+            enabled=True,
+            spec=event_spec(MEMORY_UPDATE),
             workflow={"inline": {"provider": "notify", "config": {}}},
         )
     )
@@ -148,6 +145,17 @@ def history_app(tmp_path, monkeypatch):
             "status": "failure",
             "summary": "",
             "error": "boom",
+        },
+        {
+            "run_id": "r3",
+            "job_id": "event:memory-watcher",
+            "trigger": "ok",
+            "started_at": NOW - 600,
+            "finished_at": NOW - 600,
+            "duration_ms": 0,
+            "status": "success",
+            "summary": "",
+            "error": "",
         },
     ):
         asyncio.run(runs.append(ScheduleRun.from_dict(row)))
@@ -220,10 +228,13 @@ def _consumed_fields() -> set[str]:
 def test_the_seeded_feed_carries_every_kind(sent):
     """A census over an empty feed is a passing test that checks nothing."""
     assert sent["runs"], "no rows derived — the seeding no longer reaches the endpoint"
-    assert sent["kinds"] == ["event", "lifecycle", "schedule"], (
-        f"not all three kinds projected: {sent['kinds']} — the derived field set would be "
-        "missing whichever kind dropped out"
+    assert sent["kinds"] == ["lifecycle", "schedule"], (
+        f"not every source projected: {sent['kinds']} — the derived field set would be "
+        "missing whichever source dropped out"
     )
+    assert "Memory watcher" in {
+        r["trigger_name"] for r in sent["runs"]
+    }, "the data-event trigger's run is missing — its fires share the ledger a cron's use"
     fields = _row_fields(sent)
     # Named so a walk that stopped short cannot pass.
     for name in ("id", "trigger_id", "trigger_name", "outcome", "reason", "finished_at"):
@@ -311,8 +322,8 @@ def test_every_row_carries_the_name_of_its_automation(sent):
     unnamed = [r["trigger_id"] for r in sent["runs"] if not r.get("trigger_name")]
     assert unnamed == [], (
         f"row(s) {unnamed} carry no `trigger_name`. A schedule run arrives at the projection with "
-        "the handler's `job_name` join already on it; a hook and an event trigger each carry "
-        "`.name`. Dropping it is the defect issue 466 reports."
+        "the handler's `job_name` join already on it — an event trigger's run included — and a "
+        "hook carries `.name`. Dropping it is the defect issue 466 reports."
     )
     names = {r["trigger_name"] for r in sent["runs"]}
     assert (

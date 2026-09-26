@@ -30,10 +30,10 @@ def home(tmp_path, monkeypatch):
     """One isolated home behind EVERY seam the unified count reads.
 
     In tests the autouse trigger-store fixture and the config-loader fixture point the trigger
-    store and the hook/event stores at DIFFERENT tmp homes; production resolves them all to one
-    ``config_dir()``. This pins every seam — the unified store, the lifecycle-hook store, the
-    event store, and ``status_snapshot``'s own ``trigger_counts`` — at a single home, so the count
-    is measured against one seeded world rather than three empty ones.
+    store and the hook store at DIFFERENT tmp homes; production resolves them all to one
+    ``config_dir()``. This pins every seam — the unified store (event triggers included), the
+    lifecycle-hook store, and ``status_snapshot``'s own ``trigger_counts`` — at a single home, so
+    the count is measured against one seeded world rather than several empty ones.
     """
     h = tmp_path / "home"
     h.mkdir()
@@ -43,17 +43,11 @@ def home(tmp_path, monkeypatch):
         "personalclaw.dashboard.handlers.triggers.config_dir", lambda: h, raising=False
     )
     monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: h, raising=False)
-    import personalclaw.event_triggers as et
     from personalclaw.hooks import set_global_hook_store
 
-    # `EventTriggerEngine` memoizes its store on first use and `get_engine()` is process-global —
-    # reset before and after so a leak in either direction cannot make this read another test's
-    # store (the exact hazard `test_trigger_sources` documents).
-    et._engine = None
     try:
         yield h
     finally:
-        et._engine = None
         set_global_hook_store(None)
 
 

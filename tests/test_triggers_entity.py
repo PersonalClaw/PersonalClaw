@@ -205,8 +205,13 @@ def test_the_min_clock_interval_is_declared():
 # ── the other kinds ──
 
 
-def test_an_event_trigger_needs_a_SOURCE():
-    assert any(i.path == "spec.source" for i in validate_spec("event", {}))
+def test_an_event_trigger_needs_a_PATTERN_and_its_SOURCE():
+    """The pattern names what the trigger listens for; the source is the pattern's own (the writers
+    derive it), and a row that carries neither can never fire."""
+    assert any(
+        i.path == "spec.pattern" and i.severity == "error" for i in validate_spec("event", {})
+    )
+    assert any(i.path == "spec.source" for i in validate_spec("event", {"pattern": "MemoryUpdate"}))
 
 
 def test_a_webhook_with_NO_TOKEN_is_refused_not_defaulted():
@@ -405,11 +410,33 @@ def test_EVERY_ScheduleJob_field_is_accounted_for():
     assert unmapped_legacy_fields("ScheduleJob", names) == []
 
 
-def test_EVERY_EventTrigger_field_is_accounted_for():
-    from personalclaw.event_triggers import EventTrigger
+#: A legacy `event_triggers.json` row, field for field, as the retired `EventTrigger` dataclass
+#: wrote it (`asdict`, so every field is on disk). Frozen here because the dataclass is gone and
+#: nothing writes that file any more: this is the format `boot_migrate.absorb_event_triggers` reads.
+LEGACY_EVENT_TRIGGER_FIELDS = (
+    "id",
+    "pattern",
+    "source",
+    "action_provider",
+    "action_config",
+    "key_glob",
+    "content_re",
+    "sender_glob",
+    "address_glob",
+    "event_glob",
+    "enabled",
+    "state",
+    "park_reason",
+    "park_retry_after",
+    "max_fires",
+    "fire_count",
+    "debounce_secs",
+    "last_fired_at",
+)
 
-    names = [f.name for f in dc.fields(EventTrigger)]
-    assert unmapped_legacy_fields("EventTrigger", names) == []
+
+def test_EVERY_legacy_EventTrigger_field_is_accounted_for():
+    assert unmapped_legacy_fields("EventTrigger", list(LEGACY_EVENT_TRIGGER_FIELDS)) == []
 
 
 def test_a_NEW_legacy_field_fails_here_rather_than_vanishing_later():

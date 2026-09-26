@@ -227,12 +227,31 @@ def test_the_sweep_is_a_dry_run_when_asked(tmp_path):
 # ── crash-safety: the spool survives a restart ──
 
 
-def test_a_fire_with_NO_RUNNING_LOOP_is_spooled_not_dropped(tmp_path, monkeypatch):
-    """🔴 `event_triggers._schedule_fire` recorded the fire, asked for a running loop, and `return`ed
-    when there was none — so a sync CLI memory write incremented `fire_count` and dropped the action
-    with nothing recording that it did not run. `dispatch.spool_fire` was written for exactly this
-    path and its docstring calls it "THE fix for the measured bug"; it had no caller, so the bug it
-    names was still live."""
+def _memory_trigger(home) -> None:
+    """A stored `event` row that wants every memory write."""
+    from personalclaw.event_triggers import MEMORY_UPDATE, event_spec
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    TriggerStore(base_dir=home).upsert(
+        Trigger(
+            id="e-1",
+            name="e-1",
+            kind="event",
+            enabled=True,
+            spec=event_spec(MEMORY_UPDATE),
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+
+
+def test_an_event_in_a_process_with_NO_ROUTER_is_spooled_not_dropped(tmp_path, monkeypatch):
+    """🔴 The retired engine recorded the fire, asked for a running loop, and `return`ed when there
+    was none — so a sync CLI memory write incremented `fire_count` and dropped the action with
+    nothing recording that it did not run. Any process without the gateway's router (the CLI, the
+    `mcp-core` server an agent's memory tools run in) now parks the event in the dispatch spool, and
+    the gateway's tick re-emits it there. Nothing is counted against `max_fires` here: the budget is
+    spent when the gateway ADMITS the fire, not when a process that cannot run it sees the event."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     from personalclaw.config import loader
 
@@ -241,69 +260,46 @@ def test_a_fire_with_NO_RUNNING_LOOP_is_spooled_not_dropped(tmp_path, monkeypatc
     import personalclaw.event_triggers as et
     from personalclaw.triggers.dispatch import drain_spool
 
-    store = et.EventTriggerStore(tmp_path / "event_triggers.json")
-    store.save(
-        [
-            et.EventTrigger(
-                id="e-1",
-                pattern=et.MEMORY_UPDATE,
-                action_provider="bash",
-                action_config={"command": "true"},
-                max_fires=3,
-            )
-        ]
-    )
-    engine = et.EventTriggerEngine()
-    engine._store = store
-
-    # No running loop — this IS the sync CLI write.
-    engine.on_event(
+    _memory_trigger(tmp_path)
+    assert not et.router_attached(), "this test is the process WITHOUT a gateway"
+    et.emit_event(
         source=et.SOURCE_MEMORY, event_type="memory_write", key="notes/x", value="hi", now=NOW
     )
 
-    assert store.load()[0].fire_count == 1, "the fire was counted against max_fires either way"
     envelopes, bad = drain_spool()
     assert bad == 0
     assert [e.payload["key"] for e in envelopes] == ["notes/x"], "so it must not be lost"
+    assert envelopes[0].kind == "memory.memory_write"
 
 
 def test_a_spool_failure_does_not_BREAK_THE_MEMORY_WRITE(tmp_path, monkeypatch):
     """The write is the user's actual work and this is bookkeeping layered on top of it. An
-    unwritable disk must not take down ordinary use."""
+    unwritable disk must not take down ordinary use — driven through a real memory write."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     from personalclaw.config import loader
 
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
 
-    import personalclaw.event_triggers as et
     from personalclaw.triggers import dispatch
+    from personalclaw.vector_memory import VectorMemoryStore
+
+    attempts: list[object] = []
 
     def _boom(*a, **kw):
+        attempts.append(a)
         raise OSError("read-only file system")
 
     monkeypatch.setattr(dispatch, "spool_fire", _boom)
-
-    store = et.EventTriggerStore(tmp_path / "event_triggers.json")
-    store.save(
-        [
-            et.EventTrigger(
-                id="e-1",
-                pattern=et.MEMORY_UPDATE,
-                action_provider="bash",
-                action_config={"command": "true"},
-            )
-        ]
-    )
-    engine = et.EventTriggerEngine()
-    engine._store = store
-    engine.on_event(
-        source=et.SOURCE_MEMORY, event_type="memory_write", key="k", value="v", now=NOW
-    )  # must not raise
+    _memory_trigger(tmp_path)
+    memory = VectorMemoryStore(db_path=tmp_path / "memory.db", embedding_dim=3)
+    memory.init()
+    assert memory.set_semantic("project.notes", "v", 1.0, "user_explicit") is None  # no raise
+    assert len(attempts) == 1, "the spool was never tried, so this proved nothing"
 
 
 def test_a_LIVE_fire_still_dispatches_rather_than_spooling(tmp_path, monkeypatch):
-    """The spool is the no-loop path ONLY. Spooling a fire that could have run now would turn every
-    live memory-trigger fire into a delayed one."""
+    """The spool is the no-router path ONLY. Spooling an event the gateway could fire now would
+    turn every live memory-trigger fire into a delayed one."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     from personalclaw.config import loader
 
@@ -311,38 +307,27 @@ def test_a_LIVE_fire_still_dispatches_rather_than_spooling(tmp_path, monkeypatch
 
     import personalclaw.event_triggers as et
     from personalclaw.triggers.dispatch import drain_spool
+    from personalclaw.triggers.event_fire import EventRouter
 
-    store = et.EventTriggerStore(tmp_path / "event_triggers.json")
-    store.save(
-        [
-            et.EventTrigger(
-                id="e-1",
-                pattern=et.MEMORY_UPDATE,
-                action_provider="bash",
-                action_config={"command": "true"},
-            )
-        ]
-    )
+    _memory_trigger(tmp_path)
 
-    async def _with_loop():
-        engine = et.EventTriggerEngine()
-        engine._store = store
+    async def _with_gateway():
         fired: list[str] = []
-        monkeypatch.setattr(
-            et,
-            "execute_event_action",
-            lambda t, **kw: _record(fired, kw["key"]),
-        )
-        engine.on_event(
-            source=et.SOURCE_MEMORY, event_type="memory_write", key="live", value="v", now=NOW
-        )
-        await asyncio.sleep(0)  # let the created task run
+
+        async def dispatch_fire(trigger, payload, *, event, context):
+            fired.append(payload["key"])
+
+        router = EventRouter(dispatch=dispatch_fire, loop=asyncio.get_running_loop())
+        et.attach(router)
+        try:
+            et.emit_event(
+                source=et.SOURCE_MEMORY, event_type="memory_write", key="live", value="v", now=NOW
+            )
+            await router.settle()
+        finally:
+            et.detach(router)
         return fired
 
-    async def _record(sink, key):
-        sink.append(key)
-        return et.FireOutcome(True, "")
-
-    fired = asyncio.run(_with_loop())
+    fired = asyncio.run(_with_gateway())
     assert fired == ["live"]
     assert drain_spool()[0] == [], "a live fire must not also be spooled"

@@ -740,8 +740,7 @@ async def run_script_hook(
     if hook_event is None:
         hook_event = {"hook_event_name": hook.event, "cwd": os.getcwd()}
     if test:
-        # The event-path contract verbatim (event_triggers.fire_event_trigger): the tag
-        # rides the payload so a provider can tell a rehearsal from the real thing.
+        # The tag rides the payload so a provider can tell a rehearsal from the real thing.
         # Copied first — the caller's dict is not ours to mutate.
         hook_event = dict(hook_event)
         hook_event["test"] = True

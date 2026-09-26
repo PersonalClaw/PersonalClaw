@@ -181,7 +181,6 @@ async def test_trigger_history_404s_for_unknown_trigger_kind(trigger_id, monkeyp
 
     empty_store = SimpleNamespace(get=lambda _key: None, load=lambda: [])
     monkeypatch.setattr(handlers, "_trigger_store", lambda: empty_store)
-    monkeypatch.setattr(handlers, "_event_store", lambda: empty_store)
     monkeypatch.setattr(handlers, "_hook_store", lambda _state: empty_store)
 
     response = await handlers.api_trigger_history(

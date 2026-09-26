@@ -543,18 +543,19 @@ def _reenter_spooled(envelope: Any, *, now: float) -> tuple[str, str]:
     the double-fire §3.2/criterion 7 bans. So the boundary is the `emit_event(...)` call itself,
     and the split is enforced structurally by two separate `try` blocks rather than by a comment:
 
-    * **Above the line** the function only reads the envelope, builds keyword arguments and resolves
-      the engine. Nothing there can fire a trigger, write a ledger row or touch a store, so a
-      failure there provably delivered nothing and is honestly retryable.
+    * **Above the line** the function only reads the envelope, builds keyword arguments and checks
+      that this process has an event router. Nothing there can fire a trigger, write a ledger row
+      or touch a store, so a failure there provably delivered nothing and is honestly retryable.
     * **Below the line** the envelope is DELIVERED, full stop, whatever happens next. `emit_event`
-      matches every stored trigger and schedules their actions; once entered, the drain cannot know
-      how far it got, and "I don't know" must resolve to delivered rather than to a retry.
+      hands it to the router, which matches every stored trigger and schedules their fires; once
+      entered, the drain cannot know how far it got, and "I don't know" must resolve to delivered
+      rather than to a retry.
 
-    `get_engine()` is resolved as the LAST pre-flight step, immediately above the boundary, and that
-    placement is the point: it is a pure lazy constructor (its store is bound on first use, not
-    here), so asking for it is side-effect-free, and asking BEFORE the boundary converts "the event
-    engine is not reachable" from a fact `emit_event` swallows into a `logger.debug` — silently
-    losing every spooled fire — into a pre-delivery TRANSIENT that earns a bounded retry.
+    The router check is the LAST pre-flight step, immediately above the boundary, and that placement
+    is the point: without a router, `emit_event` does not deliver — it spools the event again — so
+    re-entering would ack the envelope while writing it straight back, a loop that fires nothing
+    and never ends. Asked BEFORE the boundary it is a pre-delivery TRANSIENT that earns a bounded
+    retry instead.
 
     Re-entry stays through `emit_event`, the SAME seam a live source write uses, not a second
     dispatch path: that is what stops a spooled fire skipping a gate a live one walks, which is
@@ -563,7 +564,7 @@ def _reenter_spooled(envelope: Any, *, now: float) -> tuple[str, str]:
     from personalclaw.triggers.dispatch import Handling, classify_handler_outcome
 
     try:
-        from personalclaw.event_triggers import SOURCE_MEMORY, emit_event, get_engine
+        from personalclaw.event_triggers import SOURCE_MEMORY, emit_event, router_attached
 
         # `kind` is `f"{source}.{event_type}"` (EIAT-1); split on the first dot so the
         # spooled fire re-enters scoped to the source it came from. Legacy envelopes with
@@ -588,7 +589,8 @@ def _reenter_spooled(envelope: Any, *, now: float) -> tuple[str, str]:
             "now": now,
             "meta": dict(meta) if isinstance(meta, dict) else None,
         }
-        get_engine()
+        if not router_attached():
+            raise RuntimeError("no event router is attached in this process")
     except Exception as exc:  # noqa: BLE001 - classified, not swallowed
         # `classify_handler_outcome` maps an unclassified throw to TRANSIENT — its "never drop"
         # rule. This is its first production call site; it was written for exactly this seam.

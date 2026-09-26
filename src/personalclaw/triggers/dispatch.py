@@ -6,13 +6,13 @@ payload plus a wakeup signal;
 a dispatcher claims and drives it. Crash-safety falls out of that shape — the payload survives an
 executor crash because it is in the queue, not in a coroutine.
 
-**The bug this session fixes, reproduced before it was written.** `event_triggers._schedule_fire`
-records the fire and then does `asyncio.get_running_loop()`; with no loop
-(a sync CLI memory write) it
-`return`s. Measured on a real store: `fire_count` becomes 1 and **the action is dropped with nothing
-anywhere recording that it did not run**. That is the silent drop §1.3
-bans, in shipped code. The spool
-here is the fix: a sync-context fire is written to disk and drained on the next tick.
+**The bug this session fixed, reproduced before it was written.** The retired data-event engine's
+`_schedule_fire` recorded the fire and then did `asyncio.get_running_loop()`; with no loop (a sync
+CLI memory write) it `return`ed. Measured on a real store: `fire_count` became 1 and **the action
+was dropped with nothing anywhere recording that it did not run** — the silent drop §1.3 bans, in
+shipped code. The spool here is the fix: an event raised in a process with no gateway router (the
+CLI, the `mcp-core` server an agent's memory tools run in) is written to disk, and the gateway's
+next tick re-emits it to its router.
 
 The delivery rules, each with the failure it prevents:
 
@@ -367,12 +367,10 @@ def spool_path() -> Path:
 def spool_fire(envelope: Envelope, *, path: Path | None = None) -> bool:
     """Park one fire on disk. Returns whether it was written.
 
-    THE fix for the measured bug: `event_triggers._schedule_fire` records
-    the fire, asks for a running
-    loop, and `return`s when there is none — so a sync CLI memory write increments `fire_count` and
-    drops the action with nothing recording that it did not run.
-    Appending here means the fire survives
-    to the next tick.
+    THE fix for the measured bug: the retired data-event engine recorded a fire, asked for a
+    running loop, and `return`ed when there was none — so a sync CLI memory write incremented
+    `fire_count` and dropped the action with nothing recording that it did not run. Appending here
+    means the event survives to the next tick.
 
     Append-only JSONL, one event per line: a partial write damages one
     line, and `drain_spool` skips an

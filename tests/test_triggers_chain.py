@@ -247,7 +247,7 @@ KIND_RUNTIMES: dict[str, str] = {
     "file": "personalclaw.triggers.file_poll.poll_all (S93)",
     "web_watch": "personalclaw.triggers.web_poll.poll_all (S121)",
     "run_completed": "personalclaw.triggers.chain.next_fires (S122)",
-    "event": "personalclaw.event_triggers.execute_event_action (the data-event engine)",
+    "event": "personalclaw.triggers.event_fire.EventRouter (the gateway's router on the bus)",
     "manual": "the Run button / automation_run — fires on demand, needs no runtime",
     "view": "personalclaw.triggers.pull_on_view.on_render (S123 — render-driven, not polled)",
     "idle": "personalclaw.triggers.idle_poll.poll (WF2AUT-11 — driven off the tick)",

@@ -88,12 +88,19 @@ def test_NO_cap_still_fires_every_slot(store, tmp_path):
     assert fires == 8
 
 
-def test_the_production_tick_SUPPLIES_the_budget():
+def test_the_production_admission_SUPPLIES_the_budget():
     """A source check, because the property is that the field is POPULATED. A behavioural test alone
-    would pass against a gate that happened to allow everything — the exact hole this closes."""
+    would pass against a gate that happened to allow everything — the exact hole this closes.
+
+    The gate context is built in `admit_fire`, the ONE admission the tick and the event router both
+    call, so the field is asserted there and each production caller is asserted to reach it."""
     import inspect
 
-    assert "budget_remaining=" in inspect.getsource(svc.tick)
+    from personalclaw.triggers import event_fire
+
+    assert "budget_remaining=" in inspect.getsource(svc.admit_fire)
+    assert "admit_fire(" in inspect.getsource(svc.tick)
+    assert "admit_fire(" in inspect.getsource(event_fire.EventRouter)
 
 
 def test_RUN_COUNT_is_incremented_and_PERSISTED(store, tmp_path):

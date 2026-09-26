@@ -54,25 +54,21 @@ const STORE = (over: Record<string, unknown> = {}) => ({
   broken: [],
   ...over,
 })
-const EVENT = (over: Record<string, unknown> = {}) => ({
-  kind: 'event',
-  id: 'event:app-note-mirror',
-  raw_id: 'app-note-mirror',
+// A data-event trigger is a store row (`store_kind: 'event'`), listed through the store feed.
+const EVENT = (over: Record<string, unknown> = {}) => STORE({
+  id: 'store:event:app-note-mirror',
+  raw_id: 'event:app-note-mirror',
+  store_kind: 'event',
   name: 'app-note-mirror',
-  enabled: true,
-  pattern: 'AppEvent',
-  action: { provider: 'notify', config: {} },
-  health: 'ok',
-  state: 'active',
-  last_error: '',
-  fire_count: 3,
+  spec: { source: 'app', pattern: 'AppEvent', event_glob: 'app:notes:*' },
+  run_count: 3,
   ...over,
 })
 
 const REAP = 'Reaped after 1811s (exceeded 1800s deadline)'
 
 const { STATE } = vi.hoisted(() => ({
-  STATE: { jobs: [] as unknown[], stores: [] as unknown[], events: [] as unknown[] },
+  STATE: { jobs: [] as unknown[], stores: [] as unknown[] },
 }))
 
 vi.mock('../../lib/api', async (orig) => ({
@@ -81,7 +77,6 @@ vi.mock('../../lib/api', async (orig) => ({
     schedules: () => Promise.resolve({ jobs: STATE.jobs }),
     hooks: () => Promise.resolve([]),
     storeTriggers: () => Promise.resolve(STATE.stores),
-    eventTriggers: () => Promise.resolve(STATE.events),
     actionProviders: () => Promise.resolve([]),
     autonomyLadder: () => Promise.reject(new Error('no ladder in this test')),
     triggerVariables: () => Promise.resolve({ lifecycle: [], schedule: [], event: [] }),
@@ -97,7 +92,6 @@ beforeEach(() => {
   sessionStorage.clear()
   STATE.jobs = []
   STATE.stores = []
-  STATE.events = []
 })
 
 describe('the row names its state', () => {
@@ -119,7 +113,7 @@ describe('the row names its state', () => {
   })
 
   it('labels a parked event trigger "parked" instead of the never-run dot', async () => {
-    STATE.events = [EVENT({ state: 'parked', health: 'parked', last_error: 'the app that owns this event is gone' })]
+    STATE.stores = [EVENT({ state: 'parked', health: 'parked', last_error: 'the app that owns this event is gone' })]
     mount()
     await waitFor(() => expect(screen.getByText('app-note-mirror')).toBeInTheDocument())
     expect(screen.getByText('parked')).toBeInTheDocument()
@@ -169,7 +163,7 @@ describe('the row explains itself', () => {
   })
 
   it('renders the reason for a parked EVENT trigger too', async () => {
-    STATE.events = [EVENT({ state: 'parked', health: 'parked', last_error: 'the app that owns this event is gone' })]
+    STATE.stores = [EVENT({ state: 'parked', health: 'parked', last_error: 'the app that owns this event is gone' })]
     mount()
     await waitFor(() => expect(screen.getByText('app-note-mirror')).toBeInTheDocument())
     expect(screen.getByText('the app that owns this event is gone')).toBeInTheDocument()

@@ -18,15 +18,18 @@ every trigger it fed and toggle each one back on.
 
 **Which triggers bind to which app** is decided by :func:`bound_app` on the trigger's `event_glob`,
 and the rule is narrow on purpose — see that function.
+
+**The park holds until the app returns, not until a timer runs out.** The rows live in the one
+trigger store, whose tick revives a PARKED trigger once its cooldown elapses — right for a transport
+outage, which resolves with time, and wrong here: a trigger whose app is still disabled would read
+as listening for a source that cannot speak. :func:`waits_on_absent_source` is the question the tick
+asks before reviving one, and :func:`unpark_for_app` is what brings these back.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from personalclaw.event_triggers import EventTrigger, EventTriggerStore
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -67,14 +70,37 @@ def bound_app(event_glob: str) -> str:
     return app
 
 
-def bound_triggers(triggers: list["EventTrigger"], app: str) -> list["EventTrigger"]:
-    """Every ``AppEvent`` trigger bound to *app*, in store order."""
+def _bound_app_of(trigger: Any) -> str:
+    """The app an ``event`` row's ``AppEvent`` glob binds it to, or ""."""
     from personalclaw.event_triggers import APP_EVENT
 
-    return [t for t in triggers if t.pattern == APP_EVENT and bound_app(t.event_glob) == app]
+    if getattr(trigger, "kind", "") != "event":
+        return ""
+    spec = trigger.spec if isinstance(getattr(trigger, "spec", None), dict) else {}
+    if spec.get("pattern") != APP_EVENT:
+        return ""
+    return bound_app(str(spec.get("event_glob") or ""))
 
 
-def park_for_app(store: "EventTriggerStore", app: str, *, now: float = 0.0) -> list[str]:
+def bound_triggers(triggers: list[Any], app: str) -> list[Any]:
+    """Every ``AppEvent`` trigger bound to *app*, in store order."""
+    return [t for t in triggers if _bound_app_of(t) == app]
+
+
+def waits_on_absent_source(trigger: Any) -> bool:
+    """Whether *trigger* listens to exactly one app, and that app has no registered source.
+
+    The tick asks this before it revives a PARKED trigger on a timer. A trigger bound to a source
+    that is gone stays parked however long ago it parked — it has nothing to fire on until the app
+    returns, and :func:`unpark_for_app` brings it back the moment the source registers.
+    """
+    from personalclaw.trigger_sources.registry import get_source
+
+    app = _bound_app_of(trigger)
+    return bool(app) and get_source(app) is None
+
+
+def park_for_app(store: Any, app: str, *, now: float = 0.0) -> list[str]:
     """Park every trigger bound to *app*. Returns the parked trigger ids.
 
     Called when the app's ``trigger_source`` provider deregisters (app disabled or uninstalled).
@@ -91,19 +117,21 @@ def park_for_app(store: "EventTriggerStore", app: str, *, now: float = 0.0) -> l
         exit_type=ExitType.TRANSPORT_UNAVAILABLE.value, consecutive_failures=0, now=now
     )
     parked: list[str] = []
-    items = store.load()
-    for trigger in bound_triggers(items, app):
+    for trigger in bound_triggers([row.trigger for row in store.load()], app):
         if trigger.state == TriggerState.PARKED.value:
             continue
         trigger.state = decision.state
+        trigger.health_status = decision.health
         # The app name rides the reason because `PARK_REASONS` phrases the CLASS of outage ("the
         # service this trigger calls was unreachable") and the user's next question is WHICH one.
-        trigger.park_reason = f"{decision.reason}: the {app!r} app that supplies its events is "
-        trigger.park_reason += "disabled or uninstalled"
+        trigger.last_error_summary = (
+            f"{decision.reason}: the {app!r} app that supplies its events is disabled or "
+            "uninstalled"
+        )
         trigger.park_retry_after = decision.retry_after
+        store.upsert(trigger)
         parked.append(trigger.id)
     if parked:
-        store.save(items)
         logger.info(
             "parked %d event trigger(s) bound to the disabled app %r: %s",
             len(parked),
@@ -113,7 +141,7 @@ def park_for_app(store: "EventTriggerStore", app: str, *, now: float = 0.0) -> l
     return parked
 
 
-def unpark_for_app(store: "EventTriggerStore", app: str) -> list[str]:
+def unpark_for_app(store: Any, app: str) -> list[str]:
     """Un-park every trigger bound to *app*. Returns the revived trigger ids.
 
     Called when the app's source registers (app enabled). The app being back IS the proof the
@@ -124,19 +152,19 @@ def unpark_for_app(store: "EventTriggerStore", app: str) -> list[str]:
     were reached for reasons this app's absence had nothing to do with, and reviving a quarantined
     trigger by re-enabling an unrelated app would defeat the one state that must never auto-retry.
     """
-    from personalclaw.triggers.models import TriggerState
+    from personalclaw.triggers.models import TriggerHealth, TriggerState
 
     revived: list[str] = []
-    items = store.load()
-    for trigger in bound_triggers(items, app):
+    for trigger in bound_triggers([row.trigger for row in store.load()], app):
         if trigger.state != TriggerState.PARKED.value:
             continue
         trigger.state = TriggerState.ACTIVE.value
-        trigger.park_reason = ""
+        trigger.health_status = TriggerHealth.OK.value
+        trigger.last_error_summary = ""
         trigger.park_retry_after = 0.0
+        store.upsert(trigger)
         revived.append(trigger.id)
     if revived:
-        store.save(items)
         logger.info(
             "un-parked %d event trigger(s) bound to the re-enabled app %r: %s",
             len(revived),
@@ -147,13 +175,12 @@ def unpark_for_app(store: "EventTriggerStore", app: str) -> list[str]:
 
 
 def _default_store() -> Any:
-    """The live event-trigger store for the active home.
+    """The trigger store for the active home.
 
-    Resolved lazily at each call rather than held, matching `dashboard/handlers/triggers.py`'s
-    `_event_store`: the home can change between calls in tests and in a seeded dev run, and a
-    cached path would write the wrong file.
+    Resolved lazily at each call rather than held: the home can change between calls in tests and in
+    a seeded dev run, and a cached path would write the wrong file.
     """
     from personalclaw.config.loader import config_dir
-    from personalclaw.event_triggers import EventTriggerStore
+    from personalclaw.triggers.store import TriggerStore
 
-    return EventTriggerStore(config_dir() / "event_triggers.json")
+    return TriggerStore(base_dir=config_dir())

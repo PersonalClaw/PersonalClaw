@@ -434,7 +434,7 @@ async def tick(
     `~/.personalclaw`, where leftovers then blocked unrelated tests' fires. A claim describing
     one store must not live in another.
     """
-    from personalclaw.triggers import claims, screen
+    from personalclaw.triggers import claims
     from personalclaw.triggers.routing import routed
 
     # 🔴 PROVIDER ROWS JOIN THE ARM PATH HERE (TSE-5). `routed` merges every registered `trigger`
@@ -458,7 +458,6 @@ async def tick(
     triggers = provider.armable(store)
     by_id = {t.id: t for t in triggers}
 
-    from personalclaw.triggers import firepath as fp
     from personalclaw.triggers.missed import late_outcome
 
     # Named resource slots, read ONCE per tick (§3.5 — S135). Per-trigger would re-scan every claim
@@ -510,67 +509,32 @@ async def tick(
                     store.upsert(trigger)
                     result.retired.append(trigger.id)
 
-        ctx = fp.FireContext(
-            trigger_id=trigger.id,
-            gates=trigger.gates or {},
-            # 🔴 `payload_text` is deliberately LEFT EMPTY here (§7/R4 rule a — S134), and that is
-            # correct rather than the omission it looks like. A clock trigger carries no external
-            # content: at tick time there is a schedule and no payload. The screen's real input
-            # arrives with a POLLED payload — web_watch items, file changes — which is dispatched
-            # through `gateway._fire_store_trigger`, NOT through this walk. S134 screens there.
-            #
-            # Written down because the DEFAULT is what hid the gap: `payload_text=""` made
-            # `if ctx.payload_text:` false, so every clock fire's ledger row listed `screen` among
-            # the gates PASSED while the screen had never run on a single real fire.
-            capabilities=trigger.capabilities,
-            holder=f"tick:{int(now)}",
-            overlap=str(getattr(trigger, "overlap", "skip") or "skip"),
+        # 🔴 `payload_text` is deliberately LEFT EMPTY here (§7/R4 rule a — S134), and that is
+        # correct rather than the omission it looks like. A clock trigger carries no external
+        # content: at tick time there is a schedule and no payload. The screen's real input
+        # arrives with a POLLED payload — web_watch items, file changes, an event's value — which
+        # is dispatched through `gateway._fire_store_trigger`, and screened there (S134).
+        #
+        # Written down because the DEFAULT is what hid the gap: `payload_text=""` made
+        # `if ctx.payload_text:` false, so every clock fire's ledger row listed `screen` among
+        # the gates PASSED while the screen had never run on a single real fire.
+        admission = await admit_fire(
+            store,
+            trigger,
             now=now,
+            base_dir=base_dir,
+            holder=f"tick:{int(now)}",
             user_active=user_active,
-            yield_to_user=bool(getattr(trigger, "yield_to_user", False)),
-            # 🔴 THE RESOURCE SLOT (§3.5 — S135). `resource_slots` was declared, persisted and
-            # round-tripped, and read by NOTHING — the only field in 41 trigger dataclasses with
-            # zero non-declaration readers. Supplied here from the claim store, so a fire that
-            # needs `local-llm` while another trigger holds it defers instead of contending.
-            # 🔴 The SPACING meter (S151). `debounce_secs`/`cooldown_secs` were declared in
-            # `GATE_KEYS` and read by nothing because no last-FIRE timestamp existed —
-            # `last_success_at`/`last_failure_at` describe an outcome, and a suppressed fire is
-            # neither. `_since_last_fire` returns None for a trigger that has never fired, which
-            # the gate reads as "nothing to space against" rather than "0 seconds ago".
-            # 🔴 The RATE meter (S152). Three cap keys waited on a windowed history query that
-            # did not exist; `ScheduleRunStore.count_since` is it. Read per DUE trigger rather
-            # than once per tick because it is per-job JSONL — a tick with one due trigger must
-            # not scan every trigger's history. None (unreadable) is NOT zero: see the gate.
-            fires_in_window=await _fires_in_window(trigger, now=now, base_dir=base_dir),
-            since_last_fire=_since_last_fire(trigger, now=now),
-            busy_slot=claims.busy_slot(trigger, holders=slot_map),
-            # 🔴 THE LIVENESS SIGNAL (§3.5 / WF2AUT-9). `skip_if_active` was undeclared anywhere
-            # before this — a new entity scope, not a gap-fill — and its guard (dirty worktree /
-            # lock file / recent mtime) is evaluated HERE, up front, so `evaluate` stays pure and
-            # never runs a `git status` mid-walk. Computed only when the trigger opts in (an empty
-            # dict is the default → never busy), so an unguarded trigger pays nothing. Fail-open in
-            # `liveness.is_target_active`: a broken git check reads as NOT busy rather than
-            # deferring forever. Unpacked into the two FireContext fields the gate reads.
-            **_target_active_kwargs(trigger, now=now, base_dir=base_dir),
-            # 🔴 The EXISTING claim, read from the shared claim store. Measured: this was never
-            # supplied, so `claim_fire` always saw `existing=None` and always granted — a trigger
-            # whose previous run was still going fired again anyway, which is the precise failure
-            # `overlap` exists to prevent. The gate was present, reviewed, and enforcing nothing.
-            existing_claim=claims.read_claim(trigger.id, now=now, base_dir=base_dir),
-            # 🔴 WHAT THE TRIGGER ACTUALLY ASKS FOR (S116). This was omitted, so `evaluate`'s
-            # `if ctx.requested:` was always false and the frozen-capability fence — decision 7's
-            # enforcement point — had never run on a single real fire. Exactly the `existing_claim`
-            # defect one line up, in the gate directly below it.
-            requested=screen.requested_capabilities(trigger),
-            # 🔴 THE BUDGET, actually supplied (§7 crit 8 / §3.6 — S133). Measured: `tick` never set
-            # either budget field, so `if ctx.budget_remaining is not None` was always False and the
-            # budget gate had NEVER refused a real fire — the third instance of this exact shape
-            # after S97's `existing_claim` and S116's `requested`. `gates.max_fires` was the
-            # user-visible cost: set to 2, a trigger fired 8 times in 8 slots.
-            budget_remaining=_budget_remaining(trigger),
+            persist=persist,
+            # 🔴 NOT persisted for a RETIRED trigger. Found by a red test rather than by reading:
+            # the retirement branch above `store.delete()`s a `delete_after_run` one-shot, and an
+            # unconditional upsert on the grant RESURRECTED the row it had just removed — turning a
+            # retired one-shot back into a live trigger holding an elapsed slot, which is the storm
+            # S112's retirement exists to prevent. The in-memory count still rides on the DueFire.
+            persist_trigger=trigger.id not in result.retired,
+            slot_map=slot_map,
         )
-        decision = await fp.evaluate(ctx)
-        row = fp.ledger_row(decision, ctx)
+        decision, row = admission.decision, admission.row
         row["scheduled_for"] = scheduled_for
         # 🔴 `ran_late`, which only the MANUAL missed-fire card ever wrote (§1.3 — S170). §1.3 added
         # the outcome and `scheduled_for` together — "a run that started 40 minutes after its
@@ -589,39 +553,8 @@ async def tick(
         if late_reason:
             row["reason"] = late_reason
         result.ledger_rows.append(row)
-        # 🔴 PERSIST the suppression (§7 crit 8 — S171). The row above has always been built and
-        # returned, and nothing stored it, so a suppressed fire left no trace a user could read —
-        # the silent drop the criterion bans. Gated on `persist` so `automation doctor`'s dry run
-        # stays side-effect free, which is the whole point of that flag.
-        if persist and not decision.allowed:
-            await _persist_suppression(row, now=now, base_dir=base_dir)
 
         if decision.allowed:
-            # Persist the granted claim so the NEXT tick (and any other process — the MCP tools and
-            # the API read the same store) can see this run in flight. `firepath` already notes "the
-            # caller must release it"; the executor's drain releases on completion.
-            if persist and decision.claim is not None:
-                claims.write_claim(decision.claim, base_dir=base_dir)
-            # The counter the budget READS. Nothing incremented `run_count` on this path, so even a
-            # wired budget would have compared against a permanent zero — a cap needs a meter.
-            # Incremented on a GRANTED fire, before dispatch: `max_fires` bounds attempts the
-            # substrate authorised, and deferring the increment to completion would let a storm of
-            # in-flight fires all pass a cap of one.
-            #
-            # 🔴 NOT persisted for a RETIRED trigger. Found by a red test rather than by reading: the
-            # retirement branch above `store.delete()`s a `delete_after_run` one-shot, and an
-            # unconditional upsert here RESURRECTED the row it had just removed — turning a retired
-            # one-shot back into a live trigger holding an elapsed slot, which is the storm S112's
-            # retirement exists to prevent. The in-memory count still rides along on the DueFire.
-            trigger.run_count = int(getattr(trigger, "run_count", 0) or 0) + 1
-            # The meter the SPACING gate reads (S151). Written here and nowhere else, for the
-            # same reason `run_count` is: this is the one point a fire is GRANTED. Writing it
-            # at completion would let a burst of in-flight fires all see the same stale
-            # timestamp and every one pass a debounce; writing it on a SUPPRESSED fire would
-            # make a blocked fire space out the next real one.
-            trigger.last_fired_at = to_iso(now)
-            if persist and trigger.id not in result.retired:
-                store.upsert(trigger)
             result.fires.append(
                 DueFire(
                     trigger=trigger,
@@ -633,6 +566,130 @@ async def tick(
 
     result.next_sleep = sleep_for(list(by_id.values()), now=now)
     return result
+
+
+@dataclass
+class Admission:
+    """What the fire path decided about ONE trigger: the verdict and its typed ledger row."""
+
+    decision: Any
+    row: dict[str, Any]
+
+    @property
+    def allowed(self) -> bool:
+        return bool(getattr(self.decision, "allowed", False))
+
+
+async def admit_fire(
+    store: Any,
+    trigger: Trigger,
+    *,
+    now: float,
+    base_dir: Any = None,
+    holder: str = "",
+    user_active: bool = False,
+    persist: bool = True,
+    persist_trigger: bool = True,
+    slot_map: dict[str, str] | None = None,
+) -> Admission:
+    """Walk ONE trigger through S86's fire path and record what it decided (§3).
+
+    THE admission, shared by every caller that decides a fire: the clock tick for a due trigger,
+    and the event router (`triggers.event_fire`) for a matched event. One function so an event fire
+    and a clock fire are refused by the same gates for the same reasons — a second copy of this
+    context is how a gate input gets supplied on one path and forgotten on the other, which is the
+    exact shape of the four "defaulted and never supplied" defects the comments below record.
+
+    Everything a gate reads is gathered UP FRONT into `FireContext`, so `firepath.evaluate` stays
+    pure. On a suppression the typed row is persisted (§7 crit 8 — S171: "every suppressed fire
+    appears as a typed ledger row with a reason — zero silent drops"). On a grant the claim is
+    written — the CALLER releases it when the run settles — and the two meters are advanced:
+
+    * `run_count`, which the budget reads. Incremented on a GRANTED fire, before dispatch:
+      `max_fires` bounds attempts the substrate authorised, and deferring the increment to
+      completion would let a storm of in-flight fires all pass a cap of one.
+    * `last_fired_at`, which the SPACING gate reads (S151). Written here and nowhere else, for the
+      same reason: this is the one point a fire is GRANTED. Writing it at completion would let a
+      burst of in-flight fires all see the same stale timestamp and every one pass a debounce;
+      writing it on a SUPPRESSED fire would make a blocked fire space out the next real one.
+
+    `persist=False` is the dry run (`automation doctor`): the walk runs and nothing is written.
+    `persist_trigger=False` keeps the meters in memory only — the tick's case for a trigger it has
+    just retired, which an upsert here would resurrect.
+    """
+    from personalclaw.triggers import claims
+    from personalclaw.triggers import firepath as fp
+    from personalclaw.triggers import screen
+
+    if slot_map is None:
+        slot_map = claims.slot_holders(store, now=now, base_dir=base_dir)
+    ctx = fp.FireContext(
+        trigger_id=trigger.id,
+        gates=trigger.gates or {},
+        capabilities=trigger.capabilities,
+        holder=holder,
+        overlap=str(getattr(trigger, "overlap", "skip") or "skip"),
+        now=now,
+        user_active=user_active,
+        yield_to_user=bool(getattr(trigger, "yield_to_user", False)),
+        # 🔴 THE RESOURCE SLOT (§3.5 — S135). `resource_slots` was declared, persisted and
+        # round-tripped, and read by NOTHING — the only field in 41 trigger dataclasses with
+        # zero non-declaration readers. Supplied here from the claim store, so a fire that
+        # needs `local-llm` while another trigger holds it defers instead of contending.
+        # 🔴 The SPACING meter (S151). `debounce_secs`/`cooldown_secs` were declared in
+        # `GATE_KEYS` and read by nothing because no last-FIRE timestamp existed —
+        # `last_success_at`/`last_failure_at` describe an outcome, and a suppressed fire is
+        # neither. `_since_last_fire` returns None for a trigger that has never fired, which
+        # the gate reads as "nothing to space against" rather than "0 seconds ago".
+        # 🔴 The RATE meter (S152). Three cap keys waited on a windowed history query that
+        # did not exist; `ScheduleRunStore.count_since` is it. Read per trigger rather than
+        # once per tick because it is per-job JSONL — a tick with one due trigger must not scan
+        # every trigger's history. None (unreadable) is NOT zero: see the gate.
+        fires_in_window=await _fires_in_window(trigger, now=now, base_dir=base_dir),
+        since_last_fire=_since_last_fire(trigger, now=now),
+        busy_slot=claims.busy_slot(trigger, holders=slot_map),
+        # 🔴 THE LIVENESS SIGNAL (§3.5 / WF2AUT-9). `skip_if_active` was undeclared anywhere
+        # before this — a new entity scope, not a gap-fill — and its guard (dirty worktree /
+        # lock file / recent mtime) is evaluated HERE, up front, so `evaluate` stays pure and
+        # never runs a `git status` mid-walk. Computed only when the trigger opts in (an empty
+        # dict is the default → never busy), so an unguarded trigger pays nothing. Fail-open in
+        # `liveness.is_target_active`: a broken git check reads as NOT busy rather than
+        # deferring forever. Unpacked into the two FireContext fields the gate reads.
+        **_target_active_kwargs(trigger, now=now, base_dir=base_dir),
+        # 🔴 The EXISTING claim, read from the shared claim store. Measured: this was never
+        # supplied, so `claim_fire` always saw `existing=None` and always granted — a trigger
+        # whose previous run was still going fired again anyway, which is the precise failure
+        # `overlap` exists to prevent. The gate was present, reviewed, and enforcing nothing.
+        existing_claim=claims.read_claim(trigger.id, now=now, base_dir=base_dir),
+        # 🔴 WHAT THE TRIGGER ACTUALLY ASKS FOR (S116). This was omitted, so `evaluate`'s
+        # `if ctx.requested:` was always false and the frozen-capability fence — decision 7's
+        # enforcement point — had never run on a single real fire. Exactly the `existing_claim`
+        # defect one line up, in the gate directly below it.
+        requested=screen.requested_capabilities(trigger),
+        # 🔴 THE BUDGET, actually supplied (§7 crit 8 / §3.6 — S133). Measured: `tick` never set
+        # either budget field, so `if ctx.budget_remaining is not None` was always False and the
+        # budget gate had NEVER refused a real fire — the third instance of this exact shape
+        # after S97's `existing_claim` and S116's `requested`. `gates.max_fires` was the
+        # user-visible cost: set to 2, a trigger fired 8 times in 8 slots.
+        budget_remaining=_budget_remaining(trigger),
+    )
+    decision = await fp.evaluate(ctx)
+    row = fp.ledger_row(decision, ctx)
+    if not decision.allowed:
+        # Gated on `persist` so `automation doctor`'s dry run stays side-effect free, which is the
+        # whole point of that flag.
+        if persist:
+            await persist_suppression(row, now=now, base_dir=base_dir)
+        return Admission(decision=decision, row=row)
+    # Persist the granted claim so the NEXT decision (and any other process — the MCP tools and the
+    # API read the same store) can see this run in flight.
+    if persist and decision.claim is not None:
+        claims.write_claim(decision.claim, base_dir=base_dir)
+    trigger.run_count = int(getattr(trigger, "run_count", 0) or 0) + 1
+    trigger.last_fired_at = to_iso(now)
+    if persist and persist_trigger:
+        store.upsert(trigger)
+    return Admission(decision=decision, row=row)
 
 
 def _run_store(base_dir: Any) -> Any:
@@ -668,12 +725,16 @@ def _run_store(base_dir: Any) -> Any:
     return ScheduleRunStore(Path(base_dir) if base_dir is not None else config_dir())
 
 
-async def _persist_suppression(row: dict[str, Any], *, now: float, base_dir: Any = None) -> None:
+async def persist_suppression(row: dict[str, Any], *, now: float, base_dir: Any = None) -> None:
     """Write a SUPPRESSED fire's typed row to the run store (§7 crit 8 — S171).
+
+    Called by `admit_fire` for every gate refusal, and by the event router for the one refusal it
+    makes before admission (the cross-trigger storm guard) — so both rows land in the same ledger in
+    the same shape.
 
     🔴 WHY THIS EXISTS. Criterion 8 is *"every suppressed fire appears as a typed ledger row
     with a reason — zero silent drops"*, and `tick` builds exactly that row for every
-    evaluated trigger. It then returns it, and **no caller persisted it**:
+    evaluated trigger. It then returned it, and **no caller persisted it**:
     `TickResult.ledger_rows` has no consumer outside this module, so `loop.tick_once`'s own
     comment ("`tick` already persisted each next fire and wrote a ledger row") was half true
     — the next fire was persisted, the row was not.
@@ -772,6 +833,7 @@ def _unpark_ready(store: Any, triggers: list[Any], *, now: float, persist: bool)
     cannot clear a real streak), so clearing it on unpark would hand a genuinely failing trigger a
     fresh budget every time an unrelated outage parked it.
     """
+    from personalclaw.trigger_sources.parking import waits_on_absent_source
     from personalclaw.triggers import autopause
 
     unparked: list[str] = []
@@ -781,6 +843,12 @@ def _unpark_ready(store: Any, triggers: list[Any], *, now: float, persist: bool)
         if not autopause.unpark_due(
             retry_after=float(getattr(trigger, "park_retry_after", 0.0) or 0.0), now=now
         ):
+            continue
+        # A park that waits on a SOURCE rather than on the clock: an event trigger bound to an app
+        # whose trigger source is gone (the app is disabled or uninstalled). Reviving it on a timer
+        # would show "listening" for a source that cannot speak; `trigger_sources.parking` brings it
+        # back the moment the app's source registers again.
+        if waits_on_absent_source(trigger):
             continue
         trigger.state = TriggerState.ACTIVE.value
         trigger.health_status = TriggerHealth.OK.value
@@ -867,6 +935,18 @@ def _budget_remaining(trigger: Any) -> float | None:
         return None
     used = int(getattr(trigger, "run_count", 0) or 0)
     return float(max(0, cap - used))
+
+
+def budget_spent(trigger: Any) -> bool:
+    """Whether `trigger` declares a `max_fires` budget and has used all of it.
+
+    The event router asks it after a grant (the fire that spends the last allowance retires the
+    trigger) and `tools.set_paused` asks it on a resume (a resume restores a spent budget). Both
+    read `_budget_remaining`, the budget gate's own meter, so "spent" means exactly what makes the
+    gate refuse.
+    """
+    remaining = _budget_remaining(trigger)
+    return remaining is not None and remaining <= 0
 
 
 def boot(store: Any, *, now: float = 0.0, persist: bool = True) -> dict[str, Any]:

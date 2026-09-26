@@ -8,8 +8,9 @@ properties this atom is defined by are:
 2. a ``leaves_machine`` type cannot resolve ``autonomous`` without an explicit ceiling
    raise.
 
-**Everything here is driven through a REAL dispatch.** ``execute_event_action`` and
-``run_script_hook`` are the production fire paths; the app declaration arrives through
+**Everything here is driven through a REAL dispatch.** A memory write reaching a stored
+``event`` trigger through the gateway's router and ``_fire_store_trigger``, and
+``run_script_hook``, are the production fire paths; the app declaration arrives through
 ``ActionTypeHandler.register``, the same handler the app loader calls on enable. A test that
 constructed a spec and called ``resolve_rung`` by hand would prove the decision layer works
 and say nothing about whether anything consults it — which is the exact defect AG-6 left and
@@ -128,30 +129,13 @@ APP_KEY = "app:acme.acme-do-thing"
 
 
 def _fire_event_trigger(provider_name: str = "acme-do-thing") -> Any:
-    """Drive the REAL data-event fire path for a trigger pointing at ``provider_name``."""
-    from personalclaw.event_triggers import (
-        MEMORY_UPDATE,
-        SOURCE_MEMORY,
-        EventTrigger,
-        execute_event_action,
-    )
+    """Drive the REAL data-event fire path for a trigger pointing at ``provider_name``.
 
-    trigger = EventTrigger(
-        id="t-acme",
-        pattern=MEMORY_UPDATE,
-        source=SOURCE_MEMORY,
-        action_provider=provider_name,
-        action_config={"note": "hello"},
-    )
-    return asyncio.run(
-        execute_event_action(
-            trigger,
-            source=SOURCE_MEMORY,
-            event_type="update",
-            key="project.acme.status",
-            value="green",
-        )
-    )
+    `ran` and `reason` are read off the run row the fire leaves — what the user's history shows.
+    """
+    from fakes import fire_memory_event_trigger
+
+    return fire_memory_event_trigger(provider_name, config={"note": "hello"})
 
 
 def _inbox_rows(home) -> list[dict]:
@@ -169,8 +153,8 @@ def _inbox_rows(home) -> list[dict]:
 def test_an_app_declared_floor_HOLDS_a_real_event_trigger_fire(_isolated_home):
     """🔴 THE ATOM. An app declares ``floor: one_tap`` and its action stops executing.
 
-    Driven through `execute_event_action` — the production fire path — so the assertion is
-    not "resolve_rung returns one_tap" but "the provider was never called". `calls` being
+    Driven through the production data-event fire path, so the assertion is not
+    "resolve_rung returns one_tap" but "the provider was never called". `calls` being
     empty is the whole proof: a routing decision nothing acts on leaves it non-empty.
     """
     action = _install_app_action(floor="one_tap", ceiling="auto_with_undo")
@@ -217,9 +201,9 @@ def test_the_seams_carry_no_per_action_branch(_isolated_home):
     behavioural tests above and fail the requirement. The name→type mapping lives on the
     declaration (`ActionTypeSpec.providers`), so no seam mentions an action type at all.
     """
-    from personalclaw import event_triggers, gateway, hooks
+    from personalclaw import gateway, hooks
 
-    for module in (hooks, event_triggers, gateway):
+    for module in (hooks, gateway):
         src = inspect.getsource(module)
         for key in (APP_KEY, "acme-do-thing", "inbox.reply_draft", "action.execute_code"):
             assert key not in src, f"{module.__name__} names {key!r} — that is special-casing"
@@ -659,8 +643,8 @@ def test_the_store_trigger_seam_records_the_reversal_handle(_isolated_home):
 #: withholds for, and routing it would refuse the click that authorised the action.
 ROUTED_SEAMS: tuple[tuple[str, str], ...] = (
     ("personalclaw.hooks", "the lifecycle-hook fire path"),
-    ("personalclaw.event_triggers", "the data-event fire path"),
-    ("personalclaw.gateway", "the clock/file/webhook store-trigger fire path"),
+    # A data-event trigger is a store row, so its fires take this seam too.
+    ("personalclaw.gateway", "the clock/file/webhook/event store-trigger fire path"),
 )
 
 
