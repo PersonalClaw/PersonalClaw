@@ -65,6 +65,8 @@ while not terminal:
 | `coalescer.py` | per-observer event batching in front of the SSE write |
 | `projection.py` | the schema-validated run snapshot |
 | `resilience.py` | retries, circuit breaker, budgets |
+| `step_usage.py` | what one attempt at a step used, as every row that ends it records it: `measured()` reads the node's `guardrails.calls` log once for `step_completed`, `step_failed` and `step_cancelled` (tokens and cost as the providers reported them, the model and provider, a floor beside `model_calls_open` when calls were cut off) and says what the run row's token budget is charged. `NOTHING_SENT` for an attempt refused before it dispatched |
+| `liveness.py` | what keeps a working node's stall clock running: a nested run's heartbeat (`wait_with_progress`) and the latest event the node's model calls received (`last_heard`) |
 | `failure_taxonomy.py` | the ONE place that decides whether a failed step's retry can help (only `TRANSIENT`/`NETWORK` are retryable), which is also whether the run page offers Retry. Classified at the cause, typed errors first: `classify_exception()` reads an HTTP status, a transport error's type, the guard's `CircuitOpenError`/`ModelCallTimeout`/`BudgetExceededError` and the provider bridge's WHAT/WHY/FIX before any substring rule; `classify_action_result()` takes a failed action's own `failure_class`, `retry_after` and `agent_error.fix`, and never assumes a silent failure is retryable; `binding_failure()` files a binding by who can fix it; `with_breaker_window()` records the providers a retryable failure called and, while one's breaker is open, when a retry can run (`Failure.retry_at`). A permanent failure's remediation says what to change and where. Lifted out of `engine.py` because three modules consult it — the engine, the controller's terminal-failure path and the gateway's channel injection — and two of them reached it through a function-local import of a private name |
 | `error_codes.py` | `WF_ERROR_CODES` — the registry for the `WF_UPPER_SNAKE` service-result vocabulary (#3499), and the place to look a code up. One derived one-line meaning per code, grouped by the module that raises it so the derivation can be re-checked. Every meaning is read off the raise site — the guard that fires plus the message it emits — never off the name: a plausible-sounding guess reads as authoritative, and an author would act on a contract the engine never implemented. A row is the *stable contract* a caller may branch on, while the per-instance message stays the concrete detail (which node, which key, which run) — which is why, unlike `http_errors.HTTP_ERROR_CODES`, this registry is not also a default message. Carries no severity, because `validator.py`'s `_add` takes one per call and the emitters decide it. Its rail runs BOTH directions — every raised code has a row, and every row is still raised, the half that stops a registry rotting into codes that no longer exist — and EXCLUDES this module from the scan, since its own keys are string literals in core and counting them would make the second direction true by construction |
 | `preflight.py` | run-start checks — credentials, binaries, models, providers |
@@ -282,6 +284,15 @@ cost, and why it failed is starved if the engine only journals free text. The
 acceptance bar is that prompt → tool calls → output is reconstructable from
 ledger events alone.
 
+Every row that ends an attempt carries what its model calls used, read once
+from the guard's call log (`step_usage.py`): `step_completed`, `step_failed`
+(a retried attempt, a final one, a stall kill) and `step_cancelled` all write
+`tokens`, `cost_usd`, `model`, `provider` and `model_calls_open`. The numbers
+are what the providers reported: `null` where none reported anything, and a
+floor when calls were cut off before they finished, with `model_calls_open`
+counting them. `run_totals`, Introspect and the run row's token charge fold all
+three the same way, so a failed attempt's spend reaches the run's budget.
+
 Everything written passes through `redact()` first. A journal is read by the
 flywheel, shipped in bug reports, and rendered in a UI — a credential reaching
 it is leaked to all three. Outputs past ~64KB, or matching a binary magic
@@ -335,8 +346,12 @@ provider counts toward it.
 `timeout_total` bounds wall time. `timeout_stall` bounds *silence*, and it is
 fed by progress — a long-but-progressing node survives, a wedged one does not.
 If nothing feeds the stall clock the two collapse into one and a node that is
-visibly working gets killed as wedged; the `on_progress` callback threaded
-through `dispatch` is what keeps them distinct.
+visibly working gets killed as wedged. Two things feed it (`liveness.py`): the
+`on_progress` callback threaded through `dispatch`, which a nested run's
+heartbeat calls while its child works, and the node's own model calls. The
+guard stamps every event a provider sends on the call, so a best-of-n whose
+samples are streaming is working, while a call that sends nothing for the whole
+window is still a stall.
 
 `0` means unbounded, for both. A cap the user did not ask for that silently
 halts work is worse than no cap.

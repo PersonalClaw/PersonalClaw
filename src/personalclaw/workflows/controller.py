@@ -102,6 +102,7 @@ from personalclaw.workflows.failure_taxonomy import with_breaker_window
 from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
 from personalclaw.workflows.judge_contract import hints_from_dict as judge_hints_from_dict
+from personalclaw.workflows.liveness import last_heard
 from personalclaw.workflows.loop_middleware import (
     InterruptQueue,
     call_fingerprint,
@@ -140,6 +141,7 @@ from personalclaw.workflows.scope import diff as scope_diff
 from personalclaw.workflows.scope import enforces_scope, scope_mode
 from personalclaw.workflows.scope import snapshot as scope_snapshot
 from personalclaw.workflows.scope import watch_roots as scope_watch_roots
+from personalclaw.workflows.step_usage import NOT_RECORDED, NOTHING_SENT, measured, subagent_usage
 from personalclaw.workflows.supervisor_policy import tick_config as convergence_config
 from personalclaw.workflows.tick import (
     Frontier,
@@ -1823,30 +1825,15 @@ class RunController:
             node_id = node.id if node else ""
             error = str(getattr(info, "error", "") or "")
             reaped = bool(getattr(info, "reaped", False))
-            # 🔴 The child's USAGE, which this method used to leave on the floor. `_apply` books it
-            # for an awaited dispatch (`self.run.total_tokens += result.tokens`, :3331) and a
-            # spawned `stage` returns at the RUNNING branch before that line — so for a template
-            # whose only leaves are stages (`general-project`: `loop[sequence[stage, stage]]`) the
-            # run row counted NOTHING, no matter how many nodes completed or which provider they
-            # billed. Measured on the owner's instance: run 61899886, eight `done` nodes against a
-            # remote provider, `total_tokens: 0`.
-            #
-            # Read off `SubagentInfo`, where it is ALREADY measured: `input_tokens`/`output_tokens`/
-            # `cost_usd`/`model` are populated from the child's `EVENT_COMPLETE`
-            # (``subagent.py:2239-2252``) before `done` is set, and the same three feed the spend
-            # meter (``subagent.py:1491``) and the usage ledger (`_record_subagent_usage`). So this
-            # is a ROLL-UP of an existing observation, not a second measurement — the fan-out's own
-            # ceiling has been seeing this spend all along; only the run row could not.
-            #
-            # `getattr` with a default, like `error`/`reaped` above: the manager is injected, so a
-            # stand-in that does not model usage must read as zero rather than crash the tick.
-            tokens = int(getattr(info, "input_tokens", 0) or 0) + int(
-                getattr(info, "output_tokens", 0) or 0
-            )
-            # On the instance for BOTH outcomes, exactly as `_apply` does it (:3248, outside its
-            # success gate): a reaped stage burned its whole deadline, and a node record claiming it
-            # spent nothing is the most misleading row in the ledger.
-            inst.tokens = tokens
+            # 🔴 The child's USAGE, which this method used to leave on the floor: a spawned `stage`
+            # returns at `_apply`'s RUNNING branch, before any usage is booked, so a template whose
+            # only leaves are stages (`general-project`) charged its run NOTHING. Measured on the
+            # owner's instance: run 61899886, eight `done` nodes on a remote provider,
+            # `total_tokens: 0`. Charged and journaled for BOTH outcomes, as `_apply` does: a
+            # reaped stage burned its whole deadline.
+            usage = subagent_usage(info)
+            inst.tokens = usage.billable()
+            self.run.total_tokens += inst.tokens
             if error:
                 failure = Failure(
                     # The manager reaps on its OWN deadline, so a reaped child is a timeout.
@@ -1876,6 +1863,7 @@ class RunController:
                     node_id,
                     epoch=inst.epoch,
                     failure=failure,
+                    usage=usage,
                     attempt=inst.attempt,
                     retries_exhausted=True,
                 )
@@ -1915,12 +1903,6 @@ class RunController:
                     # existed a downstream `{{nodes.X}}` on a stage could only ever have read
                     # the placeholder the RUNNING branch left behind.
                     self._outputs[node_id] = preview
-                # The RUN total, and only on success — the same gate `_apply` applies (:3331 sits
-                # under `if result.state in SUCCESS_STATES`), and the same gate the ledger reader
-                # applies (`ledger/reader.py:106` sums `tokens` from STEP_COMPLETED rows alone). A
-                # stage that charged the run here while an `infer` node did not would give one run
-                # row two accounting rules.
-                self.run.total_tokens += tokens
                 self.journal.step_completed(
                     path,
                     node_id,
@@ -1932,17 +1914,13 @@ class RunController:
                     cache_key="",
                     state=InstanceState.DONE,
                     retries=max(0, inst.attempt - 1),
-                    # The ledger fields the roll-up above is derived from, so a reader reconciling
-                    # the run row against the rows under it arrives at the same number. `tokens`
-                    # also decides `run_totals()["tokens_recorded"]` (`ledger/reader.py:108`), which
-                    # is what `_prepare` pre-charges a capped resume from — without it a capped
-                    # stage-bodied run could not resume at all (:642 pauses on an unrecorded spend).
-                    # `provider` is deliberately left unset: no dispatcher populates
-                    # `NodeResult.provider` either, so naming one only here would make the stage the
-                    # single kind in the ledger that carries it.
-                    tokens=tokens,
-                    model=str(getattr(info, "model", "") or ""),
-                    cost_usd=float(getattr(info, "cost_usd", 0.0) or 0.0),
+                    # The ledger fields the run row's charge above is derived from, so a reader
+                    # reconciling the two arrives at the same number. `tokens` also decides
+                    # `run_totals()["tokens_recorded"]`, which is what `_prepare` pre-charges a
+                    # capped resume from. No `provider`: the subagent does not report one.
+                    tokens=usage.tokens,
+                    model=usage.model,
+                    cost_usd=usage.cost_usd,
                     output_ref=ref,
                     schema_shortfall=inst.schema_shortfall,
                 )
@@ -2826,6 +2804,7 @@ class RunController:
                 item.node.id,
                 epoch=inst.epoch,
                 failure=inst.failure,
+                usage=NOTHING_SENT,
                 attempt=inst.attempt,
                 retries_exhausted=True,
             )
@@ -2857,6 +2836,7 @@ class RunController:
                     item.node.id,
                     epoch=inst.epoch,
                     failure=inst.failure,
+                    usage=NOTHING_SENT,
                     attempt=inst.attempt,
                     retries_exhausted=True,
                 )
@@ -3218,7 +3198,7 @@ class RunController:
         silently got the 300s default and a legitimately slow node was killed as wedged.
 
         That is the WRONG DIRECTION to fail in. `timeout_stall` is supposed to mean "silent", not
-        "slow" (the heartbeat in `engine._wait_with_progress` exists precisely to keep that
+        "slow" (the heartbeat in `liveness.wait_with_progress` exists precisely to keep that
         distinction), and a node whose author measured it needing 20 minutes being cancelled at 5 is
         the failure the knob was added to prevent.
 
@@ -3242,13 +3222,15 @@ class RunController:
 
         The window is PER NODE (`_node_stall_window`) — see that method for the four shipped
         templates whose declared override was inert.
+
+        A model call counts as progress while its provider is still sending (`liveness`).
         """
         if not self.services.node_timeout_stall or self.services.node_timeout_stall <= 0:
             return
         now = time.time()
         for path, entry in list(self._inflight.items()):
             stall = self._node_stall_window(path)
-            if stall <= 0 or now - entry.last_progress < stall:
+            if stall <= 0 or now - last_heard(entry.last_progress, entry.calls) < stall:
                 continue
             entry.task.cancel()
             self._inflight.pop(path, None)
@@ -3264,11 +3246,16 @@ class RunController:
             inst.state = InstanceState.FAILED
             inst.failure = failure
             inst.completed_at = _now()
+            # Read before the cancel reaches the calls: each one still open is cut off by it.
+            usage = measured(entry.calls)
+            inst.tokens = usage.billable()
+            self.run.total_tokens += inst.tokens
             self.journal.step_failed(
                 path,
                 entry.ready.node.id,
                 epoch=inst.epoch,
                 failure=failure,
+                usage=usage,
                 attempt=inst.attempt,
                 retries_exhausted=True,
             )
@@ -3407,13 +3394,16 @@ class RunController:
                 )
             return
 
+        # What this attempt's model calls used, for the row that ends it and the run's charge —
+        # whichever way it ended, a retried attempt included (`step_usage`).
+        usage = measured(entry.calls, estimate=result.tokens)
         # Retry, when the failure class says it is worth spending on. The attempt is
         # RECORDED before the retry so the next one can be corrected rather than blind —
         # a blind retry re-sends the same prompt and reproduces the same failure.
         if result.state == InstanceState.FAILED:
             failure = result.failure or Failure()
             record = attempt_from_failure(
-                inst.attempt, failure, tokens=result.tokens, duration_secs=duration
+                inst.attempt, failure, tokens=usage.billable(result.tokens), duration_secs=duration
             )
             self._attempts.setdefault(item.path, []).append(record)
             if self._should_retry(item, inst, result):
@@ -3435,9 +3425,11 @@ class RunController:
                     item.node.id,
                     epoch=inst.epoch,
                     failure=failure,
+                    usage=usage,
                     attempt=inst.attempt,
                     retries_exhausted=False,
                 )
+                self.run.total_tokens += usage.billable(result.tokens)
                 return
 
         inst.state = result.state
@@ -3449,9 +3441,8 @@ class RunController:
         # reusing that field would flip the row's rendering and lose the distinction.
         inst.schema_shortfall = result.schema_shortfall
         # A retry cannot run while the provider's breaker is open: record when it can.
-        inst.failure = with_breaker_window(result.failure, (c.provider for c in entry.calls.calls))
-        tokens, model, cost_usd = _measured_usage(result, entry.calls)
-        inst.tokens = tokens if tokens is not None else result.tokens
+        inst.failure = with_breaker_window(result.failure, entry.calls.providers)
+        inst.tokens = usage.billable(result.tokens)
         self._decline(inst, result.declined_edges)
 
         # An action provider may ASK rather than finish (WF2-R7). Checked before the
@@ -3544,11 +3535,12 @@ class RunController:
                 cache_key=entry.cache_key.to_str(),
                 state=result.state,
                 duration_secs=duration,
-                tokens=tokens,
+                tokens=usage.tokens,
                 retries=max(0, inst.attempt - 1),
-                model=model,
-                provider=result.provider,
-                cost_usd=cost_usd,
+                model=usage.model,
+                provider=usage.provider,
+                cost_usd=usage.cost_usd,
+                model_calls_open=usage.calls_cut_off,
                 degraded_reason=result.degraded_reason,
                 # The prompt the PROVIDER received, with the fact of a substitution beside it
                 # (#3166). `result.resolved_prompt` is post-scan since the dispatcher reads it back
@@ -3574,11 +3566,13 @@ class RunController:
                 # lines below, and shadowing it made every failing node crash the tick.
                 ref, _unused = self.journal.store_output(item.path, result.output)
                 inst.output_ref = ref
+            self.run.total_tokens += int(inst.tokens)
             self.journal.step_failed(
                 item.path,
                 item.node.id,
                 epoch=inst.epoch,
                 failure=result.failure or Failure(),
+                usage=usage,
                 attempt=inst.attempt,
                 retries_exhausted=True,
                 signature={
@@ -4890,6 +4884,7 @@ class RunController:
                 node.id if node else "",
                 epoch=inst.epoch,
                 failure=failure,
+                usage=NOTHING_SENT,
                 attempt=inst.attempt,
                 retries_exhausted=True,
             )
@@ -4946,15 +4941,10 @@ class RunController:
             # CancelledError: every call still open is a generation this cancel cut off, and what
             # the finished ones reported is then a floor. Without the row a run cancelled
             # mid-generation had no ledger events at all, and Introspect said nothing cost money.
-            calls = entry.calls
+            usage = measured(entry.calls)
+            self.run.total_tokens += usage.billable()
             self.journal.step_cancelled(
-                entry.ready.path,
-                entry.ready.node.id,
-                epoch=inst.epoch,
-                model_calls_open=calls.cut_off,
-                tokens=calls.floor_tokens if calls.cut_off else calls.tokens,
-                model=", ".join(calls.models),
-                cost_usd=calls.floor_cost_usd if calls.cut_off else calls.cost_usd,
+                entry.ready.path, entry.ready.node.id, epoch=inst.epoch, usage=usage
             )
         self._inflight.clear()
         # A DISPATCHED stage is in flight too, and it is the one `_inflight` never holds (see
@@ -4974,13 +4964,7 @@ class RunController:
             # Its model calls ran in the subagent, outside this controller's call log, so what it
             # spent is "not recorded" (`None`) rather than a zero claiming it was free.
             self.journal.step_cancelled(
-                path,
-                node.id if node else "",
-                epoch=inst.epoch,
-                model_calls_open=0,
-                tokens=None,
-                model="",
-                cost_usd=None,
+                path, node.id if node else "", epoch=inst.epoch, usage=NOT_RECORDED
             )
         self._persist_state()
 
@@ -5760,19 +5744,6 @@ def _item_label(item: Any) -> str:
 def _clip(text: str) -> str:
     text = " ".join(text.split())  # a newline inside a row breaks the layout
     return text if len(text) <= _ITEM_LABEL_MAX else text[: _ITEM_LABEL_MAX - 1] + "…"
-
-
-def _measured_usage(result: NodeResult, calls: CallLog) -> tuple[int | None, str, float | None]:
-    """`(tokens, model, cost_usd)` for a settled step, measured at the guard when it saw calls.
-
-    A step whose dispatch made no guarded call keeps its dispatcher's own numbers — a transform's
-    zero is a measurement. One that did is reported from what the provider said: an action
-    provider's calls (best-of-n's samples and judge passes) used to book `tokens: 0` and no model,
-    and a call whose provider reported no usage books `None`, the ledger's "not recorded".
-    """
-    if not calls.calls:
-        return result.tokens, result.model, result.cost_usd
-    return calls.tokens, ", ".join(calls.models) or result.model, calls.cost_usd
 
 
 def _opt_metric(value: Any) -> float | None:

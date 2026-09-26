@@ -52,6 +52,7 @@ from personalclaw.workflows.models import (
     WorkflowRun,
 )
 from personalclaw.workflows.native_defs import register_native_provider
+from personalclaw.workflows.step_usage import StepUsage
 
 GOLDEN_DIR = Path(__file__).parent / "fixtures" / "ledger_golden"
 
@@ -215,6 +216,9 @@ def _drive_emitters() -> dict[str, list[str]]:
             remediation="retry",
             recoverable=True,
         ),
+        # A floor, so the row carries every usage field a stopped attempt can: tokens and cost
+        # (rounded to 6dp), the model and provider, and how many calls were cut off.
+        usage=StepUsage(tokens=64, cost_usd=0.0123456789, model="m", provider="p", calls_cut_off=1),
         attempt=2,
         retries_exhausted=True,
         signature={"class": "network"},

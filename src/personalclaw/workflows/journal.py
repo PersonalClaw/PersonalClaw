@@ -51,7 +51,7 @@ the engine still emits all of them keep binding to this module.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 # The vocabulary and the machinery are re-exported wholesale: 26 modules read these names off THIS
 # module, and the drift tests assert `journal.LEDGER_KINDS` by that path.
@@ -117,6 +117,9 @@ from personalclaw.ledger import (  # noqa: F401 — re-exported for this module'
 )
 from personalclaw.workflows import store
 from personalclaw.workflows.models import Failure, InstanceState
+
+if TYPE_CHECKING:
+    from personalclaw.workflows.step_usage import StepUsage
 
 # ── hashing ──────────────────────────────────────────────────────────────────
 
@@ -203,6 +206,7 @@ class Journal(LedgerWriter):
         resolved_prompt_scan: tuple[str, ...] | list[str] = (),
         output_ref: str = "",
         schema_shortfall: str = "",
+        model_calls_open: int = 0,
     ) -> None:
         """The ledger's primary record. Every field here is required by the flywheel's
         refiner (§5 Run Ledger) — `cost_usd` is backend-authoritative with a rate-table
@@ -230,6 +234,12 @@ class Journal(LedgerWriter):
 
         `tokens` / `cost_usd` are ``None`` when the step's model calls did not report them — the
         ledger's own "not recorded" (`ledger.reader.run_totals`), never a zero standing in for one.
+        `provider` names the providers the calls went to (`workflows.step_usage`).
+
+        `model_calls_open` counts calls the step left unfinished, which makes `tokens` / `cost_usd`
+        a floor — the same field and the same reading `step_failed` and `step_cancelled` carry.
+        Written only when non-zero, like `schema_shortfall` and for the same reason: a step whose
+        calls all finished keeps the row it always had.
         """
         self.write(
             STEP_COMPLETED,
@@ -249,6 +259,7 @@ class Journal(LedgerWriter):
             resolved_prompt_redacted=bool(resolved_prompt_redacted),
             resolved_prompt_scan=sorted({str(c) for c in (resolved_prompt_scan or ())}),
             output_ref=output_ref,
+            **({"model_calls_open": int(model_calls_open)} if model_calls_open else {}),
             **({"schema_shortfall": schema_shortfall} if schema_shortfall else {}),
         )
 
@@ -259,10 +270,18 @@ class Journal(LedgerWriter):
         *,
         epoch: int,
         failure: Failure,
+        usage: StepUsage,
         attempt: int = 0,
         retries_exhausted: bool = False,
         signature: dict[str, Any] | None = None,
     ) -> None:
+        """An attempt that failed — retried, final, or stopped by the stall timeout — with what
+        its model calls used.
+
+        `usage` is required, not defaulted: every writer has to say what the attempt spent, and a
+        default would let a new failure path book a silent zero. An attempt that never dispatched
+        passes `step_usage.NOTHING_SENT`, whose zero is a measurement.
+        """
         self.write(
             STEP_FAILED,
             instance_path=path,
@@ -273,19 +292,10 @@ class Journal(LedgerWriter):
             failure_signature=dict(signature or {}),
             attempt=int(attempt),
             retries_exhausted=bool(retries_exhausted),
+            **usage.fields(),
         )
 
-    def step_cancelled(
-        self,
-        path: str,
-        node_id: str,
-        *,
-        epoch: int,
-        model_calls_open: int,
-        tokens: int | None,
-        model: str,
-        cost_usd: float | None,
-    ) -> None:
+    def step_cancelled(self, path: str, node_id: str, *, epoch: int, usage: StepUsage) -> None:
         """A step the run's cancel stopped mid-flight, with what its model calls had spent.
 
         `model_calls_open` counts the generations the cancel cut off. Their usage was never
@@ -294,19 +304,17 @@ class Journal(LedgerWriter):
         "not recorded" (at least this much) rather than as a measured total or a free zero. With
         nothing cut off they are the step's measured usage, ``None`` when a provider reported none.
         """
+        cut_off = usage.calls_cut_off
         self.write(
             STEP_CANCELLED,
             instance_path=path,
             node_id=node_id,
             epoch=epoch,
-            model_calls_open=int(model_calls_open),
-            tokens=None if tokens is None else int(tokens),
-            model=model,
-            cost_usd=None if cost_usd is None else round(float(cost_usd), 6),
+            **usage.fields(),
             detail=(
-                f"cancelled with {model_calls_open} model "
-                f"{'call' if model_calls_open == 1 else 'calls'} still generating"
-                if model_calls_open
+                f"cancelled with {cut_off} model {'call' if cut_off == 1 else 'calls'} "
+                "still generating"
+                if cut_off
                 else "cancelled"
             ),
         )

@@ -222,21 +222,28 @@ describe('the cockpit must not read spend off the loop entity', () => {
   })
 })
 
-describe('a cancel that cut generations off is spend, not nothing', () => {
+describe('calls cut off mid-generation are spend, not nothing', () => {
   // Measured: a best-of-n cancelled with four candidates generating read "Nothing — no step on
   // this run recorded a model", because the only step never completed. The count is the reason
   // the total is unknown, so it is what the sentence names.
   it('names the cut-off calls instead of calling the run free', () => {
     const text = runCostText(0, false, true, 4)
-    expect(text).toMatch(/^Not recorded — 4 model calls were still generating when the run was cancelled/)
+    expect(text).toMatch(/^Not recorded — 4 model calls were cut off before they finished/)
     expect(text).not.toMatch(/Nothing/)
     expect(text).not.toContain('$0')
   })
 
   it('keeps a measured part as a floor, and reads one call in the singular', () => {
     const text = runCostText(0.02, false, true, 1)
-    expect(text).toMatch(/^At least ~\$0\.0200 — 1 model call was still generating/)
+    expect(text).toMatch(/^At least ~\$0\.0200 — 1 model call was cut off before it finished/)
     expect(text).toMatch(/what it spent was never reported$/)
+  })
+
+  // A step the stall timeout or the total timeout stops counts its cut-off calls too, and the old
+  // sentence would have said they were cut off "when the run was cancelled" about a run nothing
+  // cancelled. The count cannot say what stopped them, so the sentence names no cause at all.
+  it('claims no cause the count cannot know', () => {
+    expect(runCostText(0, false, true, 2)).not.toMatch(/cancel/i)
   })
 
   it('changes nothing for a run with no cut-off calls', () => {
