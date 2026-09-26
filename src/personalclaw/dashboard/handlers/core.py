@@ -12,6 +12,7 @@ from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
 import personalclaw.validation as _validation_mod
+from personalclaw import self_update
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
 from personalclaw.config.loader import (
@@ -649,6 +650,19 @@ def _bot_name_validator(value: str) -> str:
     return name
 
 
+def _version_pin_sanitizer(value: str) -> str:
+    """Refuse a version pin that could never name a release; store the resolvers' spelling.
+
+    The rule is `self_update.normalize_pin`'s, not a copy of it: `personalclaw update --to`
+    writes the same field through `set_version_pin`, and two copies of "what a pin looks like"
+    would let the CLI and Settings disagree about which pins are storable.
+    """
+    try:
+        return self_update.normalize_pin(value)
+    except ValueError as exc:
+        raise ConfigValueError(str(exc), f"updates.pin={value}") from None
+
+
 def _push_to_talk_chord_sanitizer(value: str) -> str:
     """Normalize a push-to-talk accelerator at the WRITE boundary (DC-3 T3.1).
 
@@ -1004,13 +1018,15 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # runtime-editable from Settings > Updates (RUM-10). `channel`/`auto` are closed enums
     # so an out-of-range value is REFUSED at the boundary (a mistyped channel should be
     # told, not silently overruled); `check_interval_hours` states the same [1, 168] window
-    # `load()` clamps, so the file and the dashboard agree. `pin`/`last_version` are free
-    # text (a version string or PEP 440 range) the resolver interprets, not this boundary.
+    # `load()` clamps, so the file and the dashboard agree. `pin` is refused unless it is a
+    # release VERSION (`self_update.normalize_pin`): the resolvers match it exactly against
+    # the release tags, so a line, a range or a typo can never name a release, and storing
+    # one silently stopped every update. `last_version` is written by the updater itself.
     # `updates.auto` (off | staged) is the opt-in unattended-apply gate that RETIRED the
     # legacy top-level `auto_update` bool (RUM-5): "off" = notify-only, "staged" = apply at
     # the next safe point (holds while work is in flight, lands on the resolved tag).
     "updates.channel": {"type": "enum", "values": ["stable", "beta", "nightly"]},
-    "updates.pin": {"type": "str", "max_len": 64},
+    "updates.pin": {"type": "str", "max_len": 64, "sanitize": _version_pin_sanitizer},
     "updates.auto": {"type": "enum", "values": ["off", "staged"]},
     "updates.check_enabled": {"type": "bool"},
     "updates.check_interval_hours": {"type": "int", "min": 1, "max": 168},
@@ -1376,6 +1392,31 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         value = coerce_edit_value(path_key, value, spec)
     except ConfigValueError as exc:
         return _deny(str(exc), exc.resources, exc.status)
+
+    # 🔴 TURNING YOLO ON NEEDS THE OWNER'S CONSENT ON THE WIRE, not only in a dialog. `true`
+    # skips every tool-approval confirmation, for every session, with no expiry, so the Agent
+    # defaults panel asks first (#753). The Settings hub's tile switch did not: one click sent
+    # this PATCH ~40 ms later and the bypass was live, because the dialog was the only gate and
+    # a second writer that never called it skipped it. So the core refuses without
+    # `confirm: true` — the reasoning `security_credentials` gives for its own flag: a future
+    # caller cannot skip the consent by not knowing about it; it gets this 400 instead.
+    #
+    # OFF never needs it. Revoking the bypass is the direction a broken or confused client must
+    # always be able to take (#672 made it apply live for exactly that reason).
+    #
+    # A protocol record, not an authorization control: anything holding the owner's session can
+    # send the flag. What it guarantees is that the flag is SENT, and the one frontend writer
+    # (`web/src/pages/settings/agentYolo.ts`) sends it only after the owner confirms.
+    if path_key == "agent.yolo" and value is True and not confirm_granted(body):
+        _log_sel("denied", "agent.yolo=True without confirm")
+        return json_error(
+            "confirmation_required",
+            message=(
+                'send {"confirm": true} — turning YOLO on skips every tool-approval '
+                "confirmation, for every session, until it is turned off"
+            ),
+            status=400,
+        )
 
     # Read, update, write
     cfg_path = config_path()

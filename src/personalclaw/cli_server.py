@@ -693,7 +693,7 @@ def _pin_before_update(to: str) -> None:
     target = self_update.normalize_version(to)
     if not self_update.set_version_pin(target):
         print(f"❌ Not a usable version to pin: {to!r}")
-        print("   Give a release version, e.g. `personalclaw update --to 0.2.1`.")
+        print("   Give a release version, e.g. `personalclaw update --to 0.1.3`.")
         sys.exit(1)
     print(f"  📌 Pinned updates.pin = {target} (clear it to follow the channel again)")
     if self_update.version_tuple(target) < self_update.version_tuple(__version__):

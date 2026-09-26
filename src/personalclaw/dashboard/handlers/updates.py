@@ -81,6 +81,13 @@ async def api_update_check(request: web.Request) -> web.Response:
     # Prefer the tag-driven `update_available` when we have a latest tag; else
     # fall back to the git changelog-diff `available` signal (offline git view).
     merged: dict[str, object] = {**_update_info, **status}
+    # Either half is an answer. The git changelog-diff half only runs on a checkout; the
+    # release-tag half runs on every kind and is the WHOLE check on pip/container/desktop.
+    # Taking `checked` from the git half alone is why Updates → Check never gave a pip install
+    # a result: it stayed false there forever, while this endpoint had just compared the
+    # install with the newest release. A plain merge would also let the release half's
+    # `False` erase a git answer, so the two are OR-ed.
+    merged["checked"] = bool(_update_info.get("checked")) or bool(status.get("checked"))
     if status.get("latest"):
         merged["available"] = bool(status.get("update_available"))
     # The `nightly` channel tracks COMMITS, not release tags, so on a git checkout
@@ -132,7 +139,8 @@ async def _do_update_check() -> None:
 
     The changelog-diff half of the check, which only the ``git`` kind can answer. Every
     other kind's "is there a newer version?" is the release-tag comparison
-    :func:`self_update.build_update_status` makes, and ``api_update_check`` merges the two.
+    :func:`self_update.build_update_status` makes, and ``api_update_check`` merges the two —
+    including ``checked``, which this half sets only for itself.
 
     **Why the kind gate is here and not just the project-dir probe.** ``PERSONALCLAW_PROJECT_DIR``
     is not a proxy for "this is a checkout": the Electron shell sets it to ``…/Resources``

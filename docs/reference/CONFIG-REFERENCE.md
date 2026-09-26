@@ -131,6 +131,6 @@ children (bash tools, hook and cron-script children, app backends, MCP servers).
 ## Programmatic surfaces
 
 - `GET /api/config/personalclaw` — full config as JSON (sensitive defaults masked in the schema, not here; this endpoint is owner-only).
-- `PATCH /api/config/personalclaw {path, value}` — single-field writes, allowlisted (`_EDITABLE_CONFIG`); non-editable paths return 400.
+- `PATCH /api/config/personalclaw {path, value}` — single-field writes, allowlisted (`_EDITABLE_CONFIG`); non-editable paths return 400. Turning `agent.yolo` on also needs `"confirm": true` in the body (the JSON literal), or it answers `400 confirmation_required`.
 - `GET /api/config/schema` — the full field registry (labels, help, types, defaults, deprecations) auto-derived from the config dataclasses.
 - `personalclaw config get|set <key> [value]` — CLI equivalent; `set` validates through the same loader. `get` withholds credential-named fields (`api_key`, `bot_token`, …) unless `--reveal` is passed.

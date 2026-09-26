@@ -3766,7 +3766,10 @@ export interface ProjectImportResult {
  *  `channel`/`pin`/`auto`/`check_enabled`/`check_interval_hours`, plus `last_version` — the
  *  rollback offer, which has no other source (RUM-9). `release_notes` describe the release the
  *  channel/pin RESOLVES to, not `releases/latest`. */
-export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto: 'off' | 'staged'; version?: string; latest?: string; kind?: 'git' | 'pip' | 'container' | 'desktop'; current?: string; update_available?: boolean; commits_behind?: number | null; apply_method?: string; instructions?: string[]; channel?: 'stable' | 'beta' | 'nightly'; pin?: string; image_tag?: string; release_notes?: string; check_enabled?: boolean; check_interval_hours?: number; last_version?: string }
+/** `checked` — the check has an answer (a release it compared against, fetched or cached). `pin_miss` — a
+ *  pin is set and no release in the fetched list carries it; the ONE "no release matches the pin" signal
+ *  (`latest: ''` alone also means "offline, nothing cached"). Both read through `settings/updateVerdict`. */
+export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto: 'off' | 'staged'; version?: string; latest?: string; kind?: 'git' | 'pip' | 'container' | 'desktop'; current?: string; update_available?: boolean; pin_miss?: boolean; commits_behind?: number | null; apply_method?: string; instructions?: string[]; channel?: 'stable' | 'beta' | 'nightly'; pin?: string; image_tag?: string; release_notes?: string; check_enabled?: boolean; check_interval_hours?: number; last_version?: string }
 
 // settings entity payloads
 export interface NotificationSettings {
@@ -5936,6 +5939,12 @@ export const api = {
   // single-field PATCH (allowlisted dotted paths — see _EDITABLE_CONFIG).
   personalclawConfig: () => get<Record<string, any>>('/api/config/personalclaw'),
   patchConfig: (path: string, value: unknown) => patch<Record<string, any>>('/api/config/personalclaw', { path, value }),
+  // `agent.yolo` has a writer of its own because turning it ON carries the owner's consent: the
+  // PATCH refuses `value: true` without `confirm: true` (400 `confirmation_required`). Call it only
+  // through `pages/settings/agentYolo.ts`'s `setAgentYolo`, which asks first — `yoloOneWriter.test.ts`
+  // fails any other caller. OFF sends no flag: revoking the bypass never needs consent.
+  setAgentYolo: (on: boolean) => patch<Record<string, any>>('/api/config/personalclaw',
+    on ? { path: 'agent.yolo', value: true, confirm: true } : { path: 'agent.yolo', value: false }),
 
   // ── Companion apps (COMPANION-APPS S2) ──
   // The LIVE state of the LAN advertiser, which is not the same question as whether
