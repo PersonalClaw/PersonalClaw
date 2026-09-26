@@ -362,6 +362,7 @@ async def apply_item(
     item: Any,
     *,
     store: Any = None,
+    state: Any = None,
     edited: dict[str, Any] | None = None,
     actor: str = "user",
     installer: Callable[[Any], None] | None = None,
@@ -372,13 +373,12 @@ async def apply_item(
     exactly as it was (PENDING for an unhandled row) and ``refs["proposal_error"]`` records
     what happened, so the user still sees the proposal and can retry it. The row is
     persisted on BOTH paths: an error nobody wrote down is an error nobody can act on.
+    ``state`` is the dashboard the row's move is announced to (see ``_record``).
 
     ``edited`` is the edit-then-approve payload: for an ``editable`` proposal it REPLACES
     the stored payload (and is persisted, so the row shows what was actually applied). An
     edit on a non-editable proposal is refused rather than silently ignored.
     """
-    from personalclaw.inbox import ItemStatus
-
     proposal = proposal_of(item)
     if proposal is None:
         return ApplyOutcome(ok=False, error="item carries no proposal payload")
@@ -401,15 +401,20 @@ async def apply_item(
         proposal, item_id=str(getattr(item, "id", "")), actor=actor, installer=installer
     )
     if outcome.ok:
-        item.status = ItemStatus.HANDLED.value
         item.refs[RESULT_KEY] = outcome.to_dict()
         item.refs.pop(ERROR_KEY, None)
-    _record(item, store, outcome)
+    _record(item, store, outcome, state=state)
     return outcome
 
 
-def _record(item: Any, store: Any, outcome: ApplyOutcome) -> None:
-    """Persist the row. On failure the status is untouched — that is the whole point."""
+def _record(item: Any, store: Any, outcome: ApplyOutcome, *, state: Any = None) -> None:
+    """Persist the row. On failure the status is untouched — that is the whole point.
+
+    On success the row moves to HANDLED through the Inbox's one status transition, which also
+    tells every open surface and reads the proposal's notification in the bell.
+    """
+    from personalclaw.inbox import ItemStatus, set_item_status
+
     if not outcome.ok:
         item.refs[ERROR_KEY] = outcome.to_dict()
     if store is None:
@@ -417,9 +422,11 @@ def _record(item: Any, store: Any, outcome: ApplyOutcome) -> None:
     try:
         # The row is the SAME object the store holds, so this is a persist, not a merge —
         # named fields are passed so a reader can see exactly what apply writes back.
-        written = store.update(getattr(item, "id", ""), status=item.status, refs=item.refs)
+        written = store.update(getattr(item, "id", ""), refs=item.refs)
         if written is None:
             logger.warning("proposal apply: item %s not in store", getattr(item, "id", "?"))
+        elif outcome.ok:
+            set_item_status(state, store, [written], ItemStatus.HANDLED)
     except Exception:
         logger.warning("proposal apply: inbox write failed for %s", getattr(item, "id", "?"))
 

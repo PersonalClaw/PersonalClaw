@@ -100,6 +100,7 @@ from personalclaw.sdk.model import (
     ProviderResolutionError,
     StructuredOutput,
     get_default_registry,
+    per_call_temperature,
 )
 from personalclaw.sdk.prompt import USER_REQUEST_MARKER
 from personalclaw.sdk.settings import ProviderSettings
@@ -1655,9 +1656,9 @@ def _factory(
     """
     del session_key  # stateless, credential-free
     options = {**ProviderSettings.load(APP_NAME), **dict(entry.options or {})}
-    temperature = kwargs.get("temperature")
-    if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
-        options["temperature"] = float(temperature)
+    temperature = per_call_temperature(kwargs)
+    if temperature is not None:
+        options["temperature"] = temperature
     return BundledChatProvider(options)
 
 

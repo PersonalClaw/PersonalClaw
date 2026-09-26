@@ -115,8 +115,9 @@ async def api_memory_history(request: web.Request) -> web.Response:
 #: way the hand-rolled version did (that one ran `bool(body[flag])`, so `"false"` turned a
 #: memory behaviour ON, and clamped an out-of-range confidence instead of refusing it).
 #:
-#: The GET below returns three MORE fields that this PUT deliberately does NOT write —
-#: `graph_topology_in_context`, `holder_attribution`, `slot_size_cap` ride the PATCH. The
+#: The GET below returns four MORE fields that this PUT deliberately does NOT write —
+#: `graph_topology_in_context`, `holder_attribution`, `slot_size_cap` and
+#: `semantic_confidence_threshold` ride the PATCH. The
 #: panel needs to read them to render its controls; naming one of them in a PUT body is a
 #: 400 here rather than a silent no-op, because "one writer per field" is only true if the
 #: other writer says no out loud.
@@ -233,6 +234,9 @@ async def api_memory_settings(request: web.Request) -> web.Response:
             # tab needs the current value to render its control, and a read on the panel's
             # own endpoint is what keeps that control from having to guess the default.
             "slot_size_cap": cfg.memory.slot_size_cap,
+            # Same shape (settings B10): the one control for the learned-fact gate the store
+            # applies, replacing the Vector Memory app field nothing read.
+            "semantic_confidence_threshold": cfg.memory.semantic_confidence_threshold,
         }
     )
 

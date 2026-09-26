@@ -80,11 +80,13 @@ from personalclaw.workflows.effects import (
     EffectRecord,
     EffectStatus,
     committed_effect,
+    committed_effect_refusal,
     effect_history,
-    idempotency_key,
+    effect_key,
     output_id_of,
     redo_blocked,
     run_teardown,
+    teardown_refusal,
 )
 from personalclaw.workflows.engine import (
     NodeResult,
@@ -96,6 +98,7 @@ from personalclaw.workflows.engine import (
     release_execution_claim,
 )
 from personalclaw.workflows.engine_support import DEFAULT_MODEL_TIERS, resolve_axis_model
+from personalclaw.workflows.failure_taxonomy import with_breaker_window
 from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
 from personalclaw.workflows.judge_contract import hints_from_dict as judge_hints_from_dict
@@ -118,6 +121,7 @@ from personalclaw.workflows.models import (
     NodeKind,
     RunStatus,
     WorkflowRun,
+    run_ending,
     spec_path,
 )
 from personalclaw.workflows.resilience import (
@@ -2731,7 +2735,7 @@ class RunController:
     # ── effect ledger ──
 
     def _effect_key(self, path: str, inst: NodeInstance) -> str:
-        return idempotency_key(self.run.id, path, inst.epoch)
+        return effect_key(self.run.id, path, inst.epoch, self._effects.get(path, []))
 
     def _record_effect(
         self,
@@ -2816,18 +2820,7 @@ class RunController:
         if redo_blocked(item.node.config or {}, committed, inst.epoch):
             inst.state = InstanceState.BLOCKED
             inst.completed_at = _now()
-            inst.failure = Failure(
-                failure_class=FailureClass.USER,
-                cause_plain=(
-                    f"node {item.node.id or item.path} has a committed external effect "
-                    f"from epoch {committed.epoch}; re-running would fire it again"
-                ),
-                remediation=(
-                    "set `redo_effects: true` on the node to deliberately re-fire "
-                    "(a declared teardown runs first), or skip the node"
-                ),
-                terminal_reason="committed_effect",
-            )
+            inst.failure = committed_effect_refusal(item.node.id or item.path, committed.epoch)
             self.journal.step_failed(
                 item.path,
                 item.node.id,
@@ -2858,13 +2851,7 @@ class RunController:
                 # stack a second resource on top of a live first one.
                 inst.state = InstanceState.BLOCKED
                 inst.completed_at = _now()
-                inst.failure = Failure(
-                    failure_class=FailureClass.INTERNAL,
-                    cause_plain=f"effect teardown failed: {detail}"[:500],
-                    remediation="fix the teardown command, or clean up the external "
-                    "resource manually and clear redo_effects",
-                    terminal_reason="teardown_failed",
-                )
+                inst.failure = teardown_refusal(detail)
                 self.journal.step_failed(
                     item.path,
                     item.node.id,
@@ -3005,6 +2992,9 @@ class RunController:
             # id is durably written and invisible in the runs surface. Same `item.path` the stall
             # clock below is bound to, so a row and its progress notes agree on which instance ran.
             instance_path=item.path,
+            # The effect's identity, for an ACTION to hand its receiver: the key the ledger's
+            # ATTEMPTED record carries, so a retry is recognisable as the attempt it retries.
+            idempotency_key=self._effect_key(item.path, self._instance(item.path)),
             cwd=self.services.cwd,
             tiers=self.services.model_tiers,
             completion=self.services.completion,
@@ -3458,7 +3448,8 @@ class RunController:
         # degradation — the node did its work and produced an output the run goes on to use — and
         # reusing that field would flip the row's rendering and lose the distinction.
         inst.schema_shortfall = result.schema_shortfall
-        inst.failure = result.failure
+        # A retry cannot run while the provider's breaker is open: record when it can.
+        inst.failure = with_breaker_window(result.failure, (c.provider for c in entry.calls.calls))
         tokens, model, cost_usd = _measured_usage(result, entry.calls)
         inst.tokens = tokens if tokens is not None else result.tokens
         self._decline(inst, result.declined_edges)
@@ -4971,10 +4962,11 @@ class RunController:
         # and a spawn still waiting on approval stayed in the approvals queue — measured 2026-09-25,
         # a cancelled run's `spawn:` approval was approvable, and approving it spawned a subagent
         # for a run that no longer existed. Stopping the subagent ends both:
-        # `SubagentManager.cancel` cancels the waiting task, whose `finally` expires the pending
-        # approval.
+        # `SubagentManager.cancel` cancels the waiting task, whose `finally` ends the pending
+        # approval as `cancelled`, and the subagent's error names the run's ending.
         nodes = dict(_walk(self.root))
-        for path in await self._stop_dispatched_stages():
+        why = f"Cancelled: the workflow run {run_ending(RunStatus.CANCELLED)}"
+        for path in await self._stop_dispatched_stages(reason=why):
             inst = self._instance(path)
             inst.state = InstanceState.CANCELLED
             inst.completed_at = _now()
@@ -4992,7 +4984,7 @@ class RunController:
             )
         self._persist_state()
 
-    async def _stop_dispatched_stages(self) -> list[str]:
+    async def _stop_dispatched_stages(self, *, reason: str) -> list[str]:
         """Stop every dispatched stage's subagent; return the paths whose subagent was stopped.
 
         A path whose subagent had ALREADY finished (or that this process's manager does not know —
@@ -5009,7 +5001,7 @@ class RunController:
         for path in self._awaiting_out_of_band_work():
             inst = self._instance(path)
             try:
-                cancelled = bool(await manager.cancel(inst.subagent_id))
+                cancelled = bool(await manager.cancel(inst.subagent_id, reason=reason))
             except Exception:
                 logger.warning(
                     "run %s: could not stop the subagent for %s", self.run.id, path, exc_info=True
@@ -5038,7 +5030,7 @@ class RunController:
         * an awaited node is cancelled and reset the same way.
         """
         self._reconcile_dispatched_stages()
-        withdrawn = list(await self._stop_dispatched_stages())
+        withdrawn = list(await self._stop_dispatched_stages(reason="Stopped: the run was paused"))
         for entry in list(self._inflight.values()):
             entry.task.cancel()
             withdrawn.append(entry.ready.path)
@@ -5099,7 +5091,11 @@ class RunController:
             # it is actionable now. Leaving the rows open would put a permanently unanswerable
             # gate in the inbox — cancel a run mid-gate and the question survives the run.
             # NEEDS_INPUT is deliberately not terminal here: that run is waiting, not finished.
+            # The same for every approval still listed under it, whatever the ending.
             attention.resolve_run_items(self.services.attention_state, self.run.id)
+            attention.cancel_run_approvals(
+                self.services.attention_state, self.run.id, run_ending(status)
+            )
             # A run started as a loop says it ended, the way a loops-table loop does — after the
             # resolve above, so the "needs a decision" row it may raise is not closed with the
             # run's other rows.

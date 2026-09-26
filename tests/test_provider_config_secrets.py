@@ -83,10 +83,12 @@ def _config_file(tmp_path: Path) -> Path:
 def _stored(tmp_path: Path) -> dict:
     """The settings as the app reads them: the file holds a reference for each secret, and the
     value is resolved from the credential store (``config.secret_refs``)."""
-    from personalclaw.config.secret_refs import resolve
+    from personalclaw.config.secret_refs import app_owner, resolve
 
     path = _config_file(tmp_path)
-    return resolve(json.loads(path.read_text(encoding="utf-8"))) if path.is_file() else {}
+    if not path.is_file():
+        return {}
+    return resolve(json.loads(path.read_text(encoding="utf-8")), owner=app_owner("fake-channel"))
 
 
 @pytest.mark.asyncio
@@ -158,6 +160,37 @@ async def test_a_real_new_value_still_overwrites(tmp_path):
             "/api/providers/fake-channel/config", json={"bot_token": "xoxb-ROTATED-fixture"}
         )
         assert _stored(tmp_path)["bot_token"] == "xoxb-ROTATED-fixture"
+
+
+@pytest.mark.asyncio
+async def test_a_patch_naming_another_owners_key_is_refused(tmp_path, monkeypatch):
+    """This form writes the same file as the app's Configure page, so the same refusal: a
+    reference to a credential another owner holds is a 400 that says what to do, and the
+    stored settings are untouched. On main it was saved, and the app then resolved it."""
+    from personalclaw.config.credentials import save_credential
+    from personalclaw.config.secret_refs import make_ref
+
+    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
+    async with _client(tmp_path) as client:
+        await client.patch("/api/providers/fake-channel/config", json={"bot_token": _SECRET})
+        before = _config_file(tmp_path).read_text(encoding="utf-8")
+        save_credential("VAULT_FIXTURE_KEY", "ghp-vault-value-never-an-apps")
+
+        r = await client.patch(
+            "/api/providers/fake-channel/config",
+            json={"bot_token": make_ref("VAULT_FIXTURE_KEY"), "command": "renamed"},
+        )
+
+        text = await r.text()
+        assert r.status == 400, text
+        message = json.loads(text)["error"]
+        assert "{{secret:VAULT_FIXTURE_KEY}}" in message
+        assert "belongs to a different owner" in message
+        assert "a credential in Settings → Secrets" in message
+        assert "type the key itself — not a reference — into" in message
+        assert "ghp-vault-value" not in text
+        assert _config_file(tmp_path).read_text(encoding="utf-8") == before
+        assert _stored(tmp_path)["bot_token"] == _SECRET
 
 
 def test_the_masking_policy_has_exactly_one_implementation():

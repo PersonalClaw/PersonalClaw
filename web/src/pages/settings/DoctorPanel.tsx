@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { RefreshCw, ChevronRight, CheckCircle2, AlertTriangle, XCircle, Wrench, FlaskConical } from 'lucide-react'
 import {
-  api, type DoctorReport, type DoctorCapability, type DoctorProbe, type RemediationSnapshot,
-  type SurfacingCandidate, type AutomationWouldExecute, type Trigger,
+  api, type DoctorReport, type DoctorCapability, type DoctorProbe, type DoctorFix,
+  type RemediationSnapshot, type SurfacingCandidate, type AutomationWouldExecute, type Trigger,
 } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { confirm } from '../../ui/dialog'
@@ -41,12 +41,19 @@ function capLabel(key: string): string {
 export function DoctorPanel() {
   const [report, setReport] = useState<DoctorReport | null>(null)
   const [busy, setBusy] = useState(false)
+  // Bumped when a Fix lands, so Maintenance re-reads the score the Fix just changed — the two
+  // sections read one health, and a Fix that turned a card green under a stale score would be
+  // the page disagreeing with itself.
+  const [rev, setRev] = useState(0)
 
-  const refresh = useCallback(() => {
+  // `fresh` for the page's own Re-run and the re-read after a repair: the server caches the
+  // report for 30s, so a cached read here showed the verdict from BEFORE the Fix or the run.
+  const refresh = useCallback((fresh = false) => {
     setBusy(true)
-    api.doctor().then(setReport).catch(() => setReport(null)).finally(() => setBusy(false))
+    api.doctor(fresh).then(setReport).catch(() => setReport(null)).finally(() => setBusy(false))
   }, [])
   useEffect(() => { refresh() }, [refresh])
+  const onFixed = useCallback(() => { refresh(true); setRev((n) => n + 1) }, [refresh])
 
   if (report === null && busy) return <FormSkeleton sections={2} />
 
@@ -88,7 +95,7 @@ export function DoctorPanel() {
           // panel top-down heard the Doctor's hint and then a Re-run button, with nothing between them.
           <div role="alert" data-type="body-s" className="text-on-surface-low">Couldn't load the doctor report.</div>
         )}
-        <Button variant="secondary" size="sm" onClick={refresh} loading={busy}>
+        <Button variant="secondary" size="sm" onClick={() => refresh(true)} loading={busy}>
           <RefreshCw size={15} /> Re-run
         </Button>
       </div>
@@ -101,7 +108,7 @@ export function DoctorPanel() {
       {report && (
         <Section title="Subsystem probes">
           <div className="flex flex-col gap-m">
-            {caps.map(([key, cap]) => <CapabilityCard key={key} name={key} cap={cap} onFixed={refresh} />)}
+            {caps.map(([key, cap]) => <CapabilityCard key={key} name={key} cap={cap} onFixed={onFixed} />)}
           </div>
           {report.skipped_capabilities.length > 0 && (
             <div data-type="caption" className="mt-m text-on-surface-low">
@@ -112,7 +119,7 @@ export function DoctorPanel() {
       )}
 
       <SimulatorsSection />
-      <RemediationSection />
+      <RemediationSection rev={rev} onRan={() => refresh(true)} />
     </div>
   )
 }
@@ -394,8 +401,12 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 // surface + visibility.
 /** Exported for test: the deficit list's derivations (zero-count filter, reachable-first ordering,
  *  the penalty attribution) are only observable by rendering the section against a stubbed
- *  snapshot — jsdom reports every box as 0, so nothing about them is measurable from layout. */
-export function RemediationSection() {
+ *  snapshot — jsdom reports every box as 0, so nothing about them is measurable from layout.
+ *
+ *  `rev` re-reads the score when the page above applied a Fix; `onRan` tells the page to re-probe
+ *  after Run now. The score counts the Doctor's failed checks, so either side changing without the
+ *  other re-reading would leave one page showing two healths. */
+export function RemediationSection({ rev = 0, onRan }: { rev?: number; onRan?: () => void } = {}) {
   const [snap, setSnap] = useState<RemediationSnapshot | null>(null)
   const [busy, setBusy] = useState(false)
   // 🔴 `setSnap(null)` on failure left this section rendering **"Loading…" forever** while **Run now
@@ -406,7 +417,7 @@ export function RemediationSection() {
   const load = useCallback(() => {
     api.doctorRemediation().then((v) => { setSnap(v); setLoadErr(null) }).catch(setLoadErr)
   }, [])
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load() }, [load, rev])
 
   // `measure_deficits()` returns EVERY source it can read, including the ones currently at zero
   // (a clean install reports skill_aging_due ×0). Those are measurements, not problems — listing
@@ -451,6 +462,7 @@ export function RemediationSection() {
         level,
       )
       load()
+      onRan?.()
     } catch (e) {
       notify(`Maintenance failed: ${String((e as Error)?.message || e)}`, 'error')
     } finally { setBusy(false) }
@@ -481,24 +493,26 @@ export function RemediationSection() {
             `reachable: true`, i.e. fixable by pressing Run now. A score with no breakdown cannot
             tell "nothing wrong" from "nothing the engine will act on".
 
-            `reachable` is the load-bearing distinction: health_score() sums penalties over
-            REACHABLE deficits only, because an unreachable one is at its floor and the engine
-            cannot improve it (e.g. missing embeddings with no embedder bound). Those are shown
-            greyed and marked, so a user does not press Run now expecting them to clear.
+            EVERY row counts. health_score() used to sum REACHABLE deficits only, so the number
+            meant "what maintenance can still do" while reading as "how healthy this is": B16
+            measured "Health score 100 · no deficits measured" directly under the Doctor's failed
+            "faiss index desync" and "4 unclaimed paths" checks. Failed checks are now rows here
+            (a `check:` key, labelled by their probe title), and an unreachable row subtracts like
+            any other. `reachable` still decides what Run now touches: the rest are greyed and
+            carry their own next step, so nobody presses Run now expecting them to clear.
 
-            🔴 AND "not fixable yet" WAS NOT ENOUGH. Measured on a seeded home: score 100 in
-            success green above `Knowledge missing embeddings ×25 · not fixable yet`. Correct
-            arithmetic (the penalty is excluded because no run can improve it) and a dead end
-            on screen — "yet" promises a later pass that will never come, because what is
-            missing is an embedding model, not a maintenance tick. The engine knew that
-            exactly where it computed `reachable`; `blocked_by` is that sentence, carried
-            through instead of dropped, so the row names the prerequisite and the next step. */}
+            🔴 AND "not fixable yet" WAS NOT ENOUGH. Measured on a seeded home: a row reading
+            `Knowledge missing embeddings ×25 · not fixable yet` — a dead end on screen, since
+            "yet" promises a later pass that will never come when what is missing is an embedding
+            model, not a maintenance tick. The engine knew that exactly where it computed
+            `reachable`; `blocked_by` is that sentence, carried through instead of dropped, so the
+            row names the prerequisite and the next step. */}
         {scored.length > 0 && (
           <div className="mt-s flex flex-col gap-xs border-t border-outline-variant/30 pt-s">
             {scored.map((d) => (
               <div key={d.key} data-type="caption" className="flex items-baseline justify-between gap-s">
                 <span className={d.reachable ? 'text-on-surface-var' : 'text-on-surface-low'}>
-                  {capLabel(d.key)}
+                  {d.title || capLabel(d.key)}
                   <span className="ml-1.5 text-on-surface-low tabular-nums">×{d.count}</span>
                   {/* One reason string, produced once in `Deficit.blocked_by` and rendered
                       identically by `personalclaw doctor` — not a per-key map re-derived here,
@@ -509,10 +523,10 @@ export function RemediationSection() {
                     <span className="ml-1.5 text-on-surface-low">· {d.blocked_by}</span>
                   )}
                 </span>
-                {/* An unreachable deficit is NOT subtracted from the score, so showing its penalty
-                    as if it counted would misattribute the number the row above reports. */}
+                {/* Every row's penalty, because every row is subtracted: the column adds up to the
+                    distance between the score above and 100. */}
                 <span className="shrink-0 text-on-surface-low tabular-nums">
-                  {d.reachable ? `−${d.penalty.toFixed(1)}` : '—'}
+                  −{d.penalty.toFixed(1)}
                 </span>
               </div>
             ))}
@@ -525,16 +539,17 @@ export function RemediationSection() {
         {snap && (
           <div data-type="caption" className="mt-s border-t border-outline-variant/30 pt-s text-on-surface-low">
             {snap.plan.length > 0
-              ? <>Run now would: {snap.plan.map((j) => capLabel(j.id)).join(' · ')}</>
-              : scored.some((d) => d.reachable)
-                ? 'Run now would do nothing — the score already meets its target, so the engine stops before touching the fixable items above.'
-                : scored.length > 0
-                  /* SPLIT from the branch below, because they were one line for two states that
-                     read opposite. "Nothing to do — no fixable deficits." sitting directly under
-                     `Knowledge missing embeddings ×25` says "no deficits" to anyone not parsing
-                     the word "fixable", which is the exact reading the score already invites. */
-                  ? 'Run now would do nothing — nothing measured above is fixable by maintenance; each row names what it needs instead.'
-                  : 'Nothing to do — no deficits measured.'}
+              /* A job in its cooldown is IN the dry-run plan but will not run — naming it as
+                 something Run now "would" do was a promise the run then broke. */
+              ? <>Run now would: {snap.plan.map((j) => `${capLabel(j.id)}${j.status === 'skipped_cooldown' ? ' (cooling down — not yet)' : ''}`).join(' · ')}</>
+              : scored.length === 0
+                ? 'Nothing to do — no deficits measured.'
+                : snap.score >= snap.target_score
+                  ? 'Run now would do nothing — the score already meets its target, so the engine stops before touching the items above.'
+                  /* SPLIT from the branch above, because they read opposite: here the score is
+                     BELOW target and still nothing will run, which is exactly when a reader needs
+                     to be told the rows are theirs to act on. */
+                  : 'Run now would do nothing — nothing measured above is fixable by maintenance; each row names what it needs instead.'}
           </div>
         )}
         {/* The run ledger. It said `score 88→100 · 1 job · target_score reached` — dropping WHEN
@@ -636,12 +651,27 @@ function CapabilityCard({ name, cap, onFixed }: { name: string; cap: DoctorCapab
 // Nothing auto-applies: a two-step confirm (the armed-delete pattern) runs the fix,
 // which is SEL-audited server-side. On success we re-run the doctor so the fixed
 // capability turns green.
+//
+// The confirm names THIS fix: its title, its impact and its dry-run preview, read from
+// `/api/doctor/fixes` when the button is pressed. It used to be one generic sentence enumerating
+// "symlinks, stale locks, or stale bindings" for every fix — untrue the moment a fix did anything
+// else (the memory index rebuild), and it never showed the preview the catalog already computes.
+// A catalog read that fails is SAID in the dialog, with its reason, rather than papered over with
+// a generic description that might not be true of this fix.
 function FixButton({ fixId, onFixed }: { fixId: string; onFixed: () => void }) {
   const [busy, setBusy] = useState(false)
   const run = async () => {
+    let fix: DoctorFix | undefined
+    let unread = ''
+    try {
+      fix = (await api.doctorFixes()).fixes.find((f) => f.id === fixId)
+      if (!fix) unread = 'the server does not list it'
+    } catch (e) { unread = e instanceof Error ? e.message : 'the request failed' }
     if (!(await confirm({
-      title: 'Apply this fix?',
-      body: 'This repairs harness state (symlinks, stale locks, or stale bindings) — never your content. It is logged to the security audit.',
+      title: fix ? `${fix.title}?` : 'Apply this fix?',
+      body: fix
+        ? `${fix.impact}\n\n${fix.preview}\n\nIt is logged to the security audit.`
+        : `Couldn't read what this fix does (${unread}), so it can't be described here. It is logged to the security audit.`,
       confirmLabel: 'Apply fix',
     }))) return
     setBusy(true)
@@ -667,12 +697,21 @@ function FixButton({ fixId, onFixed }: { fixId: string; onFixed: () => void }) {
 function ProbeRow({ probe, onFixed }: { probe: DoctorProbe; onFixed: () => void }) {
   const hasEvidence = probe.evidence && Object.keys(probe.evidence).length > 0
   const dot = probe.ok ? 'var(--color-success)' : probe.tier <= 2 ? 'var(--color-error)' : 'var(--color-warning)'
+  // A failed probe offers its Fix, or says there is none and what to do. The page header promises
+  // "a failed probe's Fix", and a failed row carrying neither was a dead end (settings B16: two
+  // failed checks, no Fix, and nothing on either row saying so). The probe's own `remedy` names
+  // the next step; a probe that has not written one still gets a true sentence, pointing at the one
+  // control every card carries.
+  const remedy = !probe.ok && !probe.fix_id
+    ? (probe.remedy || 'No automatic fix for this check — use Investigate in chat on this card to find the next step.')
+    : ''
   const head = (
     <>
       <span className="mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: dot }} />
       <span className="min-w-0 flex-1">
         <span data-type="body-s" className="text-on-surface">{probe.title}</span>
         <span data-type="caption" className="block text-on-surface-low">{probe.detail}</span>
+        {remedy && <span data-type="caption" className="block text-on-surface-var">{remedy}</span>}
       </span>
       {probe.fix_id && !probe.ok && <FixButton fixId={probe.fix_id} onFixed={onFixed} />}
     </>

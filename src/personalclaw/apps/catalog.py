@@ -27,6 +27,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from personalclaw.apps.disclosure import describe
 from personalclaw.apps.manifest import AppManifest, version_tuple
@@ -226,13 +227,25 @@ class CatalogEntry:
     # read until install — `consentKnown` is what says which of those two silences it is.
     hasUI: bool = False  # noqa: N815
     uiComponents: str = ""  # noqa: N815
-    # What the install RUNS beyond its grants: a server process of its own, the shell
-    # command its install (or update) hook executes in the app's folder, and each MCP server
-    # it adds to the assistant (`{name, launches}`). `disclosure.describe` documents each.
+    # What the install RUNS beyond its grants: a server process of its own and the sandbox tier
+    # it runs in, each provider module the gateway loads, the shell command of each lifecycle
+    # hook, the CLI setup/doctor steps, each connector-pack parser, each MCP server it adds to
+    # the assistant (`{name, launches}`), the skills it installs for your agents, and the
+    # sentence saying which of that runs as you. `disclosure.describe` documents each.
     hasBackend: bool = False  # noqa: N815
+    backendSandbox: str = ""  # noqa: N815
+    providers: list[dict[str, str]] = field(default_factory=list)
     onInstall: str = ""  # noqa: N815
     onUpdate: str = ""  # noqa: N815
+    onEnable: str = ""  # noqa: N815
+    onDisable: str = ""  # noqa: N815
+    onUninstall: str = ""  # noqa: N815
+    cliSetup: str = ""  # noqa: N815
+    cliDoctor: str = ""  # noqa: N815
+    sources: list[dict[str, str]] = field(default_factory=list)
     mcpServers: list[dict[str, str]] = field(default_factory=list)  # noqa: N815
+    skills: list[str] = field(default_factory=list)
+    runsAsYou: str = ""  # noqa: N815
     # The app's DECLARED quality block, rendered as the card's badge row. Only
     # the axes the manifest actually declared appear here — an empty dict means the app
     # claimed nothing, which the card renders as no badges, NOT as a row of misses.
@@ -540,9 +553,14 @@ class RegistryPointer:
         name = str(d.get("name", "")).strip()
         if not name:
             return None  # a pointer with no name is unusable — skip it
+        repo = str(d.get("repo", "")).strip()
+        refusal = _listing_repo_refusal(repo) if repo else None
+        if refusal:
+            logger.warning("app registry: not listing %r — %s", name, refusal)
+            return None
         return cls(
             name=name,
-            repo=str(d.get("repo", "")).strip(),
+            repo=repo,
             branch=str(d.get("branch", "")).strip(),
             subdirectory=str(d.get("subdirectory", "")).strip(),
             displayName=str(d.get("displayName", "")).strip(),
@@ -555,6 +573,34 @@ class RegistryPointer:
             last_validated=str(d.get("last_validated", "")).strip(),
             last_scan_verdict=str(d.get("last_scan_verdict", "")).strip(),
         )
+
+
+def _listing_repo_refusal(repo: str) -> str | None:
+    """Why a listing's ``repo`` may not be installed from, or ``None`` when it may.
+
+    An index is untrusted text from whichever source published it, and ``repo`` is where an
+    install fetches the bytes — so it must name a remote repository, never a folder on this
+    machine (a path, ``~``, ``file://``, or a ``.git``-suffixed path git would clone off the
+    disk). A local folder installs only as the owner's own act: Install from URL, or adding
+    it as a source. The form is the published registry's own contract
+    (``staged-repos/registry/validate_registry.py`` ``check_repo_url``): a plain ``https://``
+    URL with a host, no credentials and no explicit port."""
+    if any(c.isspace() or not c.isprintable() for c in repo):
+        return "its repo contains whitespace or control characters"
+    try:
+        parts = urlsplit(repo)
+        port = parts.port
+    except ValueError:
+        return f"its repo {repo!r} is not a URL"
+    if parts.scheme != "https":
+        return f"its repo {repo!r} is not an https:// URL"
+    if "@" in parts.netloc:
+        return "its repo URL embeds credentials"
+    if not parts.hostname:
+        return f"its repo {repo!r} names no host"
+    if port is not None:
+        return f"its repo {repo!r} names an explicit port"
+    return None
 
 
 def _parse_registry(text: str) -> list[RegistryPointer]:

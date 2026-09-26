@@ -79,13 +79,16 @@ class TestTransform:
         )
         assert r.output == [1, 2, 3]
 
-    async def test_an_unresolvable_ref_is_a_user_failure_not_an_exception(self) -> None:
+    async def test_an_unresolvable_ref_is_the_definitions_failure_not_an_exception(self) -> None:
+        """A node id the definition names and the run does not have is the definition's fault:
+        whoever pressed Run did not write it, so it is not filed as their error."""
         r = await dispatch_transform(
             _n({"kind": "transform", "id": "t", "config": {"expr": "{{nodes.gone.output}}"}}),
             _ctx(),
         )
         assert r.state == InstanceState.FAILED
-        assert r.failure.failure_class == FailureClass.USER
+        assert r.failure.failure_class == FailureClass.INTERNAL
+        assert r.failure.cause_plain.startswith("transform binding failed: ")
         assert r.failure.remediation  # actionable, not just an error string
 
     async def test_a_null_upstream_output_flows_through_as_a_value(self) -> None:
@@ -441,7 +444,9 @@ class TestBranch:
 
 class TestAction:
     class _Result:
-        def __init__(self, success=True, stdout="", outcome="", error="", exit_code=0):
+        def __init__(
+            self, success=True, stdout="", outcome="", error="", exit_code=0, failure_class=""
+        ):
             self.success = success
             self.stdout = stdout
             self.outcome = outcome
@@ -449,6 +454,7 @@ class TestAction:
             self.exit_code = exit_code
             self.stderr = ""
             self.agent_error = None
+            self.failure_class = failure_class
 
     def _provider(self, result):
         class P:
@@ -485,13 +491,28 @@ class TestAction:
         )
         assert r.state == InstanceState.NO_CHANGE
 
-    async def test_a_failed_action_is_retryable_transient(self) -> None:
+    async def test_a_failed_action_that_says_nothing_is_not_assumed_retryable(self) -> None:
+        """Every failed action used to be filed TRANSIENT, so Retry was offered for failures a
+        retry reproduces. Nothing in "boom" says a second attempt can differ."""
         r = await dispatch_action(
             _n({"kind": "action", "id": "a", "config": {"provider": "bash"}}),
             _ctx(),
             get_provider=self._provider(self._Result(success=False, error="boom")),
         )
         assert r.state == InstanceState.FAILED
+        assert r.failure.failure_class is FailureClass.INTERNAL
+        assert not r.failure.retryable
+        assert "`config.with`" in r.failure.remediation
+
+    async def test_a_failed_action_is_retryable_when_its_provider_says_so(self) -> None:
+        r = await dispatch_action(
+            _n({"kind": "action", "id": "a", "config": {"provider": "bash"}}),
+            _ctx(),
+            get_provider=self._provider(
+                self._Result(success=False, error="upstream 503", failure_class="transient")
+            ),
+        )
+        assert r.failure.failure_class is FailureClass.TRANSIENT
         assert r.failure.retryable
 
     async def test_an_unknown_provider_is_a_user_error_with_a_fix(self) -> None:

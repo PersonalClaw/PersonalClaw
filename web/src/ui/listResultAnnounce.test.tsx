@@ -388,8 +388,6 @@ describe('the hand-laid bars reach the same idiom', () => {
     // Remote searches: `active` waits for the fetch, or it reports the previous query's count.
     ['pages/settings/LocalModelManager.tsx', 'models',
       /active=\{!!query\.trim\(\) && !searching && searchResults !== null\}/],
-    ['pages/settings/OllamaModelManager.tsx', 'models',
-      /active=\{!!q\.trim\(\) && !searching && results !== null\}/],
     // Artifacts joined this group when its text search moved server-side (#292/#421): the exact
     // filters still narrow client-side, so `active` is the union of both with the in-flight query
     // gated out. 🪤 The gate must live on `active` and NOT be an unmount of the tag, and this
@@ -440,7 +438,6 @@ describe('the hand-laid bars reach the same idiom', () => {
       ['pages/settings/DiagnosticsPanel.tsx', /count=\{visible\.length\}/],
       ['pages/settings/ModelsPanel.tsx', /count=\{filtered\.length\}/],
       ['pages/settings/LocalModelManager.tsx', /count=\{searchResults\?\.length \?\? 0\}/],
-      ['pages/settings/OllamaModelManager.tsx', /count=\{results\?\.length \?\? 0\}/],
       // Not a filtered array at all: each widget reports whether it matched, and that same map
       // decides what stays on screen (`anyMatch` reads it), so the two cannot disagree.
       ['pages/settings/SettingsHome.tsx', /count=\{Object\.values\(matches\)\.filter\(Boolean\)\.length\}/],
@@ -510,7 +507,9 @@ describe('the hand-laid bars reach the same idiom', () => {
     const withControl = walk(SRC)
       .map((abs) => ({ rel: abs.replace(SRC + '/', ''), src: strip(readFileSync(abs, 'utf8')) }))
       .filter(({ src }) => hasControl(src))
-    expect(withControl.length, 'the census must find the search controls').toBeGreaterThanOrEqual(17)
+    // 16: the Ollama-only model manager (a library search) was unreachable and is gone — Ollama's
+    // card is `LocalModelManager`, which is counted here already.
+    expect(withControl.length, 'the census must find the search controls').toBeGreaterThanOrEqual(16)
 
     const silent = withControl
       .filter(({ rel, src }) =>

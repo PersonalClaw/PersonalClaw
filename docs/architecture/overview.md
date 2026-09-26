@@ -64,12 +64,14 @@ one process that boots everything:
   wiring.
 - **The dashboard server** — `dashboard/server.py`, an aiohttp app serving the
   REST API, WebSocket event fan-out, and the built SPA (see below).
-- **Channel transports** — the gateway names no channel vendor. It iterates
-  `channel_transports/manager.py` `list_transports()` and calls each
-  transport's `start_inbound(services)`, handing it a `GatewayServices`
-  protocol object (`gateway_services.py`) that exposes the shared runtime:
-  sessions, context builder, conversation log, consolidator, cron service,
-  subagent manager, channel history, dashboard state, config, and owner id.
+- **Channel transports** — the gateway names no channel vendor. It binds a
+  `GatewayServices` protocol object (`gateway_services.py`) that exposes the shared
+  runtime — sessions, context builder, conversation log, consolidator, cron service,
+  subagent manager, channel history, dashboard state, config, and owner id — and
+  `channel_transports.reconcile_inbound` then runs one receiver
+  (`start_inbound(services)`) per configured, registered channel, re-applied on every
+  enable, disable, install, uninstall, update and settings save, so a channel starts
+  and stops receiving without a restart.
   Outbound delivery flows through the registered `ChannelDelivery` protocol
   (`channel_delivery.py`) — see [inbox-channels.md](inbox-channels.md).
 - **Service management** — `service/` installs the gateway as a systemd unit

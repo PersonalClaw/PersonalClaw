@@ -163,7 +163,6 @@ const ADOPTERS = [
   'pages/settings/SecurityPanel.tsx',
   'pages/settings/VoicePanel.tsx',
   'pages/settings/ProjectionRulesPanel.tsx',
-  'pages/settings/OllamaModelManager.tsx',
 ]
 
 describe('every converted raw submit uses the helper', () => {

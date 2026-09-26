@@ -98,7 +98,6 @@ _DOORS: tuple[tuple[str, str, str, str, str], ...] = (
         "require_string",
     ),
     ("mcp-toggle", "dashboard/handlers/mcp.py", "api_mcp_toggle", "name", "require_string"),
-    ("mcp-remove", "dashboard/handlers/mcp.py", "api_mcp_remove", "name", "require_string"),
     (
         "entity-create",
         "dashboard/handlers/memory.py",

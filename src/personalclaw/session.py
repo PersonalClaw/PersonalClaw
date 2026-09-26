@@ -335,6 +335,10 @@ class SessionManager:
         # a stop that cannot reach a spawned subagent is a stop that only looks like one.
         # Returns how many were stopped.
         self._stop_children: Callable[[str], Awaitable[int]] | None = None
+        # End a stopped turn's pending approvals. Registered by the dashboard state, for the
+        # same reason as `_stop_children`: it depends on this class, not the other way round.
+        # Returns how many were ended.
+        self._on_turn_stop: Callable[[str], int] | None = None
         self._pool_started = False
         self._session_map = SessionMap()
         self._active_dashboard_sessions: set[str] | None = (
@@ -1849,6 +1853,19 @@ class SessionManager:
         """Register the callback :meth:`stop_turn` uses to stop a session's subagents."""
         self._stop_children = stopper
 
+    def register_turn_stop_hook(self, hook: Callable[[str], int]) -> None:
+        """Register what :meth:`stop_turn` tells FIRST: the turn's pending approvals are over."""
+        self._on_turn_stop = hook
+
+    def _end_turn_approvals(self, key: str) -> None:
+        """Fail-open like `_stop_spawned_children`: the user pressed stop on the turn itself."""
+        if self._on_turn_stop is None:
+            return
+        try:
+            self._on_turn_stop(key)
+        except Exception:
+            logger.warning("stop_turn: ending pending approvals failed for %s", key, exc_info=True)
+
     async def _stop_spawned_children(self, key: str) -> int:
         """Stop every subagent spawned by *key*. Returns how many were stopped.
 
@@ -1898,6 +1915,12 @@ class SessionManager:
         run_chat finally-block dequeue immediately picks up the next queued
         message. ``/stop`` keeps the default (clears the queue).
         """
+        # A turn parked on an approval is waiting on a future, not on the provider, so the
+        # provider's cancel below is acknowledged while the turn stays parked — and its approval
+        # stayed listed everywhere, answerable, resuming a turn the user had stopped. Ending the
+        # approvals FIRST wakes the turn with a refusal, so it leaves through the same path any
+        # refused call takes. First of all, so it holds even when no provider is registered.
+        self._end_turn_approvals(key)
         session = self._sessions.get(key)
         if not session:
             return "idle"

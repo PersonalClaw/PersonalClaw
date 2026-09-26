@@ -71,7 +71,14 @@ from personalclaw.channel_trust import (
 # CRED_SLACK_* are the slack app's credential KEYS in the generic cred store;
 # they are defined in config/loader.py (the store's home) and re-exported here
 # as the surface apps import — see the definition site for the layering note.
-from personalclaw.config.credentials import save_credential
+#
+# The owner's id is PER CHANNEL: a channel stores it under `owner_id_credential(<provider>)`
+# and reads it with `owner_id_for(<provider>)`. `CRED_OWNER_ID` is the one key Slack, Telegram
+# and Discord all wrote, so a second channel's setup overwrote the first one's owner. It stays
+# on this surface because the released channel apps still read and write it, and
+# `owner_id_for` falls back to it so such a channel keeps its owner. Taking it off is an
+# apps-repo release first, then core — the order the `run_chat` removal below followed.
+from personalclaw.config.credentials import owner_id_credential, owner_id_for, save_credential
 from personalclaw.config.loader import (
     CRED_OWNER_ID,
     CRED_SLACK_APP_TOKEN,
@@ -223,7 +230,10 @@ from personalclaw.testing.channel_conformance import (
     ChannelContractError,
     assert_channel_contract,
 )
-from personalclaw.textfmt import extract_options, strip_thinking_tags
+
+# `parse_title` — THE title-generation-reply parser (#3590), for a channel that names its threads.
+# The Slack app mirrored it (#124) because it was private to the dashboard module.
+from personalclaw.textfmt import extract_options, parse_title, strip_thinking_tags
 
 # ── Media + prompts + discovery ──
 from personalclaw.transcribe import is_available as stt_available
@@ -343,8 +353,11 @@ __all__ = [
     "list_servers",
     "load_use_case_settings",
     "note_unknown_sender",
+    "owner_id_credential",
+    "owner_id_for",
     "parse_dashboard_url",
     "parse_duration",
+    "parse_title",
     "redact",
     "redact_and_truncate",
     "redact_credentials",

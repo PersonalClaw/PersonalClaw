@@ -10,6 +10,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **An SDK change is a reviewed diff, and CI runs the first-party apps' contract on it.**
+
 - **Bringing your setup over lists what comes across, with a count and a checkbox per group, and lets you pick item by item.**
 
 - **A fresh install can hold a conversation without an account, an API key or a provider — after one download it tells you about first.**
@@ -21,10 +23,29 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A channel starts and stops receiving the moment you enable, change or remove it.**
+- **A failed workflow step says whether a Retry can help, and the run page offers Retry only when it can.**
+
+- **Typing fast in the chat composer no longer trips React's "Maximum update depth exceeded" (#185), and five search boxes with the same defect are fixed with it.**
+
+- **A snapshot carries every file PersonalClaw writes, and the Doctor's health score counts the checks it shows as failed.**
+
+- **A notification for you goes to the first channel that can actually reach you, and to the Inbox when none can.**
+
+- **An app's setup and doctor steps load, a step that cannot run fails the command, a saved app setting takes effect without a restart, each channel keeps its own owner, and "a channel is configured" is the channel's own answer.**
+
+- **The `rich-ingest` template persists what its lenses extract, and a workflow can no longer save a pipe call the engine cannot evaluate.**
 - **An unattended loop runs unattended, every loop is listed wherever you look, and Pause stops the worker.**
 - **The chat page has no drifting shadow shapes any more, and the glow around the composer fades out smoothly in every state instead of ending in a hard line.**
 - **A chat model that validates tool schemas strictly (Gemini, directly or through a router) can chat again, and one tool with a sloppy schema can no longer fail every turn.**
+- **If PersonalClaw can't read your name when it opens, it shows a retry instead of first-run setup, so "Skip setup for now" can no longer overwrite your name.**
+
 - **A room keeps showing replies after everyone has spoken, a restart no longer loses a round without a word, and a member whose turn fails says so.**
+- **Settings → Providers never freezes the gateway, and every model instance — Ollama included — can be tested, edited and removed.**
+- **An approval ends with the work that asked for it, and an approval whose work is gone can no longer run anything.**
+- **Mission Control can decide.**
+- **An idle tab no longer floods the gateway and the security log.**
+- **The attention surfaces agree with each other.**
 - **The container image can offer and fetch its default chat model, keeps your workspace on its volume, and says when a project's folder is gone.**
 - **Apps with Python dependencies install on the published Docker image, and keep working after `docker rm` + `docker run`.**
 - **Generated chat titles no longer keep the model's label.**
@@ -71,10 +92,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **A secret reference resolves only against its own owner's credentials.**
+
+- **An installed app can no longer read your conversations, and its socket carries only its own.**
+- **An installed app can no longer post into your chats, rooms or runs, or steer them, and a conversation of its own runs under its own grant.**
+- **An installed app can no longer rewrite your agents or install skills, and install consent says its code runs as you.**
 - **Installing an app never copies files from outside its bundle.**
+- **An app installs exactly what was scanned.**
+- **An installed app can no longer run a command through the gateway, set up an automation that approves itself, or take your access away.**
 - **An installed app can no longer change your security settings, and every write that loosens one asks you first.**
 - **The Settings home's YOLO switch now asks before turning auto-approve-everything on, and the server refuses to turn it on without that consent.**
 - **API keys and channel tokens are no longer stored in plaintext, world-readable, or copied into backups.**
+- **MCP server secrets and the webhook token live in the credential store too, so an export truly carries no credential.**
+- **Importing an MCP server from Claude Code keeps it, its values never reach the browser, and a server can be edited and fully removed.**
+- **A remote MCP server works: it imports, can be added and edited on the Tools page, and connects with its headers, and the import list shows no credential.**
 - **Every app install now shows what the app gets and waits for you — a clean security scan no longer installs in one click.**
 - **A gateway running as root can now use its own home directory as a workspace — and its credentials under it stay refused.**
 - **The owner token no longer stays in the address bar after it is used.**

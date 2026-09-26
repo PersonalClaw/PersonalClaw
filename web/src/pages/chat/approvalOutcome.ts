@@ -21,6 +21,13 @@ import type { LucideIcon } from 'lucide-react'
 //                  It trusted this chat and nothing more.
 //   trust_reads  — api_chat_session_approve, read-only-tool grant for this chat
 //   yolo         — api_chat_mode bulk-resolving pending calls under process-global YOLO
+//   expired      — state end_session_approval: nobody answered inside the window
+//   cancelled    — state cancel_approval / end_session_approval: the turn was stopped (or torn
+//                  down) while it waited
+//
+// The last two are an approval ending with NO answer. Both fail closed — the tool did not run —
+// but neither is "denied", which states a decision nobody made. A stopped turn used to leave its
+// row unresolved, so a reload rendered a live card whose buttons could no longer deliver anything.
 //
 // The two `trust_agent*` rows are #683 + #541. The handler used to overwrite the action with
 // `"approved"` before the record was written, so "Always for this agent" and "Allow once"
@@ -30,7 +37,7 @@ import type { LucideIcon } from 'lucide-react'
 // and no production callers, deleted in the same change.
 export type ApprovalResolution =
   | 'approved' | 'rejected' | 'trust' | 'trust_agent' | 'trust_agent_session'
-  | 'trust_reads' | 'yolo'
+  | 'trust_reads' | 'yolo' | 'expired' | 'cancelled'
 
 export interface ApprovalOutcome {
   label: string
@@ -54,6 +61,9 @@ const OUTCOMES: Record<ApprovalResolution, ApprovalOutcome> = {
   trust_reads: { label: 'auto-approved (reads trusted for this chat)', icon: Check, tone: 'var(--color-ok)' },
   yolo: { label: 'auto-approved (YOLO — everywhere)', icon: Check, tone: 'var(--color-ok)' },
   rejected: { label: 'denied', icon: Ban, tone: 'var(--color-on-surface-low)' },
+  // Not run, and said why — the denied treatment (the call was refused) with the true reason.
+  expired: { label: 'not run — no answer in time', icon: Ban, tone: 'var(--color-on-surface-low)' },
+  cancelled: { label: 'not run — the turn was stopped', icon: Ban, tone: 'var(--color-on-surface-low)' },
 }
 
 /** Render treatment for a settled permission row. Takes the wire `string` (persisted

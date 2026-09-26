@@ -6,12 +6,13 @@ Each transport owns one external system: it connects, sends outbound messages,
 and reports its own health. Inbound delivery is transport-specific — see the
 note on the inbound seam below.
 
-**Inbound:** transports do NOT own an inbound dispatch loop here. For a channel
-app like Slack, the
-Socket-Mode receiver lives in ``personalclaw.gateway`` and routes inbound
-messages straight to chat sessions; for the Web UI, the dashboard chat runner is
-the canonical consumer. The ``ChannelManager`` (comms) is a management +
-visibility surface over the registered transports, not a second inbound router.
+**Inbound:** transports do NOT own an inbound dispatch loop here. A channel app's
+receiver (Slack's Socket Mode, Telegram's long-poll, …) lives in its own bundle, started
+through :meth:`ChannelTransportProvider.start_inbound`, and routes inbound messages through
+the platform's guarded door; for the Web UI, the dashboard chat runner is the canonical
+consumer. WHEN a receiver runs is core's one rule,
+:func:`personalclaw.channel_transports.reconcile_inbound`. The ``ChannelManager`` (comms) is
+a management + visibility surface over the registered transports, not a second inbound router.
 """
 
 from abc import ABC, abstractmethod
@@ -120,16 +121,25 @@ class ChannelTransportProvider(ABC):
     async def start_inbound(self, services: "Any") -> None:
         """Start this transport's inbound receiver, driving the platform runtime.
 
-        Called once by the gateway at boot AFTER core services are up, passing a
-        :class:`~personalclaw.gateway_services.GatewayServices` handle (sessions,
-        cron, channel history, dashboard state, config, owner). A transport that
-        owns a push receiver (Slack Socket-Mode) connects here and routes inbound
-        messages to chat sessions via ``services``. Default: no inbound (the Web UI
-        drives its own inbound through the dashboard chat runner)."""
+        Called by core AFTER its services are up — at gateway boot, and whenever this channel
+        is enabled, installed, updated or rebuilt from saved settings — at most once per
+        instance, and only while :meth:`health` says the channel is configured (any state but
+        ``offline``). It is passed a :class:`~personalclaw.gateway_services.GatewayServices`
+        handle (sessions, cron, channel history, dashboard state, config, owner). A transport
+        that owns a push receiver (Slack Socket-Mode) connects here and routes inbound
+        messages to chat sessions via ``services``. Raising, or not returning within a minute,
+        is reported as the channel's health. Default: no inbound (the Web UI drives its own
+        inbound through the dashboard chat runner)."""
         return None
 
     async def stop_inbound(self) -> None:
-        """Gracefully stop the inbound receiver started by :meth:`start_inbound`."""
+        """Stop the inbound receiver :meth:`start_inbound` started — all of it.
+
+        Called when this instance stops being the channel that runs: it is disabled or
+        uninstalled, it is replaced by a rebuilt or updated instance (which starts only after
+        this returns), its health turns ``offline``, or the gateway shuts down. Nothing may keep
+        receiving afterwards. Core drops the delivery handle registered under this channel's
+        name itself."""
         return None
 
     async def health(self) -> dict[str, Any]:

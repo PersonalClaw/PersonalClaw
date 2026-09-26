@@ -5,7 +5,7 @@ import { Segmented } from '../../ui/Segmented'
 import { FormSkeleton } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { api, type WorkflowIntrospection, type WorkflowTimelineRow } from '../../lib/api'
-import { elapsedStat, fmtElapsed } from './workflowMeta'
+import { elapsedStat, firstOutputStat, fmtElapsed, isTerminal } from './workflowMeta'
 import { runCostStat, runCostText, templateCostStat } from '../../lib/runCost'
 import { runTokensStat } from '../../lib/unrecorded'
 
@@ -127,7 +127,10 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                     value={runTokensStat(data.stats.tokens, data.stats.tokens_recorded)}
                   />
                   <Stat label="Duration" value={elapsedStat(data.stats.duration_secs)} />
-                  <Stat label="To first output" value={`${Math.round(data.stats.first_byte_ms)} ms`} />
+                  <Stat
+                    label="To first output"
+                    value={firstOutputStat(data.stats.first_byte_ms, isTerminal(data.answers.running.status))}
+                  />
                   <Stat label="Steps done" value={String(data.stats.steps_completed)} />
                   <Stat label="Steps failed" value={String(data.stats.steps_failed)} />
                   <Stat label="Cache hits" value={`${Math.round(data.stats.cache_hit_rate * 100)}%`} />

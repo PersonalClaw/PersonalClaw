@@ -92,7 +92,9 @@ class TestScheduleTriggerUpdateAgent:
     @pytest.mark.asyncio
     async def test_other_fields_are_patched_alongside_the_action(self, home):
         _seed(home)
-        body = {"name": "renamed"}
+        # Turning auto-approve on is a loosening the owner confirms; this test is about the
+        # fields that ride along with it.
+        body = {"name": "renamed", "confirm": True}
         body.update(_agent_action("bxt-brain-leader", approval_mode="auto"))
         resp = await api_trigger_detail(_make_request(body))
         assert resp.status == 200

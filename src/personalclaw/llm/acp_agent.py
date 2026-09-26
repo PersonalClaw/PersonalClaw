@@ -121,7 +121,8 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
           * adapter binary not on PATH → ``not_found``
           * a declared delegate engine CLI (``options.requires_executable``) is
             absent → ``not_found`` (handshake never attempted — see below)
-          * spawn + ACP ``initialize`` succeeds → ``ready``
+          * spawn + ACP ``initialize`` + one bare ``session/new`` succeed → ``ready``
+            (:meth:`probe_handshake` — no MCP servers, no session setup verbs)
           * handshake fails with an auth/login signal → ``needs_login`` (with a
             best-effort ``login_command`` argv for the Sign-in terminal)
           * any other failure → ``error``
@@ -217,10 +218,12 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
         # own warm-up — both can exceed a few seconds before the ACP
         # ``initialize`` even begins. A 10s budget made authenticated-but-slow
         # CLIs probe as timed-out and (worse) get mislabeled needs_login. Use a
-        # realistic cold-start budget; the probe is one-shot per Settings load.
+        # realistic cold-start budget. The probe runs at boot, on "Check availability"
+        # and after a sign-in — never on a plain Settings read (/api/agent-providers
+        # serves the cached answer).
         probe_timeout = float(options.get("probe_timeout_secs") or 45)
         try:
-            await asyncio.wait_for(provider.start(), timeout=probe_timeout)
+            await asyncio.wait_for(provider.probe_handshake(), timeout=probe_timeout)
             caps = sorted(provider.declared_capabilities)
             await provider.shutdown()
             return ReadinessStatus(
@@ -598,6 +601,19 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
         ``initialize`` response (R5.4).
         """
         await self._client.ensure_ready()
+        self._snapshot_capabilities()
+
+    async def probe_handshake(self) -> None:
+        """The readiness probe's handshake: spawn, ``initialize``, one bare session.
+
+        :meth:`start` sets up a chat session — core MCP servers (a ``personalclaw mcp-core``
+        child each), agent activation, model/mode/effort verbs, an MCP-init drain — none of
+        which a probe that sends no prompt needs. See :meth:`AcpClient.probe_handshake`.
+        """
+        await self._client.probe_handshake()
+        self._snapshot_capabilities()
+
+    def _snapshot_capabilities(self) -> None:
         # Snapshot the negotiated capabilities. ``AcpClient`` records the
         # full ``agentCapabilities`` dict from the initialize response.
         # We surface it as a vendor-neutral ``frozenset[str]`` keyed by

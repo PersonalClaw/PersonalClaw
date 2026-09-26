@@ -55,7 +55,11 @@ export function CommandPalette({ commands }: { commands: Command[] }) {
       .map((x) => x.c)
   }, [q, commands])
 
-  useEffect(() => { setActive(0) }, [q])
+  // A new query puts the cursor back on the first match, IN the handler that changes the query —
+  // the same place ⌘K already resets it. This was `useEffect(() => { setActive(0) }, [q])`, which
+  // scheduled a render from inside every keystroke's own commit; typed fast, ~50 keys threw React's
+  // "Maximum update depth exceeded" (#185). The mechanism is written up in `ui/composer/MarkdownInput`.
+  const search = (v: string) => { setQ(v); setActive(0) }
 
   // keep the highlighted row visible as arrows move the selection
   const listRef = useRef<HTMLDivElement>(null)
@@ -98,7 +102,7 @@ export function CommandPalette({ commands }: { commands: Command[] }) {
             {/* search row */}
             <div className="flex items-center gap-s border-b border-outline-variant/40 px-l h-14">
               <SearchField variant="inline" inlineIconSize={17} clearable={false}
-                inputRef={inputRef} value={q} onChange={setQ} onKeyDown={onKeyDown}
+                inputRef={inputRef} value={q} onChange={search} onKeyDown={onKeyDown}
                 placeholder="Search pages and actions…" ariaLabel="Search pages and actions"
                 ariaHasPopup="listbox" ariaControls={`${cpId}-list`}
                 ariaActiveDescendant={results.length ? `${cpId}-opt-${active}` : undefined}

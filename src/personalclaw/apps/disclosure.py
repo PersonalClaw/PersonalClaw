@@ -21,7 +21,7 @@ import hashlib
 import json
 import logging
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from personalclaw.apps.app_crons import schedules
@@ -41,11 +41,24 @@ def describe(m: AppManifest) -> dict[str, Any]:
       gateway loads into its own process (``apps/app_python.py``).
     * ``hasUI`` / ``uiComponents`` — browser code loaded into the dashboard page.
     * ``hasBackend`` — a server process of its own, started on install and kept running
-      while the app is enabled.
-    * ``onInstall`` / ``onUpdate`` — the shell command the install (or update) runs in the
-      app's folder, verbatim.
+      while the app is enabled. ``backendSandbox`` names the tier it launches inside
+      (``backend.sandbox``), or is ``""`` when it runs on the host.
+    * ``providers`` — each provider module, the ``module:factory`` entry point the gateway
+      loads and whether it runs ``in-process`` (imported into the gateway itself) or as a
+      ``sidecar`` child process.
+    * ``onInstall`` / ``onUpdate`` / ``onEnable`` / ``onDisable`` / ``onUninstall`` — the
+      shell command each lifecycle hook runs in the app's folder, verbatim.
+    * ``cliSetup`` / ``cliDoctor`` — the ``module:function`` it runs when you run
+      ``personalclaw setup`` or ``personalclaw doctor``.
+    * ``sources`` — each connector-pack parser script, which the gateway runs on what the
+      pack's sources fetch.
     * ``mcpServers`` — each MCP server it adds to the assistant's tools, and what that
       server starts or connects to.
+    * ``skills`` — the skills it installs for your agents to follow, by the name each one
+      installs under.
+    * ``runsAsYou`` — the sentence that says which of the above run as you, composed from this
+      projection itself so it can never name a kind the lists do not, or miss one they do.
+      ``""`` when the app brings no such code.
 
     Best-effort per section: a shape surprise empties that section and logs, because this
     runs on every catalog scan and one odd manifest must not break the Store. The install
@@ -57,17 +70,28 @@ def describe(m: AppManifest) -> dict[str, Any]:
     except Exception:  # noqa: BLE001 — best-effort, see the docstring
         logger.debug("disclosure: permissions unreadable for %s", m.name, exc_info=True)
         perms = {}
-    return {
+    d: dict[str, Any] = {
         "permissions": perms,
         "crons": _crons(m),
         "pythonDependencies": _python_dependencies(m),
         "hasUI": bool(m.ui.pages),
         "uiComponents": m.ui.components,
         "hasBackend": bool(m.backend.entryPoint),
+        "backendSandbox": _backend_sandbox(m),
+        "providers": _providers(m),
         "onInstall": m.setup.onInstall,
         "onUpdate": m.setup.onUpdate,
+        "onEnable": m.setup.onEnable,
+        "onDisable": m.setup.onDisable,
+        "onUninstall": m.setup.onUninstall,
+        "cliSetup": m.cli.setup,
+        "cliDoctor": m.cli.doctor,
+        "sources": _sources(m),
         "mcpServers": _mcp_servers(m),
+        "skills": _skills(m),
     }
+    d["runsAsYou"] = _runs_as_you(d)
+    return d
 
 
 def changed(previous: dict[str, Any] | None, current: dict[str, Any]) -> bool:
@@ -140,6 +164,115 @@ def _python_dependencies(m: AppManifest) -> list[dict[str, Any]]:
     except Exception:  # noqa: BLE001 — best-effort, see `describe`
         logger.debug("disclosure: python deps unreadable for %s", m.name, exc_info=True)
         return []
+
+
+def _backend_sandbox(m: AppManifest) -> str:
+    """The sandbox tier the app's server launches inside, or ``""`` when it runs on the host —
+    no server, no tier named, or the ``none`` builtin, which is the host by definition
+    (``apps/backend_runtime.py`` refuses a named tier it cannot provide rather than falling
+    back, so a named one is where the server really runs)."""
+    if not m.backend.entryPoint:
+        return ""
+    from personalclaw.sandbox_providers.none import NONE_PROVIDER_NAME
+
+    tier = (m.backend.sandbox or "").strip()
+    return "" if tier in ("", NONE_PROVIDER_NAME) else tier
+
+
+def _providers(m: AppManifest) -> list[dict[str, str]]:
+    """Each provider module: what it provides, the entry point loaded, and where it runs."""
+    try:
+        return [
+            {"type": p.type, "implementation": p.implementation, "execution": p.execution}
+            for p in m.all_providers()
+        ]
+    except Exception:  # noqa: BLE001 — best-effort, see `describe`
+        logger.debug("disclosure: providers unreadable for %s", m.name, exc_info=True)
+        return []
+
+
+def _sources(m: AppManifest) -> list[dict[str, str]]:
+    """Each connector-pack parser: the source it parses for, and the script that does it."""
+    return [{"name": s.name, "script": s.script} for s in m.sources if s.script]
+
+
+def _skills(m: AppManifest) -> list[str]:
+    """The skills the app installs, by the name each one lands under — the declared folder's
+    own name, which is what ``apps/skill_seed.py`` installs it as."""
+    out: list[str] = []
+    for sk in m.skills:
+        rel = str(sk.path or "").strip().strip("/")
+        if rel:
+            out.append(PurePosixPath(rel).name)
+    return out
+
+
+#: The lifecycle hooks, in the order they happen, and the word for when each runs.
+_HOOKS = (
+    ("install", "onInstall"),
+    ("update", "onUpdate"),
+    ("enable", "onEnable"),
+    ("disable", "onDisable"),
+    ("uninstall", "onUninstall"),
+)
+
+
+def _joined(items: list[str]) -> str:
+    """``a``, ``a and b``, ``a, b and c``."""
+    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def _counted(n: int, one: str, many: str) -> tuple[str, bool]:
+    return (one, False) if n == 1 else (f"its {n} {many}", True)
+
+
+def _runs_as_you(d: dict[str, Any]) -> str:
+    """The sentence install consent leads with: WHICH of the app's code runs as you, and that the
+    permissions above do not bound it (``docs/security/limitations.md`` §7).
+
+    Composed from the projection, never from the manifest a second time, so it names exactly the
+    kinds the lists below it name. A server that launches inside a sandbox tier is left out: the
+    tier confines it instead (``apps/backend_runtime.py::build_backend_sandbox_spec``). A Python
+    package core already pins is left out too — the install guard refuses to move a core
+    dependency, so no new code arrives with it. ``""`` when nothing is left."""
+    parts: list[tuple[str, bool]] = []
+    if d["hasBackend"] and not d["backendSandbox"]:
+        parts.append(("its server", False))
+    if d["providers"]:
+        parts.append(_counted(len(d["providers"]), "its provider module", "provider modules"))
+    if d["mcpServers"]:
+        parts.append(_counted(len(d["mcpServers"]), "its MCP server", "MCP servers"))
+    hooks = [when for when, key in _HOOKS if d[key]]
+    if hooks:
+        plural = len(hooks) > 1
+        parts.append((f"the command{'s' if plural else ''} it runs at {_joined(hooks)}", plural))
+    # Plain words, no markup: the dialog shows this sentence as text.
+    cli = [
+        f"personalclaw {c}" for c, key in (("setup", "cliSetup"), ("doctor", "cliDoctor")) if d[key]
+    ]
+    if cli:
+        plural = len(cli) > 1
+        parts.append((f"the step{'s' if plural else ''} it adds to {_joined(cli)}", plural))
+    if d["sources"]:
+        parts.append(_counted(len(d["sources"]), "its source parser", "source parsers"))
+    new_packages = [p for p in d["pythonDependencies"] if not p.get("coreOwned")]
+    if new_packages:
+        n = len(new_packages)
+        parts.append(
+            ("the Python package it installs", False)
+            if n == 1
+            else (f"the {n} Python packages it installs", True)
+        )
+    if not parts:
+        return ""
+    plural = len(parts) > 1 or parts[0][1]
+    subject = _joined([text for text, _ in parts])
+    return (
+        f"{subject[:1].upper()}{subject[1:]} {'run' if plural else 'runs'} as you on this machine. "
+        f"{'They' if plural else 'It'} can read and change your files, your PersonalClaw settings "
+        "included, and the permissions listed here limit what the app asks the gateway for, not "
+        "what this code does."
+    )
 
 
 def _mcp_servers(m: AppManifest) -> list[dict[str, str]]:

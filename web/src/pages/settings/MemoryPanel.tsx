@@ -1978,9 +1978,17 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
   if (!s) return <FormSkeleton sections={2} />
   return (
     <div>
-      <Section title="Retention" hint="When idle conversations roll up into memory and how long history is kept.">
+      <Section title="Retention" hint="When idle conversations roll up into memory, how sure a learned fact must be to stay, and how long history is kept.">
         <Field label="Idle before history rollup (hours)" hint="A conversation idle this long gets consolidated into memory.">
           <NumberField value={s.history_idle_hours} onChange={(v) => patch({ history_idle_hours: v })} step={0.5} min={0.5} width="w-28" ariaLabel="Idle before history rollup (hours)" />
+        </Field>
+        {/* The gate the memory store applies to every LEARNED fact (settings B10). Its only control
+            used to be a "Confidence Threshold" on the Vector Memory provider that nothing read —
+            that field is gone, and this writes the value the store reads live. It rides the
+            `_EDITABLE_CONFIG` PATCH (one writer), not the settings PUT above. */}
+        <Field label="Learned-fact confidence" hint="How confident an automatically learned fact must be before memory keeps it (0–1). Facts you add yourself are always kept. Higher keeps fewer, surer facts; lower keeps more, and more of them will be wrong.">
+          <NumberField value={Number(s.semantic_confidence_threshold ?? 0.8)} min={0} max={1} step={0.05}
+            onChange={(v) => patchCfg('semantic_confidence_threshold', v)} width="w-28" ariaLabel="Learned-fact confidence" />
         </Field>
         <Field label="Max history age (days)" hint="History older than this is pruned.">
           <NumberField value={s.history_max_days} onChange={(v) => patch({ history_max_days: v })} step={1} min={1} width="w-28" ariaLabel="Max history age (days)" />

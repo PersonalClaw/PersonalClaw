@@ -45,12 +45,30 @@ _MCP_TABLE = "mcpServers"
 _SETTINGS_FILE = "settings.json"
 
 
+def _configured_root() -> Path | None:
+    """``$CLAUDE_CONFIG_DIR``, when it is set: the one place this module reads it."""
+    env = os.environ.get(ENV_VAR, "").strip()
+    return Path(env).expanduser() if env else None
+
+
 def resolve_root() -> Path:
     """Env var first, documented default second (no other search paths)."""
-    env = os.environ.get(ENV_VAR, "").strip()
-    if env:
-        return Path(env).expanduser()
-    return Path(DEFAULT_ROOT).expanduser()
+    return _configured_root() or Path(DEFAULT_ROOT).expanduser()
+
+
+def global_config_path() -> Path:
+    """Claude Code's own global config, where ``claude mcp add --scope user`` keeps its servers.
+
+    Claude Code's rule, read from its source: a legacy ``.config.json`` in the config root wins
+    when present; otherwise ``.claude.json`` sits IN ``$CLAUDE_CONFIG_DIR`` when that is set, and
+    in the home directory — beside ``~/.claude``, not inside it — when it is not. Resolved per
+    call, from the same variable :func:`resolve_root` reads, so the MCP importer and this scanner
+    cannot read two different Claude Codes.
+    """
+    legacy = resolve_root() / ".config.json"
+    if legacy.is_file():
+        return legacy
+    return (_configured_root() or Path.home()) / ".claude.json"
 
 
 def scan(root: Path | str | None = None) -> ScanResult:

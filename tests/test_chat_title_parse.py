@@ -20,13 +20,10 @@ from __future__ import annotations
 import pytest
 from chat_test_helpers import _make_state
 
-from personalclaw.dashboard.chat_title import (
-    _maybe_auto_title,
-    _parse_tags_line,
-    _parse_title,
-)
+from personalclaw.dashboard.chat_title import _maybe_auto_title, _parse_tags_line
 from personalclaw.dashboard.state import _ChatSession
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
+from personalclaw.sdk.channel import parse_title as _parse_title
 
 
 class TestObservedLabelLeaks:

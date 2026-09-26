@@ -1,6 +1,7 @@
 """CLI config subcommand — get, set, edit configuration values."""
 
 import argparse
+import copy
 import json
 import os
 import sys
@@ -15,6 +16,7 @@ from personalclaw.apps.secret_fields import (
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
+from personalclaw.config.secret_refs import reveal_stored_values, store_config_secrets
 from personalclaw.hooks import safe_read_file
 from personalclaw.sel import sel
 
@@ -57,10 +59,7 @@ def _report_withheld(masked_paths: list[str], key: str | None) -> None:
     exists. STDERR rather than stdout because `config get > f.json` must stay valid JSON; that
     redirect is the documented round-trip and a note inside the document would break it.
     """
-    if key is not None:
-        # `providers[0].api_key` is under `providers`, so the subtree test has to admit the
-        # index bracket as well as the dot separator.
-        masked_paths = [p for p in masked_paths if p == key or p.startswith((f"{key}.", f"{key}["))]
+    masked_paths = _in_subtree(masked_paths, key)
     if not masked_paths:
         return
     shown = ", ".join(masked_paths[:6])
@@ -75,6 +74,26 @@ def _report_withheld(masked_paths: list[str], key: str | None) -> None:
         "for a file you intend to `config set --file` back.",
         file=sys.stderr,
     )
+
+
+def _in_subtree(paths: list[str], key: str | None) -> list[str]:
+    """The paths at or under ``key`` (all of them for the whole document). ``providers[0].api_key``
+    is under ``providers``, so the test admits the index bracket as well as the dot separator."""
+    if key is None:
+        return paths
+    return [p for p in paths if p == key or p.startswith((f"{key}.", f"{key}["))]
+
+
+def _report_unresolved(paths: list[str], key: str | None) -> None:
+    """Name, on STDERR, every revealed field whose reference points at nothing in the store — so a
+    printed ``{{secret:…}}`` reads as "this value is missing", not as the value."""
+    paths = _in_subtree(paths, key)
+    if paths:
+        print(
+            f"⚠️  {len(paths)} field(s) refer to a value the credential store no longer holds, "
+            f"printed as the reference: {', '.join(paths)}",
+            file=sys.stderr,
+        )
 
 
 def _refuse(operation: str, resources: str, message: str, outcome: str = "error") -> NoReturn:
@@ -131,11 +150,18 @@ def _config_cmd(args: argparse.Namespace) -> None:
         # in it, which was not (#3125). Masked by DEFAULT, because the operator who needs a
         # plaintext config is the rare case and the one reading a terminal is not.
         masked_paths: list[str] = []
-        if not reveal:
+        unresolved: list[str] = []
+        if reveal:
+            # The file holds a `{{secret:…}}` reference where PersonalClaw moved a credential into
+            # the store (a provider key, the webhook token). `--reveal` is the owner asking for
+            # the credential itself, so the reference is resolved, not printed.
+            d, unresolved = reveal_stored_values(d)
+        else:
             d, masked_paths = mask_secrets_in_document(d)
         if not key:
             print(json.dumps(d, indent=2))
             _report_withheld(masked_paths, None)
+            _report_unresolved(unresolved, None)
             return
         val = _dict_get(d, key)
         if val is _MISSING:
@@ -146,6 +172,7 @@ def _config_cmd(args: argparse.Namespace) -> None:
         else:
             print(val)
         _report_withheld(masked_paths, key)
+        _report_unresolved(unresolved, key)
     elif action == "set":
 
         file_path = getattr(args, "file", None)
@@ -225,6 +252,10 @@ def _config_cmd(args: argparse.Namespace) -> None:
             # in another, so the guarantee is stated twice and the census in
             # `test_config_file_roundtrip_preserves_unmodeled_blocks.py` reads this line.
             data = config_loader.merge_unmodeled_top_keys(data, stored)
+            try:
+                data = store_config_secrets(data, previous=stored)
+            except (ValueError, OSError) as exc:
+                _refuse("config_set_file", str(fp), f"❌ {exc}")
             atomic_write(p, json.dumps(data, indent=2) + "\n")
             sel().log_api_access(
                 caller="cli",
@@ -285,10 +316,16 @@ def _config_cmd(args: argparse.Namespace) -> None:
                     )
                     sys.exit(1)
             # The MODEL dict answers "is this a real key?" — every section is materialised
-            # there, so a leaf the operator has never written still resolves.
-            if _dict_get(d, key) is _MISSING:
+            # there, so a leaf the operator has never written still resolves. A section the model
+            # types as a bare mapping (`hooks`) is materialised as whatever the file holds, so its
+            # first `hooks.webhook_token` has no leaf to resolve: there, the section is the answer.
+            if _dict_get(d, key) is _MISSING and not _in_free_form_section(d, key):
                 print(f"❌ Unknown key: {key}", file=sys.stderr)
                 sys.exit(1)
+            # 🔴 The audit row and the confirmation name a credential's KEY, never its value: the
+            # security log travels in every snapshot, so `resources="hooks.webhook_token=<token>"`
+            # put the token into an archive this write exists to keep it out of.
+            shown = key if _carries_credential(key, parsed) else f"{key}={json.dumps(parsed)}"
             # 🔴 …but the write lands on the RAW document, not on `d`. `d` is
             # `AppConfig.to_dict()`, a fixed literal of the 40-odd sections the loader models,
             # and serialising it over config.json OMITTED every top-level key that literal
@@ -307,17 +344,29 @@ def _config_cmd(args: argparse.Namespace) -> None:
             except config_loader.ConfigPreserveError as exc:
                 # Absent is safe to write over, unreadable is not — the rule `AppConfig.save()`
                 # already enforces, now stated once in the loader and shared by all three writes.
-                _refuse("config_set", f"{key}={value}", f"❌ {exc}")
+                _refuse("config_set", shown, f"❌ {exc}")
+            before = copy.deepcopy(doc)
             _dict_put(doc, key, parsed)
+            # The webhook token reaches the file as a reference to the credential store.
+            try:
+                doc = store_config_secrets(doc, previous=before)
+            except (ValueError, OSError) as exc:
+                _refuse("config_set", shown, f"❌ {key}: {exc}")
             atomic_write(p, json.dumps(doc, indent=2) + "\n")
             sel().log_api_access(
                 caller="cli",
                 operation="config_set",
                 outcome="allowed",
                 source="cli",
-                resources=f"{key}={json.dumps(parsed)}",
+                resources=shown,
             )
-            print(f"✅ {key} = {json.dumps(parsed)}")
+            if _dict_get(doc, key) != parsed:
+                # Only the store step changes what was put: it moved a secret out of the file.
+                print(f"✅ {key} set. The value is in the credential store; {p.name} refers to it.")
+            elif shown == key:
+                print(f"✅ {key} set")
+            else:
+                print(f"✅ {key} = {json.dumps(parsed)}")
     elif action == "unset":
 
         # 🔴 THE ESCAPE HATCH REMOVAL NEVER HAD. `config` shipped `{get,set,edit}`, and no spelling
@@ -339,6 +388,7 @@ def _config_cmd(args: argparse.Namespace) -> None:
         # A key that is not in the file is REFUSED, not shrugged off. `config unset slak` answering
         # success while `slack` survives is the same false-success defect this verb exists to end —
         # and the one where being wrong leaves a credential on disk.
+        before = copy.deepcopy(doc)
         if _dict_pop(doc, key) is _MISSING:
             _refuse(
                 "config_unset",
@@ -348,6 +398,9 @@ def _config_cmd(args: argparse.Namespace) -> None:
                 "from the file is already at its default.",
                 outcome="denied",
             )
+        # Removing the reference removes the secret it pointed at: an unset that left the token in
+        # the credential store would be the "✅ while it stays on disk" this verb exists to end.
+        doc = store_config_secrets(doc, previous=before)
         atomic_write(p, json.dumps(doc, indent=2) + "\n")
         sel().log_api_access(
             caller="cli",
@@ -395,6 +448,30 @@ def _editable_spec(key: str) -> dict | None:
         return _EDITABLE_CONFIG.get(key)
     except Exception:  # noqa: BLE001 — no spec available is the same as no spec declared
         return None
+
+
+def _in_free_form_section(model: dict, key: str) -> bool:
+    """Whether *key* is a leaf of a section the model types as a bare mapping (``hooks``).
+
+    Such a section is free-form by declaration — "hook definitions keyed by hook ID, plus
+    ``webhook_token`` and ``auto_approve_sources``" — so any leaf of it is a real key, and the
+    model dict, which holds only what the file does, cannot be asked.
+    """
+    from dataclasses import fields
+
+    section, _, leaf = key.partition(".")
+    if not leaf or "." in leaf or not isinstance(model.get(section), dict):
+        return False
+    return any(f.name == section and f.type in (dict, "dict") for f in fields(AppConfig))
+
+
+def _carries_credential(key: str, value: object) -> bool:
+    """Whether writing *value* at *key* writes a credential — judged by the one masker
+    ``config get`` uses, so the two cannot disagree about what is secret."""
+    node: object = value
+    for part in reversed(key.split(".")):
+        node = {part: node}
+    return bool(mask_secrets_in_document(node)[1])
 
 
 def _dict_get(d: dict, key: str) -> object:

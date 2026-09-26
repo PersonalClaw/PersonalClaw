@@ -244,8 +244,8 @@ def _save_credentials(names: list[str], values: dict[str, str]) -> list[str]:
     """Persist each required credential to the credential store (the WORK-R19 fallback).
 
     Writes a ``static_token`` descriptor per name whose ``value_env`` is the credential's
-    own name — so the resolved secret is read back from the env at spawn time and the server
-    spec need only reference the env var, never carry the value. The plaintext value is
+    own name — so the server spec need only reference it (``{{secret:NAME}}``, resolved from
+    the store at spawn time), never carry the value. The plaintext value is
     written ONLY into the 0o600 credential store (via :meth:`CredentialStore.save`), never a
     config field or the pack. Returns the names written.
 
@@ -283,9 +283,9 @@ def _save_credentials(names: list[str], values: dict[str, str]) -> list[str]:
 
 def _write_server(entry: CatalogEntry, credential_names: list[str]) -> str:
     """Write ``entry`` as an mcp.json server through the mcp_instances seam. Returns the
-    server name. The server references each credential by env-var name (``{"env": {NAME:
-    "${NAME}"}}`` shape is provider-specific; we set the env keys so the spawn reads them
-    from the process env the credential store populated), never an inline secret."""
+    server name. The server references each credential by name (``{"env": {NAME:
+    "{{secret:NAME}}"}}``), resolved from the credential store when the server is spawned —
+    never an inline secret."""
     from personalclaw.providers import mcp_instances
 
     cfg: dict[str, Any] = {
@@ -306,10 +306,13 @@ def _write_server(entry: CatalogEntry, credential_names: list[str]) -> str:
 def _attach_env_refs(server_name: str, credential_names: list[str]) -> None:
     """Point the server's ``env`` at the credential names (references, not values).
 
-    Reads back the freshly-written server spec and sets ``env[NAME] = "${NAME}"`` for each
-    required credential, so the MCP client substitutes the value from the environment the
-    credential store populated. The credential VALUE is never written here.
+    Reads back the freshly-written server spec and sets ``env[NAME] = "{{secret:NAME}}"`` for
+    each required credential — the reference every MCP spawn resolves from the credential store
+    (``config.secret_refs.resolve_mcp_spec``). It was ``"${NAME}"``, which nothing expanded: the
+    spawn handed the server the literal placeholder as its key, overriding the real value the
+    process environment held. The credential VALUE is never written here.
     """
+    from personalclaw.config.secret_refs import make_ref, write_mcp_document
     from personalclaw.providers import mcp_instances
 
     path = mcp_instances._mcp_json_path()
@@ -324,11 +327,9 @@ def _attach_env_refs(server_name: str, credential_names: list[str]) -> None:
     if not isinstance(env, dict):
         env = {}
     for name in credential_names:
-        env[name] = f"${{{name}}}"
+        env[name] = make_ref(name)
     spec["env"] = env
-    from personalclaw.agent import _atomic_json_write
-
-    _atomic_json_write(path, data)
+    write_mcp_document(path, data)
 
 
 def resolve_connector(

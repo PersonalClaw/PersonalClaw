@@ -74,6 +74,7 @@ from personalclaw.llm.events import (
     EVENT_TOOL_CALL,
     EVENT_TOOL_RESULT,
     STOP_MAX_TOKENS,
+    TOOL_META_APPROVAL_WAIVED,
     AgentEvent,
     is_length_stop,
 )
@@ -1756,6 +1757,11 @@ class NativeAgentRuntime(AgentProvider):
 
         if self._requires_approval(tool_name):
             return _NEEDS_APPROVAL
+        if self._asks_first(tool_name):
+            # The tool asks before it runs, and the session's approval policy answered for it.
+            # Recorded HERE, past every refusal above, so only for a call that is about to run;
+            # the host says whose switch set the policy (`chat_runner.auto_approval_reason`).
+            meta[TOOL_META_APPROVAL_WAIVED] = True
         return await self._invoke(tool_name, args, meta_sink=meta)
 
     def _resolve_name(self, name: str) -> str:
@@ -1902,9 +1908,14 @@ class NativeAgentRuntime(AgentProvider):
     _META_TOOLS = frozenset({"tool_search", "tool_schema", "reset_tools"})
 
     def _requires_approval(self, tool_name: str) -> bool:
-        if tool_name in self._META_TOOLS:
+        if not self._asks_first(tool_name):
             return False
-        if self._approval_policy in ("auto", "yolo", "acceptEdits"):
+        return self._approval_policy not in ("auto", "yolo", "acceptEdits")
+
+    def _asks_first(self, tool_name: str) -> bool:
+        """Whether the tool asks before it runs by its own definition, before the session's
+        approval policy is consulted."""
+        if tool_name in self._META_TOOLS:
             return False
         for t in self._tool_defs:
             if t.name == tool_name:

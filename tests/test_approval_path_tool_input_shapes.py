@@ -171,15 +171,14 @@ def test_the_scanner_still_refuses_a_non_string() -> None:
 def test_the_coercion_has_one_owner_shared_with_the_chat_card() -> None:
     """Two surfaces describe one call; one serializer, so they cannot disagree.
 
-    ``state.request_approval`` (the approval prompt) and ``chat_runner``/``chat_utils`` (the
+    ``request_approval`` (the approval prompt) and ``chat_runner``/``chat_utils`` (the
     tool pill's ``input_preview``) both coerce through this function. A second copy would be a
     second convention, and the two surfaces asking a human about one call would describe it
     differently — the same shape #2821 named for the screening verdict.
     """
-    from personalclaw.dashboard import chat_runner, chat_utils
-    from personalclaw.dashboard import state as state_mod
+    from personalclaw.dashboard import approval_state, chat_runner, chat_utils
     from personalclaw.task_modes import tool_input_to_str
 
-    assert state_mod.tool_input_to_str is tool_input_to_str
+    assert approval_state.tool_input_to_str is tool_input_to_str
     assert chat_runner.tool_input_to_str is tool_input_to_str
     assert chat_utils.tool_input_to_str is tool_input_to_str

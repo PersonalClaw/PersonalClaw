@@ -471,8 +471,9 @@ def test_a_curated_or_configured_fallback_still_wins_over_raising(
     """An empty picker is worse than a stale one: when the instance HAS something to offer
     (a configured Default Model — #955's own workaround — or a branded app's curated list)
     discovery failure degrades to it. What changes is that the reason is logged, not that
-    the user loses the list."""
-    srv = _Endpoint("/v1/models", '{"error":{"message":"nope"}}', status=401)
+    the user loses the list. (A server that is down, here — a REJECTED key is the one
+    failure that does not degrade; see the next test.)"""
+    srv = _Endpoint("/v1/models", '{"error":{"message":"overloaded"}}', status=503)
     try:
         with caplog.at_level(logging.WARNING):
             got = _run(_byo_catalog(f"{srv.base}/v1", default_model="MiniMax-M2.5").list_models())
@@ -480,7 +481,30 @@ def test_a_curated_or_configured_fallback_still_wins_over_raising(
         srv.close()
     assert [m.id for m in got] == ["MiniMax-M2.5"]
     logged = " ".join(r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING)
-    assert "401" in logged, "degrading to the fallback must still record WHY"
+    assert "503" in logged, "degrading to the fallback must still record WHY"
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_a_rejected_key_raises_even_with_a_fallback_to_offer(
+    allow_loopback_egress: None, status: int
+) -> None:
+    """A rejected key is not a stale list: every model in the fallback would fail its first
+    turn with the same refusal. Settings → Models offered ten Claude models from an instance
+    whose key Anthropic had rejected — the fallback, standing in for a list the vendor had
+    refused to give. The refusal has to reach the provider row instead."""
+    srv = _Endpoint("/v1/models", '{"error":{"message":"invalid api key"}}', status=status)
+    fallback = ({"id": "curated-a"}, {"id": "curated-b"})
+    try:
+        with pytest.raises(ModelDiscoveryError) as caught:
+            _run(
+                _byo_catalog(
+                    f"{srv.base}/v1", default_model="MiniMax-M2.5", fallback=fallback
+                ).list_models()
+            )
+    finally:
+        srv.close()
+    assert caught.value.status == status
+    assert caught.value.rejected_credential
 
 
 def test_a_reachable_endpoint_beats_the_configured_default_model(

@@ -64,7 +64,6 @@ from personalclaw.dashboard.state import (
     SUBAGENT_COMPLETION_PREFIX,
     DashboardState,
     _ChatSession,
-    chat_approval_id,
     read_only_command,
     resolve_effective_risk,
     tool_input_to_str,
@@ -101,7 +100,7 @@ from personalclaw.llm.base import (
     EVENT_TOOL_CALL_UPDATE,
     EVENT_TOOL_RESULT,
 )
-from personalclaw.llm.events import is_length_stop
+from personalclaw.llm.events import TOOL_META_APPROVAL_WAIVED, is_length_stop
 from personalclaw.llm_helpers import PromptBusyExhaustedError, humanize_provider_error
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
@@ -1648,6 +1647,37 @@ async def _abort_acp_turn(client: object, why: str) -> None:
         logger.warning("ACP cancel after %s failed", why, exc_info=True)
 
 
+def app_conversation_posture(session: _ChatSession) -> bool | None:
+    """How a conversation an app started approves its tool calls, or ``None`` for one of yours.
+
+    ``True`` approves on its own and ``False`` asks, decided by the APP's grant
+    (:func:`~personalclaw.apps.permissions.app_conversation_auto_approves`). ``None`` means your
+    own switches decide, as they always have. An app's conversation never reads them: the bound
+    agent's "always allow", the Trust-reads default and YOLO are yours, for your chats. Asked
+    once per turn, so an app update that drops the ``agent`` grant takes effect on the next one.
+    """
+    creator = getattr(session, "created_by_app", "") or ""
+    if not creator:
+        return None
+    from personalclaw.apps.permissions import app_conversation_auto_approves
+
+    return app_conversation_auto_approves(creator)
+
+
+def auto_approval_reason(app_auto: bool | None, yolo_active: bool) -> str:
+    """Whose switch approved a call nobody was asked about — the ``reason`` its audit row names.
+
+    ``app_grant`` in a conversation an app started (its ``agent`` grant, see
+    :func:`app_conversation_posture`), else ``yolo`` while your YOLO is on, else ``trust``: your
+    Trust for this chat, or an agent's "always allow" seeded into it. One answer for both runtimes —
+    the ACP gate asks it when it auto-approves a permission request, and the native runtime's
+    waived asks (``TOOL_META_APPROVAL_WAIVED``) are recorded with it at their result.
+    """
+    if app_auto:
+        return "app_grant"
+    return "yolo" if yolo_active else "trust"
+
+
 async def run_chat(
     state: DashboardState,
     session: _ChatSession,
@@ -1797,6 +1827,9 @@ async def run_chat(
     last_heartbeat = time.time()
     in_tool_group = False
     _pending_tools: dict[str, str] = {}  # tool_call_id -> tool_name
+    # tool_call_id -> the call's effective risk, logged with its `invoked` row and again with the
+    # `auto_approved` row a waived ask gets at its result (`TOOL_META_APPROVAL_WAIVED`).
+    _call_risk: dict[str, str] = {}
     # Host-authority bookkeeping for ACP turns. An ACP CLI decides for
     # ITSELF which tools ask the client for permission; anything it never asks about
     # runs before the host has a decision point, so the deny-list, the task-mode gate
@@ -1997,6 +2030,9 @@ async def run_chat(
     # value comes from the terminal complete event; initialized here, beside the other
     # finally-inputs, so cleanup always has it instead of an UnboundLocalError.
     _turn_tool_call_count = 0
+    # How a conversation an app started approves (`app_conversation_posture`); None for yours.
+    # Read again by the approval gate below, which must not let YOLO into an app's conversation.
+    _app_auto: bool | None = None
     try:
         # Resolve agent bindings early so we pass the correct ACP agent
         # name (e.g. "personalclaw") instead of the PersonalClaw session name
@@ -2243,6 +2279,13 @@ async def run_chat(
             },
         )
 
+        # A conversation an app started takes its posture from the APP's grant, set here every
+        # turn, and never from the floor below (the per-agent grant is yours, for your chats).
+        _app_auto = app_conversation_posture(session)
+        if _app_auto is not None:
+            session._agent_floor_seeded = True
+            session._trust = _app_auto
+            session._trust_reads = False
         # Seed this session's trust from the bound agent's persistent approval floor
         # ("Always allow for this agent" = AgentProfile.approval_mode "auto"). This is
         # the per-agent grant made real: the gate reads session._trust, so without this
@@ -2252,7 +2295,7 @@ async def run_chat(
         # the user set mid-session. Seeding once lets session scope OVERRIDE the floor
         # (most-permissive on entry, but the user's later downgrade sticks). Audited so
         # the floor's activation is traceable, not silent.
-        if not session._agent_floor_seeded:
+        elif not session._agent_floor_seeded:
             session._agent_floor_seeded = True
             if agent_approval_mode == "auto" and not session._trust:
                 session._trust = True
@@ -2288,8 +2331,9 @@ async def run_chat(
                 except Exception:
                     logger.warning("SEL audit failed for trust_reads floor seeding", exc_info=True)
 
-        # Propagate trust/YOLO to session so subagents inherit auto-approve.
-        if session._trust or state.is_yolo_active():
+        # Propagate trust/YOLO to session so subagents inherit auto-approve. YOLO is yours, so it
+        # does not reach a conversation an app started.
+        if session._trust or (_app_auto is None and state.is_yolo_active()):
             state.sessions.set_approval_policy(session_key, "auto")
         else:
             state.sessions.set_approval_policy(session_key, "")
@@ -3002,6 +3046,14 @@ async def run_chat(
                 # already paused on the tool call awaiting the reply.
                 if event.title == "AskUserQuestion":
                     _emit_question_card(state, session.key, event.tool_input, event.tool_call_id)
+                _risk = resolve_effective_risk(
+                    getattr(event, "risk_level", "") or "",
+                    event.title,
+                    event.tool_kind,
+                    event.tool_input,
+                )
+                if event.tool_call_id:
+                    _call_risk[event.tool_call_id] = _risk
                 sel().log_tool_invocation(
                     session_key=session_key,
                     agent=_agent_label(session),
@@ -3014,14 +3066,7 @@ async def run_chat(
                     # runtime auto-approved under YOLO/policy=auto (which never reach
                     # the chat_runner approval gate). The one place risk is guaranteed
                     # logged for a forensic "what destructive tool ran" query.
-                    metadata={
-                        "risk": resolve_effective_risk(
-                            getattr(event, "risk_level", "") or "",
-                            event.title,
-                            event.tool_kind,
-                            event.tool_input,
-                        )
-                    },
+                    metadata={"risk": _risk},
                 )
                 # Fire PreToolUse hooks for auto-approved tools.
                 # NOTE: For EVENT_TOOL_CALL, hooks are informational only - the tool
@@ -3208,6 +3253,26 @@ async def run_chat(
                             break
                 # Fire PostToolUse hooks
                 _tool_name = _pending_tools.pop(event.tool_call_id, "")
+                _risk_of_call = _call_risk.pop(event.tool_call_id, "")
+                # The native runtime answered this call's ask from the session's policy, in its own
+                # loop, so no approval reached the gate above: record it the way that gate records
+                # its own auto-approvals, naming whose switch it was.
+                if _tmeta.get(TOOL_META_APPROVAL_WAIVED):
+                    sel().log_tool_invocation(
+                        session_key=session_key,
+                        agent=_agent_label(session),
+                        source="dashboard",
+                        tool_name=_tool_name or event.title,
+                        tool_kind=event.tool_kind,
+                        outcome="auto_approved",
+                        request_id=event.tool_call_id,
+                        metadata={
+                            "reason": auto_approval_reason(
+                                _app_auto, _app_auto is None and state.is_yolo_active()
+                            ),
+                            "risk": _risk_of_call,
+                        },
+                    )
                 # Host-authority residue check. A result for a call the
                 # host was never asked about means the CLI self-approved it. We cannot
                 # pre-block what the protocol never showed us — so we make the ABSENCE
@@ -3523,7 +3588,9 @@ async def run_chat(
                         continue
                     _pre_tool_hooks_fired = True
                     # Hooks passed — fall through to trust-reads/trust/yolo/interactive
-                yolo_active = state.is_yolo_active()
+                # YOLO is your switch, for your chats: an app's conversation approves by the
+                # app's grant alone, which the posture above already put in `session._trust`.
+                yolo_active = _app_auto is None and state.is_yolo_active()
                 # Effective risk of THIS call (per-invocation): the tool's declared
                 # risk downgraded to safe when it's a read-only invocation. The
                 # single source of truth (task_modes.resolve_effective_risk) — also
@@ -3654,7 +3721,7 @@ async def run_chat(
                         # YOLO without a human prompt — the highest-value audit signal
                         # under the "risk is an indicator, floor covers everything" model.
                         metadata={
-                            "reason": "yolo" if yolo_active else "trust",
+                            "reason": auto_approval_reason(_app_auto, yolo_active),
                             "risk": effective_risk,
                         },
                     )
@@ -3813,6 +3880,9 @@ async def run_chat(
                 # Default "rejected": a never-answered approval must not execute the tool.
                 # The cancellation still propagates (the finally doesn't swallow it).
                 outcome = "rejected"
+                # How the approval ends if nobody answers it: its window closing is `expired`;
+                # the turn being torn down first is `cancelled`. See `request_approval`.
+                timed_out = False
                 try:
                     # ONE registration for every surface — inside the try, so a turn torn
                     # down mid-publication still leaves nothing listed. The live chat page
@@ -3848,12 +3918,16 @@ async def run_chat(
                     outcome = await asyncio.wait_for(fut, timeout=state._APPROVAL_TIMEOUT)
                 except asyncio.TimeoutError:
                     outcome = "rejected"
+                    timed_out = True
                 finally:
                     session._approval_futures.pop(request_id, None)
-                    # Unanswered on the way out — expired, or its turn was torn down — so
-                    # every surface still listing it drops it as denied. A no-op when a
-                    # decision already withdrew it.
-                    state.expire_approval(chat_approval_id(session.key, request_id))
+                    # Unanswered on the way out — expired, or its turn was torn down — so every
+                    # surface still listing it drops it saying which, and the transcript row
+                    # records it (a reload then shows what happened, not a dead live card). A
+                    # no-op when a decision already withdrew it.
+                    state.end_session_approval(
+                        session, request_id, outcome="expired" if timed_out else "cancelled"
+                    )
                 if outcome == "approved_trust_reads":
                     session._trust_reads = True
                     outcome = "approved"
@@ -3950,14 +4024,22 @@ async def run_chat(
                         )
                 else:
                     await client.reject_tool(event.request_id)
-                    session.append("tool", f"{event.title} (rejected)", "msg msg-tool")
+                    # `cancelled` is the turn being stopped while it waited (see
+                    # `DashboardState.cancel_approval`), not a person's Deny — so it is not
+                    # written up as one, in the transcript or in the audit row.
+                    stopped = outcome == "cancelled"
+                    session.append(
+                        "tool",
+                        f"{event.title} ({'cancelled' if stopped else 'rejected'})",
+                        "msg msg-tool",
+                    )
                     sel().log_tool_invocation(
                         session_key=session_key,
                         agent=_agent_label(session),
                         source="dashboard",
                         tool_name=event.title,
                         tool_kind=event.tool_kind,
-                        outcome="rejected",
+                        outcome="cancelled" if stopped else "rejected",
                         request_id=event.request_id,
                         metadata={"reason": "interactive", "risk": effective_risk},
                     )

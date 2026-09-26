@@ -14,6 +14,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 const saveOnboardingState = vi.fn()
 const onboarding = vi.fn()
 const setName = vi.fn()
+const keepOrDefaultName = vi.fn()
 let stored = { name: 'Maya Chen', username: 'maya' }
 
 vi.mock('../../lib/api', () => ({
@@ -30,7 +31,7 @@ vi.mock('../../lib/api', () => ({
 }))
 vi.mock('../identity', async (orig) => {
   const real = await orig<typeof import('../identity')>()
-  return { ...real, useIdentity: () => ({ name: stored.name, setName, username: stored.username }) }
+  return { ...real, useIdentity: () => ({ name: stored.name, setName, keepOrDefaultName, username: stored.username }) }
 })
 vi.mock('../../ui/DotGlow', () => ({ DotGlow: () => null }))
 vi.mock('./ImportStep', () => ({
@@ -83,6 +84,9 @@ describe('a re-run of setup keeps what is already saved', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Skip setup for now' }))
     await waitFor(() => expect(onFinished).toHaveBeenCalled())
     expect(setName, 'a skip overwrote the saved identity').not.toHaveBeenCalled()
+    // Not even the first-run fallback's read-then-write: a re-run has a name, so there is nothing to
+    // default — and a re-run skip must leave even when that read would fail.
+    expect(keepOrDefaultName).not.toHaveBeenCalled()
     expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'done' })
   })
 
@@ -111,11 +115,14 @@ describe('a re-run of setup keeps what is already saved', () => {
   })
 
   it('a FIRST run skipped from step 1 still commits the visible default', async () => {
-    // The first-run half is unchanged: the guard needs a name, and the skip line says which.
+    // The first-run half: the guard needs a name, and the skip line says which. It goes through
+    // `keepOrDefaultName`, which commits the default only onto a home that still has no name when
+    // the skip lands — a name stored since this run opened is kept (`identityReadFailure.test.tsx`).
     stored = { name: '', username: '' }
     openRerun()
     expect(screen.getByText(/you'll be called "Operator" until you pick a name/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Skip setup for now' }))
-    await waitFor(() => expect(setName).toHaveBeenCalledWith('Operator', ''))
+    await waitFor(() => expect(keepOrDefaultName).toHaveBeenCalledWith())
+    expect(setName).not.toHaveBeenCalled()
   })
 })

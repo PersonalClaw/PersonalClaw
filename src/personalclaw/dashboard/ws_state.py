@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from aiohttp import web
@@ -32,6 +32,56 @@ BROADCAST_NOTE_TYPES = frozenset(
     }
 )
 
+#: Where a frame names the conversation it is about, when that is not its ``session`` field — the
+#: key every chat frame, tool card, approval, subagent status and chat notification names it in.
+#: A frame about a conversation reaches an app's socket only when the app started that
+#: conversation (:meth:`DashboardWebSocketState._ws_may_receive`), so a frame naming it anywhere
+#: else must be listed here (``tests/test_apps_see_only_their_own_conversations.py`` censuses the
+#: producers).
+FRAME_CONVERSATION_FIELDS: dict[str, str] = {
+    "session_title": "key",
+    # The re-tag run names the chat it is reading.
+    "retag_progress": "current",
+    "retag_done": "current",
+}
+
+#: Frames that carry one inbox item. The inbox is what reached YOU, so its reads are yours
+#: (``apps/permissions.ROUTE_AUTHZ``), and an app's socket hears only an item it raised itself: a
+#: proposal, whose ``source`` names the app (``proposals_contract.app_source``).
+INBOX_ITEM_FRAMES: frozenset[str] = frozenset({"inbox_new_item", "inbox_item_updated"})
+
+#: Frames that carry a LIST of conversations, and the field each row names its conversation in.
+#: An app's socket gets the list with the rows of its own conversations only.
+CONVERSATION_LIST_FRAMES: dict[str, str] = {"sessions": "key"}
+
+#: The approval registry's frames. They say no more than ``GET /api/approvals`` answers, and the
+#: relay an app declares for your approvals (the menu-bar companion) reads that route in full and
+#: rings on these frames — so an app the permission middleware lets read it may hear an approval
+#: in any conversation. Every other app hears only its own conversations' (#3625's one declared
+#: exception, ``docs/security/limitations.md``).
+APPROVAL_RELAY_FRAMES: frozenset[str] = frozenset({"approval", "approval_resolved"})
+APPROVAL_REGISTRY_ROUTE = "/api/approvals"
+
+#: What a frame is about, when only some apps may hear of it: ``("conversation", name)`` or
+#: ``("inbox_item", source)``.
+FrameSubject = tuple[str, str]
+
+
+def frame_subject(event_type: str, data: object) -> FrameSubject | None:
+    """What a frame is about, or ``None`` for a frame about nothing an app could not see.
+
+    A value that is present but not a name answers as something no app owns, never as nothing,
+    so a malformed frame reaches owner sockets only."""
+    if not isinstance(data, dict):
+        return None
+    if event_type in INBOX_ITEM_FRAMES:
+        source = data.get("source")
+        return ("inbox_item", source if isinstance(source, str) else "")
+    named = data.get(FRAME_CONVERSATION_FIELDS.get(event_type, "session"))
+    if named is None or named == "":
+        return None
+    return ("conversation", named if isinstance(named, str) else repr(named))
+
 
 class DashboardWebSocketState:
     """WebSocket delivery state mixed into :class:`DashboardState`."""
@@ -45,6 +95,8 @@ class DashboardWebSocketState:
     _ws_loop: asyncio.AbstractEventLoop | None
     _ws_subagent_subscribers: set[web.WebSocketResponse]
     _stream_seq: int
+    # DashboardState's: the app that started a conversation, or "" (``session_creating_app``).
+    session_creating_app: Callable[[str], str]
 
     def next_stream_seq(self) -> int:
         """Stamp the next streamed text chunk — the ``seq`` every ``chat_chunk`` carries.
@@ -146,9 +198,17 @@ class DashboardWebSocketState:
         self.broadcast_ws(msg_type, data, extra=extra)
 
     def _dispatch_ws(
-        self, sockets: Iterable[web.WebSocketResponse], event_type: str, msg: str
+        self,
+        sockets: Iterable[web.WebSocketResponse],
+        event_type: str,
+        msg: str,
+        *,
+        subject: FrameSubject | None = None,
     ) -> None:
         """Fan a pre-serialized envelope out to ``sockets`` — THE WS write path.
+
+        ``subject`` is what the frame is about (:func:`frame_subject`), which an app's socket
+        carries only when the app owns it.
 
         Every gateway→client frame goes through here or through its awaited
         single-socket twin :meth:`send_ws_event`, and both open with
@@ -172,7 +232,7 @@ class DashboardWebSocketState:
             if ws.closed:
                 dead.append(ws)
                 continue
-            if not self._ws_may_receive(ws, event_type):
+            if not self._ws_may_receive(ws, event_type, subject):
                 continue
             try:
                 if not self._schedule_ws_send(ws.send_str(msg), ws):
@@ -198,9 +258,14 @@ class DashboardWebSocketState:
         tasks. Awaiting is the ONLY thing that differs from the fan-out path; the
         permission check is the same call. Each of those three replays used to call
         ``ws.send_json`` itself, which is how an app-scoped socket received the session
-        list and the whole log ring it never declared (issue 2963)."""
-        if not self._ws_may_receive(ws, event_type):
+        list and the whole log ring it never declared (issue 2963). An app's socket gets a
+        conversation list with its own rows only, and a frame about one conversation only when
+        the app started it."""
+        if not self._ws_may_receive(ws, event_type, frame_subject(event_type, data)):
             return
+        app = self._ws_app.get(ws, "")
+        if app and event_type in CONVERSATION_LIST_FRAMES:
+            data = self._own_rows(app, event_type, data)
         envelope: dict[str, Any] = {"type": event_type, "data": data}
         if extra:
             # Envelope keys only — `type`/`data` stay owned by this method so a caller
@@ -212,19 +277,65 @@ class DashboardWebSocketState:
             logger.debug("WS send failed (client gone?): %s", exc)
             self._remove_ws(ws)
 
-    def _ws_may_receive(self, ws: web.WebSocketResponse, event_type: str) -> bool:
-        """THE app-event gate: may THIS socket receive ``event_type``?
+    def _ws_may_receive(
+        self, ws: web.WebSocketResponse, event_type: str, subject: FrameSubject | None = None
+    ) -> bool:
+        """THE app-event gate: may THIS socket receive ``event_type`` about ``subject``?
 
         An owner/dashboard socket — no app identity in ``_ws_app`` — receives
         everything, exactly as before. An app-scoped socket (sandbox P1) receives an
         event ONLY if the app's manifest declares it in ``permissions.events``: deny by
         default, including when the manifest cannot be read at all. Server-side
         enforcement, because the SDK's client-side filter is advisory and the Store
-        shows that declared list as the install-consent surface."""
+        shows that declared list as the install-consent surface.
+
+        A declared event about something (:func:`frame_subject`) reaches it only when the app owns
+        that thing: a conversation it started — the rule every read of one follows
+        (``apps/permissions.ROUTE_AUTHZ``'s ``owns``) — or an inbox item it raised. The type was
+        the whole filter, so an app that declared ``chat_chunk`` read every answer your agent
+        streamed you, and one that declared ``inbox_new_item`` read everything that reached you."""
         app = self._ws_app.get(ws, "")
         if not app:
             return True
-        return self._app_may_see_event(app, event_type)
+        if not self._app_may_see_event(app, event_type):
+            return False
+        return subject is None or self._app_may_hear_about(app, event_type, subject)
+
+    def _app_may_hear_about(self, app: str, event_type: str, subject: FrameSubject) -> bool:
+        """Whether *app*'s socket may carry a frame about *subject*: an inbox item it raised, a
+        conversation it started, or an approval frame when it holds the approval relay
+        (:data:`APPROVAL_RELAY_FRAMES`)."""
+        kind, key = subject
+        if kind == "inbox_item":
+            from personalclaw.proposals_contract import app_source
+
+            return key == app_source(app)
+        if self.session_creating_app(key) == app:
+            return True
+        if event_type not in APPROVAL_RELAY_FRAMES:
+            return False
+        try:
+            from personalclaw.apps.permissions import app_request_denial
+
+            return not app_request_denial(
+                app, APPROVAL_REGISTRY_ROUTE, method="GET", route=APPROVAL_REGISTRY_ROUTE
+            )
+        except Exception:  # noqa: BLE001 — an undecidable relay hears nothing it did not start
+            logger.debug("approval relay check failed for %s", app, exc_info=True)
+            return False
+
+    def _own_rows(self, app: str, event_type: str, data: object) -> object:
+        """A conversation list frame's *data* with only *app*'s own conversations in it."""
+        field = CONVERSATION_LIST_FRAMES[event_type]
+        if not isinstance(data, list):
+            return []
+        return [
+            row
+            for row in data
+            if isinstance(row, dict)
+            and isinstance(row.get(field), str)
+            and self.session_creating_app(row[field]) == app
+        ]
 
     def _schedule_ws_send(  # type: ignore[no-untyped-def]
         self, coro, ws: "web.WebSocketResponse | None" = None
@@ -292,7 +403,10 @@ class DashboardWebSocketState:
         always-on frame — sessions, titles, refresh hints, chat messages, notifications —
         reached app-scoped sockets regardless of what the app declared. One gate for
         every producer; a second write path is a second place for it to be missing
-        from."""
+        from.
+
+        A frame about one conversation reaches an app's socket only when the app started it,
+        and a conversation list frame is serialized per app socket with that app's rows only."""
         if not self._ws_clients:
             return
         envelope: dict[str, Any] = {"type": msg_type, "data": data}
@@ -300,7 +414,20 @@ class DashboardWebSocketState:
             # Envelope keys only — `type`/`data` stay owned by this method so a caller
             # cannot rename the event out from under the permission check.
             envelope.update({k: v for k, v in extra.items() if k not in ("type", "data")})
-        self._dispatch_ws(self._ws_clients, msg_type, json.dumps(envelope))
+        if msg_type in CONVERSATION_LIST_FRAMES:
+            apps = [ws for ws in self._ws_clients if self._ws_app.get(ws)]
+            owners = [ws for ws in self._ws_clients if not self._ws_app.get(ws)]
+            self._dispatch_ws(owners, msg_type, json.dumps(envelope))
+            for ws in apps:
+                own = {**envelope, "data": self._own_rows(self._ws_app[ws], msg_type, data)}
+                self._dispatch_ws([ws], msg_type, json.dumps(own))
+            return
+        self._dispatch_ws(
+            self._ws_clients,
+            msg_type,
+            json.dumps(envelope),
+            subject=frame_subject(msg_type, data),
+        )
 
     def _app_may_see_event(self, app: str, event_type: str) -> bool:
         """Whether an app-scoped WS may receive ``event_type`` per its manifest."""
@@ -382,7 +509,10 @@ class DashboardWebSocketState:
         if not self._ws_subagent_subscribers:
             return
         self._dispatch_ws(
-            self._ws_subagent_subscribers, msg_type, json.dumps({"type": msg_type, "data": data})
+            self._ws_subagent_subscribers,
+            msg_type,
+            json.dumps({"type": msg_type, "data": data}),
+            subject=frame_subject(msg_type, data),
         )
 
     def broadcast_ws_log_subscribers(self, data: object) -> None:

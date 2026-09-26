@@ -115,6 +115,7 @@ async def _sample_one(prompt: str, idx: int, temperature: float, use_case: str) 
             )
             text = None
             candidate["error"] = f"{type(exc).__name__}: {exc}"
+            candidate["failure"] = _candidate_failure(exc, use_case)
     answered = [c for c in calls.calls if c.state == DONE]
     if answered:
         candidate["sampled_at"] = answered[-1].temperature
@@ -147,6 +148,43 @@ def _sampling_note(candidates: list[dict[str, Any]]) -> str:
     return (
         f"{len(missed)} of {len(observed)} candidates were not sent at their requested temperature"
     )
+
+
+def _candidate_failure(exc: BaseException, use_case: str) -> dict[str, Any]:
+    """Why one sample failed, classified at the cause: this is the only frame holding the
+    exception. Every later reader gets its string, and a string cannot say whether a retry
+    helps — the workflow step used to be filed transient for a rejected key or a missing model.
+    """
+    from personalclaw.workflows.failure_taxonomy import classify_exception
+
+    failure = classify_exception(exc, use_case=use_case)
+    out: dict[str, Any] = {
+        "class": failure.failure_class.value,
+        "retryable": failure.retryable,
+        "fix": failure.remediation,
+    }
+    if failure.retry_at is not None:
+        out["retry_at"] = round(failure.retry_at, 3)
+    return out
+
+
+def _slate_failure(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    """The step's failure for an all-failed slate: retryable when ANY candidate's cause is.
+
+    One candidate lost to a network blip can return on a retry even if its siblings failed for
+    good, and a single survivor is a result. They share a provider, so in practice they agree.
+    Among retryable causes the LATEST `retry_at` wins, because a retry before it is refused by an
+    open breaker without making a call. Empty when no candidate raised (every one came back empty).
+    """
+    failures = [c["failure"] for c in candidates if isinstance(c.get("failure"), dict)]
+    if not failures:
+        return {}
+    retryable = [f for f in failures if f.get("retryable")]
+    chosen = dict((retryable or failures)[0])
+    waits = [f["retry_at"] for f in retryable if isinstance(f.get("retry_at"), (int, float))]
+    if waits:
+        chosen["retry_at"] = max(waits)
+    return chosen
 
 
 def _failure_summary(candidates: list[dict[str, Any]]) -> str:
@@ -313,8 +351,10 @@ async def best_of_n(
     Returns:
         ``{winner, winner_idx, candidates, judgments, judged, n, note}``. ``winner`` is
         the winning candidate's text, or ``None`` when every sample failed (``note``
-        then says so, with the candidates' errors). ``candidates`` is always N wide, each
-        ``{idx, temperature, text, error}`` plus ``sampled_at`` — the temperature the
+        then says so, with the candidates' errors, and ``failure`` says whether a retry can
+        help: ``{class, retryable, fix}`` plus ``retry_at`` while a breaker is open).
+        ``candidates`` is always N wide, each ``{idx, temperature, text, error}`` plus
+        ``failure`` for one whose call raised, and ``sampled_at`` — the temperature the
         request actually carried, ``None`` if it carried none — whenever the call was
         observed at the guard; ``note`` says so when those differ from the ladder.
         ``judgments`` carries ``{idx, score, reason, reasoning}`` per scored candidate.
@@ -370,6 +410,7 @@ async def best_of_n(
             "judged": False,
             "n": n,
             "note": note,
+            "failure": _slate_failure(candidates),
         }
 
     judgments = await _judge_candidates(prompt, judge_criteria, survivors, judge_provider_factory)

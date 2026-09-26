@@ -236,11 +236,11 @@ def test_app_dir_allows_real_and_special_names():
 def test_config_path_helpers_are_traversal_safe():
     """The config read/write helpers (app_config + ProviderSettings) go through
     app_dir, so a traversal name can't reach the filesystem via them either."""
-    from personalclaw.apps.app_config import read_config
+    from personalclaw.apps.app_config import read_stored
     from personalclaw.providers.settings import ProviderSettings
 
     with pytest.raises(ValueError):
-        read_config("../../etc/passwd")
+        read_stored("../../etc/passwd")
     with pytest.raises(ValueError):
         ProviderSettings.config_path("../../evil")
 

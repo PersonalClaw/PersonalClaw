@@ -452,16 +452,24 @@ class TestBindingFailureReachesTheRightAudience:
             ).failure_class
             is FailureClass.INTERNAL
         )
-        # The narrow scope IS the design. These three are separate faults with separate
-        # arguments, and sweeping them in would change four behaviours to justify one.
+        # What the definition reads on its own is the definition's fault, whatever the root.
         assert (
             self._class_of("{{nodes.typo.output}}", BindingContext()).failure_class
-            is FailureClass.USER
-        ), "a node-id typo is statically knowable and keeps its class"
+            is FailureClass.INTERNAL
+        ), "a node-id typo is in the definition, not in anything the caller supplied"
+        piped = self._class_of(
+            "{{inputs.topic | truncate('x')}}", BindingContext(inputs={"topic": "t"})
+        )
         assert (
-            self._class_of("{{inputs.missing}}", BindingContext(inputs={})).failure_class
-            is FailureClass.USER
-        ), "an input IS what the caller supplies — the one root USER is right for"
+            piped.failure_class is FailureClass.INTERNAL
+        ), "a pipe the definition misuses is its own fault, even on an input the caller gave"
+        # USER only for what the caller supplies: a run input, or a secret they have not added.
+        missing_input = self._class_of("{{inputs.missing}}", BindingContext(inputs={}))
+        assert missing_input.failure_class is FailureClass.USER
+        assert "started without the input 'missing'" in missing_input.remediation
+        unset = self._class_of("{{secret:API_TOKEN}}", BindingContext(secret_resolver=lambda k: ""))
+        assert unset.failure_class is FailureClass.USER
+        assert "'API_TOKEN'" in unset.remediation
 
     def test_the_reclassified_failure_still_reaches_the_user(self) -> None:
         """The control on the change. `classify_block` routes on the class, so the reclassification
@@ -550,6 +558,51 @@ class TestFailureRemediation:
         assert failure is not None and failure.failure_class is FailureClass.INTERNAL
         assert "cannot rescue" in failure.remediation, failure.remediation
         assert "genuinely optional" not in failure.remediation, failure.remediation
+
+    @pytest.mark.parametrize(
+        ("call", "fix"),
+        [
+            ("default([])", "use `| filter` instead"),
+            ("default(topic)", "quote it if it is text"),
+            ("default('x'", "write a pipe as `name` or `name(<literal>, …)`"),
+            ("json(1)", "`json` takes no arguments"),
+            ("default('a', 'b')", "`default` takes at most 1 argument"),
+            ("filter(1, 2, 3)", "`filter` takes at most 2 arguments"),
+            ("evalx", "the pipes are: clamp, count, default"),
+        ],
+    )
+    def test_a_pipe_call_that_cannot_evaluate_says_how_to_fix_the_call(
+        self, ctx, call: str, fix: str
+    ) -> None:
+        """The reference resolves — `inputs.topic` exists — so "check the referenced node id and
+        field exist" would send the author after a problem they do not have. The call is what is
+        wrong, and only the grammar knows which part."""
+        with pytest.raises(BindingError) as exc:
+            resolve(f"{{{{inputs.topic | {call}}}}}", ctx)
+        assert fix in exc.value.remediation, exc.value.remediation
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("anyio_backend", ["asyncio"])
+    async def test_every_dispatcher_surfaces_the_pipe_remediation(self, ctx, anyio_backend) -> None:
+        """Measured on a dev gateway: `rich-ingest`'s judge gate failed on `| default([])` with
+        the fix "check the referenced node id and field exist" — false, the node and field both
+        existed. `resolve_config` already preferred the raise site's remediation; the transform
+        dispatcher replaced it with that sentence unconditionally."""
+        from personalclaw.workflows.engine import dispatch_transform
+        from personalclaw.workflows.engine_support import resolve_config
+        from personalclaw.workflows.models import Node
+
+        expr = "{{nodes.find.output.findings | default([])}}"
+        _, failure = resolve_config(
+            Node.from_dict({"kind": "stage", "id": "s", "config": {"prompt": f"x {expr}"}}), ctx
+        )
+        assert failure is not None and "`| filter`" in failure.remediation, failure
+        result = await dispatch_transform(
+            Node.from_dict({"kind": "transform", "id": "t", "config": {"expr": expr}}), ctx
+        )
+        assert result.failure is not None
+        assert "`| filter`" in result.failure.remediation, result.failure.remediation
+        assert "node id" not in result.failure.remediation
 
 
 class TestSecrets:

@@ -1,8 +1,9 @@
 """MCP server discovery — detects configured MCP servers and checks liveness.
 
 Scans the agent config (``agents/defaults.json``) for ``mcpServers`` entries,
-then optionally probes each server by spawning the command and sending an
-MCP ``initialize`` handshake.
+then optionally probes each server: a stdio server by spawning its command and sending an
+MCP ``initialize`` handshake, a server at a URL through the native client, over its own
+transport and with its headers.
 
 Used by the dashboard to show live MCP server badges and by the heartbeat
 to auto-sync newly discovered servers into the agent config.
@@ -12,14 +13,16 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import time
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
 
-import aiohttp
-
+from personalclaw.apps.secret_fields import SECRET_MASK, is_credential_field_name
 from personalclaw.env import augmented_path
 from personalclaw.hooks import safe_read_file
 
@@ -42,51 +45,84 @@ def _get_probe_timeout() -> int:
 # Probe results expire after 30 minutes → status becomes "outdated"
 _PROBE_TTL_SECS = 1800
 
-# Well-known MCP config locations, tagged by scope.  Scope names match
-# the dashboard badges (personalclaw / globalMcp / ccGlobal) and are the
-# source of truth for the ``presence`` field on each server.
-SCOPE_PERSONALCLAW = "personalclaw"
-SCOPE_LEGACY_GLOBAL = "globalMcp"
-SCOPE_CC_GLOBAL = "ccGlobal"
 
-
-# Single source of truth pairing each config path with its scope label.
-# Priority at collision time is controlled by the explicit scope iteration
-# order in :func:`_load_mcp_json` (personalclaw > legacy global), not by this
-# tuple's order.
+# PersonalClaw discovers MCP servers ONLY from its own config. A Claude-Code-only server
+# (``~/.claude.json``) is not invocable by the native loop, so surfacing it here would imply
+# tools the agent can't call. Such servers are instead offered as explicit *import
+# suggestions* via :func:`discover_importable_servers` + the ``/api/mcp/apply`` endpoint,
+# which copies a chosen spec into ``~/.personalclaw/mcp.json``.
 #
-# PersonalClaw discovers MCP servers ONLY from its own config scopes. A
-# Claude-Code-only server (``~/.claude.json``) is not invocable by the native
-# loop, so surfacing it here would imply tools the agent can't call. Such
-# servers are instead offered as explicit *import suggestions* via
-# :func:`discover_importable_servers` + the ``/api/mcp/apply`` endpoint, which
-# copies a chosen spec into ``~/.personalclaw/mcp.json``.
-# UT3: ONE canonical MCP store. The former legacy ``settings/mcp.json`` source was
-# dropped (its content is migrated into this file once, at startup, by
-# handlers/mcp._migrate_legacy_mcp_json) so there is a single read+write path the
-# dashboard, the provider instances, agent.py, and the native runtime all share.
+# UT3: ONE canonical MCP store. The former legacy ``settings/mcp.json`` source was dropped (its
+# content is migrated into this file once, at startup, by handlers/mcp._migrate_legacy_mcp_json)
+# so there is a single read+write path the dashboard, the provider instances, agent.py, and the
+# native runtime all share. The "global" scope that file used to be is gone with it: a second
+# scope NAME left pointing at the one file is how Import added a server and removed it again in
+# the same request.
+#
 # A FUNCTION, not a module constant: a `Path.home()` value computed at import time is
 # frozen before `PERSONALCLAW_HOME` can matter, so an isolated dev home read the operator's
 # real `~/.personalclaw/mcp.json` — their servers and their credentials — while the
 # dashboard wrote the dev home. Resolved per call, through `config_dir()`.
-def _mcp_sources() -> tuple[tuple[Path, str], ...]:
+def _mcp_json_paths() -> tuple[Path, ...]:
+    """The MCP config files discovery reads. Tests monkeypatch this to inject fixture paths
+    (several patch more than one, to exercise first-wins precedence)."""
     from personalclaw.config.loader import config_dir
 
-    return ((config_dir() / "mcp.json", SCOPE_PERSONALCLAW),)
+    return (config_dir() / "mcp.json",)
 
 
-# External backend MCP configs PersonalClaw can *import from* (but never
-# silently loads). Each entry maps a config file to the backend label shown in
-# the import-suggestions UI. Extensible: add further backend config paths here
-# once their formats are confirmed — the discovery + import path is backend-agnostic.
-_IMPORT_SOURCES: tuple[tuple[Path, str], ...] = ((Path.home() / ".claude.json", "Claude Code"),)
+def _import_sources() -> tuple[tuple[Path, str], ...]:
+    """External backend MCP configs PersonalClaw can *import from* (but never silently loads),
+    each with the backend label the import suggestions show. Extensible: add further backend
+    config paths here once their formats are confirmed — the discovery + import path is
+    backend-agnostic.
+
+    A FUNCTION, like :func:`_mcp_json_paths`: this was ``Path.home() / ".claude.json"`` frozen at
+    import, so it ignored ``$CLAUDE_CONFIG_DIR`` while the onboarding importer honoured it. Claude
+    Code's file now comes from the resolver that importer uses, per call. Tests monkeypatch this.
+    """
+    from personalclaw.onboarding_import.sources import claude_code
+
+    return ((claude_code.global_config_path(), claude_code.DISPLAY_NAME),)
 
 
-# Test override seam: tests monkeypatch this FUNCTION to inject fixture paths (several
-# patch more than one path to exercise merge precedence, which a single `config_dir()`
-# derivation cannot express). Derived from :func:`_mcp_sources` so the two cannot drift.
-def _mcp_json_paths() -> tuple[Path, ...]:
-    return tuple(p for p, _ in _mcp_sources())
+# ── transports ──────────────────────────────────────────────────────────────
+#
+# A server spec says how it is reached in ONE key, ``type``, with one of three values. It is
+# Claude Code's key and spelling (and VS Code's), so a spec copied between PersonalClaw and Claude
+# Code keeps its transport in both directions. Every reader asks :func:`mcp_transport` — the
+# native client, the probe, the rebuild, the edit form, the provider card — so no two of them can
+# disagree about what a server is. Before, the client read only ``transport``, so an imported
+# ``"type": "http"`` server was opened as SSE, while the probe posted to every URL as Streamable
+# HTTP.
+
+#: The transports PersonalClaw connects over: a spawned ``command``, Streamable HTTP, and the older
+#: HTTP+SSE transport.
+MCP_TRANSPORTS = ("stdio", "http", "sse")
+
+#: Other names for Streamable HTTP in server configs. ``streamable-http`` is also what PersonalClaw
+#: itself wrote into ``~/.mcp.json`` before, which Claude Code's schema does not accept.
+_TRANSPORT_ALIASES = {
+    "streamable-http": "http",
+    "streamable_http": "http",
+    "streamablehttp": "http",
+}
+
+
+def mcp_transport(spec: Mapping[str, Any]) -> str:
+    """How PersonalClaw connects to the server ``spec`` describes: ``stdio``, ``http`` or ``sse``.
+
+    The declared ``type`` decides (``transport``, the other key server configs use for it, when
+    ``type`` is absent). With neither, a ``url`` and no ``command`` is ``sse``: what a bare URL has
+    always meant to the native client, and what the MCP Tool Servers card and pack connectors meant
+    when they wrote one. Anything else is ``stdio``. A declared transport PersonalClaw has no client
+    for (``ws``) comes back as it is, so the caller can say so instead of guessing.
+    """
+    declared = spec.get("type") or spec.get("transport")
+    if isinstance(declared, str) and declared.strip():
+        name = declared.strip().lower()
+        return _TRANSPORT_ALIASES.get(name, name)
+    return "sse" if spec.get("url") and not spec.get("command") else "stdio"
 
 
 @dataclass
@@ -132,7 +168,7 @@ def _cache_probe(server: "McpServerInfo") -> None:
 
 @dataclass
 class McpServerInfo:
-    """Metadata for a single MCP server (local stdio or remote HTTP)."""
+    """Metadata for a single MCP server (local stdio, or remote over Streamable HTTP or SSE)."""
 
     name: str
     command: str = ""
@@ -148,37 +184,37 @@ class McpServerInfo:
     tools: list[dict[str, Any]] = field(default_factory=list)
     error: str = ""
     source: str = "agent"  # agent | mcp.json | discovered
-    presence: dict[str, bool] = field(
-        default_factory=lambda: {
-            SCOPE_PERSONALCLAW: False,
-            SCOPE_LEGACY_GLOBAL: False,
-            SCOPE_CC_GLOBAL: False,
-        }
-    )
     disabled_tools: list[str] = field(default_factory=list)
+    #: ``stdio``, ``http`` or ``sse`` (:func:`mcp_transport`). Left empty, it is derived from
+    #: ``url`` and ``command`` exactly as for a spec that declares none.
+    transport: str = ""
+
+    def __post_init__(self) -> None:
+        self.transport = mcp_transport(
+            {"type": self.transport, "url": self.url, "command": self.command}
+        )
 
     @property
     def is_remote(self) -> bool:
-        """True for Streamable HTTP servers (url-based, no command)."""
-        return bool(self.url) and not self.command
+        """True for a server reached at a URL rather than spawned from a command."""
+        return self.transport != "stdio"
 
     def to_dict(self) -> dict[str, Any]:
+        """The server as the Tools page reads it: its name, how it is reached, and its state.
+
+        Never its definition. Arguments and a URL can carry a token (``--api-key …``,
+        ``?token=…``), the page shows neither, and it keeps this response in session storage;
+        so ``command``, ``args``, ``url``, ``headers`` and ``cwd`` stay on the server. The edit
+        form reads one server's definition from ``GET /api/mcp/servers/{name}`` when it opens.
+        """
         d: dict[str, Any] = {
             "name": self.name,
-            "command": self.command,
-            "args": self.args or [],
+            "transport": self.transport,
             "status": self.status,
             "tools": self.tools,
             "error": self.error,
             "source": self.source,
-            "presence": dict(self.presence),
         }
-        if self.url:
-            d["url"] = self.url
-            if self.headers:
-                d["headers"] = self.headers
-        if self.cwd:
-            d["cwd"] = self.cwd
         if self.disabled_tools:
             d["disabledTools"] = self.disabled_tools
         return d
@@ -246,26 +282,14 @@ def _load_agent_config() -> dict[str, Any]:
     return merged
 
 
-def _load_mcp_json_by_source() -> dict[str, dict[str, Any]]:
-    """Return ``{scope: {name: spec}}`` keyed by scope name.
+def _load_mcp_json() -> dict[str, Any]:
+    """``mcpServers`` from every path :func:`_mcp_json_paths` names, merged.
 
-    Reads every well-known MCP config location and bucketizes servers by
-    their origin scope.  Unlike :func:`_load_mcp_json`, no cross-source
-    merging happens — callers that need per-scope presence use this.
-
-    Iterates :func:`_mcp_sources` (path + scope pairs), so paths and scope
-    labels can never drift.  When tests monkeypatch :func:`_mcp_json_paths`
-    to a shorter tuple for isolation, the corresponding scopes are
-    recovered by looking up each patched path in ``_mcp_sources()``; any
-    unknown path falls back to :data:`SCOPE_PERSONALCLAW`.
+    Earlier paths take precedence — if the same server name appears in
+    multiple files, the first definition wins (via ``setdefault``).
     """
-    result: dict[str, dict[str, Any]] = {
-        SCOPE_PERSONALCLAW: {},
-        SCOPE_LEGACY_GLOBAL: {},
-    }
-    path_to_scope = {p: scope for p, scope in _mcp_sources()}
+    merged: dict[str, Any] = {}
     for p in _mcp_json_paths():
-        scope = path_to_scope.get(p, SCOPE_PERSONALCLAW)
         if not p.is_file():
             continue
         try:
@@ -279,32 +303,8 @@ def _load_mcp_json_by_source() -> dict[str, dict[str, Any]]:
             continue
         servers = data.get("mcpServers", {})
         if isinstance(servers, dict):
-            # Merge instead of overwriting — if two paths resolve to the
-            # same scope (legitimate duplicates, or tests that monkeypatch
-            # _mcp_json_paths() with fallback-scoped paths), setdefault keeps
-            # first-wins semantics within the scope.
-            bucket = result[scope]
             for name, spec in servers.items():
-                bucket.setdefault(name, spec)
-    return result
-
-
-def _load_mcp_json() -> dict[str, Any]:
-    """Load and merge mcpServers from all well-known mcp.json locations.
-
-    Earlier paths take precedence — if the same server name appears in
-    multiple files, the first definition wins (via ``setdefault``).
-    Retained for callers that only need a merged view; use
-    :func:`_load_mcp_json_by_source` when per-scope presence matters.
-    """
-    merged: dict[str, Any] = {}
-    by_source = _load_mcp_json_by_source()
-    # Iteration order = priority (setdefault is a no-op once populated):
-    # personalclaw-specific file > legacy global. Matches rebuild_agent_config's
-    # merge order in agent.py.
-    for scope in (SCOPE_PERSONALCLAW, SCOPE_LEGACY_GLOBAL):
-        for name, spec in by_source.get(scope, {}).items():
-            merged.setdefault(name, spec)
+                merged.setdefault(name, spec)
     return merged
 
 
@@ -318,6 +318,7 @@ def _server_from_spec(name: str, spec: dict, source: str) -> McpServerInfo:
         url=spec.get("url", ""),
         headers=spec.get("headers", {}),
         source=source,
+        transport=mcp_transport(spec),
     )
 
 
@@ -358,15 +359,11 @@ def _fix_stale_managed_command(name: str, spec: dict) -> None:
 
 
 def list_servers() -> list[McpServerInfo]:
-    """Return all known MCP servers from agent config + mcp.json + CC global.
+    """Return all known MCP servers from the agent config and ``mcp.json``.
 
-    Merges cached probe results so status/tools survive across requests.
-    Populates ``presence`` for each server with booleans for whether the
-    server appears in each of the three scope config files.
-
-    Servers that live only in a provider global (e.g. a user added one via
-    directly to ``~/.claude.json``) still show up
-    on the dashboard so users get a full inventory from one page.
+    Merges cached probe results so status/tools survive across requests. A server configured
+    only in another tool (Claude Code) is not listed here: it is an import suggestion
+    (:func:`discover_importable_servers`), because the native loop cannot call it.
     """
     servers: dict[str, McpServerInfo] = {}
     disabled_in_agent: set[str] = set()
@@ -382,61 +379,18 @@ def list_servers() -> list[McpServerInfo]:
                 _fix_stale_managed_command(name, spec)
                 servers[name] = _server_from_spec(name, spec, "agent")
 
-    # 2. From scope-tagged mcp.json sources, in priority order so highest-
-    #    priority scope populates disabled_tools first and lower scopes
-    #    don't overwrite it.  Order = personalclaw-specific > CC global >
-    #    Legacy global, matching rebuild_agent_config's merge priority.
-    by_source = _load_mcp_json_by_source()
-    disabled_tools_claimed: set[str] = set()
-    for scope in (SCOPE_PERSONALCLAW, SCOPE_LEGACY_GLOBAL):
-        for name, spec in by_source.get(scope, {}).items():
-            if not isinstance(spec, dict):
-                continue
-            # Introduce the server first (if new) so the disabledTools
-            # carry below applies to both new and existing entries.  Without
-            # this ordering, the highest-priority scope's disabledTools is
-            # dropped for new servers because `name in servers` is False
-            # before insertion, letting a lower-priority scope's value
-            # overwrite the (empty) default on a later iteration.
-            if not spec.get("disabled") and name not in servers and name not in disabled_in_agent:
-                servers[name] = _server_from_spec(name, spec, "mcp.json")
+    # 2. From mcp.json. Introduce the server first (if new) so the disabledTools carry below
+    #    applies to new and existing entries alike. "disabledTools" by key presence, not
+    #    truthiness: an explicit [] ("every tool enabled") is the user's answer too.
+    for name, spec in _load_mcp_json().items():
+        if not isinstance(spec, dict):
+            continue
+        if not spec.get("disabled") and name not in servers and name not in disabled_in_agent:
+            servers[name] = _server_from_spec(name, spec, "mcp.json")
+        if name in servers and "disabledTools" in spec:
+            servers[name].disabled_tools = spec.get("disabledTools", [])
 
-            # Per-tool disables: first-scope-wins.  Use "disabledTools" in
-            # spec (key presence) rather than truthiness so an explicit
-            # "disabledTools": [] (user intent: "all tools enabled") is
-            # respected and prevents lower-priority scopes from overwriting.
-            if name in servers and "disabledTools" in spec and name not in disabled_tools_claimed:
-                servers[name].disabled_tools = spec.get("disabledTools", [])
-                disabled_tools_claimed.add(name)
-
-    # 3. Compute per-scope presence.
-    #
-    #    MC presence = "will this load in PersonalClaw sessions after the next
-    #    rebuild".  A server present in any PClaw scope source (or already in
-    #    the current merged agent config) counts as MC green unless PersonalClaw
-    #    has an explicit ``disabled: true`` override.  ``ccGlobal`` presence is
-    #    always False here: PersonalClaw does not read ``~/.claude.json`` as a
-    #    discovery source — Claude-Code servers are surfaced only as explicit
-    #    import suggestions (see :func:`discover_importable_servers`).
-    agent_names = set(agent_cfg.get("mcpServers", {}).keys())
-    personalclaw_own = by_source.get(SCOPE_PERSONALCLAW, {})
-    for name, server in servers.items():
-        pc_disabled = (
-            isinstance(personalclaw_own.get(name), dict)
-            and personalclaw_own[name].get("disabled") is True
-        )
-        in_any_source = (
-            name in agent_names
-            or name in personalclaw_own
-            or name in by_source.get(SCOPE_LEGACY_GLOBAL, {})
-        )
-        server.presence = {
-            SCOPE_PERSONALCLAW: in_any_source and not pc_disabled,
-            SCOPE_LEGACY_GLOBAL: name in by_source.get(SCOPE_LEGACY_GLOBAL, {}),
-            SCOPE_CC_GLOBAL: False,
-        }
-
-    # 4. Merge cached probe results
+    # 3. Merge cached probe results
     for s in servers.values():
         status, tools, error = _get_cached(s.name)
         s.status = status
@@ -446,93 +400,60 @@ def list_servers() -> list[McpServerInfo]:
     return list(servers.values())
 
 
-async def _read_jsonrpc_response(resp: aiohttp.ClientResponse) -> dict:
-    """Parse a JSON-RPC response from either JSON or SSE content-type.
-
-    MCP Streamable HTTP servers may respond with ``application/json`` (single
-    object) or ``text/event-stream`` (SSE with ``data:`` lines containing JSON).
-    """
-    ct = resp.content_type or ""
-    if "text/event-stream" in ct:
-        body = await resp.text()
-        last: dict = {}
-        for line in body.splitlines():
-            if line.startswith("data:"):
-                payload = line[len("data:") :].strip()
-                if payload:
-                    try:
-                        parsed = json.loads(payload)
-                        if isinstance(parsed, dict) and "id" in parsed:
-                            last = parsed
-                    except json.JSONDecodeError:
-                        pass
-        return last
-    return await resp.json()
-
-
 async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
-    """Probe a remote Streamable HTTP MCP server via POST."""
-    server.status = "probing"
+    """Probe a server at a URL through the native client — the connection an agent's tool call
+    makes, over the server's own transport and with its headers — so ``ok`` here means an agent
+    can use it.
+
+    This used to be a hand-written Streamable HTTP exchange: it posted to every URL, so an SSE
+    server always read as an error, and it dropped the session id between ``initialize`` and
+    ``tools/list``, so a stateful server read ``ok`` with no tools.
+    """
+    from personalclaw.config.secret_refs import ForeignSecretReference, resolve_mcp_values
+    from personalclaw.mcp_client import McpServerConn, mcp_sdk_available
+
     try:
-        init_body = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "personalclaw-probe", "version": "1.0.0"},
-            },
-        }
-        hdrs = {
-            **server.headers,
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        }
-
-        timeout = aiohttp.ClientTimeout(total=_get_probe_timeout())
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(server.url, json=init_body, headers=hdrs) as resp:
-                if resp.status != 200:
-                    server.status = "error"
-                    server.error = f"HTTP {resp.status}"
-                    _cache_probe(server)
-                    return server
-                data = await _read_jsonrpc_response(resp)
-                if data.get("error"):
-                    server.status = "error"
-                    err = data["error"]
-                    server.error = (
-                        err.get("message", "unknown error") if isinstance(err, dict) else str(err)
-                    )
-                    _cache_probe(server)
-                    return server
-
-            list_body = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
-            async with session.post(server.url, json=list_body, headers=hdrs) as resp:
-                if resp.status == 200:
-                    data = await _read_jsonrpc_response(resp)
-                    tools_data = data.get("result", {}).get("tools", [])
-                    server.tools = [
-                        {
-                            "name": t.get("name", ""),
-                            "description": t.get("description", ""),
-                            "inputSchema": t.get("inputSchema", {}),
-                        }
-                        for t in tools_data
-                        if isinstance(t, dict) and t.get("name")
-                    ]
-
-        server.status = "ok"
-    except asyncio.TimeoutError:
+        # The spec holds `{{secret:…}}` references; the header values are resolved here, where the
+        # connection is made, and never written anywhere — only keys the server's owner holds.
+        headers = resolve_mcp_values(server.name, "headers", server.headers)
+    except ForeignSecretReference as exc:
+        # No request was made and no value was read: the whole sentence is this server's error.
         server.status = "error"
-        server.error = "timeout"
-        logger.warning("MCP probe failed [%s]: timeout", server.name)
-    except Exception as exc:
+        server.error = str(exc)
+        _cache_probe(server)
+        return server
+    server.status = "probing"
+    if server.transport not in MCP_TRANSPORTS:
         server.status = "error"
-        server.error = str(exc)[:200]
+        server.error = f"PersonalClaw cannot connect over the {server.transport!r} transport"
+    elif not mcp_sdk_available():
+        server.status = "error"
+        server.error = (
+            "connecting to a server at a URL needs the 'mcp' extra "
+            "(pip install 'personalclaw[mcp]')"
+        )
+    else:
+        conn = McpServerConn(
+            server.name, {"type": server.transport, "url": server.url, "headers": headers}
+        )
+        try:
+            tools = await asyncio.wait_for(conn.list_tools(), timeout=_get_probe_timeout())
+            if conn.error:
+                server.status = "error"
+                server.error = conn.error
+            else:
+                server.status = "ok"
+                server.tools = [
+                    {"name": t.name, "description": t.description, "inputSchema": t.input_schema}
+                    for t in tools
+                ]
+        except asyncio.TimeoutError:
+            server.status = "error"
+            server.error = "timeout"
+        finally:
+            await conn.shutdown()
+    if server.status == "error":
         logger.warning("MCP probe failed [%s]: %s", server.name, server.error)
-
     _cache_probe(server)
     return server
 
@@ -574,15 +495,27 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
         logger.warning("MCP probe failed [%s]: no command configured", server.name)
         return server
 
+    from personalclaw.config.secret_refs import ForeignSecretReference, resolve_mcp_values
+
+    try:
+        # The spec holds `{{secret:…}}` references; the values are resolved here, at spawn, and
+        # reach only the child's environment — only keys the server's owner holds.
+        server_env = resolve_mcp_values(server.name, "env", server.env)
+    except ForeignSecretReference as exc:
+        # Nothing was spawned and no value was read: the whole sentence is this server's error.
+        server.status = "error"
+        server.error = str(exc)
+        _cache_probe(server)
+        return server
     server.status = "probing"
     proc = None
     try:
         env = dict(os.environ)
         env["PATH"] = augmented_path(env.get("PATH", ""))
         # Merge server-specific env additively
-        if "PATH" in server.env:
-            env["PATH"] = server.env["PATH"] + os.pathsep + env["PATH"]
-        env.update({k: v for k, v in server.env.items() if k != "PATH"})
+        if "PATH" in server_env:
+            env["PATH"] = server_env["PATH"] + os.pathsep + env["PATH"]
+        env.update({k: v for k, v in server_env.items() if k != "PATH"})
 
         # Resolve command to absolute path using the merged env PATH
         resolved = shutil.which(server.command, path=env.get("PATH"))
@@ -779,11 +712,17 @@ def discover_servers_to_sync() -> list[McpServerInfo]:
     for name, spec in mcp_servers.items():
         if not isinstance(spec, dict):
             continue
+        # `url`, `headers` and the transport too: without them a remote server read as a stdio
+        # one with no command, and `register_servers_for_cc` wrote it into `~/.mcp.json` as
+        # `{"command": "", "type": "stdio"}`, an entry Claude Code refuses.
         info = McpServerInfo(
             name=name,
             command=spec.get("command", ""),
             args=spec.get("args"),
             env=spec.get("env") or {},
+            url=spec.get("url", ""),
+            headers=spec.get("headers") or {},
+            transport=mcp_transport(spec),
             source="discovered",
         )
         if name not in agent_names:
@@ -805,10 +744,6 @@ def discover_servers_to_sync() -> list[McpServerInfo]:
     return out
 
 
-# Test override seam: tests monkeypatch this to inject fixture import paths.
-_IMPORT_JSON_PATHS: tuple[tuple[Path, str], ...] = _IMPORT_SOURCES
-
-
 def discover_importable_servers() -> list[dict[str, Any]]:
     """Return MCP servers configured in an external backend (e.g. Claude Code)
     that are NOT yet present in any PersonalClaw scope — i.e. candidates the
@@ -819,17 +754,22 @@ def discover_importable_servers() -> list[dict[str, Any]]:
     Claude-Code-only server). The UI offers each as an explicit "Import" action
     backed by ``/api/mcp/apply``, which copies the spec into the PClaw scope.
 
-    Each entry: ``{name, backend, command, args, env, url, headers}`` — enough
-    to render the suggestion and round-trip the spec on import.
+    This is the list a browser renders, so each entry carries what the picker shows and no
+    credential: ``{name, backend, transport, command, args, url, env, headers}``. ``command`` is
+    the command's file name, ``args`` the arguments with every credential in them masked
+    (:func:`masked_args`), ``url`` the address with its userinfo, query values and any token-shaped
+    path segment masked (:func:`masked_url`), and ``env``/``headers`` ``[{name, hasValue}]`` —
+    which variables the server sets, never what they hold. The import reads the whole definition
+    from the backend's own file, server-side, and stores its values.
     """
-    # Servers already known to PClaw (own scope + legacy global + agent config)
-    # are not "importable" — they're already first-class.
+    # Servers already known to PClaw (mcp.json + the agent config) are not
+    # "importable" — they're already first-class.
     known: set[str] = set(_load_mcp_json().keys())
     known |= set(_load_agent_config().get("mcpServers", {}).keys())
 
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for path, backend in _IMPORT_JSON_PATHS:
+    for path, backend in _import_sources():
         if not path.is_file():
             continue
         try:
@@ -845,23 +785,159 @@ def discover_importable_servers() -> list[dict[str, Any]]:
         for name, spec in servers.items():
             if not isinstance(spec, dict) or name in known or name in seen:
                 continue
-            # Only surface servers we can actually run: a stdio command or a
-            # remote url. Skip malformed entries silently.
-            if not (spec.get("command") or spec.get("url")):
+            # Only surface servers PersonalClaw can run: a stdio command, or a URL over a
+            # transport it has a client for. Skip anything else silently.
+            transport = mcp_transport(spec)
+            remote = transport != "stdio"
+            if transport not in MCP_TRANSPORTS or not spec.get("url" if remote else "command"):
                 continue
             seen.add(name)
+            args = spec.get("args")
             out.append(
                 {
                     "name": name,
                     "backend": backend,
-                    "command": spec.get("command", ""),
-                    "args": spec.get("args", []),
-                    "env": spec.get("env", {}),
-                    "url": spec.get("url", ""),
-                    "headers": spec.get("headers", {}),
+                    "transport": transport,
+                    "command": "" if remote else _command_name(str(spec["command"])),
+                    "args": masked_args(args) if not remote and isinstance(args, list) else [],
+                    "url": masked_url(str(spec["url"])) if remote else "",
+                    "env": _names_with_presence(spec.get("env")),
+                    "headers": _names_with_presence(spec.get("headers")),
                 }
             )
     return out
+
+
+def _names_with_presence(values: Any) -> list[dict[str, Any]]:
+    """``{name: value}`` as ``[{"name", "hasValue"}]``: what a listing may say about another
+    tool's environment or headers without holding any of it."""
+    if not isinstance(values, dict):
+        return []
+    return [{"name": str(k), "hasValue": v not in (None, "")} for k, v in values.items()]
+
+
+# ── what a browser may see of another tool's server definition ──────────────
+#
+# A server's arguments and URL are where a token goes when it is not in the environment or a
+# header: ``--api-key sk-…``, ``--header "Authorization: Bearer …"``, ``?token=…``,
+# ``https://user:pw@…``, or the secret path segment a hosted endpoint embeds. The import picker
+# needs to show which server a row is, not how it authenticates, so those parts reach the browser
+# as the mask the edit form uses. Deliberately biased toward masking: an over-masked argument
+# costs a little recognisability, an under-masked one is a token in the page and in its session
+# storage.
+
+#: Flags whose NEXT argument is an HTTP header (``mcp-remote --header "Authorization: Bearer …"``,
+#: curl's ``-H``): its name stays, its value is masked.
+_HEADER_FLAGS = frozenset({"--header", "--headers", "-H"})
+#: A scheme, as ``urlsplit`` reads one: so ``--url=https://…`` is not mistaken for a URL.
+_SCHEME_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*")
+#: A run of token characters. Long enough, and mixing letters and digits, it is a key in a format
+#: no named rule knows (a hex or base64url secret). ``/`` and ``.`` are not in it: a path, a host
+#: name and a version number are not tokens, and a JWT's parts are tested one by one.
+_TOKEN_RUN_RE = re.compile(r"[A-Za-z0-9_\-+=~]{20,}")
+_LETTER_RE = re.compile(r"[A-Za-z]")
+_DIGIT_RE = re.compile(r"\d")
+
+
+def _looks_secret(text: str) -> bool:
+    """Shaped like a credential: a format the credential redactor knows (a provider key, a bearer
+    token, ``api_key=…``), or a long run of token characters mixing letters and digits."""
+    from personalclaw.security import redact_credentials
+
+    if redact_credentials(text)[1]:
+        return True
+    return any(
+        _TOKEN_RUN_RE.fullmatch(piece) and _LETTER_RE.search(piece) and _DIGIT_RE.search(piece)
+        for piece in text.split(".")
+    )
+
+
+def _command_name(command: str) -> str:
+    """A command's file name (``npx``, ``node.exe``): the picker shows which program, not where
+    it lives."""
+    return re.split(r"[\\/]", command.rstrip("\\/"))[-1]
+
+
+def masked_url(url: str) -> str:
+    """``url`` as a browser may see it: where it points, and no credential it carries.
+
+    Scheme, host, port and path stay, so the server is recognisable. Userinfo, every query value,
+    the fragment and any path segment shaped like a token are masked. Text that is not a URL with
+    a host is masked whole if it looks like a credential and kept otherwise.
+    """
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return SECRET_MASK
+    host = parts.hostname
+    if not parts.scheme or not host:
+        return SECRET_MASK if _looks_secret(url) else url
+    netloc = (f"[{host}]" if ":" in host else host) + (f":{port}" if port else "")
+    if "@" in parts.netloc:
+        netloc = f"{SECRET_MASK}@{netloc}"
+    path = "/".join(
+        SECRET_MASK if seg and _looks_secret(unquote(seg)) else seg for seg in parts.path.split("/")
+    )
+    query = "&".join(
+        (SECRET_MASK if _looks_secret(key) else key) + (f"={SECRET_MASK}" if value else "")
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+    )
+    return urlunsplit((parts.scheme, netloc, path, query, SECRET_MASK if parts.fragment else ""))
+
+
+def masked_args(args: Iterable[Any]) -> list[str]:
+    """Command arguments as a browser may see them: every credential they carry masked.
+
+    The value a credential-named flag carries (``--api-key X``, ``--token=X``, ``API_KEY=X``,
+    named by :func:`~personalclaw.apps.secret_fields.is_credential_field_name`, the repository's
+    one rule), a header's value (``--header "Authorization: Bearer X"``), a URL's credential parts
+    (:func:`masked_url`), and an argument shaped like a credential. A shell string (``sh -c "…"``)
+    is read word by word by the same rules. Everything else stays, so the command line still says
+    which server it starts.
+    """
+    out: list[str] = []
+    carries: str | None = None
+    for raw in args:
+        arg = str(raw)
+        if carries == "header":
+            out.append(_masked_header(arg))
+        elif carries == "value":
+            out.append(SECRET_MASK)
+        else:
+            out.append(_masked_word(arg))
+        carries = _what_flag_carries(arg)
+    return out
+
+
+def _what_flag_carries(arg: str) -> str | None:
+    """What the argument AFTER ``arg`` holds: ``"header"``, a credential ``"value"``, or neither."""
+    if arg in _HEADER_FLAGS:
+        return "header"
+    if arg.startswith("-") and "=" not in arg and is_credential_field_name(arg.lstrip("-")):
+        return "value"
+    return None
+
+
+def _masked_header(text: str) -> str:
+    name, sep, _value = text.partition(":")
+    return f"{name.strip()}: {SECRET_MASK}" if sep and name.strip() else SECRET_MASK
+
+
+def _masked_word(arg: str) -> str:
+    scheme, sep, _rest = arg.partition("://")
+    if sep and _SCHEME_RE.fullmatch(scheme):
+        return masked_url(arg)
+    name, sep, value = arg.partition("=")
+    if sep and name:
+        if name in _HEADER_FLAGS:
+            return f"{name}={_masked_header(value)}"
+        if is_credential_field_name(name.lstrip("-")):
+            return f"{name}={SECRET_MASK}"
+        return f"{name}={_masked_word(value)}" if value else arg
+    if any(ch.isspace() for ch in arg):
+        return " ".join(masked_args(arg.split()))
+    return SECRET_MASK if _looks_secret(arg) else arg
 
 
 def sync_to_agent_config(servers: list[McpServerInfo]) -> bool:
@@ -926,8 +1002,15 @@ def register_servers_for_cc(
     Adds entries without removing existing ones. CC-side complement
     to sync_to_agent_config() which handles agent-side registration.
 
+    🔴 Only a server's PLAIN values are written: this file is outside the PersonalClaw home,
+    nobody asked for the copy, and a new one is created at the umask mode — so a credential-store
+    value copied here would be a world-readable plaintext secret. A server whose token Claude Code
+    needs goes into Claude Code's own scope on purpose (the Tools page's Claude Code toggle).
+
     Returns True if any servers were added or updated.
     """
+    from personalclaw.config.secret_refs import foreign_mcp_spec
+
     if mcp_json_path is None:
         mcp_json_path = Path.home() / ".mcp.json"
 
@@ -942,14 +1025,17 @@ def register_servers_for_cc(
     changed = False
 
     for s in servers:
+        plain = foreign_mcp_spec(s.name, {"env": s.env, "headers": s.headers}, with_secrets=False)
         if s.is_remote:
-            entry: dict = {"url": s.url, "type": "streamable-http"}
-            if s.headers:
-                entry["headers"] = s.headers
+            # Claude Code's own `type` values (`http`, `sse`): it refuses the `streamable-http`
+            # this used to write.
+            entry: dict = {"url": s.url, "type": s.transport}
+            if plain.get("headers"):
+                entry["headers"] = plain["headers"]
         else:
             entry = {"command": s.command, "args": s.args or [], "type": "stdio"}
-            if s.env:
-                entry["env"] = s.env
+            if plain.get("env"):
+                entry["env"] = plain["env"]
 
         if s.name not in mcp or mcp[s.name] != entry:
             mcp[s.name] = entry

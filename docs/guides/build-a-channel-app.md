@@ -63,16 +63,16 @@ the authority where the two could disagree: it carries the machine-readable inve
 |---|---|---|---|
 | `name` (property) | the opaque provider key: trust store, SEL, inbox source, settings all key off it. Pick it once; changing it orphans state | **MUST** | yes — clause 1 |
 | `display_name` (property) | the label on the Channels page | **MUST** | yes — clause 1 |
-| `connect()` | called at boot; returns success as a `bool` | **MUST** | yes — clause 2 |
-| `disconnect()` | graceful close at shutdown | **MUST** | yes — clause 2 |
+| `connect()` | the Channels page's **Connect** button; returns success as a `bool` | **MUST** | yes — clause 2 |
+| `disconnect()` | the Channels page's **Disconnect** button | **MUST** | yes — clause 2 |
 | `send(OutboundMessage)` | the one outbound primitive every surface can rely on; returns `bool`, and never raises for a well-formed message | **MUST** | yes — clause 2 |
 | `capabilities()` | machine-readable feature gate — core routes and feature-gates off it, so it must be *honest*, not aspirational | **MUST** | yes — clause 3 |
-| `health()` | the Channels page pill. `{state, detail}` with `state` in `ready` / `offline` / `error`; a fourth state renders as an unknown grey pill | **MUST** | yes — clause 5 |
+| `health()` | the Channels page pill, AND core's only answer to "is this channel configured" (whether core runs your receiver at all, the gateway's dashboard-only line, `setup`'s remote-URL prompt, `doctor`'s remote-bind warning). `{state, detail}` with `state` in `ready` / `offline` / `error`; a fourth state renders as an unknown grey pill. Return `offline` only when you have nothing to connect with (no token, no account): `error` (half-up) and `ready` both read as configured. While core is starting your receiver the page shows core's own `starting`, and a start that raised shows core's `error` sentence — yours again once the start has succeeded | **MUST** | yes — clause 5 |
 | `test()` | the "Test" button — an active probe. `{ok: bool, detail: str}`, and it MUST agree with `health()`: a green Test on an offline channel is a lie | **MUST** | yes — clause 5 |
 | `info()` | static listing; MUST project `name`, `display_name`, `connected`, `capabilities()` without relabelling any of them | **MUST** | yes — clause 1 |
 | `connected` (property) | the default `health()`/`test()`/`info()` all derive from it | **SHOULD** — override it, or override `health()` so it stops mattering | **no** — in no kit tuple |
-| `start_inbound(services)` | called once by the gateway *after* core services are up, with a `GatewayServices` handle. This is where a push/poll receiver starts | **MUST if `capabilities().inbound` is `True`**, else MAY | partly (clause 4 checks the inbound path exists, via `inbound_via=`) |
-| `stop_inbound()` | graceful stop of whatever `start_inbound` started | **MUST if you implement `start_inbound`** | **no** — in no kit tuple |
+| `start_inbound(services)` | called by core *after* its services are up, with a `GatewayServices` handle — at boot, and whenever your channel is enabled, installed, updated or its settings are saved — at most once per instance, and only while `health()` is not `offline`. It runs as its own task: raising, or not returning within a minute, becomes your channel's status. This is where a push/poll receiver starts | **MUST if `capabilities().inbound` is `True`**, else MAY | partly (clause 4 checks the inbound path exists, via `inbound_via=`) |
+| `stop_inbound()` | stop EVERYTHING `start_inbound` started. Called when your instance is replaced (the replacement starts only after this returns), disabled or uninstalled, when `health()` turns `offline`, and at shutdown. Core drops the delivery handle registered under your channel's name itself | **MUST if you implement `start_inbound`** | **no** — in no kit tuple |
 | `receive()` | the optional pull-based inbound seam: an `AsyncIterator[ChannelMessage]`. The base implementation raises | **MAY** — no shipped channel uses it; they all drive their own loop from `start_inbound` | partly (clause 4 accepts a named handler instead) |
 
 `connected`, `start_inbound`, `stop_inbound` and `receive` appear in **none** of the kit's
@@ -124,13 +124,33 @@ to catch dishonesty here: declaring `inbound=True` with no inbound path, and dec
 
 ```
 install / enable      →  your manifest's provider `implementation` factory builds the instance
-gateway boot          →  connect()                     (returns bool; a False is not a crash)
-                      →  start_inbound(services)       (once, AFTER core services are up)
+the instance is live  →  health(); unless `offline`: start_inbound(services), as its own task
+  (boot, install,        (the page reads `starting` until it returns; `error` + why if it
+   enable, update,        raises or takes over a minute)
+   settings saved)
+settings saved/update →  a NEW instance: old.stop_inbound() FIRST, then the new one starts —
+                         never two receivers at once
+disable / uninstall   →  stop_inbound()                (core drops your delivery handle)
+health() → offline    →  stop_inbound()                (e.g. its token was deleted)
 Channels page render  →  info(), capabilities(), health()
 "Test" button         →  test()                        (must agree with health())
+"Connect"/"Disconnect"→  connect() / disconnect()
 every inbound message →  your handler → guard_inbound(...) → session
-gateway shutdown      →  stop_inbound() → disconnect()
+gateway shutdown      →  stop_inbound()
 ```
+
+Core runs receivers by one rule, `channel_transports.reconcile_inbound`, applied at boot, on every
+change to the transport registry (enable, disable, install, uninstall, update, a settings save), and
+after a secret is written to or deleted from the Secrets vault: exactly one receiver per enabled
+channel whose `health()` is not `offline`, on the instance that is registered NOW, and none for any
+other. So a channel starts and stops receiving the moment it is enabled, changed or removed — no
+restart. After a vault write, a channel that then reports `error` (a receiver still on the token it
+started with says so) is rebuilt from its settings, which replaces its receiver. `start_inbound()`
+is called at most once per instance, and a failed start is retried only when the channel changes
+(its settings are saved, it is turned off and on). `stop_inbound()` has to actually stop what
+`start_inbound()` started: the replacement starts the moment it returns. An update's new Python
+code still needs a restart to load (the app loader caches modules, see
+[app-platform](../architecture/app-platform.md)); the receiver is replaced either way.
 
 Notes that bite:
 
@@ -192,8 +212,20 @@ What that one call gets you, and what you must not re-implement:
   attributed form will not match; use `security.is_fenced`. The kit reads your module's
   source for a `fenced_text` reference precisely to catch a refactor that reverts to
   `cm.text`.
-- **Owner identity** comes from the credential store (`CRED_OWNER_ID`), not from your
-  settings.
+- **Owner identity** comes from the credential store, ONE KEY PER CHANNEL: save your owner's
+  user id under `owner_id_credential(PROVIDER)` and read it with `owner_id_for(PROVIDER)`
+  (both from `personalclaw.sdk.channel`; `PROVIDER` is the key you pass to
+  `deliver_channel_inbound`). Core addresses the owner's notifications on your channel with
+  the same key. `CRED_OWNER_ID` is the one key every channel used to share — setting up a
+  second channel overwrote the first one's owner — and `owner_id_for` falls back to it only
+  while your channel has none of its own.
+- **Refuse an owner id you cannot reach.** An owner notification (a heartbeat or cron result,
+  a hook result, a file, `send-message`) tries every connected channel in name order until one
+  delivers it (`channel_delivery.reach_owner`). Your channel is passed over when it has no
+  owner id, when `open_dm` returns `""` or raises, or when the send raises — so return `""`
+  from `open_dm` for an id that is not one of yours (email-channel does, for anything that is
+  not an address) rather than handing it to your API. When no connected channel gets it
+  through, it goes to the Inbox with a sentence naming why each one could not.
 
 Linking the channel to the dashboard: build a session link with the token-auth helpers
 (`generate_token`, `LINK_WINDOW_SECS`) over `dashboard_origin()`, and give the owner a way
@@ -289,6 +321,13 @@ app-creation guide in the apps repository; the channel-specific parts are:
   Both shapes are read everywhere, including by the completeness advisory below.
 - **Secrets go in the credential store**, never in `app.json` or the settings schema.
   Prompt for them from your `cli_setup` contribution and probe them from `cli_doctor`.
+  A step runs with your app's directory on `sys.path` (while it imports and while it runs),
+  so it may import your own package; one that cannot load or raises makes
+  `personalclaw setup` exit non-zero, naming your app and the exception.
+  `SetupContext.delete_credential(name)` removes a secret an EARLIER release saved under a
+  plain name — it refuses a key one of your settings owns (clear the setting instead).
+- A thread-title generator: parse the model's reply with `parse_title` from
+  `personalclaw.sdk.channel`, the dashboard's own parser, rather than a copy of it.
 - Declare the **minimum** permissions. The Store renders them as the consent surface a
   user reads before installing.
 - Ship `test_provider.py` (the kit call above), a `README.md` that documents any capability

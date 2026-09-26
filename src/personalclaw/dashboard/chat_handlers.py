@@ -17,6 +17,11 @@ from aiohttp.client_exceptions import ClientConnectionResetError
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig, default_workspace_dir, resolve_session_workspace
+from personalclaw.dashboard.approval_state import (
+    SESSION_APPROVAL_ACTIONS,
+    _mark_permission_resolved,
+    chat_approval_id,
+)
 from personalclaw.dashboard.chat_persistence import (
     _redact_meta,
     _rehydrate_session_from_history,
@@ -26,7 +31,7 @@ from personalclaw.dashboard.chat_persistence import (
     save_session_to_history,
     session_key_exists,
 )
-from personalclaw.dashboard.chat_runner import run_chat
+from personalclaw.dashboard.chat_runner import app_conversation_posture, run_chat
 from personalclaw.dashboard.chat_utils import (
     _build_stream_chunk,
     _emit_agent_assignment,
@@ -40,14 +45,7 @@ from personalclaw.dashboard.chat_utils import (
     full_session_messages,
     persisted_history_key,
 )
-from personalclaw.dashboard.state import (
-    SESSION_APPROVAL_ACTIONS,
-    STANDING_APPROVAL_ACTIONS,
-    DashboardState,
-    _ChatSession,
-    _mark_permission_resolved,
-    chat_approval_id,
-)
+from personalclaw.dashboard.state import CREATED_BY_APP_META_KEY, DashboardState, _ChatSession
 from personalclaw.http_errors import json_error
 from personalclaw.loop import files as loop_files
 from personalclaw.request_validation import json_object_body
@@ -235,34 +233,10 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         if not session_key_exists(state, session_name):
             return json_error("session_not_found", status=404)
         _rehydrate_session_from_history(state, session_name, include_archived=True)
-    session = state.get_or_create_session(session_name, app=request.get("app", ""))
-
-    # App ownership check: deny-by-default for app tokens.
-    # Apps can only access sessions they own. Dashboard users (empty request_app)
-    # can access everything.
-    request_app = request.get("app", "")
-    if request_app:
-        if not session._app:
-            # Unscoped session created by dashboard — apps cannot access it.
-            sel().log_api_access(
-                caller=request_app,
-                operation="chat_send",
-                outcome="denied",
-                source="app_isolation",
-                resources=f"session={session.key}",
-                error="app cannot access unscoped sessions",
-            )
-            return web.json_response({"error": "app cannot access unscoped sessions"}, status=403)
-        elif request_app != session._app:
-            sel().log_api_access(
-                caller=request_app,
-                operation="chat_send",
-                outcome="denied",
-                source="app_isolation",
-                resources=f"session={session.key}",
-                error="app does not own this session",
-            )
-            return web.json_response({"error": "app does not own this session"}, status=403)
+    # An app's request that names no conversation starts one that is the app's. One it names was
+    # already held to the app's own by the permission middleware (`ROUTE_AUTHZ["POST /api/chat"]`),
+    # before anything above loaded it.
+    session = state.get_or_create_session(session_name, created_by_app=request.get("app", ""))
 
     if session.agent not in (None, ""):
         # Session already has an agent — only reject explicit mismatches (non-empty different agent).  # noqa: E501
@@ -624,8 +598,15 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
     excluded. Worker sessions (goal loops / code projects / campaigns) ARE included
     but tagged with their ``origin`` + ``source_id``/``source_label`` so the UI can
     default-hide them behind a filter and link each back to its cockpit.
+
+    An app caller gets the conversations it started and nothing else
+    (``DashboardState.session_creating_app``, ``ROUTE_AUTHZ``'s reason for this route). A
+    conversation an app started carries the app and its display name, which your history row
+    shows as "Started by …".
     """
     state: DashboardState = request.app["state"]
+    request_app = request.get("app", "")
+    app_names: dict[str, str] = {}
     # Archived sessions are excluded by DEFAULT — that is the whole point of
     # archiving. `?archived=1` returns only the archive (the Archived view); `?all=1`
     # returns both. Filtering here rather than in the client keeps the contract in one
@@ -664,7 +645,13 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
         if getattr(s, "memory_mode", "persistent") in ("incognito", "temporary"):
             seen.add(s.key)
             continue
+        # Marked seen either way, so the disk branch below cannot hand the app the same
+        # conversation from its file.
+        if request_app and s.created_by_app != request_app:
+            seen.add(s.key)
+            continue
         d = s.to_dict()
+        d.update(_started_by(s.created_by_app, app_names))
         # A channel-linked session keeps its channel origin even once resumed live,
         # so it stays grouped under the Channel scope rather than folding into
         # 'manual'.
@@ -722,6 +709,8 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
             if name in seen:
                 continue
             meta = state.conversation_log.get_metadata(raw_key)
+            if request_app and meta.get(CREATED_BY_APP_META_KEY) != request_app:
+                continue
             if meta.get("closed"):
                 continue
             # Incognito/temporary histories are never surfaced in the list.
@@ -766,6 +755,7 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
                     else 0.0
                 ),
                 "never_archive": bool(meta.get("never_archive")),
+                **_started_by(meta.get(CREATED_BY_APP_META_KEY), app_names),
             }
             if origin != "manual":
                 row["source_id"] = sid
@@ -775,6 +765,18 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
             out.append(row)
 
     return web.json_response(out)
+
+
+def _started_by(creator: object, names: dict[str, str]) -> dict[str, str]:
+    """A history row's "Started by …" fields for a conversation whose creating app is *creator*,
+    or nothing for one of yours. *names* caches display names across one list's rows."""
+    if not isinstance(creator, str) or not creator:
+        return {}
+    if creator not in names:
+        from personalclaw.apps.app_manager import display_name_of
+
+        names[creator] = display_name_of(creator)
+    return {"created_by_app": creator, "created_by_app_name": names[creator]}
 
 
 async def api_chat_tool_result(request: web.Request) -> web.Response:
@@ -912,6 +914,12 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             if parent_meta:
                 forked_from_title = str(parent_meta.get("title") or "") or parent_key
 
+    # A conversation an app started runs under the APP's grant, whoever sends into it — your
+    # approval switches never reach it (`chat_runner.app_conversation_posture`). The chat names the
+    # app and says so above the composer, and the posture it restores is that grant's: it approves
+    # like Trust, or it asks. None for one of yours.
+    app_auto = app_conversation_posture(session)
+
     return web.json_response(
         {
             "key": session.key,
@@ -961,13 +969,22 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
                 else None
             ),
             "approval": (
-                "yolo"
-                if state.is_yolo_active()
+                ("trust" if app_auto else "normal")
+                if app_auto is not None
                 else (
-                    "trust"
-                    if session._trust
-                    else "trust_reads" if session._trust_reads else "normal"
+                    "yolo"
+                    if state.is_yolo_active()
+                    else (
+                        "trust"
+                        if session._trust
+                        else "trust_reads" if session._trust_reads else "normal"
+                    )
                 )
+            ),
+            **(
+                {**_started_by(session.created_by_app, {}), "app_auto_approves": app_auto}
+                if app_auto is not None
+                else {}
             ),
             # Memory mode so mode-gated affordances restore on reopen (e.g. the chat
             # page hides Fork on a non-persistent session — the backend refuses to
@@ -1047,7 +1064,7 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
             mode=body.get("mode", ""),
             memory_mode=memory_mode,
             ephemeral=body.get("ephemeral"),
-            app=request.get("app", ""),
+            created_by_app=request.get("app", ""),
             project_id=project_id,
         )
     except ValueError as exc:
@@ -1317,21 +1334,8 @@ async def api_chat_screen_frame(request: web.Request) -> web.Response:
         return web.json_response({"error": "not found"}, status=404)
     session_key = session.key
 
-    # App tokens have no business capturing the operator's screen: this is a
-    # human-consent surface driven from the dashboard's own composer, and an app
-    # holding a session token is not the human who clicked "share".
-    request_app = request.get("app", "")
-    if request_app:
-        sel().log_api_access(
-            caller=request_app,
-            operation="chat.screen_frame",
-            outcome="denied",
-            source="screen_share",
-            resources=f"session={session_key}",
-            error="screen frames are dashboard-only",
-        )
-        return web.json_response({"error": "screen frames are dashboard-only"}, status=403)
-
+    # No app reaches this: it is a human-consent surface driven from the dashboard's own composer,
+    # and `ROUTE_AUTHZ` makes both screen-frame writes owner-only, refused before this runs.
     action = str(body.get("action") or "frame").strip().lower()
     if action not in ("start", "frame", "stop"):
         return web.json_response({"error": "action must be start, frame or stop"}, status=400)
@@ -1446,9 +1450,6 @@ async def api_chat_screen_frame_pin(request: web.Request) -> web.Response:
     session = state._sessions.get(name)
     if not session:
         return web.json_response({"error": "not found"}, status=404)
-
-    if request.get("app", ""):
-        return web.json_response({"error": "screen frames are dashboard-only"}, status=403)
 
     if not AppConfig.load().dashboard.screen_share_enabled:
         sel().log_api_access(
@@ -1675,36 +1676,8 @@ async def api_chat_session_delete(request: web.Request) -> web.Response:
     if not session and not on_disk:
         return web.json_response({"error": "not found"}, status=404)
 
-    # App ownership check: app can only delete sessions it created.
-    # Unscoped sessions (empty _app) cannot be deleted by app tokens.
-    # Dashboard users (empty request_app) can delete anything. (Only enforceable
-    # against a resident session's _app; a disk-only session predates any app scope.)
-    request_app = request.get("app", "")
-    if request_app and session is not None:
-        if session._app != request_app:
-            sel().log_api_access(
-                caller=request_app,
-                operation="session_delete",
-                outcome="denied",
-                source="app_isolation",
-                resources=f"session={name}",
-                error="app does not own this session",
-            )
-            return web.json_response({"error": "app does not own this session"}, status=403)
-        if not session._app:
-            sel().log_api_access(
-                caller=request_app,
-                operation="session_delete",
-                outcome="denied",
-                source="app_isolation",
-                resources=f"session={name}",
-                error="app cannot delete unscoped sessions",
-            )
-            return web.json_response({"error": "app cannot delete unscoped sessions"}, status=403)
-    elif request_app and session is None:
-        # An app token cannot hard-delete a disk-only (unscoped) session it can't prove it owns.
-        return web.json_response({"error": "app cannot delete unscoped sessions"}, status=403)
-
+    # An app reaches this only for a conversation it started, resident or on disk — the
+    # permission middleware checked the creator on its meta line before this ran.
     # Remove from dict before async operations
     state._sessions.pop(name, None)
     if session is not None and session.running and session.task is not None:
@@ -1785,12 +1758,10 @@ async def api_chat_sessions_cleanup(request: web.Request) -> web.Response:
         session = state._sessions.get(name)
         if session is None or session.pinned:
             continue
-        # App Kit ownership isolation: app callers can only archive
-        # their own sessions. Dashboard users (empty request_app) pass
-        # through and can archive anything.
-        if request_app:
-            if session._app != request_app:
-                continue
+        # An app archives only conversations it started (`ROUTE_AUTHZ`'s reason for this route);
+        # you archive any.
+        if request_app and session.created_by_app != request_app:
+            continue
         last_activity = 0.0
         if session.messages:
             for m in reversed(session.messages):
@@ -2215,8 +2186,10 @@ async def api_chat_session_workspace_dir(request: web.Request) -> web.Response:
         outcome="allowed",
         resources=f"session={name} workspace_dir={workspace_dir}",
     )
-    # Track recent working directories
-    if workspace_dir:
+    # Track recent working directories — yours. An app's conversation works where the app (or you,
+    # on its behalf) pointed it, and that folder is not one you chose to work in: filed among your
+    # recents, it would be offered to your next chat as one of yours.
+    if workspace_dir and not session.created_by_app:
         try:
             await asyncio.to_thread(_save_recent_project, workspace_dir)
         except Exception:
@@ -2302,31 +2275,8 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
                 existing = session
                 break
     if existing:
-        # App ownership check: an app may only act on sessions it owns.
-        request_app = request.get("app", "")
-        if request_app:
-            if not existing._app:
-                sel().log_api_access(
-                    caller=request_app,
-                    operation="session_resume",
-                    outcome="denied",
-                    source="app_isolation",
-                    resources=f"session={existing.key}",
-                    error="app cannot access unscoped sessions",
-                )
-                return web.json_response(
-                    {"error": "app cannot access unscoped sessions"}, status=403
-                )
-            elif request_app != existing._app:
-                sel().log_api_access(
-                    caller=request_app,
-                    operation="session_resume",
-                    outcome="denied",
-                    source="app_isolation",
-                    resources=f"session={existing.key}",
-                    error="app does not own this session",
-                )
-                return web.json_response({"error": "app does not own this session"}, status=403)
+        # An app's request got here only for a conversation it started, named both in the path and
+        # in any `key` (`ROUTE_AUTHZ["POST /api/chat/sessions/{session}/resume"].owns`).
         total = len(existing.messages)
         recent = existing.messages[-200:] if total > 200 else existing.messages
         prepared = _prepare_messages(recent, existing.running)
@@ -2355,7 +2305,7 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
     # only ever going to produce a blank session wearing a dead conversation's name.
     if not session_key_exists(state, history_key):
         return json_error("session_not_found", status=404)
-    session = state.get_or_create_session(name, app=request.get("app", ""))
+    session = state.get_or_create_session(name, created_by_app=request.get("app", ""))
     # 🔴 EVERY disk read below reads THIS key, not `history_key`. `history_key` is the
     # BARE client-supplied name; a dashboard session's file lives under the
     # `dashboard:` form, so `get_metadata`, `_path` and `read_messages_chained` all
@@ -2563,6 +2513,10 @@ async def api_chat_mode(request: web.Request) -> web.Response:
         for session in state._sessions.values():
             for aid, fut in list(session._approval_futures.items()):
                 if not fut.done():
+                    # A posture switch is a door like any other: it does not approve a call
+                    # for work that has already ended (a stopped loop's worker, say).
+                    if state.refuse_ended_owner(chat_approval_id(session.key, aid)):
+                        continue
                     fut.set_result("approved")
                     # Persist resolved state into the permission message
                     _mark_permission_resolved(session.messages, aid, mode)
@@ -2570,7 +2524,7 @@ async def api_chat_mode(request: web.Request) -> web.Response:
                     # Inbox row and Home's count all read the same entry.
                     state.withdraw_approval(
                         chat_approval_id(session.key, aid),
-                        approved=True,
+                        outcome="approved",
                         request_id=aid,
                         session=session.key,
                     )
@@ -2722,31 +2676,8 @@ async def api_chat_session_approve(request: web.Request) -> web.Response:
             {"error": f"unknown action {action!r}", "allowed": sorted(SESSION_APPROVAL_ACTIONS)},
             status=400,
         )
-    # 🔴 An app answers ONE call. `yolo` here turns auto-approve on for every session and
-    # `trust_agent` persists it onto the agent for every future chat — the posture an app is
-    # refused in `/api/chat/mode` and in the config PATCH, reached through the approval card
-    # instead. A companion relaying the owner's approve/reject needs nothing more.
-    app_name = request.get("app", "")
-    if app_name and action in STANDING_APPROVAL_ACTIONS:
-        try:
-            sel().log_api_access(
-                caller=f"app:{app_name}",
-                operation="chat.approval_resolve",
-                outcome="denied",
-                source="app_permissions",
-                resources=f"{name}:{action}",
-                error="standing approval grant is owner-only",
-            )
-        except Exception:
-            logger.warning("SEL audit failed for a refused app approval grant", exc_info=True)
-        return json_error(
-            "security_setting_owner_only",
-            message=(
-                f"an app may answer this approval once, with 'approved' or 'rejected' — "
-                f"'{action}' changes the approval posture, which only the owner can do"
-            ),
-            status=403,
-        )
+    # No app reaches this: the route is the owner's in `apps/permissions.ROUTE_AUTHZ`, so every
+    # verb here, `yolo` and `trust_agent` included, is the owner's.
     # Name the target BEFORE anything is granted: a trust/yolo verb aimed at an approval that is
     # no longer pending must not raise the session's posture behind a 404.
     pending_ids = [k for k, f in session._approval_futures.items() if not f.done()]
@@ -2760,6 +2691,9 @@ async def api_chat_session_approve(request: web.Request) -> web.Response:
         request_id = pending_ids[0] if pending_ids else ""
     if request_id not in pending_ids:
         return web.json_response({"error": "no pending approval"}, status=404)
+    ended = state.refuse_ended_owner(chat_approval_id(session.key, request_id))
+    if ended:
+        return json_error("approval_owner_ended", message=f"Nothing was run: {ended}.", status=409)
     grant = state.decide_session_approval(session, request_id, action)
     # Report what the grant DID. The route answered a flat `{"ok": true}`, so a client that
     # had just rendered "Saved on this agent: … in this chat and future ones" had no way to
@@ -2906,31 +2840,9 @@ async def api_chat_session_context(request: web.Request) -> web.Response:
     if not session:
         return web.json_response({"error": "session not found"}, status=404)
 
-    # App ownership check: deny-by-default for app tokens.
-    # Apps can only access sessions they own. Dashboard users (empty request_app)
-    # can access everything.
+    # An app reaches this only for a conversation it started (`ROUTE_AUTHZ`'s `owns`), which the
+    # permission middleware checked before this ran.
     request_app = request.get("app", "")
-    if request_app:
-        if not session._app:
-            sel().log_api_access(
-                caller=request_app,
-                operation="context_inject",
-                outcome="denied",
-                source="app_isolation",
-                resources=f"session={name}",
-                error="app cannot access unscoped sessions",
-            )
-            return web.json_response({"error": "app cannot access unscoped sessions"}, status=403)
-        elif request_app != session._app:
-            sel().log_api_access(
-                caller=request_app,
-                operation="context_inject",
-                outcome="denied",
-                source="app_isolation",
-                resources=f"session={name}",
-                error="app does not own this session",
-            )
-            return web.json_response({"error": "app does not own this session"}, status=403)
 
     try:
         body = await request.json()

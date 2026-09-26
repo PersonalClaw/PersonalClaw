@@ -223,9 +223,10 @@ const useAgentDefaults = () => useQuery('settings:agent-defaults', async () => {
   const [cfg, agents] = await Promise.all([
     // NO `.catch` — byte-identical to `AgentDefaultsPanel`'s read, which is the whole point.
     api.personalclawConfig().then((c) => (c.agent ?? {}) as Record<string, unknown>),
-    // This one KEEPS its fallback, and the panel spells it the same way: the default agent's NAME is a
-    // decorating read (the tile renders '—' for it), not a control's claimed state.
-    api.agents().then((a) => a.default_agent).catch(() => ''),
+    // This one KEEPS its fallback, spelled exactly as the panel spells it: `null`. Here the default
+    // agent's NAME only decorates the tile, which renders '—' for `null` as for none. The panel seeds
+    // its picker from the same value, where `''` claimed "no default" for a default nobody had read.
+    api.agents().then((a) => a.default_agent).catch(() => null),
   ])
   return { cfg, defaultAgent: agents }
 }, { persist: true })

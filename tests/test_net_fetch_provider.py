@@ -509,6 +509,86 @@ async def test_a_non_2xx_answer_is_a_failure_with_the_status_visible(
     assert "text" not in json.loads(result.stdout)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "failure_class", "retryable"),
+    [
+        (503, "transient", True),
+        (429, "transient", True),
+        (404, "user", False),
+        (403, "permission", False),
+    ],
+)
+async def test_a_non_2xx_answer_says_whether_a_retry_can_help(
+    monkeypatch: pytest.MonkeyPatch, status: int, failure_class: str, retryable: bool
+) -> None:
+    """The status is known here and nowhere after: the engine reads it off the result, and used to
+    file every failed action `transient`, a 404 included."""
+    from personalclaw.workflows.bindings import BindingContext
+    from personalclaw.workflows.engine import dispatch_action
+    from personalclaw.workflows.models import Node
+
+    _with_operator_egress(monkeypatch, _FakeEgress(allow_hosts=[PUBLIC_HOST]))
+    _fake_dns(monkeypatch, FAKE_DNS)
+    _install_wire(monkeypatch, status=status, body=b"nope")
+
+    node = Node.from_dict(
+        {
+            "kind": "action",
+            "id": "fetch",
+            "config": {"provider": PROVIDER_NAME, "with": {"url": PUBLIC_URL}},
+        }
+    )
+    result = await dispatch_action(
+        node, BindingContext(), get_provider=lambda _n: NetFetchActionProvider()
+    )
+    assert result.failure.failure_class.value == failure_class
+    assert result.failure.retryable is retryable
+    assert ("Retry" in result.failure.remediation) is retryable
+
+
+@pytest.mark.asyncio
+async def test_a_host_that_cannot_be_reached_is_a_network_failure_a_retry_can_clear(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Classified by the exception's type, where the exception still exists: the message a DNS
+    failure leaves ("nodename nor servname provided") carries no word the text rules know."""
+    _with_operator_egress(monkeypatch, _FakeEgress(allow_hosts=[PUBLIC_HOST]))
+    _fake_dns(monkeypatch, FAKE_DNS)
+    _install_wire(monkeypatch)
+
+    import aiohttp
+
+    async def unreachable(*_a: Any, **_kw: Any) -> Any:
+        raise aiohttp.ClientConnectionError(
+            f"Cannot connect to host {PUBLIC_HOST}:443 ssl:default "
+            "[nodename nor servname provided, or not known]"
+        )
+
+    monkeypatch.setattr("personalclaw.net.fetch", unreachable)
+    result = await _run({"url": PUBLIC_URL})
+    assert result.success is False
+    assert result.failure_class == "network"
+
+    async def slow(*_a: Any, **_kw: Any) -> Any:
+        raise TimeoutError()
+
+    monkeypatch.setattr("personalclaw.net.fetch", slow)
+    assert (await _run({"url": PUBLIC_URL})).failure_class == "transient"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_host_is_permanent_until_the_allow_list_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _with_operator_egress(monkeypatch, _FakeEgress(allow_hosts=[]))
+    _fake_dns(monkeypatch, FAKE_DNS)
+    _install_wire(monkeypatch)
+    result = await _run({"url": PUBLIC_URL})
+    assert result.agent_error.code == "ERR_NET_FETCH_EGRESS_BLOCKED"
+    assert result.failure_class == "permission"
+
+
 # ── property 4: registration, all five points ────────────────────────────────
 
 

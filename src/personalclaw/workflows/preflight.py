@@ -184,7 +184,12 @@ def _check_credentials(
                 Finding(
                     code="WF_PRE_CREDENTIAL_MISSING",
                     message=f"credential {key!r} is not set",
-                    remediation=f"add {key} in Settings → Providers, then start the run again",
+                    # No settings page is named: this check reads `credentials.json`, which
+                    # neither Settings → Providers (a provider's key is stored under a name of
+                    # its own) nor Settings → Secrets writes, so either would send the user to
+                    # a page whose save does not clear this refusal.
+                    remediation=f"set a value for the credential {key!r}, then start the run "
+                    "again",
                     kind="credentials",
                 )
             )

@@ -85,8 +85,15 @@ function FitChip({ model }: { model: AvailableModel }) {
  *  cluster, and a browse filter that can hide the ones this device cannot run — but ONLY on a host
  *  whose memory budget was actually measured. See `modelFit.ts`. */
 export function LocalModelManager({
-  provider, models, searchable, onChanged,
-}: { provider: string; models: AvailableModel[]; searchable?: boolean; onChanged: () => void }) {
+  provider, models, searchable, error, onChanged,
+}: {
+  provider: string; models: AvailableModel[]; searchable?: boolean
+  /** Why the catalog could not be listed (the provider's row `error`). An empty catalog with an
+   *  error is "could not ask", never "lists none" — an Ollama nothing was listening at used to
+   *  read "No downloadable models listed." */
+  error?: string
+  onChanged: () => void
+}) {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [query, setQuery] = useState('')
   const [searchResults, setSearchResults] = useState<AvailableModel[] | null>(null)
@@ -126,12 +133,21 @@ export function LocalModelManager({
   }
 
   // Debounced remote-catalog search (searchable providers only, e.g. ollama).
+  // A query's synchronous consequences happen in the handler that changes it, batched into the
+  // keystroke's own render; the effect below only runs the debounced search. `setSearching(true)`
+  // used to sit in that effect, where it scheduled a render from inside every keystroke's commit
+  // (measured: 103 of 110 fast keys) — the shape that throws React's #185 once a page renders slower
+  // than the keys arrive (the mechanism: `ui/composer/MarkdownInput`).
+  const search = (v: string) => {
+    setQuery(v)
+    if (v.trim()) setSearching(true)
+    else { setSearchResults(null); setSearching(false) }
+  }
   useEffect(() => {
     if (!searchable) return
     const q = query.trim()
-    if (!q) { setSearchResults(null); setSearching(false); return }
+    if (!q) return
     const seq = ++searchSeq.current
-    setSearching(true)
     const t = setTimeout(async () => {
       try {
         const res = await api.searchLocalModels(provider, q)
@@ -277,7 +293,7 @@ export function LocalModelManager({
 
       {searchable && (
         <div className="mb-1.5">
-          <SearchField value={query} onChange={setQuery} size="sm"
+          <SearchField value={query} onChange={search} size="sm"
             placeholder="Search the library to install a model…"
             ariaLabel="Search the model library" />
           {/* The results come from a fetch, so `active` waits for it: announcing while `searching`
@@ -290,6 +306,10 @@ export function LocalModelManager({
 
       {showSearch && searching && rows.length === 0 ? (
         <div data-type="caption" className="py-1 text-on-surface-low italic">Searching…</div>
+      ) : !showSearch && models.length === 0 && error ? (
+        <div role="alert" data-type="caption" className="flex items-start gap-1 py-1" style={{ color: 'var(--color-danger)' }}>
+          <AlertTriangle size={11} className="mt-0.5 shrink-0" /> <span className="min-w-0">{error}</span>
+        </div>
       ) : rows.length === 0 ? (
         <div data-type="caption" className="py-1 text-on-surface-low italic">
           {/* The filter can empty the list completely, and "No downloadable models listed" would

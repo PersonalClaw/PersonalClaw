@@ -24,6 +24,7 @@ path with extra steps.
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import re
@@ -55,11 +56,19 @@ class BindingError(Exception):
     that pipe it names an act the author has already performed, which is worse than silence.
     Measured: six bundled templates shipped the guarded idiom and the engine answered every
     one of them by asking for the guard they had written.
+
+    `caller_supplied` is set where the missing value is one the CALLER provides, a run input or
+    a secret, so the failure is theirs to fix. Only the raise site can tell: `{{inputs.x}}` with
+    no `x` is the caller's, and the same expression failing in its pipe is the definition's.
+    `failure_taxonomy.binding_failure` files the first USER and everything else INTERNAL.
     """
 
-    def __init__(self, message: str, expr: str = "", remediation: str = "") -> None:
+    def __init__(
+        self, message: str, expr: str = "", remediation: str = "", *, caller_supplied: bool = False
+    ) -> None:
         self.expr = expr
         self.remediation = remediation
+        self.caller_supplied = caller_supplied
         super().__init__(f"{message} (in {{{{{expr}}}}})" if expr else message)
 
 
@@ -488,6 +497,10 @@ PIPES: dict[str, Any] = {
     "source_refs": _pipe_source_refs,
 }
 
+#: Each pipe's signature, read once, so `parse_pipe` can refuse a call with too many arguments
+#: without calling the pipe — the same refusal the call itself would raise, known before any data.
+_PIPE_SIGNATURES = {name: inspect.signature(fn) for name, fn in PIPES.items()}
+
 #: Pipes that suppress the default sibling view. `window` and `significant` count: a template
 #: that stated its own bound has said what it wants, and silently applying the default on top
 #: would make an explicit `window(50)` mean 20.
@@ -530,8 +543,80 @@ def _parse_pipe_args(raw: str) -> list[Any]:
             args.append(float(tok))
             continue
         except ValueError as exc:
-            raise BindingError(f"pipe argument {tok!r} is not a literal") from exc
+            raise _not_a_literal(tok) from exc
     return args
+
+
+def _not_a_literal(tok: str) -> BindingError:
+    """The refusal for a non-literal pipe argument: what IS allowed, and what to write instead.
+
+    `[]` gets its own remediation: `default([])` is the idiom an author (or an authoring model)
+    brings from Jinja, and a bundled template shipped it seven times. The closed grammar's way to
+    say "an empty list when there is none" is `| filter`, whose null case is exactly that.
+    """
+    if tok.replace(" ", "") == "[]":
+        fix = (
+            "for an empty list when the value is null, use `| filter` instead: it turns null "
+            "into [] (and drops empty entries from a list)"
+        )
+    else:
+        fix = "quote it if it is text — an argument can never name a variable"
+    return BindingError(
+        f"pipe argument {tok!r} is not a literal — a pipe argument is a quoted string, "
+        "a number, true, false or null",
+        remediation=fix,
+    )
+
+
+def _arity(name: str) -> str:
+    """How many arguments a pipe accepts, read off its signature: `at most 2 arguments`."""
+    positional = [
+        p
+        for p in list(_PIPE_SIGNATURES[name].parameters.values())[1:]
+        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+    ]
+    required = sum(1 for p in positional if p.default is p.empty)
+    count = len(positional)
+    if count == 0:
+        return "no arguments"
+    noun = "argument" if count == 1 else "arguments"
+    if required == count:
+        return f"exactly {count} {noun}"
+    if required == 0:
+        return f"at most {count} {noun}"
+    return f"{required} to {count} arguments"
+
+
+def parse_pipe(raw_pipe: str) -> tuple[str, list[Any]]:
+    """One pipe call, `name` or `name(<literals>)`, as resolution evaluates it: `(name, args)`.
+
+    Raises :class:`BindingError` for a call resolution can never evaluate, whatever the data: a
+    call that is not `name(...)` syntax, a name outside the closed set, an argument that is not a
+    literal, or the wrong number of arguments — each carrying the remediation only it knows.
+    That is the whole grammar, in one place, because authoring validation calls this too: a
+    validator that checked only the pipe NAME passed `rich-ingest`'s `| default([])` into the
+    shipped library, where every resolution of it then failed — its judge gate on the prompt,
+    and its five `foreach`es before they started.
+    """
+    m = _PIPE_RE.match(raw_pipe)
+    if not m:
+        raise BindingError(
+            f"malformed pipe {raw_pipe!r}",
+            remediation="write a pipe as `name` or `name(<literal>, …)`, e.g. `| truncate(4000)`",
+        )
+    name, arg_src = m.group(1), m.group(2) or ""
+    if name not in PIPES:
+        raise BindingError(
+            f"unknown pipe {name!r}", remediation="the pipes are: " + ", ".join(sorted(PIPES))
+        )
+    args = _parse_pipe_args(arg_src)
+    try:
+        _PIPE_SIGNATURES[name].bind(None, *args)
+    except TypeError as exc:
+        raise BindingError(
+            f"bad arguments for pipe {name!r}", remediation=f"`{name}` takes {_arity(name)}"
+        ) from exc
+    return name, args
 
 
 def _split_args(raw: str) -> list[str]:
@@ -588,17 +673,6 @@ def _is_prior_cycle_output_path(head: str) -> bool:
     return len(segs) >= 3 and segs[0] in _PRIOR_CYCLE_ROOTS and segs[1] == "output"
 
 
-def reads_prior_cycle_output(expr: str) -> bool:
-    """Does this whole expression body (pipes included) read a prior cycle's output field?
-
-    Public because a FAILURE CLASS depends on the answer: `engine_support.resolve_config` files
-    a binding failure here as INTERNAL rather than USER. The shape test lives with the rule it
-    shares (`_prior_cycle_field_miss`) so the two cannot drift into disagreeing about which
-    reads are prior-cycle reads.
-    """
-    return _is_prior_cycle_output_path((expr or "").split("|")[0].strip())
-
-
 def _unresolved_remediation(seg: str, *, is_root: bool, head: str = "") -> str:
     """The actionable half of an `unresolved reference` failure.
 
@@ -639,6 +713,12 @@ def _unresolved_remediation(seg: str, *, is_root: bool, head: str = "") -> str:
             f"there is no {seg!r} root here — check the spelling against `inputs`, `nodes` "
             f"and {', '.join(sorted(_ROOT_HOLDS))}."
         )
+    if [s.strip() for s in head.split(".")[:2]] == ["inputs", seg]:
+        # The input itself: what the caller left out, so the fix is theirs, and it is at Start.
+        return (
+            f"this run was started without the input {seg!r}. Start the workflow again with a "
+            "value for it, or give the input a default in the workflow."
+        )
     return (
         f"check that the value really carries {seg!r}. A `| default(...)` pipe does not "
         "rescue a missing path, only one that resolves to null."
@@ -656,12 +736,18 @@ def _walk_path(root: Any, path: str, expr: str) -> Any:
             idx = int(seg)
             nxt = cur[idx] if 0 <= idx < len(cur) else _MISSING
         else:
-            raise BindingError(f"cannot read {seg!r} from a {type(cur).__name__}", expr)
+            raise BindingError(
+                f"cannot read {seg!r} from a {type(cur).__name__}",
+                expr,
+                f"the value before {seg!r} is a {type(cur).__name__}, which has no fields; check "
+                "the path against what that value really holds",
+            )
         if nxt is _MISSING:
             raise BindingError(
                 f"unresolved reference at {seg!r}",
                 expr,
                 _unresolved_remediation(seg, is_root=index == 0, head=path),
+                caller_supplied=index > 0 and path.split(".")[0].strip() == "inputs",
             )
         cur = nxt
     return cur
@@ -683,12 +769,26 @@ def resolve_expr(expr: str, ctx: BindingContext) -> Any:
     if head.startswith("secret:"):
         key = head[len("secret:") :].strip()
         if not key:
-            raise BindingError("secret reference needs a key", expr)
+            raise BindingError(
+                "secret reference needs a key", expr, "write the secret's name after `secret:`"
+            )
         if ctx.secret_resolver is None:
-            raise BindingError("no secret resolver available", expr)
+            raise BindingError(
+                "no secret resolver available",
+                expr,
+                "the engine had no credential store to read for this run; check the gateway log",
+            )
         value: Any = ctx.secret_resolver(key)
-        if value is None:
-            raise BindingError(f"secret {key!r} is not set", expr)
+        # "" is how the credential store answers for a key it does not hold
+        # (`controller._secret_resolver`). Substituted, a request carrying it fails at the
+        # receiver with nothing naming the key, so the trigger path refuses it too.
+        if value is None or value == "":
+            raise BindingError(
+                f"secret {key!r} is not set",
+                expr,
+                f"set a value for the secret {key!r}, then fork this run to try again",
+                caller_supplied=True,
+            )
     else:
         try:
             value = _walk_path(ctx.as_root(), head, expr)
@@ -717,22 +817,28 @@ def resolve_expr(expr: str, ctx: BindingContext) -> Any:
 
 def _run_pipes(value: Any, raw_pipes: list[str], expr: str, ctx: BindingContext) -> Any:
     for raw_pipe in raw_pipes:
-        m = _PIPE_RE.match(raw_pipe)
-        if not m:
-            raise BindingError(f"malformed pipe {raw_pipe!r}", expr)
-        name, arg_src = m.group(1), m.group(2) or ""
-        fn = PIPES.get(name)
-        if fn is None:
-            raise BindingError(f"unknown pipe {name!r}", expr)
+        try:
+            name, args = parse_pipe(raw_pipe)
+        except BindingError as be:
+            raise BindingError(str(be), expr, be.remediation) from be
         try:
             if name == "unseen":
                 value = _pipe_unseen(value, _seen=ctx.seen_filter)
             else:
-                value = fn(value, *_parse_pipe_args(arg_src))
+                value = PIPES[name](value, *args)
         except BindingError as be:
-            raise BindingError(str(be), expr) from be
+            # The pipe refused the value or its argument: the definition's to change, where the
+            # pipe is written, and never a node id or field to go looking for.
+            raise BindingError(
+                str(be),
+                expr,
+                be.remediation
+                or f"change the `{name}` pipe or what it is given; it takes {_arity(name)}",
+            ) from be
         except TypeError as exc:
-            raise BindingError(f"bad arguments for pipe {name!r}", expr) from exc
+            raise BindingError(
+                f"bad arguments for pipe {name!r}", expr, f"`{name}` takes {_arity(name)}"
+            ) from exc
     return value
 
 

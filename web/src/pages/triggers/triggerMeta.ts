@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { CalendarClock, Webhook, Bell, MessageSquare, ListPlus, Users, TerminalSquare, FileCode2, Zap, Anchor, Bot, Workflow, FolderClock, Globe, Moon, FileText, Inbox, Database, Plug, Wrench } from 'lucide-react'
+import { CalendarClock, Webhook, Bell, MessageSquare, ListPlus, Users, TerminalSquare, FileCode2, Zap, Anchor, Bot, Workflow, FolderClock, Globe, Moon, FileText, Inbox, Database, Plug, Play, Wrench } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { api, type ScheduleJob, type HookItem, type HookEnforcement, type LifecycleEventInfo, type TriggerVariables, type Trigger as WireTrigger, type EventPattern } from '../../lib/api'
 import { deriveKind, deriveMode, kindMeta as schedKindMeta, modeMeta as schedModeMeta } from '../schedule/scheduleMeta'
@@ -116,6 +116,10 @@ const STORE_KIND_META: Record<string, { label: string; icon: LucideIcon }> = {
   run_completed: { label: 'When a run finishes', icon: Workflow },
   view: { label: 'View trigger', icon: FileText },
   webhook: { label: 'On webhook', icon: Webhook },
+  // Both made by the chat's `automation_create` ("when I …" routes to `event`; `manual` is asked
+  // for by name) and listed nowhere until the list and the status count shared one gathering.
+  event: { label: 'On an event', icon: Zap },
+  manual: { label: 'When you run it', icon: Play },
 }
 function storeKindMeta(storeKind?: string): { label: string; icon: LucideIcon } {
   return STORE_KIND_META[storeKind ?? ''] ?? { label: storeKind || 'Automation', icon: Zap }

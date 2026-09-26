@@ -1211,22 +1211,31 @@ def rebuild_agent_config(*, clean: bool = False) -> Path:
     managed_names = set(_MANAGED_MCP_SERVERS)
 
     # ~/.personalclaw/mcp.json — user-configured MCP overrides (highest priority).
+    from personalclaw.config.secret_refs import MCP_DEFINITION_KEYS
+
     personalclaw_mcp = _load_json(_USER_DIR / "mcp.json").get("mcpServers", {})
     for name, spec in personalclaw_mcp.items():
         if isinstance(spec, dict) and name not in managed_names:
             mcps = config.setdefault("mcpServers", {})
             if name in mcps and isinstance(mcps[name], dict):
-                mcps[name].update(spec)
+                # mcp.json DEFINES the server, so its definition replaces the copy's whole; the
+                # copy keeps only the state it adds (`autoApprove`, …). A key-by-key merge kept
+                # whatever an edit had removed — cleared arguments, a deleted variable — in the
+                # copy `list_servers` reads first.
+                kept = {k: v for k, v in mcps[name].items() if k not in MCP_DEFINITION_KEYS}
+                mcps[name] = {**kept, **spec}
             else:
                 mcps[name] = spec
 
     # Resolve MCP commands to absolute paths and validate
+    from personalclaw.mcp_discovery import mcp_transport  # circular: it imports this module
+
     valid_servers: dict[str, Any] = {}
     for name, spec in config.get("mcpServers", {}).items():
         if not isinstance(spec, dict):
             continue
-        # Remote Streamable HTTP servers — preserve as-is (url-based, no command)
-        if spec.get("url"):
+        # A server at a URL (Streamable HTTP or SSE) has no command to resolve — kept as it is.
+        if mcp_transport(spec) != "stdio":
             valid_servers[name] = spec
             continue
         cmd = spec.get("command", "")
@@ -1239,7 +1248,21 @@ def rebuild_agent_config(*, clean: bool = False) -> Path:
         if os.path.isabs(cmd) and os.path.isfile(cmd) and os.access(cmd, os.X_OK):
             resolved = cmd
         else:
-            env_path = spec.get("env", {}).get("PATH", "")
+            # A server's PATH is an env value like any other, so it may be a credential-store
+            # reference: resolved for the lookup, never written back — PATH alone, the one
+            # value the lookup needs, and only against the server's own owner.
+            from personalclaw.config.secret_refs import (
+                ForeignSecretReference,
+                resolve_mcp_values,
+            )
+
+            env = spec.get("env")
+            path_only = {"PATH": env["PATH"]} if isinstance(env, dict) and "PATH" in env else {}
+            try:
+                env_path = resolve_mcp_values(name, "env", path_only).get("PATH", "")
+            except ForeignSecretReference as exc:
+                logger.warning("Dropping MCP server %r: %s", name, exc)
+                continue
             search_path = (env_path + os.pathsep if env_path else "") + os.environ.get("PATH", "")
             resolved = shutil.which(cmd, path=search_path)
         if resolved:
@@ -1314,7 +1337,11 @@ def rebuild_agent_config(*, clean: bool = False) -> Path:
     for key in ("tools", "allowedTools"):
         config[key] = list(dict.fromkeys(config.get(key, [])))
 
-    _atomic_json_write(path, config)
+    # Through the MCP document writer: a server spec reaches this file with its secrets as
+    # credential-store references, whichever source it was merged from.
+    from personalclaw.config.secret_refs import write_mcp_document
+
+    write_mcp_document(path, config)
     logger.info("Installed agent config: %s", path)
 
     return path

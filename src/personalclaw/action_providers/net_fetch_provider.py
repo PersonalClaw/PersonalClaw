@@ -202,6 +202,8 @@ class NetFetchActionProvider(ActionProvider):
                     why="incident mode suspends all unattended work",
                     fix="clear incident mode in Settings → Guardrails, then re-run",
                 ),
+                # An operator's switch: only clearing it helps, and a retry meets it again.
+                failure_class="user",
             )
 
         max_chars = self._max_chars(action_config)
@@ -222,6 +224,8 @@ class NetFetchActionProvider(ActionProvider):
         except EgressBlocked as blocked:
             return self._refused(blocked, policy=policy, started=started)
         except Exception as exc:  # noqa: BLE001 — an unreachable host is a result, not a crash
+            from personalclaw.workflows.failure_taxonomy import classify_exception
+
             return self._error(
                 f"net-fetch could not reach {url}: {type(exc).__name__}: {exc}",
                 why=(
@@ -231,6 +235,15 @@ class NetFetchActionProvider(ActionProvider):
                 fix="check the URL and the host's availability, then re-run",
                 started=started,
                 code="ERR_NET_FETCH_FAILED",
+                # By the exception's type: a refused connection or a slow host is worth a
+                # retry, an unusable URL is not, and only this frame still holds the exception.
+                # A timeout here is the host's response time against the policy's cap, which a
+                # retry can beat; the taxonomy's own reading of a bare timeout is a step budget.
+                failure_class=(
+                    "transient"
+                    if isinstance(exc, TimeoutError)
+                    else classify_exception(exc).failure_class.value
+                ),
             )
 
         return self._to_result(response, requested_url=url, max_chars=max_chars, started=started)
@@ -293,6 +306,8 @@ class NetFetchActionProvider(ActionProvider):
                 fix=fix,
                 suggestions=tuple(getattr(decision, "recovery_hints", ()) or ()),
             ),
+            # Refused before the request was made, by a policy a retry cannot change.
+            failure_class="permission",
         )
 
     def _to_result(
@@ -309,18 +324,24 @@ class NetFetchActionProvider(ActionProvider):
         final_url = _screen_url(str(getattr(response, "url", "") or requested_url))
 
         if not 200 <= status < 300:
+            from personalclaw.workflows.failure_taxonomy import http_status_class
+            from personalclaw.workflows.models import RETRYABLE_CLASSES
+
+            failure_class = http_status_class(status)
             return self._error(
                 f"net-fetch got HTTP {status} from {final_url}",
                 why="the host answered with a non-success status, so there is no body to use",
                 fix=(
-                    "check the URL; a 4xx is usually the wrong path and a 5xx is the host's "
-                    "own fault"
+                    "the host is failing or busy; Retry once it has recovered"
+                    if failure_class in RETRYABLE_CLASSES
+                    else "check the URL and what the host expects; a retry sends the same request"
                 ),
                 started=started,
                 code="ERR_NET_FETCH_FAILED",
                 stdout=json.dumps(
                     {"url": final_url, "status": status, "content_type": content_type}
                 ),
+                failure_class=failure_class.value,
             )
 
         text = str(getattr(response, "text", "") or "")
@@ -367,6 +388,8 @@ class NetFetchActionProvider(ActionProvider):
         started: float,
         code: str = "ERR_NET_FETCH_CONFIG",
         stdout: str = "",
+        # A config fault unless the caller says otherwise: a retry sends the same config.
+        failure_class: str = "user",
     ) -> ActionResult:
         return ActionResult(
             success=False,
@@ -374,6 +397,7 @@ class NetFetchActionProvider(ActionProvider):
             error=message,
             duration_ms=self._ms(started),
             agent_error=AgentError(code=code, what=message, why=why, fix=fix),
+            failure_class=failure_class,
         )
 
 

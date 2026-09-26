@@ -190,14 +190,24 @@ def _load_hook_context(hook_id: str) -> str:
 
 
 def _verify_hook_token(request: web.Request) -> bool:
-    """Verify Bearer token against hooks.webhook_token in config."""
+    """Verify Bearer token against hooks.webhook_token in config.
+
+    ``config.json`` holds a ``{{secret:…}}`` reference; the token itself is in the credential
+    store, resolved here, where it is used. A reference the store cannot answer resolves to
+    ``""``, which is "no token configured" — every request is refused — and so does one naming
+    a credential another owner holds (refused and logged by ``resolve``).
+    """
     import hmac  # noqa: F811
 
     from personalclaw.config.loader import AppConfig
+    from personalclaw.config.secret_refs import ForeignSecretReference, config_owner, resolve
 
     cfg = AppConfig.load()
-    token = cfg.hooks.get("webhook_token", "")
-    if not token:
+    try:
+        token = resolve(cfg.hooks, owner=config_owner("hooks")).get("webhook_token", "")
+    except ForeignSecretReference:
+        return False
+    if not isinstance(token, str) or not token:
         return False
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
@@ -408,12 +418,15 @@ async def _run_hook_agent(
         state.notify(
             notification_kinds.HOOK, title, result_text[:2000], meta={"session_key": session_key}
         )
-        if state.channel_delivery and state.owner_id:
-            try:
-                channel = await state.channel_delivery.open_dm(state.owner_id)
-                if channel:
-                    await state.channel_delivery.deliver_text(
-                        channel, f"*{title}*\n{result_text[:3000]}"
-                    )
-            except Exception:
-                logger.exception("Hook agent: channel delivery failed")
+        from personalclaw.channel_delivery import deliver_to_owner
+
+        body = result_text[:3000]
+        try:
+            await deliver_to_owner(
+                lambda delivery, dm: delivery.deliver_text(dm, f"*{title}*\n{body}"),
+                title=title,
+                text=body,
+                state=state,
+            )
+        except Exception:
+            logger.exception("Hook agent: channel delivery failed")

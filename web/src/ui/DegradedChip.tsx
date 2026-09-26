@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowRight, CloudOff, Sparkles } from 'lucide-react'
-import { api, type DegradedSurface } from '../lib/api'
+import { api, type ChatProviderConnection, type DegradedSurface } from '../lib/api'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
 import { useIsMobile } from '../app/useIsMobile'
 import { TextLink } from './TextLink'
 
-// Prettify a surface slug for display ("search_ranking" → "Search ranking").
-function label(surface: string): string {
-  const s = surface.replace(/[_-]/g, ' ')
+// Prettify a use-case slug the map below does not know ("some_new_case" → "Some new case").
+function prettify(slug: string): string {
+  const s = slug.replace(/[_-]/g, ' ')
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
@@ -17,7 +17,7 @@ function label(surface: string): string {
  *  Not imported from that map: it is a page-local const carrying icons, descriptions and chain
  *  flags for 14 use cases, and a shell chip pulling in a settings page would be a far worse
  *  dependency than three labels. Kept minimal on purpose — only the slugs `degraded.py`'s registry
- *  actually declares (`chat`, `embedding`, `stt`), with `label()` as the fallback so a new
+ *  actually declares (`chat`, `embedding`, `stt`), with `prettify()` as the fallback so a new
  *  contract still reads sensibly instead of rendering a raw slug. */
 const USE_CASE_LABEL: Record<string, string> = {
   chat: 'Chat',
@@ -26,7 +26,7 @@ const USE_CASE_LABEL: Record<string, string> = {
 }
 
 function useCaseLabel(uc: string): string {
-  return USE_CASE_LABEL[uc] ?? label(uc)
+  return USE_CASE_LABEL[uc] ?? prettify(uc)
 }
 
 /** A compact shell chip shown when any model-dependent surface is running on its
@@ -37,6 +37,10 @@ function useCaseLabel(uc: string): string {
  *  expand a popover listing each degraded surface, its floor, and its backlog. */
 export function DegradedChip() {
   const [surfaces, setSurfaces] = useState<DegradedSurface[] | null>(null)
+  /** The chat instance's last MEASURED connection (the report reads it from the gateway's cache,
+   *  never probing). A surface's `available` only says a model RESOLVES — no network call — so a
+   *  bound provider that is down left every surface "available" and this chip silent. */
+  const [chatProvider, setChatProvider] = useState<ChatProviderConnection | null>(null)
   /** True while the degraded read is failing. Paired with `surfaces === null` it means "we have
    *  never been told", which must not render as "nothing is degraded". */
   const [unread, setUnread] = useState(false)
@@ -78,7 +82,7 @@ export function DegradedChip() {
   const isMobile = useIsMobile()
 
   useVisiblePoll(() => {
-    api.degraded().then((r) => { setSurfaces(r.surfaces); setUnread(false) })
+    api.degraded().then((r) => { setSurfaces(r.surfaces); setUnread(false); setChatProvider(r.chat_provider ?? null) })
       // 🔴 `catch(() => {})` left `surfaces` null, and null renders NOTHING — the same absence as
       // "every surface has a model". Measured with only `/api/resilience/degraded` at 500 and the rest
       // of the gateway healthy: SEVEN degraded surfaces, no chip, and the sibling connectivity
@@ -104,7 +108,9 @@ export function DegradedChip() {
   // Never answered AND the read is failing → say so; `SystemWidget` sets `disconnected` from exactly
   // this signal, so the shell already has the vocabulary for "we asked and could not tell".
   const unknown = surfaces === null && unread
-  if (down.length === 0 && !unknown) return null
+  // A model resolves, but the instance it resolves to failed its last connection test.
+  const providerDown = !unknown && chatProvider?.state === 'failed' ? chatProvider : null
+  if (down.length === 0 && !unknown && !providerDown) return null
 
   const worst = down[0]
   // Setup-land: nothing in config.json has ever been bound, so nothing "degraded" —
@@ -116,7 +122,12 @@ export function DegradedChip() {
   const summary = unknown
     ? 'Status unknown'
     : setupLand ? 'Set up a model'
-    : down.length === 1 ? `${label(worst.surface)} degraded` : `${down.length} degraded`
+    // Chat not answering outranks a surface on its floor: it is the failure a user hits next.
+    : providerDown ? 'Chat provider not answering'
+    // The surface's own name, from the contract that declares it — the same words its degraded and
+    // recovered notifications use. A prettified slug ("Assistant reasoning", "Search ranking") is
+    // the engineer's name for it, not the user's.
+    : down.length === 1 ? `${worst.label} degraded` : `${down.length} degraded`
   const detail = unknown
     ? 'Status unknown — the degraded-surfaces check could not be read, so this may be hiding a surface running without a model'
     // 🔑 ONE EXPRESSION GAVE TWO ANSWERS TO THE SAME QUESTION. `summary` on the line above already
@@ -132,7 +143,9 @@ export function DegradedChip() {
     // user reads. (`title` can still reach AT as a *description*, which is a weaker claim.)
     : setupLand
       ? 'No model provider is configured yet — click to see what unlocks once you bind one'
-      : `${summary} — ${down.length} surface${down.length === 1 ? '' : 's'} running without a model, click for detail`
+      : providerDown
+        ? `Your chat model's provider (${providerDown.provider}) isn't answering${down.length ? ` and ${down.length} surface${down.length === 1 ? ' is' : 's are'} running without a model` : ''} — click for detail`
+        : `${summary} — ${down.length} surface${down.length === 1 ? '' : 's'} running without a model, click for detail`
   const FaceIcon = setupLand ? Sparkles : CloudOff
   return (
     <div className="relative">
@@ -171,8 +184,28 @@ export function DegradedChip() {
             className="absolute right-0 z-50 mt-1.5 w-80 rounded-xl bg-surface-container p-3 shadow-lg"
             style={{ border: '1px solid var(--color-outline-variant)' }}>
             <div data-type="body-s" className="mb-2 flex items-center gap-1.5 text-on-surface" style={{ color: 'var(--color-warn)' }}>
-              <CloudOff size={14} /> {unknown ? 'Could not read the check' : 'Running without a model'}
+              <CloudOff size={14} /> {unknown ? 'Could not read the check' : down.length === 0 ? 'Chat provider not answering' : 'Running without a model'}
             </div>
+            {/* The provider half: chat is bound, and the instance it is bound to failed its last
+                connection test. Stated with the test's own sentence (what failed, why, what to do)
+                and a way to the one place it is fixed — the instance's card, whose Test, Edit and
+                Remove all live in Settings → Providers. */}
+            {providerDown && (
+              <div className="mb-2 border-b border-outline-variant/30 pb-2">
+                <div data-type="body-s" className="text-on-surface">
+                  Your chat model's provider, {providerDown.provider}, isn't answering.
+                </div>
+                {providerDown.detail && (
+                  <div data-type="caption" className="mt-0.5 text-on-surface-var">{providerDown.detail}</div>
+                )}
+                <div className="mt-1">
+                  <TextLink href="#/settings/providers" icon={ArrowRight} iconPosition="trailing" size="xs"
+                    onClick={() => { setOpen(false); triggerRef.current?.focus() }}>
+                    {providerDown.rejected_credential ? 'Update its key in Settings → Providers' : 'Check it in Settings → Providers'}
+                  </TextLink>
+                </div>
+              </div>
+            )}
             {/* An unknown state has no rows to list, so the popover says what it does not know rather
                 than opening empty. It deliberately does NOT claim a fault: the surfaces may all be
                 fine, and asserting a problem we have not measured is the same error in reverse. */}
@@ -216,7 +249,7 @@ export function DegradedChip() {
               {down.map((s) => (
                 <div key={s.surface} className="border-b border-outline-variant/30 pb-2 last:border-0 last:pb-0">
                   <div className="flex items-center justify-between gap-2">
-                    <span data-type="body-s" className="text-on-surface">{label(s.surface)}</span>
+                    <span data-type="body-s" className="text-on-surface">{s.label}</span>
                     {s.backlog > 0 && (
                       // 0.6875rem sat under the caption floor tokens.css documents;
                       // the caption role is that drift's designated on-ramp home.
@@ -230,8 +263,8 @@ export function DegradedChip() {
                       whose entire job is "a provider went away".
 
                       The backend already treats this as the headline: its own degradation notice
-                      reads `No model for {', '.join(contract.use_cases)} — {contract.floor}`. The
-                      popover was the one surface stating the second half without the first. */}
+                      reads `No {use cases} model — {floor}`. The popover was the one surface
+                      stating the second half without the first. */}
                   {/* Defaulted read, not `s.use_cases.length`: an older/partial payload can omit
                       the key entirely (the chip's own pre-existing test fixture does), and a chip
                       that crashes the shell corner because a field is absent is a worse failure

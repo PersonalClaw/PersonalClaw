@@ -1,4 +1,8 @@
-"""`GET /api/model-providers` reported `credential_status: "missing"` for every provider.
+"""`GET /api/model-providers` reported every provider's stored key as missing.
+
+(The field was `credential_status`; it is `key_in_store` now — whether the instance's key
+lives in the credential store. Whether an instance CONNECTS is its measured `connection`,
+see `providers/connection.py`, and no longer inferred from a credential's presence.)
 
 Co-located with issue 2217's census work: the census resolves `credentials.json` from
 `dashboard/handlers/providers.py`, and reading that one write path is what surfaced this.
@@ -33,6 +37,7 @@ class _Entry:
     model: str
     credential: str | None
     declared_capabilities: tuple = field(default_factory=tuple)
+    options: dict = field(default_factory=dict)
 
 
 class _Registry:
@@ -45,9 +50,12 @@ class _Registry:
     def capability_of(self, _type):  # no static descriptor — handler falls back
         raise LookupError("no capability descriptor")
 
+    def build_catalog(self, _entry):  # no catalog: its connection reads "untestable"
+        return None
 
-async def _statuses(monkeypatch, home, entries) -> dict[str, str]:
-    """Drive the real handler and return {provider name: credential_status}."""
+
+async def _statuses(monkeypatch, home, entries) -> dict[str, bool]:
+    """Drive the real handler and return {provider name: key_in_store}."""
     from personalclaw.config import loader as config_loader
     from personalclaw.dashboard.handlers import providers as handler
     from personalclaw.llm import registry as llm_registry
@@ -55,7 +63,7 @@ async def _statuses(monkeypatch, home, entries) -> dict[str, str]:
     monkeypatch.setattr(config_loader, "config_dir", lambda: home)
     monkeypatch.setattr(llm_registry, "get_default_registry", lambda: _Registry(entries))
     resp = await handler.api_providers_list(object())
-    return {p["name"]: p["credential_status"] for p in json.loads(resp.text)["providers"]}
+    return {p["name"]: p["key_in_store"] for p in json.loads(resp.text)["providers"]}
 
 
 @pytest.mark.asyncio
@@ -67,18 +75,18 @@ async def test_a_configured_credential_reports_ok_not_missing(monkeypatch, tmp_p
     )
     entries = [_Entry("openrouter", "openai_compatible", "gpt-4o", "my-key")]
 
-    assert await _statuses(monkeypatch, tmp_path, entries) == {"openrouter": "ok"}
+    assert await _statuses(monkeypatch, tmp_path, entries) == {"openrouter": True}
 
 
 @pytest.mark.asyncio
 async def test_a_genuinely_absent_credential_still_reports_missing(monkeypatch, tmp_path):
-    """The pair: "always ok" would satisfy the test above and be just as wrong."""
+    """The pair: "always there" would satisfy the test above and be just as wrong."""
     (tmp_path / "credentials.json").write_text(
         json.dumps({"my-key": {"type": "api_key"}}), encoding="utf-8"
     )
     entries = [_Entry("openrouter", "openai_compatible", "gpt-4o", "my-key")]
 
-    assert await _statuses(monkeypatch, tmp_path, entries) == {"openrouter": "missing"}
+    assert await _statuses(monkeypatch, tmp_path, entries) == {"openrouter": False}
 
 
 @pytest.mark.asyncio
@@ -88,15 +96,16 @@ async def test_an_undeclared_credential_name_still_reports_missing(monkeypatch, 
     (tmp_path / "credentials.json").write_text(json.dumps({"other": {}}), encoding="utf-8")
     entries = [_Entry("openrouter", "openai_compatible", "gpt-4o", "absent-key")]
 
-    assert await _statuses(monkeypatch, tmp_path, entries) == {"openrouter": "missing"}
+    assert await _statuses(monkeypatch, tmp_path, entries) == {"openrouter": False}
 
 
 @pytest.mark.asyncio
-async def test_a_provider_declaring_no_credential_is_unaffected(monkeypatch, tmp_path):
-    """`credential=None` never reaches the store at all — pinned so the fix stays scoped."""
+async def test_a_provider_declaring_no_credential_has_no_key_in_the_store(monkeypatch, tmp_path):
+    """`credential=None` never reaches the store at all. It used to read "ok" here — which
+    is how an instance with no key anywhere was badged "✓ Configured"."""
     entries = [_Entry("ollama", "openai_compatible", "llama3", None)]
 
-    assert await _statuses(monkeypatch, tmp_path, entries) == {"ollama": "ok"}
+    assert await _statuses(monkeypatch, tmp_path, entries) == {"ollama": False}
 
 
 def test_no_call_site_passes_the_credentials_file_as_the_home():

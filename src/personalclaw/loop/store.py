@@ -298,6 +298,7 @@ def create(loop: Loop) -> Loop:
     # Materialize the file dir + initial status.json so the worker has its interface.
     files.loop_dir(loop.id)
     files.write_status(loop.id, LoopStatus(loop.status))
+    _announce()
     return loop
 
 
@@ -425,10 +426,29 @@ def update_status(loop_id: str, new_status: LoopStatus, **fields: Any) -> Loop:
     files.write_status(loop_id, new_status)
     if current in ATTENTION_STATUSES and new_status not in ATTENTION_STATUSES:
         _resolve_attention_rows(loop_id)
+    _announce()
     out = get(loop_id)
     if out is None:
         raise KeyError(loop_id)
     return out
+
+
+def _announce() -> None:
+    """Tell every open dashboard the loop list changed: the gateway's `loops` refresh hint.
+
+    Here, at the store's own writes (create, a status change, delete), because the surfaces that
+    show loops (Home's work, the agent-activity feed, the rail badge) re-read on this hint and
+    poll only as a slow safety net, and pause, stop, start and create sent none: a loop paused in
+    one tab stayed "running" in another until its next poll. Best-effort, and a no-op headless.
+    """
+    try:
+        from personalclaw.inbox_providers.native_source import get_dashboard_state
+
+        state = get_dashboard_state()
+        if state is not None:
+            state.push_refresh("loops")
+    except Exception:
+        logger.debug("loops: could not announce a change", exc_info=True)
 
 
 def _resolve_attention_rows(loop_id: str) -> int:
@@ -682,6 +702,8 @@ def delete(loop_id: str) -> bool:
         import shutil
 
         shutil.rmtree(d, ignore_errors=True)
+    if deleted:
+        _announce()
     return deleted
 
 

@@ -16,6 +16,13 @@ app owns and writes a ``{{secret:…}}`` reference in its place, and :meth:`Prov
 resolves it back — so an app reads and writes real values exactly as before
 (:mod:`personalclaw.config.secret_refs`). The Bot and App tokens slack-channel is configured
 with used to sit in this file in plaintext, at mode 0644.
+
+A reference resolves only against the app's own credentials: one in this file naming another
+owner's key is refused by :meth:`ProviderSettings.load` and by :meth:`ProviderSettings.save`
+(:class:`~personalclaw.config.secret_refs.ForeignSecretReference`). The settings routes read
+:func:`load_stored` — the references, masked — never the values. It is a module function and
+not a method on purpose: ``ProviderSettings`` is published to apps through ``personalclaw.sdk``,
+and an app has no use for the stored form.
 """
 
 import json
@@ -23,12 +30,30 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from personalclaw.apps.manager import app_dir
+from personalclaw.apps.manager import app_dir, read_app_owned_text
 from personalclaw.apps.schema_validate import validate_properties
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import secret_refs
 
 logger = logging.getLogger(__name__)
+
+
+def load_stored(extension_name: str) -> dict[str, Any]:
+    """The app's settings file as it is on disk — secret fields are references. For the
+    writers, and for the routes that show settings (masked), which have no business holding a
+    value.
+
+    Never read through a link: the app writes ``data/``, so a ``config.json`` it made a link
+    reads as no settings rather than as whatever file the link names."""
+    root = app_dir(extension_name)
+    try:
+        data = json.loads(read_app_owned_text(root, "data", "config.json"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        logger.warning("Failed to read extension config for %s: %s", extension_name, exc)
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 class ProviderSettings:
@@ -42,45 +67,48 @@ class ProviderSettings:
         return app_dir(extension_name) / "data" / "config.json"
 
     @staticmethod
-    def _load_stored(extension_name: str) -> dict[str, Any]:
-        """The file as it is on disk — secret fields are references. For the writers."""
-        path = ProviderSettings.config_path(extension_name)
-        if not path.is_file():
-            return {}
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else {}
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Failed to read extension config %s: %s", path, exc)
-            return {}
-
-    @staticmethod
     def load(extension_name: str) -> dict[str, Any]:
-        """The extension's settings with every secret field holding its VALUE."""
-        return secret_refs.resolve(ProviderSettings._load_stored(extension_name))
+        """The extension's settings with every secret field holding its VALUE.
+
+        Raises :class:`~personalclaw.config.secret_refs.ForeignSecretReference` when the file
+        references a credential another owner holds."""
+        return secret_refs.resolve(
+            load_stored(extension_name), owner=secret_refs.app_owner(extension_name)
+        )
 
     @staticmethod
     def save(extension_name: str, config: dict[str, Any]) -> None:
         """Persist ``config`` with each secret value moved into the credential store.
 
-        Raises :class:`ValueError` for a secret the store cannot hold (a multi-line value).
+        Raises :class:`ValueError` for a value no credential can hold (a NUL character) or a
+        reference to another owner's credential, and nothing is written.
         """
+        ProviderSettings._save(extension_name, config)
+
+    @staticmethod
+    def _save(extension_name: str, config: dict[str, Any]) -> dict[str, Any]:
         stored = secret_refs.store(
             config,
             owner=secret_refs.app_owner(extension_name),
             declared=secret_refs.declared_app_fields(extension_name),
-            previous=ProviderSettings._load_stored(extension_name),
+            previous=load_stored(extension_name),
         )
         atomic_write(
             ProviderSettings.config_path(extension_name), json.dumps(stored, indent=2) + "\n"
         )
+        return stored
 
     @staticmethod
     def update(extension_name: str, partial: dict[str, Any]) -> dict[str, Any]:
-        current = ProviderSettings.load(extension_name)
+        """Merge ``partial`` into the saved settings; returns them with each secret's VALUE.
+
+        Merged over the STORED form, so a secret ``partial`` does not mention stays exactly the
+        reference it is, and one it carries back as a reference (a masked form's untouched
+        field) is kept — never read out and written again."""
+        current = load_stored(extension_name)
         current.update(partial)
-        ProviderSettings.save(extension_name, current)
-        return current
+        stored = ProviderSettings._save(extension_name, current)
+        return secret_refs.resolve(stored, owner=secret_refs.app_owner(extension_name))
 
     @staticmethod
     def validate(config: dict[str, Any], schema: dict[str, Any]) -> list[str]:

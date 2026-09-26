@@ -414,9 +414,9 @@ const SILENT_WRITE_BUDGET: Record<string, number> = {
   // (a) A tool-group enable/disable toggle, same no-catch family as the four settings ones.
   'pages/tools/ToolGroupsTile.tsx': 1,
   // (b) "status surfaces on reload" for a single-server reconnect — the server's rendered status IS
-  // the answer to "did the reconnect work".
-  // (a) the MCP import beside it: `try { …importMcpServer… } finally { setBusy(null) }`, no catch.
-  'pages/tools/ToolsPage.tsx': 2,
+  // the answer to "did the reconnect work". (The MCP import beside it was the second, a
+  // `try { … } finally { setBusy(null) }` with no catch; it reports through `reportingWrite` now.)
+  'pages/tools/ToolsPage.tsx': 1,
   // (a) A lifecycle-hook toggle, same no-catch family.
   'pages/triggers/LifecycleDetail.tsx': 1,
   // (a) A 👍/👎 that stays optimistic on a failed record. "never break the host surface" argues for

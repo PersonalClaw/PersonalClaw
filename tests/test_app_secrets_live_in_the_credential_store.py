@@ -115,7 +115,7 @@ def test_a_declared_sensitive_field_goes_to_the_store(home):
     text = (manager.app_dir(APP) / "data" / "config.json").read_text(encoding="utf-8")
     assert PASSCODE not in text
     assert saved["passcode"] == PASSCODE, "the caller still gets the value it saved"
-    assert app_config.read_config(APP)["passcode"] == PASSCODE
+    assert ProviderSettings.load(APP)["passcode"] == PASSCODE
     assert _hits(home, PASSCODE) == [".env"]
 
 
@@ -124,8 +124,12 @@ def test_an_instance_secret_lives_in_the_store_through_create_update_delete(home
         "fixture-multi", "Work", {"api_key": INSTANCE_KEY, "endpoint": "https://x.invalid"}
     )
     assert _hits(home, INSTANCE_KEY) == [".env"]
-    assert instances.get_instance("fixture-multi", inst.id).config["api_key"] == INSTANCE_KEY
-    assert instances.list_instances("fixture-multi")[0].config["api_key"] == INSTANCE_KEY
+    # The store hands out the record as stored — a reference — and a consumer resolves it.
+    stored = instances.get_instance("fixture-multi", inst.id)
+    assert INSTANCE_KEY not in json.dumps(stored.to_dict())
+    assert instances.resolved_config(stored)["api_key"] == INSTANCE_KEY
+    [listed] = instances.list_instances("fixture-multi")
+    assert instances.resolved_config(listed)["api_key"] == INSTANCE_KEY
 
     instances.update_instance(
         "fixture-multi", inst.id, config={"api_key": ROTATED, "endpoint": "https://x.invalid"}
@@ -222,5 +226,6 @@ def test_plaintext_settings_from_before_this_change_move_on_boot(home):
     assert _hits(home, INSTANCE_KEY) == [".env"]
     assert _hits(home, APP_TOKEN) == [], "the uninstalled app's parked token was kept"
     assert ProviderSettings.load(APP)["bot_token"] == TOKEN
-    assert instances.get_instance("fixture-multi", "i1").config["api_key"] == INSTANCE_KEY
+    migrated = instances.get_instance("fixture-multi", "i1")
+    assert instances.resolved_config(migrated)["api_key"] == INSTANCE_KEY
     assert json.loads(parked.read_text(encoding="utf-8")) == {"command": "pc"}

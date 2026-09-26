@@ -97,8 +97,9 @@ export function DesktopLiveView() {
     api.computerUseLiveView(), { persist: false },
   )
   // Poll ONLY while a view is on and the tab visible — see the header comment for why this
-  // widget carries its own (gated) poll instead of a DashboardLive slice.
-  useVisiblePoll(refresh, watching ? WATCH_POLL_MS : null)
+  // widget carries its own (gated) poll instead of a DashboardLive slice. No idle back-off: a
+  // live mirror is watched WITHOUT input, and its cadence is the whole product.
+  useVisiblePoll(refresh, watching ? WATCH_POLL_MS : null, { idleBackoff: false })
 
   // A failed read must not render as a quiet desktop: "the agent is doing nothing" and
   // "the gateway didn't answer" are different facts, and one of them is about your machine.

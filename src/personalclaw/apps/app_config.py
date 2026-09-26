@@ -12,7 +12,10 @@ are rejected, because an app shouldn't receive config it never declared.
 
 A field the schema declares ``x-meta.sensitive`` (or whose name is credential-shaped) is kept
 in the credential store, and the file holds a ``{{secret:…}}`` reference: :func:`write_config`
-stores, :func:`read_config` resolves (:mod:`personalclaw.config.secret_refs`).
+stores (:mod:`personalclaw.config.secret_refs`), refusing a reference to a credential another
+owner holds. The settings routes read :func:`read_stored`, never the values: what they send is
+the references, masked. The app itself reads the values through ``ProviderSettings.load`` (the
+same file), which resolves only keys the app holds.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from personalclaw.apps.manager import app_dir
+from personalclaw.apps.manager import app_dir, read_app_owned_text
 from personalclaw.apps.schema_validate import validate_properties
 from personalclaw.apps.secret_fields import sensitive_field_names
 from personalclaw.atomic_write import atomic_write
@@ -46,22 +49,20 @@ def _schema_properties(schema: dict[str, Any]) -> dict[str, Any]:
     return props if isinstance(props, dict) else {}
 
 
-def _read_stored(name: str) -> dict[str, Any]:
-    path = _config_path(name)
-    if not path.is_file():
-        return {}
+def read_stored(name: str) -> dict[str, Any]:
+    """The file as it is on disk — secret fields are references. Never read through a link:
+    the app writes ``data/``, so a ``config.json`` it made a link reads as no config."""
+    root = app_dir(name)
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (json.JSONDecodeError, OSError):
-        logger.warning("app %s config unreadable; treating as empty", name, exc_info=True)
+        data = json.loads(read_app_owned_text(root, "data", _CONFIG_FILENAME))
+    except FileNotFoundError:
         return {}
-
-
-def read_config(name: str) -> dict[str, Any]:
-    """Return the persisted config for an app (empty dict if none saved yet), each secret
-    field holding its value."""
-    return secret_refs.resolve(_read_stored(name))
+    except (OSError, ValueError) as exc:
+        logger.warning(
+            "app %s: data/%s not read (%s); treating as empty", name, _CONFIG_FILENAME, exc
+        )
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def validate_config(values: dict[str, Any], schema: dict[str, Any]) -> list[str]:
@@ -92,7 +93,8 @@ def validate_config(values: dict[str, Any], schema: dict[str, Any]) -> list[str]
 
 def write_config(name: str, values: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
     """Validate then persist an app's config. Raises :class:`AppConfigError` on
-    invalid input; returns the saved values on success."""
+    invalid input — a reference to a credential another owner holds included, with the
+    sentence that says what to do instead; returns the saved values on success."""
     if not isinstance(values, dict):
         raise AppConfigError("config must be a JSON object")
     errors = validate_config(values, schema)
@@ -103,7 +105,7 @@ def write_config(name: str, values: dict[str, Any], schema: dict[str, Any]) -> d
             values,
             owner=secret_refs.app_owner(name),
             declared=sensitive_field_names(schema) | secret_refs.declared_app_fields(name),
-            previous=_read_stored(name),
+            previous=read_stored(name),
         )
     except ValueError as exc:
         raise AppConfigError(str(exc)) from exc

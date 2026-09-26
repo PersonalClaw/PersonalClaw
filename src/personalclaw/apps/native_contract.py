@@ -42,10 +42,11 @@ the workspace ``apps/`` dir is absent).
 from __future__ import annotations
 
 import ast
+import contextlib
 import importlib.util
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 # The bundled-app root. ``providers/loader.py`` exposes the same directory as
 # ``BUNDLED_DIR``; this module is the lower layer (``apps/`` knows nothing about
@@ -111,6 +112,31 @@ def namespaced_module_name(app_name: str, module_path: str) -> str:
     return f"_pclaw_app_{app_name.replace('-', '_')}__{module_path.replace('.', '_')}"
 
 
+@contextlib.contextmanager
+def app_dir_on_path(ext_dir: Path | None) -> Iterator[None]:
+    """Hold an app's own directory on ``sys.path`` for the block, so its own imports resolve.
+
+    An app's modules import each other as top-level names (``from telegram_runtime.settings
+    import …``), which only works while the app's directory is on the path. The entry is
+    scoped, not permanent: a lasting one would let a later bare import pick up an app's module
+    by accident. Only the block that added the entry removes it, so nested holders compose.
+
+    ONE definition for every place core runs an app's code by path: the provider loader, a
+    bundle module's import, and ``personalclaw setup`` / ``doctor`` (``app_cli``). The CLI
+    runner held none until #124 found ten setup/doctor steps across five apps that read
+    "setup step unavailable — No module named '<app>_runtime'".
+    """
+    entry = str(ext_dir) if ext_dir is not None else ""
+    added = bool(entry) and entry not in sys.path
+    if added:
+        sys.path.insert(0, entry)
+    try:
+        yield
+    finally:
+        if added and entry in sys.path:
+            sys.path.remove(entry)
+
+
 def load_bundle_module(ext_dir: Path, app_name: str, module_path: str) -> Any:
     """Import an app's own module from its directory, under a namespaced name.
 
@@ -118,13 +144,15 @@ def load_bundle_module(ext_dir: Path, app_name: str, module_path: str) -> Any:
     module, and an app read (the extension-list API calls the availability probe) must not
     re-execute app code — re-exec would also give two distinct classes for one provider,
     so an ``isinstance`` across two reads would start failing. A changed module needs a
-    gateway restart, which is what the install/update docs already promise.
+    gateway restart, which is what the install/update docs already promise. The cache holds
+    for the FILE it was loaded from: the same name loaded from another directory (another
+    home, a reinstall elsewhere) is that directory's module, not the cached one.
     """
     unique_name = namespaced_module_name(app_name, module_path)
-    cached = sys.modules.get(unique_name)
-    if cached is not None:
-        return cached
     file_path = bundle_module_file(ext_dir, module_path)
+    cached = sys.modules.get(unique_name)
+    if cached is not None and file_path is not None and cached.__file__ == str(file_path):
+        return cached
     if file_path is None:
         raise ImportError(f"no bundle-local module {module_path!r} in {ext_dir}")
     spec = importlib.util.spec_from_file_location(unique_name, file_path)
@@ -132,21 +160,13 @@ def load_bundle_module(ext_dir: Path, app_name: str, module_path: str) -> Any:
         raise ImportError(f"cannot load {module_path!r} from {file_path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[unique_name] = module
-    # The app dir goes on sys.path only while the module executes, so its own sibling
-    # imports resolve; a permanent entry would let a later bare import pick up an app's
-    # module by accident.
-    added = str(ext_dir) not in sys.path
-    if added:
-        sys.path.insert(0, str(ext_dir))
     try:
-        spec.loader.exec_module(module)
+        with app_dir_on_path(ext_dir):
+            spec.loader.exec_module(module)
     except BaseException:
         # A half-executed module must not stay cached, or the next read gets a shell.
         sys.modules.pop(unique_name, None)
         raise
-    finally:
-        if added and str(ext_dir) in sys.path:
-            sys.path.remove(str(ext_dir))
     return module
 
 

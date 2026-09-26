@@ -752,10 +752,12 @@ class TestAnUnparseableFileIsItsOwnState:
         assert _by_rule(_scan(root), "destructive_root").reachability is Reachability.UNREACHABLE
 
     def test_an_unreadable_python_file_makes_the_whole_graph_untrustworthy(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A .py the walk skipped (here: oversize) is a HOLE in the import graph, so L3's
-        "nothing references it" claim cannot be made about anything in the bundle."""
+        """A .py the walk could not read (here: past the read cap, lowered so the fixture
+        stays small) is a HOLE in the import graph, so L3's "nothing references it" claim
+        cannot be made about anything in the bundle."""
+        monkeypatch.setattr(supply_chain, "_MAX_FILE_BYTES", 512 * 1024)
         root = _bundle(
             tmp_path,
             {

@@ -39,6 +39,7 @@ import { SessionSkillsReview } from './chat/SessionSkillsReview'
 import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { deliverableToOpenSession } from './chat/sessionDelivery'
 import { sessionRowMeta } from './chat/sessionRowMeta'
+import { AppPermissionNotice, StartedByApp, startedByName } from './chat/StartedByApp'
 import { snapshotPredatesSend, streamingAtMount } from './chat/liveRun'
 import { OrganizeChip } from './chat/OrganizeChip'
 import { ContextLedger } from './chat/ContextLedger'
@@ -388,6 +389,7 @@ function ChatHistorySidePanelBody({ navigate, onOpen }: { navigate: (p: string) 
               className="group flex items-center gap-s rounded-md px-2 py-2 text-left transition-colors hover:bg-surface-high">
               <MessageSquare size={14} className="shrink-0 text-on-surface-low group-hover:text-primary transition-colors" />
               <span className="min-w-0 flex-1 truncate text-on-surface-var text-[0.8125rem] group-hover:text-on-surface">{sessionTitle(s)}</span>
+              <StartedByApp s={s} />
               <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{relTimeShort(sessionActivitySeconds(s))}</span>
             </motion.button>
           ))}
@@ -907,6 +909,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // open. Sourced from the server (not from the navigation that created the branch) so
   // the breadcrumb is still there after a reload. `title: ''` = the origin is gone.
   const [branchedFrom, setBranchedFrom] = useState<{ key: string; title: string } | null>(null)
+  // The app that started this conversation, and whether its grant approves on its own — `null`
+  // for one of yours. Read from the session detail on every open.
+  const [startedBy, setStartedBy] = useState<{ name: string; autoApproves: boolean } | null>(null)
   // Investigate origin: the entity this chat was opened to investigate.
   // Rendered as a header chip deep-linking back to the source surface.
   const [investigateOrigin, setInvestigateOrigin] = useState<import('../lib/api').InvestigateOrigin | null>(null)
@@ -1136,6 +1141,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     setQueued([])  // queue is per-session; clear when the open session changes
     setSubagents([])  // subagent cards are per-session too
     setBranchedFrom(null)  // lineage is per-session; the load below re-reads it
+    setStartedBy(null)  // so is which app started it
     if (!sessionId) { setTurns([]); setLoadingHistory(false); return }
     setLoadFailure(null)
     let alive = true
@@ -1216,6 +1222,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // than from whatever navigation happened to land us here.
         setBranchedFrom(d.forked_from
           ? { key: branchParentKey(d.forked_from), title: d.forked_from_title || '' }
+          : null)
+        // Which app started this conversation, if one did: a turn here runs under that app's
+        // grant whoever sends it, and the composer and the Permission pill say so (`StartedByApp`).
+        setStartedBy(startedByName(d)
+          ? { name: startedByName(d), autoApproves: !!d.app_auto_approves }
           : null)
         // Investigate origin chip — present on sessions opened via
         // POST /api/investigate; survives the first turn (display fields kept).
@@ -1404,8 +1415,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       case 'approval_resolved':
         // Matched by the chat's own id, like the card was created; the session gate above has
         // already dropped a frame for another chat, which may be waiting on the same bare id.
+        // `outcome` is how it ENDED (approved / rejected / expired / cancelled): a stopped turn
+        // is not a Deny, and the card says which, in the words the transcript row will use.
         setTurns((prev) => prev.map((t) => ({ ...t, segments: t.segments.map((sg) =>
-          sg.kind === 'approval' && sg.id === String(d.request_id ?? '') ? { ...sg, resolved: d.approved ? 'approved' : 'rejected' } as ApprovalSegment : sg) })))
+          sg.kind === 'approval' && sg.id === String(d.request_id ?? '') ? { ...sg, resolved: String(d.outcome ?? '') } as ApprovalSegment : sg) })))
         break
       case 'chat_segment': endTextRun(); break
       // A regenerated answer landed (fresh reply → new variant) OR the user switched
@@ -1874,10 +1887,23 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     return () => el.removeEventListener('scroll', onScroll)
   }, [started])
 
-  // keep paste blocks in sync if the user manually deletes a [📋 Paste #N] marker.
-  useEffect(() => {
-    setPasteBlocks((prev) => (prev.length ? pruneBlocks(input, prev) : prev))
-  }, [input])
+  // The paste cards above the composer are the blocks whose `[Paste #N]` marker is still in the
+  // draft — DERIVED from the draft on render, never synced back into state.
+  //
+  // 🔴 This used to be an effect that re-set `pasteBlocks` on every `input` change, and it was the
+  // chat half of the composer's update loop (React #185). Its updater returned `prev` for an empty
+  // list, but a same-value set still SCHEDULES a render — the keystroke has just updated this
+  // component, so React cannot drop the update eagerly — and after a keystroke that render lands
+  // inside the keystroke's own synchronous commit. Typing fast, every commit ended with one pending
+  // and React counted them as nested updates until it threw (see `ui/composer/MarkdownInput`).
+  //
+  // Deriving also keeps a block whose marker comes BACK: "revert to original" restores the draft an
+  // optimize rewrote, and pruning state on the rewrite had already thrown the pasted content away,
+  // so the restored marker pointed at nothing and was sent as literal text. `send` and
+  // `onLargePaste` read the full list on purpose — `send` expands and keeps only the markers present
+  // in what it sends, and numbering over every block means a new paste can never reuse the number
+  // of one whose marker is only hidden.
+  const livePasteBlocks = useMemo(() => (pasteBlocks.length ? pruneBlocks(input, pasteBlocks) : pasteBlocks), [input, pasteBlocks])
 
   // "Show full result" (tool-io-rendering TC4): a tool card asked to reveal the
   // full raw of a projected result → the modal is URL-backed (?result=<rawRef>,
@@ -3082,6 +3108,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             : 'Temporary — this chat is forgotten when the session ends.'}</span>
         </div>
       )}
+      {/* An app's conversation: what you send runs under the APP's grant, not your approval
+          switches — said before you type, like the memory notice above. */}
+      {startedBy && <AppPermissionNotice name={startedBy.name} autoApproves={startedBy.autoApproves} />}
       {/* Voice-input failure notice: STT errors (mic denied, no STT model,
           backend failure) otherwise vanish silently after the spinner. */}
       {micError && (
@@ -3131,7 +3160,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         onOpen={setOpenFile} />
       <KnowledgeChips items={mentionedKnowledge}
         onRemove={(id) => setMentionedKnowledge((prev) => prev.filter((k) => k.id !== id))} />
-      <PasteCards blocks={pasteBlocks} onRemove={removePaste} />
+      <PasteCards blocks={livePasteBlocks} onRemove={removePaste} />
       {/* revert-optimize: the optimize rewrite replaces the draft in place, so
           offer a one-click undo back to what the user originally typed. */}
       {preOptimize !== null && (
@@ -3426,7 +3455,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           <HeaderActions className="max-w-[70vw]">
             <HeaderModePill ariaLabel="Task mode" value={selection.taskMode ?? 'agent'}
               options={TASK_MODE_SLIDER} onChange={(v) => applySelection({ taskMode: v as TaskMode })} />
+            {/* In an app's conversation the app's grant decides every turn and your choice here
+                would be overwritten by it, so the pill shows that grant and is not yours to move
+                (the composer says why). */}
             <HeaderModePill ariaLabel="Permission mode" value={selection.approval ?? 'normal'}
+              disabled={!!startedBy}
+              disabledReason={startedBy ? `${startedBy.name}'s permissions decide this chat, not yours` : undefined}
               options={APPROVAL_SLIDER} onChange={(v) => applySelection({ approval: v as ApprovalMode })} />
             {started && sessionRef.current && (
               <HeaderControl icon={NotebookPen} label="Brief the agent" priority="low" onClick={briefAgent} />
@@ -3919,11 +3953,21 @@ function KnowledgeContextPicker({ attached, onPick, onRemove, onClose }: {
   const [loading, setLoading] = useState(false)
   const MAX = 4000
   const attachedIds = new Set(attached.map((a) => a.id))
+  // A query's synchronous consequences happen in the handler that changes it, batched into the
+  // keystroke's own render; the effect below only runs the debounced search. `setLoading(true)`
+  // used to sit in that effect, where it scheduled a render from inside every keystroke's commit —
+  // typed fast, ~50 keys threw React's #185 (the mechanism: `ui/composer/MarkdownInput`). Clearing
+  // here also clears `loading`, which the effect never did: emptying the box while a search was
+  // pending left the spinner turning where "Type to search" belongs.
+  const search = (v: string) => {
+    setQ(v)
+    if (v.trim()) setLoading(true)
+    else { setRes(null); setLoading(false) }
+  }
   useEffect(() => {
     const query = q.trim()
-    if (!query) { setRes(null); return }
+    if (!query) return
     let alive = true
-    setLoading(true)
     const t = window.setTimeout(() => {
       api.knowledgeSearchForContext(query, MAX).then((r) => { if (alive) setRes(r) }).catch(() => { if (alive) setRes(null) }).finally(() => { if (alive) setLoading(false) })
     }, 250)
@@ -3935,7 +3979,7 @@ function KnowledgeContextPicker({ attached, onPick, onRemove, onClose }: {
   return (
     <Modal title="Add knowledge to prompt" icon={<BookText size={18} className="text-primary" />} onClose={onClose}>
       <div className="flex flex-col gap-m" style={{ minWidth: 420 }}>
-        <SearchField value={q} onChange={setQ} autoFocus placeholder="Search your knowledge library…"
+        <SearchField value={q} onChange={search} autoFocus placeholder="Search your knowledge library…"
           ariaLabel="Search your knowledge library"
           trailingSlot={loading ? <Loader2 size={15} className="animate-spin text-on-surface-low" /> : undefined} />
         {/* Remote, and debounced 250ms: `active` waits for `loading` to clear so the count is the
@@ -5067,6 +5111,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
               </button>
             )
           })()}
+          <StartedByApp s={s} />
           {(s.tags ?? []).map((tid) => tagById[tid] && (
             <span key={tid} className="inline-flex items-center rounded-pill px-1.5 h-[18px] text-[0.75rem]"
               style={{ background: `color-mix(in srgb, ${tagById[tid].color || 'var(--color-primary)'} 18%, transparent)`, color: tagById[tid].color || 'var(--color-primary)' }}>{tagById[tid].name}</span>

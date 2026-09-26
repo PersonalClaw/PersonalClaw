@@ -16,7 +16,7 @@ import sys
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 from personalclaw.config.loader import AppConfig
@@ -180,6 +180,33 @@ INJECTION_TIMEOUT = 300.0  # inner cap: max seconds for a single stream_and_coll
 # Mirrors ``session._CIRCUIT_BREAKER_THRESHOLD`` — the per-child ``subagent:<id>``
 # session is released before it can fail, so the breaker must key on the FAN-OUT.
 _CIRCUIT_BREAKER_THRESHOLD = 5
+
+
+def spawn_approval_id(agent_id: str) -> str:
+    """The registry id of the approval a spawn waits on before it starts."""
+    return f"spawn:{agent_id}"
+
+
+def tool_approval_id(agent_id: str, request_id: object) -> str:
+    """The registry id of one of a running subagent's tool calls.
+
+    Namespaced by the subagent for the reason a chat's is namespaced by its session: the raw id
+    is an ACP agent's JSON-RPC message id, which every subagent's connection counts from the same
+    small integers. Two subagents both waiting on ``"1"`` shared one registry row, so one being
+    cancelled took the OTHER's approval off every surface while that one was still waiting — and
+    the id alone could not say which subagent (and so which run) asked.
+    """
+    return f"subagent:{agent_id}:{request_id}"
+
+
+def approval_subagent_id(approval_id: str) -> str:
+    """The subagent an approval belongs to, from either id above — "" when it is not one's."""
+    if approval_id.startswith("spawn:"):
+        return approval_id[len("spawn:") :]
+    if approval_id.startswith("subagent:"):
+        agent_id, sep, _request = approval_id[len("subagent:") :].partition(":")
+        return agent_id if sep else ""
+    return ""
 
 
 def _fanout_key(info: "SubagentInfo") -> str:
@@ -782,8 +809,14 @@ class SubagentManager:
             except Exception:
                 logger.debug("Reaper: tombstone pruning failed", exc_info=True)
 
-    async def _force_reap(self, agent_id: str, info: SubagentInfo, elapsed: float) -> None:
-        """Kill a subagent's session process and mark it done."""
+    async def _force_reap(
+        self, agent_id: str, info: SubagentInfo, elapsed: float, *, reason: str = ""
+    ) -> None:
+        """Kill a subagent's session process and mark it done.
+
+        *reason* is a cancel's own error; empty for the reaper's deadline kill, which states its
+        own.
+        """
         session_key = f"subagent:{agent_id}"
 
         # Kill the process FIRST so the pipe unblocks, then cancel the task.
@@ -801,7 +834,14 @@ class SubagentManager:
 
         if not info.done:
             info.done = True
-            info.error = f"Reaped after {int(elapsed)}s (exceeded {self._default_timeout}s deadline) [{_timeout_context(info, include_elapsed=False)}]"  # noqa: E501
+            # A cancel names its own reason, and it is the true one: the deadline sentence is for
+            # the reaper's own kill, and stamping it over a cancel told the activity view that a
+            # subagent stopped seconds in had "exceeded" its 30-minute cap.
+            context = _timeout_context(info, include_elapsed=False)
+            info.error = reason or (
+                f"Reaped after {int(elapsed)}s "
+                f"(exceeded {self._default_timeout}s deadline) [{context}]"
+            )
             self._dec_running(info)
             Stats().inc_subagent_failed()
             self._write_tombstone(info, "reaped")
@@ -1603,7 +1643,7 @@ class SubagentManager:
             info (SubagentInfo): The subagent metadata.
         """
         assert self._on_spawn_approval is not None
-        request_id: str = f"spawn:{info.id}"
+        request_id: str = spawn_approval_id(info.id)
         try:
             from personalclaw.security import (
                 redact_credentials,
@@ -2207,7 +2247,12 @@ class SubagentManager:
                         metadata={"subagent_id": info.id},
                     )
                 elif self._on_tool_approval:
-                    approved = await self._on_tool_approval(event, info.parent_session_key)
+                    # The callback lists the call under an id that names THIS subagent; the
+                    # client is still answered on the agent's own raw id (`event` below).
+                    approved = await self._on_tool_approval(
+                        replace(event, request_id=tool_approval_id(info.id, event.request_id)),
+                        info.parent_session_key,
+                    )
                     if not approved:
                         await self._reject_and_log(client, event.request_id, session_key, event)
                         continue
@@ -2323,8 +2368,12 @@ class SubagentManager:
             model=info.model or "",
         )
 
-    async def cancel(self, agent_id: str) -> bool:
-        """Cancel a single subagent — running OR still queued. Returns True if found."""
+    async def cancel(self, agent_id: str, *, reason: str = "Cancelled by user") -> bool:
+        """Cancel a single subagent — running, still queued, or waiting to be approved.
+
+        Returns True if found. *reason* is the error it ends with, so a subagent stopped because
+        the run that spawned it ended says that rather than claiming a user cancelled it.
+        """
         info = self._agents.get(agent_id)
         if not info or info.done:
             return False
@@ -2334,10 +2383,9 @@ class SubagentManager:
             self._queue = [qi for qi in self._queue if qi.id != agent_id]
             info.queued = False
             info.done = True
-            info.error = "Cancelled by user"
+            info.error = reason
             return True
-        info.error = "Cancelled by user"
-        await self._force_reap(agent_id, info, time.time() - info.started)
+        await self._force_reap(agent_id, info, time.time() - info.started, reason=reason)
         return True
 
     async def stop_children_of(self, parent_key: str) -> int:

@@ -147,9 +147,9 @@ describe('an unknown route corrects its URL', () => {
     // the corrector `replace`d the destination the guard had just pushed. Ordering two effects by
     // a predicate is what failed; the fix is that there is only one, and correction sits after
     // every `return` that precedes it, so it cannot run while a route decision is pending.
-    const effects = [...code.matchAll(/useEffect\(\(\) => \{\s*\n\s*if \(!loaded\)/g)]
+    const effects = [...code.matchAll(/useEffect\(\(\) => \{\s*\n\s*if \(identityStatus !== 'ready'\)/g)]
     expect(effects.length, 'exactly one effect may decide the route').toBe(1)
-    const body = code.slice(code.indexOf('if (!loaded) return'))
+    const body = code.slice(code.indexOf("if (identityStatus !== 'ready') return"))
     const onboardingBranch = body.indexOf("if (route === 'onboarding')")
     const correction = body.indexOf('!renderable(route)')
     expect(onboardingBranch).toBeGreaterThan(-1)

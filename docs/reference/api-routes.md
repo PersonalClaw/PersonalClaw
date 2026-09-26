@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **854 registrations** over **693 distinct paths** — 847 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **855 registrations** over **693 distinct paths** — 848 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -36,11 +36,11 @@ The 127 families the surface divides into, largest first.
 | `/api/skills` | 19 | 15 |
 | `/api/voice` | 17 | 11 |
 | `/api/triggers` | 16 | 14 |
-| `/api/mcp` | 15 | 13 |
+| `/api/mcp` | 15 | 12 |
 | `/api/projects` | 14 | 10 |
+| `/api/providers` | 14 | 10 |
 | `/api/sessions` | 14 | 11 |
 | `/api/dashboard` | 13 | 8 |
-| `/api/providers` | 13 | 9 |
 | `/api/tasks` | 13 | 9 |
 | `/api/agents` | 12 | 8 |
 | `/api/packs` | 12 | 12 |
@@ -154,7 +154,7 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 847 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 848 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -581,7 +581,7 @@ The 847 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/logs` | SSE stream of live log entries. |
 | `GET` | `/api/logs/level` | current backend logger level. |
 | `POST` | `/api/logs/level` | change the backend logger level at runtime. |
-| `GET` | `/api/loops` | loops (redacted), newest first. |
+| `GET` | `/api/loops` | EVERY loop (redacted), newest first. |
 | `POST` | `/api/loops` | {kind, task\|goal, …} — create a READY loop, or START a run for a ported kind. |
 | `POST` | `/api/loops/classify` | {kind, task\|goal} — the kind-aware intake analyze |
 | `POST` | `/api/loops/validate` | deterministic pre-flight on a create payload |
@@ -611,9 +611,9 @@ The 847 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/mcp/probe` | return cached probe results (non-blocking). |
 | `POST` | `/api/mcp/probe` | probe all MCP servers and return live status. |
 | `POST` | `/api/mcp/probe/{name}` | reconnect (re-probe) a SINGLE MCP server. |
-| `POST` | `/api/mcp/remove` | uninstall an MCP server. |
-| `DELETE` | `/api/mcp/servers/{name}` | register or remove an MCP server. |
-| `PUT` | `/api/mcp/servers/{name}` | register or remove an MCP server. |
+| `DELETE` | `/api/mcp/servers/{name}` | read, add or edit, or remove one MCP server. |
+| `GET` | `/api/mcp/servers/{name}` | read, add or edit, or remove one MCP server. |
+| `PUT` | `/api/mcp/servers/{name}` | read, add or edit, or remove one MCP server. |
 | `POST` | `/api/mcp/sync` | apply MCP config changes and restart sessions. |
 | `POST` | `/api/mcp/toggle` | enable or disable an MCP server globally. |
 | `POST` | `/api/mcp/toggle-all` | enable or disable all MCP servers. |
@@ -668,7 +668,7 @@ The 847 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/memory/vault/sync` | reconcile the vault against the store. |
 | `GET` | `/api/memory/volunteer-stats` | per-arm volunteered-vs-used precision (§3). |
 | `GET` | `/api/model-provider-types` | installable model-provider types. |
-| `GET` | `/api/model-providers` | list configured model-provider entries. |
+| `GET` | `/api/model-providers` | every configured model-provider instance. |
 | `POST` | `/api/model-providers` | add a new model provider to config. |
 | `DELETE` | `/api/model-providers/{name}` | remove a provider from config. |
 | `PUT` | `/api/model-providers/{name}` | update a provider's model, endpoint, or options. |
@@ -783,6 +783,7 @@ The 847 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/prompts/{name}/render` | render a prompt template with the |
 | `GET` | `/api/providers` | _(no summary)_ |
 | `GET` | `/api/providers/{name}` | _(no summary)_ |
+| `POST` | `/api/providers/{name}/availability` | measure again whether it can run here. |
 | `GET` | `/api/providers/{name}/config` | _(no summary)_ |
 | `PATCH` | `/api/providers/{name}/config` | _(no summary)_ |
 | `POST` | `/api/providers/{name}/disable` | _(no summary)_ |

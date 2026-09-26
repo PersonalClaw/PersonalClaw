@@ -107,9 +107,13 @@ def test_availability_all_use_cases_must_resolve(monkeypatch):
         "personalclaw.providers.provider_bridge.can_resolve_use_case",
         lambda uc: uc in resolvable,
     )
-    degraded.register_contract(DegradedContract(surface="t_one", use_cases=("chat",), floor="f"))
     degraded.register_contract(
-        DegradedContract(surface="t_both", use_cases=("chat", "embedding"), floor="f")
+        DegradedContract(surface="t_one", label="T one", use_cases=("chat",), floor="f")
+    )
+    degraded.register_contract(
+        DegradedContract(
+            surface="t_both", label="T both", use_cases=("chat", "embedding"), floor="f"
+        )
     )
     rows = {r["surface"]: r for r in degraded.evaluate()}
     assert rows["t_one"]["available"] is True  # chat resolves
@@ -124,7 +128,9 @@ def test_availability_probe_fault_fails_available_not_down(monkeypatch):
         raise RuntimeError("probe exploded")
 
     monkeypatch.setattr("personalclaw.providers.provider_bridge.can_resolve_use_case", _boom)
-    degraded.register_contract(DegradedContract(surface="t_fault", use_cases=("chat",), floor="f"))
+    degraded.register_contract(
+        DegradedContract(surface="t_fault", label="T fault", use_cases=("chat",), floor="f")
+    )
     row = next(r for r in degraded.evaluate() if r["surface"] == "t_fault")
     assert row["available"] is True
 
@@ -139,7 +145,13 @@ def test_backlog_probe_is_fail_safe(monkeypatch):
         raise RuntimeError("store gone")
 
     degraded.register_contract(
-        DegradedContract(surface="t_backlog", use_cases=("chat",), floor="f", backlog_probe=_boom)
+        DegradedContract(
+            surface="t_backlog",
+            label="T backlog",
+            use_cases=("chat",),
+            floor="f",
+            backlog_probe=_boom,
+        )
     )
     row = next(r for r in degraded.evaluate() if r["surface"] == "t_backlog")
     assert row["backlog"] == 0
@@ -150,9 +162,11 @@ def test_degraded_surfaces_lists_only_unavailable(monkeypatch):
         "personalclaw.providers.provider_bridge.can_resolve_use_case",
         lambda uc: uc == "chat",
     )
-    degraded.register_contract(DegradedContract(surface="t_up", use_cases=("chat",), floor="f"))
     degraded.register_contract(
-        DegradedContract(surface="t_down", use_cases=("embedding",), floor="f")
+        DegradedContract(surface="t_up", label="T up", use_cases=("chat",), floor="f")
+    )
+    degraded.register_contract(
+        DegradedContract(surface="t_down", label="T down", use_cases=("embedding",), floor="f")
     )
     down = degraded.degraded_surfaces()
     assert "t_down" in down and "t_up" not in down
@@ -174,7 +188,9 @@ def test_first_evaluation_is_silent_baseline(monkeypatch):
     monkeypatch.setattr(
         "personalclaw.providers.provider_bridge.can_resolve_use_case", lambda uc: False
     )
-    degraded.register_contract(DegradedContract(surface="t_new", use_cases=("chat",), floor="f"))
+    degraded.register_contract(
+        DegradedContract(surface="t_new", label="T new", use_cases=("chat",), floor="f")
+    )
     state = _RecordingState()
     degraded.evaluate(notify=True, state=state)
     assert state.notes == []  # baseline seeded, nothing emitted
@@ -187,12 +203,12 @@ def test_down_then_recovery_emits_warning_then_info(monkeypatch):
         lambda uc: available["value"],
     )
     degraded.register_contract(
-        DegradedContract(surface="t_flap", use_cases=("chat",), floor="the floor")
+        DegradedContract(surface="t_flap", label="T flap", use_cases=("chat",), floor="the floor")
     )
     state = _RecordingState()
     # Filter to THIS surface's notes — the built-in contracts share the monkeypatched
     # probe and transition alongside t_flap, which is not what this test measures.
-    flap = lambda: [n for n in state.notes if "t_flap" in n[1]]  # noqa: E731
+    flap = lambda: [n for n in state.notes if "T flap" in n[1]]  # noqa: E731
 
     degraded.evaluate(notify=True, state=state)  # baseline: available
     assert flap() == []
@@ -200,7 +216,7 @@ def test_down_then_recovery_emits_warning_then_info(monkeypatch):
     available["value"] = False
     degraded.evaluate(notify=True, state=state)  # went down → warning
     assert len(flap()) == 1
-    assert flap()[0][0] == "warning" and "t_flap" in flap()[0][1]
+    assert flap()[0][0] == "warning" and "T flap" in flap()[0][1]
 
     available["value"] = True
     degraded.evaluate(notify=True, state=state)  # recovered → info
@@ -212,7 +228,9 @@ def test_no_change_emits_nothing(monkeypatch):
     monkeypatch.setattr(
         "personalclaw.providers.provider_bridge.can_resolve_use_case", lambda uc: False
     )
-    degraded.register_contract(DegradedContract(surface="t_stable", use_cases=("chat",), floor="f"))
+    degraded.register_contract(
+        DegradedContract(surface="t_stable", label="T stable", use_cases=("chat",), floor="f")
+    )
     state = _RecordingState()
     degraded.evaluate(notify=True, state=state)  # baseline
     degraded.evaluate(notify=True, state=state)  # still down — no new note
@@ -224,7 +242,9 @@ def test_evaluate_without_notify_never_touches_state(monkeypatch):
     monkeypatch.setattr(
         "personalclaw.providers.provider_bridge.can_resolve_use_case", lambda uc: False
     )
-    degraded.register_contract(DegradedContract(surface="t_quiet", use_cases=("chat",), floor="f"))
+    degraded.register_contract(
+        DegradedContract(surface="t_quiet", label="T quiet", use_cases=("chat",), floor="f")
+    )
     # notify defaults False; a plain rollup for the Doctor must not notify.
     rows = degraded.evaluate()
     assert any(r["surface"] == "t_quiet" for r in rows)
@@ -284,7 +304,9 @@ def test_recovery_fires_the_contracts_drain(home, monkeypatch):
     available = {"value": False}
     _flip(monkeypatch, available)
     degraded.register_contract(
-        DegradedContract(surface="t_drain", use_cases=("chat",), floor="f", drain=_drain)
+        DegradedContract(
+            surface="t_drain", label="T drain", use_cases=("chat",), floor="f", drain=_drain
+        )
     )
     state = _RecordingState()
 
@@ -308,7 +330,9 @@ def test_going_down_and_holding_steady_never_fire_the_drain(home, monkeypatch):
     available = {"value": True}
     _flip(monkeypatch, available)
     degraded.register_contract(
-        DegradedContract(surface="t_nodrain", use_cases=("chat",), floor="f", drain=_drain)
+        DegradedContract(
+            surface="t_nodrain", label="T nodrain", use_cases=("chat",), floor="f", drain=_drain
+        )
     )
     state = _RecordingState()
 
@@ -328,30 +352,29 @@ def test_a_raising_drain_never_breaks_the_recovery(home, monkeypatch):
     async def _boom(state=None) -> int:
         raise RuntimeError("drain exploded")
 
-    available = {"value": False}
-    _flip(monkeypatch, available)
-    degraded.register_contract(
-        DegradedContract(surface="t_boom", use_cases=("chat",), floor="f", drain=_boom)
-    )
-    state = _RecordingState()
-    degraded.evaluate(notify=True, state=state)
-    available["value"] = True
+    state = _recover(
+        monkeypatch,
+        DegradedContract(
+            surface="t_boom", label="T boom", use_cases=("chat",), floor="f", drain=_boom
+        ),
+    )  # must not raise
 
-    degraded.evaluate(notify=True, state=state)  # must not raise
-
-    assert any("t_boom recovered" == title for _kind, title, _body in state.notes)
+    assert any("T boom recovered" == title for _kind, title, _body in state.notes)
 
 
-def _recovered_body(state, surface: str) -> str:
-    return next(body for _kind, title, body in state.notes if title == f"{surface} recovered")
+def _recovered_body(state, label: str) -> str:
+    return next(body for _kind, title, body in state.notes if title == f"{label} recovered")
 
 
 def _recover(monkeypatch, contract) -> "_RecordingState":
-    available = {"value": False}
+    """A real outage: up (the silent baseline), down (announced), then back up."""
+    available = {"value": True}
     _flip(monkeypatch, available)
     degraded.register_contract(contract)
     state = _RecordingState()
-    degraded.evaluate(notify=True, state=state)  # baseline: down
+    degraded.evaluate(notify=True, state=state)  # baseline: up
+    available["value"] = False
+    degraded.evaluate(notify=True, state=state)  # down, and the user is told
     available["value"] = True
     degraded.evaluate(notify=True, state=state)  # recovered
     return state
@@ -369,6 +392,7 @@ def test_the_recovery_notification_reports_what_was_REENRICHED(home, monkeypatch
         monkeypatch,
         DegradedContract(
             surface="t_summary",
+            label="T summary",
             use_cases=("chat",),
             floor="f",
             backlog_probe=lambda: 7,
@@ -376,7 +400,7 @@ def test_the_recovery_notification_reports_what_was_REENRICHED(home, monkeypatch
         ),
     )
 
-    assert "7 item(s) re-enriched" in _recovered_body(state, "t_summary")
+    assert "7 item(s) re-enriched" in _recovered_body(state, "T summary")
 
 
 def test_a_drain_that_moved_nothing_still_reports_the_STANDING_backlog(home, monkeypatch):
@@ -391,6 +415,7 @@ def test_a_drain_that_moved_nothing_still_reports_the_STANDING_backlog(home, mon
         monkeypatch,
         DegradedContract(
             surface="t_stuck",
+            label="T stuck",
             use_cases=("chat",),
             floor="f",
             backlog_probe=lambda: 5,
@@ -398,7 +423,7 @@ def test_a_drain_that_moved_nothing_still_reports_the_STANDING_backlog(home, mon
         ),
     )
 
-    body = _recovered_body(state, "t_stuck")
+    body = _recovered_body(state, "T stuck")
     assert "5 item(s) awaiting re-enrichment" in body and "re-enriched" not in body
 
 

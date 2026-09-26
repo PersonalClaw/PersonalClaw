@@ -444,10 +444,12 @@ def install_scanned(
     Quarantine-first means dangerous content never lands in the live skills tree.
     Raises :class:`SkillInstallRefused` on a blocked verdict; returns an
     :class:`InstallResult` on success."""
+    import dataclasses
     import shutil
     import tempfile
+    from pathlib import PurePosixPath
 
-    from personalclaw.supply_chain import TrustTier, Verdict, scan_dir
+    from personalclaw.supply_chain import TrustTier, Verdict, never_installed, scan_dir
 
     try:
         tier = TrustTier(marketplace.trust_tier)
@@ -455,6 +457,19 @@ def install_scanned(
         tier = TrustTier.COMMUNITY
 
     detail = marketplace.fetch(skill_id)
+    # What the skill IS: its files minus the tooling no skill runs (a `.git`, a
+    # `__pycache__` whose bytecode the interpreter would run in place of the scanned source,
+    # a virtualenv). Decided once, here, so staging, the scan, the commit and the lock all
+    # see the same list — the scan reads every file it is handed, so it reads exactly what
+    # installs.
+    detail = dataclasses.replace(
+        detail,
+        files=[
+            entry
+            for entry in detail.files
+            if not any(never_installed(part) for part in PurePosixPath(entry.get("path", "")).parts)
+        ],
+    )
     staged_root = Path(tempfile.mkdtemp(prefix="pclaw-skill-quarantine-"))
     try:
         # Stage the fetched payload to quarantine (path-safe) BEFORE any scan/commit.

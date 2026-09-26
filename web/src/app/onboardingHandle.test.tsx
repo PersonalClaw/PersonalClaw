@@ -29,11 +29,14 @@ import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/re
 //   • `handleTouched` never set on change → "clears the field" RED: committed `ada-lovelace`
 //     for a field the operator had emptied.
 //   • `savedHandle` defaulted the way the name is → "skipped without a name" RED with
-//     `operator`, a handle nobody chose.
+//     `operator`, a handle nobody chose. A skip without a name no longer reaches `setName` at
+//     all — it is `keepOrDefaultName`, which sends no handle — so that test now asserts the
+//     route, and `identityHandleWrite.test.tsx` asserts the body has no `username` key.
 
 const saveOnboardingState = vi.fn()
 const onboarding = vi.fn()
 const setName = vi.fn()
+const keepOrDefaultName = vi.fn()
 
 /** The handle this install already has, as the provider would report it: '' on a fresh
  *  install, non-empty for the "Restart onboarding" case. Read at render time. */
@@ -55,7 +58,7 @@ vi.mock('./identity', async (orig) => {
   // suggester would let the flow pass while showing the operator something else.
   const real = await orig<typeof import('./identity')>()
   // `name` is the STORED display name the flow seeds its name field from; '' is a fresh install.
-  return { ...real, useIdentity: () => ({ name: '', setName, username: storedHandle }) }
+  return { ...real, useIdentity: () => ({ name: '', setName, keepOrDefaultName, username: storedHandle }) }
 })
 vi.mock('../ui/DotGlow', () => ({ DotGlow: () => null }))
 vi.mock('./onboarding/ImportStep', () => ({
@@ -171,8 +174,11 @@ describe('the first-run identity step asks for a handle beside the display name'
     fireEvent.click(screen.getByRole('button', { name: /^Skip setup/ }))
     // The NAME falls back to the shared default because the route guard needs a non-empty
     // one. The handle has no such need and `slugify_username` never invents a fallback, so a
-    // skipped run must not be silently stamped `operator`.
-    await waitFor(() => expect(setName).toHaveBeenCalledWith('Operator', ''))
+    // skipped run must not be silently stamped `operator`: the skip commits through
+    // `keepOrDefaultName`, which sends no handle at all, and never through `setName`, whose
+    // handle argument is the only way it could send one.
+    await waitFor(() => expect(keepOrDefaultName).toHaveBeenCalledWith())
+    expect(setName).not.toHaveBeenCalled()
   })
 
   it('offers back a handle this install already has, rather than a fresh suggestion', async () => {

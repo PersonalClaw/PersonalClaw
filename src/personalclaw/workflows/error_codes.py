@@ -73,7 +73,7 @@ from __future__ import annotations
 # contract that silently stopped existing, and that is what direction 2 catches.
 WF_ERROR_CODES: dict[str, str] = {
     # ── workflows/validator.py — template-author authoring errors ──────────
-    # The 64 codes a workflow-template author can hit while validating a spec. Every one
+    # The 65 codes a workflow-template author can hit while validating a spec. Every one
     # is produced by `_add(res, code, message, path, severity)`, so the message quoted in
     # each meaning below is that call's second argument.
     "WF_NOT_AN_OBJECT": "The spec is not a JSON object, so nothing about it can be validated.",
@@ -180,6 +180,12 @@ WF_ERROR_CODES: dict[str, str] = {
         "`supervisor.convergence`'s done signal is not one of the recognised signals."
     ),
     "WF_UNKNOWN_PIPE": "A binding applies a pipe name the template language does not define.",
+    "WF_BAD_PIPE": (
+        "A binding calls a known pipe in a way resolution can never evaluate — not "
+        "`name(...)` syntax, an argument that is not a literal (quoted string, number, "
+        "true/false, null), or more arguments than the pipe takes — so every resolution of it "
+        "fails."
+    ),
     "WF_HANDROLLED_FENCE": (
         "A binding writes the `<untrusted_content>` fence as literal text. A hand-written "
         "fence neutralises neither an embedded close marker nor a chat-template role token — "

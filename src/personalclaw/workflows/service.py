@@ -45,8 +45,10 @@ from personalclaw.workflows import (
     store,
     template_lint,
 )
+from personalclaw.workflows.failure_taxonomy import with_breaker_window
 from personalclaw.workflows.models import (
     RUN_PHASES,
+    SUCCESS_STATES,
     TERMINAL_RUN_STATUSES,
     TERMINAL_STATES,
     InstanceState,
@@ -912,6 +914,9 @@ def status(run_id: str) -> dict[str, Any]:
         spec_version=run.spec_version,
         error=run.error_message,
         attention=run.attention,
+        # EVERY escalation, oldest first. `attention` is one slot — the current decision — and
+        # each escalation overwrote it, so a run whose two steps both gave up showed one.
+        escalations=_escalations(run_id),
         tokens=run.total_tokens,
         elapsed_secs=run.elapsed_seconds,
         # The containing project, so the run view can offer per-project controls (the R14
@@ -2637,6 +2642,25 @@ def _with_declared_defaults(spec: dict[str, Any], provided: dict[str, Any]) -> d
     return out
 
 
+def _escalations(run_id: str) -> list[dict[str, Any]]:
+    """Every escalation the run raised, oldest first, read back from its `step_escalated` rows.
+
+    The ledger already kept each one — `_escalate` journals the artifact before it replaces
+    `run.attention` — so this is a projection, not a second record to keep in step. A step that
+    gave up and has since SUCCEEDED (a rewind re-ran it) is left out: its escalation no longer
+    says why the run is where it is.
+    """
+    fields = ("node_id", "instance_path", "reason", "detail", "options", "attempts")
+    instances = store.read_state(run_id)
+    rows = journal_mod.ledger(run_id, kinds={journal_mod.STEP_ESCALATED})
+    return [
+        {"kind": "escalation", **{key: row.get(key) for key in fields}}
+        for row in rows
+        if (inst := instances.get(str(row.get("instance_path") or ""))) is None
+        or inst.state not in SUCCESS_STATES
+    ]
+
+
 def _nodes_of(run_id: str) -> list[dict[str, Any]]:
     instances = store.read_state(run_id)
     spec = store.read_spec(run_id)
@@ -2665,6 +2689,9 @@ def _nodes_of(run_id: str) -> list[dict[str, Any]]:
     for path in sorted(instances):
         inst = instances[path]
         base = spec_path(path)
+        # Asked again at every read: the breaker a Retry passes through can have opened since the
+        # step failed, and a Retry offered inside the window is refused without a call.
+        failure = with_breaker_window(inst.failure)
         row: dict[str, Any] = {
             "instance_path": path,
             # The run view's LABEL, not just an api field: `web/src/pages/workflows/runDag.ts:136`
@@ -2675,7 +2702,7 @@ def _nodes_of(run_id: str) -> list[dict[str, Any]]:
             "state": inst.state.value,
             "attempt": inst.attempt,
             "degraded_reason": inst.degraded_reason,
-            "failure": inst.failure.to_dict() if inst.failure else None,
+            "failure": failure.to_dict() if failure else None,
         }
         # What this node's declared `schema` asked for and did not get (#3545), so the run view can
         # say it on the row that produced it. Omitted rather than sent as "" for the same reason

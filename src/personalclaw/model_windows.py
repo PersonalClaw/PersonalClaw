@@ -81,13 +81,9 @@ def declared_context_window(value: object) -> int | None:
     Garbage still reads as undeclared rather than raising: a malformed option must not
     make a provider unbuildable.
     """
-    if isinstance(value, bool) or value is None:  # bool is an int subclass; not a window
-        return None
-    try:
-        window = int(float(value))  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
-    return window if window > 0 else None
+    from personalclaw.llm.build_kwargs import positive_count
+
+    return positive_count(value)
 
 
 def _table_window(model_id: str | None) -> int | None:

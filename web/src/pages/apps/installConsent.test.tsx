@@ -62,6 +62,8 @@ const UNSIGNED = { state: 'unsigned', signer: '', reason: '' }
 const NOTHING: AppDisclosure = {
   permissions: {}, crons: [], pythonDependencies: [], hasUI: false, uiComponents: '',
   hasBackend: false, onInstall: '', onUpdate: '', mcpServers: [],
+    backendSandbox: '', providers: [], onEnable: '', onDisable: '', onUninstall: '',
+    cliSetup: '', cliDoctor: '', sources: [], skills: [], runsAsYou: '',
 }
 
 const scan = (over: Partial<AppScanReport> = {}): AppScanReport => ({

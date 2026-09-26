@@ -130,38 +130,16 @@ def test_single_instance_tool_path_unchanged(_cfg_home, monkeypatch):
     assert result.endpoint == "https://single/x"
 
 
-# ── multiInstance MODEL providers must re-register too (#3372) ────────────────
+# ── a MODEL app's instances are not in this store (#3372, superseded) ────────
 #
-# instance_routes._refresh_tool_provider_safe used to guard on
-# provider_config.type == "tool", so a multiInstance MODEL provider (e.g.
-# ollama-models) never got the disable→enable re-registration cycle after
-# create/update/delete: its local_models.registry entry — which is what
-# _known_provider_names() reads to accept a "provider:model" binding — stayed
-# stale until the next gateway restart, even though the instance was created
-# and tested successfully. Fixed by widening the guard (renamed
-# _refresh_multi_instance_provider_safe) to also cover type == "model". These
-# tests drive the real HTTP routes end to end, mirroring the filed repro:
-# create an instance → bind it with NO restart → delete removes it again (the
-# reverse hole the issue also names — the old provider must not keep serving).
-
-
-class _FakeLocalModelProvider:
-    """Minimal LocalModelProvider duck-type — enough for is_local_model_provider
-    (name/display_name/list_models/download_model/delete_model)."""
-
-    def __init__(self, config: dict):
-        self.endpoint = config.get("endpoint", "")
-        self.name = "fake-multi-model"
-        self.display_name = "Fake Multi Model"
-
-    async def list_models(self):
-        return []
-
-    async def download_model(self, name: str):
-        raise NotImplementedError
-
-    async def delete_model(self, name: str):
-        raise NotImplementedError
+# #3372 widened `_refresh_multi_instance_provider_safe` to model apps so an instance
+# created through THESE routes became bindable without a restart. But nothing chat
+# resolves reads this store: chat, discovery and Settings → Providers read config.json
+# `providers[]` (/api/model-providers). An Ollama endpoint saved here was a second copy
+# nobody used — listed on the Providers page with no Test, Edit or Remove, while chat kept
+# talking to whatever `providers[]` said. So the generic routes now REFUSE a model app, and
+# #3372's guarantee — bindable with no restart, unbindable once removed — is pinned on the
+# one store that chat reads.
 
 
 class _ModelCfg:
@@ -178,10 +156,7 @@ class _ModelCfg:
 
 @pytest.fixture
 def _model_provider_registry(monkeypatch):
-    """A REAL ProviderRegistry (not a stub) with one multiInstance MODEL
-    extension registered but not yet enabled, so create/update/delete drive the
-    actual disable→enable cycle through ModelTypeHandler — exactly like the live
-    gateway, not a mocked shortcut."""
+    """A REAL ProviderRegistry (not a stub) with one multiInstance MODEL extension."""
     from personalclaw.providers.registry import (
         ModelTypeHandler,
         ProviderRegistry,
@@ -195,95 +170,106 @@ def _model_provider_registry(monkeypatch):
     )
     registry._extensions["fake-multi-model"] = record
     monkeypatch.setattr("personalclaw.providers.registry.get_provider_registry", lambda: registry)
-    monkeypatch.setattr(
-        "personalclaw.providers.loader.load_factory",
-        lambda ext: (lambda config=None: _FakeLocalModelProvider(config or {})),
-    )
     yield registry
-    # The local-model registry is a module-level global: unregister even if an
-    # assertion above failed, so this fixture never leaks into another test.
-    from personalclaw.local_models.registry import unregister_provider
-
-    unregister_provider("fake-multi-model")
 
 
 @asynccontextmanager
 async def _model_provider_client(tmp_path):
     from personalclaw.dashboard.handlers import model_registry
+    from personalclaw.dashboard.handlers import providers as model_providers
     from personalclaw.providers import instance_routes
 
-    # 🪤 `config_dir` is NOT the only home seam these routes reach. A successful
-    # instance mutation now also runs `_rebuild_agent_config_safe()`, and
-    # `rebuild_agent_config()` writes through `agent.agents_dir()` — no longer a MODULE-LEVEL
-    # constant frozen at import (`agent.py:93`) — patching `config_dir` alone
-    # leaves it pointing at the REAL home, so the write escapes tmp_path and the
-    # real-home guard refuses it and fails the test (`agents/personalclaw.json`). Redirect
-    # the frozen constants too; `_USER_DIR` keeps the merge from reading the real user's
-    # `mcp.json` into the rebuilt config.
+    # 🪤 `config_dir` is NOT the only home seam these routes reach: a tool-instance
+    # mutation runs `_rebuild_agent_config_safe()`, which writes through `agent.agents_dir()`
+    # and reads `agent._USER_DIR`. Redirect them too, so nothing here can reach the real home.
     with (
         patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
         patch("personalclaw.agent.agents_dir", lambda: tmp_path / "agents"),
         patch("personalclaw.agent._USER_DIR", tmp_path),
+        # The typed media registries are process-wide; a config write re-reads them.
+        patch.object(model_providers, "_refresh_media_registries", lambda: None),
     ):
         app = web.Application()
         instance_routes.register_instance_routes(app)
         model_registry.register_model_registry_routes(app)
+        app.router.add_post("/api/model-providers", model_providers.api_provider_create)
+        app.router.add_delete("/api/model-providers/{name}", model_providers.api_provider_delete)
         async with TestClient(TestServer(app)) as client:
             yield client
 
 
 @pytest.mark.asyncio
-async def test_creating_a_multi_instance_model_provider_is_bindable_without_restart(
-    tmp_path, _model_provider_registry
-):
+async def test_the_generic_instance_routes_refuse_a_model_app(tmp_path, _model_provider_registry):
+    """Every route, not just create — a list or a test answered from this store would
+    still show (or probe) the copy chat never reads."""
+    base = "/api/providers/fake-multi-model/instances"
+    body = {"display_name": "local", "config": {"endpoint": "http://127.0.0.1:11434"}}
     async with _model_provider_client(tmp_path) as client:
-        from personalclaw.providers.use_cases import _known_provider_names
+        calls = [
+            client.get(base),
+            client.post(base, json=body),
+            client.get(f"{base}/abc123"),
+            client.put(f"{base}/abc123", json={"config": {"endpoint": "http://x:1"}}),
+            client.delete(f"{base}/abc123"),
+            client.post(f"{base}/abc123/test"),
+        ]
+        for call in calls:
+            r = await call
+            payload = json.loads(await r.text())
+            assert r.status == 400, (r.method, r.url, payload)
+            assert payload["error"]["code"] == "model_instances_elsewhere", payload
+            assert "Settings → Providers" in payload["error"]["message"]
 
-        assert "fake-multi-model" not in (_known_provider_names() or set())
+    assert not (
+        tmp_path / "extensions" / "fake-multi-model"
+    ).exists(), "a model app's instance was written to the generic store anyway"
 
-        r = await client.post(
-            "/api/providers/fake-multi-model/instances",
-            json={"display_name": "local", "config": {"endpoint": "http://127.0.0.1:11434"}},
+
+def _register_fake_model_type() -> None:
+    """Simulate an installed model app having registered its provider type."""
+    from personalclaw.llm.capabilities import Capability, ProviderCapability
+    from personalclaw.llm.registry import get_default_registry
+
+    reg = get_default_registry()
+    if "fake-multi-model" not in reg._capabilities:  # noqa: SLF001
+        reg.register_type(
+            ProviderCapability(
+                type="fake-multi-model",
+                capabilities=frozenset({Capability.CHAT}),
+                supports_streaming=True,
+                supports_tools=False,
+                supports_embeddings=False,
+                supports_vision=False,
+                max_context_tokens=0,
+            ),
+            lambda **kw: None,
         )
-        assert r.status == 201, await r.text()
-
-        # In-process, no restart: the prefix is now known...
-        assert "fake-multi-model" in (_known_provider_names() or set())
-        # ...and the binding PUT the filed issue's step 3 got a 400 on now succeeds.
-        r = await client.put(
-            "/api/models/active/chat", json={"models": ["fake-multi-model:some-model"]}
-        )
-        assert r.status == 200, await r.text()
 
 
 @pytest.mark.asyncio
-async def test_deleting_a_multi_instance_model_provider_makes_it_unbindable_again(
-    tmp_path, _model_provider_registry
-):
+async def test_a_model_instance_is_bindable_at_once_and_unbindable_once_removed(tmp_path):
+    """#3372's guarantee, on the store chat reads: no restart between add and bind, and a
+    removed instance stops being bindable (the old provider must not keep serving)."""
+    _register_fake_model_type()
     async with _model_provider_client(tmp_path) as client:
         from personalclaw.providers.use_cases import _known_provider_names
 
+        assert "local-models" not in (_known_provider_names() or set())
         r = await client.post(
-            "/api/providers/fake-multi-model/instances",
-            json={"display_name": "local", "config": {"endpoint": "http://127.0.0.1:11434"}},
-        )
-        assert r.status == 201, await r.text()
-        instance_id = json.loads(await r.text())["instance"]["id"]
-
-        # Confirm it actually became bindable first, so the assertions below pin
-        # the DELETE path specifically rather than degenerating to "never worked".
-        r = await client.put(
-            "/api/models/active/chat", json={"models": ["fake-multi-model:some-model"]}
+            "/api/model-providers",
+            json={
+                "name": "local-models",
+                "type": "fake-multi-model",
+                "options": {"endpoint": "http://127.0.0.1:11434"},
+            },
         )
         assert r.status == 200, await r.text()
 
-        r = await client.delete(f"/api/providers/fake-multi-model/instances/{instance_id}")
+        r = await client.put("/api/models/active/chat", json={"models": ["local-models:m1"]})
         assert r.status == 200, await r.text()
 
-        # The reverse hole: without a re-registration on delete, the old provider
-        # (and its binding eligibility) would keep serving until a restart.
-        assert "fake-multi-model" not in (_known_provider_names() or set())
-        r = await client.put(
-            "/api/models/active/chat", json={"models": ["fake-multi-model:some-model"]}
-        )
+        r = await client.delete("/api/model-providers/local-models")
+        assert r.status == 200, await r.text()
+        assert "local-models" not in (_known_provider_names() or set())
+        r = await client.put("/api/models/active/chat", json={"models": ["local-models:m1"]})
         assert r.status == 400, await r.text()

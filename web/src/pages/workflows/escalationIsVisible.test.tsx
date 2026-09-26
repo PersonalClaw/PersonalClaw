@@ -18,7 +18,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, cleanup } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { EscalationPanel } from './EscalationPanel'
+import { EscalationPanel, escalationHeading } from './EscalationPanel'
 import { attentionLine, readAttention, type EscalationRead } from './attentionMeta'
 import { foldEvent, foldSnapshot } from './workflowFold'
 
@@ -56,7 +56,7 @@ afterEach(() => cleanup())
 
 describe('the panel', () => {
   it('names the reason, the node, and the engine’s suggested fix', () => {
-    render(<EscalationPanel read={read()} />)
+    render(<EscalationPanel reads={[read()]} runStatus="failed" />)
     expect(screen.getByText(/needs a decision/i)).toBeTruthy()
     expect(screen.getByText(/every retry was spent and the step still failed/i)).toBeTruthy()
     expect(screen.getByText('consume')).toBeTruthy()
@@ -66,7 +66,7 @@ describe('the panel', () => {
   it('lists every attempt, not just the last', () => {
     // Two attempts with the SAME signature: a de-dup on signature would collapse them and lose
     // "it failed the same way twice", which is exactly what makes retrying pointless.
-    render(<EscalationPanel read={read()} />)
+    render(<EscalationPanel reads={[read()]} runStatus="failed" />)
     expect(screen.getByText('Attempt 1')).toBeTruthy()
     expect(screen.getByText('Attempt 2')).toBeTruthy()
   })
@@ -76,7 +76,7 @@ describe('the panel', () => {
     // ever produced — and no endpoint accepts one back. Five buttons that cannot succeed would be
     // worse than the silence this fixes, and five inert words carry no information about THIS
     // run. The decision surface that consumes them is engine work.
-    render(<EscalationPanel read={read()} />)
+    render(<EscalationPanel reads={[read()]} runStatus="failed" />)
     expect(screen.queryAllByRole('button')).toHaveLength(0)
     for (const option of ATTENTION.options) {
       expect(screen.queryByText(option), `${option} rendered with nothing to click`).toBeNull()
@@ -87,19 +87,39 @@ describe('the panel', () => {
     // On the loud-failure paths `_finish(FAILED, error=…)` DOES carry a message, and it can be
     // the same string as the escalation's detail. Two copies of one sentence reads as two
     // problems.
-    render(<EscalationPanel read={read()} runError="ConnectionError: network down" />)
+    render(<EscalationPanel reads={[read()]} runStatus="failed" runError="ConnectionError: network down" />)
     // Still once — as the attempt's own error line, which is labelled by its attempt number.
     expect(screen.getAllByText('ConnectionError: network down')).toHaveLength(2)
     cleanup()
-    render(<EscalationPanel read={read()} runError="" />)
+    render(<EscalationPanel reads={[read()]} runStatus="failed" runError="" />)
     // The standalone detail line is back: 2 attempts + 1 detail.
     expect(screen.getAllByText('ConnectionError: network down')).toHaveLength(3)
+  })
+
+  it('explains every step that gave up, oldest first, and tells two items apart', () => {
+    // `run.attention` is ONE slot and each escalation overwrote it: a run whose two steps both
+    // gave up explained only the second.
+    const first = readAttention({ ...ATTENTION, node_id: 'body', instance_path: 'root.body#1', detail: 'first cause' })
+    const second = readAttention({ ...ATTENTION, node_id: 'body', instance_path: 'root.body#2', detail: 'second cause' })
+    if (first?.kind !== 'escalation' || second?.kind !== 'escalation') throw new Error('not escalations')
+    render(<EscalationPanel reads={[first, second]} runStatus="failed" />)
+    expect(screen.getByText('first cause')).toBeTruthy()
+    expect(screen.getByText('second cause')).toBeTruthy()
+    expect(screen.getByText('body #1')).toBeTruthy()
+    expect(screen.getByText('body #2')).toBeTruthy()
+  })
+
+  it('does not say "stopped" over a run that finished with failed items skipped', () => {
+    expect(escalationHeading('failed', 1)).toBe('This run stopped and needs a decision')
+    expect(escalationHeading('complete', 2)).toBe('This run finished, but 2 steps failed')
+    expect(escalationHeading('complete', 1)).toBe('This run finished, but 1 step failed')
+    expect(escalationHeading('running', 1)).toBe('1 step failed so far')
   })
 
   it('renders a breaker escalation that has no attempts at all', () => {
     const r = readAttention({ kind: 'escalation', reason: 'token_cap', node_id: 'draft' })
     if (r?.kind !== 'escalation') throw new Error('not an escalation')
-    render(<EscalationPanel read={r} />)
+    render(<EscalationPanel reads={[r]} runStatus="failed" />)
     expect(screen.getByText(/reached its token budget/i)).toBeTruthy()
     expect(screen.queryByText(/^Attempt/)).toBeNull()
   })
@@ -134,8 +154,9 @@ describe('the run page', () => {
   beforeEach(() => { cleanup(); vi.resetModules() })
 
   it('🔑 explains a failed run whose error line is EMPTY', async () => {
-    // The measured case, end to end: status failed, error '', diagnosis only on `attention`.
-    await mountRun({ status: 'failed', error: '', attention: ATTENTION })
+    // The measured case, end to end: status failed, error '', the diagnosis only in the
+    // escalation record (the ledger's copy, which the page reads, and `attention`'s).
+    await mountRun({ status: 'failed', error: '', attention: ATTENTION, escalations: [ATTENTION] })
     await waitFor(() => expect(screen.getByTestId('escalation-panel')).toBeTruthy())
     expect(screen.getByText(/every retry was spent/i)).toBeTruthy()
   })

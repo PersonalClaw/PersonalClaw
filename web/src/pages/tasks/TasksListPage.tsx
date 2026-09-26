@@ -69,6 +69,8 @@ const ASSIGNED_MINE = 'mine'
 // Deliberately URL-ONLY, with no localStorage twin: an empty-string "any" sentinel plus a
 // remembered value is exactly the pair that made the scope filter unclearable (#476 below).
 const TAG_ANY = ''
+/** The identity of one server search — what a search failure is kept against. */
+const searchRequest = (q: string, tag: string, retry: number) => `${q}\n${tag}\n${retry}`
 
 /** Whether a task is the owner's work — mirrors `Task.belongs_to` on the backend.
  *  Assignee decides when set; otherwise the author does, because an unassigned task
@@ -133,7 +135,8 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   // load already answers with LoadError. The nonces re-run each fetch from a Retry click.
   const [readyErr, setReadyErr] = useState<unknown>(null)
   const [readyNonce, setReadyNonce] = useState(0)
-  const [searchErr, setSearchErr] = useState<unknown>(null)
+  // A search failure is kept WITH the request it answered (see `searchError` beside the search effect).
+  const [searchErr, setSearchErr] = useState<{ request: string; error: unknown } | null>(null)
   const [searchNonce, setSearchNonce] = useState(0)
   // Server-backed search (/api/tasks/search): a non-empty query takes precedence
   // over the status filter. URL-backed (?q, replace) so it's shareable + survives
@@ -261,10 +264,18 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
 
   // Debounced server-side search; clears results when the query is emptied.
   const q = query.trim()
+  // The error shows only while the request it answered — query, tag, retry — is still the current
+  // one, so a new query or a Retry hides it by construction (a Retry still drops to the skeleton
+  // while it runs, as before). It used to be hidden by `setSearchErr(null)` at the top of the
+  // effect below: a set that ran on every keystroke from inside the keystroke's own commit, the
+  // shape that throws React's #185 when keys outrun the renders (the mechanism:
+  // `ui/composer/MarkdownInput`). The periodic `tasks` refresh re-asks the SAME request, so a
+  // standing error no longer blinks off and on with it.
+  const searchError = searchErr?.request === searchRequest(q, tagFilter, searchNonce) ? searchErr.error : null
   useEffect(() => {
     if (!q) { setResults(null); setSearchErr(null); return }
     let alive = true
-    setSearchErr(null)
+    const request = searchRequest(q, tagFilter, searchNonce)
     const h = window.setTimeout(() => {
       // `tags` is the search API's own filter axis — plumbed through
       // `tasks/handlers.py` to `registry.search_tasks` and working, but until now it
@@ -272,8 +283,8 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
       // active so an unfiltered search keeps its existing request shape, and the
       // client-side `hasTag` pass below still applies for the non-search paths.
       api.searchTasks({ query: q, limit: 100, ...(tagFilter !== TAG_ANY ? { tags: [tagFilter] } : {}) })
-        .then((d) => { if (alive) setResults(d.tasks) })
-        .catch((e) => { if (alive) { setSearchErr(e); setResults(null) } })
+        .then((d) => { if (alive) { setResults(d.tasks); setSearchErr(null) } })
+        .catch((e) => { if (alive) { setSearchErr({ request, error: e }); setResults(null) } })
     }, 250)
     return () => { alive = false; clearTimeout(h) }
   }, [q, tasks, tagFilter, searchNonce])
@@ -554,7 +565,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
             {/* Error FIRST: `tasks === null` also satisfies the skeleton and the empty branch, so a
                 later test would be unreachable. Removing the swallow above is only half the fix —
                 without this branch a failed load would hang on the skeleton forever instead. */}
-            {q && searchErr ? <LoadError what="search results" error={searchErr} onRetry={() => setSearchNonce((n) => n + 1)} />
+            {q && searchError ? <LoadError what="search results" error={searchError} onRetry={() => setSearchNonce((n) => n + 1)} />
               : filter === 'ready' && !q && readyErr ? <LoadError what="ready tasks" error={readyErr} onRetry={() => setReadyNonce((n) => n + 1)} />
               : tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateKeys('tasks', true); refresh() }} />
               : filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (
@@ -586,7 +597,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
                 onPick={(l) => setListFilter(listFilter?.id === l.id ? null : { id: l.id, name: l.name })}
                 onReset={resetList} />
             )}
-            {q && searchErr ? <LoadError what="search results" error={searchErr} onRetry={() => setSearchNonce((n) => n + 1)} />
+            {q && searchError ? <LoadError what="search results" error={searchError} onRetry={() => setSearchNonce((n) => n + 1)} />
               : filter === 'ready' && !q && readyErr ? <LoadError what="ready tasks" error={readyErr} onRetry={() => setReadyNonce((n) => n + 1)} />
               : tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateKeys('tasks', true); refresh() }} />
               : filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (

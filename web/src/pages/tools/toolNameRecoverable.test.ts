@@ -25,9 +25,10 @@ import { join } from 'node:path'
 // as its 34 long ones. Fixing 3 of 37 would have fragmented the family — the exact anti-pattern the
 // coherence rules warn about. Read the TEXT, not the ratio.
 //
-// The server line is included though it did NOT clip with this seed: it is a URL or a full command line,
-// the most tail-heavy string on the surface, and leaving it bare would ship a row whose name recovers
-// and whose address does not. Stated rather than dressed up as a measurement.
+// The server line is included though it did NOT clip with this seed: it is a URL or a command line (with
+// every credential masked by the gateway), the most tail-heavy string on the surface, and leaving it bare
+// would ship a row whose name recovers and whose address does not. Stated rather than dressed up as a
+// measurement.
 //
 // Nothing re-layouts — `title` is an attribute — so the captures are pixel-identical.
 
@@ -47,17 +48,18 @@ describe('a clipped tool identifier can still be read', () => {
   })
 
   it('and the server address line, which is the most tail-heavy string here', () => {
-    expect(PAGE).toMatch(/title=\{s\.url \|\| \[s\.command, \.\.\.\(s\.args \?\? \[\]\)\]\.join\(' '\)\}>\{s\.url \|\| \[s\.command, \.\.\.\(s\.args \?\? \[\]\)\]\.join\(' '\)\}<\/p>/)
+    expect(PAGE).toMatch(/title=\{importedTarget\(s\)\}>\{importedTarget\(s\)\}<\/p>/)
   })
 
   it('every title is the rendered expression, not a paraphrase', () => {
     // A title that could drift would name a different tool than the row shows. The address line matters
-    // most here: it is built from three fields, so a hand-written title would rot silently.
+    // most here: it is built from three fields (the command, its arguments, or the URL), so the row's
+    // text and its title are one helper call, `importedTarget`, and a hand-written title cannot rot.
     for (const [what, expr] of [['tool', 't.name'], ['server', 's.name']] as const) {
       const e = expr.replace('.', '\\.')
       expect(new RegExp(`title=\\{${e}\\}>\\{${e}\\}<`).test(PAGE), `${what}`).toBe(true)
     }
-    const addr = /title=\{(s\.url \|\| \[s\.command[^}]*)\}>\{(s\.url \|\| \[s\.command[^}]*)\}</.exec(PAGE)
+    const addr = /title=\{(importedTarget\([^}]*\))\}>\{(importedTarget\([^}]*\))\}</.exec(PAGE)
     expect(addr, 'address title and text are the same expression').toBeTruthy()
     expect(addr?.[1]).toBe(addr?.[2])
   })

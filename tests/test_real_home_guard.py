@@ -26,7 +26,6 @@ from real_home_guard import Guard, RealHomeAccessError
 # modules freeze a home into a constant. See test_no_import_time_constant_holds_the_real_home.
 import personalclaw.agent as _agent
 import personalclaw.dashboard.handlers.hooks as _hooks_handlers
-import personalclaw.dashboard.handlers.mcp as _mcp_handlers
 
 _TESTS_DIR = Path(__file__).resolve().parent
 
@@ -381,16 +380,16 @@ def test_the_suite_runs_under_the_guard(pytestconfig) -> None:
 
 
 def test_no_import_time_constant_holds_the_real_home() -> None:
-    """Six modules freeze a home into a constant at import — collection time, before any
-    fixture — and this module imported three of them at ITS import. Measured before the
-    import window in conftest: every one of these was the developer's real home, and 150+
-    tests read the owner's skills, agent hooks and mcp.json through them."""
+    """Five modules freeze a home into a constant at import — collection time, before any
+    fixture — and this module imports two of them at ITS import. Measured before the import
+    window in conftest: every one of these was the developer's real home, and 150+ tests read
+    the owner's skills, agent hooks and mcp.json through them. (A third, the MCP handlers'
+    ``_GLOBAL_MCP_JSON``, was deleted: it resolves per call now.)"""
     real = str(real_home_guard.REAL_HOME)
     frozen = {
         "agent._USER_DIR": _agent._USER_DIR,
         "agent._DEFAULT_HOOKS_DIR": _agent._DEFAULT_HOOKS_DIR,
         "dashboard.handlers.hooks._HOOK_STORE_PATH": _hooks_handlers._HOOK_STORE_PATH,
-        "dashboard.handlers.mcp._GLOBAL_MCP_JSON": _mcp_handlers._GLOBAL_MCP_JSON,
     }
     leaked = {name: str(path) for name, path in frozen.items() if str(path).startswith(real)}
     assert not leaked, f"frozen at import to the real home: {leaked}"

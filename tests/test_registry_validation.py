@@ -532,6 +532,37 @@ def test_a_symlink_escaping_the_repo_blocks(tmp_path: Path, target: str) -> None
     assert "repo_symlink_escape" in _codes(row.blocking)
 
 
+def test_the_dry_run_scans_what_an_install_stages(tmp_path: Path) -> None:
+    """The verdict a listing carries must be the one the install gate reaches. An install
+    leaves ``.git`` and committed bytecode out of the app, so the dry-run does too: the
+    clone's own ``.git`` (whose sample hooks match the script rules) and a committed
+    ``__pycache__`` are not what gets installed, and not what gets judged."""
+
+    def add_tooling(tree: Path) -> None:
+        (tree / "__pycache__").mkdir()
+        (tree / "__pycache__" / "helper.py").write_text("eval(input())\n")
+
+    row = _validate_one(_row(_variant(tmp_path, mutate=add_tooling)))
+    assert row.listable, row.blocking
+    assert row.verdict == "clean", row.findings
+
+
+def test_a_tree_the_stager_refuses_blocks_the_listing(tmp_path: Path) -> None:
+    """A link to a folder inside the repo does not escape it, so the shape check passes it —
+    and the install refuses it, because the scan never reads what a folder link reaches.
+    A listing nobody could install is not listable, and the reason says so."""
+
+    def add_folder_link(tree: Path) -> None:
+        (tree / "vendor").mkdir()
+        (tree / "vendor" / "lib.py").write_text("X = 1\n")
+        os.symlink("vendor", tree / "lib")
+
+    row = _validate_one(_row(_variant(tmp_path, mutate=add_folder_link)))
+    assert not row.listable
+    assert _codes(row.blocking) == ["bundle_refused"], row.blocking
+    assert "'lib' links to a folder" in row.blocking[0].detail, row.blocking
+
+
 def test_a_relative_symlink_inside_the_repo_is_left_alone(tmp_path: Path) -> None:
     """Vacuity for the rail above: it targets ESCAPE, not symlinks.
 
@@ -840,7 +871,10 @@ def test_the_validator_records_the_signer_without_verifying_anything() -> None:
     core_imports = sorted(
         line.strip() for line in source.splitlines() if line.startswith("from personalclaw")
     )
+    # `apps.staging` is the stager an install copies a bundle with, so the dry-run scans
+    # what an install scans. It copies; it verifies nothing.
     assert core_imports == [
+        "from personalclaw.apps import staging",
         "from personalclaw.apps.manifest import PROVIDER_TYPES, AppManifest",
         "from personalclaw.supply_chain import ScanReport, SkillScanner, TrustTier, Verdict",
     ], core_imports

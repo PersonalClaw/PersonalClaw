@@ -47,6 +47,9 @@ const CASES: { resolved: ApprovalResolution; approved: boolean; says: string }[]
   { resolved: 'trust_reads', approved: true, says: 'reads' },
   { resolved: 'yolo', approved: true, says: 'YOLO' },
   { resolved: 'rejected', approved: false, says: 'denied' },
+  // An approval that ended with NO answer: not run, and not a Deny either.
+  { resolved: 'expired', approved: false, says: 'no answer in time' },
+  { resolved: 'cancelled', approved: false, says: 'the turn was stopped' },
 ]
 
 describe('approvalOutcome mapping', () => {
@@ -87,6 +90,20 @@ describe('approvalOutcome mapping', () => {
 
   it('maps a denial to denied', () => {
     expect(approvalOutcome('rejected').label).toBe('denied')
+  })
+
+  it('does not call an approval that ended unanswered "denied"', () => {
+    // A stopped turn and a closed window both refuse the call, but nobody decided anything:
+    // "denied" there claimed a decision the user never made. Each names what actually happened.
+    for (const r of ['expired', 'cancelled'] as const) {
+      const o = approvalOutcome(r)
+      expect(o.label, r).not.toContain('denied')
+      expect(o.label, r).not.toContain('approved')
+      expect(o.label, r).toMatch(/^not run — /)
+      expect(o.label, r).not.toMatch(/^resolved:/)
+      expect(o.tone, r).not.toBe('var(--color-ok)')
+    }
+    expect(approvalOutcome('expired').label).not.toBe(approvalOutcome('cancelled').label)
   })
 
   it('does not read an UNKNOWN outcome as denied or as approved', () => {

@@ -108,6 +108,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The field is a security setting only the owner can change; an app cannot, in either "
         "direction."
     ),
+    # An app-scoped caller read or wrote a setting its manifest does not name in
+    # `permissions.config` — the list install consent showed the owner.
+    "config_field_not_declared": (
+        "The app did not declare this setting in permissions.config, so it cannot read or "
+        "change it."
+    ),
     # ── session deletion (dashboard/handlers/sessions.py) ──
     # A LIVE session carries no history file, so `delete_session` declines it. That is a
     # real resource this route refuses, which is a DIFFERENT fact from a key that never
@@ -217,6 +223,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     ),
     # ── security audit (handlers/security_audit.py) ──
     "audit_owner_only": "The audit trail is owner-only; an app-scoped token may not read it.",
+    # the SEL rotate (handlers/core.py `api_sel_rotate`)
+    "sel_archive_failed": "The audit log could not be moved into its archive, so it was kept "
+    "as it is and no new chain was started.",
     "invalid_cursor": "The pagination cursor is malformed.",
     "invalid_limit": "The limit parameter is out of range or not an integer.",
     "invalid_time_filter": "A since/until filter is not a recognized timestamp.",
@@ -643,6 +652,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "A provider instance's connection test failed unexpectedly; the underlying error is "
         "in the server log."
     ),
+    # A MODEL provider's instances are config.json `providers[]` entries (/api/model-providers)
+    # — the store chat resolves. The generic instance store refuses them rather than keep a
+    # second, unread copy of an instance's settings (400: the request named the wrong store).
+    "model_instances_elsewhere": (
+        "A model provider's instances are managed through /api/model-providers, not the "
+        "generic provider-instance store."
+    ),
     # ── per-run policy overrides (workflows/handlers.py) ──
     # Emitted through the workflows `_STATUS_MAP`/`_fail` translation rather than a
     # `json_error` call site, but registered here all the same: these are wire codes a
@@ -689,6 +705,48 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "the clone failed.",
     "app_preview_failed": "The app was fetched but cannot be offered for install; the message "
     "says why.",
+    # ── pending approvals (dashboard/approval_owner.py) ──
+    # A 409 state refusal: the approval was listed, but the work that asked for it (its turn,
+    # subagent, workflow run or loop) has ended, so it was cancelled rather than answered and
+    # nothing ran. The message names which owner ended and how.
+    "approval_owner_ended": (
+        "The work that asked for this approval has ended, so it was cancelled and nothing ran."
+    ),
+    # ── saving an MCP server (dashboard/handlers/mcp.py — PUT /api/mcp/servers/{name}) ──
+    # `invalid_env` (400) — the environment cannot be saved as sent: `env` is not a map of names
+    # to strings, `plainEnv`/`keepEnv` is not a list of names, a variable asked to keep its saved
+    # value has none saved, or a value holds a character no credential can (NUL). The message
+    # names the variable. `mcp_server_not_editable` (409) — the name belongs to a server
+    # PersonalClaw manages itself or an app provides, so its definition is not the form's to
+    # replace; the message says which.
+    "invalid_env": (
+        "The MCP server's environment cannot be saved as sent; the message names the variable."
+    ),
+    "mcp_server_not_editable": (
+        "PersonalClaw or an app provides this MCP server, so it cannot be saved from here."
+    ),
+    # ── a secret reference to another owner's credential (config/secret_refs.py) ──
+    # 400: the settings name a `{{secret:…}}` stored under a different owner (another app, or
+    # core for an app's settings). A reference resolves only against its own owner's keys, and
+    # the message names the key and says how to store one under this owner instead.
+    "secret_owned_elsewhere": (
+        "The settings reference a credential that belongs to a different owner; store the key "
+        "under this owner instead."
+    ),
+    # ── saving an MCP server at a URL (dashboard/handlers/mcp.py — PUT /api/mcp/servers/{name}) ──
+    # `invalid_transport` (400) — the transport is not `stdio`, `http` or `sse`, or the body carries
+    # the other transport's fields. `invalid_url` (400) — the URL is not an http(s) address with a
+    # host. `invalid_headers` (400) — the headers cannot be saved as sent: not a map of names to
+    # strings, a name that is not a header name or is sent twice, an empty value or one with a line
+    # break, or a header asked to keep a saved value it does not have. The message names the header.
+    "invalid_transport": (
+        "The MCP server's transport is not stdio, http or sse, or the request mixes the fields "
+        "of two transports."
+    ),
+    "invalid_url": "The MCP server's URL is not an http or https address with a host.",
+    "invalid_headers": (
+        "The MCP server's headers cannot be saved as sent; the message names the header."
+    ),
 }
 
 
@@ -727,3 +785,17 @@ def json_error(
     if error_extra:
         err.update(error_extra)
     return web.json_response({"error": err, **extra}, status=status, headers=dict(headers or {}))
+
+
+def consent_required(field: str, consent: str) -> web.Response:
+    """The ``400 confirmation_required`` a write that loosens a security setting answers when it
+    did not carry ``"confirm": true`` — one shape for every writer (the config PATCH, an agent's
+    approval mode, an automation's posture), because the SPA's ``withSecurityConsent`` asks the
+    owner by reading exactly this: ``{field, consent}`` in ``error.detail``, with *consent* being
+    the sentence the dialog shows (``config/edit_spec.SecurityControl.consent``)."""
+    return json_error(
+        "confirmation_required",
+        message=f'send {{"confirm": true}} to confirm — {consent}',
+        status=400,
+        error_extra={"detail": {"field": field, "consent": consent}},
+    )

@@ -217,7 +217,7 @@ _PROVIDER_BOOTSTRAP_COMMANDS = frozenset(
 #: still listing the choice in the ``{chat,run,…}`` metavar. The result is the opposite of
 #: the intent: an internal sentinel on the first surface a CLI user reads, and the command
 #: advertised rather than hidden. Genuinely hiding one takes BOTH halves below.
-HIDDEN_COMMANDS = frozenset({"mcp-core"})
+HIDDEN_COMMANDS = frozenset({"mcp-core", "availability-probe"})
 
 
 def _add_hidden_parser(
@@ -1248,6 +1248,11 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
     # mcp-core (MCP server — spawned by an ACP agent, never typed by a user)
     _add_hidden_parser(sub, "mcp-core")
 
+    # availability-probe (spawned by the gateway to run provider apps' availability hooks
+    # out of process — providers/availability.py; never typed by a user)
+    probe_parser = _add_hidden_parser(sub, "availability-probe")
+    probe_parser.add_argument("names", nargs="*")
+
     # learn
     learn_parser = sub.add_parser(
         "learn",
@@ -1425,14 +1430,28 @@ def main() -> None:
     # Load .env from the project root (CWD or detected project dir) and from
     # PERSONALCLAW_HOME so credentials resolve via os.environ without requiring
     # users to manually copy .env into ~/.personalclaw.
-    from dotenv import load_dotenv as _load_dotenv
+    #
+    # NAMED credentials only. The home's `.env` is also where the credential store keeps every
+    # OWNED secret (`PCSECRET_…`: provider keys, app tokens, each MCP server's env and header
+    # values, the webhook token), and those are read through their settings reference and never
+    # exported — `AppConfig.load_credentials` holds the same line. python-dotenv's `load_dotenv`
+    # sets every line, so it handed all of them to every child the gateway spawns: each MCP
+    # server started with every other server's tokens.
+    from dotenv import dotenv_values as _dotenv_values
+
+    from personalclaw.config.credentials import is_owned_key
+
+    def _load_named_credentials(path: Path) -> None:
+        for key, value in _dotenv_values(path).items():
+            if value is not None and not is_owned_key(key):
+                os.environ.setdefault(key, value)
 
     _cwd_env = Path.cwd() / ".env"
     if _cwd_env.is_file():
-        _load_dotenv(_cwd_env, override=False)
+        _load_named_credentials(_cwd_env)
     _home_env = config_dir() / ".env"
     if _home_env.is_file() and _home_env != _cwd_env:
-        _load_dotenv(_home_env, override=False)
+        _load_named_credentials(_home_env)
 
     # Validate PERSONALCLAW_PORT early — fail fast before anything else loads.
     _raw_port = os.environ.get("PERSONALCLAW_PORT")
@@ -1455,6 +1474,14 @@ def main() -> None:
     parser = build_parser()
 
     args = parser.parse_args()
+
+    # The gateway's availability-probe child answers before any of the setup below runs:
+    # that setup loads config and attaches a RotatingFileHandler to the gateway's own
+    # gateway.log, and a child must not become a second writer rotating the parent's log.
+    if args.command == "availability-probe":
+        from personalclaw.providers.availability_probe import main as _availability_probe
+
+        sys.exit(_availability_probe(list(args.names)))
 
     # ``gateway --seed <fixture>`` populates $PERSONALCLAW_HOME from a hand-authored
     # fixture BEFORE the gateway starts — lets a dev spin up a pre-populated

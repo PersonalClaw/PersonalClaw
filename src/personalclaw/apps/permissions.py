@@ -22,18 +22,25 @@ sandbox). Enforcement status of each method:
   socket also handed the app an owner shell (#2964). See that registry.
 * ``can_use_agent`` — the app agent-run endpoints (handlers/apps.py), checked
   against the CALLING app's identity rather than the ``{name}`` path segment, plus
-  a per-run ownership check so an app only reads runs it spawned.
+  a per-run ownership check so an app only reads runs it spawned. The same grant
+  gates every ``agent_work`` route in :data:`ROUTE_AUTHZ` (a turn in the app's own
+  conversation) and decides how that conversation approves
+  (:func:`app_conversation_auto_approves`).
 * ``can_use_event`` — WS fan-out (state.broadcast_ws) filters an app connection's
-  events to its declared set.
+  events to its declared set, and a frame about a conversation or an inbox item reaches it only
+  when the app started that conversation or raised that item (``dashboard/ws_state.py::
+  frame_subject``).
 * ``can_receive_platform_event`` — the platform event registry (``apps/app_events.emit``)
   fans a core fact out ONLY to apps that named it exactly, and that dispatch is the only
   path such an event reaches an app by, so this is the whole gate. A SEPARATE axis from
   ``can_use_event`` above: a WS grant is not a platform subscription and vice versa.
 * ``can_use_mcp_tool`` — the direct tool-invoke endpoint (handlers/tools.py).
-* ``can_use_memory`` — app-permission middleware gates any ``/api/memory`` path. ONE
-  boolean grant, no tier: the ``"app-scoped"``/``"shared"`` vocabulary was deleted in
-  #3501 because ``app-scoped`` granted nothing anywhere and never said so. See that
-  method.
+* ``can_use_config_field`` — ``/api/config/personalclaw`` (handlers/core.py): an app reads,
+  and writes, only the settings its manifest names in ``permissions.config``.
+* ``can_use_memory`` — app-permission middleware gates every :data:`MEMORY_API_PATHS` path
+  (``/api/memory`` and ``/api/lessons``). ONE boolean grant, no tier: the
+  ``"app-scoped"``/``"shared"`` vocabulary was deleted in #3501 because ``app-scoped``
+  granted nothing anywhere and never said so. See that method.
 * ``can_use_cron``  — app-declared manifest crons are registered only when held
   (apps/app_crons.reconcile_app_crons).
 * ``can_use_storage`` — the backend launcher hands the app its DATA_DIR only when
@@ -63,7 +70,10 @@ sandbox). Enforcement status of each method:
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from personalclaw.apps.manifest import Permissions
@@ -107,6 +117,16 @@ class PermissionChecker:
     # -- MCP tools --------------------------------------------------------
     def can_use_mcp_tool(self, tool_name: str) -> bool:
         return _matches_any(tool_name, self.permissions.mcpTools)
+
+    # -- the owner's settings --------------------------------------------
+    def can_use_config_field(self, field: str) -> bool:
+        """Whether the app may read and write the config field *field* (``voice.echo_filter_
+        enabled``) through ``/api/config``. EXACT match, deny-by-default: the path grant
+        ``/api/config`` reaches the route, and this list says which settings it reaches —
+        the ones install consent named. A security setting can never be on it
+        (``AppManifest.validate`` refuses the declaration), and the PATCH refuses one first
+        anyway (``config/edit_spec.app_write_refusal``)."""
+        return bool(field) and field in self.permissions.config
 
     # -- app-to-app messaging --------------------------------------------
     def can_use_app_messaging(self, target_app: str) -> bool:
@@ -273,6 +293,14 @@ def _matches_any(value: str, patterns: list[str]) -> bool:
 #: settings an app may legitimately write; the routes below exist only to change the posture,
 #: so the whole route is the owner's.
 #:
+#: **So is code that runs as the owner, and the owner's own access.** Defining an MCP server
+#: is naming a command the gateway launches; restoring a backup rewrites every setting at once;
+#: revoking a device, a paired sender or an autonomy grant takes something from the owner that
+#: an app has no documented reason to take. An app ships its code in its MANIFEST, where install
+#: consent shows it (``mcpServers``, ``backend``, ``setup``), and stops unattended work with
+#: ``POST /api/incident`` — the one lever an app keeps. Routes that mix the owner's and an app's
+#: business are declared per route in :data:`ROUTE_AUTHZ` instead.
+#:
 #: **The way OUT** (a refusal with no escape becomes the outage). None of these removes a
 #: capability an app can legitimately need:
 #:
@@ -326,8 +354,13 @@ OWNER_ONLY_API_PATHS: dict[str, str] = {
     "/api/incident/resume": "resuming unattended work after you stopped it",
     # `trusted: true` lets a folder run and write its own project scripts.
     "/api/guardrails/project-trust": "which folders may run their own scripts",
-    # A promotion lets an action type run without asking. Demote and undo stay grantable.
+    # A promotion lets an action type run without asking.
     "/api/autonomy/grant": "letting an action type run without asking you",
+    # Demote and undo only reduce autonomy, which is why they need no confirmation from the
+    # owner — and why an app holding them is a denial of service: it can hand back every
+    # grant the owner made (restarting each cooldown) or reverse actions the owner kept.
+    "/api/autonomy/demote": "taking back the autonomy you granted an action type",
+    "/api/autonomy/undo": "reversing an action your automation already took",
     # A taught `approve` rule auto-executes matching actions on your behalf.
     "/api/memory/approval-rules": "standing approve and deny rules for actions taken for you",
     # A pairing code redeems for a durable DEVICE session — the owner's sign-in, not an app's.
@@ -340,10 +373,784 @@ OWNER_ONLY_API_PATHS: dict[str, str] = {
     # The ACP agent's runtime config: `allowedTools` runs without asking, `mcpServers` are
     # commands it launches.
     "/api/agent/config": "the tools your agent runs without asking, and the servers it launches",
+    # ── Code that runs as you (see the class note above) ──
+    # Every MCP route, reads included. A write names a command the gateway spawns
+    # (`PUT /api/mcp/servers/{name}`), enables one the owner switched off, or copies one out of
+    # `~/.claude.json` (`/api/mcp/apply`); a read returns each server's arguments and, for a
+    # remote server, its headers — where bearer tokens live. An app declares its own servers in
+    # its manifest (`mcpServers`), registered at install and shown on the consent screen.
+    "/api/mcp": (
+        "the MCP servers this gateway launches — the commands it runs as you, and the "
+        "credentials in their arguments and headers"
+    ),
+    # Export copies the whole home out; import and restore write every setting, automation
+    # and MCP server back at once, which is every other row in this registry in one request.
+    "/api/durability": "your backups — exporting your home, and restoring or importing one over it",
+    # ── Your access ──
+    # The list of people who may message the agent from a chat channel (sender ids are PII),
+    # and revoking one — which cuts the owner off from their own agent on that channel.
+    "/api/channels/trust": "who may message your agent from a chat channel, and revoking them",
+    # ── What your agents are told ──
+    # The import copies MCP servers (commands the gateway launches) and skills in from the
+    # owner's other agent tools, and folds their CLAUDE.md-style instructions into memory — the
+    # `/api/mcp/apply` door and a skill install in one request. The scan reads those tools'
+    # setup, which is the owner's too. Reads included, like `/api/mcp`.
+    "/api/onboarding/import": (
+        "bringing your setup over from other agent tools — their instructions, skills and "
+        "MCP servers"
+    ),
+    # ── Speaking as your agent ──
+    # The schedules' delivery door. `session: "origin"` with a `caller_session` of `cron:<id>`
+    # appends the text to the chat that schedule came from and starts a turn there, with your
+    # tools under your approval settings; the fallback posts it to your channel DM and your
+    # notifications labelled as your agent. An app reaches you through `POST /api/inbox/proposals`,
+    # which names the app.
+    "/api/send-message": (
+        "speaking as your agent — into the chat a schedule came from, where it starts a turn, "
+        "and into your channel DM and notifications"
+    ),
+    # The attachment half of the same door: a file from your workspace or outbox, posted to the
+    # active channel as your agent.
+    "/api/channel/upload-file": (
+        "posting a file from your workspace into your chat channel, as your agent"
+    ),
+    # Refreshes the idle clock of the chat named by `X-Session-Key`, so the gateway does not stop
+    # its agent as stuck. Its one sender is that chat's own MCP subprocess (a long `wait`), holding
+    # the internal secret — never an app token, whoever started the chat.
+    "/api/session-keepalive": (
+        "keeping a chat's agent running past its idle limit — the chat's own tools send it"
+    ),
 }
 
 
-def owner_only_api_reason(path: str) -> str:
+@dataclass(frozen=True)
+class OwnerOnly:
+    """A route no app declaration reaches, and the capability it really grants (shown in the
+    refusal, so a developer reads a policy rather than a bug)."""
+
+    capability: str
+
+
+@dataclass(frozen=True)
+class OwnedTarget:
+    """Where a route names a conversation that an app may reach only if the app created it.
+
+    ``field`` is a path parameter or, with ``in_body``, a key of the JSON body. ``optional`` says
+    a request naming none is still the app's own business: the route then starts a conversation,
+    which is the app's (``POST /api/chat``), or another target names it. Without it such a request
+    is refused, because the route then means every conversation (``POST /api/chat/task-mode``)."""
+
+    field: str
+    in_body: bool = False
+    optional: bool = False
+
+
+@dataclass(frozen=True)
+class AppMay:
+    """A route an app reaches when it declared the path in ``permissions.api``, and why that is
+    safe — what the handler screens, or why the route grants nothing.
+
+    ``owns`` narrows it to the app's own conversations. Every target it lists must name a
+    conversation the calling app created, or the gateway refuses the request before the handler
+    runs (``dashboard/server.py::app_permission_middleware``). A conversation that is yours,
+    another app's, or none at all gets the same refusal, so the answer confirms nothing.
+
+    ``agent_work`` marks a route that runs your model with your tools: a turn, a side question,
+    a revised plan, a generated title. An app does agent work only under its own ``agent``
+    permission, which install consent names, so it is refused without that grant however it
+    declared the path."""
+
+    reason: str
+    owns: tuple[OwnedTarget, ...] = ()
+    agent_work: bool = False
+
+
+#: The verbs that write. A read under a security family is governed by the ordinary allowlist,
+#: except under the :data:`READ_DECLARED_FAMILIES`.
+WRITE_METHODS: frozenset[str] = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+#: The verbs that read. ``HEAD`` is ``GET`` without the body — aiohttp answers it on every
+#: ``add_get`` route with the same handler — so it answers from the ``GET`` row
+#: (:func:`route_authz`): its status says whether a conversation exists.
+READ_METHODS: frozenset[str] = frozenset({"GET", "HEAD"})
+
+#: The route families whose WRITES decide what runs as the owner, whether it asks first, who
+#: may reach the owner, or what the owner's agents are told — and the category each belongs to.
+#: Every write route under one of these roots must be covered by :data:`OWNER_ONLY_API_PATHS` or
+#: declared in :data:`ROUTE_AUTHZ` (``tests/test_security_posture_rail.py``), and one that is
+#: neither is refused to an app at runtime (:func:`undeclared_security_route`) — so a route added
+#: tomorrow fails closed until someone decides which it is.
+#:
+#: **What an agent is told is in the class** (#3614 left it open). An agent's system prompt, its
+#: skills, the system prompt a chat or an unattended run starts from and the routing note the
+#: orchestrator reads are all instructions, and the agent carries them out with the owner's tools
+#: under the owner's approval settings. An app that can write them has written the owner's next
+#: request, so the six instruction families below are declared route by route like the rest.
+#:
+#: **So are your conversations.** A message in one of your chats, your line in a room, your answer
+#: to an agent's question in the inbox: each is an instruction your agent carries out with your
+#: tools, and an app that can write one is speaking as you. So the chat, session, room, inbox and
+#: reveal families are declared route by route too. An app keeps a conversation of its OWN (the
+#: rows that carry ``owns``, whose turns need its ``agent`` grant) and its labelled way to reach
+#: you (``POST /api/inbox/proposals``).
+#:
+#: **And what a conversation says is yours to read.** A transcript holds what you told your agent
+#: and what it did with your tools, so the conversation families declare their READS as well
+#: (:data:`READ_DECLARED_FAMILIES`), and your notifications — what reaches you, and how loudly —
+#: are a family whose writes are declared like the rest.
+SECURITY_ROUTE_FAMILIES: dict[str, str] = {
+    "/api/mcp": "MCP servers — commands the gateway launches",
+    "/api/apps": "installing and switching on app code",
+    "/api/packs": "installing packs and deploying what they stage",
+    "/api/triggers": "automations — what they run, and whether their agents ask you",
+    "/api/workflows": "workflows — what their steps run, and whether their agents ask you",
+    "/api/loops": "autonomous loops, whose workers approve their own tool calls",
+    "/api/spawn": "background agents started on request",
+    "/api/agents": "agents — the instructions, tools and approval mode your chats run with",
+    "/api/agent-marketplace": "agent definitions, and making one of them one of your agents",
+    "/api/agent-metadata": "the routing notes your orchestrator reads",
+    "/api/skills": "skills — instructions your agents follow",
+    "/api/prompts": "the system prompts your chats, unattended runs and judges start from",
+    "/api/prompt-snippets": "text included in your prompts",
+    "/api/agent": "the ACP agent's runtime config",
+    "/api/config": "your settings",
+    "/api/autonomy": "earned autonomy",
+    "/api/incident": "the incident stop",
+    "/api/guardrails": "guardrails",
+    "/api/devices": "the devices signed in as you",
+    "/api/channels": "chat channels and who may reach your agent through them",
+    "/api/external-access": "credentials for reaching this gateway from outside",
+    "/api/durability": "backups and restores",
+    "/api/chat": "your chats — what you say in them, and what your agent then does",
+    "/api/sessions": "your conversation history",
+    # Singular, and a different segment from `/api/sessions`: the transcript batches older
+    # versions archived out of your chats.
+    "/api/session": "your archived chat transcripts",
+    "/api/rooms": "rooms, where your agents deliberate and only you speak for you",
+    "/api/inbox": "your inbox — what reaches you, and your answers to it",
+    "/api/reveal": "revealing and opening files on your desktop",
+    "/api/notifications": "your notifications — what reaches you, and how loudly",
+}
+
+#: The families whose READS are declared route by route as well as their writes — your
+#: conversations. A read here answers with a transcript, or with a list of whose conversations
+#: exist, so it is refused to every app until :data:`ROUTE_AUTHZ` declares it
+#: (:func:`undeclared_security_route`): default-deny, where a read anywhere else is the ordinary
+#: allowlist's business. A read that names one conversation carries ``owns`` and reaches only a
+#: conversation the calling app started; a list is ``AppMay`` because its handler answers an app
+#: with the app's own conversations and nothing else; the rest are the owner's.
+READ_DECLARED_FAMILIES: frozenset[str] = frozenset(
+    {"/api/chat", "/api/sessions", "/api/session", "/api/rooms", "/api/inbox", "/api/reveal"}
+)
+
+_INSTALLS_APP = "installing an app — its backend, MCP servers and setup hooks run as you"
+_APP_SOURCES = "where the Store installs apps from"
+_INSTALLS_PACK = "installing a pack — the skills, agents and automations it brings"
+#: Starting or steering work an app did not write. The work may run a command the owner defined
+#: or an agent that approves its own tool calls, and an app's route to agent work is its own
+#: `agent` permission (`POST /api/apps/{name}/agent-run`), which install consent names.
+_STARTS_AGENT_WORK = (
+    "starting or steering agent work — an app runs agents through its own `agent` permission"
+)
+_FIRES_AUTOMATION = (
+    "firing an automation by hand, including one you switched off, one that runs a command, "
+    "and one whose agent approves its own tool calls"
+)
+_STARTS_LOOP = "starting or steering an autonomous loop — its worker approves its own tool calls"
+_STOPS_WORK = "stops work — stopping is never an escalation, and resuming is yours"
+#: Defining an automation, not screening one: a step can run a shell command, start one of your
+#: workflows, or prompt an agent that approves its own tool calls, and a step screen would have
+#: to keep up with every provider. An app's scheduled work is the `crons` its manifest declares,
+#: which install consent lists (`apps/app_crons.py`).
+_DEFINES_AUTOMATION = (
+    "defining an automation — its steps can run commands and agents that approve their own "
+    "tool calls; an app schedules work with the crons its manifest declares"
+)
+#: An agent's system prompt is the instruction set the owner's chat with it carries out, with the
+#: owner's tools. #3602 screened the one field that decides whether it asks first
+#: (`approval_mode`), which left the one that decides what it DOES open: an app could rewrite an
+#: agent the owner made and wait for the owner to talk to it. There is no field to leave an app —
+#: the description is routing text, the model and tools are what runs — so the whole write is the
+#: owner's. An app's agent work is its own `agent` permission (`POST /api/apps/{name}/agent-run`),
+#: which install consent names.
+_WRITES_AGENT = (
+    "writing one of your agents — the instructions it follows and the tools it holds when you "
+    "chat with it; an app runs agent work through its own `agent` permission"
+)
+_REMOVES_AGENTS = "removing your agents"
+_WRITES_AGENT_DEFINITION = (
+    "writing an agent definition — the instructions, skills and MCP servers an agent gets when "
+    "you make it one of yours"
+)
+_WRITES_ROUTING_NOTE = (
+    "the routing note your orchestrator reads when it picks which agent handles your request"
+)
+#: A skill is a SKILL.md every agent may load and follow. An app ships its own in its manifest
+#: (`skills`), seeded through the supply-chain scan and listed at install consent.
+_WRITES_SKILL = (
+    "writing a skill — instructions your agents follow; an app ships its skills in its manifest, "
+    "which install consent lists"
+)
+#: The prompt library holds the default system prompt of every chat and every unattended run, and
+#: the judges' — rebinding or editing one rewrites what all of them are told. A runnable template
+#: carries a launch spec, so writing one is also writing a loop's start.
+_WRITES_PROMPT = (
+    "writing a prompt — the system prompts your chats, unattended runs and judges start from "
+    "are prompts, and a runnable one launches a loop"
+)
+_WRITES_SNIPPET = (
+    "writing a prompt snippet — text included in every prompt that names it, your system "
+    "prompts among them"
+)
+_RENDERS = "renders it with the values it is sent; it writes nothing"
+_SCREENED_CONFIG = (
+    "screened: an app reads and writes only the settings its manifest declares in "
+    "`permissions.config`, and never a security setting"
+)
+#: The conversation a ``/api/chat/sessions/{session}/…`` route addresses.
+_OWN_CHAT = (OwnedTarget("session"),)
+#: A turn is your model working with your tools, so it runs under the app's own `agent` grant —
+#: the one install consent words as "background agents that use any tool without asking you".
+_TURN_IN_OWN_CHAT = (
+    "runs a turn in a conversation the app started, under the app's own `agent` permission"
+)
+_SETS_OWN_CHAT = "changes a conversation the app started"
+_STOPS_OWN_CHAT = "stops a turn in a conversation the app started"
+_ORGANISES_CHATS = "organising your chats — the folders, tags and board columns are yours"
+_CHAT_TEMPLATES = (
+    "the session templates your new chats start from — their agent, model and first message"
+)
+_SHARES_SCREEN = "sharing your screen into a chat — a frame you chose to share, from your composer"
+_CARRIES_TO_CHANNEL = (
+    "carrying a chat into your channel DM — it posts there as your agent, and replies there "
+    "reach the chat"
+)
+_SPEAKS_IN_ROOM = (
+    "speaking in a room as you — every member reads the line as yours and answers it with its "
+    "tools"
+)
+_TRIAGES_INBOX = "triaging your inbox — dismissing, handling or restoring what reached you"
+_READS_INBOX = (
+    "your reading of the inbox — what you opened, saw and favourited is what its ranking learns"
+)
+#: A read of one conversation — its transcript, or something its turns produced.
+_READS_OWN_CHAT = "reads a conversation the app started"
+_READS_OWN_AGENTS = "reads what a background agent returned to a conversation the app started"
+_LISTS_OWN_CHATS = (
+    "lists only the conversations the app started — the handler leaves out every other"
+)
+_YOUR_ORGANISATION = "how you organise your chats — your folders, tags and board columns"
+_YOUR_ROOMS = "your rooms — what your agents said there, to each other and to you"
+_YOUR_INBOX = "your inbox — what reached you, and what you did with it"
+_ARCHIVED_TRANSCRIPTS = "the transcript batches older versions archived out of your chats"
+#: Clearing a notification or marking it read takes what reached you out of view; a rule or a
+#: mute decides whether the next one reaches you at all.
+_HIDES_NOTIFICATIONS = (
+    "clearing your notifications or marking them read — what reached you, taken out of view"
+)
+
+#: Per-route authorization for the WRITE routes in :data:`SECURITY_ROUTE_FAMILIES`, and the READ
+#: routes in :data:`READ_DECLARED_FAMILIES`, that no :data:`OWNER_ONLY_API_PATHS` subtree covers
+#: — keyed ``"METHOD /canonical/{route}"``, the form aiohttp reports as
+#: ``request.match_info.route.resource.canonical``, and read through :func:`route_authz`, which
+#: answers ``HEAD`` from the ``GET`` row. A read elsewhere in a family may carry a row too, when it
+#: names a conversation (a chat's draft skills). A per-route table,
+#: not more subtree rows, because these families mix the owner's business with an app's:
+#: ``POST /api/triggers`` is an app's to call (screened), ``POST /api/triggers/{id}/run`` is
+#: not, and a path prefix cannot tell them apart.
+ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
+    # ── apps ──
+    "POST /api/apps": OwnerOnly(_INSTALLS_APP),
+    # Installs nothing, but it is the first half of an install: it clones the git URL it is
+    # given, or reads the local folder it is given, and answers with what it found there.
+    "POST /api/apps/preview": OwnerOnly(
+        "reviewing an install — it clones any git URL, or reads any folder, named as the source"
+    ),
+    "POST /api/apps/sources": OwnerOnly(_APP_SOURCES),
+    "DELETE /api/apps/sources": OwnerOnly(_APP_SOURCES),
+    "POST /api/apps/local-sources": OwnerOnly(_APP_SOURCES),
+    "DELETE /api/apps/local-sources": OwnerOnly(_APP_SOURCES),
+    "POST /api/apps/{name}/enable": OwnerOnly(
+        "switching an app on — its backend and MCP servers start, as you"
+    ),
+    "POST /api/apps/{name}/disable": OwnerOnly("switching your apps off"),
+    "POST /api/apps/{name}/update": OwnerOnly("replacing an app's code"),
+    "DELETE /api/apps/{name}": OwnerOnly("uninstalling your apps"),
+    "POST /api/apps/{name}/token": OwnerOnly("minting an app's token — only you mint one"),
+    "POST /api/apps/{name}/agent-run": AppMay(
+        "runs an agent under the CALLING app's own `agent` permission, which install consent "
+        "names — `_agent_run_identity` gates on the token's app, never the path"
+    ),
+    "PUT /api/apps/{name}/config": AppMay(
+        "an app writes only its own settings — the handler refuses a path naming another app"
+    ),
+    "POST /api/apps/message": AppMay(
+        "the app-to-app broker — the target must be in the sender's `appMessaging`"
+    ),
+    # ── packs ──
+    "POST /api/packs/bundled/{name}/install": OwnerOnly(_INSTALLS_PACK),
+    "POST /api/packs/one-link": OwnerOnly(_INSTALLS_PACK),
+    "POST /api/packs/{name}/update": OwnerOnly(_INSTALLS_PACK),
+    "POST /api/packs/{name}/roster/deploy": OwnerOnly("deploying a pack's agents"),
+    # A pack stages its automations switched off precisely so that the owner arms them.
+    "POST /api/packs/{name}/triggers/deploy": OwnerOnly("deploying a pack's automations"),
+    "POST /api/packs/{name}/bindings": OwnerOnly("which of your folders a pack reads"),
+    "POST /api/packs/prompt-card": AppMay(
+        "turns a pasted card into a proposal for you to review; it writes nothing else"
+    ),
+    "POST /api/packs/proposals/reject": AppMay(
+        "declines a pending proposal; declining grants nothing"
+    ),
+    "POST /api/packs/{name}/finish-setup": AppMay(
+        "returns a pack's setup interview to open in chat; it runs nothing"
+    ),
+    # ── triggers ──
+    "POST /api/triggers": OwnerOnly(_DEFINES_AUTOMATION),
+    "PUT /api/triggers/{id}": OwnerOnly(_DEFINES_AUTOMATION),
+    "DELETE /api/triggers/{id}": OwnerOnly("deleting your automations"),
+    # Arming is the owner's: a pack stages its automations switched off so that only you arm them.
+    "POST /api/triggers/{id}/toggle": OwnerOnly("switching your automations on and off"),
+    "POST /api/triggers/{id}/run": OwnerOnly(_FIRES_AUTOMATION),
+    "POST /api/triggers/{id}/test": OwnerOnly(_FIRES_AUTOMATION),
+    "POST /api/triggers/view/render": OwnerOnly(_FIRES_AUTOMATION),
+    "POST /api/triggers/{id}/fire": AppMay(
+        "the external webhook fire — admitted only by a client token you minted and scoped to "
+        "this trigger; an app's identity adds nothing"
+    ),
+    "POST /api/triggers/{id}/to-chat": AppMay(
+        "opens a chat holding a schedule's last result; it starts no agent turn"
+    ),
+    # ── workflows ──
+    "POST /api/workflows": OwnerOnly(_DEFINES_AUTOMATION),
+    "DELETE /api/workflows/{name}": OwnerOnly("deleting your workflows"),
+    "POST /api/workflows/{name}/a2a-publish": OwnerOnly(
+        "publishing a workflow to outside A2A clients — a new way into this gateway"
+    ),
+    "POST /api/workflows/{name}/refine": OwnerOnly(_STARTS_AGENT_WORK),
+    "POST /api/workflows/{name}/versions/repin": OwnerOnly(
+        "which version of a workflow runs — an older one can carry steps you removed"
+    ),
+    "POST /api/workflows/runs": OwnerOnly(_STARTS_AGENT_WORK),
+    "POST /api/workflows/runs/{run_id}/start": OwnerOnly(_STARTS_AGENT_WORK),
+    "POST /api/workflows/runs/{run_id}/steer": OwnerOnly(_STARTS_AGENT_WORK),
+    "POST /api/workflows/runs/{run_id}/rewind": OwnerOnly(_STARTS_AGENT_WORK),
+    "POST /api/workflows/runs/{run_id}/run-from": OwnerOnly(_STARTS_AGENT_WORK),
+    "POST /api/workflows/runs/{run_id}/review/triage": OwnerOnly(_STARTS_AGENT_WORK),
+    "POST /api/workflows/runs/{run_id}/resume": OwnerOnly("resuming a run you paused"),
+    "POST /api/workflows/runs/{run_id}/edit": OwnerOnly("rewriting a run's steps"),
+    "PUT /api/workflows/runs/{run_id}/policy-overrides": OwnerOnly(
+        "how far an unattended run may go before it stops, and whether it waits for you"
+    ),
+    "POST /api/workflows/runs/{run_id}/fork": AppMay(
+        "copies a run into a draft; nothing runs until you start it"
+    ),
+    "POST /api/workflows/runs/{run_id}/cancel": AppMay(_STOPS_WORK),
+    "POST /api/workflows/runs/{run_id}/pause": AppMay(_STOPS_WORK),
+    "DELETE /api/workflows/runs/{run_id}": OwnerOnly("deleting your runs and what they produced"),
+    "POST /api/workflows/runs/{run_id}/confirm": AppMay(
+        "answers one pending confirmation once — the relay a companion needs, like a one-off "
+        "answer to a chat approval"
+    ),
+    "POST /api/workflows/runs/{run_id}/drop": AppMay(
+        "adds a file to the run's approval-gated drop; the run reads it only after you approve"
+    ),
+    # ── loops (every worker session is trusted: `loop/manager.py` sets its approval to auto) ──
+    "POST /api/loops": OwnerOnly(_STARTS_LOOP),
+    "PUT /api/loops/{id}": OwnerOnly(_STARTS_LOOP),
+    # One route starts, resumes, pauses and stops; an app stops unattended work with the incident.
+    "PATCH /api/loops/{id}": OwnerOnly(_STARTS_LOOP),
+    "POST /api/loops/{id}/autopilot": OwnerOnly(_STARTS_LOOP),
+    "POST /api/loops/{id}/grill-tree": OwnerOnly(_STARTS_LOOP),
+    "POST /api/loops/{id}/nudge": OwnerOnly(_STARTS_LOOP),
+    "POST /api/loops/{id}/plan/approve": OwnerOnly(_STARTS_LOOP),
+    "POST /api/loops/{id}/plan/comment": OwnerOnly(_STARTS_LOOP),
+    "POST /api/loops/{id}/plan/edit": OwnerOnly(_STARTS_LOOP),
+    "POST /api/loops/{id}/plan/retry": OwnerOnly(_STARTS_LOOP),
+    "POST /api/loops/{id}/plan/start": OwnerOnly(_STARTS_LOOP),
+    "POST /api/loops/{id}/queue": OwnerOnly(_STARTS_LOOP),
+    "POST /api/loops/classify": AppMay("analyses a draft goal; it creates and starts nothing"),
+    "POST /api/loops/validate": AppMay("checks a draft; it creates and starts nothing"),
+    "DELETE /api/loops/{id}": OwnerOnly("deleting your loops"),
+    # ── spawn ──
+    "POST /api/spawn": OwnerOnly(_STARTS_AGENT_WORK),
+    "DELETE /api/spawn": AppMay(_STOPS_WORK),
+    "POST /api/spawn/cancel-fanout": AppMay(_STOPS_WORK),
+    "DELETE /api/spawn/{agent_id}": AppMay(_STOPS_WORK),
+    # ── agents (what your chats run with) ──
+    "POST /api/agents": OwnerOnly(_WRITES_AGENT),
+    "PUT /api/agents/{name}": OwnerOnly(_WRITES_AGENT),
+    # The per-file runtime config, `personalclaw.json` included.
+    "PATCH /api/agents/detail/{name}": OwnerOnly(_WRITES_AGENT),
+    # Folds every agent file on disk into your agents — prompts, tools and approval modes alike.
+    "POST /api/agents/sync": OwnerOnly(
+        "folding the agent files on disk into your agents — their instructions, tools and "
+        "approval mode"
+    ),
+    "DELETE /api/agents/{name}": OwnerOnly(_REMOVES_AGENTS),
+    "DELETE /api/agents/detail/{name}": OwnerOnly(_REMOVES_AGENTS),
+    "POST /api/agents/routing/dismiss": AppMay("dismisses a routing suggestion"),
+    "POST /api/agents/routing/unmute": AppMay("brings routing suggestions back"),
+    # ── agent definitions ──
+    "POST /api/agent-marketplace/agents": OwnerOnly(_WRITES_AGENT_DEFINITION),
+    "PUT /api/agent-marketplace/agents/{name}": OwnerOnly(_WRITES_AGENT_DEFINITION),
+    "DELETE /api/agent-marketplace/agents/{name}": OwnerOnly("removing your agent definitions"),
+    # Writes the definition's prompt to disk and puts it in `config.json`'s agents map, in place
+    # of any agent of that name.
+    "POST /api/agent-marketplace/agents/{name}/activate": OwnerOnly(
+        "making a definition one of your agents, in place of any agent of that name — its "
+        "instructions become what that agent follows"
+    ),
+    # A one-turn chat on your model and credentials; an app's agent work is its `agent` grant.
+    "POST /api/agent-marketplace/agents/{name}/test": OwnerOnly(_STARTS_AGENT_WORK),
+    # ── routing notes (the orchestrator skill is rendered from them) ──
+    "PUT /api/agent-metadata/{name}": OwnerOnly(_WRITES_ROUTING_NOTE),
+    "DELETE /api/agent-metadata/{name}": OwnerOnly(_WRITES_ROUTING_NOTE),
+    # ── skills ──
+    "POST /api/skills": OwnerOnly(_WRITES_SKILL),
+    "PUT /api/skills/{name}": OwnerOnly(_WRITES_SKILL),
+    # The body names the marketplace, the skill and the folder it lands in.
+    "POST /api/skills/install": OwnerOnly(
+        "installing a skill from a marketplace, into whatever folder the request names — "
+        "instructions your agents follow"
+    ),
+    "DELETE /api/skills/{name}": OwnerOnly("removing your skills"),
+    "POST /api/skills/overlay/revert": OwnerOnly(
+        "undoing a refinement you accepted into one of your skills"
+    ),
+    "POST /api/skills/ephemeral/{session}/promote": OwnerOnly(_WRITES_SKILL),
+    "POST /api/skills/proposals/{id}/accept": OwnerOnly(
+        "accepting a proposed skill — it installs instructions your agents follow"
+    ),
+    "POST /api/skills/{name}/verify": AppMay(
+        "compares an installed skill with the hashes it installed with; it changes nothing"
+    ),
+    "DELETE /api/skills/proposals/{id}": AppMay(
+        "declines a pending skill proposal; declining installs nothing"
+    ),
+    # A draft skill is what a conversation's turns taught, so the conversation decides who reaches
+    # it — the same rule as its transcript. Reads elsewhere in `/api/skills` are the allowlist's.
+    "GET /api/skills/ephemeral/{session}": AppMay(
+        "reads the draft skills a conversation the app started produced", owns=_OWN_CHAT
+    ),
+    "DELETE /api/skills/ephemeral/{session}/{slug}": AppMay(
+        "forgets a draft skill from a conversation the app started; nothing is installed",
+        owns=_OWN_CHAT,
+    ),
+    # ── prompts and snippets ──
+    "POST /api/prompts": OwnerOnly(_WRITES_PROMPT),
+    "PUT /api/prompts/{name}": OwnerOnly(_WRITES_PROMPT),
+    "DELETE /api/prompts/{name}": OwnerOnly("removing your prompts"),
+    "PUT /api/prompts/bindings": OwnerOnly(
+        "which system prompt your chats, unattended runs and judges start from"
+    ),
+    # Renders a runnable template and creates AND starts a loop from its launch spec — the same
+    # start `POST /api/loops` is owner-only for.
+    "POST /api/prompts/{name}/launch": OwnerOnly(_STARTS_LOOP),
+    "POST /api/prompts/{name}/render": AppMay(_RENDERS),
+    "POST /api/prompts/preview": AppMay(
+        "renders a draft through the prompt engine; it saves nothing"
+    ),
+    "POST /api/prompt-snippets": OwnerOnly(_WRITES_SNIPPET),
+    "PUT /api/prompt-snippets/{name}": OwnerOnly(_WRITES_SNIPPET),
+    "DELETE /api/prompt-snippets/{name}": OwnerOnly("removing your prompt snippets"),
+    "POST /api/prompt-snippets/{name}/render": AppMay(_RENDERS),
+    # ── config ──
+    "PATCH /api/config/personalclaw": AppMay(_SCREENED_CONFIG),
+    "PUT /api/config/personalclaw": AppMay(_SCREENED_CONFIG),
+    # The agent every new chat runs, instructions and all.
+    "PUT /api/config/default-agent": OwnerOnly("which agent your chats run by default"),
+    # ── incident ──
+    "POST /api/incident": AppMay(
+        "the stop — halting unattended work is the one lever an app keeps; resuming is yours"
+    ),
+    # ── devices ──
+    "POST /api/devices/pair/complete": AppMay(
+        "redeems a pairing code you minted (`browser-connector` pairs through it); minting "
+        "one is yours"
+    ),
+    "POST /api/devices/{id}/revoke": OwnerOnly("signing out your devices"),
+    # ── channels ──
+    "POST /api/channels/{name}/connect": OwnerOnly(
+        "connecting a chat channel — the people on it can then reach your agent, as its trust "
+        "policy allows"
+    ),
+    "POST /api/channels/{name}/disconnect": OwnerOnly("disconnecting your chat channels"),
+    "POST /api/channels/{name}/test": AppMay("probes a channel you connected; it changes nothing"),
+    # ── chat: an app may hold conversations of its own, and `owns` keeps it to those ──
+    # A conversation records the app whose token started it (`_ChatSession.created_by_app`, on
+    # its meta line so a restart keeps it). Sending into, editing, regenerating, resuming or
+    # steering one of YOUR chats is refused, whatever the app declared.
+    "POST /api/chat": AppMay(
+        "sends into a conversation the app started, or starts one that is the app's, and runs "
+        "the turn under the app's own `agent` permission",
+        owns=(OwnedTarget("session", in_body=True, optional=True),),
+        agent_work=True,
+    ),
+    "POST /api/chat/sessions": AppMay(
+        "starts a conversation that is the app's — a name returns a conversation only if the app "
+        "started it",
+        owns=(OwnedTarget("name", in_body=True, optional=True),),
+    ),
+    # `key` may name a DIFFERENT conversation than the path, whose transcript is read into this
+    # one, so it has to be the app's too.
+    "POST /api/chat/sessions/{session}/resume": AppMay(
+        "reopens a conversation the app started",
+        owns=(OwnedTarget("session"), OwnedTarget("key", in_body=True, optional=True)),
+    ),
+    "POST /api/chat/sessions/{session}/regenerate": AppMay(
+        _TURN_IN_OWN_CHAT, owns=_OWN_CHAT, agent_work=True
+    ),
+    "POST /api/chat/sessions/{session}/edit-resend": AppMay(
+        _TURN_IN_OWN_CHAT, owns=_OWN_CHAT, agent_work=True
+    ),
+    "POST /api/chat/sessions/{session}/side/turn": AppMay(
+        _TURN_IN_OWN_CHAT, owns=_OWN_CHAT, agent_work=True
+    ),
+    "POST /api/chat/sessions/{session}/plan/comment": AppMay(
+        _TURN_IN_OWN_CHAT, owns=_OWN_CHAT, agent_work=True
+    ),
+    "POST /api/chat/sessions/{session}/plan/approve": AppMay(
+        _TURN_IN_OWN_CHAT, owns=_OWN_CHAT, agent_work=True
+    ),
+    "POST /api/chat/sessions/{session}/generate-title": AppMay(
+        "titles a conversation the app started, with your model under the app's own `agent` "
+        "permission",
+        owns=_OWN_CHAT,
+        agent_work=True,
+    ),
+    "POST /api/chat/sessions/{session}/context": AppMay(
+        "adds background context to the next turn of a conversation the app started",
+        owns=_OWN_CHAT,
+    ),
+    "POST /api/chat/sessions/{session}/stop": AppMay(_STOPS_OWN_CHAT, owns=_OWN_CHAT),
+    "POST /api/chat/sessions/{session}/interrupt": AppMay(_STOPS_OWN_CHAT, owns=_OWN_CHAT),
+    "DELETE /api/chat/sessions/{session}/queue/{queue_id}": AppMay(
+        "withdraws a queued message from a conversation the app started", owns=_OWN_CHAT
+    ),
+    "DELETE /api/chat/sessions/{session}": AppMay(
+        "deletes a conversation the app started", owns=_OWN_CHAT
+    ),
+    "POST /api/chat/sessions/{session}/agent": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "POST /api/chat/sessions/{session}/acp-agent": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "POST /api/chat/sessions/{session}/model": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "POST /api/chat/sessions/{session}/reasoning-effort": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "POST /api/chat/sessions/{session}/workspace-dir": AppMay(
+        "chooses the folder a conversation the app started works in; a sensitive folder is "
+        "refused",
+        owns=_OWN_CHAT,
+    ),
+    "PATCH /api/chat/sessions/{session}/color": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "PATCH /api/chat/sessions/{session}/natural-voice": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "PATCH /api/chat/sessions/{session}/title": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "PATCH /api/chat/sessions/{session}/pin": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "PATCH /api/chat/sessions/{session}/folder": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "PUT /api/chat/sessions/{session}/tags": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "POST /api/chat/sessions/{session}/drop": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "PATCH /api/chat/sessions/{session}/lifecycle": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "POST /api/chat/sessions/{session}/organize/accept": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "POST /api/chat/sessions/{session}/organize/decline": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "POST /api/chat/sessions/{session}/switch-variant": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "POST /api/chat/sessions/{session}/undo": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "POST /api/chat/sessions/{session}/rewind": AppMay(
+        "reverts the files a conversation the app started changed", owns=_OWN_CHAT
+    ),
+    "POST /api/chat/sessions/{session}/fork": AppMay(
+        "copies a conversation the app started into a new one that is the app's", owns=_OWN_CHAT
+    ),
+    "POST /api/chat/sessions/{session}/fork-rewound": AppMay(
+        "copies a conversation the app started into a new one that is the app's", owns=_OWN_CHAT
+    ),
+    "POST /api/chat/sessions/{session}/side/open": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "POST /api/chat/sessions/{session}/side/close": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "POST /api/chat/sessions/{session}/plan/activate": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "POST /api/chat/sessions/{session}/plan/edit": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "POST /api/chat/sessions/{session}/plan/cancel": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    # Whether a tool call runs is your decision, in any conversation: in yours it steers your
+    # agent, and in an app's it is the ask the app's own grant did not cover. The companion that
+    # carries your answer from the menu bar does it through `/api/approvals`, which it declares;
+    # no app answers through here.
+    "POST /api/chat/sessions/{session}/approve": OwnerOnly(
+        "answering an approval a conversation raised — whether that tool call runs is yours to say"
+    ),
+    "POST /api/chat/sessions/{session}/channel-link": OwnerOnly(_CARRIES_TO_CHANNEL),
+    "POST /api/chat/sessions/{session}/handoff": OwnerOnly(_CARRIES_TO_CHANNEL),
+    "POST /api/chat/sessions/{session}/share": OwnerOnly(
+        "publishing a chat into your artifact library"
+    ),
+    "POST /api/chat/sessions/bulk": AppMay(
+        "changes only conversations the app started — the handler skips every other"
+    ),
+    "POST /api/chat/sessions/cleanup": AppMay(
+        "archives only conversations the app started — the handler skips every other"
+    ),
+    "POST /api/chat/sessions/auto-archive": OwnerOnly(
+        "running the auto-archive rule over your chats"
+    ),
+    "POST /api/chat/sessions/templates": OwnerOnly(_CHAT_TEMPLATES),
+    "PUT /api/chat/sessions/templates/{template}": OwnerOnly(_CHAT_TEMPLATES),
+    "DELETE /api/chat/sessions/templates/{template}": OwnerOnly("removing your session templates"),
+    # Without `session` the mode goes to every conversation there is, so an app names its own.
+    "POST /api/chat/task-mode": AppMay(
+        "sets the task mode of a conversation the app started",
+        owns=(OwnedTarget("session", in_body=True),),
+    ),
+    "POST /api/chat/screen-frame": OwnerOnly(_SHARES_SCREEN),
+    "POST /api/chat/screen-frame/pin": OwnerOnly(_SHARES_SCREEN),
+    "POST /api/chat/nav/resolve-links": AppMay(
+        "summarises links with your model under the app's own `agent` permission; it writes "
+        "nothing",
+        agent_work=True,
+    ),
+    "POST /api/chat/folders": OwnerOnly(_ORGANISES_CHATS),
+    "PATCH /api/chat/folders/{id}": OwnerOnly(_ORGANISES_CHATS),
+    "DELETE /api/chat/folders/{id}": OwnerOnly(_ORGANISES_CHATS),
+    "POST /api/chat/tags": OwnerOnly(_ORGANISES_CHATS),
+    "PATCH /api/chat/tags/{id}": OwnerOnly(_ORGANISES_CHATS),
+    "DELETE /api/chat/tags/{id}": OwnerOnly(_ORGANISES_CHATS),
+    "POST /api/chat/tag-columns": OwnerOnly(_ORGANISES_CHATS),
+    "PUT /api/chat/tag-columns/order": OwnerOnly(_ORGANISES_CHATS),
+    "PATCH /api/chat/tag-columns/{id}": OwnerOnly(_ORGANISES_CHATS),
+    "DELETE /api/chat/tag-columns/{id}": OwnerOnly(_ORGANISES_CHATS),
+    # ── chat reads (`READ_DECLARED_FAMILIES`): a transcript is its conversation's ──
+    # A read that names one conversation is held to the app's own before the handler loads
+    # anything; the list answers an app with its own conversations only.
+    "GET /api/chat/sessions": AppMay(_LISTS_OWN_CHATS),
+    "GET /api/chat/sessions/{session}": AppMay(_READS_OWN_CHAT, owns=_OWN_CHAT),
+    "GET /api/chat/sessions/{session}/map": AppMay(_READS_OWN_CHAT, owns=_OWN_CHAT),
+    "GET /api/chat/sessions/{session}/export": AppMay(_READS_OWN_CHAT, owns=_OWN_CHAT),
+    "GET /api/chat/sessions/{session}/tool-result/{rid}": AppMay(
+        "reads a tool's full output from a conversation the app started", owns=_OWN_CHAT
+    ),
+    "GET /api/chat/sessions/{session}/plan-session": AppMay(_READS_OWN_CHAT, owns=_OWN_CHAT),
+    "GET /api/chat/sessions/{session}/rewind": AppMay(
+        "previews which files reverting a conversation the app started would restore",
+        owns=_OWN_CHAT,
+    ),
+    # Asks your model by default (`?llm=0` does not), so it is the app's `agent` work.
+    "GET /api/chat/sessions/{session}/organize": AppMay(
+        "proposes a folder and tags for a conversation the app started, with your model under "
+        "the app's own `agent` permission",
+        owns=_OWN_CHAT,
+        agent_work=True,
+    ),
+    "GET /api/chat/sessions/templates": OwnerOnly(_CHAT_TEMPLATES),
+    # Keyed off the caller's `X-Session-Key`: the chat's own tools ask it, as the chat they run in.
+    "GET /api/chat/sessions/bound-project": OwnerOnly(
+        "which project one of your chats is bound to — the chat's own tools ask, as that chat"
+    ),
+    "GET /api/chat/folders": OwnerOnly(_YOUR_ORGANISATION),
+    "GET /api/chat/tags": OwnerOnly(_YOUR_ORGANISATION),
+    "GET /api/chat/tag-columns": OwnerOnly(_YOUR_ORGANISATION),
+    "GET /api/chat/screen-frame": OwnerOnly(
+        "whether one of your chats can share your screen, and the frame staged for it"
+    ),
+    # ── sessions (your history, by its key) ──
+    "DELETE /api/sessions": OwnerOnly("deleting your closed chats for good"),
+    "DELETE /api/sessions/{key}": OwnerOnly("deleting a chat from your history for good"),
+    "POST /api/sessions/restart": OwnerOnly(
+        "restarting every chat's agent, and syncing your MCP servers into them"
+    ),
+    "POST /api/sessions/retag-all": OwnerOnly("re-tagging every chat you have, with your model"),
+    "POST /api/sessions/retag-all/cancel": AppMay(_STOPS_WORK),
+    "GET /api/sessions": AppMay(_LISTS_OWN_CHATS),
+    "GET /api/sessions/search": AppMay(
+        "searches only the conversations the app started — the handler leaves out every other "
+        "match"
+    ),
+    "GET /api/sessions/{key}": AppMay(_READS_OWN_CHAT, owns=(OwnedTarget("key"),)),
+    "GET /api/sessions/{id}/agents": AppMay(_READS_OWN_AGENTS, owns=(OwnedTarget("id"),)),
+    "GET /api/sessions/{id}/agents/{agent_id}": AppMay(
+        _READS_OWN_AGENTS, owns=(OwnedTarget("id"),)
+    ),
+    "GET /api/sessions/{id}/agents/{agent_id}/stream": AppMay(
+        _READS_OWN_AGENTS, owns=(OwnedTarget("id"),)
+    ),
+    "GET /api/sessions/context": OwnerOnly("how full the context of each chat you have open is"),
+    "GET /api/sessions/health": OwnerOnly("which of your chats look stalled"),
+    "GET /api/sessions/retag-all": OwnerOnly(
+        "your re-tagging run — which of your chats it is reading"
+    ),
+    # ── session archive ──
+    "GET /api/session/archive": OwnerOnly(_ARCHIVED_TRANSCRIPTS),
+    "GET /api/session/archive/{name}": OwnerOnly(_ARCHIVED_TRANSCRIPTS),
+    # ── rooms (a posted line is written as the HUMAN's, and starts the members' turns) ──
+    # No app starts a room, so no room is an app's to read.
+    "GET /api/rooms": OwnerOnly(_YOUR_ROOMS),
+    "GET /api/rooms/{room_id}": OwnerOnly(_YOUR_ROOMS),
+    "GET /api/rooms/{room_id}/export": OwnerOnly(_YOUR_ROOMS),
+    "POST /api/rooms": OwnerOnly("creating a room — a conversation among your agents"),
+    "PATCH /api/rooms/{room_id}": OwnerOnly(
+        "how many rounds a room's agents take among themselves before it waits for you"
+    ),
+    "POST /api/rooms/{room_id}/archive": OwnerOnly("archiving your rooms"),
+    "POST /api/rooms/{room_id}/members": OwnerOnly(
+        "which of your agents sit in a room, and what each may reach"
+    ),
+    "DELETE /api/rooms/{room_id}/members/{name}": OwnerOnly(
+        "removing an agent from one of your rooms"
+    ),
+    "POST /api/rooms/{room_id}/messages": OwnerOnly(_SPEAKS_IN_ROOM),
+    "POST /api/rooms/{room_id}/continue": OwnerOnly(
+        "resuming a room's round — each member takes its turn with its tools"
+    ),
+    # ── inbox (an app reaches you with a proposal that names it; the answers are yours) ──
+    "POST /api/inbox/proposals": AppMay(
+        "the app's own way to reach you: a proposal labelled with the app's name, of a kind its "
+        "manifest declares, which you decide"
+    ),
+    "POST /api/inbox/notes": OwnerOnly(
+        "writing a note as you — a note is labelled yours; an app raises a proposal, which names "
+        "it"
+    ),
+    "POST /api/inbox/send": OwnerOnly(
+        "answering as you — the reply goes to whoever asked, and starts the asking agent's next "
+        "turn"
+    ),
+    "POST /api/inbox/{id}/draft": OwnerOnly("drafting a reply with your model"),
+    "POST /api/inbox/{id}/apply": OwnerOnly(
+        "approving a proposal — the decision is yours, whoever raised it"
+    ),
+    "POST /api/inbox/{id}/restore": OwnerOnly(_TRIAGES_INBOX),
+    "PUT /api/inbox/{id}": OwnerOnly(_TRIAGES_INBOX),
+    "POST /api/inbox/dismiss-all": OwnerOnly(_TRIAGES_INBOX),
+    "POST /api/inbox/{id}/open": OwnerOnly(_READS_INBOX),
+    "POST /api/inbox/{id}/favorite": OwnerOnly(_READS_INBOX),
+    "POST /api/inbox/seen": OwnerOnly(_READS_INBOX),
+    "POST /api/inbox/restart": OwnerOnly("restarting your inbox service"),
+    "POST /api/inbox/digest": OwnerOnly("summarising a channel into your inbox, with your model"),
+    "PUT /api/inbox/settings": OwnerOnly(
+        "your inbox settings, including how long it keeps what reached you"
+    ),
+    # Every read of the inbox is of what reached YOU: the items, their counts by kind and by
+    # owner, the sources feeding it and how it is set up.
+    "GET /api/inbox": OwnerOnly(_YOUR_INBOX),
+    "GET /api/inbox/open": OwnerOnly(_YOUR_INBOX),
+    "GET /api/inbox/kinds": OwnerOnly(_YOUR_INBOX),
+    "GET /api/inbox/owners": OwnerOnly(_YOUR_INBOX),
+    "GET /api/inbox/providers": OwnerOnly(_YOUR_INBOX),
+    "GET /api/inbox/settings": OwnerOnly(_YOUR_INBOX),
+    "GET /api/inbox/status": OwnerOnly(_YOUR_INBOX),
+    # ── notifications ──
+    "DELETE /api/notifications": OwnerOnly(_HIDES_NOTIFICATIONS),
+    "POST /api/notifications/clear": OwnerOnly(_HIDES_NOTIFICATIONS),
+    "POST /api/notifications/ack": OwnerOnly(_HIDES_NOTIFICATIONS),
+    "POST /api/notifications/unack": OwnerOnly(_HIDES_NOTIFICATIONS),
+    "POST /api/notifications/ack-all": OwnerOnly(_HIDES_NOTIFICATIONS),
+    "PUT /api/notifications/rules": OwnerOnly(
+        "which notifications reach you, and how loudly — a rule can silence one"
+    ),
+    "PUT /api/notifications/settings": OwnerOnly(
+        "muting your notifications, and when they stay quiet"
+    ),
+    # ── reveal ──
+    "POST /api/reveal": AppMay(
+        "reveals or opens only a file in the app's own data folder — the handler refuses any "
+        "other path"
+    ),
+}
+
+
+def owner_only_api_reason(path: str, *, method: str = "", route: str = "") -> str:
     """The capability *path* really grants when it is owner-only, else ``""``.
 
     Matching is SEGMENT-aware, which is load-bearing in both directions: ``/api/auth``
@@ -352,13 +1159,96 @@ def owner_only_api_reason(path: str) -> str:
     swallowed). The registry is the reason this cannot be folded into ``_matches_any``:
     that function answers "did the app ask for this", and this one answers "is this
     askable at all".
+
+    *method* and *route* (the matched route's canonical template) also consult the per-route
+    half, :data:`ROUTE_AUTHZ`. A caller with no route in hand — manifest validation, which
+    judges a declared PATH — gets the subtree half only, which is the half that can make a
+    declaration dishonest: a per-route row leaves the path's other methods reachable.
     """
     if not path:
         return ""
     for root, capability in OWNER_ONLY_API_PATHS.items():
         if path == root or path.startswith(root + "/"):
             return capability
+    authz = route_authz(method, route)
+    if isinstance(authz, OwnerOnly):
+        return authz.capability
     return ""
+
+
+def route_authz(method: str, route: str) -> OwnerOnly | AppMay | None:
+    """The :data:`ROUTE_AUTHZ` row for *method* on the canonical *route*, or ``None``.
+
+    THE lookup: every consumer of the table reads it here, so the ``HEAD``-is-``GET`` rule
+    cannot be honoured by one and skipped by another — aiohttp answers ``HEAD`` on every
+    ``add_get`` route with the same handler, and a read refused as ``GET`` must not answer as
+    ``HEAD``.
+    """
+    if not method or not route:
+        return None
+    verb = method.upper()
+    return ROUTE_AUTHZ.get(f"{'GET' if verb == 'HEAD' else verb} {route}")
+
+
+def security_family(route: str) -> str:
+    """The :data:`SECURITY_ROUTE_FAMILIES` root *route* sits under, or ``""``."""
+    for root in SECURITY_ROUTE_FAMILIES:
+        if route == root or route.startswith(root + "/"):
+            return root
+    return ""
+
+
+def undeclared_security_route(method: str, route: str) -> str:
+    """Why an app is refused a route no declaration covers, or ``""``.
+
+    The fail-closed half of the rail: a WRITE added under ``/api/triggers`` tomorrow, or a READ
+    added under one of your conversation families (:data:`READ_DECLARED_FAMILIES`), is refused to
+    every app until someone declares, in :data:`ROUTE_AUTHZ`, whether an app may reach it.
+    Covered routes — a subtree row or a declaration of either kind — answer ``""`` here; the
+    owner-only verdict itself comes from :func:`owner_only_api_reason`. A read in any other family
+    is the ordinary allowlist's business.
+    """
+    verb = method.upper()
+    family = security_family(route) if route else ""
+    if not family or owner_only_api_reason(route):
+        return ""
+    if verb in WRITE_METHODS:
+        kind = "write"
+    elif verb in READ_METHODS and family in READ_DECLARED_FAMILIES:
+        kind = "read"
+    else:
+        return ""
+    if route_authz(verb, route) is not None:
+        return ""
+    return (
+        f"{verb} {route} is a {kind} under {family} ({SECURITY_ROUTE_FAMILIES[family]}) "
+        "that has not declared whether an app may reach it"
+    )
+
+
+#: The app a request is scoped to, for the seams that decide reach without a request in hand.
+#: Set by the gateway's app-permission middleware around the handler (:func:`scoped_to_app`) and
+#: read by :func:`request_app` — today by the file explorer's root list, which must not hand an
+#: app the PersonalClaw home (``dashboard/handlers/files._dashboard_roots``). ``asyncio.to_thread``
+#: copies it, so a handler's offloaded work sees the same identity.
+_REQUEST_APP: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "personalclaw_request_app", default=""
+)
+
+
+@contextlib.contextmanager
+def scoped_to_app(app_name: str) -> Iterator[None]:
+    """Mark the current request as the app *app_name*'s for everything it calls."""
+    token = _REQUEST_APP.set(app_name or "")
+    try:
+        yield
+    finally:
+        _REQUEST_APP.reset(token)
+
+
+def request_app() -> str:
+    """The app the current request is scoped to, or ``""`` for the owner (and outside a request)."""
+    return _REQUEST_APP.get()
 
 
 def checker_for(app_name: str) -> PermissionChecker | None:
@@ -390,6 +1280,13 @@ def checker_for(app_name: str) -> PermissionChecker | None:
 #: ``/apps/`` is an app's own UI/proxy surface; anything else is not app-scoped.
 APP_SCOPED_PREFIXES: tuple[str, ...] = ("/api/", "/apps/")
 
+#: The paths that reach the memory store, each needing the ``memory`` capability on top of the
+#: path grant. ``/api/lessons`` is the store's second door: a lesson is a ``lesson.*`` record in
+#: ``memory.db``, and context assembly hands every agent its lessons as rules. It used to need
+#: only the path, so an app with no ``memory`` grant wrote the one kind of memory every agent is
+#: told to follow.
+MEMORY_API_PATHS: tuple[str, ...] = ("/api/memory", "/api/lessons")
+
 
 def app_lifecycle_denial(app_name: str) -> str:
     """Why this app may not act AT ALL, or ``""`` when it is installed and enabled.
@@ -414,8 +1311,11 @@ def app_lifecycle_denial(app_name: str) -> str:
     return ""
 
 
-def app_request_denial(app_name: str, path: str) -> str:
+def app_request_denial(app_name: str, path: str, *, method: str = "", route: str = "") -> str:
     """Why an app-scoped request must be refused, or ``""`` to allow it.
+
+    *method* and *route* (the matched route's canonical template) are what the per-route
+    declarations are keyed on; the gateway middleware always passes both.
 
     **The one authorization decision for a request carrying an app identity**, so the
     gateway middleware and its tests exercise the same code. It previously lived inline
@@ -461,13 +1361,53 @@ def app_request_denial(app_name: str, path: str) -> str:
     # refused the terminal under it: the path IS in its permissions by the prefix grammar,
     # and what refused it is that the capability is not app-grantable at all. A developer
     # who reads the wrong reason adds `/api/ws/terminal` to the manifest and files a bug.
-    owner_only = owner_only_api_reason(path)
+    owner_only = owner_only_api_reason(path, method=method, route=route)
     if owner_only:
         return f"owner-only capability, not grantable to an app: {owner_only}"
+    undeclared = undeclared_security_route(method, route)
+    if undeclared:
+        return undeclared
     if not checker.can_use_api(path):
         return "api path not in declared permissions"
     # A memory API path additionally requires the ``memory`` capability (sandbox P3) —
-    # declaring the /api/memory path in permissions.api is necessary but not sufficient.
-    if path.startswith("/api/memory") and not checker.can_use_memory():
+    # declaring the path in permissions.api is necessary but not sufficient.
+    if path.startswith(MEMORY_API_PATHS) and not checker.can_use_memory():
         return "memory access not declared (permissions.memory)"
+    # A turn is your model working with your tools. Declaring `/api/chat` shows the owner a path;
+    # the grant that says an app runs agents is `agent`, and it is worded at install consent as
+    # agents that use any tool without asking — so that is the grant a turn needs.
+    authz = route_authz(method, route)
+    if isinstance(authz, AppMay) and authz.agent_work and not checker.can_use_agent():
+        return (
+            "this runs your model with your tools — agent work, which an app does only under its "
+            "own `agent` permission (permissions.agent), and this app does not hold it"
+        )
     return ""
+
+
+def app_conversation_auto_approves(app_name: str) -> bool:
+    """Whether a conversation the app *app_name* started approves its own tool calls.
+
+    An app's conversation runs under the APP's grant, never under the approval switches the owner
+    set for the owner's chats: YOLO, Trust, Trust reads and an agent's "always allow" are not read
+    for it (``dashboard/chat_runner.py``), so none of them can widen it. The grant a turn needs is
+    ``agent``, which install consent words as "background agents that use any tool without asking
+    you", so a conversation of an app that holds it approves on its own — as the app's background
+    agent runs do (``handlers/apps.py::api_app_agent_run``) — and one whose app no longer holds it,
+    or is disabled or gone, asks.
+
+    The operator CEILING still bounds it, exactly as it bounds a spawned agent's auto-approval
+    (``subagent._run_inner``): a ceiling that says every run asks makes this answer False.
+    """
+    if not app_name or app_lifecycle_denial(app_name):
+        return False
+    checker = checker_for(app_name)
+    if checker is None or not checker.can_use_agent():
+        return False
+    from personalclaw.guardrails.policy import ceiling_permits_approval
+
+    try:
+        return ceiling_permits_approval("auto")
+    except Exception:  # noqa: BLE001 — a ceiling that will not resolve grants nothing
+        logger.warning("ceiling unresolvable; %s's conversation asks", app_name, exc_info=True)
+        return False

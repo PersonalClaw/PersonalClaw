@@ -96,12 +96,12 @@ class _Subagents:
             info.done = True
         return info
 
-    async def cancel(self, agent_id: str) -> bool:
+    async def cancel(self, agent_id: str, *, reason: str = "Cancelled by user") -> bool:
         info = self.infos.get(agent_id)
         if info is None or info.done:
             return False
         info.cancelled = info.done = True
-        info.error = "Cancelled by user"
+        info.error = reason
         return True
 
 

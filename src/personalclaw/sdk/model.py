@@ -44,6 +44,10 @@ from personalclaw.llm.base import (  # noqa: F401
     ModelProvider,
 )
 from personalclaw.llm.branded_specs import BrandedProviderSpec  # noqa: F401
+
+# What a model app's factory reads from its build kwargs — the per-call sampling temperature and
+# the output cap — so it is read ONE way. Five first-party apps each copied these lines (#124).
+from personalclaw.llm.build_kwargs import output_cap, per_call_temperature  # noqa: F401
 from personalclaw.llm.capabilities import (  # noqa: F401
     Capability,
     ProviderCapability,
@@ -52,6 +56,7 @@ from personalclaw.llm.capabilities import (  # noqa: F401
 from personalclaw.llm.catalog import (  # noqa: F401
     ConnectionResult,
     ModelCatalog,
+    ModelDiscoveryError,
     ModelInfo,
     ModelManager,
     PullProgress,
@@ -162,6 +167,8 @@ __all__ = [
     "Segment",
     "model_context_window",
     "declared_context_window",
+    "per_call_temperature",
+    "output_cap",
     "ContextGauge",
     "prompt_text_chars",
     "PromptExceedsWindow",
@@ -173,6 +180,9 @@ __all__ = [
     "ModelManager",
     "ModelInfo",
     "ConnectionResult",
+    # A catalog that could not obtain a list RAISES this (ModelCatalog.list_models's
+    # contract) — "0 models" and "could not ask" are different answers.
+    "ModelDiscoveryError",
     "PullProgress",
     "infer_capabilities",
     "openai_compatible_list_models",

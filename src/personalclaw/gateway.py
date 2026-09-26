@@ -6,12 +6,14 @@ subagents, task runner, dashboard / API server, update checks, and signal
 handling. This is the core process boot — it runs with or without any external
 channel configured.
 
-Channel connectivity is optional and pluggable via the channel-transport seam:
-each registered transport's ``start_inbound`` runs at boot (Slack Socket-Mode
-lives entirely in the ``slack-channel`` app bundle), and the transport registers
-its outbound :class:`~personalclaw.channel_delivery.ChannelDelivery` on the
-orchestrator. Core imports NO vendor channel code. With no channel configured the
-gateway runs dashboard-only.
+Channel connectivity is optional and pluggable via the channel-transport seam: the
+gateway binds itself as the services handle at boot, and from then on
+``channel_transports.reconcile_inbound`` runs each configured channel's receiver
+(``start_inbound`` — Slack Socket-Mode lives entirely in the ``slack-channel`` app
+bundle) and stops it again, whenever a channel is enabled, changed or removed. The
+transport registers its outbound :class:`~personalclaw.channel_delivery.ChannelDelivery`
+on the orchestrator. Core imports NO vendor channel code. With no channel configured
+the gateway runs dashboard-only.
 """
 
 import asyncio
@@ -36,7 +38,7 @@ from personalclaw.cancellation import kill_timed_out
 from personalclaw.channel_history import ChannelHistory
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
-from personalclaw.config.loader import CRED_OWNER_ID, CRED_SLACK_APP_TOKEN, CRED_SLACK_BOT_TOKEN
+from personalclaw.config.loader import CRED_OWNER_ID
 from personalclaw.constants import CHAT_TURN_TIMEOUT, DATA_WARNING
 from personalclaw.context import ContextBuilder
 from personalclaw.dashboard import start_dashboard
@@ -78,6 +80,7 @@ from personalclaw.subagent import (
     SubagentInfo,
     SubagentManager,
     ToolApprovalCallback,
+    approval_subagent_id,
     resolve_max_subagents,
 )
 from personalclaw.triggers.models import Outcome
@@ -374,13 +377,11 @@ class GatewayOrchestrator:
         self._json_ready = json_ready
         self._approval_mode = approval_mode
         creds = cfg.load_credentials()
-        self._app_token = creds.get(CRED_SLACK_APP_TOKEN, "")
-        self._bot_token = creds.get(CRED_SLACK_BOT_TOKEN, "")
         self._owner_id = creds.get(CRED_OWNER_ID, "")
         # Multi-user access is disabled — only owner is authorized. The channel
-        # app owns its allowlist config (SlackSettings) and enforces owner-only
-        # in its own runtime; core holds no channel allowlist.
-        self._slack_enabled = bool(self._app_token and self._bot_token)
+        # app owns its allowlist config and enforces owner-only in its own runtime;
+        # core holds no channel allowlist, and no channel's credentials either: whether a
+        # channel is configured is the channel's own answer (`configured_channels`).
 
         # Outbound delivery lives in `channel_delivery`'s per-provider registry — not on this
         # object and not on DashboardState, which each held their own slot for the same fact
@@ -428,7 +429,7 @@ class GatewayOrchestrator:
 
     @property
     def owner_id(self) -> str:
-        """Primary owner's channel-user id (``""`` if unset)."""
+        """The owner id under the one shared key (see ``GatewayServices.owner_id``)."""
         return self._owner_id
 
     @property
@@ -719,8 +720,13 @@ class GatewayOrchestrator:
                             on_prompted=_on_prompted,
                         )
                     finally:
-                        if self.dashboard_state:
-                            self.dashboard_state.resolve_approval(request_id, bool(approved))
+                        # Only a real answer is delivered to the dashboard's copy. `None` is the
+                        # channel producing NO answer (it could not deliver, or this wait was
+                        # cancelled); recording that as a rejection wrote an `approval_decision`
+                        # row and a "denied" card for a decision nobody made. Cancelling the
+                        # dashboard waiter instead ends its approval as `cancelled`.
+                        if self.dashboard_state and approved is not None:
+                            self.dashboard_state.resolve_approval(request_id, approved)
                         if dashboard_future and not dashboard_future.done():
                             dashboard_future.cancel()
 
@@ -804,9 +810,6 @@ class GatewayOrchestrator:
 
     def _init_services(self) -> None:
         """Initialize memory, skills, hooks, context, history, sessions."""
-        if not self._slack_enabled:
-            logger.info("Starting in dashboard-only mode (no channel credentials)")
-
         # Auto-repair missing pip deps (handles chicken-and-egg after auto-update)
         try:
             self._check_missing_deps()
@@ -842,8 +845,10 @@ class GatewayOrchestrator:
         # Vector memory (structured semantic store)
         from personalclaw.vector_memory import VectorMemoryStore
 
+        # confidence_threshold is deliberately NOT pinned either: the store reads
+        # `memory.semantic_confidence_threshold` live, so Settings → Memory applies it on the
+        # next write and every store instance applies the same value.
         self.vector_memory = VectorMemoryStore(
-            confidence_threshold=self._cfg.memory.semantic_confidence_threshold,
             extra_prefixes=self._cfg.memory.semantic_keys or None,
             dedup_threshold=self._cfg.memory.episodic_dedup_threshold,
             episodic_max=self._cfg.memory.episodic_max_count,
@@ -853,6 +858,7 @@ class GatewayOrchestrator:
         # `memory.graph_enabled` live so the Settings toggle works without a restart.
         self.vector_memory.init()
         memory.vector_store = self.vector_memory
+        self.vector_memory.serve_recall()
 
         skills = SkillsLoader()
         hooks = HookManager(HooksConfig.from_dict(self._cfg.hooks))
@@ -1026,15 +1032,19 @@ class GatewayOrchestrator:
             runner=_runner,
             sessions=self.sessions,
             base_dir=store.base_dir,
+            # A row written by anyone else (a loop's auto-nudge, the chat's automation tools in
+            # their own process) reaches an open Triggers page within one tick, rather than never.
+            on_store_changed=lambda: self._push_trigger_refresh("crons"),
         )
 
-    def _push_trigger_refresh(self) -> None:
+    def _push_trigger_refresh(self, *kinds: str) -> None:
         """Hint open dashboard views to refresh after a store-backed fire (S107).
 
-        Both kinds, matching what the legacy `_record_run` pushed plus the list the fire may have
-        changed: `cron_history` for the run feed, `crons` for the trigger list's status dots and
-        next-fire times. Best-effort — a broadcast failure must never affect the fire's outcome, and
-        a dashboard-less gateway (`--no-dashboard`) simply has nothing to notify.
+        Both kinds by default, matching what the legacy `_record_run` pushed plus the list the fire
+        may have changed: `cron_history` for the run feed, `crons` for the trigger list's status
+        dots and next-fire times. A store change that is not a fire names `crons` alone.
+        Best-effort — a broadcast failure must never affect the fire's outcome, and a
+        dashboard-less gateway (`--no-dashboard`) simply has nothing to notify.
         """
         # `getattr`, not attribute access: this runs in the fire path's `finally`, and an
         # orchestrator that has not reached `_init_dashboard` yet (or a partially-built one) has
@@ -1044,7 +1054,7 @@ class GatewayOrchestrator:
         if state is None:
             return
         try:
-            state.push_refresh("crons", "cron_history")
+            state.push_refresh(*(kinds or ("crons", "cron_history")))
         except Exception:  # noqa: BLE001 - a refresh hint is never worth failing a fire over
             logger.debug("could not push a trigger refresh", exc_info=True)
 
@@ -3169,15 +3179,7 @@ class GatewayOrchestrator:
 
         # ── channel (no thread) → new channel DM only ──
         if deliver == "channel":
-            if self._channel_delivery is not None and self._owner_id:
-                try:
-                    channel = await self._channel_delivery.open_dm(self._owner_id)
-                    if channel:
-                        await self._channel_delivery.deliver_notification(
-                            channel, title, result_text
-                        )
-                except Exception:
-                    logger.exception("Heartbeat channel delivery failed")
+            await self._notify_owner_dm(title, result_text)
             return
 
         # ── channel:<channel>:<thread_ts> → reply to thread ──
@@ -3187,10 +3189,8 @@ class GatewayOrchestrator:
                 if self._channel_delivery is not None and len(parts) == 3:
                     chan, ts = parts[1], parts[2]
                     await self._channel_delivery.deliver_notification(chan, title, result_text, ts)
-                elif self._channel_delivery is not None and self._owner_id:
-                    chan = await self._channel_delivery.open_dm(self._owner_id)
-                    if chan:
-                        await self._channel_delivery.deliver_notification(chan, title, result_text)
+                else:
+                    await self._notify_owner_dm(title, result_text)
             except Exception:
                 logger.exception("Heartbeat channel delivery failed")
             if self.dashboard_state:
@@ -3198,15 +3198,27 @@ class GatewayOrchestrator:
             return
 
         # ── default: channel DM + dashboard notification ──
-        if self._channel_delivery is not None and self._owner_id:
-            try:
-                channel = await self._channel_delivery.open_dm(self._owner_id)
-                if channel:
-                    await self._channel_delivery.deliver_notification(channel, title, result_text)
-            except Exception:
-                logger.exception("Heartbeat channel delivery failed")
+        await self._notify_owner_dm(title, result_text)
         if self.dashboard_state:
             self.dashboard_state.notify(notification_kinds.HEARTBEAT, title, body)
+
+    async def _notify_owner_dm(self, title: str, text: str) -> None:
+        """Deliver a notification to the owner's DM, on the first channel that reaches them.
+
+        Through :func:`channel_delivery.deliver_to_owner`: a channel that cannot reach the owner
+        hands over to the next, and when none can the notification goes to the Inbox saying why.
+        """
+        from personalclaw.channel_delivery import deliver_to_owner
+
+        try:
+            await deliver_to_owner(
+                lambda delivery, dm: delivery.deliver_notification(dm, title, text),
+                title=title,
+                text=text,
+                state=self.dashboard_state,
+            )
+        except Exception:
+            logger.exception("Heartbeat channel delivery failed")
 
     def _init_mcp_discovery(self) -> None:
         """Log configured MCP servers at startup.
@@ -3643,22 +3655,32 @@ class GatewayOrchestrator:
 
                         # Post only the LLM's synthesized response to the channel
                         try:
-                            if response and self._channel_delivery is not None and self._owner_id:
-                                channel = (
-                                    self.sessions.get_channel(parent_key) if self.sessions else None
-                                ) or await self._channel_delivery.open_dm(self._owner_id)
-                                if channel:
-                                    elapsed = (
-                                        info.elapsed
-                                        if info.elapsed > 0
-                                        else (time.monotonic() - info.started)
-                                    )
-                                    await self._channel_delivery.deliver_subagent_reply(
-                                        channel,
-                                        response,
-                                        parent_key,
-                                        elapsed,
-                                    )
+                            # The session's own thread when it has one; otherwise the owner's
+                            # DM, on the first channel that reaches the owner (the Inbox when
+                            # none does).
+                            thread_channel = (
+                                self.sessions.get_channel(parent_key) if self.sessions else None
+                            )
+                            elapsed = (
+                                info.elapsed
+                                if info.elapsed > 0
+                                else (time.monotonic() - info.started)
+                            )
+                            if response and thread_channel and self._channel_delivery is not None:
+                                await self._channel_delivery.deliver_subagent_reply(
+                                    thread_channel, response, parent_key, elapsed
+                                )
+                            elif response:
+                                from personalclaw.channel_delivery import deliver_to_owner
+
+                                await deliver_to_owner(
+                                    lambda delivery, dm: delivery.deliver_subagent_reply(
+                                        dm, response, parent_key, elapsed
+                                    ),
+                                    title="Subagent reply",
+                                    text=response,
+                                    state=self.dashboard_state,
+                                )
                         except Exception:
                             logger.exception(
                                 "Subagent %s: channel posting failed (injection succeeded)",
@@ -3848,8 +3870,13 @@ class GatewayOrchestrator:
             return is_yolo_mode()
 
         def _spawn_session_resolver(request_id: str) -> str:
-            """Resolve session from spawn request_id (spawn:{agent_id})."""
-            agent_id = request_id.removeprefix("spawn:")
+            """The parent session of the subagent a spawn or tool-call approval id names.
+
+            Both shapes carry the subagent (``subagent.approval_subagent_id``), so a stage's tool
+            call is listed under its run like the stage's spawn is — which is what lets the run's
+            page show it and the decision path tell when that run has ended.
+            """
+            agent_id = approval_subagent_id(request_id)
             info = self.subagent_mgr.get(agent_id) if self.subagent_mgr is not None else None
             session = (
                 info.parent_session_key.removeprefix("dashboard:")
@@ -4115,13 +4142,10 @@ class GatewayOrchestrator:
             if self.dashboard_state:
                 await self.dashboard_state.close_all_ws()
             cleanup_tasks.append(self._dashboard_runner.cleanup())
-        # Stop channel inbound receivers (Slack Socket-Mode lives in the app now).
-        from personalclaw.channel_transports import get_transport, list_transports
+        # Stop every channel receiver, and start none after this.
+        from personalclaw.channel_transports import unbind_inbound
 
-        for _tn in list_transports():
-            _tp = get_transport(_tn)
-            if _tp is not None:
-                cleanup_tasks.append(_tp.stop_inbound())
+        cleanup_tasks.append(unbind_inbound())
 
         if cleanup_tasks:
             await asyncio.gather(*cleanup_tasks, return_exceptions=True)
@@ -4409,23 +4433,22 @@ class GatewayOrchestrator:
             logger.warning("Auto-update failed", exc_info=True)
 
     async def _start_channel_inbound(self) -> None:
-        """Drive every registered channel transport's inbound receiver.
+        """Hand the channel receivers this gateway, and start every configured channel's.
 
         The gateway satisfies :class:`~personalclaw.gateway_services.GatewayServices`,
-        so it passes itself as the services handle. A transport that owns a push
-        receiver (Slack Socket-Mode, in the slack-channel app) connects here; the
-        Web UI transport is a no-op. Failures are isolated per-transport — a
-        channel that can't start never takes down the gateway."""
-        from personalclaw.channel_transports import get_transport, list_transports
+        so it binds itself as the services handle. From here on the receivers follow the
+        registry — a channel enabled, installed, updated or re-saved later starts, one
+        disabled or removed stops — through ``channel_transports.reconcile_inbound``, which
+        this runs for the first time. Failures are isolated per channel: one that cannot
+        start reports why in its own health and never takes down the gateway."""
+        from personalclaw.channel_transports import bind_inbound, configured_channels
 
-        for tname in list_transports():
-            transport = get_transport(tname)
-            if transport is None:
-                continue
-            try:
-                await transport.start_inbound(self)
-            except Exception:
-                logger.warning("Channel transport %r start_inbound failed", tname, exc_info=True)
+        await bind_inbound(self)
+        # Each channel app says whether it has what it needs (its own health), so this line is
+        # true for a channel configured on the Apps page too — core used to infer it from two
+        # Slack credential names, and printed "no channel credentials" beside a working Slack.
+        if not await configured_channels():
+            logger.info("Starting in dashboard-only mode (no channel app is configured)")
 
     # ------------------------------------------------------------------
     # Main run loop
@@ -4526,10 +4549,10 @@ class GatewayOrchestrator:
         # process takes over.
         await self._init_autonudge()
 
-        # Start inbound receivers for every registered channel transport (Slack
-        # Socket-Mode lives in the slack-channel app now). Each transport connects
-        # + degrades gracefully internally; a channel failure never crashes the
-        # gateway. The Web UI transport is a no-op here (dashboard drives its own
+        # Start the receiver of every configured channel (Slack Socket-Mode lives in the
+        # slack-channel app now), and keep them following the registry from here on. Each
+        # transport connects + degrades gracefully internally; a channel failure never
+        # crashes the gateway. The Web UI has no receiver (the dashboard drives its own
         # inbound). This is the core→channel seam — core imports no vendor code.
         await self._start_channel_inbound()
 
@@ -4624,13 +4647,14 @@ class GatewayOrchestrator:
         # ── Start background session and print URLs ──
         # Report every connected external channel transport (the in-app webui
         # one is always present and not news) — no hardcoded transport name.
+        from personalclaw.channel_transports import WEBUI_TRANSPORT
         from personalclaw.channel_transports import get_transport as _get_transport
         from personalclaw.channel_transports import list_transports as _list_transports
 
         _connected_channels = [
             _tp.display_name
             for _tp in (_get_transport(_n) for _n in _list_transports())
-            if _tp and _tp.name != "webui" and _tp.connected
+            if _tp and _tp.name != WEBUI_TRANSPORT and _tp.connected
         ]
 
         async def _start_bg_session() -> None:
@@ -4674,9 +4698,8 @@ class GatewayOrchestrator:
         print("PersonalClaw gateway starting…")
         print(f"\n{DATA_WARNING}\n")
 
-        # Channel inbound (Slack Socket-Mode) already connected inside
-        # _start_channel_inbound() above — the transport owns its own
-        # retry/degrade-gracefully loop.
+        # Channel inbound (Slack Socket-Mode) was started by _start_channel_inbound()
+        # above — the transport owns its own retry/degrade-gracefully loop.
 
         # Block until shutdown
         await shutdown_event.wait()

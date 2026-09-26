@@ -40,7 +40,7 @@ are in Settings → Memory. These are the tuning constants under them:
 
 | Key | Default | What it does |
 |---|---|---|
-| `memory.semantic_confidence_threshold` | `0.8` | Minimum similarity for a semantic-memory hit to be injected. |
+| `memory.semantic_confidence_threshold` | `0.8` | Confidence (0-1) an automatically learned semantic fact needs before memory keeps it; facts you add yourself are always kept. Settings → Memory → Learned-fact confidence. |
 | `memory.episodic_dedup_threshold` | `0.88` | Cosine similarity above which a new episodic record is treated as a duplicate and skipped. |
 | `memory.episodic_max_results` | `8` | Episodic records recalled per query. |
 | `memory.episodic_max_count` | `10000` | Episodic store size cap; oldest records are pruned past it. |
@@ -117,7 +117,7 @@ children (bash tools, hook and cron-script children, app backends, MCP servers).
 
 | Key | Default | What it does |
 |---|---|---|
-| `hooks` | `{}` | Webhook trigger config by hook id, plus `webhook_token` and `auto_approve_sources` (sources whose tool calls are auto-approved). Managed via the Triggers UI/API (`/api/hooks`); documented here because the raw shape is config-visible. |
+| `hooks` | `{}` | Webhook trigger config by hook id, plus `webhook_token` and `auto_approve_sources` (sources whose tool calls are auto-approved). `webhook_token` is kept in the credential store and the file holds a `{{secret:…}}` reference to it; `personalclaw config set hooks.webhook_token <token>` sets it. Managed via the Triggers UI/API (`/api/hooks`); documented here because the raw shape is config-visible. |
 | `observe_max_messages` | `200` | Channel-observation ring buffer size (messages kept per channel for context). |
 | `observe_ttl_hours` | `168` | How long observed channel messages stay usable as context. |
 | `timezone` | `""` (system) | IANA timezone (e.g. `Asia/Tokyo`) for schedules and the clock the LLM sees. Set by `personalclaw setup`; per-job trigger timezones override it. |
@@ -130,7 +130,7 @@ children (bash tools, hook and cron-script children, app backends, MCP servers).
 
 ## Programmatic surfaces
 
-- `GET /api/config/personalclaw` — full config as JSON (sensitive defaults masked in the schema, not here; this endpoint is owner-only).
-- `PATCH /api/config/personalclaw {path, value}` — single-field writes, allowlisted (`_EDITABLE_CONFIG`); non-editable paths return 400. A **security setting** (an entry declaring a `SecurityControl`) needs `"confirm": true` in the body (the JSON literal) for any write that loosens it, or it answers `400 confirmation_required` with `{field, consent}` in `error.detail`; tightening never needs it. An app-scoped request is refused `403 security_setting_owner_only` for every security setting, in either direction. Rules: `config/edit_spec.py`.
+- `GET /api/config/personalclaw` — full config as JSON for the owner (sensitive defaults masked in the schema, not here). An app-scoped request gets only the fields its manifest declares in `permissions.config`, and `403 config_field_not_declared` when it declares none.
+- `PATCH /api/config/personalclaw {path, value}` — single-field writes, allowlisted (`_EDITABLE_CONFIG`); non-editable paths return 400. A **security setting** (an entry declaring a `SecurityControl`) needs `"confirm": true` in the body (the JSON literal) for any write that loosens it, or it answers `400 confirmation_required` with `{field, consent}` in `error.detail`; tightening never needs it. An app-scoped request is refused `403 security_setting_owner_only` for every security setting, in either direction, and `403 config_field_not_declared` for any other field its manifest's `permissions.config` does not name. Rules: `config/edit_spec.py`.
 - `GET /api/config/schema` — the full field registry (labels, help, types, defaults, deprecations) auto-derived from the config dataclasses.
 - `personalclaw config get|set <key> [value]` — CLI equivalent; `set` validates through the same loader. `get` withholds credential-named fields (`api_key`, `bot_token`, …) unless `--reveal` is passed.

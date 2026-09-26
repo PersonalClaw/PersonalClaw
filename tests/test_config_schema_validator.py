@@ -97,15 +97,21 @@ def test_an_authors_broken_regex_does_not_make_the_field_unfillable():
 @pytest.mark.parametrize(
     "app, field, bad",
     [
-        ("native-vector-memory", "confidence_threshold", 5),
-        ("native-vector-memory", "confidence_threshold", -1),
-        ("native-vector-memory", "confidence_threshold", True),
+        # Both bounds and a bool-for-a-number, the three shapes the provider path let through.
+        # These rows used Vector Memory's `confidence_threshold` until that field was removed —
+        # nothing ever read it (settings B10); the core setting it pretended to be is the one
+        # the store applies.
+        ("bundled-chat", "context_tokens", 9000),
+        ("bundled-chat", "context_tokens", 0),
+        ("bundled-chat", "context_tokens", True),
+        ("bundled-chat", "temperature", -1),
+        ("bundled-chat", "temperature", True),
         ("browse-action", "max_steps", 0),
         ("browse-action", "max_steps", -5),
     ],
 )
 def test_a_shipped_schemas_declared_bound_is_now_honored(app, field, bad):
-    """Read from the real manifests: these two declare bounds the provider path ignored.
+    """Read from the real manifests: these declare bounds the provider path used to ignore.
 
     Measured before the fix — ``validate({"confidence_threshold": 5})`` returned ``[]`` for a
     field declaring ``[0.0, 1.0]``. If someone relaxes a manifest, this rail fails loudly rather
@@ -122,8 +128,8 @@ def test_a_shipped_schemas_declared_bound_is_now_honored(app, field, bad):
 
 def test_those_shipped_fields_still_accept_their_documented_values():
     # The other half of the same claim: enforcement must not break a legitimate setting.
-    vm = _settings_schema("native-vector-memory")["properties"]
-    assert validate_properties({"confidence_threshold": 0.75}, vm) == []
+    chat = _settings_schema("bundled-chat")["properties"]
+    assert validate_properties({"context_tokens": 4096, "temperature": 0.7}, chat) == []
     ba = _settings_schema("browse-action")["properties"]
     assert validate_properties({"max_steps": 12}, ba) == []
 

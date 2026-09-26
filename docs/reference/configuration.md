@@ -133,7 +133,7 @@ Behavior toggles live in Settings → Memory; tuning constants are backend-only.
 
 | Key | Type | Default | Where to set | Description |
 |---|---|---|---|---|
-| `memory.semantic_confidence_threshold` | number | `0.8` | backend-only | Minimum similarity for a semantic-memory hit to be injected. |
+| `memory.semantic_confidence_threshold` | number | `0.8` | Settings → Memory | Confidence (0-1) an automatically learned semantic fact needs before memory keeps it; facts you add yourself are always kept. Read live — a change applies on the next write. |
 | `memory.episodic_dedup_threshold` | number | `0.88` | backend-only | Cosine similarity above which a new episodic record is treated as a duplicate and skipped. |
 | `memory.episodic_max_results` | integer | `8` | backend-only | Episodic records recalled per query. |
 | `memory.episodic_max_count` | integer | `10000` | backend-only | Episodic store size cap; oldest records are pruned past it. |
@@ -295,7 +295,7 @@ makes the voice loop noisier, never less safe.
 
 | Key | Type | Default | Where to set | Description |
 |---|---|---|---|---|
-| `hooks` | object | `{}` | Triggers page / `/api/hooks` | Webhook trigger config by hook id, plus `webhook_token` and `auto_approve_sources`. Managed via the Triggers UI; documented here because the raw shape is config-visible. |
+| `hooks` | object | `{}` | Triggers page / `/api/hooks` | Webhook trigger config by hook id, plus `webhook_token` (kept in the credential store — the file holds a `{{secret:…}}` reference; set it with `personalclaw config set hooks.webhook_token <token>`) and `auto_approve_sources`. Managed via the Triggers UI; documented here because the raw shape is config-visible. |
 | `observe_max_messages` | integer | `200` | backend-only | Channel-observation ring-buffer size (messages kept per channel for context). |
 | `observe_ttl_hours` | number | `168.0` | backend-only | How long observed channel messages stay usable as context. |
 | `agents` | object | `{}` | Agents page | Named agent definitions (see below). |
@@ -361,8 +361,8 @@ never sent to the default port: on a host running more than one instance, `10000
 instance's gateway — with its own home, config and state — so a guess is a cross-instance
 read or write, not a degraded local call.
 
-- `GET /api/config/personalclaw` — full config as JSON (owner-only).
-- `PATCH /api/config/personalclaw {path, value}` — single-field writes, allowlisted; non-editable paths return 400. A field that is a **security setting** (its `_EDITABLE_CONFIG` entry declares a `SecurityControl` — approval mode and YOLO, sign-in and 2FA, egress, the keychain, the sandbox ceilings, guardrail budgets, external access, sync, and a few more) follows two more rules. A write that LOOSENS it needs `"confirm": true` in the body (the JSON literal), or it answers `400 confirmation_required` with `{field, consent}` in `error.detail` — the sentence Settings shows before it resends; tightening never needs it. And a request carrying an **app** identity is refused `403 security_setting_owner_only`, in either direction and whatever it sends. `config/edit_spec.py` holds the rules; the settings are exactly the entries that declare one.
+- `GET /api/config/personalclaw` — the full config as JSON, for the owner. A request carrying an **app** identity gets only the fields its manifest declares in `permissions.config`, nested where the full read has them, and `403 config_field_not_declared` when it declares none.
+- `PATCH /api/config/personalclaw {path, value}` — single-field writes, allowlisted; non-editable paths return 400. An app may write only a field its manifest names in `permissions.config`; any other answers `403 config_field_not_declared`, and a manifest that names a security setting fails to install. A field that is a **security setting** (its `_EDITABLE_CONFIG` entry declares a `SecurityControl` — approval mode and YOLO, sign-in and 2FA, egress, the keychain, the sandbox ceilings, guardrail budgets, external access, sync, and a few more) follows two more rules. A write that LOOSENS it needs `"confirm": true` in the body (the JSON literal), or it answers `400 confirmation_required` with `{field, consent}` in `error.detail` — the sentence Settings shows before it resends; tightening never needs it. And a request carrying an **app** identity is refused `403 security_setting_owner_only`, in either direction and whatever it sends. `config/edit_spec.py` holds the rules; the settings are exactly the entries that declare one.
 - `GET /api/config/schema` — the full field registry (labels, help, types, defaults, deprecations) auto-derived from the config dataclasses. This document is generated against it.
 - `personalclaw config get|set <key> [value]` — CLI equivalent; `set` validates through the same loader. `get` withholds credential-named fields (`api_key`, `bot_token`, …) unless `--reveal` is passed.
 

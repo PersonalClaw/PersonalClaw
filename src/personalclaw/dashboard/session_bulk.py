@@ -128,14 +128,14 @@ async def api_chat_sessions_bulk(request: web.Request) -> web.Response:
     missing: list[str] = []
 
     for key in keys:
-        session = resolve_session(state, key)
-        if session is None:
+        # An app changes only conversations it started (`ROUTE_AUTHZ`'s reason for this route);
+        # you change any. Asked BEFORE the rehydrate, so a key naming one of yours loads nothing,
+        # and answered "missing" like a key naming nothing, so it confirms nothing either.
+        if request_app and state.session_creating_app(key) != request_app:
             missing.append(key)
             continue
-        # App Kit ownership isolation, mirroring the cleanup endpoint: an app caller
-        # may only touch its own sessions; a dashboard user (no request app) may touch
-        # any. Without this an app could archive the user's conversations.
-        if request_app and getattr(session, "_app", "") != request_app:
+        session = resolve_session(state, key)
+        if session is None:
             missing.append(key)
             continue
 

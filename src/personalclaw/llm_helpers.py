@@ -669,13 +669,15 @@ async def one_shot_completion(
         )
 
     provider = None
+    unresolved: Exception | None = None
     # The single-entry / empty chain resolves the axis itself, so the budget is derived
     # from the model that axis will actually run (``_chain`` already holds it when there
     # is one) rather than from nothing — an unbound axis falls back to the window table.
     _plain_ref = _chain[0] if _chain else ""
     try:
         provider = resolve_provider_for_use_case(resolved_uc, **(await _entry_kw(_plain_ref)))
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — the last-resort build below may still serve
+        unresolved = exc
         logger.debug(
             "one_shot_completion: use-case bridge resolve failed for %r", resolved_uc, exc_info=True
         )
@@ -702,6 +704,12 @@ async def one_shot_completion(
         registry = get_default_registry()
         entries = registry.list_entries()
         if not entries:
+            # Nothing can serve, so the bridge's refusal IS the cause: typed, with the
+            # WHAT/WHY/FIX it derived (which use case, and what to add where). A bare
+            # RuntimeError here left a workflow step unable to tell "no model is set up" from
+            # a transient fault, and the run page offered a Retry that could only fail again.
+            if unresolved is not None:
+                raise unresolved
             raise RuntimeError("No provider entries registered")
         fallback = entries[0]
         fallback_ref = f"{fallback.name}:{fallback.model}" if fallback.model else fallback.name
@@ -717,7 +725,7 @@ async def one_shot_completion(
     return await _run(provider)
 
 
-def _failed_endpoint(exc: BaseException) -> str:
+def failed_endpoint(exc: BaseException) -> str:
     """``" at <host:port>"`` for a transport error that knows its request, else ``""``.
 
     Only the host and port — never the path or query, which is where a provider that takes
@@ -759,7 +767,7 @@ def _describe_unexplained_failure(exc: object) -> str:
     for _ in range(5):
         if seen is None:
             break
-        where = _failed_endpoint(seen)
+        where = failed_endpoint(seen)
         if isinstance(seen, httpx.ConnectTimeout):
             return (
                 f"Timed out connecting to the model provider{where}. Check that it is "

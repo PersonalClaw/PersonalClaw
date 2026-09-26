@@ -56,7 +56,13 @@ class GatewayServices(Protocol):
 
     @property
     def owner_id(self) -> str:
-        """The primary owner's channel-user id, or ``""`` if unset."""
+        """The owner id stored under the one SHARED key (``CRED_OWNER_ID``), or ``""``.
+
+        The key every channel used to write, so it holds whichever platform's id was saved
+        last. A channel reads its OWN owner with ``owner_id_for(<provider>)``
+        (``personalclaw.sdk.channel``), which falls back to this value until the channel has
+        stored its own under ``owner_id_credential(<provider>)``.
+        """
         ...
 
     async def deliver_channel_inbound(

@@ -88,9 +88,16 @@ async def api_uploads_init(request: web.Request) -> web.Response:
     target_dir = ""
     target_key = ""
     if target == "workspace":
-        from personalclaw.dashboard.handlers.files import _validate_dashboard_path
+        from personalclaw.dashboard.handlers.files import (
+            _app_path_refusal,
+            _validate_dashboard_path,
+        )
 
         target_dir = _validate_dashboard_path(str(body.get("path") or "")) or ""
+        if not target_dir:
+            refused = _app_path_refusal(str(body.get("path") or ""), tool="file_upload")
+            if refused is not None:
+                return refused
         if not target_dir or not os.path.isdir(target_dir):
             return web.json_response({"error": "invalid or forbidden directory"}, status=400)
 
@@ -350,10 +357,17 @@ async def _finalize_target(request: web.Request, sess, final_path: Path) -> dict
         return {"profile": vprof.profile_payload(profile)}
 
     if sess.target == "workspace":
-        from personalclaw.dashboard.handlers.files import _validate_dashboard_path
+        from personalclaw.dashboard.handlers.files import (
+            _app_path_refusal_message,
+            _validate_dashboard_path,
+        )
 
-        wdest = _validate_dashboard_path(os.path.join(sess.target_dir, Path(sess.filename).name))
+        wanted = os.path.join(sess.target_dir, Path(sess.filename).name)
+        wdest = _validate_dashboard_path(wanted)
         if not wdest:
+            refused = _app_path_refusal_message(wanted, tool="file_upload")
+            if refused:
+                raise UploadError(refused, 403)
             raise UploadError(f"forbidden filename: {sess.filename}", 400)
         if os.path.exists(wdest):
             raise UploadError(f"already exists: {sess.filename}", 409)

@@ -209,7 +209,9 @@ export function foldAgentActivity(src: AgentActivitySources): { entities: AgentA
   return { entities: all.slice(0, MAX_ENTITIES), truncated: Math.max(0, all.length - MAX_ENTITIES) }
 }
 
-const FAST_POLL = 10_000
+/** A safety net, not the feed: every source this folds already signals its own changes (below),
+ *  so the timer only has to cover a frame the socket missed. It re-read all four every 10s. */
+const SAFETY_POLL = 60_000
 const SIGNAL_DEBOUNCE = 600
 
 /** Live agent activity, folded from four public GETs and refreshed by the existing
@@ -248,12 +250,15 @@ export function useAgentActivity(): AgentActivityFeed {
     // touched here — that is the whole contract. Do not "optimize" a field out of it.
     if (
       t === 'chat_status' || t === 'sessions' || t === 'update_progress' ||
-      t.startsWith('subagent') || t === 'approval' || t === 'approval_resolved'
+      t.startsWith('subagent') || t === 'approval' || t === 'approval_resolved' ||
+      // A loop's lifecycle rides the gateway's `refresh` hint. Signalled on the TYPE alone, per
+      // the contract above: the hint is rare, so an unrelated kind costs one coalesced re-read.
+      t === 'refresh'
     ) signal()
   }, [signal])
 
   useChatSocket(onMessage, load)  // reopened after a drop → full catch-up refetch
-  useVisiblePoll(load, FAST_POLL)
+  useVisiblePoll(load, SAFETY_POLL)
 
   const folded = useMemo(
     () => sources ? foldAgentActivity(sources) : { entities: [], truncated: 0 },

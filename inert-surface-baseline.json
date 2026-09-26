@@ -51,7 +51,7 @@
       ]
     },
     "src/personalclaw/sdk/channel.py": {
-      "inert": 93,
+      "inert": 92,
       "surfaces": [
         "sdk_export:AcpError",
         "sdk_export:AcpProcessDied",
@@ -128,7 +128,6 @@
         "sdk_export:resolve_bind_host",
         "sdk_export:resolve_dashboard_host",
         "sdk_export:safe_read_file",
-        "sdk_export:save_conversation_turn",
         "sdk_export:save_credential",
         "sdk_export:save_session_to_history",
         "sdk_export:save_use_case_settings",
@@ -355,9 +354,9 @@
       "config_reader": 6,
       "editable_config": 0,
       "enum": 8,
-      "sdk_export": 153,
+      "sdk_export": 152,
       "trigger_kind": 0
     },
-    "inert": 167
+    "inert": 166
   }
 }

@@ -87,12 +87,12 @@ async def _upload_sweep_loop() -> None:
 
 
 async def _sel_prune_loop() -> None:
-    """Periodically trim the SEL audit log so it can't grow unbounded.
+    """Periodically apply the SEL audit log's retention.
 
-    Every gateway/channel/mcp action (incl. dashboard polls) appends an entry, so
-    without this the file grows to millions of lines and the audit reads/verify
-    crawl. Prunes once at startup, then every few hours, on an executor thread
-    (the prune rewrites the whole file)."""
+    The live file's SIZE is bounded by the log's own rotation (`sel._ROTATE_BYTES`), which moves
+    it into `sel_archive/`; this is the AGE half — rows past retention leave the live file and
+    expired rotated files leave the archive. Once at startup, then every few hours, on an
+    executor thread (the prune rewrites the live file)."""
     from personalclaw import shutdown_event
 
     first = True
@@ -414,6 +414,133 @@ async def spa_fallback(
                 headers={"Allow": allow} if allow else None,
             )
         raise
+
+
+@web.middleware  # type: ignore[misc]
+async def app_permission_middleware(
+    request: web.Request,
+    handler: object,
+) -> web.StreamResponse:
+    """Enforce an app's declared ``permissions.api`` allowlist (A5).
+
+    Only acts on requests carrying an app identity (``request["app"]`` set
+    from an app-scoped token). A path the app didn't declare is rejected
+    403 before the handler runs — the half an app's own BACKEND cannot talk its
+    way past, since its token is the only credential it holds. Owner/dashboard
+    requests (no app identity) pass.
+
+    🪤 That is not a boundary on an app's FRONTEND (#492). An app's UI bundle is
+    imported into the dashboard page itself, so a bare ``fetch`` from it carries
+    the owner's cookie and no app identity, arrives indistinguishable from the
+    dashboard's own request, and passes here by the rule above. Nothing on this
+    side can tell the two apart — separating them needs a distinct ORIGIN for app
+    bundles, which is why this is a disclosed limitation
+    (``docs/security/limitations.md`` §4, surfaced at install consent) rather than
+    a check that could be added here.
+
+    The decision itself is ``permissions.app_request_denial``, not inline here, and this
+    is a module-level function rather than a closure inside :func:`start_dashboard` so a
+    test drives THIS middleware instead of a mirror of it (a mirror is free to drift from
+    the boundary it claims to test). This half owns logging the refusal and shaping the
+    response; the module owns what is refused.
+
+    It hands the decision the matched route's canonical template as well as the path,
+    because the per-route declarations (``permissions.ROUTE_AUTHZ``) are keyed on it:
+    ``POST /api/triggers`` and ``POST /api/triggers/{id}/run`` share a prefix and not a
+    verdict. A row that carries ``owns`` is then held to the conversations the calling app
+    started (:func:`_conversation_denial`). An allowed app request runs inside
+    ``scoped_to_app``, so a seam with no request in hand (the file explorer's root list) still
+    knows who is asking."""
+    from personalclaw.apps.permissions import (
+        APP_SCOPED_PREFIXES,
+        app_request_denial,
+        scoped_to_app,
+    )
+
+    app_name = request.get("app", "")
+    if app_name and request.path.startswith(APP_SCOPED_PREFIXES):
+
+        def _deny(reason: str) -> web.StreamResponse:
+            from personalclaw.sel import sel
+
+            try:
+                sel().log_api_access(
+                    caller=f"app:{app_name}",
+                    operation=f"{request.method} {request.path}",
+                    outcome="denied",
+                    source="app_permissions",
+                    resources=request.path,
+                    error=reason,
+                )
+            except Exception:
+                pass
+            raise web.HTTPForbidden(
+                # The reason rides in the body, so a developer reads the policy — "owner-only
+                # capability …: the MCP servers this gateway launches" — rather than a bare 403.
+                text=f"app {app_name!r} not permitted to access {request.path}: {reason}",
+                content_type="text/plain",
+            )
+
+        resource = request.match_info.route.resource
+        route = resource.canonical if resource is not None else ""
+        reason = app_request_denial(app_name, request.path, method=request.method, route=route)
+        if not reason:
+            reason = await _conversation_denial(request, app_name, route)
+        if reason:
+            return _deny(reason)
+    if app_name:
+        with scoped_to_app(app_name):
+            return await handler(request)  # type: ignore[operator]
+    return await handler(request)  # type: ignore[operator]
+
+
+async def _conversation_denial(request: web.Request, app_name: str, route: str) -> str:
+    """Why an app's request names a conversation the app did not start, or ``""``.
+
+    The ``owns`` half of a ``ROUTE_AUTHZ`` row (``permissions.OwnedTarget``): every target the row
+    lists must name a conversation whose creating app is the caller
+    (``DashboardState.session_creating_app``). Decided here, before the handler, for the reason the
+    route table exists at all — the ownership check used to be copied into a dozen handlers, keyed
+    on an origin tag an app could share by its name, and missing from thirty more — and so that a
+    refused request loads nothing: the creator is read without rehydrating the conversation.
+
+    A body target reads the JSON body, which aiohttp keeps, so the handler reads the same bytes
+    after. A body that is not a JSON object names nothing, so an optional target passes and the
+    handler refuses the body itself.
+    """
+    from personalclaw.apps.permissions import AppMay, route_authz
+
+    authz = route_authz(request.method, route)
+    if not isinstance(authz, AppMay) or not authz.owns:
+        return ""
+    body: dict = {}
+    if any(target.in_body for target in authz.owns):
+        try:
+            parsed = await request.json()
+        except Exception:  # noqa: BLE001 — unparseable names nothing; the handler refuses it
+            parsed = None
+        body = parsed if isinstance(parsed, dict) else {}
+    state = request.app.get("state")
+    for target in authz.owns:
+        named = body.get(target.field) if target.in_body else request.match_info.get(target.field)
+        if named is None or named == "":
+            if target.optional:
+                continue
+            return (
+                f"the request must name a conversation the app started in {target.field!r} — "
+                "without one it reaches every conversation you have"
+            )
+        if (
+            not isinstance(named, str)
+            or state is None
+            or state.session_creating_app(named) != app_name
+        ):
+            shown = named if isinstance(named, str) else f"a {type(named).__name__}"
+            return (
+                f"{shown!r} is not a conversation this app started — an app reaches only the "
+                "conversations it started"
+            )
+    return ""
 
 
 async def start_dashboard(
@@ -1120,8 +1247,8 @@ async def start_dashboard(
     app.router.add_post("/api/mcp/toggle", handlers.api_mcp_toggle)
     app.router.add_post("/api/mcp/toggle-tool", handlers.api_mcp_toggle_tool)
     app.router.add_post("/api/mcp/toggle-all", handlers.api_mcp_toggle_all)
-    app.router.add_post("/api/mcp/remove", handlers.api_mcp_remove)
-    # REST-style MCP server registration
+    # One MCP server: the edit form's read, add or edit, remove
+    app.router.add_get("/api/mcp/servers/{name}", handlers.api_mcp_server_detail)
     app.router.add_put("/api/mcp/servers/{name}", handlers.api_mcp_server_detail)
     app.router.add_delete("/api/mcp/servers/{name}", handlers.api_mcp_server_detail)
     # Skills marketplace integration
@@ -1659,8 +1786,9 @@ async def start_dashboard(
     from personalclaw.providers.routes import register_routes as register_extension_routes
 
     load_all_extensions()
-    # Move any secret an earlier release left inline in a settings file (a provider key in
-    # config.json, an app's tokens in its data/config.json, an instance's key) into the
+    # Move any secret an earlier release left inline in a settings file (a provider key or the
+    # webhook token in config.json, an app's tokens in its data/config.json, an instance's key,
+    # an MCP server's env and headers in mcp.json and the agent config) into the
     # credential store. HERE: after extensions load, so every app's declared-sensitive fields
     # are known, and before the registry sync below reads config.json. Idempotent and
     # fail-safe per file — a key it cannot move keeps working where it is.
@@ -2040,6 +2168,34 @@ async def start_dashboard(
 
     app.on_cleanup.append(_acp_pool_shutdown)
 
+    async def _warm_provider_availability(app_: web.Application) -> None:
+        """Measure every provider's availability once at boot, in the background.
+
+        The measurement runs in the availability child process (providers/availability.py),
+        so this costs the loop nothing; it exists so Settings → Providers opens on answers
+        rather than on a page of "checking" cards."""
+        try:
+            from personalclaw.providers.availability import get_availability_board
+            from personalclaw.providers.registry import get_provider_registry
+
+            names = sorted({ext.name for ext in get_provider_registry().list_extensions()})
+            get_availability_board().warm(names)
+        except Exception:
+            logger.debug("provider availability warm failed", exc_info=True)
+
+    app.on_startup.append(_warm_provider_availability)
+
+    async def _provider_availability_shutdown(app_: web.Application) -> None:
+        """Kill a still-running availability child on gateway stop."""
+        try:
+            from personalclaw.providers.availability import get_availability_board
+
+            await get_availability_board().shutdown()
+        except Exception:
+            logger.debug("provider availability shutdown failed", exc_info=True)
+
+    app.on_cleanup.append(_provider_availability_shutdown)
+
     async def _mcp_client_shutdown(app_: web.Application) -> None:
         """Stop the idle sweeper + drain all live MCP connections on gateway stop
         (rel-mcp-server-pooling #46)."""
@@ -2094,6 +2250,18 @@ async def start_dashboard(
             logger.debug("LAN discovery shutdown failed", exc_info=True)
 
     app.on_cleanup.append(_discovery_shutdown)
+
+    async def _auth_tally_shutdown(app_: web.Application) -> None:
+        """Write the summary row of every still-open authentication window on gateway stop, so
+        the successes of the last quarter hour are counted rather than lost with the process."""
+        try:
+            from personalclaw.dashboard.token_auth import flush_success_tally
+
+            flush_success_tally()
+        except Exception:
+            logger.debug("auth success tally flush failed", exc_info=True)
+
+    app.on_cleanup.append(_auth_tally_shutdown)
 
     # Static files — React build under /assets, packaged static assets under /static
     if _DIST_DIR.is_dir():
@@ -2188,61 +2356,6 @@ async def start_dashboard(
                 from personalclaw.http_errors import json_error
 
                 return json_error("auth_origin_not_allowed", status=403)
-        return await handler(request)  # type: ignore[operator]
-
-    @web.middleware  # type: ignore[misc]
-    async def app_permission_middleware(
-        request: web.Request,
-        handler: object,
-    ) -> web.StreamResponse:
-        """Enforce an app's declared ``permissions.api`` allowlist (A5).
-
-        Only acts on requests carrying an app identity (``request["app"]`` set
-        from an app-scoped token). A path the app didn't declare is rejected
-        403 before the handler runs — the half an app's own BACKEND cannot talk its
-        way past, since its token is the only credential it holds. Owner/dashboard
-        requests (no app identity) pass.
-
-        🪤 That is not a boundary on an app's FRONTEND (#492). An app's UI bundle is
-        imported into the dashboard page itself, so a bare ``fetch`` from it carries
-        the owner's cookie and no app identity, arrives indistinguishable from the
-        dashboard's own request, and passes here by the rule above. Nothing on this
-        side can tell the two apart — separating them needs a distinct ORIGIN for app
-        bundles, which is why this is a disclosed limitation
-        (``docs/security/limitations.md`` §4, surfaced at install consent) rather than
-        a check that could be added here.
-
-        The decision itself is ``permissions.app_request_denial``, not inline here:
-        this closure cannot be imported, so every test of the boundary had to
-        re-implement it and was free to drift from it. This half owns logging the
-        refusal and shaping the response; the module owns what is refused."""
-        from personalclaw.apps.permissions import APP_SCOPED_PREFIXES, app_request_denial
-
-        app_name = request.get("app", "")
-        if app_name and request.path.startswith(APP_SCOPED_PREFIXES):
-
-            def _deny(reason: str) -> web.StreamResponse:
-                from personalclaw.sel import sel
-
-                try:
-                    sel().log_api_access(
-                        caller=f"app:{app_name}",
-                        operation=f"{request.method} {request.path}",
-                        outcome="denied",
-                        source="app_permissions",
-                        resources=request.path,
-                        error=reason,
-                    )
-                except Exception:
-                    pass
-                raise web.HTTPForbidden(
-                    text=f"app {app_name!r} not permitted to access {request.path}",
-                    content_type="text/plain",
-                )
-
-            reason = app_request_denial(app_name, request.path)
-            if reason:
-                return _deny(reason)
         return await handler(request)  # type: ignore[operator]
 
     # Generate per-session secret for local app / IPC authentication.
@@ -2449,8 +2562,8 @@ async def start_dashboard(
     _reaper.add_done_callback(lambda t: t.result() if not t.cancelled() else None)
     state._terminal_reaper = _reaper  # prevent GC
 
-    # Trim the append-only security-event log at startup + periodically so audit
-    # reads/verify stay fast (the chain is otherwise unbounded).
+    # Apply the security-event log's retention at startup + periodically (its size is bounded
+    # by rotation; see `_sel_prune_loop`).
     state._sel_prune_task = asyncio.create_task(_sel_prune_loop())  # prevent GC
 
     # Sweep abandoned resumable-upload session dirs (partial parts) so a never-

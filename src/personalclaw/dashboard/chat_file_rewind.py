@@ -36,14 +36,19 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_session(request: web.Request, operation: str):
-    """(session, error_response). Mirrors chat_undo's 404 + app-isolation 403."""
+    """(session, error_response): 404 for an unknown session, 403 for one the app did not start.
+
+    The 403 is here for the PREVIEW. The rewind itself is a write, which the permission middleware
+    already held to the app's own conversations (``ROUTE_AUTHZ``'s ``owns``); the preview is a
+    read, which the route table does not govern, and it lists the files the conversation touched.
+    """
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
     session = state._sessions.get(name)
     request_app = request.get("app", "")
     if not session:
         return None, json_error("not_found", message=f"no such session: {name}", status=404)
-    if request_app and session._app != request_app:
+    if request_app and session.created_by_app != request_app:
         sel().log_api_access(
             caller=request_app,
             operation=operation,

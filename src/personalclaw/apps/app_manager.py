@@ -275,7 +275,7 @@ def _run_hook(cmd: str, *, cwd: Path, timeout: int, env_name: str) -> None:
     before this ever runs (install gate); a hook that errors aborts the op.
 
     The hook's environment names the app packages on ``PYTHONPATH``
-    (``app_python.hook_env``), so a hook that runs Python can import what the app
+    (``app_python.app_packages_env``), so a hook that runs Python can import what the app
     declared — the dependency step runs before ``onInstall``/``onUpdate`` for that.
     """
     if not cmd.strip():
@@ -290,7 +290,7 @@ def _run_hook(cmd: str, *, cwd: Path, timeout: int, env_name: str) -> None:
             timeout=max(1, timeout),
             capture_output=True,
             text=True,
-            env=app_python.hook_env(),
+            env=app_python.app_packages_env(),
         )
     except subprocess.TimeoutExpired as exc:
         raise AppLifecycleError(f"{env_name} hook timed out after {timeout}s") from exc
@@ -2563,3 +2563,11 @@ def _manifest_of(name: str) -> AppManifest | None:
     except Exception:  # noqa: BLE001
         logger.debug("app %s: manifest load failed", name, exc_info=True)
         return None
+
+
+def display_name_of(name: str) -> str:
+    """The name the app *name* goes by: its manifest's ``displayName``, the one install consent
+    showed you. The bare name when it declares none, or is no longer installed — so a conversation
+    an uninstalled app started still says which app it was."""
+    manifest = _manifest_of(name) if name else None
+    return (manifest.displayName if manifest is not None else "") or name

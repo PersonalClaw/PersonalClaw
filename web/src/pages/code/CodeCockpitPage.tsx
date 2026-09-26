@@ -1202,11 +1202,22 @@ function FileFinder({ ws }: { ws: string }) {
   // Debounce + sequence-guard the search so fast typing doesn't apply out-of-order
   // results (a slow earlier query resolving after a faster later one).
   const seq = useRef(0)
+  // Every synchronous consequence of a query change happens HERE, in the handlers that change it,
+  // batched into the keystroke's own render; the effect below only runs the debounced search.
+  // `setSearching(true)` used to sit in that effect, where it scheduled a render from inside every
+  // keystroke's commit — the shape that throws React's #185 when keys outrun the renders (the
+  // mechanism: `ui/composer/MarkdownInput`).
+  const changeQuery = (v: string) => {
+    setQ(v)
+    const live = v.trim().length >= 2
+    setSearching(live)
+    if (!live) setResults([])
+    if (!v) setOpen(false)
+  }
   useEffect(() => {
     const needle = q.trim()
-    if (needle.length < 2) { setResults([]); setSearching(false); return }
+    if (needle.length < 2) return
     const mine = ++seq.current
-    setSearching(true)
     const t = setTimeout(() => {
       api.fileSearch(needle, ws).then((r) => {
         if (mine === seq.current) { setResults((r.results || []).map((x) => ({ path: x.path, name: x.name }))); setHi(0); setOpen(true); setSearching(false) }
@@ -1216,7 +1227,7 @@ function FileFinder({ ws }: { ws: string }) {
   }, [q, ws])
   const openFile = (r: { path: string; name: string }) => {
     window.dispatchEvent(new CustomEvent('ne:code-open-file', { detail: { name: r.name, path: r.path, is_dir: false } }))
-    setQ(''); setResults([]); setOpen(false)
+    changeQuery('')
   }
   // Dismiss the results dropdown on an outside click — else it floats over the tree
   // after the user clicks away (e.g. to pick a tree file instead) with no way to close
@@ -1240,13 +1251,13 @@ function FileFinder({ ws }: { ws: string }) {
     <div ref={rootRef} className="relative shrink-0 border-b border-outline-variant/40 px-2 py-1.5">
       <div className="flex items-center gap-1.5 rounded-md bg-surface-high px-2 py-1">
         <SearchField variant="inline" inlineIconSize={13} size="md" inputRef={inputRef} value={q}
-          onChange={(v) => { setQ(v); if (!v) { setResults([]); setOpen(false) } }}
+          onChange={changeQuery}
           onFocus={() => results.length && setOpen(true)}
           onKeyDown={(e) => {
             if (e.key === 'ArrowDown' && results.length) { e.preventDefault(); setOpen(true); setHi((i) => Math.min(results.length - 1, i + 1)) }
             else if (e.key === 'ArrowUp' && results.length) { e.preventDefault(); setHi((i) => Math.max(0, i - 1)) }
             else if (e.key === 'Enter' && results.length) { e.preventDefault(); openFile(results[Math.min(hi, results.length - 1)]) }
-            else if (e.key === 'Escape') { e.preventDefault(); setQ(''); setResults([]); setOpen(false) }
+            else if (e.key === 'Escape') { e.preventDefault(); changeQuery('') }
           }}
           placeholder="Find file by name…  ⌘P" spellCheck={false} autoCapitalize="off" autoCorrect="off"
           ariaLabel="Find file by name"

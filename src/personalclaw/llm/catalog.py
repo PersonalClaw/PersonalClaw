@@ -37,10 +37,13 @@ profile / …); ``model`` is the entry's pinned model (rarely needed for listing
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
+import hashlib
 import logging
 import re
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -90,11 +93,17 @@ class ModelInfo:
 
 @dataclass
 class ConnectionResult:
-    """Outcome of a provider connectivity probe (Settings → "Test connection")."""
+    """Outcome of a provider connectivity probe (Settings → "Test connection").
+
+    ``rejected_credential`` is True when the endpoint answered but refused the stored key
+    (HTTP 401/403) — the one failure whose fix is the key, not the endpoint. Core stops
+    offering such an instance's models and stops re-sending the key until it changes.
+    """
 
     ok: bool
     detail: str = ""
     model_count: int | None = None
+    rejected_credential: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"ok": self.ok}
@@ -102,6 +111,8 @@ class ConnectionResult:
             d["detail"] = self.detail
         if self.model_count is not None:
             d["model_count"] = self.model_count
+        if self.rejected_credential:
+            d["rejected_credential"] = True
         return d
 
 
@@ -358,6 +369,58 @@ class ModelDiscoveryError(RuntimeError):
         self.url = url
         self.status = status
 
+    @property
+    def rejected_credential(self) -> bool:
+        """The endpoint answered and refused the key (401/403), as opposed to not answering."""
+        return self.status in (401, 403)
+
+
+#: Failures a fail-soft discovery swallowed, collected for whoever asked (see
+#: :func:`capture_discovery_failures`). ``None`` outside a capture.
+_SWALLOWED: contextvars.ContextVar[list[ModelDiscoveryError] | None] = contextvars.ContextVar(
+    "personalclaw_swallowed_discovery_failures", default=None
+)
+
+
+@contextlib.contextmanager
+def capture_discovery_failures() -> Iterator[list[ModelDiscoveryError]]:
+    """Collect every discovery failure a fail-soft path swallows inside this block.
+
+    A catalog that lists through :func:`openai_compatible_list_models` gets ``[]`` for a
+    401, and its ``test_connection`` then reported "No models returned (check key/endpoint)"
+    for a key the vendor had plainly rejected. The caller that relays a result to the user
+    wraps the call in this and reads what actually happened — the resolver's own sentence —
+    without every app having to change how it lists.
+    """
+    sink: list[ModelDiscoveryError] = []
+    token = _SWALLOWED.set(sink)
+    try:
+        yield sink
+    finally:
+        _SWALLOWED.reset(token)
+
+
+def record_swallowed_discovery_failure(exc: ModelDiscoveryError) -> None:
+    """Hand a failure a fail-soft path is about to swallow to the active capture, if any."""
+    sink = _SWALLOWED.get()
+    if sink is not None:
+        sink.append(exc)
+
+
+#: (models URL, key digest) pairs whose rejection has already been logged at WARNING. The
+#: same rejected key used to log once per page load — 51 identical warnings in one log.
+_REJECTION_WARNED: set[tuple[str, str]] = set()
+
+
+def _key_digest(api_key: str | None) -> str:
+    return hashlib.sha256((api_key or "").encode()).hexdigest()[:16]
+
+
+#: The most of a failure's own sentence a connection result carries. Long enough for the longest
+#: one core composes — an egress refusal names the URL, the guard's reason and BOTH ways to allow
+#: the host (~330 characters), and cutting it at 300 dropped exactly the instruction.
+FAILURE_DETAIL_CHARS = 600
+
 
 #: A path segment that is an API VERSION (``v1``, ``v4``, ``v1beta``, ``v1alpha1``) — as
 #: opposed to an ordinary segment that merely starts with a "v" (``vllm``, ``voice``).
@@ -435,8 +498,14 @@ async def openai_compatible_discover_models(
             url=url,
         ) from exc
     except Exception as exc:  # noqa: BLE001 — every transport failure, named not swallowed
+        from personalclaw.providers.failure_copy import connectivity_guidance
+
+        # The classified sentence when there is one: it names the cause (refused, timed out,
+        # unresolvable) and, for a refused localhost inside the container image, the host
+        # address to use instead — the one refusal whose fix is a hostname, not a server.
         raise ModelDiscoveryError(
-            f"Could not reach {url} ({type(exc).__name__}) — check the endpoint host is "
+            connectivity_guidance(exc, endpoint=url)
+            or f"Could not reach {url} ({type(exc).__name__}) — check the endpoint host is "
             f"correct and reachable from this machine.",
             url=url,
         ) from exc
@@ -517,7 +586,14 @@ async def openai_compatible_list_models(
     try:
         return await openai_compatible_discover_models(endpoint, api_key, default_base=default_base)
     except ModelDiscoveryError as exc:
-        logger.warning("Model discovery found nothing: %s", exc)
+        record_swallowed_discovery_failure(exc)
+        seen = (exc.url, _key_digest(api_key))
+        if exc.rejected_credential and seen in _REJECTION_WARNED:
+            logger.debug("Model discovery found nothing (already reported): %s", exc)
+        else:
+            if exc.rejected_credential:
+                _REJECTION_WARNED.add(seen)
+            logger.warning("Model discovery found nothing: %s", exc)
         return []
 
 
@@ -547,8 +623,18 @@ class ModelCatalog(ABC):
         non-empty ⇒ ok). Providers with a cheaper health check override this."""
         try:
             models = await self.list_models()
+        except ModelDiscoveryError as exc:
+            return ConnectionResult(
+                ok=False,
+                detail=str(exc)[:FAILURE_DETAIL_CHARS],
+                rejected_credential=exc.rejected_credential,
+            )
         except Exception as exc:  # noqa: BLE001 — a probe never propagates
-            return ConnectionResult(ok=False, detail=str(exc)[:200])
+            from personalclaw.providers.failure_copy import relayed_failure_copy
+
+            # The user-facing sentence, never the exception's own text: that belongs in the log.
+            logger.debug("connection test raised", exc_info=True)
+            return ConnectionResult(ok=False, detail=relayed_failure_copy(exc))
         return ConnectionResult(ok=True, model_count=len(models))
 
 
@@ -585,12 +671,14 @@ class ModelManager(ModelCatalog):
 
 
 __all__ = [
+    "FAILURE_DETAIL_CHARS",
     "ModelInfo",
     "ConnectionResult",
     "PullProgress",
     "ModelCatalog",
     "ModelDiscoveryError",
     "ModelManager",
+    "capture_discovery_failures",
     "infer_capabilities",
     "openai_compatible_discover_models",
     "openai_compatible_list_models",

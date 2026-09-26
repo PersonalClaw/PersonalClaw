@@ -112,10 +112,20 @@ describe('the approval card in the chat it belongs to', () => {
   it('closes when its approval is answered elsewhere — and only then', async () => {
     await openWithPendingApproval()
     // Another chat waiting on the same bare id "1" is answered: this card must not move.
-    pushFrame('approval_resolved', { id: 'chat-b:1', request_id: '1', session: 'chat-b', approved: true })
+    pushFrame('approval_resolved', { id: 'chat-b:1', request_id: '1', session: 'chat-b', approved: true, outcome: 'approved' })
     expect(screen.queryByRole('button', { name: /^Deny bash/ })).toBeTruthy()
     // This chat's approval is answered from Home or the phone: the card collapses to the outcome.
-    pushFrame('approval_resolved', { id: 'chat-a:1', request_id: '1', session: 'chat-a', approved: false })
+    pushFrame('approval_resolved', { id: 'chat-a:1', request_id: '1', session: 'chat-a', approved: false, outcome: 'rejected' })
     await waitFor(() => expect(screen.queryByRole('button', { name: /^Deny bash/ })).toBeNull())
+  })
+
+  it('says the turn was stopped, not "denied", when its approval ends with the turn', async () => {
+    // The frame a stopped turn sends. The card used to read only `approved: false` and paint
+    // "denied" — a decision the user never made.
+    await openWithPendingApproval()
+    pushFrame('approval_resolved', { id: 'chat-a:1', request_id: '1', session: 'chat-a', approved: false, outcome: 'cancelled' })
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Deny bash/ })).toBeNull())
+    expect(screen.getByText(/not run — the turn was stopped/)).toBeTruthy()
+    expect(screen.queryByText(/denied/)).toBeNull()
   })
 })

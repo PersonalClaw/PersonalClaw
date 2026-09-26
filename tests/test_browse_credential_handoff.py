@@ -736,9 +736,10 @@ class TestTheProfileNeverTravels:
         assert not any(e.path.split("/")[0] == "browse" for e in inv.INVENTORY)
         # `backup_entries` is the SNAPSHOT projection and `export_entries` the portable one. Both,
         # because the point is that a profile is in NEITHER — a `secret=True` entry would be absent
-        # from the second and present in the first.
-        assert not any(e.path.startswith("browse") for e in inv.backup_entries())
-        assert not any(e.path.startswith("browse") for e in inv.export_entries())
+        # from the second and present in the first. By path SEGMENT: `browse_kill.json` (the
+        # browse kill switch) is a different, declared store that merely shares the prefix.
+        assert not any(e.path.split("/")[0] == "browse" for e in inv.backup_entries())
+        assert not any(e.path.split("/")[0] == "browse" for e in inv.export_entries())
         assert "browse" not in inv.secret_paths()
 
     def test_an_export_carries_no_profile_bytes(self, _isolated_home):

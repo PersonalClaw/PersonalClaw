@@ -16,22 +16,7 @@
       "semantic_search",
       "episodic",
       "preferences"
-    ],
-    "settingsSchema": {
-      "type": "object",
-      "properties": {
-        "confidence_threshold": {
-          "type": "number",
-          "default": 0.8,
-          "minimum": 0.0,
-          "maximum": 1.0,
-          "x-meta": {
-            "label": "Confidence Threshold",
-            "help": "Minimum similarity score for semantic recall."
-          }
-        }
-      }
-    }
+    ]
   },
   "native": true
 }

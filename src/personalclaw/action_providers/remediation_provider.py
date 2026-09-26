@@ -93,7 +93,10 @@ class SelfRemediationActionProvider(ActionProvider):
             logger.warning("remediation run failed", exc_info=True)
             return ActionResult(success=False, error=f"remediation failed: {exc}")
 
-        healthy = result.score_after >= _rem.HEALTHY_SCORE
+        # The cadence follows what the engine can still DO, not the score: a failed check only a
+        # person can repair keeps the score down for good, and waking every few minutes to find
+        # nothing to run would make that the most expensive state to be in.
+        healthy = result.fixable_after <= 100.0 - _rem.HEALTHY_SCORE
         rearmed = _rearm(healthy=healthy, cfg=cfg, now=now)
 
         # A maintenance job that failed must not read as a quiet success — the engine owns passes

@@ -3,7 +3,7 @@ import { Zap, FileText, ChevronRight, Trash2, ArrowLeft, Pencil, Save, X, Shield
 import hljs from 'highlight.js/lib/common'
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
-import { Skeleton } from '../../ui/ListScaffold'
+import { LoadError, Skeleton } from '../../ui/ListScaffold'
 import { confirmDelete } from '../../ui/dialog'
 import { TextArea, FieldError } from '../../ui/forms'
 import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
@@ -173,7 +173,13 @@ function IntegritySection({ skill }: { skill: SkillItem }) {
 function SkillEditor({ name, onBack, onSaved }: { name: string; onBack: () => void; onSaved: () => void }) {
   // Cache the fetched SKILL.md so reopening the editor paints instantly; local
   // `content` is the editable copy, seeded from the cache when it lands.
-  const { data: fetched } = useQuery<string>(`skill:content:${name}:SKILL.md`, () => api.skillContent(name).catch(() => ''), { persist: true })
+  //
+  // 🔴 NO FALLBACK. This read seeds an editor whose Save PUTs the whole document, and
+  // `.catch(() => '')` made a failed read an empty SKILL.md: the field empty, Save enabled, no
+  // error — one click replaced the skill's instructions with nothing. It also persisted that ''
+  // under the key `FileView` reads for the same file. The failure is shown with a retry, and the
+  // editor waits for a real read.
+  const { data: fetched, error: fetchErr, refresh } = useQuery<string>(`skill:content:${name}:SKILL.md`, () => api.skillContent(name), { persist: true })
   const [content, setContent] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -195,7 +201,9 @@ function SkillEditor({ name, onBack, onSaved }: { name: string; onBack: () => vo
       <button onClick={onBack} className="self-start inline-flex items-center gap-1.5 text-on-surface-low text-[0.8125rem] hover:text-on-surface"><ArrowLeft size={14} /> Back</button>
       <div className="font-mono text-on-surface text-[0.8125rem]">{name} · SKILL.md</div>
       {content === null
-        ? <Skeleton className="h-72 w-full" />
+        ? (fetchErr
+          ? <LoadError what="SKILL.md" error={fetchErr} onRetry={refresh} />
+          : <Skeleton className="h-72 w-full" />)
         : <TextArea value={content} onChange={setContent} rows={18} mono />}
       {err && <FieldError>{err}</FieldError>}
       <div className="flex justify-end gap-s">

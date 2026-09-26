@@ -437,7 +437,8 @@ def _doctor_maintenance() -> None:
             print("  deficits:    none measured")
             return
         for d in sorted(present, key=lambda d: (not d.reachable, -d.penalty)):
-            label = d.key.replace("_", " ")
+            # A failed Doctor check carries its probe title; a measured deficit only a key.
+            label = d.title or d.key.replace("_", " ")
             if d.reachable:
                 print(f"  deficit:     ⚠️  {label} ×{d.count} (−{d.penalty:.1f}, fixable now)")
             else:
@@ -445,8 +446,9 @@ def _doctor_maintenance() -> None:
                 # string, so the two surfaces cannot drift into two different explanations.
                 # On its own continuation line (this file's established shape for a fix hint)
                 # rather than appended: the sentence carries its own dash, and two in one row
-                # reads as a stutter.
-                print(f"  deficit:     ⏹  {label} ×{d.count}")
+                # reads as a stutter. The penalty is shown because it COUNTS: the score is the
+                # home's health, not only the part maintenance can repair.
+                print(f"  deficit:     ⏹  {label} ×{d.count} (−{d.penalty:.1f})")
                 print(f"               {d.blocked_by}")
         if any(d.reachable for d in present):
             print("               Fix: personalclaw doctor runs no jobs — use Settings → Doctor")
@@ -637,9 +639,14 @@ def _doctor() -> None:
     if _port:
         print(f"  dashboard:   http://{_display_host}:{_port}")
 
-    # Dashboard auth mode
-    creds = cfg.load_credentials()
-    _has_slack = bool(creds.get("SLACK_APP_TOKEN") and creds.get("SLACK_BOT_TOKEN"))
+    # Dashboard auth mode. Whether a channel can carry a remote token is each channel app's
+    # own answer (its health, over the transports doctor's provider bootstrap registered),
+    # not a lookup of two Slack credential names.
+    import asyncio
+
+    from personalclaw.channel_transports import configured_channels
+
+    _has_channel = bool(asyncio.run(configured_channels()))
     _bind_host = resolve_bind_host()
     _local = is_local_bind(_bind_host)
     if _local:
@@ -659,7 +666,7 @@ def _doctor() -> None:
     else:
         print("  bind:        0.0.0.0 (all interfaces)")
         print("  auth:        ✅ token auth required (via !dashboard)")
-        if not _has_slack:
+        if not _has_channel:
             print("  auth:        ⚠️  no channel configured — token generation unavailable")
             issues.append("dashboard auth: remote bind without a channel")
 

@@ -20,6 +20,9 @@ ignored. Measured through the real write path before this module existed::
     browse-action         max_steps             integer, minimum 1
         validate({"max_steps": 0})                -> []      # and -5, and True
 
+(Vector Memory's field was later removed outright: nothing read it, and the core setting it
+looked like is ``memory.semantic_confidence_threshold`` — settings B10.)
+
 This module owns the per-property rules, so they cannot drift again. It deliberately does NOT
 own the two OBJECT-level policies, which differ on purpose and stay documented at their call
 sites:

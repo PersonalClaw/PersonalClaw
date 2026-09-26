@@ -30,6 +30,12 @@ if TYPE_CHECKING:  # avoid a hard import cycle; only needed for typing
 DoctorStatus = Literal["ok", "warn", "fail", "info"]
 
 
+def _no_credential_delete(key: str) -> bool:
+    """The default ``SetupContext.delete_credential``: a context core did not build (an app's
+    own test) has no store to delete from, and a silent ``False`` would read as "was absent"."""
+    raise RuntimeError(f"this SetupContext has no credential store to delete {key!r} from")
+
+
 @dataclass
 class SetupContext:
     """The context a ``cli.setup`` function receives during ``personalclaw setup``.
@@ -49,6 +55,11 @@ class SetupContext:
     - ``print`` — emit a line to the user (defaults to ``builtins.print``).
     - ``input`` — prompt the user for a line; honors non-interactive runs by
       returning ``""`` (the setup step must treat empty as "skip / keep").
+    - ``delete_credential`` — remove a secret stored by NAME (``True`` when it was
+      there). For clearing what an earlier setup saved under a plain name, which no
+      uninstall can attribute to the app. A key a settings record owns (a
+      ``sensitive`` setting's value) is refused: clear the setting instead. Core's
+      runner supplies it; a context built without one raises when it is called.
     """
 
     app_name: str
@@ -57,6 +68,7 @@ class SetupContext:
     settings: "type[ProviderSettings]"
     print: Callable[[str], None] = print
     input: Callable[[str], str] = input
+    delete_credential: Callable[[str], bool] = _no_credential_delete
 
 
 @dataclass

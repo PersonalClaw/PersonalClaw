@@ -44,17 +44,8 @@ async def api_chat_session_undo(request: web.Request) -> web.Response:
     request_app = request.get("app", "")
     if not session:
         return web.json_response({"error": "not found"}, status=404)
-    # App-isolation: an app may only undo sessions it owns (mirrors fork/stop).
-    if request_app and session._app != request_app:
-        sel().log_api_access(
-            caller=request_app,
-            operation="chat.session_undo",
-            outcome="denied",
-            source="app_isolation",
-            resources=f"session={name}",
-            error="app does not own this session",
-        )
-        return web.json_response({"error": "app does not own this session"}, status=403)
+    # An app undoes only a conversation it started — held to that by the permission middleware
+    # (`ROUTE_AUTHZ`'s `owns`) before this ran.
 
     n = 1
     if request.body_exists:

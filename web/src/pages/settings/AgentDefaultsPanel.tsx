@@ -9,6 +9,7 @@ import { Combobox } from '../../ui/Combobox'
 import { FieldError, NumberField, TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
+import { InlineError } from '../../ui/InlineError'
 import { accentChip } from '../../design/accent'
 import { setAgentYolo } from './agentYolo'
 
@@ -23,7 +24,8 @@ type AgentCfg = Record<string, unknown>
 export function AgentDefaultsPanel() {
   const [cfg, setCfg] = useState<AgentCfg | null>(null)
   const { options: agentOptions, loading: agentsLoading, discovered } = useAgentCatalog()
-  const [defaultAgent, setDefaultAgent] = useState('')
+  /** `null` = the default agent could not be read — never '' (which renders as "no default"). */
+  const [defaultAgent, setDefaultAgent] = useState<string | null>('')
   // Whether THIS host can keep a worker's shell alive past a restart, for the durable-workers row
   // below. Called up here, above the early returns — a hook after a conditional `return` is a
   // different hook order on the loading pass.
@@ -35,7 +37,10 @@ export function AgentDefaultsPanel() {
   const { data, error: loadErr, refresh } = useQuery('settings:agent-defaults', async () => {
     const [plaw, agents] = await Promise.all([
       api.personalclawConfig().then((c) => (c.agent ?? {}) as AgentCfg),
-      api.agents().then((d) => d.default_agent).catch(() => ''),
+      // Tolerated so the rest of the panel still renders, but as `null`, never `''`: `''` showed
+      // the picker at "Select an agent…", i.e. no default, when the default had simply not been
+      // read — and invited a pick against that. The row says it could not read it instead.
+      api.agents().then((d) => d.default_agent).catch(() => null),
     ])
     return { cfg: plaw, defaultAgent: agents }
   }, { persist: true })
@@ -111,7 +116,7 @@ export function AgentDefaultsPanel() {
       <PanelHeader title="Agent defaults" hint="The default agent for new sessions and how agents execute — approval, subagents, and advanced safety knobs. New sessions inherit these unless overridden." />
 
       <Section title="Default agent" hint="Which agent definition serves a new chat when none is chosen. Native agents and connected ACP-runtime agents are both selectable.">
-        <DefaultAgentRow options={agentOptions} value={defaultAgent} onChange={onPickDefault} />
+        <DefaultAgentRow options={agentOptions} value={defaultAgent} onChange={onPickDefault} onRetry={refresh} />
       </Section>
 
       <Section title="Defaults" hint="Baseline behavior for every session.">
@@ -184,8 +189,17 @@ export function AgentDefaultsPanel() {
   )
 }
 
-function DefaultAgentRow({ options, value, onChange }: { options: AgentOption[]; value: string; onChange: (v: string) => void }) {
+function DefaultAgentRow({ options, value, onChange, onRetry }: { options: AgentOption[]; value: string | null; onChange: (v: string) => void; onRetry: () => void }) {
   const [saved, setSaved] = useState(false)
+  if (value === null) {
+    return (
+      <RowGroup>
+        <Row label="Default agent" hint="Used for every new session.">
+          <InlineError icon onRetry={onRetry}>Couldn't read the default agent, so it can't be changed until a retry succeeds.</InlineError>
+        </Row>
+      </RowGroup>
+    )
+  }
   // The stored default is a profile NAME; surface it as a selectable option even
   // if it isn't (yet) in the catalog (e.g. a freshly-materialized ACP profile).
   const opts = options.some((o) => o.value === value) || !value

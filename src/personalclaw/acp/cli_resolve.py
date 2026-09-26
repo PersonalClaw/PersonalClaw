@@ -114,18 +114,20 @@ def _node_manager_bin_globs() -> list[str]:
 node_manager_bin_globs = _node_manager_bin_globs
 
 
-def _npm_root_global_bin() -> str | None:
-    """Return the global npm ``bin`` dir (``$(npm root -g)/../.bin``) if resolvable.
+#: ``npm root -g`` per npm executable. It cannot change while this process runs, and it is
+#: not cheap: a cold ``npm`` startup took 5-7 s in the container, paid on EVERY resolution
+#: that missed PATH — twice per CLI at boot (``create_provider`` then ``login_command``) and
+#: again inside every availability check of kiro-cli and gemini-cli. Only an answer is kept:
+#: a timed-out or failed run is asked again next time.
+_NPM_GLOBAL_ROOTS: dict[str, str] = {}
 
-    ``npm root -g`` prints the global ``node_modules`` dir; its sibling ``.bin``
-    holds the global CLI shims. Best-effort and fast-timeout — never raises.
-    """
-    npm = shutil.which("npm")
-    if not npm:
-        return None
+
+def _npm_global_root(npm: str) -> str:
+    """``npm root -g`` for one npm executable (memoized), or ``""`` when it gave no answer."""
+    cached = _NPM_GLOBAL_ROOTS.get(npm)
+    if cached is not None:
+        return cached
     try:
-        import subprocess
-
         out = subprocess.run(
             [npm, "root", "-g"],
             capture_output=True,
@@ -133,8 +135,25 @@ def _npm_root_global_bin() -> str | None:
             timeout=5,
         )
     except Exception:
-        return None
+        return ""
     root = (out.stdout or "").strip()
+    if root:
+        _NPM_GLOBAL_ROOTS[npm] = root
+    return root
+
+
+def _npm_root_global_bin() -> str | None:
+    """Return the global npm ``bin`` dir (``$(npm root -g)/../.bin``) if resolvable.
+
+    ``npm root -g`` prints the global ``node_modules`` dir; its sibling ``.bin``
+    holds the global CLI shims. Best-effort and fast-timeout — never raises. The
+    directory test runs every time: a first ``npm i -g`` creates it after the root
+    was memoized.
+    """
+    npm = shutil.which("npm")
+    if not npm:
+        return None
+    root = _npm_global_root(npm)
     if not root:
         return None
     bin_dir = Path(root).parent / ".bin"

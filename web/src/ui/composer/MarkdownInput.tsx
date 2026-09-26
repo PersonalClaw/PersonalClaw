@@ -89,10 +89,22 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
   const comboComp = useRef(new Compartment())
   const comboId = useId().replace(/:/g, '')
   const [activeOption, setActiveOption] = useState<{ list: 'mention' | 'slash'; index: number } | null>(null)
-  // 🪤 DEDUPE IN THE SETTER, or this is an infinite loop: each menu reports its cursor from an effect
-  // whose dependency list includes the callback, and the callback identity changes on every render of
-  // this component. Returning `prev` unchanged makes React bail out of the re-render, so the report
-  // settles after one call instead of ping-ponging.
+  // Each menu reports its cursor from an effect whose dependency list includes its `onActiveIndex`,
+  // so the two callbacks below MUST keep one identity for this component's lifetime — the effect
+  // then runs only when a menu actually opens, closes or moves its cursor.
+  //
+  // 🔴 A SAME-VALUE SET IS NOT FREE, which is what the inline `(i) => reportCursor(…)` this replaced
+  // relied on. Returning `prev` from the updater does not stop React from SCHEDULING the update: it
+  // can only drop one eagerly while neither copy of the fiber has pending lanes, and a component that
+  // just re-rendered still carries them on its alternate. So every render of this editor queued a real
+  // render pass from both menus' effects — one per keystroke — and after a keystroke React flushes
+  // those effects inside the same synchronous commit. Measured on `#/chat` typing at 2ms a key: 102 of
+  // 128 commits ended with that update pending, React counted each one as a nested update, and the
+  // 51st threw "Maximum update depth exceeded" (#185) out of the keystroke's own `onChange`, which
+  // CodeMirror caught and logged as `update listener:` — dropping the character from the draft.
+  //
+  // The dedupe below stays (a menu whose result count changes under an unmoved cursor re-reports the
+  // same index), but it is only a render saved, never the guard against the loop.
   const reportCursor = useCallback((list: 'mention' | 'slash', index: number | null) => {
     setActiveOption((prev) => {
       if (index == null) return prev?.list === list ? null : prev
@@ -100,6 +112,8 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
       return { list, index }
     })
   }, [])
+  const reportMentionCursor = useCallback((index: number | null) => reportCursor('mention', index), [reportCursor])
+  const reportSlashCursor = useCallback((index: number | null) => reportCursor('slash', index), [reportCursor])
   // Latest props for the (static) CM extensions to read without rebuilding.
   const cb = useRef({ value, onChange, onSend, canSend, onOptimize, history, onLargePaste, onMentionFile, onMentionKnowledge, slashCommands, mobile, sendOnEnter })
   cb.current = { value, onChange, onSend, canSend, onOptimize, history, onLargePaste, onMentionFile, onMentionKnowledge, slashCommands, mobile, sendOnEnter }
@@ -337,14 +351,14 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
         <MentionMenu query={mention?.query ?? ''} anchorRef={hostRef} open={!!mention} project={mentionProject}
           leading={mention?.at === 0}
           idPrefix={`${comboId}-mention`}
-          onActiveIndex={(i) => reportCursor('mention', i)}
+          onActiveIndex={reportMentionCursor}
           onSelect={pickMention}
           onClose={() => { if (mention) dismissedRef.current = `${mention.at}:${mention.query}`; setMention(null) }} />
       )}
       {slashCommands && (
         <SlashMenu query={slash?.query ?? ''} anchorRef={hostRef} open={!!slash}
           idPrefix={`${comboId}-slash`}
-          onActiveIndex={(i) => reportCursor('slash', i)}
+          onActiveIndex={reportSlashCursor}
           onSelect={pickSlash}
           onClose={() => { if (slash) slashDismissedRef.current = slash.query; setSlash(null) }} />
       )}

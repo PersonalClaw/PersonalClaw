@@ -41,6 +41,7 @@
   "python_exec": "This code runs an external program on your machine.",
   "crontab_write": "This code edits this machine's scheduled-job table, so it can keep running later.",
   "reads_sensitive_path": "This code reads a file where credentials and keys are kept.",
+  "unscanned_file": "PersonalClaw could not read this file, so nothing in it was checked and it could hold anything.",
   "zero_width_chars": "Invisible characters are present, which can hide text from a reviewer.",
   "injection_ignore": "Text here addresses your assistant and tells it to ignore its own instructions.",
   "injection_disregard": "Text here addresses your assistant and tells it to disregard what it was told.",

@@ -12,12 +12,15 @@ Each ``mcpServers`` entry maps to one :class:`ExtensionInstance`:
 
 * ``id`` / ``display_name`` = the server name (the mcp.json key)
 * ``config`` = ``{transport, command, args, endpoint}`` matching the card's
-  ``settingsSchema`` (``args`` is a space-joined string; ``endpoint`` is the SSE
-  ``url``)
+  ``settingsSchema`` (``transport`` is the spec's ``type``, read by
+  ``mcp_discovery.mcp_transport``; ``args`` is a space-joined string; ``endpoint`` is a
+  remote server's ``url``)
 * ``enabled`` = NOT the spec's ``disabled`` flag
 
 Writes preserve any ``env``/``headers`` already on the spec so editing from the
-card never drops credentials configured elsewhere.
+card never drops credentials configured elsewhere — and every write goes through
+``secret_refs.write_mcp_document``, so those values stay in the credential store. A delete goes
+through ``secret_refs.remove_mcp_servers``, the same one the Tools page uses.
 """
 
 from __future__ import annotations
@@ -57,18 +60,22 @@ def _load() -> dict[str, Any]:
 
 
 def _save(data: dict[str, Any]) -> None:
-    from personalclaw.agent import _atomic_json_write  # circular import
+    # The MCP document writer: each server's `env`/`headers` values reach the file as
+    # credential-store references (`config.secret_refs`).
+    from personalclaw.config.secret_refs import write_mcp_document
 
-    path = _mcp_json_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_json_write(path, data)
+    write_mcp_document(_mcp_json_path(), data)
 
 
 def _spec_to_instance(name: str, spec: dict[str, Any]) -> ExtensionInstance:
+    from personalclaw.mcp_discovery import mcp_transport
+
     url = spec.get("url", "")
     args = spec.get("args", [])
     config: dict[str, Any] = {
-        "transport": "sse" if url else "stdio",
+        # The server's real transport, not "sse" for every URL: the card writes back what it
+        # read, so a Streamable HTTP server read as "sse" was turned into one on the next save.
+        "transport": mcp_transport(spec),
         "command": spec.get("command", ""),
         "args": " ".join(args) if isinstance(args, list) else str(args or ""),
         "endpoint": url,
@@ -86,18 +93,23 @@ def _config_to_spec(config: dict[str, Any], existing: dict[str, Any] | None) -> 
     """Merge a card config dict into an mcp.json server spec.
 
     Preserves ``env``/``headers`` from any existing spec so credential material
-    configured outside the card survives an edit.
+    configured outside the card survives an edit — and ``plainEnv``, which says which of those
+    values are settings rather than secrets, so an edit does not move a setting into the store.
     """
+    from personalclaw.config.secret_refs import MCP_PLAIN_ENV
+
     spec: dict[str, Any] = {}
     if isinstance(existing, dict):
-        for k in ("env", "headers"):
+        for k in ("env", "headers", MCP_PLAIN_ENV):
             if existing.get(k):
                 spec[k] = existing[k]
         if existing.get("disabled") is True:
             spec["disabled"] = True
 
     transport = config.get("transport") or ("sse" if config.get("endpoint") else "stdio")
-    if transport == "sse":
+    if transport != "stdio":
+        # Spelled out (`type`, the key every MCP reader asks — `mcp_discovery.mcp_transport`).
+        spec["type"] = transport
         spec["url"] = (config.get("endpoint") or "").strip()
     else:
         spec["command"] = (config.get("command") or "").strip()
@@ -160,10 +172,13 @@ def update_instance(
 
 
 def delete_instance(instance_id: str) -> bool:
-    data = _load()
-    servers = data.get("mcpServers", {})
-    if instance_id not in servers:
-        return False
-    del servers[instance_id]
-    _save(data)
-    return True
+    """Remove the server everywhere it is configured, and the values it owns.
+
+    Through :func:`~personalclaw.config.secret_refs.remove_mcp_servers`, the one delete. This
+    card used to remove the server from ``mcp.json`` only: the agent config kept its copy (the
+    rebuild merges additively, so nothing took it out), the Tools page kept listing it, and its
+    credential-store keys stayed, because that copy still referenced them.
+    """
+    from personalclaw.config.secret_refs import remove_mcp_servers
+
+    return bool(remove_mcp_servers([instance_id]))

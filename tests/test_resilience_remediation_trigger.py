@@ -81,6 +81,18 @@ def _cfg(**kw):
     return SimpleNamespace(remediation=SimpleNamespace(**base))
 
 
+def _listed_schedules(handlers) -> list[dict]:
+    """What `GET /api/triggers?type=schedule` lists: the rows the Triggers page renders."""
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    app = web.Application()
+    app["state"] = SimpleNamespace(conversation_log=None)
+    req = make_mocked_request("GET", "/api/triggers?type=schedule", app=app)
+    resp = asyncio.run(handlers.api_triggers(req))
+    return json.loads(resp.body)["triggers"]
+
+
 def _patch_config(monkeypatch, **kw):
     """Pin `resilience.remediation` without writing a whole config document."""
     from personalclaw.config.loader import AppConfig
@@ -163,7 +175,12 @@ class TestAdaptiveClockKind:
             },
         )
         described = describe_cadence(t)
-        assert "60m" in described and "5m" in described and "degraded" in described
+        assert "60m" in described and "5m" in described and "(now: every 5m)" in described
+        # Named by what switches the clock, not "healthy": the health score also counts failures
+        # only a person can clear, and those leave the clock on its long sleep (settings B16).
+        t.spec["health_state"] = "healthy"
+        described = describe_cadence(t)
+        assert "(now: every 60m)" in described and "healthy" not in described
 
 
 # ── clause 1b: ONE trigger, created_by system, listed on the page ────────────────────────
@@ -263,8 +280,7 @@ class TestTheTriggerIsRegisteredAndListED:
         P.reconcile_remediation_trigger(store)
         monkeypatch.setattr(H, "_trigger_store", lambda: store)
 
-        rows = H._schedule_rows(SimpleNamespace(conversation_log=None))
-        listed = {r["raw_id"]: r for r in rows}
+        listed = {r["raw_id"]: r for r in _listed_schedules(H)}
         assert P.REMEDIATION_TRIGGER_ID in listed, sorted(listed)
         row = listed[P.REMEDIATION_TRIGGER_ID]
         # The columns the list draws per row must be populated, not merely present.
@@ -297,8 +313,7 @@ class TestTheTriggerIsRegisteredAndListED:
         from personalclaw.dashboard.handlers import triggers as H
 
         monkeypatch.setattr(H, "_trigger_store", lambda: store)
-        rows = H._schedule_rows(SimpleNamespace(conversation_log=None))
-        assert P.REMEDIATION_TRIGGER_ID not in {r["raw_id"] for r in rows}
+        assert P.REMEDIATION_TRIGGER_ID not in {r["raw_id"] for r in _listed_schedules(H)}
 
 
 # ── clause 1c: instead of the heartbeat job ─────────────────────────────────────────────
@@ -393,12 +408,40 @@ class TestTheRunRearmsItsOwnClock:
         from personalclaw.triggers.service import to_epoch
 
         self._seed(store, monkeypatch)
-        monkeypatch.setattr(rem, "run_remediation", lambda **kw: rem.RunResult(20.0, 40.0))
+        monkeypatch.setattr(
+            rem, "run_remediation", lambda **kw: rem.RunResult(20.0, 40.0, fixable_after=60.0)
+        )
         assert self._fire().success
 
         t = store.get(P.REMEDIATION_TRIGGER_ID).trigger
         assert t.spec["health_state"] == "degraded"
         assert to_epoch(t.next_fire_at) - _time.time() < 600
+
+    def test_a_failure_only_a_person_can_clear_does_not_keep_the_clock_awake(
+        self, store, monkeypatch
+    ):
+        """Settings B16: the score now counts failed Doctor checks, including ones no job can
+        repair (an unclaimed path, a tampered skill). Keying the clock on the SCORE would wake the
+        engine every few minutes, forever, to find nothing it can run — so it keys on what the
+        engine's own jobs can still win back."""
+        import time as _time
+
+        from personalclaw.resilience import remediation as rem
+        from personalclaw.triggers.service import to_epoch
+
+        self._seed(store, monkeypatch)
+        monkeypatch.setattr(
+            rem,
+            "run_remediation",
+            lambda **kw: rem.RunResult(
+                70.0, 70.0, stopped_reason=rem.NOTHING_FIXABLE, fixable_after=0.0
+            ),
+        )
+        assert self._fire().success
+
+        t = store.get(P.REMEDIATION_TRIGGER_ID).trigger
+        assert t.spec["health_state"] == "healthy"
+        assert to_epoch(t.next_fire_at) - _time.time() > 1800
 
     def test_the_healthy_threshold_is_above_the_target_score(self, monkeypatch, store):
         """A store brought back to exactly `target_score` is NOT healthy: the engine stopped
@@ -407,7 +450,11 @@ class TestTheRunRearmsItsOwnClock:
 
         assert rem.HEALTHY_SCORE > rem._DEFAULT_TARGET_SCORE
         self._seed(store, monkeypatch, target_score=90)
-        monkeypatch.setattr(rem, "run_remediation", lambda **kw: rem.RunResult(80.0, 90.0))
+        # Ten points the engine's own jobs could still win back: it stopped at the target, it did
+        # not finish.
+        monkeypatch.setattr(
+            rem, "run_remediation", lambda **kw: rem.RunResult(80.0, 90.0, fixable_after=10.0)
+        )
         assert self._fire().success
         assert store.get(P.REMEDIATION_TRIGGER_ID).trigger.spec["health_state"] == "degraded"
 

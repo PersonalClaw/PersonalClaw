@@ -315,8 +315,9 @@ class TestPrune:
     def test_prune_empty_log(self, log):
         assert log.prune() == 0
 
-    def test_size_cap_keeps_newest(self, log, sel_dir):
-        # All recent (never age-pruned), but more than the size cap → keep newest N.
+    def test_prune_is_age_only_and_keeps_every_recent_row(self, log, sel_dir):
+        """Size is the rotation's bound now. The entry cap this replaced DELETED the oldest recent
+        rows to keep the file small, so a busy week erased audit history well inside retention."""
         for i in range(10):
             log.log(
                 SecurityEvent(
@@ -329,29 +330,9 @@ class TestPrune:
                     operation=f"op{i}",
                 )
             )
-        removed = log.prune(keep_days=365, max_entries=4)
-        assert removed == 6
+        assert log.prune(keep_days=365) == 0
         remaining = (sel_dir / "security_events.jsonl").read_text().strip().splitlines()
-        assert len(remaining) == 4
-        # The four kept are the newest (op6..op9), oldest dropped first.
-        assert "op6" in remaining[0]
-        assert "op9" in remaining[-1]
-
-    def test_size_cap_disabled(self, log, sel_dir):
-        for i in range(5):
-            log.log(
-                SecurityEvent(
-                    event_id=f"e{i}",
-                    timestamp="2099-01-01T00:00:00+00:00",
-                    event_type="tool_invocation",
-                    caller_identity="dashboard:slot0",
-                    agent="personalclaw",
-                    source="dashboard",
-                    operation=f"op{i}",
-                )
-            )
-        assert log.prune(keep_days=365, max_entries=0) == 0
-        assert len((sel_dir / "security_events.jsonl").read_text().strip().splitlines()) == 5
+        assert len(remaining) == 10
 
 
 class TestForwardCallback:
@@ -863,8 +844,8 @@ class TestRotate:
     """rotate() ARCHIVES the log and starts a fresh chain — it does NOT rotate the HMAC key.
 
     This pins the operational truth behind the dashboard relabel (issue 534): the "Rotate"
-    control archives the live log to a timestamped ``.bak.jsonl`` and resets the chain, while
-    the create-only signing key is left byte-for-byte untouched.
+    control archives the live log to a timestamped file in the declared archive directory and
+    resets the chain, while the create-only signing key is left byte-for-byte untouched.
     """
 
     def test_archive_preserves_key_and_starts_clean_chain(self, log, sel_dir):
@@ -879,14 +860,16 @@ class TestRotate:
         # The HMAC signing key is create-only — rotate() MUST NOT rewrite it.
         assert key_path.read_bytes() == key_before
 
-        # The old chain is archived beside the live log as a timestamped .bak.jsonl, not destroyed.
+        # The old chain is archived into `sel_archive/` — the directory the durability inventory
+        # declares, so a snapshot carries it — not left beside the log where nothing claimed it.
         assert result["rotated"] is True
         assert result["entries_before"] == 3
         assert result["entries_after"] == 0
         archive = Path(result["archive_path"])
         assert archive.exists()
+        assert archive.parent == sel_dir / "sel_archive"
         assert archive.name.startswith("security_events.")
-        assert archive.name.endswith(".bak.jsonl")
+        assert archive.name.endswith(".jsonl")
         assert len([ln for ln in archive.read_text().splitlines() if ln.strip()]) == 3
 
         # The live log restarts empty and verifies clean; a new event chains from a fresh root.

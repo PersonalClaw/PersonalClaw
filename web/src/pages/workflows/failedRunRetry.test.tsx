@@ -43,36 +43,43 @@ vi.mock('./useWorkflowStream', () => ({ useWorkflowStream: () => ({ connected: t
 vi.mock('./RunToolApprovals', () => ({ RunToolApprovals: () => null }))
 vi.mock('./DeliverablePanel', () => ({ DeliverablePanel: () => null }))
 
-/** The measured failure, after the blame fix: `sample` failed transient, `select` was skipped. */
-function failedRun(retryable: boolean): WorkflowRunDetailData {
+/** The measured failure, after the blame fix: `sample` failed, `select` was skipped. `retryAt`
+ *  (epoch seconds) is the server's `failure.retry_at`: when a Retry can run past an open breaker. */
+function failedRun(retryable: boolean, retryAt?: number): WorkflowRunDetailData {
+  const escalation = {
+    kind: 'escalation',
+    node_id: 'sample',
+    instance_path: 'root.children[0]',
+    reason: 'not_retried',
+    detail: 'no candidate: all 2 sampling calls failed — RemoteProtocolError: Server disconnected',
+    attempts: [{ attempt: 1, failure_class: retryable ? 'network' : 'user', error: 'down' }],
+  }
   return {
     run_id: 'run-1',
     workflow: 'best-of-n',
     status: 'failed',
     spec_version: 1,
     error: '',
-    attention: {
-      kind: 'escalation',
-      node_id: 'sample',
-      reason: 'not_retried',
-      detail: 'no candidate: all 2 sampling calls failed — RemoteProtocolError: Server disconnected',
-      attempts: [{ attempt: 1, failure_class: retryable ? 'transient' : 'user', error: 'down' }],
-    },
+    attention: escalation,
+    escalations: [escalation],
     nodes: [
       {
         instance_path: 'root.children[0]',
         node_id: 'sample',
         state: 'failed',
         failure: {
-          class: retryable ? 'transient' : 'user',
+          class: retryable ? 'network' : 'user',
           cause_plain: 'no candidate: all 2 sampling calls failed',
           retryable,
+          ...(retryAt === undefined ? {} : { retry_at: retryAt }),
         },
       },
       { instance_path: 'root.children[1]', node_id: 'select', state: 'skipped' },
     ],
   }
 }
+
+const now = () => Date.now() / 1000
 
 function withStatus(status: WorkflowRunDetailData['status']): WorkflowRunDetailData {
   return {
@@ -137,6 +144,58 @@ describe('a transient failure offers a retry that works', () => {
 
     await waitFor(() => expect(onOpenRun).toHaveBeenCalledWith('child-9'))
     expect(startDraftWorkflowRun).not.toHaveBeenCalled() // a fork is started by its author
+  })
+})
+
+describe('Retry is offered only when every step that gave up can be cleared by one', () => {
+  it('a second escalated step a retry cannot fix withdraws the Retry', async () => {
+    // A Retry re-runs every failed step: one refused key fails the new run the same way.
+    const run = failedRun(true)
+    const refused = {
+      kind: 'escalation', node_id: 'publish', instance_path: 'root.children[2]',
+      reason: 'not_retried', detail: 'the provider rejected the credential', attempts: [],
+    }
+    run.escalations = [...(run.escalations ?? []), refused]
+    run.nodes.push({
+      instance_path: 'root.children[2]', node_id: 'publish', state: 'failed',
+      failure: { class: 'permission', cause_plain: 'HTTP 401', retryable: false },
+    })
+    workflowRun.mockResolvedValue(run)
+    render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={() => {}} />)
+    await screen.findByText('the provider rejected the credential')
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull()
+  })
+})
+
+describe('a Retry inside a provider breaker window says when it can run', () => {
+  it('holds Retry with a countdown while the breaker refuses calls', async () => {
+    workflowRun.mockResolvedValue(failedRun(true, now() + 25))
+    render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={() => {}} />)
+    const button = await screen.findByRole('button', { name: /retry/i })
+    expect(button.getAttribute('aria-disabled')).toBe('true')
+    expect(button.getAttribute('title')).toMatch(/Retry becomes available in 2[456]s/)
+    expect(screen.getByText(/Calls to this provider are paused after repeated failures/)).toBeTruthy()
+    fireEvent.click(button)
+    expect(forkWorkflowRun).not.toHaveBeenCalled()
+  })
+
+  it('reads the run again on Retry, and waits when the breaker opened after the page loaded', async () => {
+    // Loaded with Retry available; a background call to the same provider then opened its
+    // breaker. Pressed, the old page started a run the breaker refused in microseconds.
+    workflowRun.mockResolvedValueOnce(failedRun(true)).mockResolvedValue(failedRun(true, now() + 20))
+    render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /retry/i }))
+    await screen.findByText(/Retry becomes available in \d+s/)
+    expect(workflowRun).toHaveBeenCalledTimes(2)
+    expect(forkWorkflowRun).not.toHaveBeenCalled()
+  })
+
+  it('a window that has lapsed offers Retry straight away', async () => {
+    workflowRun.mockResolvedValue(failedRun(true, now() - 5))
+    const onOpenRun = vi.fn()
+    render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={onOpenRun} />)
+    fireEvent.click(await screen.findByRole('button', { name: /retry/i }))
+    await waitFor(() => expect(onOpenRun).toHaveBeenCalledWith('child-9'))
   })
 })
 

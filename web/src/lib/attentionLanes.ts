@@ -83,20 +83,34 @@ export type ActivityInput = Pick<ChatSession, 'key' | 'title' | 'running' | 'sto
  *  above never see it. Optional, like `activity`. */
 export type LoopInput = Pick<Loop, 'id' | 'kind' | 'name' | 'task' | 'status' | 'total_cycles' | 'max_cycles' | 'started_at' | 'session_key' | 'run_id'>
 
-/** One card, normalised across the three sources so a lane renders uniformly.
+/** What every card has, whichever source it came from.
  *  `at` is epoch **seconds** — the unit both `InboxItem.created_at` and `PendingApproval.ts` arrive
  *  in (`time.time()` on the backend) — or `null` when the source carried no timestamp at all. */
-export interface LaneCard {
-  /** Unique across all three sources: `${origin}:${id}`. Two sources can mint the same id. */
+interface LaneCardBase {
+  /** Unique across all four sources: `${origin}:${id}`. Two sources can mint the same id. */
   key: string
   lane: Lane
-  origin: 'approval' | 'inbox' | 'session' | 'loop'
   id: string
   title: string
   subtitle?: string
   at: number | null
   refs?: Record<string, unknown>
 }
+
+/** One card, normalised across the four sources so a lane renders uniformly — and carrying the
+ *  ONE source object its verbs act on, discriminated by `origin`.
+ *
+ *  🔴 Why a union and not optional fields. Mission Control's own card type declared `approval?`,
+ *  `item?` and `detail?`, which this module never set; every field being optional made the two
+ *  shapes assignable, so typecheck passed while the surface that says "Approve, reject, and answer
+ *  from here" rendered no Approve, no Reject and no answer on any card (measured, day 8). Here a
+ *  view reaches `approval` only after narrowing to an approval card, and a card built without its
+ *  source object does not compile, so the verbs cannot silently lose their input again. */
+export type LaneCard =
+  | (LaneCardBase & { origin: 'approval'; approval: ApprovalInput })
+  | (LaneCardBase & { origin: 'inbox'; item: AttentionInput })
+  | (LaneCardBase & { origin: 'session'; session: ActivityInput })
+  | (LaneCardBase & { origin: 'loop'; loop: LoopInput })
 
 /** Base kind → lane, mirroring `inbox.py`'s two frozensets (fact 1).
  *
@@ -304,6 +318,7 @@ export function toLanes(
       title: firstLine(a.tool) || 'a tool',
       subtitle: firstLine(a.tool_purpose) || firstLine(a.session) || undefined,
       at: typeof a.ts === 'number' && Number.isFinite(a.ts) ? a.ts : null,
+      approval: a,
     })
   }
 
@@ -329,7 +344,7 @@ export function toLanes(
       title: firstLine(item.message) || firstLine(item.context_summary) || '(no message)',
       subtitle: firstLine(item.sender_name) || firstLine(item.channel_name) || undefined,
       at: timeOf(item),
-      refs: item.refs,
+      item,
     })
   }
 
@@ -354,6 +369,7 @@ export function toLanes(
       subtitle: l.max_cycles > 0 ? `running · cycle ${cycle}/${l.max_cycles}` : `running · cycle ${cycle}`,
       at: typeof l.started_at === 'number' && Number.isFinite(l.started_at) ? l.started_at : null,
       refs: { link: `#/${loopRoute(l)}` },
+      loop: l,
     })
   }
 
@@ -377,6 +393,7 @@ export function toLanes(
       // `stopping` still counts as working: it is winding down, not idle.
       subtitle: s.stopping === true ? 'stopping' : 'running',
       at: null,
+      session: s,
     })
   }
 

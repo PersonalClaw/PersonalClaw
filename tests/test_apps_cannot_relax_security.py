@@ -160,13 +160,20 @@ class TestAnAppCannotWriteASecuritySetting:
         assert _denials_naming(sel_rows, caller=f"app:{APP}", field=field)
 
     @pytest.mark.asyncio
-    async def test_an_app_still_writes_an_ordinary_setting(self, config_file, sel_rows) -> None:
+    async def test_an_app_still_writes_an_ordinary_setting_it_declared(
+        self, config_file, sel_rows
+    ) -> None:
         # The `/api/config` grant is not revoked wholesale: a field that governs nothing about
-        # who may do what stays writable, so an app that declared the path for a real reason
-        # keeps working.
-        async with TestClient(TestServer(_config_app(APP))) as c:
-            resp = await _patch(c, "voice.echo_filter_enabled", False)
-            assert resp.status == 200
+        # who may do what stays writable by an app whose manifest names it in
+        # `permissions.config` — the list install consent shows. An undeclared one is refused
+        # (`test_apps_cannot_run_code_or_bypass_approvals.py`).
+        with patch(
+            "personalclaw.dashboard.handlers.core._app_config_fields",
+            return_value=["voice.echo_filter_enabled"],
+        ):
+            async with TestClient(TestServer(_config_app(APP))) as c:
+                resp = await _patch(c, "voice.echo_filter_enabled", False)
+                assert resp.status == 200
         saved = json.loads(config_file.read_text(encoding="utf-8"))
         assert saved["voice"]["echo_filter_enabled"] is False
 
@@ -349,10 +356,11 @@ class TestEveryControlIsRefusedToAnApp:
 # ── An agent profile's approval mode is the same control, stored per agent ──────────
 
 
-def _agent_request(body: Any, *, app: str = "", method: str = "POST", match: dict | None = None):
+def _agent_request(body: Any, *, method: str = "POST", match: dict | None = None):
+    """An OWNER request to an agent handler."""
     from unittest.mock import AsyncMock
 
-    identity = {"user": "owner", **({"app": app} if app else {})}
+    identity = {"user": "owner"}
     req = MagicMock()
     req.method = method
     req.json = AsyncMock(return_value=body)
@@ -382,65 +390,10 @@ def _stored_approval_mode(home, name: str) -> str:
 
 
 class TestAnAgentsApprovalModeIsTheOwners:
-    @pytest.mark.asyncio
-    async def test_an_app_cannot_create_an_auto_approving_agent(self, agents_home, sel_rows):
-        from personalclaw.dashboard.handlers.agents import api_personalclaw_agents_create
-
-        resp = await api_personalclaw_agents_create(
-            _agent_request({"name": "sneaky", "approval_mode": "auto", "confirm": True}, app=APP)
-        )
-        assert resp.status == 403
-        assert not (agents_home / "config.json").exists(), "nothing may be written"
-        assert _denials_naming(sel_rows, caller=f"app:{APP}", field="agents.sneaky.approval_mode")
-
-    @pytest.mark.asyncio
-    async def test_an_app_cannot_make_an_agent_auto_approve(self, agents_home, sel_rows):
-        from personalclaw.dashboard.handlers.agents import (
-            api_personalclaw_agent_update,
-            api_personalclaw_agents_create,
-        )
-
-        assert (await api_personalclaw_agents_create(_agent_request({"name": "a1"}))).status == 200
-        resp = await api_personalclaw_agent_update(
-            _agent_request(
-                {"approval_mode": "auto", "confirm": True},
-                app=APP,
-                method="PUT",
-                match={"name": "a1"},
-            )
-        )
-        assert resp.status == 403
-        assert _stored_approval_mode(agents_home, "a1") == ""
-
-    @pytest.mark.asyncio
-    async def test_an_app_cannot_patch_a_per_file_agents_approval_mode(self, agents_home):
-        from personalclaw.agent import agents_dir
-        from personalclaw.dashboard.handlers.agents import api_agent_detail
-
-        before = (agents_dir() / "helper.json").read_text(encoding="utf-8")
-        resp = await api_agent_detail(
-            _agent_request(
-                {"approval_mode": "auto", "confirm": True},
-                app=APP,
-                method="PATCH",
-                match={"name": "helper"},
-            )
-        )
-        assert resp.status == 403
-        assert (agents_dir() / "helper.json").read_text(encoding="utf-8") == before
-
-    @pytest.mark.asyncio
-    async def test_an_app_still_edits_an_agents_description(self, agents_home):
-        from personalclaw.dashboard.handlers.agents import (
-            api_personalclaw_agent_update,
-            api_personalclaw_agents_create,
-        )
-
-        assert (await api_personalclaw_agents_create(_agent_request({"name": "a1"}))).status == 200
-        resp = await api_personalclaw_agent_update(
-            _agent_request({"description": "hi"}, app=APP, method="PUT", match={"name": "a1"})
-        )
-        assert resp.status == 200
+    """The owner's half. An app reaches no agent write at all — every route is owner-only in
+    ``apps/permissions.ROUTE_AUTHZ``, driven through the real middleware in
+    ``test_apps_cannot_rewrite_agents_or_skills.py`` — because an agent's prompt and tools are
+    as much the owner's as its approval mode."""
 
     @pytest.mark.asyncio
     async def test_the_owner_confirms_an_auto_approving_agent(self, agents_home):
@@ -502,6 +455,10 @@ class TestTheDedicatedPostureRoutesAreOwnerOnly:
             "/api/external-access/clients",
             "/api/external-access/clients/abc/disabled",
             "/api/agent/config",
+            # Handing a grant back needs no confirmation from the owner, and is a denial of
+            # service from an app: it can undo every grant, restarting each cooldown.
+            "/api/autonomy/demote",
+            "/api/autonomy/undo",
         ],
     )
     def test_no_app_declaration_reaches_it(self, path) -> None:
@@ -515,12 +472,12 @@ class TestTheDedicatedPostureRoutesAreOwnerOnly:
     @pytest.mark.parametrize(
         "path",
         [
-            # The tightening and read halves stay where an app can declare them.
+            # The stop and the read halves stay where an app can declare them.
             "/api/incident",
             "/api/chat/sessions/s1/messages",
             "/api/devices/pair/complete",
             "/api/external-access",
-            "/api/autonomy/demote",
+            "/api/autonomy",
             "/api/agents",
         ],
     )
@@ -531,9 +488,12 @@ class TestTheDedicatedPostureRoutesAreOwnerOnly:
 
 
 def _approve_app(state: Any, app_name: str) -> web.Application:
+    """The chat's approve route behind the REAL permission middleware, which is what refuses an
+    app there (``ROUTE_AUTHZ`` declares the route the owner's)."""
     from personalclaw.dashboard.chat_handlers import api_chat_session_approve
+    from personalclaw.dashboard.server import app_permission_middleware
 
-    app = web.Application(middlewares=[_identity(app_name)])
+    app = web.Application(middlewares=[_identity(app_name), app_permission_middleware])
     app["state"] = state
     app.router.add_post("/api/chat/sessions/{session}/approve", api_chat_session_approve)
     return app
@@ -551,27 +511,39 @@ class _PendingApprovalState:
         session._approval_futures = {"req-1": future}
         self._sessions = {"s1": session}
 
+    def refuse_ended_owner(self, approval_id: str) -> str:
+        return ""  # a chat still waiting: the work that asked has not ended
+
     def decide_session_approval(self, session: Any, request_id: str, action: str) -> None:
         self.decisions.append((request_id, action))
 
 
-class TestAnAppAnswersAnApprovalOnlyOnce:
+class TestAnAppAnswersNoApprovalInAChat:
+    """A standing verb raises the approval posture, and even a one-off answer decides whether your
+    agent's tool call runs, so no verb on the chat's approve route is an app's. The menu-bar
+    companion relays your answer through ``/api/approvals`` instead, which it declares
+    (``test_apps_cannot_post_into_your_chats.py`` drives that relay)."""
+
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("verb", ["yolo", "trust", "trust_agent", "trust_reads"])
-    async def test_a_standing_grant_verb_is_refused(self, sel_rows, verb) -> None:
+    @pytest.mark.parametrize(
+        "verb", ["yolo", "trust", "trust_agent", "trust_reads", "approved", "rejected"]
+    )
+    async def test_no_verb_is_decided_for_an_app(self, tmp_path, verb) -> None:
+        from test_apps_cannot_run_code_or_bypass_approvals import _home, _install
+
         state = _PendingApprovalState()
-        async with TestClient(TestServer(_approve_app(state, APP))) as c:
-            resp = await c.post("/api/chat/sessions/s1/approve", json={"action": verb})
-            assert resp.status == 403
+        with _home(tmp_path):
+            _install(tmp_path, APP, {"api": ["/api/chat"]})
+            async with TestClient(TestServer(_approve_app(state, APP))) as c:
+                resp = await c.post("/api/chat/sessions/s1/approve", json={"action": verb})
+                assert resp.status == 403, await resp.text()
         assert state.decisions == [], "nothing may be decided, least of all a standing grant"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("verb", ["approved", "rejected"])
-    async def test_a_one_off_answer_still_works(self, verb) -> None:
-        # The menu-bar companion's whole job is answering approvals away from the dashboard;
-        # a one-off answer is the owner's decision relayed, not a change of posture.
+    async def test_your_answer_is_decided(self, verb) -> None:
         state = _PendingApprovalState()
-        async with TestClient(TestServer(_approve_app(state, APP))) as c:
+        async with TestClient(TestServer(_approve_app(state, ""))) as c:
             resp = await c.post("/api/chat/sessions/s1/approve", json={"action": verb})
             assert resp.status == 200
         assert state.decisions == [("req-1", verb)]

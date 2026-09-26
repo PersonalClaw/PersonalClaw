@@ -8,8 +8,11 @@ was retired; what remains is reading what's present so the provider loader can
 discover installed extensions.
 """
 
+import errno
 import json
 import logging
+import os
+import stat
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -122,6 +125,48 @@ def app_data_dir(name: str) -> Path:
     d = app_dir(_validate_app_name(name)) / "data"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
+
+
+def read_app_owned_text(root: Path, *parts: str) -> str:
+    """The UTF-8 text of ``root/<parts…>``, never read through a link below ``root``.
+
+    For a file the gateway reads, with its own authority, inside a folder an APP writes: its
+    ``data/`` (``root`` the app's folder, ``parts`` starting ``"data"``) or a parked copy of
+    one (``root`` the copy). A confined app may write there, so a link it planted —
+    ``data/config.json -> ~/.ssh/…`` or ``-> ../../other-app/data/config.json`` — would hand
+    it whatever the link names. So every component below ``root`` is opened ``O_NOFOLLOW``
+    (``root`` itself is the gateway's own path and may be reached through a link), and the
+    file must be a regular file: a named pipe is refused, never waited on.
+
+    Raises :class:`OSError` — ``FileNotFoundError`` when it is absent, ``ELOOP`` for a link,
+    ``EINVAL`` for anything but a regular file — so a caller treats every refusal as it
+    already treats an unreadable file."""
+    if os.open in os.supports_dir_fd:
+        fd = os.open(root, os.O_RDONLY | _DIRECTORY)
+        try:
+            for part in parts[:-1]:
+                inner = os.open(part, os.O_RDONLY | _DIRECTORY | _NOFOLLOW, dir_fd=fd)
+                os.close(fd)
+                fd = inner
+            leaf = os.open(parts[-1], os.O_RDONLY | _NOFOLLOW | _NONBLOCK, dir_fd=fd)
+        finally:
+            os.close(fd)
+    else:  # no openat on this platform: refuse a link at each hop, then open
+        here = root
+        for part in parts:
+            here = here / part
+            if here.is_symlink():
+                raise OSError(errno.ELOOP, "is a link, which is never followed", str(here))
+        leaf = os.open(here, os.O_RDONLY | _NOFOLLOW | _NONBLOCK)
+    with os.fdopen(leaf, "rb") as fh:
+        if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+            raise OSError(errno.EINVAL, "is not a regular file", str(root.joinpath(*parts)))
+        return fh.read().decode("utf-8")
 
 
 # ---------------------------------------------------------------------------

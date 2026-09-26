@@ -40,12 +40,32 @@ backend**.
   pipe, socket or device, a link into or out of `data/`, and `data` or
   `installed.json` as a link. A `repo#subdirectory` pointer must stay inside its
   clone. The gateway's own copies of an app's `data/` (update, keep-data uninstall,
-  restore) copy links as links.
-- **The scan** is the shared `SkillScanner` (`supply_chain.py`). A *dangerous*
+  restore) copy links as links, and the gateway's own reads of files there (the
+  app's `data/config.json`, for the config API, provider settings and the boot-time
+  secret move) never follow a link (`apps/manager.read_app_owned_text`).
+- **Tooling is never installed** — staging leaves out every entry named in
+  `supply_chain.NEVER_INSTALLED_NAMES`, at any depth and in any letter case: `.git`,
+  `.hg`, `.svn` (version-control metadata, whose tools run what it names),
+  `__pycache__` (bytecode the interpreter would run instead of the scanned source)
+  and `.venv`, `venv`, `.tox` (virtualenvs; the platform installs
+  `pythonDependencies` itself). What is left out is not scanned, not in the consent
+  digest and not installed; a link into it is refused. Everything else is the app,
+  `node_modules` included: a JavaScript app's dependencies are code it runs, so they
+  install and are scanned like any other file. Skills follow the same rule
+  (`skills.marketplace.install_scanned`).
+- **The scan** is the shared `SkillScanner` (`supply_chain.py`), and it reads the
+  whole staged tree: no folder is skipped, every file a rule reads is read whole (up
+  to 16 MB), and a file it cannot read is an `unscanned_file` finding in the review,
+  never a silent pass. A *dangerous*
   verdict (or an invalid signature) is a terminal refusal, **non-overridable**.
   Each finding carries whether the code it sits in can run (`reachability`) and
   whether anything the app runs loads its file at all (`runtime` — the install
   dialog groups an app's own test files apart from the code it runs).
+- **A registry listing names a remote repository** — a `repo` in a source's
+  `app-registry.json` must be a plain `https://` URL (no credentials, no port), the
+  form the published registry requires. A listing naming a local path, `file://`,
+  `ssh`, `git@…` or `http://` is not listed. Installing a folder on this machine is
+  the owner's own act (Install from URL, or adding the folder as a source).
 - **Every install waits for consent** — a clean scan is not consent.
   `POST /api/apps/preview {source}` stages the source and returns what installing
   it grants and runs (`apps/disclosure.describe`: permissions, scheduled jobs and
@@ -70,14 +90,15 @@ The manifest's `permissions` block is enforced, with one documented exception
 
 | Permission | Enforcement |
 |---|---|
-| `api` | prefix-allowlist middleware over gateway API paths — pathname only, query string stripped (server and SDK agree on this) |
-| `events` | WebSocket fan-out filter — an app's socket only receives event types it declared |
+| `api` | prefix-allowlist middleware over gateway API paths — pathname only, query string stripped (server and SDK agree on this). Two halves no declaration widens: the owner-only registry (`OWNER_ONLY_API_PATHS`, whole subtrees such as `/api/mcp` and `/api/terminal`), and `ROUTE_AUTHZ`, which declares each write route in a security family (`SECURITY_ROUTE_FAMILIES`: automations, apps, packs, agents and agent definitions, skills, prompts and snippets, the orchestrator's routing notes, config, devices, channels…) `OwnerOnly` or `AppMay` with a reason. Every write to an agent, a skill or a prompt is `OwnerOnly` — they are the instructions your agents carry out with your tools — so an app ships skills in its manifest's `skills` and runs agent work through its `agent` grant. Your conversations are families too (chat, sessions, rooms, inbox, reveal): an `AppMay` row that carries `owns` names where the route addresses a conversation, and the middleware refuses one the calling app did not start (`_ChatSession.created_by_app`); a row marked `agent_work` (a turn) also needs the `agent` grant. Those families declare their READS route by route too (`READ_DECLARED_FAMILIES`): a read of one conversation carries `owns`, a list or a search answers an app with its own conversations only, and rooms and the inbox are the owner's. A write route in any family, or a read in a conversation family, that has no declaration is refused to every app (`undeclared_security_route`); `HEAD` answers from the `GET` row |
+| `config` | the exact settings (`voice.echo_filter_enabled`) `/api/config` reaches for this app. A second declaration on top of `api`, which must still name `/api/config` for the route. `GET /api/config/personalclaw` returns these fields and nothing else, and a write to any other answers `403 config_field_not_declared`. Deny by default. Naming a security setting is an install error (`manifest._config_permission_errors`) |
+| `events` | WebSocket fan-out filter — an app's socket only receives event types it declared, a frame about a conversation only when the app started that conversation, and an inbox item only when the app raised it (`dashboard/ws_state.py::frame_subject`); its session list holds its own rows. An app that may read `/api/approvals` (the approval relay) also hears the approval frames for yours |
 | `eventSubscriptions` | which **platform** events (`apps/app_events.py`: `session.created`, `knowledge.ingested`, `task.completed`) are delivered to the app. A DIFFERENT axis from `events` above, deliberately: `events` is the WS type allowlist, these are core-emitted facts, and holding one grants nothing about the other. `app_events.emit` is the only delivery path and is the whole gate — deny by default and **exact name only** (no prefix, no `*`), so a typo denies rather than widens. Delivered into the app's broker-owned inbox (the `appMessaging` queue, sender `@platform`, which no app can be named), drained over `GET /api/apps/message`. Payloads carry identifiers only, never prose: a subscription grants timing, not content an app's `api` scope may not cover. |
 | `mcpTools` | which MCP tools the app may invoke |
-| `memory` | one boolean grant on `/api/memory/*`, refused unless declared. NOT a tier: this was `"app-scoped"`/`"shared"` until #3501 and `app-scoped` granted nothing on any path — the checker only answered True for it when asked about the app-scoped scope, and the gateway's single call site asked about `"shared"`. Deleted rather than implemented: core has no per-app memory partition (`memory_record.MemoryScope` is `session\|workspace\|agent\|global`), so the schema was offering a choice that did nothing on a *permission* the user approves at install. A leftover string value is an install error, never reinterpreted. |
+| `memory` | one boolean grant on `/api/memory/*` and `/api/lessons` (`permissions.MEMORY_API_PATHS` — a lesson is a memory record every agent is handed as a rule), refused unless declared. NOT a tier: this was `"app-scoped"`/`"shared"` until #3501 and `app-scoped` granted nothing on any path — the checker only answered True for it when asked about the app-scoped scope, and the gateway's single call site asked about `"shared"`. Deleted rather than implemented: core has no per-app memory partition (`memory_record.MemoryScope` is `session\|workspace\|agent\|global`), so the schema was offering a choice that did nothing on a *permission* the user approves at install. A leftover string value is an install error, never reinterpreted. |
 | `cron` | whether manifest crons register |
-| `storage` | a private DATA_DIR handed to the backend |
-| `agent` | two independent gates for agent invocation |
+| `storage` | a private DATA_DIR handed to the backend; the one folder `/api/reveal` shows or opens for the app |
+| `agent` | two independent gates for agent invocation; also the grant a turn in the app's own conversation needs, which then approves by this grant and never by your approval switches (`permissions.app_conversation_auto_approves`, bounded by the operator ceiling) |
 | `appMessaging` | which apps this app may send a brokered message to — `POST /api/apps/message` is the only app-to-app path and refuses an undeclared target `403` + SEL. Deny by default: declaring nothing means it can message no app. Install consent names each target, rendering a trailing-`*` entry as the name prefix it is (`PermissionList`), because the grant covers every current and future app under that prefix. |
 | `network` | **DECLARATION-ONLY, unenforced by design** — there is no per-app chokepoint: provider code is imported in-process by the gateway, and an app backend is its own OS process with its own network stack. So it is disclosure, and the Store consent surface says so: the network claim renders outside the enforced-permission list, labelled advisory, whether or not the app declares it (`PermissionList`) — neither its presence nor its absence reads as containment. Gateway-mediated reach is separately bounded by `api`. See [security/limitations.md](../security/limitations.md#2-the-app-network-permission-is-declaration-only). |
 
@@ -153,6 +174,12 @@ boundary lives:
   injected, so the backend has an identity bounded to its own declared
   permissions.
 
+That boundary is about what the proxy hands a backend. A backend on the host is still a
+process under the owner's account, so it can read the home directly, `session_key` (the
+token-signing key) included. A backend that names a sandbox tier runs under that tier's
+confinement instead — see
+[security/limitations.md §7](../security/limitations.md#7-an-apps-own-code-runs-as-you).
+
 ### Inbound authentication — the proxy signature (what loopback does NOT buy)
 
 The token model above is the **outbound** boundary (what the backend may do
@@ -205,13 +232,21 @@ backend has no access to the gateway's SecurityEventLog).
 
 ## The App SDK
 
-- **Python**: `sdk/` (33 modules) is THE stable app-facing import surface —
+- **Python**: `sdk/` is THE stable app-facing import surface —
   apps import core **only** via `personalclaw.sdk.*`
   (boundary-lint-enforced by `tests/test_apps_import_boundary.py`). Modules
   cover models, channels, tools, search, memory, knowledge, STT/TTS,
   credentials, settings (`ProviderSettings` — each app's persisted store),
   security helpers, and `provider_helpers.register_branded_app` for
   protocol-thin branded model apps.
+- **Its signatures are a reviewed contract**: every name each `sdk` module publishes
+  is recorded in `src/personalclaw/sdk/signatures.json`
+  (`scripts/sdk_signature_snapshot.py`), `tests/test_sdk_signature_snapshot.py`
+  fails until a change is regenerated into it, and writing it refuses a parameter
+  that changed type in place (an old caller would still bind). CI's `apps-contract`
+  job runs the first-party apps' SDK contract checks against a change that touches
+  the SDK (`scripts/apps_sdk_contract.py`). The rule for contributors:
+  [CONTRIBUTING.md](../../CONTRIBUTING.md#sdk-changes).
 - **Frontend**: `web/src/app/appSdk.tsx` — a contributed UI gets
   `createAppApi` / `createAppEvents` and mounts via `mount(el, ctx)`; the host
   resolves bare `react` / `@personalclaw/app-sdk` imports so app UIs don't
@@ -372,6 +407,14 @@ and removes them on disable/uninstall. Entries are namespaced
 removes exactly this app's servers. App-shipped stdio servers run with
 `cwd=<app dir>` (`mcp_client.py` / `mcp_discovery.py`).
 
+The manifest is the only way an app gets an MCP server. `/api/mcp` is owner-only for
+app tokens, reads included (`apps/permissions.OWNER_ONLY_API_PATHS`): a server entry is a
+command the gateway launches as the owner, with the gateway's environment, and a remote
+server's headers carry its bearer token. So the servers an app runs through the gateway are
+the ones install (or update) consent listed from `disclosure.describe`, and an installed app
+cannot add another through the API. Its own code still can, by editing `mcp.json` as you
+([security/limitations.md §7](../security/limitations.md#7-an-apps-own-code-runs-as-you)).
+
 ## Declared quality bar (`apps/quality.py`)
 
 An app may declare `quality` — `{tested, designSystem, a11y}` — which the Store
@@ -430,6 +473,17 @@ A tool provider is registered under its app's name, and every tool it lists pass
 seam before a model request carries it: a schema outside the portable profile is repaired or
 left out, with one log line naming the app and the tool — see
 [tool-schema-wire.md](tool-schema-wire.md).
+
+**Availability is measured out of process.** A provider module may export
+`availability() -> (bool, str)` — "can this provider run on this machine?". The gateway never
+calls it: `providers/availability.py` runs every hook in a child process
+(`personalclaw availability-probe <app>…`, killed at a 180 s deadline) at boot, when a
+15-minute-old answer is read, and when the user presses **Check again**
+(`POST /api/providers/{name}/availability`). `GET /api/providers` only reads the cached answer,
+`availability: {state: checking | available | unavailable | unknown, reason, checkedAt}`.
+Measured before this existed: one hook imported torch, and the list and `/api/healthz` both
+passed 120 s. A hook must still be cheap — answer from metadata, never import the library it
+checks for; the rule and the check to build it from are `personalclaw.sdk.availability`.
 
 ## Related docs
 

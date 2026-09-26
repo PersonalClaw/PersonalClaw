@@ -34,9 +34,9 @@ from test_dashboard_approval import (  # the file's own run_chat harness
     _set_stream,
 )
 
+from personalclaw.dashboard.approval_state import chat_approval_id
 from personalclaw.dashboard.chat import api_chat_session_approve, run_chat
 from personalclaw.dashboard.handlers.sessions import api_approval_resolve, api_approvals
-from personalclaw.dashboard.state import chat_approval_id
 from personalclaw.inbox import OPEN_STATUSES, InboxStore, ItemKind, emit_attention_item
 from personalclaw.llm.base import EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.sel import SecurityEventLog
@@ -263,7 +263,13 @@ async def test_deciding_in_the_chat_clears_every_surface(world):
         assert world.store.items[row.id].status == "handled"
         resolved = [d for kind, d in world.frames if kind == "approval_resolved"]
         assert resolved == [
-            {"id": row.refs["approval"], "request_id": "req-1", "session": CHAT, "approved": True}
+            {
+                "id": row.refs["approval"],
+                "request_id": "req-1",
+                "session": CHAT,
+                "approved": True,
+                "outcome": "approved",
+            }
         ], resolved
         world.client.approve_tool.assert_called_once_with("req-1")
     finally:
@@ -369,7 +375,13 @@ async def test_an_unanswered_approval_leaves_every_surface_when_its_turn_ends(wo
     assert not _approval_rows(world.store, open_only=True)
     resolved = [d for kind, d in world.frames if kind == "approval_resolved"]
     assert resolved == [
-        {"id": approval_id, "request_id": "req-1", "session": CHAT, "approved": False}
+        {
+            "id": approval_id,
+            "request_id": "req-1",
+            "session": CHAT,
+            "approved": False,
+            "outcome": "cancelled",
+        }
     ], resolved
 
 

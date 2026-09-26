@@ -113,13 +113,14 @@ describe('the hub can no longer write that entry', () => {
   })
 
   it('🪤 the DECORATING read keeps its fallback, matching the panel byte for byte', () => {
-    // The over-correction this guards: the default agent's NAME renders as '—' and is not a control's
-    // claimed state, so blanking the tile for it would be a regression dressed as a fix. The rule the
-    // file states is "match the PANEL exactly, or take a key of your own" — and the panel keeps this one.
+    // The over-correction this guards: the default agent's NAME renders as '—' on the tile, so blanking
+    // the tile for it would be a regression dressed as a fix. The rule the file states is "match the
+    // PANEL exactly, or take a key of your own" — and the panel keeps this one, as `null`: it seeds a
+    // picker from it, where `''` read as "no default" (`defaultAgentUnread.test.tsx`).
     const at = widgets.indexOf("'settings:agent-defaults'")
     const hook = widgets.slice(at, widgets.indexOf('persist: true', at) + 20)
-    expect(hook).toMatch(/api\.agents\(\)\.then\(\(a\) => a\.default_agent\)\.catch\(\(\) => ''\)/)
+    expect(hook).toMatch(/api\.agents\(\)\.then\(\(a\) => a\.default_agent\)\.catch\(\(\) => null\)/)
     expect(read('pages/settings/AgentDefaultsPanel.tsx'), 'and the panel spells the same fallback')
-      .toMatch(/default_agent\)\.catch\(\(\) => ''\)/)
+      .toMatch(/default_agent\)\.catch\(\(\) => null\)/)
   })
 })

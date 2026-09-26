@@ -28,8 +28,8 @@ import { join } from 'node:path'
 // popover explains rather than listing an empty set.
 
 const boom = () => Promise.reject(new Error('resilience read failed'))
-const degraded = { surfaces: [{ surface: 'chat', available: false, backlog: 2, floor: 'keyword search', use_case: 'chat' }] }
-const healthy = { surfaces: [{ surface: 'chat', available: true, backlog: 0, floor: '', use_case: 'chat' }] }
+const degraded = { surfaces: [{ surface: 'chat', label: 'Chat', available: false, backlog: 2, floor: 'keyword search', use_case: 'chat' }] }
+const healthy = { surfaces: [{ surface: 'chat', label: 'Chat', available: true, backlog: 0, floor: '', use_case: 'chat' }] }
 
 function mockApi(over: Record<string, unknown>) {
   vi.doMock('../lib/api', async (orig) => ({
@@ -110,6 +110,12 @@ describe('the source keeps the two states apart', () => {
   })
 
   it('an empty-but-known result still renders nothing', () => {
-    expect(code).toMatch(/if \(down\.length === 0 && !unknown\) return null/)
+    // …unless the one thing a surface's `available` cannot see is known to be wrong: chat's bound
+    // provider failed its last connection test (`providerDown`, read from the report's cache field).
+    // That is a KNOWN fault, not an unknown, so it is the only other way past this line.
+    expect(code).toMatch(/if \(down\.length === 0 && !unknown && !providerDown\) return null/)
+    expect(code, 'and only a MEASURED failure counts').toMatch(
+      /const providerDown = !unknown && chatProvider\?\.state === 'failed' \? chatProvider : null/,
+    )
   })
 })

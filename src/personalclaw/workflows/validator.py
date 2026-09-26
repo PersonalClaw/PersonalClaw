@@ -20,7 +20,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from personalclaw.workflows.bindings import BindingError, node_deps, refs_in
+from personalclaw.workflows.bindings import PIPES, BindingError, node_deps, parse_pipe, refs_in
 from personalclaw.workflows.models import (
     LLM_KINDS,
     GateKind,
@@ -477,7 +477,7 @@ def _validate_supervisor(res: ValidationResult, path: str, raw: Any) -> None:
     is the wiring owner). Imported lazily so `validator` stays import-cheap and cycle-free.
     """
     # Local import: keeps the declaration module (and its transitive loop/judge imports) off
-    # `validator`'s import path, matching the lazy-import pattern already used for PIPES below.
+    # `validator`'s import path.
     from personalclaw.workflows.supervisor_policy import (
         CONVERGENCE_FIELDS,
         DONE_SIGNALS,
@@ -588,13 +588,20 @@ def _validate_bindings(res: ValidationResult, path: str, node: Node, *, strict: 
                     path,
                 )
         for expr in refs_in(value):
-            # Malformed pipes / unknown pipes are caught by parsing the chain.
+            # Every pipe call is parsed by resolution's own grammar (`bindings.parse_pipe`), so a
+            # spec that validates is one whose pipes evaluate. Checking only the NAME is how
+            # `rich-ingest` shipped `| default([])`: the name is real, the argument is not a
+            # literal, and every resolution of it failed.
             for raw_pipe in [p.strip() for p in expr.split("|")[1:]]:
                 name = raw_pipe.split("(", 1)[0].strip()
-                from personalclaw.workflows.bindings import PIPES
-
                 if name and name not in PIPES:
                     _add(res, "WF_UNKNOWN_PIPE", f"unknown pipe {name!r}", path)
+                    continue
+                try:
+                    parse_pipe(raw_pipe)
+                except BindingError as exc:
+                    fix = f" — {exc.remediation}" if exc.remediation else ""
+                    _add(res, "WF_BAD_PIPE", f"{exc} (in {{{{{expr}}}}}){fix}", path)
 
             head = expr.split("|")[0].strip()
             root_seg = head.split(".")[0].strip()

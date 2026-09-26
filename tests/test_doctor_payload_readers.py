@@ -279,7 +279,10 @@ def test_blocked_by_is_present_exactly_when_a_deficit_is_unreachable(tmp_path, m
 
 def test_the_unreachable_reason_names_a_next_step(tmp_path, monkeypatch):
     """A blocker sentence that only restates the block ("no embedder") leaves a reader exactly
-    where "not fixable yet" did. Each one has to point somewhere — a page, a person, an action."""
+    where "not fixable yet" did. Each one has to point somewhere — a page, a person, an action.
+
+    A failed Doctor check is a deficit too now (settings B16), and its blocker is the check's own
+    remedy, whose action is often a command to run — so a backticked command counts as one."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     from personalclaw.resilience.remediation import measure_deficits
 
@@ -287,7 +290,7 @@ def test_the_unreachable_reason_names_a_next_step(tmp_path, monkeypatch):
     assert blocked, "no unreachable deficit measured — skills_tampered is always one of them"
     for d in blocked:
         assert re.search(
-            r"Settings|page|review|reinstall|remove|pick", d.blocked_by
+            r"Settings|page|review|reinstall|remove|pick|`[^`]+`", d.blocked_by
         ), f"{d.key}'s blocker {d.blocked_by!r} states the problem without a next step"
 
 

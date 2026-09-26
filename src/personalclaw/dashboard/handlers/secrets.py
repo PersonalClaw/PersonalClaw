@@ -182,6 +182,7 @@ async def api_secrets_put(request: web.Request) -> web.Response:
 
     save_credential(_store_key(name, project_id), value)
     del value  # the local is dead from here; nothing below may reference it
+    await _credentials_changed()
 
     rows = await _vault_rows(project_id)
     stored = _find_row(rows, name, project_id)
@@ -217,6 +218,7 @@ async def api_secrets_delete(request: web.Request) -> web.Response:
 
     if not delete_credential(_store_key(name, project_id)):
         return json_error("secret_absent", status=404)
+    await _credentials_changed()
 
     rows = await _vault_rows(project_id)
     return web.json_response(
@@ -226,6 +228,21 @@ async def api_secrets_delete(request: web.Request) -> web.Response:
             "secrets": [r.to_dict() for r in rows],
         }
     )
+
+
+async def _credentials_changed() -> None:
+    """A stored value changed, so a channel that reads it must stop, start or restart on it.
+
+    Rotation is "write the new value" (see ``api_secrets_put``), and a channel's receiver keeps
+    the token it started with — so without this a rotated or deleted token kept being used to
+    receive until the gateway restarted. Never fails the write it follows: the value is stored.
+    """
+    from personalclaw.providers.routes import apply_changed_credentials
+
+    try:
+        await apply_changed_credentials()
+    except Exception:  # noqa: BLE001 - the secret is saved; a channel refresh must not undo that
+        logger.warning("applying a changed secret to the channels failed", exc_info=True)
 
 
 def _find_row(rows: list[SecretPresence], name: str, project_id: str) -> SecretPresence | None:

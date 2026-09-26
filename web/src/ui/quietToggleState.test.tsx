@@ -107,14 +107,16 @@ describe('the call sites, classified per site', () => {
   // that opens a form is a disclosure. So the pin moves to `ariaExpanded`, and the two remain pinned:
   // the point of the original assertion (these two must keep announcing SOMETHING) is preserved.
   it('the two Edit buttons announce expansion, because they open a form', () => {
+    // The instance card names its row (`Edit: <instance>`): one Edit per instance would otherwise
+    // announce as N identical entries.
     expect(read('pages/settings/ModelBackends.tsx'))
-      .toMatch(/<SquareIconButton label="Edit"[^\n]*ariaExpanded=\{editing\}/)
+      .toMatch(/<SquareIconButton label=\{`Edit: \$\{provider\.name\}`\}[^\n]*ariaExpanded=\{editing\}/)
     expect(read('pages/settings/MultiInstanceCard.tsx'))
       .toMatch(/ariaExpanded=\{editing && props\.length > 0\}/)
     // And neither may go back to claiming pressedness.
     for (const rel of ['pages/settings/ModelBackends.tsx', 'pages/settings/MultiInstanceCard.tsx']) {
       expect(read(rel), `${rel}: an Edit that opens a form is not a toggle`)
-        .not.toMatch(/<SquareIconButton label="Edit"[^\n]*\bon=\{editing\}/)
+        .not.toMatch(/<SquareIconButton label=(?:"Edit"|\{`Edit: )[^\n]*\bon=\{editing\}/)
     }
   })
 

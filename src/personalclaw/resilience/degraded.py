@@ -59,8 +59,9 @@ DRAIN_BATCH = 50
 class DegradedContract:
     """One model-dependent surface's declared no-model tier.
 
-    ``surface`` is a stable slug (an agent/UI branches on it). ``use_cases`` are the
-    ``active_models`` use-cases the surface needs to run at full capability. ``floor``
+    ``surface`` is a stable slug (an agent/UI branches on it); ``label`` is what the USER
+    calls it, and the only name a notification or the degraded chip shows. ``use_cases`` are
+    the ``active_models`` use-cases the surface needs to run at full capability. ``floor``
     is the human statement of what still works with no model. ``backlog_probe``
     returns the pending-enrichment count (read-only, fail-safe). ``drain`` re-enriches
     the backlog when a provider returns; it is ``None`` for a surface whose floor is
@@ -69,6 +70,7 @@ class DegradedContract:
     """
 
     surface: str
+    label: str
     use_cases: tuple[str, ...]
     floor: str
     backlog_probe: BacklogProbe = lambda: 0
@@ -101,10 +103,36 @@ def get_contract(surface: str) -> Optional[DegradedContract]:
 # storm). Process-global by design (one gateway); reset helper for tests.
 _last_available: dict[str, bool] = {}
 
+#: The surfaces the user was TOLD went down. A recovery is announced only for one of these.
+#:
+#: 🔴 Measured on day 8: a fresh home has no model, so every surface's silent first sight is
+#: "down", and binding the first model flipped all eleven model-backed surfaces at once, posting
+#: eleven "<slug> recovered — Model available again" notifications about things that had never
+#: been up. Setting up is not a recovery. Pairing each recovery with the degradation notice
+#: before it is what makes "recovered" mean "it was down, you were told, and it is back".
+_announced_down: set[str] = set()
+
+#: What the Models page calls each use case a contract here needs (`ModelsPanel`'s
+#: `USE_CASE_META`), so "no Speech-to-text model" and the row the user binds one in agree.
+#: `test_resilience_degraded` fails a built-in contract whose use case has no name here.
+USE_CASE_NAMES: dict[str, str] = {
+    "chat": "Chat",
+    "background": "Background",
+    "reasoning": "Reasoning",
+    "embedding": "Embedding",
+    "stt": "Speech-to-text",
+}
+
+
+def use_case_names(contract: DegradedContract) -> list[str]:
+    """The user's names for the use cases *contract* needs, in its order."""
+    return [USE_CASE_NAMES.get(uc, uc) for uc in contract.use_cases]
+
 
 def reset_transition_state() -> None:
     """Clear the transition baseline (test isolation)."""
     _last_available.clear()
+    _announced_down.clear()
 
 
 def _available(contract: DegradedContract) -> bool:
@@ -128,13 +156,14 @@ def _backlog(contract: DegradedContract) -> int:
 
 
 def evaluate(*, notify: bool = False, state: object = None) -> list[dict]:
-    """Evaluate every contract → a list of ``{surface, available, floor, backlog,
+    """Evaluate every contract → a list of ``{surface, label, available, floor, backlog,
     use_cases}`` rows (the ``GET /api/resilience/degraded`` payload).
 
     When ``notify`` is set and a ``state`` with a ``.notify`` method is given, a
     surface CHANGING availability emits one notification: ``warning`` on going down,
-    ``info`` (with the drained/backlog summary) on recovery. The first evaluation of
-    a surface only seeds the baseline — it never notifies (no boot storm).
+    ``info`` (with the drained/backlog summary) on recovery, and a recovery only after a
+    degradation the user was told about. The first evaluation of a surface only seeds the
+    baseline — it never notifies (no boot storm).
     """
     rows: list[dict] = []
     for contract in _CONTRACTS.values():
@@ -143,6 +172,7 @@ def evaluate(*, notify: bool = False, state: object = None) -> list[dict]:
         rows.append(
             {
                 "surface": contract.surface,
+                "label": contract.label,
                 "available": available,
                 "floor": contract.floor,
                 "backlog": backlog,
@@ -168,14 +198,17 @@ def _maybe_notify(contract: DegradedContract, available: bool, backlog: int, sta
     notify_fn = getattr(state, "notify", None)
     if not callable(notify_fn):
         return
+    needs = " and ".join(use_case_names(contract))
     try:
         if not available:  # went down
             notify_fn(
                 "warning",
-                f"{contract.surface} degraded",
-                f"No model for {', '.join(contract.use_cases)} — {contract.floor}",
+                f"{contract.label} degraded",
+                f"No {needs} model — {contract.floor}",
             )
-        else:  # recovered
+            _announced_down.add(contract.surface)
+        elif contract.surface in _announced_down:  # recovered, from a degradation we announced
+            _announced_down.discard(contract.surface)
             # §5.2 criterion #3 wants the recovery to summarize what was RE-ENRICHED, and
             # `backlog` was measured BEFORE the drain ran — reporting it after a drain that
             # just cleared it would announce a queue that no longer exists. So: the drained
@@ -189,8 +222,8 @@ def _maybe_notify(contract: DegradedContract, available: bool, backlog: int, sta
                 tail = ""
             notify_fn(
                 "info",
-                f"{contract.surface} recovered",
-                f"Model available again for {', '.join(contract.use_cases)}{tail}.",
+                f"{contract.label} recovered",
+                f"A {needs} model is available again{tail}.",
             )
     except Exception:
         logger.debug("degraded: notify failed for %s", contract.surface, exc_info=True)
@@ -495,6 +528,7 @@ def _register_builtin_contracts() -> None:
     register_contract(
         DegradedContract(
             surface="chat",
+            label="Chat",
             use_cases=("chat",),
             floor="Chat is unavailable without a model — the composer shows how to bind one. "
             "PersonalClaw never fakes a reply.",
@@ -506,6 +540,7 @@ def _register_builtin_contracts() -> None:
     register_contract(
         DegradedContract(
             surface="inbox_enrichment",
+            label="Inbox triage",
             use_cases=("chat",),
             floor="Keyword and name-mention alerts, ingestion, dedup and mute all keep working "
             "without a model; only auto-classify, draft and digest pause.",
@@ -519,6 +554,7 @@ def _register_builtin_contracts() -> None:
     register_contract(
         DegradedContract(
             surface="memory_extraction",
+            label="Learning from chats",
             use_cases=("chat",),
             floor="Deterministic preference-facet capture keeps running without a model; only the "
             "LLM after-turn review pauses. Every pass is still recorded in the staging log, and "
@@ -535,6 +571,7 @@ def _register_builtin_contracts() -> None:
     register_contract(
         DegradedContract(
             surface="knowledge_ingest",
+            label="Knowledge insights",
             use_cases=("chat",),
             floor="Documents are still captured, indexed and embedded locally without a model "
             "through the LLM-free ingest graph; entity and insight extraction is skipped and the "
@@ -551,6 +588,7 @@ def _register_builtin_contracts() -> None:
     register_contract(
         DegradedContract(
             surface="synthesis_watchers",
+            label="Knowledge summaries",
             use_cases=("chat",),
             floor="Watchers keep appending dated evidence entries without a model "
             "(append_evidence persists raw first); only the compiled summary above them stops "
@@ -566,6 +604,7 @@ def _register_builtin_contracts() -> None:
     register_contract(
         DegradedContract(
             surface="research_report",
+            label="Research reports",
             use_cases=("background",),
             floor="A scheduled report's run is deferred, not dropped: the failure is recorded "
             "without advancing its last-run stamp or its watermark, so the next window retries "
@@ -580,6 +619,7 @@ def _register_builtin_contracts() -> None:
     register_contract(
         DegradedContract(
             surface="source_digest",
+            label="Morning digest",
             use_cases=("background",),
             floor="The morning digest still arrives without a model: its body says synthesis was "
             "unavailable and points at the collected items, which are already in the library. "
@@ -596,6 +636,7 @@ def _register_builtin_contracts() -> None:
     register_contract(
         DegradedContract(
             surface="triage_digest",
+            label="Triage digest",
             use_cases=("background",),
             floor="The triage digest still arrives without a model: collection, dedup and the "
             "rule-grammar filter keep working and the items are listed with the gate applied, "
@@ -608,6 +649,7 @@ def _register_builtin_contracts() -> None:
     register_contract(
         DegradedContract(
             surface="search_ranking",
+            label="Semantic search",
             use_cases=("embedding",),
             floor="Search degrades from hybrid to keyword (FTS) + graph + recency ranking with no "
             "embedding model; results stay useful, just not semantically ranked.",
@@ -620,6 +662,7 @@ def _register_builtin_contracts() -> None:
     register_contract(
         DegradedContract(
             surface="transcription",
+            label="Transcription",
             use_cases=("stt",),
             floor="Speech-to-text is simply off without a model — its pipeline nodes are skipped, "
             "not errored. Bind an STT model to turn it on.",
@@ -635,6 +678,7 @@ def _register_builtin_contracts() -> None:
     register_contract(
         DegradedContract(
             surface="browse",
+            label="Browse automation",
             use_cases=("reasoning",),
             floor="Browse automation is unavailable without a model — every step of the loop is a "
             "model decision, so there is no reduced tier. A run that loses its model stops and "
@@ -648,6 +692,7 @@ def _register_builtin_contracts() -> None:
     register_contract(
         DegradedContract(
             surface="assistant_reasoning",
+            label="Background tasks",
             use_cases=("chat",),
             floor="Background reasoning tasks (cron NL parsing, chat retag, loop summaries, "
             "web-extract) pause without a model and resume when one returns.",

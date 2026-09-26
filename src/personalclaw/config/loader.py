@@ -1185,8 +1185,9 @@ class MemoryConfig:
     semantic_confidence_threshold: float = field(
         default=0.8,
         metadata=_meta(
-            "Semantic Confidence Threshold",
-            "Minimum similarity score for semantic search results.",
+            "Learned-fact confidence",
+            "How confident an automatically learned fact must be before memory keeps it "
+            "(0-1). Facts you add yourself are always kept.",
         ),
     )
     episodic_dedup_threshold: float = field(
@@ -3926,7 +3927,12 @@ class AppConfig:
                 worktree_sparse=bool(loops_data.get("worktree_sparse", True)),
             ),
             memory=MemoryConfig(
-                semantic_confidence_threshold=memory_data.get("semantic_confidence_threshold", 0.8),
+                # A probability, clamped like `push_min_confidence`: a hand-edited 8 would make
+                # memory refuse every learned fact, and a -1 would admit every guess.
+                semantic_confidence_threshold=max(
+                    0.0,
+                    min(1.0, _safe_float(memory_data.get("semantic_confidence_threshold"), 0.8)),
+                ),
                 episodic_dedup_threshold=memory_data.get("episodic_dedup_threshold", 0.88),
                 episodic_max_results=memory_data.get("episodic_max_results", 8),
                 episodic_max_count=memory_data.get("episodic_max_count", 10_000),
@@ -4796,7 +4802,13 @@ class AppConfig:
         # `meta` is stamped above and so is already in `d`, which is what keeps this write
         # authoritative over the one key it does own.
         p = config_path()
-        d = merge_unmodeled_top_keys(d, read_config_for_merge(p))
+        on_disk = read_config_for_merge(p)
+        d = merge_unmodeled_top_keys(d, on_disk)
+        # The webhook token — a secret in a modelled section — reaches the file as a reference;
+        # its value goes to the credential store (`config.secret_refs.store_config_secrets`).
+        from personalclaw.config.secret_refs import store_config_secrets
+
+        d = store_config_secrets(d, previous=on_disk)
         p.parent.mkdir(parents=True, exist_ok=True)
         from personalclaw.atomic_write import atomic_write
 
@@ -4819,9 +4831,10 @@ class AppConfig:
         creds: dict[str, str] = dict(_dotenv_credentials())
         creds.update(_keychain_credentials())
 
-        for key in _CREDENTIAL_KEYS:
-            val = os.environ.get(key)
-            if val:
+        for key, val in os.environ.items():
+            # A channel's own owner key (``PERSONALCLAW_OWNER_ID_<PROVIDER>``) is named per
+            # channel, so it is matched by prefix rather than listed.
+            if val and (key in _CREDENTIAL_KEYS or key.startswith(f"{CRED_OWNER_ID}_")):
                 creds[key] = val
 
         # Propagate NAMED credentials into the process environment so spawned children

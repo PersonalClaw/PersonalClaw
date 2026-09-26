@@ -78,8 +78,10 @@ permission model holds in every auth mode.
 `POST /api/hooks/agent` (`dashboard/handlers/hooks.py`) is
 middleware-exempt; its **only** gate is `_verify_hook_token` — a
 constant-time (`hmac.compare_digest`) check of the Bearer or
-`x-personalclaw-token` header against `hooks.webhook_token` in config. No
-configured token means every request is refused. Denials are logged to the
+`x-personalclaw-token` header against `hooks.webhook_token` in config — a
+`{{secret:…}}` reference there, resolved from the credential store at the
+check (`config/secret_refs.py`). No configured token, or a reference the store
+cannot answer, means every request is refused. Denials are logged to the
 Security Event Log.
 
 ## Command screening (`security.py`)
@@ -276,7 +278,10 @@ recalled episodes (`dashboard/handlers/memory.py`; see
 - verdicts: clean / warning (consent required — 409) / **dangerous (terminal
   refusal, non-overridable)**;
 - the integrity invariant: **scanned bytes == installed bytes** (no
-  time-of-check/time-of-use window between scan and install);
+  time-of-check/time-of-use window between scan and install). Staging leaves the same
+  tooling out of both (`supply_chain.NEVER_INSTALLED_NAMES`: `.git`, `__pycache__`,
+  virtualenvs), and the scanner skips nothing else, so no folder or file size installs
+  unread; a file it cannot read is an `unscanned_file` finding;
 - source trust tiers modulate strictness (a bundled skill's `curl` is not the
   same risk as a random repository's).
 
@@ -296,6 +301,22 @@ tamper-evident, append-only. Events carry caller, operation, outcome, and
 `downstream_service` labels (the generic value is `"channel"`; no vendor
 names). API denials, webhook auth failures, and app lifecycle events all log
 here. The dashboard Security panel reads it.
+
+**Events, not requests.** A refused authentication is a row, every time. A successful one is a
+row the first time a session is seen in a 15-minute window, and the rest of that window is one
+summary row counting the requests and the paths they reached (`token_auth._SuccessTally`, flushed
+at shutdown), so every success is accounted for at a row per session per quarter hour. An
+internal-secret grant is one tallied `internal_auth` family (it used to write two rows). On day 8
+one idle Home tab grew the log ~5 MB an hour, 94% of it `dashboard.token_auth ok`.
+
+**Size and retention.** The live file rotates by size: the write that takes it past 16 MiB
+archives it to `sel_archive/security_events.<UTC time>.jsonl` under a cross-process lock and starts
+a fresh chain (`verify_integrity` tolerates the break at a rotation), and the rotation is itself
+logged (`sel.rotated`). Retention is age: 365 days, applied by the remediation engine's SEL prune
+to the live file and to whole archives, with a 512 MiB ceiling on the archive as a backstop
+(oldest first); every archive removal is logged. The durability inventory lists `sel_archive/`
+(`security_events_archive`), so snapshots carry the rotated trail. `POST /api/sel/rotate` does
+the same rotation on demand, and keeps the live log if the archive cannot be written.
 
 ## Data-leaving-the-system rules
 

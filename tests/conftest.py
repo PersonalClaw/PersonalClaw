@@ -65,15 +65,16 @@ def _caller_chose_a_home() -> bool:
 
 
 # ── Import-window home (the half no fixture can reach) ──────────────────
-# `_isolate_real_home_writers` redirects an unchosen home for each TEST. Six modules resolve the
+# `_isolate_real_home_writers` redirects an unchosen home for each TEST. Five modules resolve the
 # home at IMPORT, during collection, before any fixture exists: `agent` (`_USER_DIR` and the
 # prompt/overrides/`_DEFAULT_HOOKS_DIR` paths built from it), `agents.marketplace` (its local
-# registry), `dashboard.handlers.hooks` (`_HOOK_STORE_PATH`), `dashboard.handlers.mcp`
-# (`_GLOBAL_MCP_JSON`), and both skill roots (`skills.marketplace`, `skills.native`). Measured
-# under the guard above on a full run: every worker mkdir'd the real `~/.personalclaw` at import
-# (so a fresh machine or CI runner has one created just by collecting), and 150+ tests read the
-# owner's real skills, agent hooks and `mcp.json` through those frozen paths. Converting the six
-# is a product change with ~17 test sites that patch the constants
+# registry), `dashboard.handlers.hooks` (`_HOOK_STORE_PATH`), and both skill roots
+# (`skills.marketplace`, `skills.native`). (`dashboard.handlers.mcp` was the sixth, until its
+# `_GLOBAL_MCP_JSON` was deleted.) Measured under the guard above on a full run: every worker
+# mkdir'd the real `~/.personalclaw` at import (so a fresh machine or CI runner has one created
+# just by collecting), and 150+ tests read the owner's real skills, agent hooks and `mcp.json`
+# through those frozen paths. Converting the rest is a product change with ~17 test sites that
+# patch the constants
 # (`test_agent_paths_resolve_at_call_time.py` records the debt); this closes the suite's exposure
 # without it: until collection finishes, an unchosen home is ONE per-process scratch directory.
 # After that the per-test redirect takes over — and a resolution that happens outside every test
@@ -779,13 +780,40 @@ def _reset_channel_delivery_registry() -> object:
     `test_services_initially_none` asserts a fresh orchestrator has NO delivery, and a leaked
     handle from an approval test makes the registry answer one. Cleared rather than
     snapshot-restored, because unlike the provider registries nothing legitimately pre-registers a
-    channel at import time: outside a live gateway the correct state is empty.
+    channel at import time: outside a live gateway the correct state is empty. The receivers core
+    runs (``channel_transports._receivers``) and the gateway binding they run on
+    (``channel_transports._binding``, which holds a test's event loop) are the same kind of
+    process-global and are reset with it — a binding left behind would schedule the next test's
+    registry changes onto a closed loop.
     """
+    from personalclaw import channel_transports
     from personalclaw.channel_delivery import register
 
     register(None)
+    channel_transports._binding = None
+    channel_transports._receivers.clear()
     yield
     register(None)
+    channel_transports._binding = None
+    channel_transports._receivers.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_provider_measurement_boards() -> object:
+    """Forget every provider availability and connection answer a test measured.
+
+    Both boards (`providers/availability.py`, `providers/connection.py`) are process-wide memo
+    tables keyed by provider NAME, which every test reuses (`ollama`, `openrouter`, …). An
+    answer measured against one test's fixture home would otherwise be served to the next test
+    on the worker as a cached fact about its own. A check still in flight belongs to the
+    finished test's event loop, which cancels it (and the availability child it started).
+    """
+    yield
+    from personalclaw.providers.availability import reset_availability_board
+    from personalclaw.providers.connection import reset_connection_board
+
+    reset_availability_board()
+    reset_connection_board()
 
 
 @pytest.fixture(autouse=True)

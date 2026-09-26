@@ -96,7 +96,7 @@ def _wire_payload(monkeypatch, *, host: fit.HostCapacity, models, hide_unrunnabl
     prov = _Prov()
     monkeypatch.setattr(LR, "get_provider", lambda name: prov if name == "ollama" else None)
     monkeypatch.setattr(LR, "registered", lambda: [("ollama", prov)])
-    monkeypatch.setattr(LR, "catalog_for", _catalog(*models))
+    monkeypatch.setattr(LR, "list_catalog", _catalog(*models))
 
     monkeypatch.setattr(fit, "host_capacity", lambda target_dir=None: host)
     monkeypatch.setattr(fit, "configured_reserve_gb", lambda: 0.0)

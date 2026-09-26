@@ -257,6 +257,8 @@ export interface DoctorProbe {
   detail: string
   evidence: Record<string, unknown>
   fix_id?: string
+  /** A failure's other half when no Fix repairs it: one sentence saying so and what to do. */
+  remedy?: string
 }
 export interface DoctorCapability {
   ok: boolean
@@ -276,6 +278,8 @@ export interface DoctorReport {
 // No-model degraded mode.
 export interface DegradedSurface {
   surface: string
+  /** What the user calls the surface (the contract's `label`): the only name to show for it. */
+  label: string
   available: boolean
   floor: string
   backlog: number
@@ -468,6 +472,11 @@ export interface DurabilityJobResult {
 export interface DegradedReport {
   surfaces: DegradedSurface[]
   degraded: string[]
+  /** The last MEASURED connection of the instance chat is bound to — read from the gateway's
+   *  cache, never probed by this report — or `null` when nothing has been measured. `available`
+   *  on a surface only says a model RESOLVES, which makes no network call, so a bound provider
+   *  that is down still reads available there; this is the field that knows. */
+  chat_provider?: ChatProviderConnection | null
 }
 
 // Confirm-gated fixes + surfacing simulator.
@@ -564,12 +573,15 @@ export interface RemediationSnapshot {
   /** `blocked_by` is the actionable half of `reachable`: one sentence naming the missing
    *  prerequisite, produced by `Deficit.blocked_by` and non-empty exactly when `reachable`
    *  is false. Without it a surface can say no more than "not fixable yet", which reads as
-   *  "the system will get to it" for a deficit nothing will ever get to. */
-  deficits: { key: string; count: number; penalty: number; reachable: boolean; blocked_by: string }[]
+   *  "the system will get to it" for a deficit nothing will ever get to. `title` is the label
+   *  when the key is not one — a failed Doctor check (`check:<probe id>`) carries its probe's. */
+  deficits: { key: string; title: string; count: number; penalty: number; reachable: boolean; blocked_by: string }[]
   plan: RemediationJobRow[]
   recent_runs: RemediationRun[]
 }
 
+/** `state` is the channel's own answer — `ready`, `offline` (nothing to connect with) or `error` —
+ *  or `starting`, the gateway's while it starts the channel's receiver (then one of the three). */
 export interface ChannelHealth { state: string; detail?: string }
 export interface ChannelRuntime {
   name: string; display_name: string; connected: boolean
@@ -693,6 +705,11 @@ export interface AppPermissionsWire {
   // "declared, not yet in effect", never among the enforced bullets.
   backgroundTasks?: boolean
   eventSubscriptions?: string[]
+  // The owner's settings this app reads and writes through `/api/config` — exact dotted field
+  // paths (`voice.echo_filter_enabled`). Enforced: `GET /api/config/personalclaw` returns only
+  // these to the app, and a write to any other setting is refused 403 + SEL. A security setting
+  // can never be listed (the manifest fails to install). Absent = it reads and writes none.
+  config?: string[]
 }
 /** One declared proposal kind. `kind_suffix` is namespaced under the app at
  *  registration (`app:<name>` / `proposal:<suffix>`); `label` is what the user sees. */
@@ -791,6 +808,9 @@ export interface AppSummary {
    *  `providerType` alone cannot tell a chat model from a speech one (faster-whisper is `model` +
    *  `stt`). `[]` for an app that provides nothing. */
   providerCapabilities?: string[]
+  /** A multi-instance provider: it has NO app-level settings — its settings live on each of its
+   *  instances, which are added, edited, tested and removed in Settings → Providers. */
+  configuredPerInstance?: boolean
   permissions: AppPermissionsWire
   tags: string[]
   installedAt?: string; updatedAt?: string
@@ -833,6 +853,11 @@ export interface AppCronSummary {
 }
 /** One MCP server an app adds to the assistant's tools, and what it starts or connects to. */
 export interface AppMcpServer { name: string; launches: string }
+/** One provider module an app registers: what it provides, the `module:factory` entry point the
+ *  gateway loads, and whether it runs `in-process` (imported into the gateway) or as a `sidecar`. */
+export interface AppProviderModule { type: string; implementation: string; execution: string }
+/** One connector-pack parser: the source it parses for and the script the gateway runs. */
+export interface AppSourceParser { name: string; script: string }
 /** What installing an app GRANTS it and RUNS for it — `apps/disclosure.describe`, the one
  *  projection the Store card, the install review and the install gate all read. Every key is
  *  also an `AppCatalogEntry` field of the same name, so a card and the dialog cannot
@@ -845,10 +870,26 @@ export interface AppDisclosure {
   uiComponents: string
   /** Its own server process, started on install and kept running while it is enabled. */
   hasBackend: boolean
-  /** The shell command the install (or update) runs in the app's folder, verbatim; `''` for none. */
+  /** The sandbox tier that server launches inside; `''` when it runs on the host. */
+  backendSandbox: string
+  providers: AppProviderModule[]
+  /** The shell command each lifecycle hook runs in the app's folder, verbatim; `''` for none. */
   onInstall: string
   onUpdate: string
+  onEnable: string
+  onDisable: string
+  onUninstall: string
+  /** The `module:function` run by `personalclaw setup` / `personalclaw doctor`; `''` for none. */
+  cliSetup: string
+  cliDoctor: string
+  sources: AppSourceParser[]
   mcpServers: AppMcpServer[]
+  /** The skills it installs for your agents to follow, by the name each installs under. */
+  skills: string[]
+  /** Which of the above runs as you, and that the permissions do not bound it — composed
+   *  server-side from this same projection (`apps/disclosure._runs_as_you`) and shown verbatim.
+   *  `''` when the app brings no such code. */
+  runsAsYou: string
 }
 /** One declared `pythonDependencies` entry, classified server-side by
  *  `app_manager.describe_python_dependencies`.
@@ -904,9 +945,19 @@ export interface AppCatalogEntry {
   /** What the install RUNS beyond its grants — see `AppDisclosure`. Absent/empty for a
    *  registry pointer, whose manifest is read when the install is reviewed. */
   hasBackend?: boolean
+  backendSandbox?: string
+  providers?: AppProviderModule[]
   onInstall?: string
   onUpdate?: string
+  onEnable?: string
+  onDisable?: string
+  onUninstall?: string
+  cliSetup?: string
+  cliDoctor?: string
+  sources?: AppSourceParser[]
   mcpServers?: AppMcpServer[]
+  skills?: string[]
+  runsAsYou?: string
   // The declared quality bar, so a Store card can badge it BEFORE install.
   // `{}`/absent = declared nothing (also the case for a registry pointer whose
   // manifest hasn't been fetched) → no badges, which is honest either way.
@@ -1079,7 +1130,14 @@ export interface ChatSessionSummary {
   lifecycle?: 'active' | 'archived'
   last_activity_at?: number
   never_archive?: boolean
+  /** Which app started the conversation — absent on one of yours. `created_by_app` is the
+   *  app's id; `created_by_app_name` is the name install consent showed you, which a history
+   *  row prints as "Started by …". */
+  created_by_app?: string; created_by_app_name?: string
 }
+/** The two fields that say which app started a conversation, as the list and the detail send
+ *  them. */
+export type AppStarted = Pick<ChatSessionSummary, 'created_by_app' | 'created_by_app_name'>
 // ── Agent Rooms ─────────────────────────────────────────────────────────────────────────
 // A room is a persistent shared transcript plus a member list, where the human and N bound
 // agents deliberate. It is NOT a chat session: rooms live under `/api/rooms`, each member
@@ -1708,7 +1766,9 @@ export interface WorkflowNodeState {
   degraded_reason?: string
   // `retryable` is the engine's own verdict (`models.RETRYABLE_CLASSES`): whether a fresh attempt
   // could succeed with nothing changed — what decides whether a failed run offers Retry.
-  failure?: { class?: string; cause_plain?: string; remediation?: string; terminal_reason?: string; retryable?: boolean } | null
+  // `retry_at` (epoch seconds) is when that attempt can run: present only while the provider's
+  // circuit breaker is open, when an earlier Retry would be refused without a call.
+  failure?: { class?: string; cause_plain?: string; remediation?: string; terminal_reason?: string; retryable?: boolean; retry_at?: number } | null
   // Per-item foreach context: what a "[3/12] auth.py" row needs. Present only on an
   // iterated node — a fan-out of twelve otherwise renders as twelve rows distinguishable only
   // by an index suffix, which is useless for telling which item is stuck.
@@ -1735,6 +1795,9 @@ export interface WorkflowRunSummary {
 export interface WorkflowRunDetailData {
   run_id: string; workflow: string; status: WorkflowRunStatus; spec_version: number
   error?: string; attention?: Record<string, unknown> | null
+  /** EVERY escalation the run raised, oldest first (read from its ledger). `attention` is the one
+   *  current-decision slot, which each escalation overwrote. */
+  escalations?: Array<Record<string, unknown>>
   tokens?: number; elapsed_secs?: number
   // The containing project (empty when unscoped) — the run view scopes its per-project
   // judge-guidance control on this, since that guidance writes through the project and is
@@ -1900,8 +1963,9 @@ export interface WorkflowRunStats {
   // The run's OWN duration (the number the run header renders), not a span over its ledger.
   duration_secs: number
   // Latency to FIRST output, kept separate from total duration: one is what a watching user feels,
-  // the other is what a scheduler budgets, and a single "duration" would conflate them.
-  first_byte_ms: number
+  // the other is what a scheduler budgets, and a single "duration" would conflate them. `null`
+  // when no step produced output, which is not "0 ms". Whole-second resolution (journal stamps).
+  first_byte_ms: number | null
   models: string[]
   unverified_steps: number
   verification_debt: number
@@ -2344,10 +2408,36 @@ export interface AlwaysOnResponse {
   /** How a user opts a skill INTO the always-on tier — so an empty tier can explain itself. */
   always_skill_mechanism: string
 }
+/** How PersonalClaw reaches an MCP server: it starts a command (`stdio`), or connects to a URL over
+ *  Streamable HTTP (`http`) or the older HTTP+SSE transport (`sse`). */
+export type McpTransport = 'stdio' | 'http' | 'sse'
+/** A configured MCP server as `GET /api/mcp` lists it: its state and how it is reached, never its
+ *  definition — arguments and a URL can carry a token, and this list is kept in session storage.
+ *  The edit form reads one server's definition from `GET /api/mcp/servers/{name}`. */
 export interface McpServer {
-  name: string; command?: string; args?: string[]; status: string; tools: Array<string | { name: string; description?: string }>
-  error?: string; source?: string; enabled?: boolean; presence?: Record<string, boolean>
+  name: string; transport?: McpTransport; status: string; tools: Array<string | { name: string; description?: string }>
+  error?: string; source?: string; enabled?: boolean
 }
+/** One variable (or header) of a server: its NAME and whether it has a value — never the value,
+ *  which is that server's token. The import reads it server-side; the edit form keeps it by name. */
+export interface McpValuePresence { name: string; hasValue: boolean }
+/** One `env` variable as the edit form reads it (`GET /api/mcp/servers/{name}`). A plain one
+ *  carries its value; a stored one only says whether a value is saved, so a secret never makes
+ *  the round trip to the browser. */
+export type McpEnvEntry =
+  | { name: string; plain: true; value: string }
+  | { name: string; plain: false; hasValue: boolean }
+/** `GET /api/mcp/servers/{name}`: what the edit form needs, or why it cannot edit this server. A
+ *  server at a URL has its headers as names only: every header value is in the credential store. */
+export type McpServerDefinition =
+  | { name: string; editable: true; transport: 'stdio'; command: string; args: string[]; env: McpEnvEntry[] }
+  | { name: string; editable: true; transport: 'http' | 'sse'; url: string; headers: McpValuePresence[] }
+  | { name: string; editable: false; reason: string }
+/** `PUT /api/mcp/servers/{name}`: a server started with a command, or one at a URL. `keepEnv` and
+ *  `keepHeaders` name the values the edit form showed masked and the user left as they were. */
+export type McpServerSave =
+  | { transport?: 'stdio'; command: string; args?: string[]; env?: Record<string, string>; plainEnv?: string[]; keepEnv?: string[] }
+  | { transport: 'http' | 'sse'; url: string; headers?: Record<string, string>; keepHeaders?: string[] }
 /** P23d: the in-process MCP connection-pool observability snapshot (GET /api/mcp/pool-stats).
  *  `available:false` when the mcp SDK extra isn't installed (no pool exists). */
 export interface McpPoolStats {
@@ -2357,10 +2447,13 @@ export interface McpPoolStats {
   evicted?: number; reused?: number
 }
 /** An MCP server configured in an external backend (e.g. Claude Code) that
- *  isn't yet in PersonalClaw — offered as an import suggestion on the Tools page. */
+ *  isn't yet in PersonalClaw — offered as an import suggestion on the Tools page.
+ *  What the row shows and no credential: `command` is the program's name, and every credential in
+ *  `args` and `url` (a flag's value, a header, a URL's userinfo, query values and token-shaped path
+ *  segments) arrives as the mask. The import reads the whole definition server-side. */
 export interface ImportableMcpServer {
-  name: string; backend: string; command?: string; args?: string[]
-  env?: Record<string, string>; url?: string; headers?: Record<string, string>
+  name: string; backend: string; transport: McpTransport; command: string; args: string[]; url: string
+  env?: McpValuePresence[]; headers?: McpValuePresence[]
 }
 export interface ToolInvokeResult { ok: boolean; output?: string; error?: string }
 // `blocking` / `enforcement`: whether this hook's EVENT can short-circuit the loop, and
@@ -3906,7 +3999,7 @@ export type MemoryVaultMode = 'off' | 'mirror' | 'two_way'
  *  behaviour + vault fields ride the PUT on this same path, while `graph_topology_in_context`,
  *  `holder_attribution` and `slot_size_cap` ride the `_EDITABLE_CONFIG` PATCH — one writer
  *  each, never two. See `SettingsTab`'s `patch` vs `patchCfg`. */
-export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_mode?: MemoryVaultMode; vault_path?: string; graph_enabled?: boolean; push_context?: boolean; push_min_confidence?: number; graph_topology_in_context?: boolean; holder_attribution?: boolean; slot_size_cap?: number }
+export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_mode?: MemoryVaultMode; vault_path?: string; graph_enabled?: boolean; push_context?: boolean; push_min_confidence?: number; graph_topology_in_context?: boolean; holder_attribution?: boolean; slot_size_cap?: number; semantic_confidence_threshold?: number }
 
 // ── The triage digest ──
 
@@ -4551,9 +4644,32 @@ export interface DashboardStatus {
   stats?: SystemAgentStats
 }
 
+/** Whether a provider app can run on THIS machine, measured by the gateway in a child process
+ *  (`providers/availability.py`) and never on the request. `checking` = not measured yet (the
+ *  list answers at once rather than waiting); `unknown` = the check itself failed or did not
+ *  finish, which is not the app's "no" (`unavailable`). `checkedAt` is epoch seconds. */
+export interface ProviderAvailability {
+  state: 'checking' | 'available' | 'unavailable' | 'unknown'
+  reason: string
+  checkedAt: number | null
+}
+/** A model-provider instance's connection, MEASURED by its connection test
+ *  (`providers/connection.py`) — never inferred from whether a key is present. `checking` =
+ *  its first background test has not landed; `untestable` = its type has no test.
+ *  `rejected_credential` = the endpoint answered and refused the key (HTTP 401/403). */
+export interface ModelConnection {
+  state: 'checking' | 'connected' | 'failed' | 'untestable'
+  detail: string
+  rejected_credential: boolean
+  checked_at: number | null
+}
+/** The connection of the instance chat is bound to (`provider`), as last measured. */
+export interface ChatProviderConnection extends ModelConnection { provider: string }
 export interface SettingsProvider {
   name: string; displayName?: string; description?: string; version?: string; author?: string
-  enabled: boolean; error?: string; available?: boolean; unavailableReason?: string
+  enabled: boolean; error?: string
+  /** Absent only from a gateway that predates the availability board — read as available. */
+  availability?: ProviderAvailability
   // managed = a lifecycle app provider (installByDefault: install/uninstall is its
   // on/off). false = an always-on native built-in (mandatory, no toggle).
   managed?: boolean
@@ -4617,9 +4733,23 @@ export interface ProviderSchema { type?: string; properties?: Record<string, Pro
 // of bullets for editing. Per-instance, not per-response: a list carries N configs, so a
 // single top-level list could not say which instance a named field belongs to.
 export interface ProviderInstance { id: string; extension_name: string; display_name: string; config: Record<string, unknown>; enabled: boolean; _secret_set?: string[] }
-/** `stored_secrets` names the option fields (e.g. `api_key`) this instance keeps in the
- *  credential store — by name only. Deleting the instance deletes them. */
-export interface ModelProvider { name: string; type: string; model?: string; capabilities: string[]; credential_status: string; stored_secrets?: string[] }
+/** One configured model-provider instance (`config.json` `providers[]` — the one store chat
+ *  resolves). `options` are its settings with every secret MASKED; `secret_set` names the
+ *  secret settings that hold a value (so the editor can say "saved — leave blank to keep"
+ *  without being handed it). `stored_secrets` names the option fields (e.g. `api_key`) this
+ *  instance keeps in the credential store — by name only; deleting the instance deletes them.
+ *  `key_in_store` is true when it authenticates with a Settings → Secrets credential it
+ *  REFERENCES, which removing the instance leaves in place. */
+export interface ModelProvider {
+  name: string; type: string; model?: string; capabilities: string[]
+  /** The type it was created as (a branded alias survives here); `type` is the registry's. */
+  declared_type?: string
+  connection: ModelConnection
+  options?: Record<string, unknown>
+  secret_set?: string[]
+  stored_secrets?: string[]
+  key_in_store?: boolean
+}
 /** An installable model-provider type, from an installed model app's manifest.
  *  ``settingsSchema`` is JSON Schema (+ x-meta) describing the instance config
  *  form (api_key / region / endpoint enum / …). Drives the Add-instance dropdown.
@@ -4639,16 +4769,6 @@ export interface ModelProviderType {
 /** One provider option as it is SAVED: the settingsSchema's own JSON type, or `null` for an
  *  explicit "clear this stored field" (#3554). */
 export type ProviderOptionValue = string | number | boolean | null | unknown[] | Record<string, unknown>
-// Ollama model management (#48). Local = downloaded on the host; search = library candidates.
-export interface OllamaLocalModel {
-  name: string; size: number; size_human?: string; modified_at?: string
-  parameter_size?: string; quantization?: string; family?: string
-}
-export interface OllamaSearchResult { name: string; description?: string; pulls?: number; tags?: string[] }
-export interface OllamaModelInfo {
-  model: string; family?: string; parameter_size?: string; quantization?: string
-  format?: string; context_length?: number; capabilities?: string[]; license_short?: string; error?: string
-}
 // A registered Search provider (the Search entity) + its disclosed capabilities,
 // the unit you bind to a search use-case in Settings → Search.
 export interface SearchCapabilitiesInfo {
@@ -4725,14 +4845,18 @@ export interface HostModelFit {
 }
 export interface ProviderModels {
   name: string; displayName?: string; type: string; models: AvailableModel[]
+  /** Why this row lists nothing when it could not be listed — "models: []" alone means the
+   *  provider lists none. An instance whose last connection test failed is not asked again. */
   error?: string; searchable?: boolean; local?: boolean
+  /** A configured instance's measured connection (absent for a bundled provider). */
+  connection?: ModelConnection
   // Denormalized from the response top level, like `AvailableModel.host_fit`.
   host_fit?: HostModelFit
 }
 // The raw /api/models/available envelope. `fit` is absent on a host that predates LMMV-8's
 // budget probe, which reads as "unknown" everywhere downstream.
 export interface AvailableModelsResponse { providers: ProviderModels[]; fit?: HostModelFit }
-export interface ProviderTestResult { ok: boolean; status?: string; message: string }
+export interface ProviderTestResult { ok: boolean; status?: string; message: string; connection?: ModelConnection }
 // One HF-token cascade source's status (LMMV §5). The token VALUE never crosses the wire —
 // only `masked` (hf_…abcd). `active` marks the single winning source (first whoami-valid).
 export interface HfTokenSource {
@@ -4884,6 +5008,9 @@ export interface OnboardingState {
    *  Present whenever that model is not on disk, whatever else is set up — `needs_model` is
    *  what says whether anything answers. */
   chat_download_offer?: BundledModelOffer | null
+  /** The last MEASURED connection of the instance chat is bound to, or `null` when nothing has
+   *  been measured. Read from the gateway's cache — this route never probes the provider. */
+  chat_provider_connection?: ChatProviderConnection | null
   step?: OnboardingStep
   essentials?: OnboardingEssentials
   first_success?: { knowledge: boolean; trigger: boolean; loop: boolean }
@@ -6232,7 +6359,9 @@ export const api = {
     post<{ ok: boolean; code: string; action_type: string; demoted: boolean; detail?: string }>('/api/autonomy/undo', { id }),
 
   // ── Doctor: tiered read-only health probes ──
-  doctor: () => get<DoctorReport>('/api/doctor'),
+  /** `fresh` re-probes past the server's 30s cache — for the Doctor page's own Re-run and the
+   *  re-read after a Fix, where a cached report would show the verdict from before the repair. */
+  doctor: (fresh = false) => get<DoctorReport>(fresh ? '/api/doctor?fresh=1' : '/api/doctor'),
   doctorCapability: (capability: string) =>
     get<{ capability: string; ok: boolean; probes: DoctorProbe[]; unknown?: boolean }>(
       `/api/doctor/${encodeURIComponent(capability)}`,
@@ -6451,14 +6580,16 @@ export const api = {
    *  NAMES what was added — it was typed `number` here while the server has always answered
    *  with a list, so nothing could have rendered it (#344). `message` is the server-composed
    *  sentence; report it verbatim rather than re-deriving one from the arrays. */
-  syncAgents: () => post<{
+  // A file that would fold in a looser approval mode is asked about, in the gateway's words,
+  // before anything is written (`agents.api_personalclaw_agents_sync`).
+  syncAgents: () => withSecurityConsent((c) => post<{
     ok: boolean
     synced: string[]
     skipped: string[]
     unreadable: string[]
     scanned: number
     message: string
-  }>('/api/agents/sync'),
+  }>('/api/agents/sync', c ? { confirm: true } : undefined)),
 
   // ── Channels runtime (live connection health + connect/disconnect/test) ──
   channels: () => get<{ channels: ChannelRuntime[] }>('/api/channels').then((d) => d.channels),
@@ -6551,11 +6682,18 @@ export const api = {
   saveProviderConfig: (name: string, config: Record<string, unknown>) =>
     patch<{ config: Record<string, unknown> }>(`/api/providers/${encodeURIComponent(name)}/config`, config),
   enableProvider: (name: string) => post<{ enabled: boolean }>(`/api/providers/${encodeURIComponent(name)}/enable`),
+  // Measure again whether a provider can run here (answers 202 at once: the check runs in the
+  // gateway's availability child, and the card reads `checking` until the answer lands).
+  recheckProviderAvailability: (name: string) =>
+    post<{ name: string; availability: ProviderAvailability }>(`/api/providers/${encodeURIComponent(name)}/availability`),
   disableProvider: (name: string) => post<{ enabled: boolean }>(`/api/providers/${encodeURIComponent(name)}/disable`),
-  // agent runtimes (native + acp:<cli>) with readiness — merged onto agent cards.
-  // refresh=true forces a fresh readiness probe (post-sign-in / manual re-check),
-  // bypassing the 5-minute readiness cache.
-  agentRuntimes: (refresh = false) => get<{ agent_providers: AgentRuntime[] }>(`/api/agent-providers${refresh ? '?refresh=1' : ''}`).then((d) => d.agent_providers),
+  // agent runtimes (native + acp:<cli>) with readiness — merged onto agent cards. A plain read
+  // never spawns a runtime: it answers from the live connection or the last measurement, and a
+  // never-measured runtime reads `checking`. refresh=true measures now (post-sign-in / manual
+  // re-check); `runtime` scopes that to one runtime instead of every one.
+  agentRuntimes: (refresh = false, runtime = '') =>
+    get<{ agent_providers: AgentRuntime[] }>(`/api/agent-providers${refresh ? `?refresh=1${runtime ? `&runtime=${encodeURIComponent(runtime)}` : ''}` : ''}`)
+      .then((d) => d.agent_providers),
   // BYO runner catalog rows. A plain read returns the last PERSISTED evidence (no
   // spawns); probe=true re-measures every runner's `--version` handshake first, which
   // is what the panel's "Re-check runners" action calls.
@@ -6603,45 +6741,6 @@ export const api = {
   searchProviders: () => get<{ providers: SearchProviderInfo[] }>('/api/search/providers').then((d) => d.providers),
   searchActive: () => get<{ use_cases: Record<string, string[]> }>('/api/search/active').then((d) => d.use_cases),
   setActiveSearchProvider: (useCase: string, providers: string[]) => put<{ ok?: boolean }>(`/api/search/active/${encodeURIComponent(useCase)}`, { providers }),
-  // ── Ollama model management (first-class provider card, #48) ──
-  // Downloaded models on the provider's Ollama host (size + metadata).
-  ollamaModels: (provider: string) =>
-    get<{ models: OllamaLocalModel[]; error?: string }>(`/api/model-providers/${encodeURIComponent(provider)}/models`),
-  // Search the Ollama library (library:tag candidates to pull).
-  ollamaSearch: (provider: string, q: string) =>
-    get<{ results: OllamaSearchResult[]; error?: string }>(`/api/model-providers/${encodeURIComponent(provider)}/search?q=${encodeURIComponent(q)}`),
-  // Per-model metadata (family/params/quant/context) for an informed choice.
-  ollamaShow: (provider: string, model: string) =>
-    get<OllamaModelInfo>(`/api/model-providers/${encodeURIComponent(provider)}/show?model=${encodeURIComponent(model)}`),
-  // Delete a downloaded model to reclaim disk.
-  ollamaDeleteModel: (provider: string, model: string) =>
-    post<{ ok: boolean; model: string }>(`/api/model-providers/${encodeURIComponent(provider)}/models/delete`, { model }),
-  // Pull (download) an Ollama model via the named provider, streaming NDJSON
-  // progress frames ({status, completed?, total?} or {error}) to onFrame until
-  // the stream ends. Resolves when complete; rejects on transport error (#45).
-  // Pass an AbortSignal to let the user STOP the download: aborting the fetch
-  // closes the connection, which the backend detects and cancels the pull (#48).
-  pullOllamaModel: async (provider: string, model: string, onFrame: (f: Record<string, unknown>) => void, signal?: AbortSignal) => {
-    const r = await fetch(`/api/model-providers/${encodeURIComponent(provider)}/pull`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ model }), signal,
-    })
-    if (!r.ok || !r.body) throw new Error(await errText(r))
-    const reader = r.body.getReader()
-    const dec = new TextDecoder()
-    let buf = ''
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buf += dec.decode(value, { stream: true })
-      let nl: number
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, nl).trim()
-        buf = buf.slice(nl + 1)
-        if (line) { try { onFrame(JSON.parse(line)) } catch { /* skip partial */ } }
-      }
-    }
-    if (buf.trim()) { try { onFrame(JSON.parse(buf.trim())) } catch { /* ignore */ } }
-  },
   // Local downloadable models — ONE uniform provider-scoped surface for every local
   // provider (faster-whisper/piper/sentence-transformers/diarization/ollama). The
   // catalog comes from /api/models/available (per-provider `models`); these drive the
@@ -6837,7 +6936,12 @@ export const api = {
     natural_voice_effective?: boolean; natural_voice_source?: string
     /** The newest `chat_chunk.seq` these messages hold (read in the same step as them). A
      *  chat resuming the in-flight `streaming` partial drops chunks stamped at or below it. */
-    stream_seq?: number }>(`/api/chat/sessions/${encodeURIComponent(key)}`),
+    stream_seq?: number
+    /** Present only on a conversation an APP started. A turn in it runs under that app's
+     *  grant, whoever sends the message — your approval switches never reach it — and
+     *  `app_auto_approves` says which way that grant decides: `true` its tool calls run without
+     *  asking you, `false` they ask. */
+  } & AppStarted & { app_auto_approves?: boolean }>(`/api/chat/sessions/${encodeURIComponent(key)}`),
   deleteChatSession: (key: string) => del(`/api/chat/sessions/${encodeURIComponent(key)}`),
   /** Set the per-conversation natural-voice scope. `''` clears the override so
    *  the conversation inherits the bound agent's preference again. The response is the
@@ -7196,9 +7300,11 @@ export const api = {
     // Empty matches every app event — the catch-all, which is why AppEvent needs no second pattern.
     event_glob?: string
     max_fires?: number; action: { provider: string; config: Record<string, unknown> }
-  }) => post<Trigger & { warning?: string }>('/api/triggers', { trigger_type: 'event', ...body }),
+  }) => withSecurityConsent((c) => post<Trigger & { warning?: string }>('/api/triggers',
+    { trigger_type: 'event', ...body, ...(c ? { confirm: true } : {}) })),
   updateEventTrigger: (id: string, body: Record<string, unknown>) =>
-    put<{ ok: boolean; trigger: Trigger }>(`/api/triggers/event:${encodeURIComponent(id)}`, body),
+    withSecurityConsent((c) => put<{ ok: boolean; trigger: Trigger }>(
+      `/api/triggers/event:${encodeURIComponent(id)}`, c ? { ...body, confirm: true } : body)),
   deleteEventTrigger: (id: string) => del(`/api/triggers/event:${encodeURIComponent(id)}`),
   toggleEventTrigger: (id: string, enabled?: boolean) =>
     post<{ ok: boolean; trigger: Trigger }>(`/api/triggers/event:${encodeURIComponent(id)}/toggle`, enabled === undefined ? {} : { enabled }),
@@ -7212,10 +7318,15 @@ export const api = {
   // Schedule* components mutate by bare id, which the helpers re-namespace).
   schedules: () => get<{ triggers: Trigger[]; server_tz: string }>('/api/triggers?type=schedule')
     .then((d) => ({ jobs: d.triggers.map((t) => ({ ...t, id: t.raw_id })) as unknown as ScheduleJob[], server_tz: d.server_tz })),
+  // "Auto-approve tools" is an automation's approval posture: turning it on is asked for in the
+  // gateway's words, like a looser config field (`securityConsent.ts`).
   createSchedule: (body: Record<string, unknown>) =>
-    post<{ ok: boolean; trigger: Trigger }>('/api/triggers', { trigger_type: 'schedule', ..._scheduleBodyToWire(body) }),
+    withSecurityConsent((c) => post<{ ok: boolean; trigger: Trigger }>('/api/triggers',
+      { trigger_type: 'schedule', ..._scheduleBodyToWire(body), ...(c ? { confirm: true } : {}) })),
   updateSchedule: (id: string, body: Record<string, unknown>) =>
-    put<{ ok: boolean; trigger: Trigger }>(`/api/triggers/schedule:${encodeURIComponent(id)}`, _scheduleBodyToWire(body)),
+    withSecurityConsent((c) => put<{ ok: boolean; trigger: Trigger }>(
+      `/api/triggers/schedule:${encodeURIComponent(id)}`,
+      { ..._scheduleBodyToWire(body), ...(c ? { confirm: true } : {}) })),
   deleteSchedule: (id: string) => del(`/api/triggers/schedule:${encodeURIComponent(id)}`),
   runSchedule: (id: string, dryRun = false) =>
     post<TriggerRunResult>(`/api/triggers/schedule:${encodeURIComponent(id)}/run`, dryRun ? { dry_run: true } : undefined),
@@ -7510,15 +7621,32 @@ export const api = {
   // without re-probing the whole fleet.
   reconnectMcp: (name: string) => post<McpServer>(`/api/mcp/probe/${encodeURIComponent(name)}`),
   toggleAllMcp: (enabled: boolean) => post('/api/mcp/toggle-all', { enabled }),
-  // add/update an MCP server (stdio): writes ~/.personalclaw/mcp.json + enables.
-  addMcpServer: (name: string, body: { command: string; args?: string[]; env?: Record<string, string> }) =>
+  // Add or edit an MCP server — a command or a URL, the one write path for both: writes
+  // ~/.personalclaw/mcp.json and rebuilds the agent config. Every `env` value is kept in the credential
+  // store (mcp.json holds a reference) except the variables `plainEnv` names, which stay in the file as
+  // settings; every header value is kept there too. `keepEnv` / `keepHeaders` name values whose saved
+  // value stays as it is: the edit form sends a secret it only showed masked this way, so the value
+  // never comes to the browser and back.
+  saveMcpServer: (name: string, body: McpServerSave) =>
     put<{ ok?: boolean; name: string }>(`/api/mcp/servers/${encodeURIComponent(name)}`, body),
+  // What the edit form reads: names, plain values, and for a stored value only whether one is saved.
+  mcpServerDefinition: (name: string) => get<McpServerDefinition>(`/api/mcp/servers/${encodeURIComponent(name)}`),
+  // Removes the server from mcp.json AND the agent config, and deletes the values it owns in the
+  // credential store. Never another tool's config.
   removeMcpServer: (name: string) => del(`/api/mcp/servers/${encodeURIComponent(name)}`),
   // Servers configured in an external backend (Claude Code) not yet in PClaw.
   importableMcp: () => get<{ servers: ImportableMcpServer[] }>('/api/mcp/importable').then((r) => r.servers),
-  // Import a discovered server into ~/.personalclaw/mcp.json (PClaw scope).
-  importMcpServer: (name: string) =>
-    post('/api/mcp/apply', { changes: [{ name, personalclaw: true, globalMcp: false, ccGlobal: true }] }),
+  // Import a discovered server into ~/.personalclaw/mcp.json. The gateway copies it from Claude Code's
+  // own file, values included (stored in the credential store), and leaves that file as it is. The
+  // route answers 200 for a batch, so a change that did not land carries an `error` — thrown here, so
+  // `reportingWrite` reports both failure shapes.
+  importMcpServer: async (name: string) => {
+    const r = await post<{ results?: Array<{ name?: string; error?: string }> }>(
+      '/api/mcp/apply', { changes: [{ name, personalclaw: true, ccGlobal: true }] })
+    const failed = r.results?.find((c) => c.error)
+    if (failed?.error) throw new Error(failed.error)
+    return r
+  },
 
   // system / auth (shell status)
   system: () => get<SystemInfo>('/api/system'),
@@ -7546,16 +7674,18 @@ export const api = {
   hooks: () => get<{ triggers: Trigger[] }>('/api/triggers?type=lifecycle').then((d) => d.triggers.map(_triggerToHook)),
   actionProviders: () => get<{ providers: ActionProvider[] }>('/api/action-providers').then((d) => d.providers),
   createHook: (body: Record<string, unknown>) =>
-    post<{ ok: boolean; trigger: Trigger }>('/api/triggers', {
+    withSecurityConsent((c) => post<{ ok: boolean; trigger: Trigger }>('/api/triggers', {
       trigger_type: 'lifecycle', name: body.name, event: body.event, matcher: body.matcher,
       action: { provider: body.provider, config: body.provider_config ?? {} },
-    }).then((r) => ({ ok: r.ok, hook: _triggerToHook(r.trigger) })),
+      ...(c ? { confirm: true } : {}),
+    })).then((r) => ({ ok: r.ok, hook: _triggerToHook(r.trigger) })),
   updateHook: (id: string, body: Record<string, unknown>) =>
-    put<{ ok: boolean; trigger: Trigger }>(`/api/triggers/lifecycle:${encodeURIComponent(id)}`,
-      'provider' in body || 'provider_config' in body
+    withSecurityConsent((c) => put<{ ok: boolean; trigger: Trigger }>(`/api/triggers/lifecycle:${encodeURIComponent(id)}`, {
+      ...('provider' in body || 'provider_config' in body
         ? { ...body, action: { provider: body.provider, config: body.provider_config ?? {} } }
-        : body,
-    ).then((r) => ({ ok: r.ok, hook: _triggerToHook(r.trigger) })),
+        : body),
+      ...(c ? { confirm: true } : {}),
+    })).then((r) => ({ ok: r.ok, hook: _triggerToHook(r.trigger) })),
   deleteHook: (id: string) => del(`/api/triggers/lifecycle:${encodeURIComponent(id)}`),
   toggleHook: (id: string) => post(`/api/triggers/lifecycle:${encodeURIComponent(id)}/toggle`, {}),
   testHook: (id: string, context?: string) => post<{ ok: boolean; result: { stdout: string; stderr: string; exit_code: number; error: string; duration_ms: number } }>(`/api/triggers/lifecycle:${encodeURIComponent(id)}/test`, { context: context ?? 'test' }),
@@ -8261,7 +8391,10 @@ export const api = {
   workflowDef: (name: string) =>
     get<{ definition: WorkflowDef; provider: string }>(`/api/workflows/${encodeURIComponent(name)}`),
   saveWorkflowDef: (body: { name: string; root: WorkflowNode; description?: string; inputs?: Record<string, unknown>; tags?: string[]; metadata?: Record<string, unknown>; save?: boolean }) =>
-    post<{ saved: boolean; definition?: WorkflowDef; valid: boolean; issues: Array<{ code: string; message: string; path?: string; severity?: string }>; levels?: string[][] }>('/api/workflows', body),
+    // A step whose agent approves its own tool calls (or holds the write grant) is asked for
+    // when a save loosens it; a dry run (`save: false`) writes nothing and is never asked.
+    withSecurityConsent((c) => post<{ saved: boolean; definition?: WorkflowDef; valid: boolean; issues: Array<{ code: string; message: string; path?: string; severity?: string }>; levels?: string[][] }>('/api/workflows',
+      c ? { ...body, confirm: true } : body)),
   // Publish/unpublish one template as an A2A skill. Its own route, not a
   // field on `saveWorkflowDef`: this page holds the secret-stripped def, and re-saving that to
   // carry one bool would persist the stripped bindings.
@@ -8310,8 +8443,8 @@ export const api = {
    *  revert a live edit), and an unknown knob is a 400 `unknown_policy_key` naming the
    *  offending keys and the overridable set. */
   setWorkflowRunPolicyOverrides: (id: string, overrides: Record<string, unknown>) =>
-    put<{ run_id: string; status: string; policy_overrides: Record<string, unknown> }>(
-      `/api/workflows/runs/${encodeURIComponent(id)}/policy-overrides`, overrides),
+    withSecurityConsent((c) => put<{ run_id: string; status: string; policy_overrides: Record<string, unknown> }>(
+      `/api/workflows/runs/${encodeURIComponent(id)}/policy-overrides`, c ? { ...overrides, confirm: true } : overrides)),
   /** Resolve a pending confirmation by VERB — the backend the DagView's Approve/Deny binds to.
    *  Separate from `resumeWorkflowRun` because the verb vocabulary is the point: an unknown verb is
    *  REFUSED server-side rather than treated as a reject, so a typo cannot silently decline work the

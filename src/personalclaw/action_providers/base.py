@@ -87,6 +87,18 @@ class ActionResult:
     # offering an undo: `guardrails.rungs.record_reversal` skips the notification
     # entirely rather than promise a reversal that cannot happen.
     reversal: str = ""
+    # Why a FAILED action failed, decided by the provider that saw the cause, in the workflow
+    # failure vocabulary: "user" (a config or input the user must change), "permission" (a
+    # credential), "network", "transient" (5xx, a rate limit, a provider slow to answer),
+    # "timeout", "budget", "protocol", "internal". Only "network" and "transient" offer Retry,
+    # so this is what decides whether a run page offers one. Empty = the provider did not say:
+    # the engine reads `error` through the same taxonomy's text rules and never assumes a retry
+    # can help (`workflows.failure_taxonomy.classify_action_result`). The fix sentence — what to
+    # change and where — rides on `agent_error.fix`.
+    failure_class: str = ""
+    # Seconds until a retry can run, for a failure a retry clears only after a wait: a model
+    # provider's open circuit breaker refuses every call until it lapses. 0 = no wait known.
+    retry_after: float = 0.0
 
 
 def provider_failure(provider_name: str, exc: BaseException) -> AgentError:

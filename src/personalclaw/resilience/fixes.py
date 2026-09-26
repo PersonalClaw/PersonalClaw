@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
+from personalclaw.resilience.doctor import MEMORY_INDEX_FIX
+
 logger = logging.getLogger(__name__)
 
 
@@ -236,6 +238,78 @@ def _active_models_prune_apply() -> str:
     return "Persisted the pruned active-model bindings (removed-provider refs dropped)."
 
 
+def _memory_index_preview() -> str:
+    from personalclaw.config.loader import config_dir
+    from personalclaw.resilience.doctor import memory_index_gaps
+
+    ev = memory_index_gaps(config_dir())
+    if not ev.get("db_present"):
+        return "There is no memory.db yet, so there is nothing to index."
+    if not ev.get("faiss_available"):
+        return "faiss is not installed, so there is no index to rebuild."
+    other = ev["other_model"]
+    preview = (
+        f"Would rebuild the search index from the memories embedded by the current model; it "
+        f"holds {ev['faiss_ids']} of {ev['embedded_count']} now."
+    )
+    if other:
+        preview = (
+            f"Would first re-embed the {other} memor{'y' if other == 1 else 'ies'} a different "
+            "embedding model wrote, with the model bound now (one embedding each), then rebuild "
+            f"the search index; it holds {ev['faiss_ids']} of {ev['embedded_count']} now."
+        )
+    return preview
+
+
+def rebuild_memory_index(*, reembed: bool = True) -> str:
+    """Rebuild the faiss index semantic recall reads, from the vectors memory.db already holds.
+
+    Acts on THE index recall uses — the store the gateway registered — so a Fix pressed on the
+    Doctor page repairs the running gateway's recall, not a copy of it; with no live store in this
+    process (the CLI) it opens the home's database, whose open rebuilds and saves the file.
+
+    ``reembed`` (the Doctor's Fix, which the user confirms) first re-embeds the memories another
+    model wrote, which a rebuild alone can never index; the maintenance job passes False, so an
+    unattended pass never spends an embedding call and only rebuilds the derived index.
+    """
+    from personalclaw.config.loader import config_dir
+    from personalclaw.vector_memory import VectorMemoryStore, faiss_available, recall_store
+
+    if not faiss_available():
+        raise RuntimeError("faiss is not installed, so there is no index to rebuild")
+    db = config_dir() / "memory.db"
+    store = recall_store(db)
+    opened = store is None
+    if store is None:
+        store = VectorMemoryStore(db_path=db)
+        store.init()
+    try:
+        redone = store.reembed_other_model() if reembed else None
+        res = store.rebuild_faiss_index()
+    finally:
+        if opened:
+            store.close()
+    msg = (
+        f"Rebuilt the memory search index: {res['indexed']} of {res['embedded']} embedded "
+        "memories indexed."
+    )
+    if redone and redone["reembedded"]:
+        msg = f"Re-embedded {redone['reembedded']} memories another embedding model wrote. " + msg
+    if res["other_model"]:
+        why = (
+            "no embedding model answered, so they could not be re-embedded — bind one in "
+            "Settings → Models, which re-embeds every memory"
+            if reembed
+            else "a rebuild cannot index them; the Doctor's Fix re-embeds them"
+        )
+        msg += f" {res['other_model']} still came from a different embedding model: {why}."
+    return msg
+
+
+def _rebuild_memory_index_fix() -> str:
+    return rebuild_memory_index(reembed=True)
+
+
 def _register_builtin_fixes() -> None:
     register_fix(
         Fix(
@@ -265,6 +339,18 @@ def _register_builtin_fixes() -> None:
             "does on read, so stale bindings stop being silently ignored.",
             dry_preview=_active_models_prune_preview,
             apply=_active_models_prune_apply,
+        )
+    )
+    register_fix(
+        Fix(
+            id=MEMORY_INDEX_FIX,
+            title="Rebuild the memory search index",
+            impact="Rebuilds the faiss index semantic recall reads from the vectors already "
+            "stored in memory.db, at the width the current embedding model produces, and saves "
+            "it. Memories a different embedding model wrote are re-embedded first with the model "
+            "bound now. What your memories say is not changed.",
+            dry_preview=_memory_index_preview,
+            apply=_rebuild_memory_index_fix,
         )
     )
 

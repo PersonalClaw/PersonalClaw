@@ -401,14 +401,77 @@ def _dotenv_remove_credentials(keys: Iterable[str]) -> list[str]:
     return removed
 
 
+#: What a value written after ``KEY=`` may not contain, start with, or end with and still be
+#: read back as itself by BOTH readers of this file: :func:`_dotenv_credentials`, and
+#: python-dotenv, which ``personalclaw``'s CLI loads the same file with at startup
+#: (``cli.main``). A newline would end the line, surrounding whitespace is stripped, a leading
+#: quote starts python-dotenv's quoted form, and ``#`` after whitespace starts its comment.
+_DOTENV_ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r"}
+_DOTENV_UNESCAPES = {
+    "\\": "\\",
+    "'": "'",
+    '"': '"',
+    "a": "\a",
+    "b": "\b",
+    "f": "\f",
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+    "v": "\v",
+}
+
+
+def _encode_dotenv_value(value: str) -> str:
+    """``value`` as it is written after ``KEY=``.
+
+    Verbatim when a line holds it faithfully, which is every value this file held before, so an
+    existing ``.env`` is unchanged. Otherwise double-quoted with backslash escapes: a PEM key or a
+    service-account JSON is one line in the file and exactly itself when read.
+    """
+    if (
+        value == value.strip()
+        and not value.startswith(("'", '"'))
+        and not any(ch in value for ch in "\n\r#")
+    ):
+        return value
+    return '"' + "".join(_DOTENV_ESCAPES.get(ch, ch) for ch in value) + '"'
+
+
+def _decode_dotenv_value(raw: str) -> str:
+    """The value a ``KEY=`` line holds (``raw`` is the part after ``=``, stripped).
+
+    The double-quoted form is python-dotenv's, decoded with its escapes, so the credential store
+    and the CLI's loader read one string. Anything else is taken verbatim, as it always was,
+    including a quote that does not close.
+    """
+    if len(raw) < 2 or raw[0] != '"' or raw[-1] != '"':
+        return raw
+    out: list[str] = []
+    body = raw[1:-1]
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if ch == '"':
+            return raw  # an unescaped quote inside: not the quoted form
+        if ch == "\\" and i + 1 < len(body) and body[i + 1] in _DOTENV_UNESCAPES:
+            out.append(_DOTENV_UNESCAPES[body[i + 1]])
+            i += 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _dotenv_save_credential(key: str, value: str) -> None:
     """Upsert ``KEY=VALUE`` into ``~/.personalclaw/.env`` at mode 0600.
 
     Preserves other lines and comments. 0600 is the floor this backend exists to
-    hold — do not relax it.
+    hold — do not relax it. One line per credential, whatever the value holds
+    (:func:`_encode_dotenv_value`).
     """
     ep = _loader.env_path()
     ep.parent.mkdir(parents=True, exist_ok=True)
+    entry = f"{key}={_encode_dotenv_value(value)}"
     lines: list[str] = []
     found = False
     if ep.exists():
@@ -417,12 +480,12 @@ def _dotenv_save_credential(key: str, value: str) -> None:
             if stripped and not stripped.startswith("#") and "=" in stripped:
                 k = stripped.split("=", 1)[0].strip()
                 if k == key:
-                    lines.append(f"{key}={value}")
+                    lines.append(entry)
                     found = True
                     continue
             lines.append(line)
     if not found:
-        lines.append(f"{key}={value}")
+        lines.append(entry)
     # `atomic_write(mode=0o600)`, not write_text-then-chmod. Two defects in that pair:
     #
     #  • A CREATION WINDOW. `write_text` creates the file at the umask default (0644 under the
@@ -458,7 +521,7 @@ def _dotenv_credentials() -> dict[str, str]:
             continue
         if "=" in line:
             k, v = line.split("=", 1)
-            creds[k.strip()] = v.strip()
+            creds[k.strip()] = _decode_dotenv_value(v.strip())
     return creds
 
 
@@ -557,3 +620,35 @@ def delete_credential(key: str) -> bool:
     _dotenv_remove_credentials([key])
     os.environ.pop(key, None)
     return existed
+
+
+def owner_id_credential(provider: str) -> str:
+    """The credential key a channel keeps its owner's user id under.
+
+    ``PERSONALCLAW_OWNER_ID_<PROVIDER>`` — one key per channel, named by the channel's provider
+    key (the string it passes to ``deliver_channel_inbound`` and the trust seam: ``slack``,
+    ``telegram``). Slack, Telegram and Discord all wrote the ONE key ``PERSONALCLAW_OWNER_ID``,
+    so setting up a second channel overwrote the first one's owner with an id from another
+    platform, and an owner notification could go through one channel addressed to a user of
+    another.
+    """
+    slug = "".join(ch if ch.isalnum() else "_" for ch in provider.strip()).strip("_").upper()
+    if not slug:
+        raise ValueError("a channel's owner id is keyed by its provider name, which is empty")
+    return f"{_loader.CRED_OWNER_ID}_{slug}"
+
+
+def owner_id_for(provider: str) -> str:
+    """The owner's user id on ``provider``'s channel, or ``""`` when none is known.
+
+    The channel's own key first. Then the one shared key the channels used before each had its
+    own: it is what an app that still writes ``CRED_OWNER_ID`` stored, so reading it here keeps
+    that channel's owner where it was. Each key is looked up in the environment first (a
+    container passes it that way), then in the store — the precedence ``load_credentials``
+    gives every named credential.
+    """
+    for key in (owner_id_credential(provider), _loader.CRED_OWNER_ID):
+        value = os.environ.get(key) or get_credential(key)
+        if value:
+            return value
+    return ""

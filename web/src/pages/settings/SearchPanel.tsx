@@ -8,6 +8,7 @@ import { DisclosureCard } from '../../ui/DisclosureCard'
 import { StatusPill } from '../../ui/StatusPill'
 import { TextLink } from '../../ui/TextLink'
 import { hasSearchTool, SEARCH_TOOL, SEARCH_TOOL_APP } from './searchTool'
+import { InlineError } from '../../ui/InlineError'
 
 // Canonical search use-cases (matches the backend SEARCH_USE_CASES). Single-select:
 // one provider per use-case; an unbound one falls back to the general binding.
@@ -47,7 +48,10 @@ export function SearchPanel() {
       // registered providers to go install their first one, and pointed them at the Store to do
       // it. The rejection has to reach the hook for the panel to be able to say otherwise.
       api.searchProviders(),
-      api.searchActive().catch(() => ({} as Record<string, string[]>)),
+      // `null`, NOT `{}`, on failure — the same reasoning as the tools probe below, for a louder
+      // claim: `{}` made every use case read "none — falls back to General" and offered its
+      // providers to pick, as if nothing were bound. Unread bindings are said as unread.
+      api.searchActive().catch(() => null),
       // `null`, NOT `[]`, on failure: "no tools came back" and "the tool list says there is
       // no web_search" are different claims, and only the second one may accuse the user of a
       // missing app. An unreachable /api/tools renders no note rather than a false one.
@@ -56,7 +60,8 @@ export function SearchPanel() {
     return { providers, active, tools }
   }, { persist: true })
   const providers = data?.providers
-  const active = data?.active ?? {}
+  /** `null` = the bindings could not be read (the rows below are replaced, not guessed). */
+  const active = data?.active ?? null
   const tools = data?.tools ?? null
   // Registered-but-no-tool is the whole gap. Registered (not "bound") is the right left-hand
   // side because the registry's implicit fallback searches over ANY registered provider when a
@@ -92,9 +97,11 @@ export function SearchPanel() {
             Binding a provider here is not enough on its own: the agent has no <code className="text-on-surface">{SEARCH_TOOL}</code> tool yet, so a chat turn cannot search. It ships in the <span className="text-on-surface">{SEARCH_TOOL_APP.label}</span> app — <TextLink href={SEARCH_TOOL_APP_HREF} ink="emphasis" className="underline">install it from the Store</TextLink>.
           </div>
         )}
-        {USE_CASE_ORDER.map((uc) => (
-          <UseCaseRow key={uc} useCase={uc} activeProviders={active[uc] ?? []} providers={providers} onChanged={reloadActive} />
-        ))}
+        {active === null
+          ? <InlineError icon onRetry={refresh}>Couldn't read which provider each use case is bound to, so none can be changed until a retry succeeds.</InlineError>
+          : USE_CASE_ORDER.map((uc) => (
+            <UseCaseRow key={uc} useCase={uc} activeProviders={active[uc] ?? []} providers={providers} onChanged={reloadActive} />
+          ))}
       </Section>
     </div>
   )

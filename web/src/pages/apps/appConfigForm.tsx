@@ -132,10 +132,12 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [], requ
   // action-config form already uses (`ActionConfig.tsx`) plus `aria-required` on the control, so
   // the affordance is not colour- or glyph-only.
   required?: readonly string[]
-  // Names of sensitive fields that already have a stored secret (from the config
-  // GET's `_secret_set`). Such fields are WRITE-ONLY: the backend never sends the
-  // real value, so the input starts blank with a "saved — leave blank to keep"
-  // placeholder; typing a new value replaces the secret, blank keeps it (#43).
+  // Names of fields that already have a stored secret (from the config GET's
+  // `_secret_set`). Such fields are WRITE-ONLY: the backend never sends the real value,
+  // so the input starts blank with a "saved — leave blank to keep" placeholder; typing a
+  // new value replaces the secret, blank keeps it (#43). The backend's list, not the
+  // schema's `sensitive` flag, decides: it also names a field whose stored value is a
+  // credential-store reference the schema never declared (a credential-named field).
   secretSet?: string[]
 }) {
   const needsPrompt = Object.values(props).some((p) => p['x-meta']?.widget === 'prompt')
@@ -146,7 +148,7 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [], requ
         const label = (meta.label || key) + (isRequired ? ' *' : '')
         const v = cur[key]
         const fieldId = `app-cfg-${appName}-${key}`
-        const secretAlreadySet = !!meta.sensitive && secretSet.includes(key)
+        const secretAlreadySet = secretSet.includes(key)
         if (meta.widget && widgets[meta.widget]) {
           return (
             <SchemaField
@@ -195,7 +197,7 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [], requ
               // does, so the two never diverge.
               aria-label={label}
               aria-required={isRequired || undefined}
-              type={meta.sensitive ? 'password' : isNum ? 'number' : 'text'}
+              type={meta.sensitive || secretAlreadySet ? 'password' : isNum ? 'number' : 'text'}
               placeholder={secretAlreadySet ? 'saved — leave blank to keep' : undefined}
               // #616: a manifest's declared bounds reach the browser as native
               // constraint attributes, so the form hints/rejects before the

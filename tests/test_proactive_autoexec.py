@@ -34,7 +34,7 @@ from typing import Any
 
 import pytest
 
-from personalclaw.inbox import InboxItem, InboxState, InboxStore, ItemStatus
+from personalclaw.inbox import InboxItem, InboxState, InboxStore, ItemStatus, set_item_status
 from personalclaw.proactive.autoexec import (
     AUTO_CAPABLE_PROVIDERS,
     PROVIDER_FOR_ACTION,
@@ -448,7 +448,8 @@ class TestTheOperations:
             {"op": "archive", "item_id": "C1_100.5"}, ActionContext(event="t")
         )
         # The user dismissed it themselves after the auto-archive.
-        state._inbox_svc.inbox.update("C1_100.5", status=ItemStatus.DISMISSED.value)
+        store = state._inbox_svc.inbox
+        set_item_status(None, store, [store.items["C1_100.5"]], ItemStatus.DISMISSED)
 
         undo = await provider.reverse(archived.reversal)
         assert undo.success is False

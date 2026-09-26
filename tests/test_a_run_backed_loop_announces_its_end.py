@@ -146,7 +146,7 @@ class _Subagents:
     def get(self, agent_id: str) -> _Info | None:
         return self.infos.get(agent_id)
 
-    async def cancel(self, agent_id: str) -> bool:  # pragma: no cover
+    async def cancel(self, agent_id: str, *, reason: str = "") -> bool:  # pragma: no cover
         return False
 
 

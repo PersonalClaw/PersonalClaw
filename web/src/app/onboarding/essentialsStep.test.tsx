@@ -129,6 +129,8 @@ function reviewOf(source: string, over: Partial<AppInstallResult> = {}): AppInst
       permissions: e.permissions ?? {},
       crons: (e.crons ?? []).map((c) => ({ ...c, scheduled: Boolean(e.permissions?.cron) })),
       pythonDependencies: [], hasUI: false, uiComponents: '', hasBackend: false, onInstall: '', onUpdate: '', mcpServers: [],
+    backendSandbox: '', providers: [], onEnable: '', onDisable: '', onUninstall: '',
+    cliSetup: '', cliDoctor: '', sources: [], skills: [], runsAsYou: '',
     },
     ...over,
   }

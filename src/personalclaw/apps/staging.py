@@ -11,6 +11,11 @@ at the source saw only a link. This module never reads through a link.
 The policy is an allowlist, checked over the WHOLE tree before a single byte is written
 (:func:`survey`), and the copy (:meth:`Survey.copy_to`) writes exactly what was checked:
 
+* **Tooling is not the app.** An entry named in ``supply_chain.NEVER_INSTALLED_NAMES`` —
+  ``.git``, ``__pycache__``, a virtualenv — is left out at any depth, and nothing inside it
+  is read. So it is not scanned, not in the consent digest and not installed, and a link
+  that resolves into one leads to something the app does not contain. Everything else,
+  ``node_modules`` included, is the app, and the scan reads all of it.
 * **Files, folders and links — nothing else.** A named pipe, a socket or a device file is
   refused: copying one blocks, fails, or reads bytes that are not the bundle's.
 * **No hard link out.** A regular file whose inode also has a name outside the bundle IS
@@ -34,6 +39,7 @@ with a sentence naming the offending path; nothing is written.
 from __future__ import annotations
 
 import errno
+import logging
 import os
 import shutil
 import stat
@@ -41,6 +47,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from personalclaw.apps.manager import INSTALLED_META_FILENAME
+from personalclaw.supply_chain import never_installed
+
+logger = logging.getLogger(__name__)
 
 #: The folder a confined app writes (``apps/manager.app_data_dir``).
 _DATA = "data"
@@ -123,7 +132,13 @@ def survey(src: Path) -> Survey:
     top = os.lstat(root)
     if not stat.S_ISDIR(top.st_mode):
         raise UnsafeBundleError(f"{str(src)!r} is not a folder.")
-    found = _walk(root)
+    found, left_out = _walk(root)
+    if left_out:
+        logger.info(
+            "staging %s: not installing %s — tooling that is never part of an app",
+            root.name,
+            ", ".join(_path(rel) for rel in left_out),
+        )
     names_per_inode: dict[tuple[int, int], int] = {}
     for _rel, st in found:
         if stat.S_ISREG(st.st_mode):
@@ -152,9 +167,14 @@ def survey(src: Path) -> Survey:
     return Survey(root=root, entries=tuple(entries))
 
 
-def _walk(root: Path) -> list[tuple[tuple[str, ...], os.stat_result]]:
-    """Every entry under ``root``, ``lstat``-ed (a link is the link), in path order."""
+def _walk(
+    root: Path,
+) -> tuple[list[tuple[tuple[str, ...], os.stat_result]], list[tuple[str, ...]]]:
+    """Every entry under ``root``, ``lstat``-ed (a link is the link), in path order — and,
+    apart, the entries left out as tooling (:func:`~personalclaw.supply_chain.never_installed`),
+    which are neither recorded nor descended into."""
     found: list[tuple[tuple[str, ...], os.stat_result]] = []
+    left_out: list[tuple[str, ...]] = []
     pending: list[tuple[str, ...]] = [()]
     while pending:
         folder = pending.pop()
@@ -162,11 +182,14 @@ def _walk(root: Path) -> list[tuple[tuple[str, ...], os.stat_result]]:
             children = [(e.name, e.stat(follow_symlinks=False)) for e in it]
         for name, st in children:
             rel = (*folder, name)
+            if never_installed(name):
+                left_out.append(rel)
+                continue
             found.append((rel, st))
             if stat.S_ISDIR(st.st_mode):
                 pending.append(rel)
     found.sort(key=lambda item: item[0])
-    return found
+    return found, sorted(left_out)
 
 
 def _check_link(root: Path, rel: tuple[str, ...], text: str) -> None:
@@ -204,6 +227,10 @@ def _check_link(root: Path, rel: tuple[str, ...], text: str) -> None:
                 raise _refusal("outside", rel, via, shown)
             here.pop()
         else:
+            if never_installed(part):
+                # Present in the source but never installed, so once installed the link
+                # names something the app does not contain — which a hook could fill later.
+                raise crossed or _refusal("missing", rel, via, shown)
             full = root.joinpath(*here, part)
             try:
                 st = os.lstat(full)

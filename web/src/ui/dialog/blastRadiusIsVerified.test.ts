@@ -464,19 +464,6 @@ describe('four more bodies, all already true — pinned so they stay that way', 
     expect(pyMethod(py('skills/loader.py'), '    def delete_skill'), 'rmtree, not a registry flag')
       .toMatch(/shutil\.rmtree\(skill_dir\)/)
   })
-
-  it('the Ollama delete really reaches the host — across the app boundary', () => {
-    // 🪤 A CROSS-REPO CLAIM, and the reason it is worth pinning: nothing in core implements this. The
-    // handler calls `catalog.delete_model`, and the only implementation lives in the REMOVABLE
-    // `ollama-models` app bundle, which is exactly where provider logic is supposed to live. A grep of
-    // core alone says the promise is unimplemented; it is not.
-    expect(web('pages/settings/OllamaModelManager.tsx')).toContain(
-      "This frees disk on the Ollama host and can't be undone.",
-    )
-    const h = py('dashboard/handlers/providers.py')
-    expect(h, 'core delegates to the catalog').toMatch(/await catalog\.delete_model\(model\)/)
-    expect(h, 'and only for a provider whose catalog can do it').toMatch(/isinstance\(catalog, ModelManager\)/)
-  })
 })
 
 describe('the stop-project dialog, and the file delete', () => {
@@ -603,8 +590,9 @@ describe('the last three bodies, and what this sweep does NOT claim', () => {
     //                      surviving sibling instance keeps the name known and the ref lingers instead.
     //                      Either outcome deserves copy — but which one it is needs tracing that ref
     //                      format end to end, not a plausible sentence.
-    //   LocalModelManager  its sibling (Ollama) says "This frees disk on the Ollama host"; this one says
-    //                      nothing about disk. The delete delegates through `local_models.registry` to a
+    //   LocalModelManager  says nothing about disk — and it is now the Ollama card too (the separate
+    //                      Ollama manager that said "This frees disk on the Ollama host" was unreachable
+    //                      and is gone). The delete delegates through `local_models.registry` to a
     //                      runtime manager that lives outside core, so the disk claim is not core's to
     //                      make until that manager is read.
     //
@@ -625,7 +613,7 @@ describe('three more bodies, checked against their handlers', () => {
     const ui = web('pages/settings/ModelBackends.tsx')
     expect(ui, 'the clause exists').toContain('Any use case set to one of its models loses that selection.')
     expect(ui, 'and the body composes it').toMatch(
-      /body: `Models it provides will no longer be available\.\$\{selections\}\$\{key\}`/,
+      /body: `Models it provides will no longer be available\.\$\{selections\}\$\{key\}\$\{referenced\}`/,
     )
     const h = py('dashboard/handlers/providers.py')
     const del = h.slice(h.indexOf('async def api_provider_delete'), h.indexOf('async def api_provider_test'))
@@ -641,6 +629,13 @@ describe('three more bodies, checked against their handlers', () => {
       /const saved = provider\.stored_secrets\?\.length \?\? 0/,
     )
     expect(ui).toContain(' The key saved for it is deleted too.')
+    // …and the other half: a Settings → Secrets credential the instance only REFERENCES is not
+    // purged, so the dialog says it stays — gated on the flag that reads exactly that reference.
+    expect(ui, 'the referenced credential stays, and says so').toMatch(
+      /provider\.key_in_store \? ' The credential it uses from Settings → Secrets stays saved\.'/,
+    )
+    const referenced = pyMethod(py('dashboard/handlers/providers.py'), 'def _key_in_store')
+    expect(referenced, 'read from the credential store').toMatch(/CredentialStore\(config_dir\(\)\)\.resolve\(entry\.credential\)\.secret/)
     const h = py('dashboard/handlers/providers.py')
     const del = h.slice(h.indexOf('async def api_provider_delete'), h.indexOf('async def api_provider_test'))
     // 🪤 THE CLAIM IS A DELETION, so it is pinned as one. This rail used to pin the opposite ("the
@@ -663,29 +658,30 @@ describe('three more bodies, checked against their handlers', () => {
     )
   })
 
-  it('the MCP remove needs no extra clause — checked, and a hypothesis killed', () => {
-    // 🪤 I EXPECTED A CROSS-APP BLAST RADIUS HERE AND WAS WRONG. The DELETE branch writes two stores,
-    // `_PERSONALCLAW_MCP_JSON` and `_GLOBAL_MCP_JSON` — and "global" reads like a shared file, next to a
-    // `_CC_GLOBAL_JSON = ~/.claude.json` in the same module. But `_canonical_mcp_json()` resolves to
-    // `config_dir() / "mcp.json"`, i.e. PersonalClaw's own home, and the delete never touches the
-    // claude-code file. So "Its tools will no longer be available." is complete, and this test exists to
-    // keep it complete: if the delete ever reaches the CC config, the copy owes the user that fact.
+  it('the MCP remove says it deletes the saved values, and never reaches another tool’s config', () => {
+    // 🪤 I EXPECTED A CROSS-APP BLAST RADIUS HERE AND WAS WRONG, and the rail that recorded it is kept
+    // for the half that still matters: the delete never touches Claude Code's `~/.claude.json`
+    // (`_CC_GLOBAL_JSON`), so a server imported from there stays there, and the copy owes the user
+    // nothing about it. What DID grow is the other half: the delete takes the server out of mcp.json
+    // AND the agent config, and the second write deletes every value it owned in the credential store
+    // (`secret_refs.remove_mcp_servers`, the one delete both the Tools page and the provider card use).
+    // "Its tools will no longer be available." was true and incomplete, so the body names that too.
     const h = py('dashboard/handlers/mcp.py')
-    expect(h, 'the canonical store is PersonalClaw-scoped').toMatch(
-      /def _canonical_mcp_json[\s\S]{0,200}?return config_dir\(\) \/ "mcp\.json"/,
-    )
-    // 🪤 SLICED TO THE WHOLE BRANCH, NOT A FIXED WINDOW. The first version took
-    // `.slice(0, 1500)` from the DELETE branch, and the store loop sits ~27 lines in — just past 1500
-    // characters — so adding `_CC_GLOBAL_JSON` to the real loop PASSED. (My first guess at why was
-    // wrong too: I assumed an earlier handler's branch had been matched, but there is exactly one in
-    // this module. The window was simply too short.) A character budget is not a scope; bound the slice
-    // by the code that ENDS the region.
+    // SLICED TO THE WHOLE BRANCH, bounded by the code that ENDS it, never a character budget: the first
+    // version of this rail took a fixed window that stopped just short of the store loop.
     const fn = h.slice(h.indexOf('async def api_mcp_server_detail'))
-    const del = fn.slice(fn.indexOf('if request.method == "DELETE":'), fn.indexOf('# PUT — register or update'))
-    expect(del, 'the delete branch must be found').toMatch(/for store in \(/)
-    expect(del, 'and it does not write the claude-code config').not.toMatch(/_CC_GLOBAL_JSON/)
-    expect(web('pages/tools/ToolsPage.tsx'), 'so the body stays as it is')
-      .toContain('Its tools will no longer be available.')
+    const del = fn.slice(fn.indexOf('if request.method == "DELETE":'), fn.indexOf('# PUT — add or edit'))
+    expect(del, 'the delete branch must be found').toMatch(/remove_mcp_servers\(\[name\]\)/)
+    expect(del, 'and it does not write the claude-code config').not.toMatch(/_CC_GLOBAL_JSON|claude\.json/)
+    const refs = py('config/secret_refs.py')
+    const one = refs.slice(refs.indexOf('def remove_mcp_servers'), refs.indexOf('def foreign_mcp_spec'))
+    expect(one, 'the one delete walks both PersonalClaw documents').toMatch(/for path in mcp_documents\(\):/)
+    expect(one, 'through the writer that deletes unreferenced values').toMatch(/write_mcp_document\(path, doc\)/)
+    expect(one, 'and no other tool’s file').not.toMatch(/claude\.json|_CC_GLOBAL_JSON/)
+    expect(py('providers/mcp_instances.py'), 'the provider card deletes through it too')
+      .toMatch(/return bool\(remove_mcp_servers\(\[instance_id\]\)\)/)
+    expect(web('pages/tools/ToolsPage.tsx'), 'so the body names the values')
+      .toContain('Its tools will no longer be available, and the values saved for it are deleted from your credential store.')
   })
   // 🪤 THIS ASSERTION WAS COUPLED TO A LOCATION, NOT A PROPERTY — the second rail in this campaign to
   // fail that way (the project-delete case above was the first). It required the literal

@@ -41,10 +41,17 @@ export function SystemWidget() {
   // A successful /api/system poll = the gateway answered → connected. A failure
   // (network error, gateway down/restarting) → disconnected. This is the live
   // connectivity signal the dot reflects; auth is secondary detail for the card.
+  //
+  // The metrics are only READ while the card is open, so only then does this poll at 5s: closed,
+  // the dot needs a heartbeat, not a sampling rate. It polled at 5s on every page regardless —
+  // 24 requests a minute, the most of any single shell poller (measured, day 8). The session's
+  // remaining lifetime changes in minutes, so its read is a minute apart.
   useVisiblePoll(() => {
     api.system().then((s) => { setSys(s); setStatus('connected') }).catch(() => setStatus('disconnected'))
+  }, open ? 5000 : 30_000)
+  useVisiblePoll(() => {
     api.authStatus().then(setAuth).catch(() => {})
-  }, 5000)
+  }, 60_000)
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {

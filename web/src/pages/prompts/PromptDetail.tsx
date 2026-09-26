@@ -61,7 +61,14 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
   const { data: fetched, error: hydrateErr, refresh: refetch } = useQuery<PromptItem | undefined>(`prompt:${prompt.name}`, () => (prompt.content == null ? api.prompt(prompt.name) : Promise.resolve(undefined)), { persist: true })
   const full = prompt.content != null ? prompt : fetched
 
-  useEffect(() => { if (full) setDraft(toDraft(full)) }, [full])
+  // 🔴 SEEDED DURING RENDER, NOT IN AN EFFECT. The edit form below renders the moment `full` lands,
+  // and an effect seeds only AFTER that commit — so for one commit the form's Save closed over the
+  // list-row draft (`content: ''`) and a click there wiped the template: measured by the control in
+  // `editWaitsForTheRecord.test.tsx`, which clicked Save in that window under load and sent `''`.
+  // Updating state while rendering makes React re-render before anything commits, so no committed
+  // form ever holds an unseeded draft. It re-seeds whenever `full` changes, e.g. the post-save re-read.
+  const [seededFrom, setSeededFrom] = useState<PromptItem | undefined>(full)
+  if (full && full !== seededFrom) { setSeededFrom(full); setDraft(toDraft(full)) }
 
   async function save() {
     if (!draft.name.trim()) { setErr('Name is required'); return }
@@ -77,31 +84,12 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
     try { await api.deletePrompt(prompt.name); onDeleted() } catch { setErr('Delete failed') }
   }
 
-  if (editing) {
-    // Edit mode mirrors the view layout (same header row + Section rhythm); only
-    // the section *contents* swap to editable controls.
-    return (
-      <div className="flex flex-col gap-l">
-        <div className="flex items-center gap-s">
-          <span data-type="body-s" className="inline-flex items-center gap-1.5 text-on-surface-low"><Pencil size={13} /> Editing</span>
-          {/* `toneChipSkin`, not a tint of the tone itself. `sourceTone` returns `--color-primary`
-              for a USER-authored prompt — which is the DEFAULT and, in a real home, effectively all of
-              them (47 of 47 here) — and coral ink over a 16% tint of itself measures **3.85:1** in
-              light at 12px against a 4.5 floor. Measured by opening prompts on `#/prompts`. The other
-              sources keep their tint and pass: `marketplace` is info, bundled/provider is
-              `on-surface-low`. See `design/accentChipTone.test.tsx`. */}
-          <span data-type="caption" className="ml-auto inline-flex items-center rounded-pill px-m h-6" style={toneChipSkin(sourceTone(prompt.source), 16)}>{sourceLabel(prompt.source, full?.tags)}</span>
-        </div>
-        <PromptEditFields draft={draft} onChange={setDraft} Section={Section} />
-        <FormFooter error={err}>
-          <Button variant="ghost" size="sm" onClick={() => { if (full) setDraft(toDraft(full)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
-          <Button size="sm" onClick={save} loading={saving} disabled={saving || !draft.name.trim()}
-            disabledReason={!draft.name.trim() ? 'Enter a name first' : undefined}><Check size={15} /> Save</Button>
-        </FormFooter>
-      </div>
-    )
-  }
-
+  // 🔴 THE FULL RECORD FIRST, THEN THE EDITOR. The draft starts as the LIST row, and the list payload
+  // omits `content`, so an edit form rendered before the hydrate landed (or after it failed) held an
+  // empty template body — and Save PUTs the whole record, so one click wiped the template. Edit mode
+  // is owned by the URL (`?edit=1`), so a deep link opened straight into that form. These guards
+  // used to sit BELOW the edit branch, which is what made them unreachable in edit mode.
+  //
   // Error before skeleton: both branches test `full === undefined`, so the order IS the
   // reachability. `what` names the thing rather than the endpoint, and carries NO LEADING ARTICLE:
   // `LoadError` composes "Couldn't load your ${what}", so "this prompt" renders "your this prompt".
@@ -116,6 +104,31 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
         <Skeleton className="h-4 w-2/3" />
         <Skeleton className="h-4 w-1/2" />
         <Skeleton className="h-24 w-full" />
+      </div>
+    )
+  }
+
+  if (editing) {
+    // Edit mode mirrors the view layout (same header row + Section rhythm); only
+    // the section *contents* swap to editable controls.
+    return (
+      <div className="flex flex-col gap-l">
+        <div className="flex items-center gap-s">
+          <span data-type="body-s" className="inline-flex items-center gap-1.5 text-on-surface-low"><Pencil size={13} /> Editing</span>
+          {/* `toneChipSkin`, not a tint of the tone itself. `sourceTone` returns `--color-primary`
+              for a USER-authored prompt — which is the DEFAULT and, in a real home, effectively all of
+              them (47 of 47 here) — and coral ink over a 16% tint of itself measures **3.85:1** in
+              light at 12px against a 4.5 floor. Measured by opening prompts on `#/prompts`. The other
+              sources keep their tint and pass: `marketplace` is info, bundled/provider is
+              `on-surface-low`. See `design/accentChipTone.test.tsx`. */}
+          <span data-type="caption" className="ml-auto inline-flex items-center rounded-pill px-m h-6" style={toneChipSkin(sourceTone(prompt.source), 16)}>{sourceLabel(prompt.source, full.tags)}</span>
+        </div>
+        <PromptEditFields draft={draft} onChange={setDraft} Section={Section} />
+        <FormFooter error={err}>
+          <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(full)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
+          <Button size="sm" onClick={save} loading={saving} disabled={saving || !draft.name.trim()}
+            disabledReason={!draft.name.trim() ? 'Enter a name first' : undefined}><Check size={15} /> Save</Button>
+        </FormFooter>
       </div>
     )
   }

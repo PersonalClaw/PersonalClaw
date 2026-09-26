@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 from aiohttp import web
 
+from personalclaw.dashboard.approval_state import APP_OWN_APPROVAL_REFUSAL
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.history import SEARCH_MIN_CHARS
 from personalclaw.http_errors import json_error
@@ -74,7 +75,8 @@ async def api_sessions(request: web.Request) -> web.Response:
       - ``limit``: max sessions to return (default 50, max 200)
       - ``offset``: skip first N sessions (default 0)
 
-    Returns ``{sessions, total, has_more}`` for pagination.
+    Returns ``{sessions, total, has_more}`` for pagination. An app caller's page and total count
+    only the conversations it started (``DashboardState.session_creating_app``).
     """
     state: DashboardState = request.app["state"]
     if not state.conversation_log:
@@ -87,12 +89,14 @@ async def api_sessions(request: web.Request) -> web.Response:
         offset = int(request.query.get("offset", "0"))
     except (TypeError, ValueError):
         offset = 0
+    request_app = request.get("app", "")
     all_sessions = [
         s
         for s in state.conversation_log.list_sessions()
         # Restricted (incognito/temporary) sessions stay out of every
         # discovery surface, not just the chat-history list.
         if s.get("memory_mode") not in ("incognito", "temporary")
+        and (not request_app or state.session_creating_app(s.get("key", "")) == request_app)
     ]
     total = len(all_sessions)
     page = all_sessions[offset : offset + limit]
@@ -120,6 +124,11 @@ async def api_sessions_search(request: web.Request) -> web.Response:
 
     Returns ``{sessions, source}`` — session metadata as in :func:`api_sessions`,
     plus which path answered. Titles may be LLM-generated and are redacted.
+
+    An app caller's matches are in the conversations it started and nowhere else
+    (``DashboardState.session_creating_app``). Both paths rank every transcript, so an app's
+    search asks each for its widest page and keeps its own: an answer that can be narrower than
+    the app's whole history, and never one that names or quotes a conversation of yours.
     """
     state: DashboardState = request.app["state"]
     if not state.conversation_log:
@@ -131,6 +140,15 @@ async def api_sessions_search(request: web.Request) -> web.Response:
         limit = max(1, min(int(request.query.get("limit", "50")), 200))
     except (TypeError, ValueError):
         limit = 50
+    request_app = request.get("app", "")
+    fetch = 200 if request_app else limit
+
+    def _visible(rows: list) -> list:
+        if not request_app:
+            return rows
+        return [
+            s for s in rows if state.session_creating_app(str(s.get("key", ""))) == request_app
+        ][:limit]
 
     loop = asyncio.get_running_loop()
     source = "index"
@@ -138,16 +156,16 @@ async def api_sessions_search(request: web.Request) -> web.Response:
     try:
         from personalclaw import session_search
 
-        sessions = await loop.run_in_executor(
-            None, lambda: session_search.search_sessions(q, limit=limit)
+        sessions = _visible(
+            await loop.run_in_executor(None, lambda: session_search.search_sessions(q, limit=fetch))
         )
     except Exception:  # noqa: BLE001 — the scan below is the designed fallback
         logger.debug("session search index unavailable", exc_info=True)
         sessions = []
     if not sessions:
         source = "scan"
-        sessions = await loop.run_in_executor(
-            None, state.conversation_log.search_sessions, q, limit
+        sessions = _visible(
+            await loop.run_in_executor(None, state.conversation_log.search_sessions, q, fetch)
         )
     for s in sessions:
         title = s.get("title")
@@ -363,6 +381,28 @@ async def api_approval_resolve(request: web.Request) -> web.Response:
     action = request.match_info["action"]
     if action not in ("approve", "reject"):
         return web.json_response({"error": "invalid action"}, status=400)
+    # The relay a companion runs (it declares `/api/approvals`) carries YOUR decision, so it never
+    # answers an approval the app's own conversation raised. The chat's own approve route is the
+    # owner's outright (`apps/permissions.ROUTE_AUTHZ`).
+    app_name = request.get("app", "")
+    if app_name and state.approval_conversation_app(approval_id) == app_name:
+        try:
+            _sel().log_api_access(
+                caller=f"app:{app_name}",
+                operation="approval_resolve",
+                outcome="denied",
+                source="app_permissions",
+                resources=f"{approval_id}:{action}",
+                error=APP_OWN_APPROVAL_REFUSAL,
+            )
+        except Exception:
+            logger.warning("SEL audit failed for a refused app approval", exc_info=True)
+        return json_error("approval_owner_only", message=APP_OWN_APPROVAL_REFUSAL, status=403)
+    # Asked here as well as inside `resolve_approval` only to NAME the refusal: the decision path
+    # refuses on its own for every door, and this door is the one that can tell the user why.
+    ended = state.refuse_ended_owner(approval_id)
+    if ended:
+        return json_error("approval_owner_ended", message=f"Nothing was run: {ended}.", status=409)
     ok = state.resolve_approval(approval_id, action == "approve")
     if not ok:
         return web.json_response({"error": "not found or expired"}, status=404)

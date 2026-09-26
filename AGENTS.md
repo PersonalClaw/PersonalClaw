@@ -255,7 +255,11 @@ re-invents a shape another touches:
 - **SDK export boundary** — apps import core only via `personalclaw.sdk.*`
   (`test_apps_import_boundary.py`); a new app-facing primitive is added to the
   relevant `sdk/<area>.py` re-export, never reached into directly. An SDK export
-  is a stable surface.
+  is a stable surface: every published signature is checked in
+  (`src/personalclaw/sdk/signatures.json`), a change to one — a re-exported core
+  function included — regenerates it (`make sdk-snapshot`) and names the apps it
+  affects in the CHANGELOG, and CI runs the first-party apps' contract checks on it
+  ([CONTRIBUTING.md](CONTRIBUTING.md#sdk-changes)).
 
 ## Repo map
 

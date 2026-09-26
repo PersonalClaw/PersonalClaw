@@ -549,7 +549,7 @@ def resolve_inbox_item(state: Any, proposal: OrganizeProposal, status: str) -> N
     """
     key = dedup_key_for(proposal)
     try:
-        from personalclaw.inbox import InboxStore, live_store
+        from personalclaw.inbox import InboxStore, live_store, set_item_status
 
         # The RUNNING service's store when one is up: it holds items in memory and never
         # re-reads the file, so resolving on a private instance would leave the row open in
@@ -558,16 +558,8 @@ def resolve_inbox_item(state: Any, proposal: OrganizeProposal, status: str) -> N
         if store is None:
             store = InboxStore()
             store.load()
-        changed = False
-        for item in store.items.values():
-            if item.refs.get("session_organize") == key and item.status != status:
-                item.status = status
-                changed = True
-        # `save()`, not `flush()`: assigning `item.status` in place never sets the store's
-        # `_dirty` flag, so `flush()` (which returns early when clean) silently persisted
-        # nothing. Caught by test_accept_resolves_the_inbox_row.
-        if changed:
-            store.save()
+        rows = [i for i in store.items.values() if i.refs.get("session_organize") == key]
+        set_item_status(state, store, rows, status)
     except Exception:
         logger.debug("session-organize: inbox resolution failed", exc_info=True)
 

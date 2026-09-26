@@ -243,3 +243,52 @@ def test_a_key_typed_before_this_change_moves_to_the_store_and_still_authenticat
     before = _config_text()
     migrate_plaintext_secrets()
     assert _config_text() == before, "the move is not idempotent"
+
+
+def test_a_provider_cannot_be_saved_naming_an_apps_key(name):
+    """``config.json`` is core's, and core holds every key no app holds — not an app's. A
+    reference to an app's token typed into Settings → Providers was accepted on create and on
+    update, and core then resolved it. It is refused with what to do, nothing is written, and a
+    Secrets-panel reference still saves: core holds the vault."""
+    from personalclaw.apps import manager
+    from personalclaw.config.credentials import save_credential
+    from personalclaw.config.secret_refs import make_ref, ref_key
+    from personalclaw.providers.settings import ProviderSettings
+    from personalclaw.sel import sel
+
+    token = "xoxb-app-owned-3c4d5e6f-fixture"
+    ProviderSettings.save("fixture-token-holder", {"bot_token": token})
+    settings = manager.app_dir("fixture-token-holder") / "data" / "config.json"
+    app_ref = json.loads(settings.read_text(encoding="utf-8"))["bot_token"]
+    app_key = ref_key(app_ref) or ""
+    assert app_key.startswith("PCSECRET_APP_"), app_ref
+
+    body = {"name": name, "type": FIXTURE_TYPE, "model": "", "options": {"api_key": app_ref}}
+    created = _run(H.api_provider_create(_req("POST", "/api/model-providers", body)))
+    assert created.status == 400, created.body
+    refusal = json.loads(created.body)["error"]
+    assert app_ref in refusal and "belongs to a different owner" in refusal, refusal
+    assert "Type the key itself — not a reference — into api_key instead" in refusal, refusal
+    assert token not in created.body.decode()
+    assert not config_loader.config_path().exists() or name not in _config_text()
+
+    save_credential("FIXTURE_VAULT_PROVIDER_KEY", KEY)
+    _create(name, {"api_key": make_ref("FIXTURE_VAULT_PROVIDER_KEY"), "endpoint": FIXTURE_BASE})
+    before = _config_text()
+    updated = _run(
+        H.api_provider_update(
+            _req(
+                "PUT",
+                f"/api/model-providers/{name}",
+                {"options": {"api_key": app_ref}},
+                {"name": name},
+            )
+        )
+    )
+    assert updated.status == 400, updated.body
+    assert "belongs to a different owner" in json.loads(updated.body)["error"]
+    assert _config_text() == before, "a refused update was written"
+    rows = [e for e in sel().recent(200) if e.get("resources") == f"secret:{app_key}"]
+    assert len(rows) == 2, rows
+    assert all(r["caller_identity"] == "core" and r["outcome"] == "denied" for r in rows)
+    assert token not in json.dumps(sel().recent(500)), "a refused value reached the security log"

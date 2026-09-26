@@ -261,18 +261,25 @@ async def test_memory_probe_fresh_home_is_ok(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_memory_probe_detects_faiss_desync(tmp_path):
-    """faiss ids.json count disagreeing with embedded row count → a failed row."""
+async def test_memory_probe_detects_faiss_desync(tmp_path, monkeypatch):
+    """An embedded row the index does not hold → a failed row that offers the rebuild Fix."""
     import json
     import sqlite3
 
+    from personalclaw import vector_memory
+
+    # The measurement, not faiss itself: with no live store the probe reads the sidecar.
+    monkeypatch.setattr(vector_memory, "faiss_available", lambda: True)
     db = tmp_path / "memory.db"
     conn = sqlite3.connect(db)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("CREATE TABLE episodic_memories (id TEXT, is_deleted INTEGER, embedding BLOB)")
-    # two embedded, non-deleted rows
-    conn.execute("INSERT INTO episodic_memories VALUES ('a', 0, X'00')")
-    conn.execute("INSERT INTO episodic_memories VALUES ('b', 0, X'00')")
+    conn.execute(
+        "CREATE TABLE episodic_memories "
+        "(id TEXT, is_deleted INTEGER, embedding BLOB, created_at TEXT)"
+    )
+    # two embedded, non-deleted rows at one width (two float32s each)
+    conn.execute("INSERT INTO episodic_memories VALUES ('a', 0, zeroblob(8), '2026-09-01')")
+    conn.execute("INSERT INTO episodic_memories VALUES ('b', 0, zeroblob(8), '2026-09-02')")
     conn.commit()
     conn.close()
     # faiss sidecar claims only ONE indexed id → desync
@@ -280,8 +287,10 @@ async def test_memory_probe_detects_faiss_desync(tmp_path):
 
     res = await doctor._probe_memory(DoctorContext(home=tmp_path))
     assert res.ok is False
-    assert "desync" in res.detail
+    assert res.detail == "faiss index desync: 1 indexed vs 2 embedded rows"
     assert res.evidence["embedded_count"] == 2 and res.evidence["faiss_ids"] == 1
+    assert res.evidence["missing"] == 1 and res.evidence["other_model"] == 0
+    assert res.fix_id == doctor.MEMORY_INDEX_FIX
 
 
 def _fake_pkg(root: Path, *, with_web_build: bool) -> Path:
