@@ -252,6 +252,33 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   left there is now copied as a link instead of as the bytes it names. Behaviour change: a
   bundle that relied on a link being followed must ship the file or folder itself. No bundled
   or first-party app ships a link.
+- **An installed app can no longer run a command through the gateway, set up an automation that
+  approves itself, or take your access away.** With an ordinary `api` declaration an app could:
+  1. define an MCP server under `/api/mcp`, which is a command the gateway launches as you, and
+     read every server's arguments and headers, where bearer tokens live;
+  2. create a schedule, event or hook whose agent approves its own tool calls with write access,
+     or whose step runs a shell command, and fire it by hand; save a workflow, start or steer a
+     run, start a goal loop, spawn a background agent, install or switch on an app or a pack, and
+     import a backup over your home;
+  3. demote your autonomy grants, undo actions you kept, sign out your devices, revoke your chat
+     senders, and connect or disconnect a chat channel;
+  4. read your whole config through `GET /api/config/personalclaw`, which the reference called
+     owner-only, read `config.json` and `mcp.json` through the file explorer, and read or write
+     another app's settings.
+
+  An app token now gets `403` for each of these, with a Security Event Log row naming the app and
+  the path. An app declares its MCP servers and scheduled jobs in its manifest, where install
+  consent lists them, keeps `POST /api/incident` to stop things, and reads and writes only the
+  settings its manifest names in the new `permissions.config`. Every write route in these families
+  has to declare whether an app may reach it, and an undeclared one is refused to apps. For you,
+  giving an automation or a workflow step auto-approval or write access now asks first, and so do
+  an agent sync that picks up a looser approval mode from disk and raising a run's cycle limit.
+  On the install screen, an `agent` grant now says its agents use any tool without asking you, and
+  a settings grant names each setting. Behaviour change to security controls: a script that
+  creates such an automation must send `"confirm": true`, and an app that uses `/api/config` must
+  declare its fields (no first-party app does). What this does not cover: an app's own code runs
+  as you and can edit `config.json` on disk directly, and the install screen does not say so yet.
+  `docs/security/limitations.md` §7 now says it plainly.
 - **An installed app can no longer change your security settings, and every write that loosens
   one asks you first.** An app that declared `/api/config` could `PATCH` any setting on that
   path: turn YOLO on, drop the 2FA requirement, let egress reach your LAN, raise every guardrail

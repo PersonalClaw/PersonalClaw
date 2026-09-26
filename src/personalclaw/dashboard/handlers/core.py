@@ -39,7 +39,7 @@ from personalclaw.config.loader import (
 )
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.dashboard.token_auth import MAX_SESSION_TTL_SECS, generate_token, parse_duration
-from personalclaw.http_errors import json_error
+from personalclaw.http_errors import consent_required, json_error
 from personalclaw.request_validation import json_object_body
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import SUSPICIOUS_BASH_PATTERNS
@@ -504,6 +504,61 @@ async def api_security_egress(_request: web.Request) -> web.Response:
 _AGENT_PUT_FIELDS = ("subagent_max_turns", "max_subagents", "orchestrator_skill")
 
 
+def _app_config_fields(app_name: str) -> list[str]:
+    """The settings the app *app_name* declared in ``permissions.config`` — ``[]`` when none, or
+    when its manifest cannot be read (the middleware already refused that case)."""
+    from personalclaw.apps.permissions import checker_for
+
+    checker = checker_for(app_name)
+    return list(checker.permissions.config) if checker is not None else []
+
+
+def _app_config_refusal(app_name: str, field: str, operation: str) -> web.Response:
+    """``403 config_field_not_declared`` + an SEL row naming the app and the setting.
+
+    ``permissions.api: ["/api/config"]`` reaches the route and says nothing about WHICH setting
+    — the same prefix-says-nothing-about-power problem #3602 met for writes, here for reads as
+    well: the config holds the owner's whole posture, where their notifications are delivered
+    and where their memory vault lives. ``permissions.config`` is the list install consent
+    showed, so it is the list an app reaches.
+    """
+    _sel().log_api_access(
+        caller=f"app:{app_name}",
+        operation=operation,
+        outcome="denied",
+        source="app_permissions",
+        resources=field,
+        error="setting not declared in permissions.config",
+    )
+    return json_error(
+        "config_field_not_declared",
+        message=(
+            f"{field} is not in this app's permissions.config — declare it in the manifest, "
+            "where install consent shows it"
+        ),
+        status=403,
+    )
+
+
+def _declared_settings(full: dict, fields: list[str]) -> dict:
+    """*full* (``AppConfig.to_dict()``) pruned to the dotted *fields*, keeping its nesting, so an
+    app reads ``voice.echo_filter_enabled`` at the same place the owner's full read has it."""
+    picked: dict = {}
+    for dotted in fields:
+        node: object = full
+        parts = dotted.split(".")
+        for part in parts:
+            if not isinstance(node, dict) or part not in node:
+                break
+            node = node[part]
+        else:
+            cursor = picked
+            for part in parts[:-1]:
+                cursor = cursor.setdefault(part, {})
+            cursor[parts[-1]] = node
+    return picked
+
+
 async def api_personalclaw_config(request: web.Request) -> web.Response:
     """GET/PUT /api/config/personalclaw — read or update PersonalClaw config."""
     from personalclaw.config.loader import config_path  # noqa: F811
@@ -539,6 +594,15 @@ async def api_personalclaw_config(request: web.Request) -> web.Response:
                 f"unknown agent settings: {', '.join(unknown)} "
                 f"(writable: {', '.join(agent_fields)})"
             )
+        # An app writes only the settings its manifest declares — none of these three is a
+        # security setting (`test_the_put_endpoint_writes_no_security_setting`), so the
+        # declaration is the whole rule here.
+        app_name = request.get("app", "")
+        if app_name:
+            declared = set(_app_config_fields(app_name))
+            for key in agent_settings:
+                if f"agent.{key}" not in declared:
+                    return _app_config_refusal(app_name, f"agent.{key}", "config.update")
         # Coerce BEFORE taking the lock, into a staging dict. Validation depends only on the
         # request body and `_EDITABLE_CONFIG`, so holding the lock across it would serialise
         # every rejected request behind whoever is writing, for no benefit — and a test asserts
@@ -613,8 +677,19 @@ async def api_personalclaw_config(request: web.Request) -> web.Response:
                     logger.exception("Failed to clean up orchestrator skill")
         return web.json_response({"ok": True})
 
-    cfg = AppConfig.load()
-    return web.json_response(cfg.to_dict())
+    full = AppConfig.load().to_dict()
+    # 🔴 The full config is the OWNER's read. An app declaring `/api/config` reached this route
+    # and was handed every setting — the whole posture, the ntfy topic URL that delivers the
+    # owner's notifications, the vault paths — while the reference docs said "owner-only". An
+    # app now reads the fields its manifest declares in `permissions.config`, nested as the
+    # owner's read nests them, and one that declared none is refused.
+    app_name = request.get("app", "")
+    if app_name:
+        fields = _app_config_fields(app_name)
+        if not fields:
+            return _app_config_refusal(app_name, "permissions.config", "config.read")
+        full = _declared_settings(full, fields)
+    return web.json_response(full)
 
 
 # Allowed editable config paths and their validators
@@ -1797,6 +1872,11 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
             error="security setting is owner-only",
         )
         return json_error("security_setting_owner_only", message=refused, status=403)
+    # An ordinary setting is still the app's only if its manifest names it — the list install
+    # consent showed. Checked after the security refusal so a security setting is refused as
+    # what it is, not as merely undeclared (a manifest cannot declare one: validate refuses it).
+    if app_name and path_key not in _app_config_fields(app_name):
+        return _app_config_refusal(app_name, path_key, "config.patch")
 
     # Validate value. The rules live in `config/edit_spec.py` because three other write
     # paths need exactly these ones — see that module for why they are one function.
@@ -1836,12 +1916,7 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         )
         if consent:
             _log_sel("denied", f"{path_key}: loosening without confirm")
-            return json_error(
-                "confirmation_required",
-                message=f'send {{"confirm": true}} to confirm — {consent}',
-                status=400,
-                error_extra={"detail": {"field": path_key, "consent": consent}},
-            )
+            return consent_required(path_key, consent)
 
         # Walk the dotted path, creating intermediate objects — supports any depth
         # (e.g. the 1-part `auto_update`, 2-part `agent.yolo`, 3-part
@@ -2007,8 +2082,12 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         except Exception:
             logger.exception("Failed to live-apply projection rules")
 
-    cfg = AppConfig.load()
-    return web.json_response(cfg.to_dict())
+    full = AppConfig.load().to_dict()
+    # The answer is a READ of the config, so an app gets the scope the GET gives it: without
+    # this, writing the one setting it declared handed back every other setting too.
+    if app_name:
+        full = _declared_settings(full, _app_config_fields(app_name))
+    return web.json_response(full)
 
 
 # ── Incident kill switch (AUTONOMY-GUARDRAILS §1.3) ────────────────────

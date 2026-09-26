@@ -30,7 +30,7 @@ from aiohttp import web
 
 from personalclaw.config import loader as config_loader
 from personalclaw.dashboard.state import DashboardState
-from personalclaw.http_errors import json_error
+from personalclaw.http_errors import consent_required, json_error
 from personalclaw.request_validation import json_object_body
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
@@ -753,6 +753,54 @@ async def api_triggers(request: web.Request) -> web.Response:
 # ── create ──
 
 
+def _stored_action_config(state: DashboardState, kind: str, raw: str) -> dict[str, Any]:
+    """The config of the action trigger *raw* runs now, or ``{}`` — what a write is compared to
+    when deciding whether it loosens the trigger's approval posture."""
+    if kind == _EVENT:
+        found = next((t for t in _event_store().load() if t.id == raw), None)
+        return dict(found.action_config or {}) if found is not None else {}
+    if kind == _LIFECYCLE:
+        hook = _hook_store(state).get(raw)
+        return dict(hook.provider_config or {}) if hook is not None else {}
+    row = _trigger_store().get(raw)
+    inline = (row.trigger.workflow or {}).get("inline") if row is not None else None
+    config = inline.get("config") if isinstance(inline, dict) else None
+    return dict(config) if isinstance(config, dict) else {}
+
+
+def _unconsented_action(
+    request: web.Request, body: dict, *, where: str, stored: dict[str, Any]
+) -> web.Response | None:
+    """``400 confirmation_required`` when *body*'s action loosens whether the trigger's agent asks
+    you — an ``approval_mode: "auto"``, a ``capability: "mutating"`` write grant — over the
+    *stored* action config (``{}`` for a new trigger) without ``confirm: true``; ``None`` otherwise.
+
+    The owner's half of the rule; an app cannot define a trigger at all
+    (``apps/permissions.ROUTE_AUTHZ``). The Schedule form's "Auto-approve tools" switch is the
+    common case, and the SPA asks in the sentence this carries (``withSecurityConsent``).
+    """
+    from personalclaw.automation_posture import unconsented_step_loosening
+
+    action = body.get("action")
+    if not isinstance(action, dict):
+        return None
+    new = action.get("config") if "config" in action else stored
+    loosened = unconsented_step_loosening(
+        where, current=stored, new=new if isinstance(new, dict) else {}, body=body
+    )
+    if loosened is None:
+        return None
+    field, consent = loosened
+    _sel().log_api_access(
+        caller=request.get("user", "dashboard"),
+        operation="trigger.write",
+        outcome="denied",
+        source="dashboard",
+        resources=f"{field}: loosening without confirm",
+    )
+    return consent_required(field, consent)
+
+
 async def api_trigger_create(request: web.Request) -> web.Response:
     """POST /api/triggers — create a schedule or lifecycle trigger.
 
@@ -767,6 +815,18 @@ async def api_trigger_create(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
+
+    # The consent names the trigger it is about. A name that is not a string only labels it
+    # "new" here; refusing that is the create path's job, not this check's.
+    name = body.get("name")
+    unconsented = _unconsented_action(
+        request,
+        body,
+        where=f"triggers.{name if isinstance(name, str) and name else 'new'}.action",
+        stored={},
+    )
+    if unconsented is not None:
+        return unconsented
 
     trigger_type = str(body.get("trigger_type") or "").strip().lower()
     if trigger_type == _LIFECYCLE:
@@ -1101,6 +1161,15 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
+
+    unconsented = _unconsented_action(
+        request,
+        body,
+        where=f"triggers.{request.match_info['id']}.action",
+        stored=_stored_action_config(state, kind, raw),
+    )
+    if unconsented is not None:
+        return unconsented
 
     if kind == _EVENT:
         return _update_event(raw, body)

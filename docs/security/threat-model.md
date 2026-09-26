@@ -80,7 +80,10 @@ against](#what-we-deliberately-dont-defend-against).
 
 ### 2. Core ↔ apps
 
-Installed apps extend the gateway but must not reach the owner's full authority:
+An installed app reaches your machine two ways: through its app-scoped token, and through
+its own code. The controls below bound the token, so an app's requests never reach the
+owner's full authority. They do not bound the code, which runs as you — the last bullet
+says what that means.
 
 - **App-scoped tokens** (`dashboard/token_auth.py::generate_token` with an `app`
   claim) bound a request to that app's declared permissions; TTLs capped by
@@ -102,6 +105,56 @@ Installed apps extend the gateway but must not reach the owner's full authority:
   owner-only registry (`apps/permissions.py::OWNER_ONLY_API_PATHS`). The owner's own write
   that loosens a security setting needs `"confirm": true` — a record that the owner was
   asked, not authorization.
+- **What runs as you is yours to define.** An app token cannot define an MCP server:
+  `/api/mcp` is owner-only, reads included, because a server entry is a command the
+  gateway launches and a remote server's headers carry its bearer token. Nor can it
+  create, edit, arm or run an automation by hand, save a workflow, start or steer a run,
+  or make any goal-loop write. Installing, enabling or updating an app or a pack, adding a
+  Store source, and importing or restoring a backup are owner-only for the same reason:
+  each puts code or configuration in place that later runs as you. An app declares its
+  MCP servers and its scheduled jobs in its manifest, where install consent lists them.
+  Subtrees are rows in `OWNER_ONLY_API_PATHS`; routes that share a family with an app's
+  legitimate business are declared one by one in `apps/permissions.py::ROUTE_AUTHZ`.
+- **Your access, and who else has any, is yours.** Demoting an autonomy grant, undoing
+  an automation's action, signing out a device, revoking a chat sender, and connecting
+  or disconnecting a chat channel refuse an app token. Two levers stay with apps on
+  purpose: `POST /api/incident`, which stops unattended work and grants nothing, and
+  `POST /api/devices/pair/complete`, which only redeems a pairing code you minted.
+- **An app reads only the settings it declared.** `GET /api/config/personalclaw` hands
+  an app the fields its manifest lists in `permissions.config` and nothing else, and a
+  write to any other field answers `403 config_field_not_declared`
+  (`dashboard/handlers/core.py`). Install consent shows the list, and a manifest that
+  names a security setting fails to install (`apps/manifest.py::_config_permission_errors`).
+  `/api/apps/{name}/config` reaches only the calling app's own settings, and the file
+  explorer hides the PersonalClaw home from an app token
+  (`dashboard/handlers/files.py::_dashboard_roots`), since `config.json` and `mcp.json`
+  live there.
+- **A new route fails closed.** Every write route under a family that decides what runs
+  as you, whether it asks first, or who may reach you (`SECURITY_ROUTE_FAMILIES`) is
+  either owner-only or declared `AppMay` with its reason. An undeclared one is refused to
+  every app token at runtime (`undeclared_security_write`), and
+  `tests/test_security_posture_rail.py` fails the build on it.
+- **An automation that approves itself asks you first.** The owner's own write that makes
+  a trigger's or a workflow step's agent approve its own tool calls (`approval_mode:
+  auto`) or gives it write access (`capability: mutating`) needs `"confirm": true`
+  (`automation_posture.py`). So does an agent sync that folds a looser `approval_mode` in
+  from disk, and a run override that raises `max_cycles`
+  (`workflows/supervisor_policy.py::POLICY_OVERRIDE_SECURITY`).
+- **The app's own code is outside all of this.** An app's provider module is imported
+  into the gateway's process, its backend is a process under your account, each MCP
+  server in its manifest is a command the gateway launches with the gateway's own
+  environment (which carries the stored credentials PersonalClaw exports for its child
+  processes, `config/loader.py`), and its setup hooks are shell commands. That code can
+  read and write every file in your PersonalClaw home: `config.json` with every security
+  setting, `mcp.json`, the credential files (`.env`, `credentials.json`), and
+  `session_key`, the key that signs every session token, yours included. The home's
+  0600/0700 modes (§5) keep other accounts out, not code running as you. The one
+  exception is a backend that names a sandbox tier (`backend.sandbox`), which launches
+  inside that tier. An app that ships code therefore needs no API call to relax your
+  posture. Install consent names its server process, its install hook and its MCP server
+  commands (`apps/disclosure.py::describe`), but not its provider modules or its other
+  hooks, and it does not say the code runs as you. The supply-chain gate (§4) is the
+  control that vets it. See [limitations.md](limitations.md) §7.
 
 ### 3. Gateway ↔ channels / inbound
 
@@ -177,9 +230,9 @@ deliberate, disclosed gap — see [limitations.md](limitations.md)). A row may c
 |---|---|---|---|
 | **ASI01** Agent goal / instruction manipulation | Untrusted-content fencing, approval modes, and data-not-instructions framing on recalled memory | `security.py::fence_untrusted`; `dashboard/handlers/memory.py` (recall framing) | enforced |
 | **ASI02** Tool misuse | Command deny/suspicious patterns, task-mode gating, OS child sandbox | `security.py` (`BUILTIN_DENIED_COMMAND_PATTERNS`, `SUSPICIOUS_BASH_PATTERNS`); `task_modes.py`; `sandbox.py` | enforced |
-| **ASI03** Identity & privilege abuse | App-scoped tokens, reverse-proxy credential stripping, permission middleware (holds even in `none` mode) | `dashboard/handlers/apps.py::api_app_proxy`; `dashboard/token_auth.py`; `dashboard/server.py` (`_dev_user_middleware`) | enforced |
+| **ASI03** Identity & privilege abuse | App-scoped tokens, reverse-proxy credential stripping, permission middleware (holds even in `none` mode), an owner-only registry plus per-route declarations that refuse an undeclared write, settings scoped to the fields a manifest declares | `dashboard/handlers/apps.py::api_app_proxy`; `dashboard/token_auth.py`; `dashboard/server.py` (`_dev_user_middleware`, `app_permission_middleware`); `apps/permissions.py` (`OWNER_ONLY_API_PATHS`, `ROUTE_AUTHZ`, `undeclared_security_write`) | enforced |
 | **ASI04** Supply-chain & dependency risk | Quarantine → scan → consent → install; `dangerous` verdict terminal; scanned-tree == installed-tree; staging never follows a link out of the bundle | `apps/app_manager.py::install`; `apps/staging.py`; `supply_chain.py` (`SkillScanner`, `Verdict`) | enforced |
-| **ASI05** Unauthorized code execution | Command screening + OS sandbox + credential-env denylist | `security.py`; `sandbox.py` | enforced |
+| **ASI05** Unauthorized code execution | Command screening + OS sandbox + credential-env denylist; an app token cannot define an MCP server or an automation, and the owner confirms an automation step that approves its own tool calls | `security.py`; `sandbox.py`; `apps/permissions.py` (`OWNER_ONLY_API_PATHS["/api/mcp"]`, `ROUTE_AUTHZ`); `automation_posture.py` | enforced *(an installed app's own code runs as you: documented limitation, [limitations.md](limitations.md) §7)* |
 | **ASI06** Memory & context poisoning | Fenced recall, propose-only (never live-write) learning, temporary/incognito session modes | `dashboard/handlers/memory.py`; `after_turn_review.py` (propose-only queue); `session_restrictions.py` | enforced |
 | **ASI07** Insecure inter-agent / inbound comms | Fail-closed inbound surface + fencing at ingestion | *(owned by MCP-READONLY-INBOUND + EXTERNAL-ACCESS)* | in progress (plans 41, 24) |
 | **ASI08** Cascading failures / denial-of-wallet | Circuit breakers, budgets, spend caps | *(owned by AUTONOMY-GUARDRAILS)* | in progress (plan 9) |
@@ -215,12 +268,21 @@ design, not by omission — stating them keeps the in-scope claims credible.
 - **What an installed app's FRONTEND does in the dashboard page.** An app's UI bundle
   is imported into the dashboard's own origin (no iframe, sharing the host React
   instance), so it has the host `document`, `localStorage`, the owner's cookie and
-  authenticated same-origin `/api/*` reach. The `api` allowlist binds the app's
-  backend and its SDK client, not its page code: a bare `fetch` from app UI carries no
-  app identity, so `app_permission_middleware` treats it as the owner. Telling the two
-  apart requires a separate origin for app UI, so this is disclosed — at install
+  authenticated same-origin `/api/*` reach. The `api` allowlist binds the requests the
+  app's backend and its SDK client make, not its page code: a bare `fetch` from app UI
+  carries no app identity, so `app_permission_middleware` treats it as the owner. Telling
+  the two apart requires a separate origin for app UI, so this is disclosed — at install
   consent and in [limitations.md](limitations.md) §4 — rather than enforced. The
   control is the supply-chain gate on what you install.
+- **What an installed app's own code does on your machine.** The permissions bind the
+  app's token, and its code does not need the token. A backend on the host, a provider
+  module, an MCP server command or a setup hook runs under your account, so it can edit
+  `config.json` on disk, add a server to `mcp.json`, or read `session_key` and sign itself
+  any token it likes. Confining that code takes per-app OS isolation, which today exists
+  only for a backend that names a sandbox tier. So this is disclosed rather than enforced:
+  install consent names the app's server process, install hook and MCP server commands, and
+  [limitations.md](limitations.md) §7 says what that code can do. The control is the
+  supply-chain gate on what you install.
 
 Each of these has a rationale above; none is an accident. Gaps discovered while
 maintaining this document are routed to the security-hardening track as

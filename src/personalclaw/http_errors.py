@@ -108,6 +108,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The field is a security setting only the owner can change; an app cannot, in either "
         "direction."
     ),
+    # An app-scoped caller read or wrote a setting its manifest does not name in
+    # `permissions.config` — the list install consent showed the owner.
+    "config_field_not_declared": (
+        "The app did not declare this setting in permissions.config, so it cannot read or "
+        "change it."
+    ),
     # ── session deletion (dashboard/handlers/sessions.py) ──
     # A LIVE session carries no history file, so `delete_session` declines it. That is a
     # real resource this route refuses, which is a DIFFERENT fact from a key that never
@@ -727,3 +733,17 @@ def json_error(
     if error_extra:
         err.update(error_extra)
     return web.json_response({"error": err, **extra}, status=status, headers=dict(headers or {}))
+
+
+def consent_required(field: str, consent: str) -> web.Response:
+    """The ``400 confirmation_required`` a write that loosens a security setting answers when it
+    did not carry ``"confirm": true`` — one shape for every writer (the config PATCH, an agent's
+    approval mode, an automation's posture), because the SPA's ``withSecurityConsent`` asks the
+    owner by reading exactly this: ``{field, consent}`` in ``error.detail``, with *consent* being
+    the sentence the dialog shows (``config/edit_spec.SecurityControl.consent``)."""
+    return json_error(
+        "confirmation_required",
+        message=f'send {{"confirm": true}} to confirm — {consent}',
+        status=400,
+        error_extra={"detail": {"field": field, "consent": consent}},
+    )

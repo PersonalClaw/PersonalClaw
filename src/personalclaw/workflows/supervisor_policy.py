@@ -44,6 +44,11 @@ import logging
 from dataclasses import dataclass, field, fields, replace
 from typing import TYPE_CHECKING, Any
 
+from personalclaw.config.edit_spec import (
+    NotASecurityControl,
+    SecurityControl,
+    loosens_when_raised,
+)
 from personalclaw.guardrails.policy import HEADLESS, SafetyProfile
 from personalclaw.guardrails.registries import path_glob
 from personalclaw.loop.tick import StepConfig, TickConfig
@@ -817,6 +822,82 @@ _OVERRIDE_APPLIERS: dict[str, Any] = {
 #: seam (`workflows.store.set_policy_overrides`) refuses anything else loudly; the read side
 #: below ignores anything else quietly. That asymmetry is the design (see both docstrings).
 OVERRIDABLE_POLICY_KEYS: frozenset[str] = frozenset(_OVERRIDE_APPLIERS)
+
+_NOT_CONSUMED = (
+    "recorded on the run and read by nothing in the engine: the one consumer of a run's policy, "
+    "`tick_config`, takes the cycle cap, the ladder and the gates"
+)
+
+#: Which overlay knobs are part of the owner's security posture — the same two declarations a
+#: config field makes (`config/edit_spec.py`). An app never writes the overlay at all (the route
+#: is owner-only, `apps/permissions.ROUTE_AUTHZ`); the owner's write that loosens a CONTROL here
+#: needs `"confirm": true`. `tests/test_security_posture_rail.py` holds this to what the engine
+#: does: a control must change `tick_config`, and an exemption citing `_NOT_CONSUMED` must not —
+#: so wiring `autopilot` into the engine turns that rail red until it is declared a control.
+#:
+#: `autopilot` is the one to watch. It sets the policy's approval posture to `auto`
+#: (`_apply_autopilot`), which reads like an approval bypass and is not one yet: nothing that
+#: approves a tool call consults it. A consent dialog for a knob with no effect would teach the
+#: owner to click through the ones that have one.
+POLICY_OVERRIDE_SECURITY: dict[str, SecurityControl | NotASecurityControl] = {
+    "max_cycles": SecurityControl(
+        loosens_when_raised(unlimited=0),
+        "The run's loop may repeat more times before it stops — 0 removes the limit.",
+    ),
+    "autopilot": NotASecurityControl(_NOT_CONSUMED),
+    "attended": NotASecurityControl(_NOT_CONSUMED),
+    "idle_secs": NotASecurityControl(_NOT_CONSUMED),
+    "success_criteria": NotASecurityControl(_NOT_CONSUMED),
+}
+
+#: How to read each control's value off a resolved policy, so a write is judged on what the run
+#: would actually get — the template's declared default when the overlay leaves the knob unset.
+_OVERRIDE_READERS: dict[str, Any] = {"max_cycles": lambda policy: policy.budget_max_cycles}
+
+
+def unconsented_override_loosening(
+    run_id: str,
+    spec_root: dict[str, Any] | None,
+    *,
+    current: dict[str, Any] | None,
+    new: dict[str, Any],
+    body: Any,
+) -> tuple[str, str] | None:
+    """``(field, consent)`` when replacing the overlay *current* with *new* loosens a control on
+    any loop node of the run's spec without ``confirm: true``; ``None`` otherwise.
+
+    Per loop node, because each declares its own ``supervisor:`` block and one overlay applies to
+    all of them: an overlay of ``max_cycles: 10`` tightens a node declaring ``0`` (uncapped) and
+    loosens one declaring ``3``. Removing a knob can loosen too (REPLACE semantics fall back to the
+    template's value), so every control is judged, present in *new* or not.
+    """
+    from personalclaw.config.edit_spec import unconsented_loosening
+    from personalclaw.workflows.models import Node, NodeKind, walk
+
+    if not spec_root:
+        return None
+    try:
+        tree = Node.from_dict(dict(spec_root))
+    except Exception:
+        logger.debug("run spec did not parse for the override consent check", exc_info=True)
+        return None
+    for _path, node in walk(tree):
+        if node.kind is not NodeKind.LOOP:
+            continue
+        declared = parse_supervisor_policy((node.config or {}).get("supervisor"))
+        before = apply_policy_overrides(declared, current)
+        after = apply_policy_overrides(declared, new)
+        for knob, control in POLICY_OVERRIDE_SECURITY.items():
+            if not isinstance(control, SecurityControl):
+                continue
+            read = _OVERRIDE_READERS[knob]
+            field = f"workflows.runs.{run_id}.policy_overrides.{knob}"
+            consent = unconsented_loosening(
+                field, {"security": control}, current=read(before), new=read(after), body=body
+            )
+            if consent:
+                return field, consent
+    return None
 
 
 def apply_policy_overrides(

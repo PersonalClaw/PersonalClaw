@@ -416,6 +416,84 @@ async def spa_fallback(
         raise
 
 
+@web.middleware  # type: ignore[misc]
+async def app_permission_middleware(
+    request: web.Request,
+    handler: object,
+) -> web.StreamResponse:
+    """Enforce an app's declared ``permissions.api`` allowlist (A5).
+
+    Only acts on requests carrying an app identity (``request["app"]`` set
+    from an app-scoped token). A path the app didn't declare is rejected
+    403 before the handler runs — the half an app's own BACKEND cannot talk its
+    way past, since its token is the only credential it holds. Owner/dashboard
+    requests (no app identity) pass.
+
+    🪤 That is not a boundary on an app's FRONTEND (#492). An app's UI bundle is
+    imported into the dashboard page itself, so a bare ``fetch`` from it carries
+    the owner's cookie and no app identity, arrives indistinguishable from the
+    dashboard's own request, and passes here by the rule above. Nothing on this
+    side can tell the two apart — separating them needs a distinct ORIGIN for app
+    bundles, which is why this is a disclosed limitation
+    (``docs/security/limitations.md`` §4, surfaced at install consent) rather than
+    a check that could be added here.
+
+    The decision itself is ``permissions.app_request_denial``, not inline here, and this
+    is a module-level function rather than a closure inside :func:`start_dashboard` so a
+    test drives THIS middleware instead of a mirror of it (a mirror is free to drift from
+    the boundary it claims to test). This half owns logging the refusal and shaping the
+    response; the module owns what is refused.
+
+    It hands the decision the matched route's canonical template as well as the path,
+    because the per-route declarations (``permissions.ROUTE_AUTHZ``) are keyed on it:
+    ``POST /api/triggers`` and ``POST /api/triggers/{id}/run`` share a prefix and not a
+    verdict. An allowed app request then runs inside ``scoped_to_app``, so a seam with no
+    request in hand (the file explorer's root list) still knows who is asking."""
+    from personalclaw.apps.permissions import (
+        APP_SCOPED_PREFIXES,
+        app_request_denial,
+        scoped_to_app,
+    )
+
+    app_name = request.get("app", "")
+    if app_name and request.path.startswith(APP_SCOPED_PREFIXES):
+
+        def _deny(reason: str) -> web.StreamResponse:
+            from personalclaw.sel import sel
+
+            try:
+                sel().log_api_access(
+                    caller=f"app:{app_name}",
+                    operation=f"{request.method} {request.path}",
+                    outcome="denied",
+                    source="app_permissions",
+                    resources=request.path,
+                    error=reason,
+                )
+            except Exception:
+                pass
+            raise web.HTTPForbidden(
+                # The reason rides in the body, so a developer reads the policy — "owner-only
+                # capability …: the MCP servers this gateway launches" — rather than a bare 403.
+                text=f"app {app_name!r} not permitted to access {request.path}: {reason}",
+                content_type="text/plain",
+            )
+
+        resource = request.match_info.route.resource
+        reason = app_request_denial(
+            app_name,
+            request.path,
+            method=request.method,
+            route=resource.canonical if resource is not None else "",
+        )
+        if reason:
+            return _deny(reason)
+    if app_name:
+        with scoped_to_app(app_name):
+            return await handler(request)  # type: ignore[operator]
+    return await handler(request)  # type: ignore[operator]
+
+
 async def start_dashboard(
     sessions: "SessionManager",
     port: int = _DEFAULT_PORT,
@@ -2188,61 +2266,6 @@ async def start_dashboard(
                 from personalclaw.http_errors import json_error
 
                 return json_error("auth_origin_not_allowed", status=403)
-        return await handler(request)  # type: ignore[operator]
-
-    @web.middleware  # type: ignore[misc]
-    async def app_permission_middleware(
-        request: web.Request,
-        handler: object,
-    ) -> web.StreamResponse:
-        """Enforce an app's declared ``permissions.api`` allowlist (A5).
-
-        Only acts on requests carrying an app identity (``request["app"]`` set
-        from an app-scoped token). A path the app didn't declare is rejected
-        403 before the handler runs — the half an app's own BACKEND cannot talk its
-        way past, since its token is the only credential it holds. Owner/dashboard
-        requests (no app identity) pass.
-
-        🪤 That is not a boundary on an app's FRONTEND (#492). An app's UI bundle is
-        imported into the dashboard page itself, so a bare ``fetch`` from it carries
-        the owner's cookie and no app identity, arrives indistinguishable from the
-        dashboard's own request, and passes here by the rule above. Nothing on this
-        side can tell the two apart — separating them needs a distinct ORIGIN for app
-        bundles, which is why this is a disclosed limitation
-        (``docs/security/limitations.md`` §4, surfaced at install consent) rather than
-        a check that could be added here.
-
-        The decision itself is ``permissions.app_request_denial``, not inline here:
-        this closure cannot be imported, so every test of the boundary had to
-        re-implement it and was free to drift from it. This half owns logging the
-        refusal and shaping the response; the module owns what is refused."""
-        from personalclaw.apps.permissions import APP_SCOPED_PREFIXES, app_request_denial
-
-        app_name = request.get("app", "")
-        if app_name and request.path.startswith(APP_SCOPED_PREFIXES):
-
-            def _deny(reason: str) -> web.StreamResponse:
-                from personalclaw.sel import sel
-
-                try:
-                    sel().log_api_access(
-                        caller=f"app:{app_name}",
-                        operation=f"{request.method} {request.path}",
-                        outcome="denied",
-                        source="app_permissions",
-                        resources=request.path,
-                        error=reason,
-                    )
-                except Exception:
-                    pass
-                raise web.HTTPForbidden(
-                    text=f"app {app_name!r} not permitted to access {request.path}",
-                    content_type="text/plain",
-                )
-
-            reason = app_request_denial(app_name, request.path)
-            if reason:
-                return _deny(reason)
         return await handler(request)  # type: ignore[operator]
 
     # Generate per-session secret for local app / IPC authentication.

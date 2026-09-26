@@ -186,9 +186,14 @@ skips.
 **Walk away if:** you were reading "permission-gated app platform" as a sandbox.
 
 It is not one, and the project says so at length in
-[Security limitations](../security/limitations.md). The four named
+[Security limitations](../security/limitations.md). The five named
 non-enforcements matter most here:
 
+- An app's own code runs as you. Its backend, its provider module, and the MCP server
+  commands and setup hooks in its manifest can read and change any file in your
+  PersonalClaw home, including `config.json` and the key that signs your session tokens.
+  The permissions bound the app's token, not its code. Only a backend that names a
+  sandbox tier is confined.
 - The app `network` permission is **declaration-only, unenforced by design**. An app's
   provider code is imported **in-process** by the gateway, so its outbound calls *are*
   the gateway's. The consent surface labels this advisory rather than implying
@@ -202,9 +207,10 @@ non-enforcements matter most here:
 
 The real control is the supply-chain scanner — quarantine → scan → consent → install,
 with a `dangerous` terminal verdict — plus a closed set of owner-only capabilities that no
-manifest can reach (the terminal, computer-use, the credential store, the audit log,
-your password and second factor, and your security settings). That is meaningful, and it
-is also *vetting what you choose to install*, not confinement afterwards. Treat installing
+app token can reach (the terminal, computer-use, the credential store, the audit log,
+your password and second factor, your security settings, the MCP servers the gateway
+launches, and defining the automations that run as you). That is meaningful, and it is
+also *vetting what you choose to install*, not confinement afterwards. Treat installing
 an app as running a program as yourself, because that is what it is.
 
 ## 10. You want a hosted service, or to run one install for other people

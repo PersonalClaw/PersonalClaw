@@ -34,6 +34,7 @@ from aiohttp.multipart import BodyPartReader
 
 from personalclaw.dashboard.handlers._shared import _is_restricted_session
 from personalclaw.dashboard.sse import stream_response
+from personalclaw.http_errors import consent_required
 from personalclaw.request_validation import json_object_body, require_string
 from personalclaw.safety_flags import confirm_granted, confirm_granted_query, strict_bool
 from personalclaw.sel import sel
@@ -269,6 +270,24 @@ async def api_def_save(request: web.Request) -> web.Response:
             status=400,
         )
     name = require_string(body, "name")
+    # A step whose agent approves its own tool calls, or holds the write grant an unattended run
+    # never gets by default, is the owner's per-automation approval posture — asked about on the
+    # wire when a save loosens it over the stored definition, like `agent.approval_mode`. A dry
+    # run (`save: false`) writes nothing, so it is never asked.
+    if bool(body.get("save", True)):
+        from personalclaw.automation_posture import unconsented_workflow_loosening
+
+        stored = await service.get_def(name)
+        loosened = unconsented_workflow_loosening(
+            name,
+            current_root=(stored.get("definition") or {}).get("root") if stored.get("ok") else None,
+            new_root=root,
+            body=body,
+        )
+        if loosened is not None:
+            field, consent = loosened
+            _audit(request, "workflow_def_save", "denied", f"{field}: loosening without confirm")
+            return consent_required(field, consent)
     result = await service.author_def(
         name=name,
         root=root,
@@ -1061,7 +1080,25 @@ async def api_run_policy_overrides(request: web.Request) -> web.Response:
         return denied
     run_id = request.match_info.get("run_id", "")
     body = await json_object_body(request)
-    result = service.set_policy_overrides(run_id, body)
+    # The owner's loosening of a control (`supervisor_policy.POLICY_OVERRIDE_SECURITY`) needs
+    # consent on the wire. `confirm` is the consent flag, not a knob, so it is not persisted.
+    overrides = {k: v for k, v in body.items() if k != "confirm"}
+    run = store.get(run_id)
+    if run is not None:
+        from personalclaw.workflows.supervisor_policy import unconsented_override_loosening
+
+        loosened = unconsented_override_loosening(
+            run_id,
+            (store.read_spec(run_id) or {}).get("root"),
+            current=run.policy_overrides,
+            new=overrides,
+            body=body,
+        )
+        if loosened is not None:
+            field, consent = loosened
+            _audit(request, "workflow_run_policy_overrides", "denied", f"{field}: without confirm")
+            return consent_required(field, consent)
+    result = service.set_policy_overrides(run_id, overrides)
     _audit(
         request,
         "workflow_run_policy_overrides",

@@ -990,8 +990,31 @@ def _dashboard_roots() -> list[tuple[str, str]]:
     enforces — workspace, outbox, uploads, and PERSONALCLAW_HOME. Roots that
     fail to resolve (e.g. not configured) are skipped. The order is
     user-facing-first (workspace) so the explorer can default to it.
-    """
 
+    🔴 AN APP NEVER GETS THE HOME ITSELF. ``config.json``, ``mcp.json``, the automations, the
+    agent files and every other app's install are plain files under PERSONALCLAW_HOME, so an
+    app that declared ``/api/file-write`` could turn YOLO on or define an MCP command by
+    editing one — past every refusal the config PATCH, the MCP routes and the automation routes
+    make — and one that declared ``/api/file-read`` could read the MCP servers' credentials.
+    So for a request the gateway scoped to an app (``permissions.request_app``), every root
+    that IS the home or CONTAINS it is left out — the two home roots, and a loop or project
+    workspace bound to ``~`` — while roots inside it (outbox, uploads) stay. The allowlist then
+    admits a home path only through one of those, and the realpath checks in
+    :func:`_validate_dashboard_path` refuse a symlink or ``..`` back out of them.
+    """
+    roots = _all_dashboard_roots()
+    from personalclaw.apps.permissions import request_app
+
+    if not request_app():
+        return roots
+    from personalclaw.config.loader import config_dir
+
+    home = os.path.realpath(str(config_dir()))
+    return [(label, r) for label, r in roots if not (home == r or home.startswith(r + os.sep))]
+
+
+def _all_dashboard_roots() -> list[tuple[str, str]]:
+    """Every root :func:`_dashboard_roots` may surface, before the app-scoped filter."""
     from personalclaw.config.loader import config_dir, outbox_dir
 
     candidates: list[tuple[str, str]] = []

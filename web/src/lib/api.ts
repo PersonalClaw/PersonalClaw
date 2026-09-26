@@ -693,6 +693,11 @@ export interface AppPermissionsWire {
   // "declared, not yet in effect", never among the enforced bullets.
   backgroundTasks?: boolean
   eventSubscriptions?: string[]
+  // The owner's settings this app reads and writes through `/api/config` — exact dotted field
+  // paths (`voice.echo_filter_enabled`). Enforced: `GET /api/config/personalclaw` returns only
+  // these to the app, and a write to any other setting is refused 403 + SEL. A security setting
+  // can never be listed (the manifest fails to install). Absent = it reads and writes none.
+  config?: string[]
 }
 /** INU-7. One declared proposal kind. `kind_suffix` is namespaced under the app at
  *  registration (`app:<name>` / `proposal:<suffix>`); `label` is what the user sees. */
@@ -6451,14 +6456,16 @@ export const api = {
    *  NAMES what was added — it was typed `number` here while the server has always answered
    *  with a list, so nothing could have rendered it (#344). `message` is the server-composed
    *  sentence; report it verbatim rather than re-deriving one from the arrays. */
-  syncAgents: () => post<{
+  // A file that would fold in a looser approval mode is asked about, in the gateway's words,
+  // before anything is written (`agents.api_personalclaw_agents_sync`).
+  syncAgents: () => withSecurityConsent((c) => post<{
     ok: boolean
     synced: string[]
     skipped: string[]
     unreadable: string[]
     scanned: number
     message: string
-  }>('/api/agents/sync'),
+  }>('/api/agents/sync', c ? { confirm: true } : undefined)),
 
   // ── Channels runtime (live connection health + connect/disconnect/test) ──
   channels: () => get<{ channels: ChannelRuntime[] }>('/api/channels').then((d) => d.channels),
@@ -7196,9 +7203,11 @@ export const api = {
     // Empty matches every app event — the catch-all, which is why AppEvent needs no second pattern.
     event_glob?: string
     max_fires?: number; action: { provider: string; config: Record<string, unknown> }
-  }) => post<Trigger & { warning?: string }>('/api/triggers', { trigger_type: 'event', ...body }),
+  }) => withSecurityConsent((c) => post<Trigger & { warning?: string }>('/api/triggers',
+    { trigger_type: 'event', ...body, ...(c ? { confirm: true } : {}) })),
   updateEventTrigger: (id: string, body: Record<string, unknown>) =>
-    put<{ ok: boolean; trigger: Trigger }>(`/api/triggers/event:${encodeURIComponent(id)}`, body),
+    withSecurityConsent((c) => put<{ ok: boolean; trigger: Trigger }>(
+      `/api/triggers/event:${encodeURIComponent(id)}`, c ? { ...body, confirm: true } : body)),
   deleteEventTrigger: (id: string) => del(`/api/triggers/event:${encodeURIComponent(id)}`),
   toggleEventTrigger: (id: string, enabled?: boolean) =>
     post<{ ok: boolean; trigger: Trigger }>(`/api/triggers/event:${encodeURIComponent(id)}/toggle`, enabled === undefined ? {} : { enabled }),
@@ -7212,10 +7221,15 @@ export const api = {
   // Schedule* components mutate by bare id, which the helpers re-namespace).
   schedules: () => get<{ triggers: Trigger[]; server_tz: string }>('/api/triggers?type=schedule')
     .then((d) => ({ jobs: d.triggers.map((t) => ({ ...t, id: t.raw_id })) as unknown as ScheduleJob[], server_tz: d.server_tz })),
+  // "Auto-approve tools" is an automation's approval posture: turning it on is asked for in the
+  // gateway's words, like a looser config field (`securityConsent.ts`).
   createSchedule: (body: Record<string, unknown>) =>
-    post<{ ok: boolean; trigger: Trigger }>('/api/triggers', { trigger_type: 'schedule', ..._scheduleBodyToWire(body) }),
+    withSecurityConsent((c) => post<{ ok: boolean; trigger: Trigger }>('/api/triggers',
+      { trigger_type: 'schedule', ..._scheduleBodyToWire(body), ...(c ? { confirm: true } : {}) })),
   updateSchedule: (id: string, body: Record<string, unknown>) =>
-    put<{ ok: boolean; trigger: Trigger }>(`/api/triggers/schedule:${encodeURIComponent(id)}`, _scheduleBodyToWire(body)),
+    withSecurityConsent((c) => put<{ ok: boolean; trigger: Trigger }>(
+      `/api/triggers/schedule:${encodeURIComponent(id)}`,
+      { ..._scheduleBodyToWire(body), ...(c ? { confirm: true } : {}) })),
   deleteSchedule: (id: string) => del(`/api/triggers/schedule:${encodeURIComponent(id)}`),
   runSchedule: (id: string, dryRun = false) =>
     post<TriggerRunResult>(`/api/triggers/schedule:${encodeURIComponent(id)}/run`, dryRun ? { dry_run: true } : undefined),
@@ -7546,16 +7560,18 @@ export const api = {
   hooks: () => get<{ triggers: Trigger[] }>('/api/triggers?type=lifecycle').then((d) => d.triggers.map(_triggerToHook)),
   actionProviders: () => get<{ providers: ActionProvider[] }>('/api/action-providers').then((d) => d.providers),
   createHook: (body: Record<string, unknown>) =>
-    post<{ ok: boolean; trigger: Trigger }>('/api/triggers', {
+    withSecurityConsent((c) => post<{ ok: boolean; trigger: Trigger }>('/api/triggers', {
       trigger_type: 'lifecycle', name: body.name, event: body.event, matcher: body.matcher,
       action: { provider: body.provider, config: body.provider_config ?? {} },
-    }).then((r) => ({ ok: r.ok, hook: _triggerToHook(r.trigger) })),
+      ...(c ? { confirm: true } : {}),
+    })).then((r) => ({ ok: r.ok, hook: _triggerToHook(r.trigger) })),
   updateHook: (id: string, body: Record<string, unknown>) =>
-    put<{ ok: boolean; trigger: Trigger }>(`/api/triggers/lifecycle:${encodeURIComponent(id)}`,
-      'provider' in body || 'provider_config' in body
+    withSecurityConsent((c) => put<{ ok: boolean; trigger: Trigger }>(`/api/triggers/lifecycle:${encodeURIComponent(id)}`, {
+      ...('provider' in body || 'provider_config' in body
         ? { ...body, action: { provider: body.provider, config: body.provider_config ?? {} } }
-        : body,
-    ).then((r) => ({ ok: r.ok, hook: _triggerToHook(r.trigger) })),
+        : body),
+      ...(c ? { confirm: true } : {}),
+    })).then((r) => ({ ok: r.ok, hook: _triggerToHook(r.trigger) })),
   deleteHook: (id: string) => del(`/api/triggers/lifecycle:${encodeURIComponent(id)}`),
   toggleHook: (id: string) => post(`/api/triggers/lifecycle:${encodeURIComponent(id)}/toggle`, {}),
   testHook: (id: string, context?: string) => post<{ ok: boolean; result: { stdout: string; stderr: string; exit_code: number; error: string; duration_ms: number } }>(`/api/triggers/lifecycle:${encodeURIComponent(id)}/test`, { context: context ?? 'test' }),
@@ -8261,7 +8277,10 @@ export const api = {
   workflowDef: (name: string) =>
     get<{ definition: WorkflowDef; provider: string }>(`/api/workflows/${encodeURIComponent(name)}`),
   saveWorkflowDef: (body: { name: string; root: WorkflowNode; description?: string; inputs?: Record<string, unknown>; tags?: string[]; metadata?: Record<string, unknown>; save?: boolean }) =>
-    post<{ saved: boolean; definition?: WorkflowDef; valid: boolean; issues: Array<{ code: string; message: string; path?: string; severity?: string }>; levels?: string[][] }>('/api/workflows', body),
+    // A step whose agent approves its own tool calls (or holds the write grant) is asked for
+    // when a save loosens it; a dry run (`save: false`) writes nothing and is never asked.
+    withSecurityConsent((c) => post<{ saved: boolean; definition?: WorkflowDef; valid: boolean; issues: Array<{ code: string; message: string; path?: string; severity?: string }>; levels?: string[][] }>('/api/workflows',
+      c ? { ...body, confirm: true } : body)),
   // EXTERNAL-ACCESS §5 — publish/unpublish one template as an A2A skill. Its own route, not a
   // field on `saveWorkflowDef`: this page holds the secret-stripped def, and re-saving that to
   // carry one bool would persist the stripped bindings.
@@ -8310,8 +8329,8 @@ export const api = {
    *  revert a live edit), and an unknown knob is a 400 `unknown_policy_key` naming the
    *  offending keys and the overridable set. */
   setWorkflowRunPolicyOverrides: (id: string, overrides: Record<string, unknown>) =>
-    put<{ run_id: string; status: string; policy_overrides: Record<string, unknown> }>(
-      `/api/workflows/runs/${encodeURIComponent(id)}/policy-overrides`, overrides),
+    withSecurityConsent((c) => put<{ run_id: string; status: string; policy_overrides: Record<string, unknown> }>(
+      `/api/workflows/runs/${encodeURIComponent(id)}/policy-overrides`, c ? { ...overrides, confirm: true } : overrides)),
   /** Resolve a pending confirmation by VERB — the backend the DagView's Approve/Deny binds to.
    *  Separate from `resumeWorkflowRun` because the verb vocabulary is the point: an unknown verb is
    *  REFUSED server-side rather than treated as a reject, so a typo cannot silently decline work the

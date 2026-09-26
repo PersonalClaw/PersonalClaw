@@ -68,12 +68,27 @@ password and second factor, gateway restart, and local token minting. Your secur
 posture is in the same class: the chat approval mode (auto-approve-everything),
 resuming after an incident stop, project trust, autonomy promotions, standing
 approve/deny rules, device pairing codes, external-access clients, and the agent's
-runtime config (`allowedTools`, the servers it launches). Holding any of those would
-make every other line in a manifest moot, so there is nothing to scope — and before
-the registry existed, an app declaring `/api/ws` (the event socket) prefix-matched
-`/api/ws/terminal/{id}` and got an interactive shell running as you. A manifest that
-names one of these paths now fails to install. None of this touches your own access
-to those surfaces; the refusal applies only to requests carrying an app identity.
+runtime config (`allowedTools`, the servers it launches). So is code that runs as you,
+and your own access: the MCP servers the gateway launches (`/api/mcp`, reads included,
+since a remote server's headers hold its bearer token), your backups (export, import and
+restore), who may message your agent from a chat channel, and taking back an autonomy
+grant or undoing what an automation did. Holding any of those would make every other
+line in a manifest moot, so there is nothing to scope — and before the registry existed,
+an app declaring `/api/ws` (the event socket) prefix-matched `/api/ws/terminal/{id}` and
+got an interactive shell running as you. A manifest that names one of these paths now
+fails to install. None of this touches your own access to those surfaces; the refusal
+applies only to requests carrying an app identity.
+
+Some route families mix your business with an app's, so they are declared route by
+route instead (`apps/permissions.ROUTE_AUTHZ`). An app may fire a webhook trigger with a
+client token you minted, cancel or pause a run, stop a background agent, redeem a pairing
+code you minted, and stop all unattended work with `POST /api/incident`. It may not
+define, edit, arm or run an automation, save a workflow, start or steer a run, start a
+goal loop, install, enable or update an app or a pack, connect or disconnect a chat
+channel, or sign out one of your devices. Its scheduled work is the `crons` its manifest
+declares, which install consent lists. Every write route in these families has to be
+declared one way or the other: one that is not is refused to every app until someone
+declares it, and `tests/test_security_posture_rail.py` fails the build on it.
 
 The security settings that live in `config.json` are refused field by field instead,
 because `/api/config` also carries ordinary settings an app may legitimately write: an
@@ -81,6 +96,9 @@ app-scoped `PATCH` of a field that is a security setting (YOLO, the approval mod
 sign-in and 2FA, egress, the keychain, sandbox ceilings, guardrail budgets, external
 access, sync) answers `403`, in either direction, as does an app writing an agent's
 `approval_mode` or answering a pending approval with a standing grant such as `yolo`.
+Every other setting is the app's only if its manifest names it in `permissions.config`,
+the list install consent shows: `GET /api/config/personalclaw` hands an app those fields
+and nothing else, and a write to any other answers `403 config_field_not_declared`.
 Every such refusal leaves a Security Event Log row naming the app and the field.
 
 **What this means for you:** treat an installed app's `network: true` as a stated
@@ -188,9 +206,10 @@ construction.
 **What is enforced:** every call an app makes through the SDK client
 (`createAppApi` / `useAppApi`) carries a short-lived app-scoped token, and
 `app_permission_middleware` refuses a path the manifest did not declare — 403 + a
-Security Event Log row, before the handler runs. An app's **backend** holds no other
-credential, so for it that allowlist (and the closed `OWNER_ONLY_API_PATHS` registry
-in §2) is a real boundary.
+Security Event Log row, before the handler runs. An app's **backend** is handed no other
+credential, so every request it makes through the gateway is bound by that allowlist
+(and by the owner-only registry in §2). That bounds the backend's requests, not the
+backend: its code runs as you and can act on your home without asking the gateway (§7).
 
 **What is not enforced:** the bundle is under no obligation to use that client. A bare
 `fetch('/api/…')` from app UI code carries the owner's cookie and *no* app identity, so
@@ -339,6 +358,60 @@ So a token in either place:
 leave its value out of `mcp.json`; treat a snapshot or export of a home that holds either one as
 holding those tokens, and change the webhook token if such an archive leaves your hands.
 
+## 7. An app's own code runs as you
+
+Everything §2 describes bounds an app's **token**: what the app may reach by asking the
+gateway. None of it bounds the app's **code**. An app can bring four kinds, and all four
+run under your own account:
+
+- provider modules, imported into the gateway's own process
+  (`providers/loader.py::_load_ext_module`);
+- a backend, started as a process on this machine (`apps/backend_runtime.py`);
+- the MCP servers in its manifest's `mcpServers`, each a command the gateway launches with
+  the gateway's own environment, which carries the stored credentials PersonalClaw exports
+  for its child processes (`apps/mcp_bridge.py`, `mcp_client.py`, `config/loader.py`);
+- setup hooks (`setup.onInstall` and the rest), shell commands run at install, update,
+  enable, disable and uninstall (`apps/app_manager.py::_run_hook`).
+
+That code can read and write every file in your PersonalClaw home. It can switch YOLO on
+by editing `config.json`, with no `PATCH /api/config/personalclaw` to refuse; it can add
+a server to `mcp.json`; it can read the credential files; and it can read `session_key`,
+the key that signs every session token, and sign one as you. The home's private file
+modes keep other accounts on the machine out, not your own processes. None of the
+refusals in §2 applies, because none of this goes through the API.
+
+**What is enforced:** an app cannot add code through the gateway after you install it.
+Its MCP servers and its scheduled jobs come from the manifest you consented to, and
+defining either through the API is owner-only (§2). A backend that names a sandbox tier
+(`backend.sandbox`, such as `docker`) launches inside that tier rather than on the host,
+with its `network` permission deciding its egress and its `storage` permission its one
+writable folder (`apps/backend_runtime.py::build_backend_sandbox_spec`). A named tier that
+is not available refuses to launch instead of falling back to the host. A backend's
+environment is an allowlist, so it inherits no credential you did not pass through by
+name in `sandbox.env_passthrough` (`sandbox.py::build_child_env`), and a backend and an
+MCP server both run under the resource-ceiling shim (`sandbox.py::spawn_shim_argv`).
+
+**What is not enforced:** anything about the code itself. A backend that names no
+sandbox, a provider module, an MCP server and a setup hook have your files and your
+network, and an MCP server and a setup hook also get the gateway's full environment.
+
+**What the consent surface tells you:** the install dialog reads `apps/disclosure.describe`
+and has a row titled *What it runs on this machine*. It says when the app starts a server
+process of its own, shows the shell command its install (or update) hook runs, verbatim,
+and names each MCP server it adds with the command line or URL that server launches. The
+network row beside it says the app's code can reach the network whatever it declares.
+
+**What the consent surface does not tell you yet:** that this code runs under your
+account with your files, and that the permissions above it do not bound it. It also does
+not list provider modules, so an app that ships only a provider shows no row at all, and
+it does not show the enable, disable and uninstall hooks. This page is where those facts
+are written down, which is not the same as saying them where you consent.
+
+**What this means for you:** installing an app that brings code is running a program
+as yourself. The supply-chain scanner (quarantine → scan → consent → install, with
+`dangerous` terminal) is the control that vets it, and the permissions describe what
+the app's token may do once it runs, not a box around it.
+
 ## Why these are listed, not fixed
 
 Per the project's lifecycle discipline, a control *gap* discovered while writing
@@ -348,6 +421,9 @@ patched inline in a docs change. Every item above has a named future direction
 #2; out-of-process providers for the residual half of #3; a distinct origin for app
 UI, with the SDK crossing it as a message channel, for #4; checking a hand-copied
 weight's sha256 when it loads, for the gap in #5; resolving MCP `env` values and the webhook
-token from the credential store where they are used, for #6). This page will shrink as those land.
+token from the credential store where they are used, for #6; per-app OS isolation for every
+kind of app code, which today only a backend that names a sandbox tier has, and a consent row
+that names all of that code and says it runs as you, for #7). This page will shrink as those
+land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

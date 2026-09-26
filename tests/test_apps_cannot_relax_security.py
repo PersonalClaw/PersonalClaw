@@ -160,13 +160,20 @@ class TestAnAppCannotWriteASecuritySetting:
         assert _denials_naming(sel_rows, caller=f"app:{APP}", field=field)
 
     @pytest.mark.asyncio
-    async def test_an_app_still_writes_an_ordinary_setting(self, config_file, sel_rows) -> None:
+    async def test_an_app_still_writes_an_ordinary_setting_it_declared(
+        self, config_file, sel_rows
+    ) -> None:
         # The `/api/config` grant is not revoked wholesale: a field that governs nothing about
-        # who may do what stays writable, so an app that declared the path for a real reason
-        # keeps working.
-        async with TestClient(TestServer(_config_app(APP))) as c:
-            resp = await _patch(c, "voice.echo_filter_enabled", False)
-            assert resp.status == 200
+        # who may do what stays writable by an app whose manifest names it in
+        # `permissions.config` — the list install consent shows. An undeclared one is refused
+        # (`test_apps_cannot_run_code_or_bypass_approvals.py`).
+        with patch(
+            "personalclaw.dashboard.handlers.core._app_config_fields",
+            return_value=["voice.echo_filter_enabled"],
+        ):
+            async with TestClient(TestServer(_config_app(APP))) as c:
+                resp = await _patch(c, "voice.echo_filter_enabled", False)
+                assert resp.status == 200
         saved = json.loads(config_file.read_text(encoding="utf-8"))
         assert saved["voice"]["echo_filter_enabled"] is False
 
@@ -502,6 +509,10 @@ class TestTheDedicatedPostureRoutesAreOwnerOnly:
             "/api/external-access/clients",
             "/api/external-access/clients/abc/disabled",
             "/api/agent/config",
+            # Handing a grant back needs no confirmation from the owner, and is a denial of
+            # service from an app: it can undo every grant, restarting each cooldown.
+            "/api/autonomy/demote",
+            "/api/autonomy/undo",
         ],
     )
     def test_no_app_declaration_reaches_it(self, path) -> None:
@@ -515,12 +526,12 @@ class TestTheDedicatedPostureRoutesAreOwnerOnly:
     @pytest.mark.parametrize(
         "path",
         [
-            # The tightening and read halves stay where an app can declare them.
+            # The stop and the read halves stay where an app can declare them.
             "/api/incident",
             "/api/chat/sessions/s1/messages",
             "/api/devices/pair/complete",
             "/api/external-access",
-            "/api/autonomy/demote",
+            "/api/autonomy",
             "/api/agents",
         ],
     )
