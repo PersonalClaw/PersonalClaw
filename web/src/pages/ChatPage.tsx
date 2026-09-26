@@ -16,7 +16,7 @@ const DEFAULT_EXIT_PHRASES = ['cancel', 'never mind', 'forget it']
 import { fvs, withWeight } from '../design/fontWeight'
 import { playCue } from '../design/soundCues'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, Coins, ListTree, Scissors } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowLeft, ArrowRight, ArrowUp, GripVertical, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, ListTree, Scissors } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -40,11 +40,11 @@ import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { deliverableToOpenSession } from './chat/sessionDelivery'
 import { sessionRowMeta } from './chat/sessionRowMeta'
 import { AppPermissionNotice, StartedByApp, startedByName } from './chat/StartedByApp'
+import { chatContextChips } from './chat/ChatContextLine'
 import { snapshotPredatesSend, streamingAtMount } from './chat/liveRun'
 import { OrganizeChip } from './chat/OrganizeChip'
 import { ContextLedger } from './chat/ContextLedger'
 import { chatFindPath, searchSourceLabel } from './chat/searchDeepLink'
-import { ScreenShareChip } from '../ui/ScreenShareChip'
 import { useScreenShare } from '../ui/composer/useScreenShare'
 import { DotGlow } from '../ui/DotGlow'
 import { EmptyState, ListSkeleton, LoadError, Skeleton, LoadingStatus } from '../ui/ListScaffold'
@@ -219,14 +219,6 @@ function greeting(name: string): string {
   const h = new Date().getHours()
   const part = h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening'
   return `Good ${part}, ${firstNameOf(name)}`
-}
-
-/** Compact token count for the session cost chip: 940 → "940", 46_000 → "46k",
- *  1_200_000 → "1.2M". Keeps the header chip short (the plan's "$0.19 · 46k tokens"). */
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
-  if (n >= 1_000) return `${Math.round(n / 1_000)}k`
-  return String(n)
 }
 
 /** Contextual prompt-starter chips on the empty-chat hero. Sourced from the
@@ -978,7 +970,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const [title, setTitle] = useState(seededDetail?.title || '')
   const [renaming, setRenaming] = useState(false)
   const [renameVal, setRenameVal] = useState('')
-  const [linkCopied, setLinkCopied] = useState(false)
   const [regenningTitle, setRegenningTitle] = useState(false)
   // P15 rAF stream coalescer: chat_chunk pushes into this; it flushes ONE growing
   // reveal per animation frame (instead of a setTurns per chunk) via onFlush, which
@@ -2961,8 +2952,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // Gated, because it was NOT: the catch swallowed the failure and "Copied" was set anyway, so
     // a blocked write left the button claiming a link the clipboard did not hold.
     if (!(await copyText(url, 'the chat link'))) return
-    setLinkCopied(true)
-    window.setTimeout(() => setLinkCopied(false), 1600)
+    // A toast, like this header's other actions ("Save as starter", a branch): the control can be
+    // a row of the `…` menu, which has closed by the time the copy lands, so a confirmation drawn
+    // on the control itself would say nothing there.
+    notify('Chat link copied.', 'success')
   }
   // Silently prime the next turn with background context — no visible message, no
   // turn triggered; consumed + prepended on the next user send.
@@ -3334,6 +3327,25 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     </div>
   )
 
+  // The header's context line: what this conversation IS, under its title (`ChatContextLine`).
+  const contextChips = started ? chatContextChips({
+    screenShare: screenShare.sharing ? { onStop: screenShare.toggle } : null,
+    startedBy: startedBy?.name,
+    project: projectName ? { name: projectName, open: () => navigate(`projects/${projectId}`) } : null,
+    branchedFrom: branchedFrom
+      ? { title: branchedFrom.title, open: () => navigate(`chat/${branchedFrom.key}`) }
+      : null,
+    investigate: investigateOrigin?.title
+      ? {
+          title: investigateOrigin.title,
+          open: investigateOrigin.back_link
+            ? () => navigate((investigateOrigin.back_link as string).replace(/^#\//, ''))
+            : undefined,
+        }
+      : null,
+    cost: sessionCost,
+  }) : []
+
   if (missing) return <MissingChat draft={input} navigate={navigate} />
   // A failed read with nothing painted: say it failed, and let the user retry. (A transcript
   // painted from the fresh cache stays on screen — a failed REVALIDATION of it is not news.)
@@ -3358,11 +3370,17 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           undefined
         ) : (
           renaming ? (
+            // `min-w-0 w-full`: an input's intrinsic width is ~20ch and a flex item will not shrink
+            // below it, so a fixed 200px floor here overran a phone's whole row.
             <input autoFocus aria-label="Rename this chat" value={renameVal} onChange={(e) => setRenameVal(e.target.value)}
               onBlur={commitRename}
               onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); else if (e.key === 'Escape') setRenaming(false) }}
-              className="h-8 min-w-[200px] max-w-[420px] rounded-md bg-surface-high px-2 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+              className="h-8 w-full min-w-0 max-w-[420px] rounded-md bg-surface-high px-2 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           ) : (
+            // The title's row holds only what names the chat: the way back, the title, and its
+            // regenerate affordance. Everything ABOUT the chat is on the context line under it
+            // (`below`), and "Copy chat link" is a control in the cluster — see `ChatContextLine`
+            // for what sharing this row cost the title.
             <div className="flex items-center gap-1.5 min-w-0">
               {/* Back to the chat history list — replaces the separate right-side
                   "Chat history" button (it sits left of the title, its natural home). */}
@@ -3379,69 +3397,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                   loading={regenningTitle} disabled={regenningTitle} size={20} iconSize={12}
                   className="shrink-0 -ml-0.5 self-start text-on-surface-low hover:text-primary" />
               )}
-              {/* Screen sharing (MI-4). Deliberately in the header rather than the
-                  composer: it must stay visible while the user scrolls the transcript,
-                  because an indicator you can scroll away from is not an indicator.
-                  Mounted off the LIVE stream state, so the browser's own stop button
-                  clears it too. */}
-              {screenShare.sharing && <ScreenShareChip onStop={screenShare.toggle} />}
-              {/* Project binding stays visible once started — the chat is scoped to this
-                  project's workspace + context; click to open the project. */}
-              {projectName && (
-                <button type="button" onClick={() => navigate(`projects/${projectId}`)}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-[0.75rem] text-on-surface-var hover:text-on-surface" title={`Scoped to project: ${projectName}`}>
-                  <FolderKanban size={12} className="text-primary" /> {projectName}
-                </button>
-              )}
-              {/* Session cost (CATO-7): what this conversation cost, read from the
-                  usage ledger scoped to the session key. "~" prefix + "unpriced"
-                  when the total mixes a model with no price row (honest, never a
-                  confidently-complete $0.00). */}
-              {sessionCost && (
-                <span
-                  className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-[0.75rem] text-on-surface-var"
-                  title={sessionCost.priced ? 'What this conversation has cost so far' : 'Cost so far — includes a model with no price row, so this is a partial total'}>
-                  <Coins size={12} className="text-primary" />
-                  {sessionCost.priced ? `$${sessionCost.cost.toFixed(sessionCost.cost < 1 ? 4 : 2)}` : 'unpriced'}
-                  {' · '}{fmtTokens(sessionCost.tokens)} tokens
-                </span>
-              )}
-              {/* "Branched from" breadcrumb (CC-7): this session's origin, read from the
-                  PERSISTED forked_from via session detail — so it is still here after a
-                  reload, and it names the parent's CURRENT title (renaming the parent
-                  updates the breadcrumb; it is a read, not a copy).
-                  When the origin has been deleted there is nothing to open, so it
-                  degrades to a plain label instead of a link into nothing. */}
-              {branchedFrom && (
-                branchedFrom.title ? (
-                  <Button size="xs" variant="secondary"
-                    onClick={() => navigate(`chat/${branchedFrom.key}`)}
-                    title={`Branched from "${branchedFrom.title}" — open the original`}>
-                    <GitBranch size={12} className="text-primary" /> Branched from {branchedFrom.title}
-                  </Button>
-                ) : (
-                  <span className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-[0.75rem] text-on-surface-var"
-                    title="This chat was branched from a conversation that no longer exists">
-                    <GitBranch size={12} className="text-on-surface-low" /> Branched from a deleted chat
-                  </span>
-                )
-              )}
-              {/* Investigate origin (plan 60): the entity this chat was opened to
-                  investigate; click deep-links back to the source surface. */}
-              {investigateOrigin?.title && (
-                <Button size="xs" variant="secondary"
-                  onClick={() => { if (investigateOrigin.back_link) navigate(investigateOrigin.back_link.replace(/^#\//, '')) }}
-                  title={`Investigating: ${investigateOrigin.title} — open the source`}>
-                  <MessageCircleQuestion size={12} className="text-primary" /> {investigateOrigin.title}
-                </Button>
-              )}
-              {/* copy chat link — lives next to the title (its subject). */}
-              {sessionRef.current && (
-                <IconButton icon={linkCopied ? Check : Link2} label={linkCopied ? 'Link copied' : 'Copy chat link'} size={40} onClick={copyLink} />
-              )}
             </div>
           )
         )}
+        below={contextChips.length > 0 ? contextChips : undefined}
         right={
           // Two live mode selectors (Task, Permission) + New chat / Regen / Activity.
           // Task + Permission are hover-expand mode pills (WidthPill idiom): each shows
@@ -3462,6 +3421,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               disabled={!!startedBy}
               disabledReason={startedBy ? `${startedBy.name}'s permissions decide this chat, not yours` : undefined}
               options={APPROVAL_SLIDER} onChange={(v) => applySelection({ approval: v as ApprovalMode })} />
+            {/* A control like its neighbours, so it takes the cluster's ladder — icon when the row
+                is tight, a row of the `…` menu when tighter. Beside the title it was 40px nothing
+                else could use, and past the viewport's edge at 1024px and below. */}
+            {started && sessionRef.current && (
+              <HeaderControl icon={Link2} label="Copy chat link" priority="low" onClick={copyLink} />
+            )}
             {started && sessionRef.current && (
               <HeaderControl icon={NotebookPen} label="Brief the agent" priority="low" onClick={briefAgent} />
             )}

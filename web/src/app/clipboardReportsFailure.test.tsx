@@ -147,12 +147,16 @@ describe('the site that claimed success now gates on the result', () => {
   const code = readFileSync(join(process.cwd(), 'src/pages/ChatPage.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-  it('copyLink only sets "Copied" when the write landed', () => {
+  it('copyLink only says "copied" when the write landed', () => {
     const body = code.match(/async function copyLink\(\)[\s\S]*?\n  \}/)?.[0] ?? ''
     expect(body, 'found copyLink').not.toBe('')
     expect(body, 'the result is checked').toMatch(/if \(!\(await copyText\([\s\S]*?\)\)\) return/)
     expect(body, 'and the old swallow is gone').not.toMatch(/catch \{/)
-    // Order matters: the guard must precede the state flip, or it changes nothing.
-    expect(body.indexOf('return'), 'the guard comes first').toBeLessThan(body.indexOf('setLinkCopied(true)'))
+    // Order matters: the guard must precede the confirmation, or it confirms a copy that failed.
+    // The confirmation is a toast since "Copy chat link" became a control of the header cluster,
+    // where it can be a row of the `…` menu that has closed before the copy lands.
+    const confirmed = body.indexOf("notify('Chat link copied.', 'success')")
+    expect(confirmed, 'the success is said').toBeGreaterThan(-1)
+    expect(body.indexOf('return'), 'the guard comes first').toBeLessThan(confirmed)
   })
 })
