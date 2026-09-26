@@ -229,6 +229,20 @@ is user- and model-authored text, and an expression language would make it a
 code-execution surface. An unknown pipe is *refused*, never ignored: a silently
 dropped sanitization pipe leaves a spec that looks sanitized and is not.
 
+A pipe's arguments are **literals** — a quoted string, a number, `true`/`false` or
+`null` — so an argument can never name a variable. That makes `| default([])` not an
+expression at all (`[]` is not a literal); "an empty list when the value is null" is
+`| filter`, whose null case is `[]`. Authoring validation parses every pipe call with
+the function resolution itself uses (`bindings.parse_pipe`), so a spec that validates
+is one whose pipes evaluate: `WF_UNKNOWN_PIPE` for a name outside the set, `WF_BAD_PIPE`
+for anything else resolution would refuse — not `name(...)` syntax, a non-literal
+argument, more arguments than the pipe takes. Each refusal carries its own fix
+(`BindingError.remediation`), which is also what a failed step shows for a spec saved
+before the rule existed, since run start does not re-validate. The validator used to check only the
+name, and `rich-ingest` shipped `| default([])` on seven reads: its judge gate failed its
+prompt, a fan-out reading it could never resolve its items and deadlocked the run, and
+no run of the template could persist what its lenses extracted.
+
 Two asymmetries that are easy to get backwards:
 
 - **a null output is a value; an unresolvable reference is an error** (WF2-R9). A

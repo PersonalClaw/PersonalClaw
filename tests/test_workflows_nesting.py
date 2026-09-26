@@ -309,6 +309,18 @@ class TestNestingRefusals:
         # Only the parent was created.
         assert len(after) == len(before) + 1
 
+    async def test_an_input_whose_pipe_cannot_evaluate_says_how_to_fix_the_pipe(self) -> None:
+        """The reference is fine, so the generic "check the referenced node id and field exist"
+        would be false; the input's pipe call is what cannot evaluate, and the fix says how."""
+        await _author_child()
+        run, status = await _run_parent(
+            _parent_spec(inputs={"msg": "{{nodes.prep.output | default([])}}"})
+        )
+        assert status == RunStatus.FAILED
+        failure = store.read_state(run.id)["root.children[1]"].failure
+        assert failure is not None and "`| filter`" in failure.remediation, failure
+        assert "node id" not in failure.remediation
+
     async def test_no_supervisor_is_an_INTERNAL_failure(self) -> None:
         """It is an engine wiring problem, not a spec problem — the distinction is what stops a
         user hunting their own spec for a bug that is ours."""

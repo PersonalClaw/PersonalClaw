@@ -182,7 +182,7 @@
         "config": {
           "kind": "judge",
           "risk": "safe",
-          "prompt": "Extracted decisions:\n{{nodes.lens-decisions.output.items | default([]) | json}}\n\nExtracted facts:\n{{nodes.lens-facts.output.items | default([]) | json}}\n\nDoes every item quote or closely paraphrase something the transcript actually contained? An item that reads plausibly for this kind of meeting but was not said is the failure to catch — it becomes a stored fact nobody can trace."
+          "prompt": "Extracted decisions:\n{{nodes.lens-decisions.output.items | filter | json}}\n\nExtracted facts:\n{{nodes.lens-facts.output.items | filter | json}}\n\nDoes every item quote or closely paraphrase something the transcript actually contained? An item that reads plausibly for this kind of meeting but was not said is the failure to catch — it becomes a stored fact nobody can trace."
         }
       },
       {
@@ -190,7 +190,7 @@
         "id": "store-decisions",
         "label": "Store decisions",
         "config": {
-          "items": "{{nodes.lens-decisions.output.items | default([])}}",
+          "items": "{{nodes.lens-decisions.output.items | filter}}",
           "on_item_error": "skip"
         },
         "body": {
@@ -219,7 +219,7 @@
         "id": "store-references",
         "label": "Store references",
         "config": {
-          "items": "{{nodes.lens-references.output.items | default([])}}",
+          "items": "{{nodes.lens-references.output.items | filter}}",
           "on_item_error": "skip"
         },
         "body": {
@@ -248,7 +248,7 @@
         "id": "store-facts",
         "label": "Store facts",
         "config": {
-          "items": "{{nodes.lens-facts.output.items | default([])}}",
+          "items": "{{nodes.lens-facts.output.items | filter}}",
           "on_item_error": "skip"
         },
         "body": {
@@ -277,7 +277,7 @@
         "id": "store-summary",
         "label": "Store summary",
         "config": {
-          "items": "{{nodes.lens-summary.output.items | default([])}}",
+          "items": "{{nodes.lens-summary.output.items | filter}}",
           "on_item_error": "skip"
         },
         "body": {
@@ -306,7 +306,7 @@
         "id": "store-tasks",
         "label": "Create the action items",
         "config": {
-          "items": "{{nodes.lens-tasks.output.items | default([])}}",
+          "items": "{{nodes.lens-tasks.output.items | filter}}",
           "on_item_error": "skip"
         },
         "body": {

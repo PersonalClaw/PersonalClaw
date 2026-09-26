@@ -370,7 +370,7 @@ async def dispatch_transform(node: Node, ctx: BindingContext) -> NodeResult:
         return _fail(
             FailureClass.USER,
             f"transform binding failed: {exc}",
-            "check the referenced node id and field exist",
+            exc.remediation or "check the referenced node id and field exist",
         )
     contract = (node.config or {}).get("output_contract")
     if isinstance(contract, dict):
@@ -1002,7 +1002,7 @@ async def dispatch_subworkflow(
             return _fail(
                 FailureClass.USER,
                 f"subworkflow input {key!r} did not resolve: {exc}",
-                "check the referenced node id and field exist",
+                exc.remediation or "check the referenced node id and field exist",
             )
 
     parent = store.get(run_id) if run_id else None
