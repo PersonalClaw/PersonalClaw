@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypedDict
 
-from personalclaw.atomic_write import atomic_write
+from personalclaw.atomic_write import atomic_write, atomic_write_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -437,11 +437,10 @@ class SecurityEventLog:
         if key_path.exists():
             return key_path.read_bytes()
         key = os.urandom(32)
-        key_path.write_bytes(key)
-        try:
-            os.chmod(key_path, 0o600)
-        except OSError:
-            pass
+        # Created 0600 and renamed into place whole. `write_bytes` then `chmod` put the key on
+        # disk at the umask mode (0644) for the gap between the two calls — long enough for
+        # another account to open it and keep the descriptor — and a crash in that gap left it so.
+        atomic_write_bytes(key_path, key, mode=0o600, fsync=True)
         return key
 
     def _size(self) -> int:

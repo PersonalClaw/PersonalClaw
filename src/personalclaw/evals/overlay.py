@@ -33,6 +33,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from personalclaw.atomic_write import atomic_write
+
 logger = logging.getLogger(__name__)
 
 #: Env var carrying the JSON overlay from parent to child. Read once, in the child.
@@ -283,7 +285,7 @@ def patch_child_config(dotted: str, value: object) -> str:
             cursor[part] = nxt
         cursor = nxt
     cursor[parts[-1]] = value
-    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    atomic_write(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
     return f"config.json:{dotted}={value!r}"
 
 

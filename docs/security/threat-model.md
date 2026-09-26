@@ -144,6 +144,21 @@ Data leaving the running system:
   `redact_exfiltration_urls`).
 - **Credential-excluding exports** (`portability.py`): `.env`, `sel_hmac.key`,
   and `session_map.json` are on the export exclusion list.
+- **Secret settings held by reference** (`config/secret_refs.py`): a provider key and every
+  app setting declared `x-meta.sensitive` live in the credential store; `config.json`, an
+  app's `data/config.json` and provider instance records carry a `{{secret:…}}` reference.
+  Deleting a provider, or either removal rung of an app, deletes what it owned.
+- **Private home** (`atomic_write.py`): a file the atomic writers put under the home —
+  `atomic_write`, and `agent._atomic_json_write` for `mcp.json` and the agent config — is 0600
+  in a 0700 directory, and a wider mode is refused. `config.json`, an app's `data/config.json`,
+  provider instance records, `mcp.json`, the agent config, `.env`, `credentials.json` and
+  `auth/` are all written that way; `.local_secret`, `telemetry_salt` and `.app_secret` have
+  writers of their own that create them 0600. A file written some other way (a log, a lock, a
+  database) keeps the umask mode inside the 0700 home.
+- **Credential-free snapshots** (`durability/inventory.py`, `credential=True`): `.env`,
+  `.env.pre-keychain`, `credentials.json` and `.local_secret` never enter a snapshot, and a
+  per-app `.app_secret` enters neither a snapshot nor an export. MCP server `env` values and
+  the webhook token are not covered yet — [limitations.md §6](limitations.md).
 - **Memory privacy** (`session_restrictions.py`): temporary/incognito sessions
   gate memory reads/writes.
 

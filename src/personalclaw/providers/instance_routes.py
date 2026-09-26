@@ -221,9 +221,21 @@ async def handle_create_instance(request: web.Request) -> web.Response:
         _rebuild_agent_config_safe()
         return web.json_response({"instance": mask_instance(inst, schema)}, status=201)
 
-    inst = create_instance(name, display_name=display_name, config=config)
+    try:
+        inst = create_instance(name, display_name=display_name, config=config)
+    except ValueError as exc:  # a secret the credential store cannot hold (multi-line)
+        return _unstorable_secret(exc)
     _refresh_multi_instance_provider_safe(name)
     return web.json_response({"instance": mask_instance(inst, schema)}, status=201)
+
+
+def _unstorable_secret(exc: ValueError) -> web.Response:
+    return json_error(
+        "invalid_request",
+        message="The instance configuration failed validation.",
+        status=422,
+        error_extra={"details": [str(exc)]},
+    )
 
 
 async def handle_get_instance(request: web.Request) -> web.Response:
@@ -314,13 +326,16 @@ async def handle_update_instance(request: web.Request) -> web.Response:
         _rebuild_agent_config_safe()
         return web.json_response({"instance": mask_instance(inst, schema)})
 
-    inst = update_instance(
-        name,
-        instance_id,
-        display_name=body.get("display_name"),
-        config=config,
-        enabled=body.get("enabled"),
-    )
+    try:
+        inst = update_instance(
+            name,
+            instance_id,
+            display_name=body.get("display_name"),
+            config=config,
+            enabled=body.get("enabled"),
+        )
+    except ValueError as exc:
+        return _unstorable_secret(exc)
     if not inst:
         return json_error("not_found", message="No instance exists with that id.", status=404)
     _refresh_multi_instance_provider_safe(name)

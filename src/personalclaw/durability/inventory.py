@@ -14,6 +14,11 @@ Each entry declares four things that matter to a backup:
 * **domain** — the user-facing grouping. Snapshot components are exactly the
   domains, so ``VALID_COMPONENTS`` is derived, never typed twice.
 * **secret** — never leaves this machine, in any export or sync.
+* **credential** — a secret whose content IS credential values (API keys, tokens, the
+  session-signing key). Never captured by a snapshot either: a snapshot is a file that gets
+  copied to a USB stick or a cloud drive, and a plaintext key inside one is a leaked key.
+  Settings files carry ``{{secret:…}}`` references instead (``config.secret_refs``), so a
+  restore onto this machine resolves them; a restore onto a wiped one asks for the keys again.
 * **derived** — an index/cache rebuilt from authoritative state. Excluded from
   shards and exports; restoring it is at best wasted bytes and at worst a
   corrupt index paired with a newer store.
@@ -85,6 +90,7 @@ class StateEntry:
     domain: str
     merge: str
     secret: bool = False  # never leaves this machine
+    credential: bool = False  # holds credential VALUES — not even a snapshot captures it
     derived: bool = False  # rebuildable index/cache — excluded from exports
     tombstones: bool = False  # deletes need markers to survive a sync merge
     # This store's content IS databases, one per key (`codegraph/<workspace>.db`), so the
@@ -484,6 +490,11 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_PLATFORM,
         merge=MERGE_UNION_BY_ID,
         help="installed app copies (their data/ holds real state)",
+        # Each app's `.app_secret` is the HMAC key its backend proxy verifies — key material,
+        # minted on demand (`apps.app_secret.ensure_app_secret`) when the backend starts. It
+        # rode every snapshot and every export inside this tree; nothing is lost by leaving it
+        # out, and a copy that travels is a key that lets its holder sign as the gateway.
+        derived_within=("*/.app_secret",),
     ),
     StateEntry(
         id="extensions",
@@ -944,6 +955,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_SECURITY,
         merge=MERGE_REPLACE_ONLY,
         secret=True,
+        credential=True,
         help="gateway session-token secret",
     ),
     StateEntry(
@@ -953,13 +965,15 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_SECURITY,
         merge=MERGE_REPLACE_ONLY,
         secret=True,
+        credential=True,
         help="provider credentials",
     ),
     # SH-2's rollback snapshot: the pre-migration `.env`, kept only while the
     # `credentials_to_keychain` move is still reversible. Claimed here for two reasons —
     # `audit_home()` fails on any unclaimed path, and `secret=True` is what puts it in
     # `portability.EXPORT_EXCLUDE` (a projection of this set), so the one file that holds a
-    # second plaintext copy of every credential cannot ride out in an export.
+    # second plaintext copy of every credential cannot ride out in an export — and, with
+    # `credential=True`, not in a snapshot either.
     StateEntry(
         id="env_pre_keychain",
         kind=KIND_TREE,
@@ -967,6 +981,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_SECURITY,
         merge=MERGE_REPLACE_ONLY,
         secret=True,
+        credential=True,
         help="pre-migration .env snapshot (rollback source for the keychain move)",
     ),
     StateEntry(
@@ -976,6 +991,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_SECURITY,
         merge=MERGE_REPLACE_ONLY,
         secret=True,
+        credential=True,
         help="the credential store",
     ),
     # The gateway's OWN auth store: the argon2id login hash (`credentials.py`), the 2FA
@@ -989,10 +1005,11 @@ INVENTORY: tuple[StateEntry, ...] = (
     # `secret=True`, NOT `IGNORED`. The distinction the neighbours already draw: `machine_id`,
     # `session_key` and `sessions.json` are IGNORED because they are per-install IDENTITY, and
     # carrying them would let a restored copy masquerade as the machine it came from. This is
-    # the owner's own credential store, which travels with the owner — so it takes the posture
-    # stated at the top of this module for exactly that case: EXCLUDED from exports (via the
-    # `secret` projection) but CAPTURED by snapshots on purpose, because a restore that
-    # silently dropped the login would lock a user out of their own gateway. Declared as the
+    # the owner's own login store, which travels with the owner — so it is EXCLUDED from
+    # exports (via the `secret` projection) but CAPTURED by snapshots on purpose, because a
+    # restore that silently dropped the login would lock a user out of their own gateway. It
+    # holds a password HASH, not a credential value, so it is not `credential=True` (the TOTP
+    # secret itself lives in `.env`, which is). Declared as the
     # whole tree rather than per-file: the pair/enrol code files are short-lived and expire on
     # their own, and claiming only `credentials.json` would leave the directory unclaimed and
     # the probe coral, which is the bug.
@@ -1006,18 +1023,12 @@ INVENTORY: tuple[StateEntry, ...] = (
         help="gateway auth store: login hash, 2FA enrolment, device pairing codes",
     ),
     # 🔴 #2217 — the provider credential DESCRIPTORS (`llm/credentials.py` `CREDENTIALS_FILE`,
-    # written 0600 by `CredentialStore.save`). Neither claimed nor ignored, so
-    # `personalclaw snapshot` — the command the pre-1.0 release notes tell users to run BEFORE
-    # upgrading — did not carry it, and a restore came back with every model provider's key
-    # gone. That is the same asset #951 destroyed from the other side, a `config set` dropping
-    # `providers[]` with the keys in it.
-    #
-    # Declared rather than left as census debt because this one needs no guess. The debt set
-    # exists because a wrong `merge` silently corrupts on convergence — and `merge` cannot fire
-    # for a secret at all: shards are built from `export_entries()` (which drops secrets) and
-    # the merge only ever runs on rows imported FROM a shard. So `secret=True` supplies both
-    # halves the issue asked for — captured by snapshot, excluded from every export — and
-    # leaves nothing undecided. Same posture, and the same argument, as `auth` directly above.
+    # written 0600 by `CredentialStore.save`). Declared so `audit_home()` claims it; it was
+    # neither claimed nor ignored. #2217 also made snapshots CARRY it so a restore returned the
+    # keys; that is reversed on purpose: a descriptor can hold an inline `value`, and no
+    # credential value travels in an archive any more (`credential=True`, see the module
+    # docstring). `merge` cannot fire for it either way — shards are built from
+    # `export_entries()`, which drops secrets.
     #
     # Distinct from the `credentials` TREE two entries up: that is the keychain-backed store,
     # this is the top-level `credentials.json` descriptor file, and `claim_for` is
@@ -1029,6 +1040,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_SECURITY,
         merge=MERGE_REPLACE_ONLY,
         secret=True,
+        credential=True,
         help="provider credential descriptors (API keys)",
     ),
     StateEntry(
@@ -1439,11 +1451,15 @@ def entries_for_domain(domain: str) -> tuple[StateEntry, ...]:
 
 
 def backup_entries(*, include_derived: bool = False) -> tuple[StateEntry, ...]:
-    """Entries a SNAPSHOT should capture. Secrets are included (a snapshot is a
-    local, 0600 archive — losing the credential store is exactly what a backup
-    should prevent); derived indexes are skipped unless asked for, since they
-    rebuild and a stale index paired with a newer store is worse than none."""
-    return tuple(e for e in INVENTORY if include_derived or not e.derived)
+    """Entries a SNAPSHOT should capture.
+
+    Credential VALUES are not (``credential=True``): an archive gets copied off the machine,
+    and a key inside it has left with it. The settings that USE those credentials still travel,
+    as ``{{secret:…}}`` references. Other secret entries are captured on purpose — the audit
+    log's HMAC key, so a restore into a wiped home can still verify the audit rows it imports.
+    Derived indexes are skipped unless asked for, since they rebuild and a stale index paired
+    with a newer store is worse than none."""
+    return tuple(e for e in INVENTORY if not e.credential and (include_derived or not e.derived))
 
 
 def export_entries() -> tuple[StateEntry, ...]:

@@ -968,8 +968,13 @@ export interface AppDepClassification {
  *  so and name them: `DELETE ?remove=1` reports every refusal as `404 app not installed`,
  *  which is both false and the opposite of actionable. Optional on the wire because an
  *  older gateway does not send the key — read `undefined` as "not reported", never as
- *  "none", or the dialog goes back to promising a removal that will be refused. */
-export interface AppDataFacts { present: boolean; entries: number; path: string; unconsumed?: string[] }
+ *  "none", or the dialog goes back to promising a removal that will be refused.
+ *
+ *  `secrets` counts the credentials the app keeps in the credential store (its settings'
+ *  tokens, its instances' keys) — both removal rungs delete them, the keep-data one
+ *  included, so "your data is kept" must not read as "your tokens are kept". A count of
+ *  names; no value crosses the wire. Optional for the same older-gateway reason. */
+export interface AppDataFacts { present: boolean; entries: number; path: string; unconsumed?: string[]; secrets?: number }
 export interface AgentDef { name: string }
 /** Agent routing's suggestion payload (AGENT-ROUTING S2). The server builds it ONCE
  *  per send and ships the same object on two transports — the `routing_suggestion` WS
@@ -4548,7 +4553,9 @@ export interface ProviderSchema { type?: string; properties?: Record<string, Pro
 // of bullets for editing. Per-instance, not per-response: a list carries N configs, so a
 // single top-level list could not say which instance a named field belongs to.
 export interface ProviderInstance { id: string; extension_name: string; display_name: string; config: Record<string, unknown>; enabled: boolean; _secret_set?: string[] }
-export interface ModelProvider { name: string; type: string; model?: string; capabilities: string[]; credential_status: string }
+/** `stored_secrets` names the option fields (e.g. `api_key`) this instance keeps in the
+ *  credential store — by name only. Deleting the instance deletes them. */
+export interface ModelProvider { name: string; type: string; model?: string; capabilities: string[]; credential_status: string; stored_secrets?: string[] }
 /** An installable model-provider type, from an installed model app's manifest.
  *  ``settingsSchema`` is JSON Schema (+ x-meta) describing the instance config
  *  form (api_key / region / endpoint enum / …). Drives the Add-instance dropdown. */

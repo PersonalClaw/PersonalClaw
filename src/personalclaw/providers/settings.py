@@ -9,6 +9,13 @@ never reached the provider. Unified onto ``data/`` — bug #31.)
 
 This module provides read/write with JSON Schema validation against the
 extension's declared ``settingsSchema``.
+
+A secret setting never reaches the file: :meth:`ProviderSettings.save` moves each
+declared-sensitive (or credential-named) value into the credential store under a key this
+app owns and writes a ``{{secret:…}}`` reference in its place, and :meth:`ProviderSettings.load`
+resolves it back — so an app reads and writes real values exactly as before
+(:mod:`personalclaw.config.secret_refs`). The Bot and App tokens slack-channel is configured
+with used to sit in this file in plaintext, at mode 0644.
 """
 
 import json
@@ -19,6 +26,7 @@ from typing import Any
 from personalclaw.apps.manager import app_dir
 from personalclaw.apps.schema_validate import validate_properties
 from personalclaw.atomic_write import atomic_write
+from personalclaw.config import secret_refs
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +42,8 @@ class ProviderSettings:
         return app_dir(extension_name) / "data" / "config.json"
 
     @staticmethod
-    def load(extension_name: str) -> dict[str, Any]:
+    def _load_stored(extension_name: str) -> dict[str, Any]:
+        """The file as it is on disk — secret fields are references. For the writers."""
         path = ProviderSettings.config_path(extension_name)
         if not path.is_file():
             return {}
@@ -46,10 +55,25 @@ class ProviderSettings:
             return {}
 
     @staticmethod
+    def load(extension_name: str) -> dict[str, Any]:
+        """The extension's settings with every secret field holding its VALUE."""
+        return secret_refs.resolve(ProviderSettings._load_stored(extension_name))
+
+    @staticmethod
     def save(extension_name: str, config: dict[str, Any]) -> None:
-        path = ProviderSettings.config_path(extension_name)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write(path, json.dumps(config, indent=2) + "\n")
+        """Persist ``config`` with each secret value moved into the credential store.
+
+        Raises :class:`ValueError` for a secret the store cannot hold (a multi-line value).
+        """
+        stored = secret_refs.store(
+            config,
+            owner=secret_refs.app_owner(extension_name),
+            declared=secret_refs.declared_app_fields(extension_name),
+            previous=ProviderSettings._load_stored(extension_name),
+        )
+        atomic_write(
+            ProviderSettings.config_path(extension_name), json.dumps(stored, indent=2) + "\n"
+        )
 
     @staticmethod
     def update(extension_name: str, partial: dict[str, Any]) -> dict[str, Any]:

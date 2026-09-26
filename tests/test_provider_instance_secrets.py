@@ -128,8 +128,15 @@ _BASE = "/api/providers/fake-models/instances"
 
 
 def _stored(tmp_path: Path, instance_id: str) -> dict:
+    """The instance's config as its provider reads it: the record on disk holds a reference for
+    each secret, resolved here from the same home's credential store (``config.secret_refs``)."""
+    from personalclaw.config.secret_refs import resolve
+
     path = tmp_path / "extensions" / "fake-models" / "instances" / f"{instance_id}.json"
-    return json.loads(path.read_text(encoding="utf-8"))["config"]
+    raw = path.read_text(encoding="utf-8")
+    assert _SECRET not in raw, "an instance's key reached its record on disk"
+    with patch("personalclaw.config.loader.config_dir", return_value=tmp_path):
+        return resolve(json.loads(raw)["config"])
 
 
 async def _create(client, **config) -> tuple[str, str]:

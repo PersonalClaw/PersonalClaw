@@ -75,13 +75,21 @@ PROJECT_KEY_PREFIX = "PCPROJ_"
 #: underscore separator would split `proj_a__KEY` at the wrong place.
 PROJECT_KEY_SEP = "__"
 
-#: Credential-store key prefixes that are MACHINE-managed, not user secrets, and are therefore
-#: hidden from the vault read model. A user must never see — or be able to delete — one of these
-#: from the secrets UI: a browse profile-encryption key (`BROWSE_PROFILE_KEY_<slug>`) is key
-#: material a profile depends on, not a credential the user typed. Kept as a literal here because
-#: the vault owns its own hiding policy, with `test_secrets_vault` pinning it to the producer's
-#: `browse.handoff.PROFILE_KEY_PREFIX` so the two cannot drift without reddening the build.
-RESERVED_KEY_PREFIXES: tuple[str, ...] = ("BROWSE_PROFILE_KEY_",)
+#: Credential-store key prefixes managed by ANOTHER surface, and therefore hidden from the vault
+#: read model. A user must never see — or be able to delete — one of these from the secrets UI:
+#:
+#: * a browse profile-encryption key (`BROWSE_PROFILE_KEY_<slug>`) is key material a profile
+#:   depends on, not a credential the user typed;
+#: * an OWNED key (`PCSECRET_…`) is a provider's API key or an app setting's token, kept in the
+#:   store by that record's own settings, which reference it. It is managed where it was typed —
+#:   Settings → Providers, the app's settings — and deleting it here would leave that setting
+#:   pointing at nothing while still reading as configured.
+#:
+#: Kept as literals here because the vault owns its own hiding policy, with a test pinning each
+#: to its producer — `test_browse_credential_handoff` (`browse.handoff.PROFILE_KEY_PREFIX`) and
+#: `test_app_secrets_live_in_the_credential_store` (`config.credentials.OWNED_KEY_PREFIX`) — so
+#: neither can drift without reddening the build.
+RESERVED_KEY_PREFIXES: tuple[str, ...] = ("BROWSE_PROFILE_KEY_", "PCSECRET_")
 
 
 def is_reserved_key(key: str) -> bool:

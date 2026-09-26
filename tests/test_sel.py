@@ -60,6 +60,41 @@ class TestHmacKeyManagement:
         mode = oct(key_path.stat().st_mode & 0o777)
         assert mode == "0o600"
 
+    def test_the_key_is_never_on_disk_wider_than_0600(self, sel_dir, monkeypatch):
+        """Created 0600 and renamed into place — not created at the umask mode, then narrowed.
+
+        The final mode was always 0600, so the test above could not see the defect: the key was
+        written by ``write_bytes`` (0644 under umask 022) and only then ``chmod``-ed, leaving it
+        readable by any account for the gap between the two calls. Every call that can observe
+        the key path is watched, so the gap is visible as a mode, not inferred from the result.
+        """
+        import os
+
+        key_path = sel_dir / "sel_hmac.key"
+        seen: list[str] = []
+        real_chmod, real_replace = os.chmod, os.replace
+
+        def spy_chmod(path, mode, *args, **kwargs):
+            if Path(path) == key_path and key_path.exists():
+                seen.append(f"chmod found it on disk at {oct(key_path.stat().st_mode & 0o777)}")
+            return real_chmod(path, mode, *args, **kwargs)
+
+        def spy_replace(src, dst, *args, **kwargs):
+            if Path(dst) == key_path:
+                seen.append(f"renamed into place at {oct(Path(src).stat().st_mode & 0o777)}")
+            return real_replace(src, dst, *args, **kwargs)
+
+        monkeypatch.setattr(os, "chmod", spy_chmod)
+        monkeypatch.setattr(os, "replace", spy_replace)
+        previous_umask = os.umask(0o022)
+        try:
+            SecurityEventLog(base_dir=sel_dir)
+        finally:
+            os.umask(previous_umask)
+
+        assert seen == ["renamed into place at 0o600"]
+        assert len(key_path.read_bytes()) == 32
+
     def test_reuses_existing_key(self, sel_dir):
         log1 = SecurityEventLog(base_dir=sel_dir)
         key1 = log1._hmac_key

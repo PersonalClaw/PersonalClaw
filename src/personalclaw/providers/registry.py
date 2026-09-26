@@ -171,6 +171,18 @@ class ProviderRegistry:
         return [ext for ext in self.list_extensions() if ext.provider_config.type == provider_type]
 
 
+def model_provider_type(ext: RegisteredProvider) -> str:
+    """The CONCRETE provider type a model app registers into the LLM registry.
+
+    ``providerType`` — not ``provider_config.type``, which is the entity CLASS ``"model"`` —
+    falling back to the app-name stem only when the manifest does not declare it. One
+    definition, because two consumers must agree on which app owns a type: the
+    Add-instance form (``/api/model-provider-types``) and the lookup of that type's
+    declared-sensitive fields (``config.secret_refs``).
+    """
+    return ext.provider_config.providerType or ext.manifest.name.replace("-models", "")
+
+
 class _TypeHandler:
     """Interface for per-type provider registration handlers.
 

@@ -17,27 +17,29 @@ this module, used by both routes.
 
 The same rule governs a *multi-instance* provider's per-instance config — a
 :class:`~personalclaw.providers.instances.ExtensionInstance` — through
-:func:`mask_instance`. Its ``to_dict()`` is the **persistence** serializer (the instance
-store writes that exact dict to disk), so masking cannot live inside it; masking a
-credential onto disk would destroy it. :func:`mask_instance` is the *wire* serializer
-instead, and every instance route uses it. That distinction is the whole reason the
-instance surfaces leaked for as long as they did: the route handed a disk serializer
-straight to a response body.
+:func:`mask_instance`. Its ``to_dict()`` serializes the record with its real values — the
+instance store derives the on-disk form from exactly that dict — so masking cannot live
+inside it; masking a credential there would destroy it. :func:`mask_instance` is the *wire*
+serializer instead, and every instance route uses it. That distinction is the whole reason
+the instance surfaces leaked for as long as they did: the route handed the value-bearing
+serializer straight to a response body.
 
 The write half is the other half of the same rule. Once ``GET`` masks, the form PATCHes the
 MASK back for any field the operator did not touch, so a PATCH must read the sentinel (and
 an empty string where a value already exists) as "keep what is stored" rather than
 overwrite a real credential with bullets.
 
-Masking is about not *handing out* secrets; it is not encryption at rest. The store itself
-is a plaintext file under the user's home, which the app-platform threat model addresses
-separately (``docs/architecture/app-platform.md``).
+Masking is about not *handing out* secrets. Keeping them off disk is a separate mechanism:
+a settings file holds a ``{{secret:…}}`` reference and the value lives in the credential
+store (:mod:`personalclaw.config.secret_refs`), so what these functions mask on the way out
+is the value the readers resolved, never the file's bytes.
 
 **A THIRD read path has no schema to consult.** ``personalclaw config get`` prints
 ``config.json``, whose credential-bearing blocks are exactly the ones core does not model —
-``providers`` (the only copy of an API key entered in the dashboard) and the legacy ``slack``
-block. Neither arrives with an ``x-meta.sensitive`` declaration: ``providers`` is a raw list
-of instance records, and ``slack`` is not a provider extension at all, so there is no
+``providers`` (whose secret options are now references into the credential store) and the
+legacy ``slack`` block. Neither arrives with an ``x-meta.sensitive`` declaration:
+``providers`` is a raw list of instance records, and ``slack`` is not a provider extension at
+all, so there is no
 ``settingsSchema`` anywhere to read. That path is served by
 :func:`mask_secrets_in_document` / :func:`preserve_unchanged_secrets_in_document`, which
 *derive* a schema from field names (:func:`is_credential_field_name`) and then delegate the

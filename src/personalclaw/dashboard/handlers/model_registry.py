@@ -59,11 +59,14 @@ def _sel_log(
 
 
 def _get_providers_from_config() -> list[dict[str, Any]]:
+    """config.json ``providers[]`` with options RESOLVED: discovery authenticates with the
+    stored key, not with the ``{{secret:…}}`` reference the document carries."""
     from personalclaw.config.loader import config_path
+    from personalclaw.config.secret_refs import resolve_provider_records
 
     try:
         data = json.loads(config_path().read_text(encoding="utf-8"))
-        return data.get("providers", [])
+        return resolve_provider_records(data.get("providers", []))
     except Exception:
         return []
 

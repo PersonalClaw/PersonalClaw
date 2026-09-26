@@ -307,6 +307,33 @@ config to clean up afterwards. To stop it answering at all, delete it under **Se
 Providers**, or turn off **Answer when nothing else is bound** in its settings there. That
 switch takes effect the next time the gateway starts.
 
+## 6. Two secrets are still stored inline: MCP server `env` values and the webhook token
+
+A provider's API key and every app setting its manifest declares `x-meta.sensitive` are kept
+in the credential store — the OS keychain, or `~/.personalclaw/.env` at mode 0600 — and the
+settings file holds only a `{{secret:…}}` reference to it (`src/personalclaw/config/secret_refs.py`).
+Two secrets are not among those settings yet, and are written exactly as you entered them:
+
+- an MCP server's `env` block — free-form, in `~/.personalclaw/mcp.json`, copied into the agent
+  config `~/.personalclaw/agents/personalclaw.json`, and read back by every place that starts
+  the server;
+- the webhook token, `hooks.webhook_token` in `~/.personalclaw/config.json`, which
+  `POST /api/hooks/agent` checks.
+
+So a token in either place:
+
+- is on disk in plaintext, in a file PersonalClaw writes 0600 inside a home that is 0700, so no
+  other account on the machine can read it. A file last written by an earlier release keeps the
+  mode it had until PersonalClaw next writes it;
+- travels in a `personalclaw snapshot` and in an export, which carry `mcp.json` and
+  `config.json`;
+- for the webhook token, is also kept in the local time-travel history (`state-history/`, which
+  records `config.json` and never leaves the machine).
+
+**What this means for you:** prefer a Secrets-panel credential for an MCP server's token and
+leave its value out of `mcp.json`; treat a snapshot or export of a home that holds either one as
+holding those tokens, and change the webhook token if such an archive leaves your hands.
+
 ## Why these are listed, not fixed
 
 Per the project's lifecycle discipline, a control *gap* discovered while writing
@@ -315,6 +342,7 @@ patched inline in a docs change. Every item above has a named future direction
 (extending the hard rail to ACP protocol paths for #1; OS-level app isolation for
 #2; out-of-process providers for the residual half of #3; a distinct origin for app
 UI, with the SDK crossing it as a message channel, for #4; checking a hand-copied
-weight's sha256 when it loads, for the gap in #5). This page will shrink as those land.
+weight's sha256 when it loads, for the gap in #5; resolving MCP `env` values and the webhook
+token from the credential store where they are used, for #6). This page will shrink as those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.
