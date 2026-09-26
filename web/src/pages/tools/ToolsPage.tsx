@@ -744,11 +744,11 @@ function importedValues(s: ImportableMcpServer): string {
   return said.charAt(0).toUpperCase() + said.slice(1)
 }
 
-/** Collapsed "Discovered in <backend>" list — MCP servers configured in an
- *  external backend (Claude Code) but not yet in PersonalClaw, from every scope it keeps them in:
- *  yours everywhere, yours in one project, and a project's own `.mcp.json`. Importing one
- *  copies its spec into ~/.personalclaw/mcp.json so the native loop can run it. A row is keyed and
- *  imported by its `id`, because two scopes can hold a server of the same name. */
+/** Collapsed "Discovered in other tools" list — MCP servers configured in another tool (Claude
+ *  Code, Codex) but not yet in PersonalClaw, from every scope it keeps them in: yours everywhere,
+ *  yours in one project, and a project's own `.mcp.json`. Importing one copies its spec into
+ *  ~/.personalclaw/mcp.json so the native loop can run it. A row is keyed and imported by its
+ *  `id`, because two scopes (or two tools) can hold a server of the same name. */
 function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServer[]; onImported: () => void }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
@@ -786,9 +786,10 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
                     <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{s.backend}</span>
                     <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low" title={TRANSPORT_HINT}>{transportLabel(s.transport)}</span>
                   </div>
-                  {/* Which of the backend's scopes it is in: yours everywhere, yours in one project,
-                      or a project's own file. Two rows of one name differ only here. */}
-                  <p data-type="caption" className="mt-0.5 truncate text-on-surface-low" title={s.origin}>{s.origin}</p>
+                  {/* Which of the tool's scopes it is in: yours everywhere, yours in one project,
+                      or a project's own file. Empty for a tool with one place for them (Codex's
+                      config.toml), where the backend pill already says it all. */}
+                  {s.origin && <p data-type="caption" className="mt-0.5 truncate text-on-surface-low" title={s.origin}>{s.origin}</p>}
                   {/* The server line is a URL or a command line — the most tail-heavy string on the
                       surface, and the half that says WHICH server this is. It did not clip with this
                       seed's data, but it truncates by the same rule and a `title` costs nothing; the

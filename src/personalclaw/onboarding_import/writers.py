@@ -36,6 +36,9 @@ Destinations
 ``prompts``          ``prompts/<name>.yaml``: a prompt you run as ``@name``
 ``conversations``    ``sessions/dashboard_<source>-<id>.jsonl``: a chat in your
                      history, readable and resumable
+``denied_commands``  ``config.json`` → ``security.denied_commands``: a pattern the
+                     shell denylist refuses (Settings › Security). Only ever a
+                     command the other tool refused to run: an import tightens it
 ``settings``         ``onboarding/staged/<source>-<key>.json`` — a REVIEW QUEUE.
                      Foreign settings never reach live config, so for this
                      category ``imported`` means "staged for a human", which is
@@ -674,6 +677,57 @@ def _write_conversation(item: ImportItem, dest: str) -> WriteResult:
     return _result(item, WriteOutcome.IMPORTED, dest)
 
 
+# ── denied_commands → config.json security.denied_commands (the shell denylist) ──
+
+_DENYLIST_DEST = "config.json#security.denied_commands"
+
+
+def _denied_pattern_of(item: ImportItem) -> str | None:
+    """The item's pattern when it is one the shell denylist can check, else ``None``."""
+    pattern = item.payload.get("pattern")
+    if not isinstance(pattern, str) or not pattern.strip():
+        return None
+    try:
+        re.compile(pattern)
+    except re.error:
+        return None
+    return pattern
+
+
+def _plan_denied_command(item: ImportItem) -> Plan:
+    from personalclaw.config.loader import AppConfig
+
+    pattern = _denied_pattern_of(item)
+    if pattern is None:
+        return Plan(
+            ItemState.REJECTED,
+            _DENYLIST_DEST,
+            "its command could not be written as a pattern the shell denylist can check",
+        )
+    if pattern in AppConfig.load().security.denied_commands:
+        return Plan(ItemState.EXISTING, _DENYLIST_DEST, "already in your shell denylist")
+    return Plan(ItemState.NEW, _DENYLIST_DEST)
+
+
+def _write_denied_command(item: ImportItem, dest: str) -> WriteResult:
+    """Add the pattern to your own shell denylist — the list Settings › Security shows and edits.
+
+    It only ever adds: a denylist entry refuses commands, so bringing one over tightens what the
+    agent may run and loosens nothing. Removing it later is the Settings panel's to do.
+    """
+    from personalclaw.config.loader import AppConfig
+
+    pattern = _denied_pattern_of(item) or ""
+    cfg = AppConfig.load()
+    # A read-modify-write of the whole config: the plan is re-asked of THIS read.
+    if pattern in cfg.security.denied_commands:
+        return _result(item, WriteOutcome.EXISTING, dest, "already in your shell denylist")
+    cfg.security.denied_commands.append(pattern)
+    cfg.save()
+    _record(item, dest)
+    return _result(item, WriteOutcome.IMPORTED, dest)
+
+
 # ── settings → the review queue (never live config) ──────────────────────────
 
 
@@ -739,6 +793,7 @@ _PLANNERS: dict[ImportCategory, Callable[[ImportItem], Plan]] = {
     ImportCategory.AGENTS: _plan_agent,
     ImportCategory.PROMPTS: _plan_prompt,
     ImportCategory.CONVERSATIONS: _plan_conversation,
+    ImportCategory.DENIED_COMMANDS: _plan_denied_command,
     ImportCategory.SETTINGS: _plan_settings,
 }
 _WRITERS: dict[ImportCategory, Callable[[ImportItem, str], WriteResult]] = {
@@ -749,6 +804,7 @@ _WRITERS: dict[ImportCategory, Callable[[ImportItem, str], WriteResult]] = {
     ImportCategory.AGENTS: _write_agent,
     ImportCategory.PROMPTS: _write_prompt,
     ImportCategory.CONVERSATIONS: _write_conversation,
+    ImportCategory.DENIED_COMMANDS: _write_denied_command,
     ImportCategory.SETTINGS: _write_settings,
 }
 

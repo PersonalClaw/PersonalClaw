@@ -162,6 +162,8 @@ def world(tmp_path):
         PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"),
     )
     env.pop("CLAUDE_CONFIG_DIR", None)
+    # The import list reads Codex too: its home is the fake user's, never a developer's.
+    env.pop("CODEX_HOME", None)
     return {"home": home, "claude": claude, "driver": driver, "env": env, "cwd": tmp_path}
 
 

@@ -43,6 +43,7 @@ class ImportCategory(str, Enum):
     AGENTS = "agents"  # subagent definitions → config.json agents (the Agents page)
     PROMPTS = "prompts"  # slash commands / custom prompts → <home>/prompts/<name>.yaml
     CONVERSATIONS = "conversations"  # session transcripts → <home>/sessions (Chat history)
+    DENIED_COMMANDS = "denied_commands"  # commands a tool refuses → config.json shell denylist
     SETTINGS = "settings"  # foreign settings → the review queue, never live config
 
 
@@ -142,8 +143,9 @@ class ImportItem:
     #: after the import ("Claude Code's tools list is not carried over"). Value-free.
     note: str = ""
     #: Whether the step starts with this item ticked. False for an item the other tool itself
-    #: never let run — a project's own ``.mcp.json`` server nobody approved there — so bringing
-    #: it over is a choice the user makes, not one the step makes for them.
+    #: does not use as it stands — a project's own ``.mcp.json`` server nobody approved there, an
+    #: ``AGENTS.md`` Codex reads an override of instead — so bringing it over is a choice the user
+    #: makes, not one the step makes for them. The item's ``note`` says why.
     preselect: bool = True
     #: How many credential/exfiltration-URL redactions were applied to ``text``.
     #: A count, never the matched value.

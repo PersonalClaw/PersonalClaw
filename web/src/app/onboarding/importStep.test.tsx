@@ -649,7 +649,7 @@ describe('everything Claude Code keeps is shown, with where it came from', () =>
     const servers = groupBox('MCP servers')
     expect(servers.indeterminate, 'two of three servers are ticked').toBe(true)
     expect(rowText('MCP servers')).toContain('2 of 3')
-    expect(screen.getByText(/Everything is ticked, except 1 item the other tool never let run;/)).toBeTruthy()
+    expect(screen.getByText(/Everything is ticked, except 1 item the other tool does not use;/)).toBeTruthy()
     fireEvent.click(disclosure('MCP servers'))
     expect(box('demo-tools').checked).toBe(false)
     expect(box('demo-tools').getAttribute('aria-label')).toBe('demo-tools, Project · ~/src/demo/.mcp.json')
@@ -691,5 +691,39 @@ describe('everything Claude Code keeps is shown, with where it came from', () =>
     const kept = await screen.findByRole('group', { name: 'Kept what you already had' })
     expect(kept.textContent).toContain('MCP servers · grafana · Local scope · /Users/noor/work/api')
     expect(kept.textContent).not.toContain('local:/Users')
+  })
+})
+
+// ── what Codex keeps: the commands it refuses, and what stays behind (F-03) ───────────────────
+
+describe('what Codex keeps is shown in its own words', () => {
+  it('names the commands Codex refused, where they land, and the rules that stay behind', async () => {
+    const codexItems = [
+      item('d1', 'denied_commands', 'rules/default.rules:[["rm"], ["-rf"]]', {
+        source: 'codex', title: 'rm -rf', note: "Codex's reason: Delete specific paths instead.",
+      }),
+      item('s1', 'mcp_servers', 'notes', { source: 'codex', note: 'It is turned off in Codex.' }),
+    ]
+    const base = scan()
+    onboardingImportScan.mockResolvedValue({
+      categories: [...CATEGORIES, 'denied_commands'],
+      sources: [base.sources[0], {
+        ...base.sources[1], present: true, detected: true, items: codexItems,
+        counts: { ...ZERO, mcp_servers: 1 },
+        not_imported: [{
+          what: 'Command rules that ask first', count: 3,
+          why: 'PersonalClaw has no rule that asks before one particular command.',
+        }],
+      }],
+    })
+    await mounted()
+    const group = screen.getByRole('checkbox', { name: /^Bring over Denied commands from Codex/ }) as HTMLInputElement
+    expect(group.checked).toBe(true)
+    expect(screen.getByText('Commands the other tool refused to run, added to your shell denylist in Settings › Security.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /^(Choose|Show) Denied commands from Codex$/ }))
+    expect(screen.getByText("Codex's reason: Delete specific paths instead.")).toBeTruthy()
+    const left = screen.getByRole('group', { name: 'Not brought over from Codex' })
+    expect(left.textContent).toContain('Command rules that ask first')
+    expect(left.textContent).toContain('PersonalClaw has no rule that asks before one particular command.')
   })
 })
