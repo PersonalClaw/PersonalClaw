@@ -414,12 +414,12 @@ async def _run_hook_agent(
         state.notify(
             notification_kinds.HOOK, title, result_text[:2000], meta={"session_key": session_key}
         )
-        if state.channel_delivery and state.owner_id:
-            try:
-                channel = await state.channel_delivery.open_dm(state.owner_id)
-                if channel:
-                    await state.channel_delivery.deliver_text(
-                        channel, f"*{title}*\n{result_text[:3000]}"
-                    )
-            except Exception:
-                logger.exception("Hook agent: channel delivery failed")
+        from personalclaw.channel_delivery import open_owner_dm
+
+        try:
+            opened = await open_owner_dm()
+            if opened is not None:
+                delivery, channel = opened
+                await delivery.deliver_text(channel, f"*{title}*\n{result_text[:3000]}")
+        except Exception:
+            logger.exception("Hook agent: channel delivery failed")

@@ -15,6 +15,10 @@
   invariant in a directory they all share, and the failure they would trade for is a
   half-written artifact a later run treats as complete.
 
+- ``app_packages_env()`` — the environment for a child process that must import the
+  packages apps declare (``<home>/app-python``): an app running one of its declared packages
+  as ``python -m <package>``. ``None`` when there is nothing to add.
+
 Keep this surface tiny: an app reaching for more than these is a sign the boundary is
 wrong (promote the need to a proper SDK submodule, or vendor it into the app).
 """
@@ -24,6 +28,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from personalclaw.apps.app_python import app_packages_env  # noqa: F401
 from personalclaw.apps.manager import app_data_dir, shared_dir_env_name  # noqa: F401
 from personalclaw.atomic_write import atomic_write  # noqa: F401
 from personalclaw.concurrency import single_flight  # noqa: F401
@@ -87,4 +92,5 @@ __all__ = [
     "sandbox_wrap_argv",
     "atomic_write",
     "single_flight",
+    "app_packages_env",
 ]

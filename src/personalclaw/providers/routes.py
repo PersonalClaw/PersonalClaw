@@ -225,24 +225,39 @@ async def handle_patch_config(request: web.Request) -> web.Response:
     except ValueError as exc:  # a secret the credential store cannot hold (multi-line)
         return web.json_response({"error": "Validation failed", "details": [str(exc)]}, status=422)
 
-    # A provider instance is built from its config at enable-time and cached in the
-    # typed registry; a config change (e.g. a new API key) wouldn't otherwise take
-    # effect until restart. Re-cycle an enabled provider so it re-reads the saved
-    # config now, and drop the typed media registries' transient adapters so the
-    # next resolution rebuilds from current config.
-    if ext.enabled:
-        registry.disable(name)
-        registry.enable(name)
+    await apply_saved_settings(name)
+    # Mask on the way out too: echoing the freshly-saved token back would undo the GET fix
+    # for the one response most likely to be read from a log or a devtools panel.
+    masked, secret_set = mask_secrets(updated, schema)
+    return web.json_response({"name": name, "config": masked, "_secret_set": secret_set})
+
+
+async def apply_saved_settings(name: str) -> None:
+    """Make an app's just-saved settings take effect now, without a gateway restart.
+
+    A provider instance is built from its settings at enable-time and cached in the typed
+    registry, so a saved change (a new API key, a new bot token) reached nothing until a
+    restart. This rebuilds an enabled app's providers from the saved settings, moves a channel's
+    running inbound receiver onto the rebuilt transport (the old one would otherwise stay
+    connected on the old token), and drops the typed media registries' transient adapters so the
+    next resolution rebuilds from current config.
+
+    ONE definition for both settings routes: ``PATCH /api/providers/{name}/config`` did this,
+    and ``PUT /api/apps/{name}/config`` — the Apps page's Configure → Save, writing the same
+    file — did none of it, so a token saved there read "No bot token configured" until restart.
+    """
+    from personalclaw.channel_transports import hand_over_inbound
+
+    registry = get_provider_registry()
+    ext = registry.get(name)
+    if ext is not None and ext.enabled:
+        await hand_over_inbound(registry.rebuild(name))
     try:
         from personalclaw.dashboard.handlers.providers import _refresh_media_registries
 
         _refresh_media_registries()
     except Exception:  # noqa: BLE001 — refresh is best-effort, never block a save
-        pass
-    # Mask on the way out too: echoing the freshly-saved token back would undo the GET fix
-    # for the one response most likely to be read from a log or a devtools panel.
-    masked, secret_set = mask_secrets(updated, schema)
-    return web.json_response({"name": name, "config": masked, "_secret_set": secret_set})
+        logger.debug("media registry refresh after a settings save failed", exc_info=True)
 
 
 async def handle_enable(request: web.Request) -> web.Response:

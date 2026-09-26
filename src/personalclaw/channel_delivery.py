@@ -298,6 +298,39 @@ def owner_reachable() -> "ChannelDelivery | None":
     return None
 
 
+def owner_route() -> "tuple[ChannelDelivery, str] | None":
+    """The connected channel that can reach the owner, with the owner's id ON THAT CHANNEL.
+
+    Chosen together because they must agree: a user id means nothing to another provider.
+    Every owner notification used to pick a channel with :func:`owner_reachable` and address it
+    to the one shared owner id, so with Slack and Telegram connected a cron result could go
+    through Slack addressed to a Telegram user. Each channel now has its own owner id
+    (``config.credentials.owner_id_for``); a connected channel that knows no owner is skipped,
+    because it cannot reach one. Sorted, like :func:`owner_reachable`, so the pick is stable.
+    """
+    from personalclaw.config.credentials import owner_id_for
+
+    for key in sorted(_REGISTRY):
+        owner = owner_id_for(key)
+        if owner:
+            return _REGISTRY[key], owner
+    return None
+
+
+async def open_owner_dm() -> "tuple[ChannelDelivery, str] | None":
+    """Open a DM with the owner through :func:`owner_route`: ``(delivery, dm_channel_id)``.
+
+    The two travel together — deliver the message through the SAME handle that opened the DM.
+    ``None`` when no connected channel knows its owner, or the channel could not open the DM.
+    """
+    route = owner_route()
+    if route is None:
+        return None
+    delivery, owner = route
+    channel = await delivery.open_dm(owner)
+    return (delivery, channel) if channel else None
+
+
 def registered_providers() -> list[str]:
     """The connected providers, sorted. For diagnostics and tests."""
     return sorted(_REGISTRY)

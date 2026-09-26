@@ -557,3 +557,35 @@ def delete_credential(key: str) -> bool:
     _dotenv_remove_credentials([key])
     os.environ.pop(key, None)
     return existed
+
+
+def owner_id_credential(provider: str) -> str:
+    """The credential key a channel keeps its owner's user id under.
+
+    ``PERSONALCLAW_OWNER_ID_<PROVIDER>`` — one key per channel, named by the channel's provider
+    key (the string it passes to ``deliver_channel_inbound`` and the trust seam: ``slack``,
+    ``telegram``). Slack, Telegram and Discord all wrote the ONE key ``PERSONALCLAW_OWNER_ID``,
+    so setting up a second channel overwrote the first one's owner with an id from another
+    platform, and an owner notification could go through one channel addressed to a user of
+    another.
+    """
+    slug = "".join(ch if ch.isalnum() else "_" for ch in provider.strip()).strip("_").upper()
+    if not slug:
+        raise ValueError("a channel's owner id is keyed by its provider name, which is empty")
+    return f"{_loader.CRED_OWNER_ID}_{slug}"
+
+
+def owner_id_for(provider: str) -> str:
+    """The owner's user id on ``provider``'s channel, or ``""`` when none is known.
+
+    The channel's own key first. Then the one shared key the channels used before each had its
+    own: it is what an app that still writes ``CRED_OWNER_ID`` stored, so reading it here keeps
+    that channel's owner where it was. Each key is looked up in the environment first (a
+    container passes it that way), then in the store — the precedence ``load_credentials``
+    gives every named credential.
+    """
+    for key in (owner_id_credential(provider), _loader.CRED_OWNER_ID):
+        value = os.environ.get(key) or get_credential(key)
+        if value:
+            return value
+    return ""

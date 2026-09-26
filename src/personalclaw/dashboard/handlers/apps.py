@@ -957,6 +957,11 @@ async def api_app_config_put(request: web.Request) -> web.Response:
         _sel_log("apps.config", "error", name, request, error=str(exc))
         return web.json_response({"error": str(exc)}, status=400)
     _sel_log("apps.config", "ok", name, request)
+    # The saved values reach the app's live provider now — the rebuild the providers route
+    # does, shared, so Configure → Save needs no restart for any app.
+    from personalclaw.providers.routes import apply_saved_settings
+
+    await apply_saved_settings(name)
     # Never echo the freshly-saved secret back either — mask on the response too.
     masked, secret_set = mask_secrets(saved, schema)
     return web.json_response(

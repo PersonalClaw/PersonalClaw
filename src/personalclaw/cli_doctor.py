@@ -637,9 +637,14 @@ def _doctor() -> None:
     if _port:
         print(f"  dashboard:   http://{_display_host}:{_port}")
 
-    # Dashboard auth mode
-    creds = cfg.load_credentials()
-    _has_slack = bool(creds.get("SLACK_APP_TOKEN") and creds.get("SLACK_BOT_TOKEN"))
+    # Dashboard auth mode. Whether a channel can carry a remote token is each channel app's
+    # own answer (its health, over the transports doctor's provider bootstrap registered),
+    # not a lookup of two Slack credential names.
+    import asyncio
+
+    from personalclaw.channel_transports import configured_channels
+
+    _has_channel = bool(asyncio.run(configured_channels()))
     _bind_host = resolve_bind_host()
     _local = is_local_bind(_bind_host)
     if _local:
@@ -659,7 +664,7 @@ def _doctor() -> None:
     else:
         print("  bind:        0.0.0.0 (all interfaces)")
         print("  auth:        ✅ token auth required (via !dashboard)")
-        if not _has_slack:
+        if not _has_channel:
             print("  auth:        ⚠️  no channel configured — token generation unavailable")
             issues.append("dashboard auth: remote bind without a channel")
 

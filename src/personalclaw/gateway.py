@@ -36,7 +36,7 @@ from personalclaw.cancellation import kill_timed_out
 from personalclaw.channel_history import ChannelHistory
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
-from personalclaw.config.loader import CRED_OWNER_ID, CRED_SLACK_APP_TOKEN, CRED_SLACK_BOT_TOKEN
+from personalclaw.config.loader import CRED_OWNER_ID
 from personalclaw.constants import CHAT_TURN_TIMEOUT, DATA_WARNING
 from personalclaw.context import ContextBuilder
 from personalclaw.dashboard import start_dashboard
@@ -375,13 +375,11 @@ class GatewayOrchestrator:
         self._json_ready = json_ready
         self._approval_mode = approval_mode
         creds = cfg.load_credentials()
-        self._app_token = creds.get(CRED_SLACK_APP_TOKEN, "")
-        self._bot_token = creds.get(CRED_SLACK_BOT_TOKEN, "")
         self._owner_id = creds.get(CRED_OWNER_ID, "")
         # Multi-user access is disabled — only owner is authorized. The channel
-        # app owns its allowlist config (SlackSettings) and enforces owner-only
-        # in its own runtime; core holds no channel allowlist.
-        self._slack_enabled = bool(self._app_token and self._bot_token)
+        # app owns its allowlist config and enforces owner-only in its own runtime;
+        # core holds no channel allowlist, and no channel's credentials either: whether a
+        # channel is configured is the channel's own answer (`configured_channels`).
 
         # Outbound delivery lives in `channel_delivery`'s per-provider registry — not on this
         # object and not on DashboardState, which each held their own slot for the same fact
@@ -429,7 +427,7 @@ class GatewayOrchestrator:
 
     @property
     def owner_id(self) -> str:
-        """Primary owner's channel-user id (``""`` if unset)."""
+        """The owner id under the one shared key (see ``GatewayServices.owner_id``)."""
         return self._owner_id
 
     @property
@@ -810,9 +808,6 @@ class GatewayOrchestrator:
 
     def _init_services(self) -> None:
         """Initialize memory, skills, hooks, context, history, sessions."""
-        if not self._slack_enabled:
-            logger.info("Starting in dashboard-only mode (no channel credentials)")
-
         # Auto-repair missing pip deps (handles chicken-and-egg after auto-update)
         try:
             self._check_missing_deps()
@@ -3179,15 +3174,7 @@ class GatewayOrchestrator:
 
         # ── channel (no thread) → new channel DM only ──
         if deliver == "channel":
-            if self._channel_delivery is not None and self._owner_id:
-                try:
-                    channel = await self._channel_delivery.open_dm(self._owner_id)
-                    if channel:
-                        await self._channel_delivery.deliver_notification(
-                            channel, title, result_text
-                        )
-                except Exception:
-                    logger.exception("Heartbeat channel delivery failed")
+            await self._notify_owner_dm(title, result_text)
             return
 
         # ── channel:<channel>:<thread_ts> → reply to thread ──
@@ -3197,10 +3184,8 @@ class GatewayOrchestrator:
                 if self._channel_delivery is not None and len(parts) == 3:
                     chan, ts = parts[1], parts[2]
                     await self._channel_delivery.deliver_notification(chan, title, result_text, ts)
-                elif self._channel_delivery is not None and self._owner_id:
-                    chan = await self._channel_delivery.open_dm(self._owner_id)
-                    if chan:
-                        await self._channel_delivery.deliver_notification(chan, title, result_text)
+                else:
+                    await self._notify_owner_dm(title, result_text)
             except Exception:
                 logger.exception("Heartbeat channel delivery failed")
             if self.dashboard_state:
@@ -3208,15 +3193,25 @@ class GatewayOrchestrator:
             return
 
         # ── default: channel DM + dashboard notification ──
-        if self._channel_delivery is not None and self._owner_id:
-            try:
-                channel = await self._channel_delivery.open_dm(self._owner_id)
-                if channel:
-                    await self._channel_delivery.deliver_notification(channel, title, result_text)
-            except Exception:
-                logger.exception("Heartbeat channel delivery failed")
+        await self._notify_owner_dm(title, result_text)
         if self.dashboard_state:
             self.dashboard_state.notify(notification_kinds.HEARTBEAT, title, body)
+
+    async def _notify_owner_dm(self, title: str, text: str) -> None:
+        """Deliver a notification to the owner's DM on a channel that knows who the owner is.
+
+        Through :func:`channel_delivery.open_owner_dm`, which picks the channel and the owner's
+        id on it together; the DM and the message go through the same handle.
+        """
+        from personalclaw.channel_delivery import open_owner_dm
+
+        try:
+            opened = await open_owner_dm()
+            if opened is not None:
+                delivery, channel = opened
+                await delivery.deliver_notification(channel, title, text)
+        except Exception:
+            logger.exception("Heartbeat channel delivery failed")
 
     def _init_mcp_discovery(self) -> None:
         """Log configured MCP servers at startup.
@@ -3653,22 +3648,31 @@ class GatewayOrchestrator:
 
                         # Post only the LLM's synthesized response to the channel
                         try:
-                            if response and self._channel_delivery is not None and self._owner_id:
-                                channel = (
-                                    self.sessions.get_channel(parent_key) if self.sessions else None
-                                ) or await self._channel_delivery.open_dm(self._owner_id)
-                                if channel:
-                                    elapsed = (
-                                        info.elapsed
-                                        if info.elapsed > 0
-                                        else (time.monotonic() - info.started)
-                                    )
-                                    await self._channel_delivery.deliver_subagent_reply(
-                                        channel,
-                                        response,
-                                        parent_key,
-                                        elapsed,
-                                    )
+                            # The session's own thread when it has one; otherwise the owner's
+                            # DM, on a channel that knows the owner's id there.
+                            target: "tuple[ChannelDelivery, str] | None" = None
+                            thread_channel = (
+                                self.sessions.get_channel(parent_key) if self.sessions else None
+                            )
+                            if response and thread_channel and self._channel_delivery is not None:
+                                target = (self._channel_delivery, thread_channel)
+                            elif response:
+                                from personalclaw.channel_delivery import open_owner_dm
+
+                                target = await open_owner_dm()
+                            if target is not None and response:
+                                delivery, channel = target
+                                elapsed = (
+                                    info.elapsed
+                                    if info.elapsed > 0
+                                    else (time.monotonic() - info.started)
+                                )
+                                await delivery.deliver_subagent_reply(
+                                    channel,
+                                    response,
+                                    parent_key,
+                                    elapsed,
+                                )
                         except Exception:
                             logger.exception(
                                 "Subagent %s: channel posting failed (injection succeeded)",
@@ -4431,16 +4435,26 @@ class GatewayOrchestrator:
         receiver (Slack Socket-Mode, in the slack-channel app) connects here; the
         Web UI transport is a no-op. Failures are isolated per-transport — a
         channel that can't start never takes down the gateway."""
-        from personalclaw.channel_transports import get_transport, list_transports
+        from personalclaw.channel_transports import (
+            configured_channels,
+            get_transport,
+            list_transports,
+            start_inbound,
+        )
 
         for tname in list_transports():
             transport = get_transport(tname)
             if transport is None:
                 continue
             try:
-                await transport.start_inbound(self)
+                await start_inbound(transport, self)
             except Exception:
                 logger.warning("Channel transport %r start_inbound failed", tname, exc_info=True)
+        # Each channel app says whether it has what it needs (its own health), so this line is
+        # true for a channel configured on the Apps page too — core used to infer it from two
+        # Slack credential names, and printed "no channel credentials" beside a working Slack.
+        if not await configured_channels():
+            logger.info("Starting in dashboard-only mode (no channel app is configured)")
 
     # ------------------------------------------------------------------
     # Main run loop
@@ -4639,13 +4653,14 @@ class GatewayOrchestrator:
         # ── Start background session and print URLs ──
         # Report every connected external channel transport (the in-app webui
         # one is always present and not news) — no hardcoded transport name.
+        from personalclaw.channel_transports import WEBUI_TRANSPORT
         from personalclaw.channel_transports import get_transport as _get_transport
         from personalclaw.channel_transports import list_transports as _list_transports
 
         _connected_channels = [
             _tp.display_name
             for _tp in (_get_transport(_n) for _n in _list_transports())
-            if _tp and _tp.name != "webui" and _tp.connected
+            if _tp and _tp.name != WEBUI_TRANSPORT and _tp.connected
         ]
 
         async def _start_bg_session() -> None:

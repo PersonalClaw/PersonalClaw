@@ -69,6 +69,7 @@ from personalclaw.sdk.model import (  # noqa: F401
     get_default_registry,
     infer_capabilities,
     make_think_splitter,
+    per_call_temperature,
     prompt_text_chars,
 )
 
@@ -1050,12 +1051,12 @@ def _factory(
     # only `model`, `messages` and `stream`, so N paid calls sampled ONE answer N times. The
     # per-call value wins over an entry-level one: the caller asking for THIS temperature is
     # more specific than the instance default (the SDK's branded factory makes the same call).
-    _temperature = kwargs.get("temperature")
-    if isinstance(_temperature, (int, float)) and not isinstance(_temperature, bool):
+    _temperature = per_call_temperature(kwargs)
+    if _temperature is not None:
         _wire = options.get(_WIRE_OPTIONS)
         options[_WIRE_OPTIONS] = {
             **(_wire if isinstance(_wire, dict) else {}),
-            "temperature": float(_temperature),
+            "temperature": _temperature,
         }
     # Routing and label fields are not request parameters: everything left in `options` is
     # `setdefault`-ed onto the request body, so `default_model` (which the "Add instance" form
