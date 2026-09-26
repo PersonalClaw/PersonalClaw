@@ -193,6 +193,19 @@ def list_providers() -> list[ToolProvider]:
     return list(_providers.values())
 
 
+def tool_surface(platform: ToolProvider | None) -> list[ToolProvider]:
+    """Every provider an agent turn can dispatch a tool to, in order: *platform* (the cwd-coupled
+    filesystem and shell provider, built per session, never registered), then every registered one.
+
+    The one definition of that surface. ``provider_bridge`` builds an agent's tools from it and
+    ``POST /api/tools/invoke`` resolves a tool over it, so "Try it" reaches a tool exactly when an
+    agent can: an external MCP server's tools are on it only through the registered provider that
+    serves them (the ``mcp-tools`` app's ``mcp``), never through a lookup of the server itself.
+    *platform* is ``None`` where no workspace resolved to confine it to.
+    """
+    return ([platform] if platform is not None else []) + list_providers()
+
+
 async def list_all_tools() -> list[ToolDefinition]:
     """Aggregate tools from all registered providers.
 

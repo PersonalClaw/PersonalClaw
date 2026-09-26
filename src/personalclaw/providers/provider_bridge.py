@@ -555,7 +555,7 @@ def _build_native_runtime(
     # because it's cwd-coupled (workspace path confinement); the session-coupled app
     # providers are registry singletons that resolve this turn via contextvars
     # (runtime._invoke binds them).
-    from personalclaw.tool_providers.registry import list_providers as _list_tool_providers
+    from personalclaw.tool_providers.registry import tool_surface
 
     platform = NativeBuiltinToolProvider(
         cwd=_cwd,
@@ -566,7 +566,7 @@ def _build_native_runtime(
         provider_name="personalclaw-filesystem",
         display="Filesystem & Shell Tools",
     )
-    tool_providers = [platform, *_list_tool_providers()]
+    tool_providers = tool_surface(platform)
 
     return NativeAgentRuntime(  # type: ignore[return-value]  # CI-2
         definition=definition,
