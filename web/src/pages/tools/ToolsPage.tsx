@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { withWeight } from '../../design/fontWeight'
-import { Wrench, ShieldAlert, Server, Cpu, Plug, Circle, RefreshCw, Loader2, Plus, Trash2, Download, ChevronRight, MessageCircleQuestion } from 'lucide-react'
+import { Wrench, ShieldAlert, Server, Cpu, Plug, Circle, RefreshCw, Loader2, Plus, Trash2, Download, ChevronRight, MessageCircleQuestion, Pencil } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -19,10 +19,11 @@ import { reportingWrite } from '../../app/reportingWrite'
 import { notify } from '../../app/appSdk'
 import { useQueryParam, useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { useQuery, invalidateKeys } from '../../lib/data'
-import { api, type ToolItem, type McpServer, type ImportableMcpServer, type ToolLoadFailure, type McpPoolStats, type ToolGroupsData } from '../../lib/api'
+import { readableErrText } from '../../lib/errText'
+import { api, type ToolItem, type McpServer, type McpServerDefinition, type ImportableMcpServer, type ToolLoadFailure, type McpPoolStats, type ToolGroupsData } from '../../lib/api'
 import { isKnownTrustTier, trustTierHint, trustTierLabel } from '../../lib/trustTier'
 import { schemaProps } from './schema'
-import { buildMcpEnv } from './mcpServerEnv'
+import { STORED_VALUE_MASK, buildMcpEdit, buildMcpEnv, envFormFields, formatArgs, parseArgs } from './mcpServerEnv'
 import { ToolInspector } from './ToolInspector'
 import { ToolGroupsTile } from './ToolGroupsTile'
 import { PageTitle } from '../../ui/PageTitle'
@@ -113,6 +114,10 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
 
   const [probing, setProbing] = useState(false)
   const [addOpen, setAddOpen] = useQueryFlag(query, setQuery, 'add')
+  // The server whose definition the edit form is open on ('' = closed). A query param like `add`,
+  // so the open form survives a reload and can be linked to. Not `edit`: that key is the canonical
+  // view↔edit MODE flag (`useEditFlag`, `?edit=1`), and this one names a record.
+  const [editing, setEditing] = useQueryParam(query, setQuery, 'editServer', '')
   const load = () => { invalidateKeys('tools:index'); refresh() }
 
   async function reprobe() {
@@ -186,7 +191,10 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
   }
 
   async function removeServer(s: McpServer) {
-    if (!(await confirm({ title: `Remove MCP server "${s.name}"?`, body: 'Its tools will no longer be available.', danger: true, confirmLabel: 'Remove' }))) return
+    // The body names the whole blast radius: the delete takes the server out of mcp.json AND the
+    // agent config, which deletes every value it owns in the credential store (`remove_mcp_servers`).
+    // It never touches another tool's config, so a server imported from Claude Code stays there.
+    if (!(await confirm({ title: `Remove MCP server "${s.name}"?`, body: 'Its tools will no longer be available, and the values saved for it are deleted from your credential store.', danger: true, confirmLabel: 'Remove' }))) return
     try {
       await api.removeMcpServer(s.name)
     } catch (e) {
@@ -348,13 +356,14 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
               {!filtered && loadFailures.length > 0 && <LoadFailures failures={loadFailures} />}
               {!filtered && groupsInfo && <ToolGroupsTile data={groupsInfo} onChanged={load} />}
               {!filtered && <McpPoolTile stats={poolStats} />}
-              {groups?.map((g) => <GroupBlock key={g.key} g={g} onOpen={setOpenName} onToggleServer={toggleServer} onRemoveServer={removeServer} onToggleTool={toggleTool} onToggleProvider={toggleProvider} onReconnect={reconnectServer} reconnecting={reconnecting} elicitationGranted={!g.server ? false : elicitationServers ? elicitationServers.includes(g.server.name) : null} onToggleElicitation={toggleElicitation} />)}
+              {groups?.map((g) => <GroupBlock key={g.key} g={g} onOpen={setOpenName} onToggleServer={toggleServer} onEditServer={(sv) => setEditing(sv.name)} onRemoveServer={removeServer} onToggleTool={toggleTool} onToggleProvider={toggleProvider} onReconnect={reconnectServer} reconnecting={reconnecting} elicitationGranted={!g.server ? false : elicitationServers ? elicitationServers.includes(g.server.name) : null} onToggleElicitation={toggleElicitation} />)}
               {!filtered && importable.length > 0 && <ImportSuggestions servers={importable} onImported={() => setTimeout(load, 300)} />}
             </div>
           )}
         </div>
 
         {addOpen && <AddToolServerModal onClose={() => setAddOpen(false)} onAdded={() => { setAddOpen(false); setTimeout(load, 300) }} />}
+        {editing && <EditToolServerModal name={editing} onClose={() => setEditing('')} onSaved={() => { setEditing(''); setTimeout(load, 300) }} />}
       </>
     </WorkbenchLayout>
   )
@@ -441,7 +450,7 @@ export function providerBadge(g: Pick<Group, 'providerLocked' | 'tier'>): { labe
   return { label: trustTierLabel(g.tier), title: trustTierHint(g.tier) }
 }
 
-function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, onToggleProvider, onReconnect, reconnecting, elicitationGranted, onToggleElicitation }: { g: Group; onOpen: (name: string) => void; onToggleServer: (s: McpServer) => void; onRemoveServer: (s: McpServer) => void; onToggleTool: (g: Group, t: ToolItem) => void; onToggleProvider: (g: Group) => void; onReconnect: (s: McpServer) => void; reconnecting: string | null; elicitationGranted: boolean | null; onToggleElicitation: (s: McpServer) => void }) {
+function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, onToggleTool, onToggleProvider, onReconnect, reconnecting, elicitationGranted, onToggleElicitation }: { g: Group; onOpen: (name: string) => void; onToggleServer: (s: McpServer) => void; onEditServer: (s: McpServer) => void; onRemoveServer: (s: McpServer) => void; onToggleTool: (g: Group, t: ToolItem) => void; onToggleProvider: (g: Group) => void; onReconnect: (s: McpServer) => void; reconnecting: string | null; elicitationGranted: boolean | null; onToggleElicitation: (s: McpServer) => void }) {
   const health = g.server ? serverHealth(g.server) : null
   // A native provider (not the locked platform one) gets a whole-provider toggle.
   const nativeToggleable = g.kind === 'native' && !g.providerLocked
@@ -511,10 +520,15 @@ function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, o
                 instead of a Trash button that would 409 + look broken. */}
             {g.server.name.includes(':') ? (
               <span data-type="caption" className="text-on-surface-low" title={`Provided by the '${g.server.name.split(':')[0]}' app — uninstall it from the Store to remove this server.`}>via app</span>
-            ) : (
+            ) : (<>
+              {/* Edit reads the server's definition from the gateway: names, plain values, and for a
+                  stored value only that one is saved. A server the form does not own (PersonalClaw's
+                  own, a remote one) opens to the sentence that says why. */}
+              <SquareIconButton icon={Pencil} iconSize={13}
+                label={`Edit ${g.server.name}`} title="Edit server" onClick={() => onEditServer(g.server!)} />
               <SquareIconButton icon={Trash2} iconSize={13} tone="danger"
                 label={`Remove ${g.server.name}`} title="Remove server" onClick={() => onRemoveServer(g.server!)} />
-            )}
+            </>)}
           </div>
         )}
         {nativeToggleable && (
@@ -676,6 +690,18 @@ function Toggle({ on }: { on: boolean }) {
   return <SharedToggle on={on} readOnly decorative size="sm" />
 }
 
+/** What an importable server sets, by NAME: its environment variables and a remote one's headers.
+ *  `''` when it sets neither. */
+function importedValues(s: ImportableMcpServer): string {
+  const env = (s.env ?? []).map((v) => v.name)
+  const headers = (s.headers ?? []).map((h) => h.name)
+  const said = [
+    env.length ? `sets ${env.join(', ')}` : '',
+    headers.length ? `sends the ${headers.join(', ')} header${headers.length === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(' · ')
+  return said.charAt(0).toUpperCase() + said.slice(1)
+}
+
 /** Collapsed "Discovered in <backend>" list — MCP servers configured in an
  *  external backend (Claude Code) but not yet in PersonalClaw. Importing one
  *  copies its spec into ~/.personalclaw/mcp.json so the native loop can run it. */
@@ -685,7 +711,11 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
 
   const importOne = async (s: ImportableMcpServer) => {
     setBusy(s.name)
-    try { await api.importMcpServer(s.name); onImported() } finally { setBusy(null) }
+    // Reported, not swallowed: an import that did not land (a refusal, or a 200 whose change carries
+    // an `error`, which `importMcpServer` throws) used to leave the row sitting here with no word.
+    try {
+      if (await reportingWrite(`import "${s.name}"`, () => api.importMcpServer(s.name))) onImported()
+    } finally { setBusy(null) }
   }
 
   return (
@@ -699,7 +729,8 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
         <>
           <p data-type="caption" className="mb-2 text-on-surface-low leading-snug">
             These MCP servers are configured in another backend but not in PersonalClaw. Import one to copy its
-            configuration here so your agents can use it.
+            configuration here so your agents can use it. The values it sets go to your credential store, and the
+            other backend's own configuration is left as it is.
           </p>
           <div className="flex flex-col gap-2">
             {servers.map((s) => (
@@ -715,6 +746,10 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
                       seed's data, but it truncates by the same rule and a `title` costs nothing; the
                       alternative is a row whose name recovers and whose address does not. */}
                   <p className="mt-0.5 truncate font-mono text-on-surface-low text-[0.75rem]" title={s.url || [s.command, ...(s.args ?? [])].join(' ')}>{s.url || [s.command, ...(s.args ?? [])].join(' ')}</p>
+                  {/* Names only: the listing never carries a value (`/api/mcp/importable`). */}
+                  {importedValues(s) && (
+                    <p data-type="caption" className="mt-0.5 truncate text-on-surface-low" title={importedValues(s)}>{importedValues(s)}</p>
+                  )}
                 </div>
                 <Button variant="secondary" size="sm" onClick={() => importOne(s)} loading={busy === s.name}><Download size={13} /> Import
                 </Button>
@@ -729,6 +764,12 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
 
 // `mcpInputCls` was DELETED with its last consumer: the raw <textarea> above migrated to the
 // shared TextArea, and it had been the only remaining user of this hand-copied field chrome.
+
+/** The Arguments hint, one sentence for both forms: they parse the field the same way (`parseArgs`). */
+const ARGS_HINT = 'Space-separated args passed to the command (optional). Put an argument with a space in "double quotes".'
+/** The two environment hints, shared by the Add and Edit forms so one field reads one way. */
+const ENV_HINT = 'One KEY=value per line (optional). Each value is kept in your credential store, never in mcp.json or an export.'
+const PLAIN_HINT = 'Settings that are not secret, one KEY=value per line (optional). Kept readable in mcp.json, so they travel with an export. A name ending in TOKEN, SECRET, PASSWORD or API_KEY goes to the credential store anyway.'
 
 /** Add a tool server — either a stdio MCP server (→ PUT /api/mcp/servers/{name},
  *  writes ~/.personalclaw/mcp.json) OR an OpenAI-compatible REST tool server
@@ -762,9 +803,10 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
     if (!command.trim()) { setErr('Command is required (e.g. npx, node, uvx).'); return }
     setSaving(true); setErr('')
     try {
-      await api.addMcpServer(name.trim(), {
+      const argv = parseArgs(args)
+      await api.saveMcpServer(name.trim(), {
         command: command.trim(),
-        args: args.trim() ? args.trim().split(/\s+/) : undefined,
+        args: argv.length ? argv : undefined,
         ...buildMcpEnv(env, plainEnv),
       })
       onAdded()
@@ -803,10 +845,10 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
           <Field label="Command" hint="The executable that starts the server over stdio.">
             <TextInput value={command} onChange={setCommand} placeholder="npx" size="md" surface="high" mono />
           </Field>
-          <Field label="Arguments" hint="Space-separated args passed to the command (optional).">
+          <Field label="Arguments" hint={ARGS_HINT}>
             <TextInput value={args} onChange={setArgs} placeholder="-y @modelcontextprotocol/server-filesystem /path" size="md" surface="high" mono />
           </Field>
-          <Field label="Environment" hint="One KEY=value per line (optional). Each value is kept in your credential store, never in mcp.json or an export.">
+          <Field label="Environment" hint={ENV_HINT}>
             {/* The one raw control left in this modal after the Field migration. A raw element
                 cannot read FieldLabelCtx, so it stayed unnamed while its seven TextInput siblings
                 were fixed. `TextArea` claims the Field label the same way they do — and this also
@@ -814,7 +856,7 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
                 class string to undo a height the primitive never sets. */}
             <TextArea value={env} onChange={setEnv} rows={2} placeholder="API_KEY=sk-…" mono size="md" />
           </Field>
-          <Field label="Plain values" hint="Settings that are not secret, one KEY=value per line (optional). Kept readable in mcp.json, so they travel with an export. A name ending in TOKEN, SECRET, PASSWORD or API_KEY goes to the credential store anyway.">
+          <Field label="Plain values" hint={PLAIN_HINT}>
             <TextArea value={plainEnv} onChange={setPlainEnv} rows={2} placeholder="LOG_LEVEL=info" mono size="md" />
           </Field>
         </>) : (<>
@@ -839,6 +881,88 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
             disabledReason={saving ? undefined
               : kind === 'mcp' ? 'Name the server and give it a command' : "Enter the server's endpoint URL"}>Add server</Button>
           <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
+          {err && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+/** The Environment hint on the EDIT form: what the mask is and the three things a line can do. */
+const EDIT_ENV_HINT = `One KEY=value per line. ${STORED_VALUE_MASK} is a value already in your credential store: leave it to keep that value, type over it to replace it, or move the line to Plain values to keep it readable in mcp.json. Delete a line to remove the variable.`
+
+/** Edit an existing stdio MCP server — the Add form's fields over the same write
+ *  (`PUT /api/mcp/servers/{name}`). The gateway sends names, plain values and, for a stored value,
+ *  only that one is saved; such a line shows the mask, and left as it is the saved value is kept
+ *  (`keepEnv`), so a secret never comes to the browser and back. A server the form does not own
+ *  (PersonalClaw's own, an app's, a remote one) opens to the gateway's sentence saying why. */
+function EditToolServerModal({ name, onClose, onSaved }: { name: string; onClose: () => void; onSaved: () => void }) {
+  const key = `tools:mcp-server:${name}`
+  const { data: def, error: loadErr, refresh } = useQuery<McpServerDefinition>(key, () => api.mcpServerDefinition(name))
+  const [command, setCommand] = useState('')
+  const [args, setArgs] = useState('')
+  const [env, setEnv] = useState('')
+  const [plainEnv, setPlainEnv] = useState('')
+  const [seeded, setSeeded] = useState(false)
+  const [err, setErr] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  // Seeded ONCE from the definition: a revalidation landing mid-edit must not replace what is typed.
+  useEffect(() => {
+    if (seeded || !def || !def.editable) return
+    setCommand(def.command)
+    setArgs(formatArgs(def.args))
+    const fields = envFormFields(def.env)
+    setEnv(fields.secretText)
+    setPlainEnv(fields.plainText)
+    setSeeded(true)
+  }, [def, seeded])
+
+  const submit = async () => {
+    if (!command.trim()) { setErr('Command is required (e.g. npx, node, uvx).'); return }
+    setSaving(true); setErr('')
+    try {
+      const argv = parseArgs(args)
+      await api.saveMcpServer(name, {
+        command: command.trim(),
+        args: argv.length ? argv : undefined,
+        ...buildMcpEdit(env, plainEnv),
+      })
+      invalidateKeys(key)
+      onSaved()
+    } catch (e) { setErr(readableErrText(e) || "Couldn't save the server."); setSaving(false) }
+  }
+
+  const editable = !!def && def.editable
+  return (
+    <Modal title={`Edit ${name}`} icon={<Pencil size={18} className="text-primary" />} onClose={onClose}>
+      <div className="flex flex-col gap-3">
+        {!def && loadErr ? (
+          <LoadError what="this server's settings" error={loadErr} onRetry={refresh} />
+        ) : !def ? (
+          <ListSkeleton rows={3} what="this server's settings" />
+        ) : !def.editable ? (
+          <p data-type="body-s" className="text-on-surface-low">{def.reason}</p>
+        ) : (<>
+          <Field label="Command" hint="The executable that starts the server over stdio.">
+            <TextInput value={command} onChange={setCommand} placeholder="npx" size="md" surface="high" mono />
+          </Field>
+          <Field label="Arguments" hint={ARGS_HINT}>
+            <TextInput value={args} onChange={setArgs} placeholder="-y @modelcontextprotocol/server-filesystem /path" size="md" surface="high" mono />
+          </Field>
+          <Field label="Environment" hint={EDIT_ENV_HINT}>
+            <TextArea value={env} onChange={setEnv} rows={3} placeholder="API_KEY=sk-…" mono size="md" />
+          </Field>
+          <Field label="Plain values" hint={PLAIN_HINT}>
+            <TextArea value={plainEnv} onChange={setPlainEnv} rows={2} placeholder="LOG_LEVEL=info" mono size="md" />
+          </Field>
+        </>)}
+        <div className="flex items-center gap-2">
+          {editable && (
+            <Button size="sm" onClick={submit} loading={saving} loadingLabel="Saving…" disabled={saving || !command.trim()}
+              disabledReason={saving ? undefined : 'Give the server a command'}>Save</Button>
+          )}
+          <Button variant="ghost" size="sm" onClick={onClose}>{editable ? 'Cancel' : 'Close'}</Button>
           {err && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
         </div>
       </div>

@@ -401,14 +401,77 @@ def _dotenv_remove_credentials(keys: Iterable[str]) -> list[str]:
     return removed
 
 
+#: What a value written after ``KEY=`` may not contain, start with, or end with and still be
+#: read back as itself by BOTH readers of this file: :func:`_dotenv_credentials`, and
+#: python-dotenv, which ``personalclaw``'s CLI loads the same file with at startup
+#: (``cli.main``). A newline would end the line, surrounding whitespace is stripped, a leading
+#: quote starts python-dotenv's quoted form, and ``#`` after whitespace starts its comment.
+_DOTENV_ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r"}
+_DOTENV_UNESCAPES = {
+    "\\": "\\",
+    "'": "'",
+    '"': '"',
+    "a": "\a",
+    "b": "\b",
+    "f": "\f",
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+    "v": "\v",
+}
+
+
+def _encode_dotenv_value(value: str) -> str:
+    """``value`` as it is written after ``KEY=``.
+
+    Verbatim when a line holds it faithfully, which is every value this file held before, so an
+    existing ``.env`` is unchanged. Otherwise double-quoted with backslash escapes: a PEM key or a
+    service-account JSON is one line in the file and exactly itself when read.
+    """
+    if (
+        value == value.strip()
+        and not value.startswith(("'", '"'))
+        and not any(ch in value for ch in "\n\r#")
+    ):
+        return value
+    return '"' + "".join(_DOTENV_ESCAPES.get(ch, ch) for ch in value) + '"'
+
+
+def _decode_dotenv_value(raw: str) -> str:
+    """The value a ``KEY=`` line holds (``raw`` is the part after ``=``, stripped).
+
+    The double-quoted form is python-dotenv's, decoded with its escapes, so the credential store
+    and the CLI's loader read one string. Anything else is taken verbatim, as it always was,
+    including a quote that does not close.
+    """
+    if len(raw) < 2 or raw[0] != '"' or raw[-1] != '"':
+        return raw
+    out: list[str] = []
+    body = raw[1:-1]
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if ch == '"':
+            return raw  # an unescaped quote inside: not the quoted form
+        if ch == "\\" and i + 1 < len(body) and body[i + 1] in _DOTENV_UNESCAPES:
+            out.append(_DOTENV_UNESCAPES[body[i + 1]])
+            i += 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _dotenv_save_credential(key: str, value: str) -> None:
     """Upsert ``KEY=VALUE`` into ``~/.personalclaw/.env`` at mode 0600.
 
     Preserves other lines and comments. 0600 is the floor this backend exists to
-    hold — do not relax it.
+    hold — do not relax it. One line per credential, whatever the value holds
+    (:func:`_encode_dotenv_value`).
     """
     ep = _loader.env_path()
     ep.parent.mkdir(parents=True, exist_ok=True)
+    entry = f"{key}={_encode_dotenv_value(value)}"
     lines: list[str] = []
     found = False
     if ep.exists():
@@ -417,12 +480,12 @@ def _dotenv_save_credential(key: str, value: str) -> None:
             if stripped and not stripped.startswith("#") and "=" in stripped:
                 k = stripped.split("=", 1)[0].strip()
                 if k == key:
-                    lines.append(f"{key}={value}")
+                    lines.append(entry)
                     found = True
                     continue
             lines.append(line)
     if not found:
-        lines.append(f"{key}={value}")
+        lines.append(entry)
     # `atomic_write(mode=0o600)`, not write_text-then-chmod. Two defects in that pair:
     #
     #  • A CREATION WINDOW. `write_text` creates the file at the umask default (0644 under the
@@ -458,7 +521,7 @@ def _dotenv_credentials() -> dict[str, str]:
             continue
         if "=" in line:
             k, v = line.split("=", 1)
-            creds[k.strip()] = v.strip()
+            creds[k.strip()] = _decode_dotenv_value(v.strip())
     return creds
 
 

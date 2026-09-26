@@ -353,9 +353,6 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "dashboard/handlers/_shared.py::_list_marketplace_skills::asyncio.create_subprocess_exec": (
         "operator: `personalclaw skills list`"
     ),
-    "dashboard/handlers/mcp.py::api_mcp_remove::asyncio.create_subprocess_exec": (
-        "operator: `personalclaw skills mcp uninstall`"
-    ),
     # Files handlers — operator's own file browser / git diff / native pickers.
     "dashboard/handlers/files.py::_content_search_rg::asyncio.create_subprocess_exec": (
         "operator: file search (rg)"

@@ -13,20 +13,18 @@ import json
 
 import pytest
 
+from personalclaw.config import loader as config_loader
 from personalclaw.providers import mcp_instances as mi
 
 
 @pytest.fixture(autouse=True)
-def _home(tmp_path, monkeypatch):
-    monkeypatch.setattr(mi, "_mcp_json_path", lambda: tmp_path / "mcp.json")
-
-    # _save imports agent._atomic_json_write — stub to a plain write to avoid
-    # pulling the whole agent module / rebuild machinery into a unit test.
-    def _fake_save(data):
-        (tmp_path / "mcp.json").write_text(json.dumps(data), encoding="utf-8")
-
-    monkeypatch.setattr(mi, "_save", _fake_save)
-    return tmp_path
+def _home(monkeypatch):
+    """The per-test home (conftest redirects it): the card writes its ``mcp.json`` through the
+    real document writer, and a delete reaches both documents through the one delete, which
+    resolves them there too — a card store pointed somewhere else would test a wiring
+    production does not have."""
+    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
+    return config_loader.config_dir()
 
 
 def _read(tmp_path) -> dict:
@@ -101,9 +99,13 @@ def test_update_preserves_env(_home):
     mi.update_instance(
         "s", config={"transport": "stdio", "command": "npx", "args": "new", "endpoint": ""}
     )
+    from personalclaw.config.secret_refs import resolve_mcp_spec
+
     spec = _read(_home)["mcpServers"]["s"]
     assert spec["args"] == ["new"]
-    assert spec["env"] == {"API_KEY": "secret"}  # preserved across edit
+    # Preserved across the edit — as a reference in the file, the value in the credential store.
+    assert spec["env"]["API_KEY"].startswith("{{secret:")
+    assert resolve_mcp_spec(spec)["env"] == {"API_KEY": "secret"}
 
 
 def test_update_toggle_enabled(_home):

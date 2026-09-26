@@ -9,7 +9,7 @@ import pytest
 
 @pytest.fixture()
 def mcp_env(tmp_path: Path):
-    """Set up agent config and global mcp.json in tmp_path."""
+    """Set up agent config and mcp.json in tmp_path."""
     agent_cfg = tmp_path / "personalclaw.json"
     mcp_json = tmp_path / "mcp.json"
 
@@ -36,7 +36,7 @@ def mcp_env(tmp_path: Path):
     )
 
     with (
-        patch("personalclaw.dashboard.handlers.mcp._GLOBAL_MCP_JSON", mcp_json),
+        patch("personalclaw.dashboard.handlers.mcp._canonical_mcp_json", return_value=mcp_json),
         patch(
             "personalclaw.dashboard.handlers.agents._installed_agent_config", return_value=agent_cfg
         ),
@@ -94,14 +94,6 @@ class TestSyncMcpToAgent:
         cfg = _load(agent_cfg)
         assert "@my-mcp-server" not in cfg["tools"]
         assert "@my-mcp-server" not in cfg["allowedTools"]
-
-    def test_remove_deletes_server_entry(self, mcp_env):
-        agent_cfg, _ = mcp_env
-        from personalclaw.dashboard.handlers.mcp import _sync_mcp_to_agent
-
-        _sync_mcp_to_agent("my-mcp-server", enabled=False, remove=True)
-        cfg = _load(agent_cfg)
-        assert "my-mcp-server" not in cfg["mcpServers"]
 
     def test_enable_returns_early_on_missing_mcp_json(self, mcp_env):
         agent_cfg, mcp_json = mcp_env

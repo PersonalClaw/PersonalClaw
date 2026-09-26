@@ -369,10 +369,11 @@ A secret still appears in plaintext in these places:
   (`state-history/`, which never leaves the machine), and an audit-log row an earlier
   `personalclaw config set` wrote with the value in it. The audit log travels in an export,
   and its rows are chained, so they are not rewritten.
-- **A multi-line value**, such as a PEM key in an MCP server's `env`. `.env` holds one
-  `KEY=VALUE` per line, so adding a server with one is refused. One that reaches `mcp.json`
-  another way (an import, a hand edit) stays there and travels with it, and the gateway logs
-  which variable it left.
+- **A value with a NUL character**, which no environment variable or keychain entry can hold.
+  Adding a server with one is refused; one that reaches `mcp.json` another way (an import, a
+  hand edit) stays there and travels with it, and the gateway logs which variable it left. A
+  multi-line value, such as a PEM key, is stored like any other: `.env` keeps it on one line,
+  quoted.
 - **A value typed into `mcp.json` or `config.json` by hand** (`personalclaw config edit`, an
   editor) stays in the file until the gateway next starts and moves it.
 - **Claude Code's own config.** Putting an MCP server into Claude Code's scope
@@ -460,9 +461,8 @@ patched inline in a docs change. Every item above has a named future direction
 (extending the hard rail to ACP protocol paths for #1; OS-level app isolation for
 #2; out-of-process providers for the residual half of #3; a distinct origin for app
 UI, with the SDK crossing it as a message channel, for #4; checking a hand-copied
-weight's sha256 when it loads, for the gap in #5; a store that can hold a multi-line value,
-for the part of #6 that is ours to close; per-app OS isolation for every kind of app code,
-which today only a backend that names a sandbox tier has, for #7). This page will shrink as
-those land.
+weight's sha256 when it loads, for the gap in #5; per-app OS isolation for every kind of app
+code, which today only a backend that names a sandbox tier has, for #7). This page will shrink
+as those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

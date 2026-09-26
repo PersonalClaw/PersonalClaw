@@ -124,13 +124,13 @@ async def _call(app_name: str, method: str, template: str, path: str) -> tuple[i
 MCP_ROUTES = [
     ("GET", "/api/mcp", "/api/mcp"),
     ("GET", "/api/mcp/importable", "/api/mcp/importable"),
+    ("GET", "/api/mcp/servers/{name}", "/api/mcp/servers/evil"),
     ("PUT", "/api/mcp/servers/{name}", "/api/mcp/servers/evil"),
     ("DELETE", "/api/mcp/servers/{name}", "/api/mcp/servers/evil"),
     ("POST", "/api/mcp/apply", "/api/mcp/apply"),
     ("POST", "/api/mcp/sync", "/api/mcp/sync"),
     ("POST", "/api/mcp/toggle", "/api/mcp/toggle"),
     ("POST", "/api/mcp/toggle-all", "/api/mcp/toggle-all"),
-    ("POST", "/api/mcp/remove", "/api/mcp/remove"),
     ("POST", "/api/mcp/probe", "/api/mcp/probe"),
 ]
 

@@ -299,8 +299,9 @@ def test_the_session_thread_scan_reads_the_active_home(sealed_home):
 
 def test_the_installed_agent_config_path_follows_the_active_home(sealed_home):
     """Both `handlers/mcp.py` sites resolve through one helper now — and one of them
-    (`_remove_from_agent_file`) DELETES an entry from the file it resolves, so pointing it at
-    the real home was a destructive write to the operator's config.
+    (`_remove_from_agent_file`, since replaced by `secret_refs.remove_mcp_servers`) deleted an
+    entry from the file it resolved, so pointing it at the real home was a destructive write to
+    the operator's config.
 
     Redirected by the env var, not by patching `agent.agents_dir`. The first version of this
     test did the latter and went green while the code had ALREADY been changed away from that

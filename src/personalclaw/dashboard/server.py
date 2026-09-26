@@ -1198,8 +1198,8 @@ async def start_dashboard(
     app.router.add_post("/api/mcp/toggle", handlers.api_mcp_toggle)
     app.router.add_post("/api/mcp/toggle-tool", handlers.api_mcp_toggle_tool)
     app.router.add_post("/api/mcp/toggle-all", handlers.api_mcp_toggle_all)
-    app.router.add_post("/api/mcp/remove", handlers.api_mcp_remove)
-    # REST-style MCP server registration
+    # One MCP server: the edit form's read, add or edit, remove
+    app.router.add_get("/api/mcp/servers/{name}", handlers.api_mcp_server_detail)
     app.router.add_put("/api/mcp/servers/{name}", handlers.api_mcp_server_detail)
     app.router.add_delete("/api/mcp/servers/{name}", handlers.api_mcp_server_detail)
     # Skills marketplace integration

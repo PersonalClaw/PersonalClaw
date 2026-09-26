@@ -2392,8 +2392,21 @@ export interface AlwaysOnResponse {
 }
 export interface McpServer {
   name: string; command?: string; args?: string[]; status: string; tools: Array<string | { name: string; description?: string }>
-  error?: string; source?: string; enabled?: boolean; presence?: Record<string, boolean>
+  error?: string; source?: string; enabled?: boolean
 }
+/** One variable (or header) of a server another tool configured: its NAME and whether it has a
+ *  value — never the value, which is that server's token. The import reads it server-side. */
+export interface McpValuePresence { name: string; hasValue: boolean }
+/** One `env` variable as the edit form reads it (`GET /api/mcp/servers/{name}`). A plain one
+ *  carries its value; a stored one only says whether a value is saved, so a secret never makes
+ *  the round trip to the browser. */
+export type McpEnvEntry =
+  | { name: string; plain: true; value: string }
+  | { name: string; plain: false; hasValue: boolean }
+/** `GET /api/mcp/servers/{name}`: what the edit form needs, or why it cannot edit this server. */
+export type McpServerDefinition =
+  | { name: string; editable: true; command: string; args: string[]; env: McpEnvEntry[] }
+  | { name: string; editable: false; reason: string }
 /** P23d: the in-process MCP connection-pool observability snapshot (GET /api/mcp/pool-stats).
  *  `available:false` when the mcp SDK extra isn't installed (no pool exists). */
 export interface McpPoolStats {
@@ -2405,8 +2418,8 @@ export interface McpPoolStats {
 /** An MCP server configured in an external backend (e.g. Claude Code) that
  *  isn't yet in PersonalClaw — offered as an import suggestion on the Tools page. */
 export interface ImportableMcpServer {
-  name: string; backend: string; command?: string; args?: string[]
-  env?: Record<string, string>; url?: string; headers?: Record<string, string>
+  name: string; backend: string; command?: string; args?: string[]; url?: string
+  env?: McpValuePresence[]; headers?: McpValuePresence[]
 }
 export interface ToolInvokeResult { ok: boolean; output?: string; error?: string }
 // `blocking` / `enforcement` (G40): whether this hook's EVENT can short-circuit the loop, and
@@ -7567,17 +7580,31 @@ export const api = {
   // without re-probing the whole fleet.
   reconnectMcp: (name: string) => post<McpServer>(`/api/mcp/probe/${encodeURIComponent(name)}`),
   toggleAllMcp: (enabled: boolean) => post('/api/mcp/toggle-all', { enabled }),
-  // add/update an MCP server (stdio): writes ~/.personalclaw/mcp.json + enables. Every `env`
-  // value is kept in the credential store (mcp.json holds a reference) except the variables
-  // `plainEnv` names, which stay in the file as settings.
-  addMcpServer: (name: string, body: { command: string; args?: string[]; env?: Record<string, string>; plainEnv?: string[] }) =>
+  // Add or edit an MCP server (stdio) — the one write path for both: writes ~/.personalclaw/mcp.json
+  // and rebuilds the agent config. Every `env` value is kept in the credential store (mcp.json holds
+  // a reference) except the variables `plainEnv` names, which stay in the file as settings.
+  // `keepEnv` names variables whose saved value stays as it is: the edit form sends a secret it only
+  // showed masked this way, so the value never comes to the browser and back.
+  saveMcpServer: (name: string, body: { command: string; args?: string[]; env?: Record<string, string>; plainEnv?: string[]; keepEnv?: string[] }) =>
     put<{ ok?: boolean; name: string }>(`/api/mcp/servers/${encodeURIComponent(name)}`, body),
+  // What the edit form reads: names, plain values, and for a stored value only whether one is saved.
+  mcpServerDefinition: (name: string) => get<McpServerDefinition>(`/api/mcp/servers/${encodeURIComponent(name)}`),
+  // Removes the server from mcp.json AND the agent config, and deletes the values it owns in the
+  // credential store. Never another tool's config.
   removeMcpServer: (name: string) => del(`/api/mcp/servers/${encodeURIComponent(name)}`),
   // Servers configured in an external backend (Claude Code) not yet in PClaw.
   importableMcp: () => get<{ servers: ImportableMcpServer[] }>('/api/mcp/importable').then((r) => r.servers),
-  // Import a discovered server into ~/.personalclaw/mcp.json (PClaw scope).
-  importMcpServer: (name: string) =>
-    post('/api/mcp/apply', { changes: [{ name, personalclaw: true, globalMcp: false, ccGlobal: true }] }),
+  // Import a discovered server into ~/.personalclaw/mcp.json. The gateway copies it from Claude Code's
+  // own file, values included (stored in the credential store), and leaves that file as it is. The
+  // route answers 200 for a batch, so a change that did not land carries an `error` — thrown here, so
+  // `reportingWrite` reports both failure shapes.
+  importMcpServer: async (name: string) => {
+    const r = await post<{ results?: Array<{ name?: string; error?: string }> }>(
+      '/api/mcp/apply', { changes: [{ name, personalclaw: true, ccGlobal: true }] })
+    const failed = r.results?.find((c) => c.error)
+    if (failed?.error) throw new Error(failed.error)
+    return r
+  },
 
   // system / auth (shell status)
   system: () => get<SystemInfo>('/api/system'),

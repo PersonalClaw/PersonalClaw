@@ -203,6 +203,14 @@ def declared_provider_type_fields(ptype: str) -> set[str]:
 
 # ── the two forms ───────────────────────────────────────────────────────────
 
+#: The one character no stored value may hold: an environment variable ends at NUL, so a child
+#: process would receive a different value from the one the user entered.
+_UNSTORABLE_CHAR = "\x00"
+
+
+def _unstorable_message(name: str) -> str:
+    return f"{name}: the value contains a NUL character, which no credential can hold"
+
 
 def resolve(settings: Mapping[str, Any] | None) -> dict[str, Any]:
     """The LOGICAL form: every top-level field holding a reference gets the stored value.
@@ -233,10 +241,11 @@ def store(
     The reference is written only after the store has provably kept the value — a write that
     would otherwise record a pointer to nothing fails instead (:class:`OSError`).
 
-    Raises :class:`ValueError` for a value the store cannot hold faithfully: ``.env`` is one
-    ``KEY=VALUE`` per line, so a multi-line secret would split into lines that parse as OTHER
-    credentials. Surrounding whitespace is dropped — it is never part of a key or a token, and a
-    pasted value often carries a trailing newline.
+    Raises :class:`ValueError` for a value no credential can hold: one with a NUL character,
+    which no environment variable or keychain entry carries. A multi-line value (a PEM key, a
+    service-account JSON) is stored like any other; ``.env`` keeps it on one line, quoted.
+    Surrounding whitespace is dropped — it is never part of a key or a token, and a pasted value
+    often carries a trailing newline.
     """
     out = dict(settings or {})
     for name in sorted(secret_fields(out, declared)):
@@ -246,11 +255,8 @@ def store(
         value = value.strip()
         if not value:
             continue
-        if any(ch in value for ch in ("\n", "\r", "\x00")):
-            raise ValueError(
-                f"{name}: a multi-line value cannot be kept in the credential store — "
-                "enter it as a single line"
-            )
+        if _UNSTORABLE_CHAR in value:
+            raise ValueError(_unstorable_message(name))
         key = owner.key(name)
         save_credential(key, value)
         if get_credential(key) != value:
@@ -349,9 +355,21 @@ def resolve_provider_records(records: Any) -> list[dict[str, Any]]:
 # field), which stays inline and travels with an export — unless its name is credential-shaped,
 # which no marking overrides. Header values are always stored: headers are how a remote server
 # authenticates, and nothing in the product writes a plain one.
+#
+# **Removing a server** goes through :func:`remove_mcp_servers`, and only through it: it takes the
+# server out of both documents, so the second write finds its keys referenced nowhere and deletes
+# them. A delete that reached one document left the other holding the server and its secrets.
 
 #: Spec key listing the ``env`` variables that stay inline — settings that are not secret.
 MCP_PLAIN_ENV = "plainEnv"
+
+#: The keys that DEFINE how a server is started — what the edit form writes as a whole, and what
+#: the rebuild takes from ``mcp.json`` as a whole rather than merging into the agent config's copy.
+#: A merge kept a key the edit had removed (cleared arguments, a deleted variable). Every other key
+#: (``disabled``, ``disabledTools``, ``autoApprove``, ``cwd``) is state an edit leaves alone.
+MCP_DEFINITION_KEYS = frozenset(
+    {"command", "args", "env", MCP_PLAIN_ENV, "url", "headers", "type", "transport", "endpoint"}
+)
 
 _MCP_OWNED_PREFIX = f"{OWNED_KEY_PREFIX}MCP_"
 _MCP_PARTS = {"env": "ENV", "headers": "HDR"}
@@ -383,22 +401,18 @@ def plain_env_names(spec: Mapping[str, Any]) -> set[str]:
 
 
 def _unstorable(value: Any) -> bool:
-    return (
-        isinstance(value, str)
-        and ref_key(value) is None
-        and any(ch in value.strip() for ch in ("\n", "\r", "\x00"))
-    )
+    return isinstance(value, str) and ref_key(value) is None and _UNSTORABLE_CHAR in value
 
 
 def store_mcp_spec(server: str, spec: Mapping[str, Any], *, strict: bool) -> dict[str, Any]:
     """The STORED form of one MCP server spec: each ``env`` value (bar the plain ones) and each
     ``headers`` value saved under a key the server owns, the field holding the reference.
 
-    ``strict`` is for a value a user is typing now: one the store cannot hold faithfully (a
-    multi-line value — ``.env`` is one ``KEY=VALUE`` per line) raises :class:`ValueError` and
-    nothing is stored, so the caller can refuse it. Otherwise that value is left inline and
-    logged: the write chokepoint and the boot move must never drop a server, or the rest of its
-    secrets, over one value they cannot move.
+    ``strict`` is for a value a user is typing now: one no credential can hold (a NUL character)
+    raises :class:`ValueError` and nothing is stored, so the caller can refuse it. Otherwise that
+    value is left inline and logged: the write chokepoint and the boot move must never drop a
+    server, or the rest of its secrets, over one value they cannot move. A multi-line value is
+    stored like any other.
     """
     if strict:
         # Refused BEFORE anything is stored: a refusal halfway through would leave the values
@@ -407,10 +421,7 @@ def store_mcp_spec(server: str, spec: Mapping[str, Any], *, strict: bool) -> dic
             values = spec.get(part)
             for name, value in values.items() if isinstance(values, Mapping) else ():
                 if _unstorable(value):
-                    raise ValueError(
-                        f"{name}: a multi-line value cannot be kept in the credential store — "
-                        "enter it as a single line"
-                    )
+                    raise ValueError(_unstorable_message(name))
     out = dict(spec)
     for part in _MCP_PARTS:
         values = spec.get(part)
@@ -421,8 +432,8 @@ def store_mcp_spec(server: str, spec: Mapping[str, Any], *, strict: bool) -> dic
         for name in [n for n, v in movable.items() if _unstorable(v)]:
             inline[name] = movable.pop(name)
             logger.warning(
-                "MCP server %r: %s %s holds a multi-line value, which the credential store "
-                "cannot keep; it stays in the file",
+                "MCP server %r: %s %s holds a NUL character, which no credential can hold; "
+                "it stays in the file",
                 server,
                 part,
                 name,
@@ -463,6 +474,63 @@ def resolve_mcp_spec(spec: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(values, Mapping):
             out[part] = resolve_mcp_values(values)
     return out
+
+
+def mcp_env_view(spec: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """A server's ``env`` as the edit form reads it: each variable's name, whether it stays in the
+    file (``plain``), a plain one's value, and for a stored one only whether a value is saved.
+
+    A stored value is never read: presence comes from the store's key NAMES, as in
+    :func:`owned_field_names`, so no call here can carry a secret to the browser. A variable marked
+    plain whose name is credential-shaped was stored anyway, and reads as stored.
+    """
+    values = spec.get("env")
+    if not isinstance(values, Mapping):
+        return []
+    held = set(credential_names())
+    plain = plain_env_names(spec)
+    view: list[dict[str, Any]] = []
+    for name, value in values.items():
+        key = ref_key(value)
+        if key is None and name in plain:
+            view.append({"name": name, "plain": True, "value": "" if value is None else str(value)})
+        else:
+            present = key in held if key is not None else value not in (None, "")
+            view.append({"name": name, "plain": False, "hasValue": present})
+    return view
+
+
+def remove_mcp_servers(names: Iterable[str]) -> list[str]:
+    """THE delete for MCP servers: out of both documents, and every value they own deleted.
+
+    Each server leaves ``mcp.json`` and the agent config — its spec, and the ``@name`` references
+    in ``tools``/``allowedTools`` — through :func:`write_mcp_document`, whose
+    delete-when-unreferenced then drops its credential-store keys: the first write keeps them
+    (the other document still references them), the second deletes them. Another tool's own
+    config (Claude Code's) is never touched. Returns the names either document held.
+    """
+    wanted = {str(n) for n in names}
+    tool_refs = {f"@{n}" for n in wanted}
+    removed: set[str] = set()
+    for path in mcp_documents():
+        doc = _read_json(path)
+        if not isinstance(doc, dict):
+            continue
+        changed = False
+        servers = doc.get("mcpServers")
+        if isinstance(servers, dict):
+            for name in sorted(wanted & set(servers)):
+                del servers[name]
+                removed.add(name)
+                changed = True
+        for list_key in ("tools", "allowedTools"):
+            listed = doc.get(list_key)
+            if isinstance(listed, list) and any(t in tool_refs for t in listed):
+                doc[list_key] = [t for t in listed if t not in tool_refs]
+                changed = True
+        if changed:
+            write_mcp_document(path, doc)
+    return sorted(removed)
 
 
 def foreign_mcp_spec(spec: Mapping[str, Any], *, with_secrets: bool) -> dict[str, Any]:
@@ -551,10 +619,12 @@ def store_config_secrets(
 
     For every writer that can put a secret into the file: ``AppConfig.save()`` (which every API
     handler that saves the config, and the boot-time config migration, go through) and the CLI's
-    ``config set`` / ``--file`` / ``unset``. A value typed into the file by hand is moved at the
-    next boot (:func:`migrate_plaintext_secrets`). ``previous`` is the document on disk before the
-    write, so a secret this write drops — ``config unset hooks.webhook_token`` — is deleted from
-    the store.
+    ``config set`` / ``--file`` / ``unset``. The secret-bearing sections (``hooks``) and every
+    ``providers[]`` record's ``options``: ``config get --reveal`` prints both with their values, so
+    the documented ``--reveal`` → edit → ``config set --file`` loop hands them back in plaintext. A
+    value typed into the file by hand is moved at the next boot (:func:`migrate_plaintext_secrets`).
+    ``previous`` is the document on disk before the write, so a secret this write drops —
+    ``config unset hooks.webhook_token`` — is deleted from the store.
     """
     for section, declared in _CONFIG_SECRET_FIELDS.items():
         before = previous.get(section) if isinstance(previous, Mapping) else None
@@ -566,7 +636,53 @@ def store_config_secrets(
             )
         else:
             _delete_orphans(before, {}, config_owner(section))
+    earlier = previous.get("providers") if isinstance(previous, Mapping) else None
+    earlier_options = {
+        str(r.get("name")): r.get("options")
+        for r in (earlier if isinstance(earlier, list) else [])
+        if isinstance(r, dict) and isinstance(r.get("options"), dict)
+    }
+    records = doc.get("providers")
+    for record in records if isinstance(records, list) else []:
+        if not isinstance(record, dict) or not isinstance(record.get("options"), dict):
+            continue
+        name = str(record.get("name") or "")
+        if name:
+            record["options"] = store_provider_options(
+                name, str(record.get("type") or ""), record["options"], earlier_options.get(name)
+            )
     return doc
+
+
+def reveal_stored_values(doc: Any) -> tuple[Any, list[str]]:
+    """``doc`` with every reference to a value PersonalClaw moved into the store replaced by the
+    value — ``personalclaw config get --reveal``, the owner reading their own home.
+
+    Returns the document and the paths (``hooks.webhook_token``, ``providers[0].options.api_key``)
+    of references whose key the store no longer holds; those are left as they are, because an
+    empty value would read as "not set". Only an OWNED key (``PCSECRET_…``) is resolved: a
+    reference the owner typed to a Secrets-panel credential is theirs and stays one, so a revealed
+    document written back with ``config set --file`` keeps it a reference.
+    """
+    from personalclaw.config.credentials import is_owned_key
+
+    missing: list[str] = []
+
+    def walk(node: Any, path: str) -> Any:
+        if isinstance(node, dict):
+            return {k: walk(v, f"{path}.{k}" if path else str(k)) for k, v in node.items()}
+        if isinstance(node, list):
+            return [walk(v, f"{path}[{i}]") for i, v in enumerate(node)]
+        key = ref_key(node)
+        if key is None or not is_owned_key(key):
+            return node
+        value = get_credential(key)
+        if not value:
+            missing.append(path)
+            return node
+        return value
+
+    return walk(doc, ""), missing
 
 
 # ── the one-time move (gateway boot) ────────────────────────────────────────
