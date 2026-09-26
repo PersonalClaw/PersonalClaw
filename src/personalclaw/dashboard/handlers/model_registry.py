@@ -549,7 +549,22 @@ async def api_models_chat(request: web.Request) -> web.Response:
     # configured provider via its registered ModelCatalog (generic, no per-type
     # branching). Each provider's list runs concurrently; a provider with no
     # catalog contributes nothing.
-    providers_cfg = _get_providers_from_config()
+    from personalclaw.llm.capabilities import Capability
+    from personalclaw.llm.registry import get_default_registry
+
+    registry = get_default_registry()
+    live = {e.name: e for e in registry.list_entries()}
+
+    def _cannot_serve(pname: str) -> bool:
+        # The registry's readiness answer — the same one onboarding and the resolver read — so
+        # this list never offers a model the next turn would refuse (a provider whose model is
+        # not downloaded yet). A row with no live entry is left to its catalog, as before.
+        entry = live.get(pname)
+        return entry is not None and registry.not_ready(entry, implicit=False) is not None
+
+    config_rows = _get_providers_from_config()
+    config_names = {str(p.get("name", "")) for p in config_rows}
+    providers_cfg = [p for p in config_rows if not _cannot_serve(p.get("name", ""))]
     all_models: list[dict[str, Any]] = []
 
     def _add(pname: str, mid: str) -> None:
@@ -585,6 +600,28 @@ async def api_models_chat(request: web.Request) -> web.Response:
             for mi in models_or_exc:
                 if "chat" in (mi.capabilities or []):
                     _add(pname, mi.id)
+
+    # Entries an APP registers itself rather than a config.json row — the bundled floor model —
+    # contribute their pinned model when they can serve. They are what a fresh install actually
+    # chats with, and the list above only walks config.json, so before this the one model that
+    # answered was the one model no picker offered ("Nothing came back"). A floor counts even
+    # when a stale config.json row shares its name: the app's entry is the live one (config rows
+    # are never floors), and the row above contributed nothing for it.
+    listed = {m["provider"] for m in all_models}
+    for entry in live.values():
+        if entry.name in listed or entry.type == "acp_agent" or not entry.model:
+            continue
+        if entry.name in config_names and not getattr(entry, "floor", False):
+            continue
+        caps = entry.declared_capabilities
+        if not caps:
+            try:
+                caps = registry.capability_of(entry.type).capabilities
+            except Exception:
+                caps = frozenset()
+        if Capability.CHAT not in caps or _cannot_serve(entry.name):
+            continue
+        _add(entry.name, entry.model)
 
     return web.json_response(all_models)
 

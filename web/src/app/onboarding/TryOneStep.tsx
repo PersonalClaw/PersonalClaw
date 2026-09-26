@@ -1,12 +1,13 @@
 import { useCallback, useState } from 'react'
 import { motion } from 'framer-motion'
-import { BookOpen, BellRing, Repeat, Check, ArrowRight, ExternalLink } from 'lucide-react'
+import { BookOpen, BellRing, Repeat, Check, ExternalLink } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
 import { TextLink } from '../../ui/TextLink'
 import { listItemEnter, stagger, spring } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
+import { StepActions } from './StepActions'
 import type { OnboardingStatePatch } from '../../lib/api'
 import {
   TRY_ONE_FLOWS, failureText, settingsTargetFor,
@@ -122,14 +123,15 @@ export function TryOneStep({ onProgress, onDone, onSkip, onExitTo }: {
         ))}
       </motion.div>
 
-      <div className="flex items-center gap-m">
-        <Button variant="primary" size="md"
-          onClick={() => onDone(doneCount ? `${doneCount} of 3 tried` : 'Skipped')}>
-          Continue <ArrowRight size={16} aria-hidden="true" />
-        </Button>
-        {/* Never a wall: the step is an offer, and OU-4's full-skip path runs through here. */}
-        {doneCount === 0 && <TextLink onClick={onSkip}>Skip this</TextLink>}
-      </div>
+      {/* Never a wall: the step is an offer, and OU-4's full-skip path runs through here. With
+          nothing tried, Continue IS the skip, and records one — this used to offer both a
+          Continue and a "Skip this" that did the same thing, and the Continue recorded the step
+          as DONE with the summary "Skipped", a green check beside the word. In the flow's
+          navigation bar, with every step's actions (`StepActions`). */}
+      <StepActions primary={{
+        label: 'Continue',
+        onClick: () => (doneCount ? onDone(`${doneCount} of 3 tried`) : onSkip()),
+      }} />
     </div>
   )
 }

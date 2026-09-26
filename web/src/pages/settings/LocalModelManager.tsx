@@ -9,12 +9,17 @@ import { WavyProgress } from '../../ui/WavyProgress'
 import { Toggle } from '../../ui/Toggle'
 import { Button } from '../../ui/Button'
 import { useModelDownloads } from './useModelDownloads'
+import { modelLabel } from './InlineModelDownload'
 import { StatusPill } from '../../ui/StatusPill'
 import {
   FIT_LABEL, FIT_TONE, budgetKnown, filterByFit, fitDescription, hostFitOf, statedSizeMb, unrunnable,
 } from './modelFit'
 
-const MB = (bytes: number) => (bytes / 1024 / 1024).toFixed(0)
+/** Bytes as whole MiB — the unit every catalog `size_mb` is in (`size_mb × 1024 × 1024` is the
+ *  byte total a download is measured against), and the unit the onboarding offer, the chat notice
+ *  and the Models page state. This card used to label the same numbers "MB", so the one download
+ *  read "138 MiB" on the offer and "138 MB" here. */
+const MiB = (bytes: number) => (bytes / 1024 / 1024).toFixed(0)
 
 /** `eta_s` as a phrase, or "" when the runner has not worked one out yet.
  *
@@ -166,6 +171,9 @@ export function LocalModelManager({
 
   const renderRow = (m: AvailableModel) => {
     const job = jobs[m.name]
+    // What a person calls it (`SmolLM2-135M-Instruct`), not its file id; the id stays the key every
+    // download, delete and binding uses, and is still one hover away.
+    const label = modelLabel(m)
     // `isLiveDownload`, not `state === 'running'` (#3520): the job this row gets back from the
     // POST is `queued`, so testing `running` rendered a just-started download as not downloading
     // at all — the Download button stayed offered and no progress row appeared.
@@ -193,15 +201,16 @@ export function LocalModelManager({
         <div className="flex items-center gap-2">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <span data-type="caption" className="truncate text-on-surface font-mono">{m.name}</span>
+              <span data-type="caption" className="truncate text-on-surface font-mono"
+                title={label !== m.name ? m.name : undefined}>{label}</span>
               {m.downloaded && <Check size={11} style={{ color: 'var(--color-success)' }} />}
               {gatedUndownloaded && <Lock size={10} className="shrink-0 text-on-surface-low" aria-label="Requires a token / license" />}
               <FitChip model={m} />
             </div>
             <div data-type="caption" className="truncate text-on-surface-low">
               {downloading
-                ? `downloading${job.downloaded_bytes ? ` · ${MB(job.downloaded_bytes)}${sizeMb ? ` / ${sizeMb}` : ''} MB` : ''}${etaLabel(job.eta_s)}`
-                : <>{m.description || (m.capabilities?.length ? m.capabilities.join(', ') : '')}{stated.mb ? ` · ${stated.mb} MB` : ''}{stated.familyMedianMb ? ` · family median ~${stated.familyMedianMb} MB` : ''}</>}
+                ? `downloading${job.downloaded_bytes ? ` · ${MiB(job.downloaded_bytes)}${sizeMb ? ` / ${Math.round(sizeMb)}` : ''} MiB` : ''}${etaLabel(job.eta_s)}`
+                : <>{m.description || (m.capabilities?.length ? m.capabilities.join(', ') : '')}{stated.mb ? ` · ${stated.mb} MiB` : ''}{stated.familyMedianMb ? ` · family median ~${stated.familyMedianMb} MiB` : ''}</>}
             </div>
             {stepDown && !downloading && (
               <Button variant="ghost-accent" size="xs" className="-ml-m mt-0.5"
@@ -212,21 +221,21 @@ export function LocalModelManager({
             {/* Determinate when the byte total is known, and then it must say WHAT is downloading —
                 the bar sits in a list of models, so "progressbar 42%" alone does not identify which.
                 Indeterminate (total unknown) stays unnamed and `aria-hidden`: the line above already
-                reads "downloading · 120 / 400 MB". */}
+                reads "downloading · 120 / 400 MiB". */}
             {downloading && (
               <div className="mt-1">
                 {frac == null
                   ? <WavyProgress width={200} />
-                  : <WavyProgress width={200} value={frac} label={`Downloading ${m.name}`} />}
+                  : <WavyProgress width={200} value={frac} label={`Downloading ${label}`} />}
               </div>
             )}
           </div>
           {downloading ? (
-            <SquareIconButton icon={X} iconSize={13} label={`Cancel ${m.name}`} title="Cancel"
+            <SquareIconButton icon={X} iconSize={13} label={`Cancel ${label}`} title="Cancel"
               onClick={() => stopDownload(m.name)} className="shrink-0" />
           ) : (
             <SquareIconButton icon={m.downloaded ? Trash2 : Download} iconSize={13}
-              label={m.downloaded ? `Delete ${m.name}` : `Download ${m.name}`}
+              label={m.downloaded ? `Delete ${label}` : `Download ${label}`}
               title={gatedUndownloaded ? 'Requires a token / license (see provider settings)' : m.downloaded ? 'Delete' : 'Download'}
               disabled={gatedUndownloaded}
               onClick={() => (m.downloaded ? remove(m.name) : download(m.name))} className="shrink-0" />

@@ -136,7 +136,13 @@ class TestVerdict:
             return_value=_FakeProvider(),
         ):
             body = await _call()
-        assert body == {"ok": True, "source": "binding", "bound": ["stub:m"]}
+        assert body == {
+            "ok": True,
+            "source": "binding",
+            "bound": ["stub:m"],
+            "floor": False,
+            "provider": "stub",
+        }
 
     @pytest.mark.asyncio
     async def test_a_pass_with_nothing_bound_says_fallback(self, _isolate_home):
@@ -148,7 +154,38 @@ class TestVerdict:
             return_value=_FakeProvider(),
         ):
             body = await _call()
-        assert body == {"ok": True, "source": "fallback", "bound": []}
+        assert body == {
+            "ok": True,
+            "source": "fallback",
+            "bound": [],
+            "floor": False,
+            "provider": "",
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_pass_names_the_entry_that_answers(self, _isolate_home):
+        """A build is not a call: an Ollama entry saved at an address nothing listens on builds,
+        so this verdict passes for it. The lane then asks THAT entry whether it answers before it
+        says "ready" — which it can only do if the verdict names it, fallback included."""
+        from personalclaw.llm.registry import ProviderEntry
+
+        _write_home(_isolate_home, chat=[])
+        answering = ProviderEntry(name="local-ollama", type="ollama", model="")
+        with (
+            patch(
+                "personalclaw.providers.provider_bridge.resolve_provider_for_use_case",
+                return_value=_FakeProvider(),
+            ),
+            patch(
+                "personalclaw.providers.provider_bridge.serving_entry",
+                return_value=answering,
+            ),
+        ):
+            body = await _call()
+        assert body["ok"] is True
+        assert body["source"] == "fallback"
+        assert body["provider"] == "local-ollama"
+        assert body["floor"] is False
 
     @pytest.mark.asyncio
     async def test_a_verified_provider_is_shut_down(self, _isolate_home):

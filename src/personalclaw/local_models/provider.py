@@ -123,11 +123,17 @@ class LocalModel:
     status: str = "active"  # active | deprecated | sunset
     integrity: str = ""  # "" | "truncated" (on-disk weights below the expected floor)
     config_only: bool = False  # a pipeline/config repo with no local weights (pyannote)
+    # What a person calls the model when `name` is a file or binding id rather than a name —
+    # `SmolLM2-135M-Instruct` for the weight `SmolLM2-135M-Instruct-Q8_0`. "" = `name` already
+    # reads as a name. Display-only: `name` stays the id every download, delete and binding uses.
+    # (A catalog card's `label` key is its DESCRIPTION line, so this one is `display_name`.)
+    display_name: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "id": self.name,
+            "display_name": self.display_name,
             "size_mb": self.size_mb,
             "size": int(self.size_mb or 0) * 1024 * 1024,
             "description": self.description,
@@ -397,6 +403,7 @@ class LocalModelProvider(ABC):
             io_mime=dict(card.get("io_mime") or {}),
             status=str(card.get("status") or "active"),
             config_only=bool(card.get("config_only", False)),
+            display_name=str(card.get("display_name") or ""),
         )
 
     @staticmethod

@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { MoreRow } from '../../ui/MoreRow'
 import {
-  Plus, Cpu, Wifi, Pencil, Trash2, X, Eye, EyeOff,
+  Plus, Cpu, Wifi, Pencil, Trash2, X,
   CheckCircle2, AlertTriangle, ChevronRight, RotateCcw,
 } from 'lucide-react'
-import { api, type ModelProvider, type AvailableModel, type ProviderTestResult, type ModelProviderTypeField } from '../../lib/api'
+import { api, type ModelProvider, type AvailableModel, type ProviderTestResult, type ProviderOptionValue } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
@@ -17,6 +17,7 @@ import { fvs } from '../../design/fontWeight'
 import { reportingWrite } from '../../app/reportingWrite'
 import { notify } from '../../app/appSdk'
 import { SchemaFields } from '../tools/schema'
+import { SchemaField, schemaDefaults } from './ProviderConfigForm'
 
 // Provider types + their config forms are NOT hardcoded here — they come from
 // the installed model apps' manifests via /api/model-provider-types (see
@@ -250,55 +251,9 @@ function InstanceCard({ provider, models, onChanged }: { provider: ModelProvider
  *  since a class string has no element to carry the attribute. */
 const inputCls = 'h-9 w-full rounded-md bg-surface-high px-3 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
 
-/** A single schema-driven field: enum → select, sensitive → password, else text.
- *  Exported so the onboarding essential-apps step renders a provider's key/config
- *  fields with the IDENTICAL semantics (label from x-meta, password masking + reveal
- *  for a `sensitive` field) instead of growing a second, subtly different key-entry
- *  idiom for the same settingsSchema. */
-export function SchemaField({ field, name, value, onChange }: {
-  field: ModelProviderTypeField; name: string; value: string; onChange: (v: string) => void
-}) {
-  const [show, setShow] = useState(false)
-  const meta = field['x-meta'] || {}
-  const label = meta.label || name
-  const enumVals = field.enum
-  if (Array.isArray(enumVals) && enumVals.length > 0) {
-    return (
-      <label className="flex flex-col gap-1">
-        <span data-type="caption" className="text-on-surface-low">{label}</span>
-        <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} data-type="body-s" className={inputCls + ' cursor-pointer'}>
-          {enumVals.map((v) => <option key={v} value={v}>{v}</option>)}
-        </select>
-        {meta.help && <span data-type="caption" className="text-on-surface-low">{meta.help}</span>}
-      </label>
-    )
-  }
-  const sensitive = !!meta.sensitive
-  // A numeric setting renders as a number input honouring the manifest's bounds, the same
-  // treatment ProviderConfigForm's renderer already gives it — otherwise `context_window`
-  // and `timeout_secs` accept "8k" here and coerce to "undeclared" with nothing said. Kept
-  // as `type="number"` over a stepper for the same reason that renderer gives: a stepper's
-  // numeric value cannot express "unset", and blank is meaningful for both of these fields.
-  const numeric = field.type === 'integer' || field.type === 'number'
-  return (
-    <label className="flex flex-col gap-1">
-      <span data-type="caption" className="text-on-surface-low">{label}</span>
-      <div className="relative">
-        <input aria-label={label} type={sensitive && !show ? 'password' : numeric ? 'number' : 'text'} value={value}
-          min={numeric ? field.minimum : undefined} max={numeric ? field.maximum : undefined}
-          onChange={(e) => onChange(e.target.value)} placeholder={meta.placeholder || meta.help || label}
-          data-type="body-s" className={inputCls + (sensitive ? ' pr-10' : '')} />
-        {sensitive && (
-          <span className="absolute right-1.5 top-1/2 -translate-y-1/2">
-            <SquareIconButton label={show ? 'Hide' : 'Show'} onClick={() => setShow((s) => !s)}>
-              {show ? <EyeOff size={14} /> : <Eye size={14} />}
-            </SquareIconButton>
-          </span>
-        )}
-      </div>
-      {meta.help && !sensitive && <span data-type="caption" className="text-on-surface-low">{meta.help}</span>}
-    </label>
-  )
+/** A value that says nothing: absent, `null`, or an empty/whitespace string. */
+function isBlank(v: unknown): boolean {
+  return v === undefined || v === null || (typeof v === 'string' && !v.trim())
 }
 
 /** Add a model-provider instance. The provider-type dropdown AND the config
@@ -310,18 +265,21 @@ function AddInstanceForm({ onDone }: { onDone: (created: boolean) => void }) {
   const { data: types } = useQuery('settings:model-provider-types', () => api.modelProviderTypes(), { persist: true })
   const [typeIdx, setTypeIdx] = useState(0)
   const [name, setName] = useState('')
-  const [values, setValues] = useState<Record<string, string>>({})
+  // TYPED, as each field's schema declares it (see `ModelProviderType`): a switch holds a
+  // boolean and a number field a number, and that is what is saved.
+  const [values, setValues] = useState<Record<string, unknown>>({})
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+
+  const [seeded, setSeeded] = useState('')
 
   const selected = types && types.length > 0 ? types[Math.min(typeIdx, types.length - 1)] : null
   const props = selected?.settingsSchema?.properties || {}
   const required = selected?.settingsSchema?.required || []
-  // Seed defaults when the selected type changes.
-  const seedFor = (t: typeof selected) => {
-    const seed: Record<string, string> = {}
-    for (const [k, f] of Object.entries(t?.settingsSchema?.properties || {})) seed[k] = String(f.default ?? '')
-    return seed
+  // Seed the selected type's defaults — in their own types — on the first render that knows the
+  // type, and again whenever the selection changes. The form shows exactly what it will send.
+  if (selected && seeded !== selected.type) {
+    setValues(schemaDefaults(selected.settingsSchema)); setSeeded(selected.type)
   }
 
   if (!types) {
@@ -339,15 +297,17 @@ function AddInstanceForm({ onDone }: { onDone: (created: boolean) => void }) {
     if (!selected) return
     if (!name.trim()) { setError('Instance name is required'); return }
     for (const r of required) {
-      if (!String(values[r] ?? props[r]?.default ?? '').trim()) {
+      if (isBlank(values[r] ?? props[r]?.default)) {
         setError(`${props[r]?.['x-meta']?.label || r} is required`); return
       }
     }
     setSaving(true); setError('')
-    const options: Record<string, string> = {}
+    const options: Record<string, ProviderOptionValue> = {}
     for (const [k, f] of Object.entries(props)) {
-      const v = (values[k] ?? String(f.default ?? '')).trim()
-      if (v) options[k] = v
+      const raw = values[k] ?? f.default
+      const v = typeof raw === 'string' ? raw.trim() : raw
+      // `false` and `0` are settings, not blanks — only an absent or empty value is left out.
+      if (!isBlank(v)) options[k] = v as ProviderOptionValue
     }
     try {
       await api.createModelProvider({ name: name.trim(), type: selected.type, model: '', options })
@@ -369,7 +329,7 @@ function AddInstanceForm({ onDone }: { onDone: (created: boolean) => void }) {
       <div data-type="label-s" className="mb-3 text-on-surface" style={fvs(600)}>Add model provider instance</div>
       <div className="grid grid-cols-2 gap-2">
         <select aria-label="Provider type" value={typeIdx}
-          onChange={(e) => { const i = Number(e.target.value); setTypeIdx(i); setValues(seedFor(types[i])); setError('') }}
+          onChange={(e) => { setTypeIdx(Number(e.target.value)); setError('') }}
           data-type="body-s" className={inputCls + ' cursor-pointer'}>
           {types.map((t, i) => <option key={t.type} value={i}>{t.label}</option>)}
         </select>
@@ -383,8 +343,7 @@ function AddInstanceForm({ onDone }: { onDone: (created: boolean) => void }) {
           values={values}
           advancedFieldClassName="flex flex-col gap-s"
           renderField={(k, field) => (
-            <SchemaField name={k} field={field}
-              value={values[k] ?? String(field.default ?? '')}
+            <SchemaField fieldKey={k} prop={field} value={values[k]}
               onChange={(v) => setValues((prev) => ({ ...prev, [k]: v }))} />
           )}
         />

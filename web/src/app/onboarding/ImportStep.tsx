@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { AlertTriangle, ArrowRight, Check, ChevronDown, ChevronUp, Loader2, ShieldCheck } from 'lucide-react'
-import { Button } from '../../ui/Button'
+import { AlertTriangle, Check, ChevronDown, ChevronUp, Loader2, ShieldCheck } from 'lucide-react'
 import { InlineError } from '../../ui/InlineError'
 import { TextLink } from '../../ui/TextLink'
 import { Checkbox } from '../../ui/forms'
@@ -10,6 +9,7 @@ import { MoreRow } from '../../ui/MoreRow'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import { LoadError, LoadingStatus } from '../../ui/ListScaffold'
 import { listItemEnter, stagger } from '../../design/motion'
+import { StepActions } from './StepActions'
 import {
   api,
   type OnboardingImportItem,
@@ -270,7 +270,7 @@ export function ImportStep({ onDone, onSkip }: {
     return (
       <div className="flex flex-col gap-m">
         <LoadError what="detected tools" error={scanError} onRetry={load} />
-        <TextLink onClick={onSkip}>Skip this</TextLink>
+        <StepActions secondary={{ label: 'Skip this', onClick: onSkip }} />
       </div>
     )
   }
@@ -328,26 +328,19 @@ export function ImportStep({ onDone, onSkip }: {
                 </div>
               )}
 
-              <div className="flex items-center gap-m">
-                {nothingNew
-                  ? (
-                    <Button variant="primary" size="md" onClick={() => onDone(settledSummary)}>
-                      Continue <ArrowRight size={16} aria-hidden="true" />
-                    </Button>
-                  )
-                  : (
-                    <Button variant="primary" size="md" loading={busy}
-                      disabled={chosen.length === 0}
-                      disabledReason="Pick at least one thing to bring over"
-                      onClick={run}>
-                      {failure
-                        ? 'Try again'
-                        : chosen.length ? `Import ${plural(chosen.length, 'item', 'items')}` : 'Import selected'}
-                      <ArrowRight size={16} aria-hidden="true" />
-                    </Button>
-                  )}
-                <TextLink onClick={onSkip}>Skip this</TextLink>
-              </div>
+              {/* In the flow's navigation bar with every step's actions (`StepActions`). */}
+              <StepActions
+                primary={nothingNew
+                  ? { label: 'Continue', onClick: () => onDone(settledSummary) }
+                  : {
+                    label: failure
+                      ? 'Try again'
+                      : chosen.length ? `Import ${plural(chosen.length, 'item', 'items')}` : 'Import selected',
+                    onClick: run, loading: busy,
+                    disabled: chosen.length === 0, disabledReason: 'Pick at least one thing to bring over',
+                  }}
+                secondary={{ label: 'Skip this', onClick: onSkip }} />
+
             </>
           )}
     </div>
@@ -367,11 +360,7 @@ function Nothing({ looked, onContinue }: {
         {looked.map((s) => s.display_name).join(' and ')} — if you install one later, you can
         import from it any time.
       </p>
-      <div>
-        <Button variant="primary" size="md" onClick={onContinue}>
-          Continue <ArrowRight size={16} aria-hidden="true" />
-        </Button>
-      </div>
+      <StepActions primary={{ label: 'Continue', onClick: onContinue }} />
     </div>
   )
 }
@@ -703,11 +692,7 @@ function Report({ report, scan, onContinue }: {
         </ul>
       )}
 
-      <div>
-        <Button variant="primary" size="md" onClick={onContinue}>
-          Continue <ArrowRight size={16} aria-hidden="true" />
-        </Button>
-      </div>
+      <StepActions primary={{ label: 'Continue', onClick: onContinue }} />
     </div>
   )
 }

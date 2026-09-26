@@ -787,6 +787,10 @@ export interface AppSummary {
   uiComponents?: string
   uiCapabilities?: string[]
   isProvider: boolean; providerType: string; hasConfig: boolean
+  /** The provider's DECLARED capabilities — the same field a catalog entry carries, because
+   *  `providerType` alone cannot tell a chat model from a speech one (faster-whisper is `model` +
+   *  `stt`). `[]` for an app that provides nothing. */
+  providerCapabilities?: string[]
   permissions: AppPermissionsWire
   tags: string[]
   installedAt?: string; updatedAt?: string
@@ -4610,26 +4614,23 @@ export interface ProviderInstance { id: string; extension_name: string; display_
 export interface ModelProvider { name: string; type: string; model?: string; capabilities: string[]; credential_status: string; stored_secrets?: string[] }
 /** An installable model-provider type, from an installed model app's manifest.
  *  ``settingsSchema`` is JSON Schema (+ x-meta) describing the instance config
- *  form (api_key / region / endpoint enum / …). Drives the Add-instance dropdown. */
+ *  form (api_key / region / endpoint enum / …). Drives the Add-instance dropdown.
+ *
+ *  The schema is the SAME `ProviderSchema` every other provider settings form renders, so one
+ *  renderer (`ProviderConfigForm`'s `SchemaField`) draws it by declared type — a boolean as a
+ *  switch, a number with its bounds — and a form saves typed values. A second, text-only field
+ *  type here is how a true/false setting rendered as a text box holding "true". */
 export interface ModelProviderType {
   type: string
   label: string
   app: string
   capabilities: string[]
   multiInstance: boolean
-  settingsSchema: { properties?: Record<string, ModelProviderTypeField>; required?: string[] }
+  settingsSchema: ProviderSchema
 }
-export interface ModelProviderTypeField {
-  type?: string
-  default?: string
-  enum?: string[]
-  // Bounds on a numeric setting. Declared by manifests (ollama-models' `context_window`
-  // carries `minimum: 1`) and honoured by both schema renderers, so a field the manifest
-  // says is a positive integer cannot be typed as prose into a text box.
-  minimum?: number
-  maximum?: number
-  'x-meta'?: { label?: string; help?: string; placeholder?: string; sensitive?: boolean; tags?: string[] }
-}
+/** One provider option as it is SAVED: the settingsSchema's own JSON type, or `null` for an
+ *  explicit "clear this stored field" (#3554). */
+export type ProviderOptionValue = string | number | boolean | null | unknown[] | Record<string, unknown>
 // Ollama model management (#48). Local = downloaded on the host; search = library candidates.
 export interface OllamaLocalModel {
   name: string; size: number; size_human?: string; modified_at?: string
@@ -4664,6 +4665,9 @@ export interface AvailableModel {
   matrix?: CapabilityMatrix | null; license?: string; non_commercial?: boolean
   runtime?: string; runtime_contract?: string; context_tokens?: number; output_tokens?: number
   io_mime?: Record<string, unknown>; status?: string; integrity?: string; config_only?: boolean
+  // What a person calls a LOCAL model whose `name` is a file/binding id (`SmolLM2-135M-Instruct`
+  // for `SmolLM2-135M-Instruct-Q8_0`). Empty or absent = `name` already reads as a name.
+  display_name?: string
   // Gated pre-warn (LMMV §5): only present on a GATED row, computed server-side from the HF
   // token cascade. `false` = no valid token is configured, so the UI warns BEFORE Download;
   // absent = the cascade could not answer (a network blip) and the UI simply does not pre-warn.
@@ -4842,6 +4846,12 @@ export interface OnboardingEssentials {
  *  has stood on, written on entry and never lowered. `first_success` is the `try` step's stored
  *  spelling; `app/onboarding/steps.ts` owns that mapping. */
 export type OnboardingStep = 'name' | 'import' | 'essentials' | 'first_success' | 'ready' | 'done'
+/** OU-14 — the one-time download `GET /api/onboarding` offers while the small model is not on
+ *  disk. An option, not a readiness claim: onboarding's model step always shows it, and the chat
+ *  screen only while nothing answers chat (`needs_model`). */
+export interface BundledModelOffer {
+  provider: string; model: string; label: string; bytes: number; licence: string; description: string
+}
 /** `GET /api/onboarding` — the live readiness triple PLUS the persisted first-run
  *  progress from `entity_settings/onboarding.json`. The readiness fields are computed
  *  per request and never stored; the progress fields are what let a reload resume. */
@@ -4852,19 +4862,20 @@ export interface OnboardingState {
    *  must name; `essentials.model` below is the **app** the lane installed, and rendering
    *  that one under those words is #3528. `lib/modelRef` owns the reading. */
   chat_model_refs?: string[]
-  /** OU-14 — chat is about to be answered by the BUNDLED zero-config floor model rather
-   *  than anything the user chose. True only with no explicit chat binding AND every capable
-   *  provider entry declaring itself a floor, so binding anything turns it off. Optional
+  /** OU-14 — what chat resolves to is the BUNDLED zero-config floor model: the entry that would
+   *  answer declares itself a floor, whether it is bound (onboarding binds it when you download
+   *  it there) or answering because nothing is. Binding anything else turns it off. Optional
    *  because an older backend omits it; `BundledFloorNotice` treats absent as false. */
   chat_is_bundled_floor?: boolean
   /** OU-14 — a chat model this machine could DOWNLOAD but has not, or `null`. Carries the
    *  BYTES because the offer is shown before the user agrees to it, and a download offer
    *  without a size is the one thing this surface must never be. Derived generically from the
    *  local-model registry (any provider whose app declares `chat` with an undownloaded model),
-   *  so no vendor name reaches the client. */
-  chat_download_offer?: {
-    provider: string; model: string; bytes: number; licence: string; description: string
-  } | null
+   *  so no vendor name reaches the client. `model` is the id it downloads and binds under
+   *  (`SmolLM2-135M-Instruct-Q8_0`); `label` is what a person calls it (`SmolLM2-135M-Instruct`).
+   *  Present whenever that model is not on disk, whatever else is set up — `needs_model` is
+   *  what says whether anything answers. */
+  chat_download_offer?: BundledModelOffer | null
   step?: OnboardingStep
   essentials?: OnboardingEssentials
   first_success?: { knowledge: boolean; trigger: boolean; loop: boolean }
@@ -4890,7 +4901,14 @@ export interface OnboardingStatePatch {
  *  for field — every cause the backend can distinguish arrives here without the frontend
  *  paraphrasing any of them into one generic sentence. */
 export type OnboardingModelCheck =
-  | { ok: true; source: 'binding' | 'fallback'; bound: string[] }
+  /** `floor`: what answers is the zero-config floor model (the small one PersonalClaw downloads),
+   *  bound or not — so the lane can say so from THIS verdict rather than from the readiness read
+   *  it made before anything was downloaded. Absent reads as false.
+   *
+   *  `provider`: the entry that answers ('' when it cannot be named). The verdict is a BUILD,
+   *  which a provider pointed at a dead address passes, so the lane asks this entry's connection
+   *  test (`testModelProvider`) whether it answers before it says "ready". */
+  | { ok: true; source: 'binding' | 'fallback'; bound: string[]; floor?: boolean; provider?: string }
   | { ok: false; code: string; what: string; why: string; fix: string }
 /** OU-13 — a reachable local Ollama endpoint and the chat model it will bind to.
  *  Surfaced ONLY after a live `/api/tags` response, so a card is never shown on a guess. */
@@ -6532,10 +6550,12 @@ export const api = {
   // by an installed app never appears.
   modelProviderTypes: () => get<{ types: ModelProviderType[] }>('/api/model-provider-types').then((d) => d.types),
   // `options` values may be `null` — an explicit "clear this stored field" (#3554),
-  // distinct from the key being absent (leave whatever is already stored alone).
-  createModelProvider: (body: { name: string; type: string; model?: string; options?: Record<string, string | null> }) =>
+  // distinct from the key being absent (leave whatever is already stored alone). Every other
+  // value travels TYPED, as the settingsSchema declares it — `true`, `4096`, not "true",
+  // "4096": a provider factory that checks `isinstance(v, int)` silently dropped the string.
+  createModelProvider: (body: { name: string; type: string; model?: string; options?: Record<string, ProviderOptionValue> }) =>
     post<{ ok: boolean; name: string }>('/api/model-providers', body),
-  updateModelProvider: (name: string, body: { model?: string; type?: string; options?: Record<string, string | null> }) =>
+  updateModelProvider: (name: string, body: { model?: string; type?: string; options?: Record<string, ProviderOptionValue> }) =>
     put<{ ok: boolean }>(`/api/model-providers/${encodeURIComponent(name)}`, body),
   deleteModelProvider: (name: string) => del(`/api/model-providers/${encodeURIComponent(name)}`),
   testModelProvider: (name: string) => post<ProviderTestResult>(`/api/model-providers/${encodeURIComponent(name)}/test`),

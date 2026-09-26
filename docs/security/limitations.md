@@ -227,8 +227,9 @@ pinned source and its sha256 are recorded in
 [`bundled-model-signoff.txt`](../../src/personalclaw/apps/native/bundled-chat/bundled-model-signoff.txt).
 
 It is there so a new install is not a dead end. At 135 million parameters it can greet you
-and answer a simple factual question, and it gets unreliable quickly after that. When it
-answers because nothing else is bound, the chat screen says so.
+and answer a simple factual question, and it gets unreliable quickly after that. Whenever it
+is the model answering — because onboarding made it your chat model when you downloaded it
+there, or because nothing else is bound — the chat screen says so.
 
 **What it does not get:**
 
@@ -269,9 +270,10 @@ dashboard's chat route:
 In none of these did it say it could not do something or did not know, so treat whatever it
 tells you as unverified.
 
-**It also answers for the rest of PersonalClaw.** With nothing else bound, anything that
-asks for a chat model falls back to it
-(`providers/provider_bridge.py::_resolve_from_config_registry`). That includes the jobs
+**It also answers for the rest of PersonalClaw.** While it is your chat model, or with nothing
+else bound, anything that asks for a chat model gets it — background work borrows the chat
+model, and with nothing bound the implicit fallback
+(`providers/provider_bridge.py::_resolve_from_config_registry`) picks it. That includes the jobs
 that run after each reply to name the chat, tag it and suggest follow-ups, so every reply is
 followed by more work for it on your CPU. In the same measurement, none of its four
 follow-up suggestion replies came back in a form the chat could use. Goal loops and
@@ -287,9 +289,11 @@ resident and took 21 seconds, and an 8,192-token one peaked at 1.8 GB and took 6
 **What is enforced:** the download never starts by itself. It is offered with its size
 (138 MiB) in onboarding, on the chat screen and in **Settings → Providers**, and runs only
 when you ask for it. It comes over https from a pinned revision on Hugging Face and is
-checked against the sha256 in the sign-off record before it is installed. A file over the
-150 MiB ceiling is refused, and a transfer that fails, is cancelled or does not match leaves
-nothing behind that PersonalClaw would load. The record's licence must be on an allowlist
+checked against the sha256 in the sign-off record before it is installed. The 150 MiB ceiling
+is enforced while the bytes arrive: a source that announces a bigger file is refused before
+anything is written, and a transfer that passes the ceiling is stopped there. A transfer that
+fails, is cancelled, passes the ceiling or does not match leaves nothing behind that
+PersonalClaw would load. The record's licence must be on an allowlist
 (Apache-2.0 or MIT); anything else is refused by name.
 
 **What is not enforced:** the sha256 check guards the download, not the file on disk. If you
@@ -305,7 +309,8 @@ and keeps working offline; every other provider is an app in the Store
 you bind wins, because this model answers only when nothing else does, and there is no
 config to clean up afterwards. To stop it answering at all, delete it under **Settings →
 Providers**, or turn off **Answer when nothing else is bound** in its settings there. That
-switch takes effect the next time the gateway starts.
+switch takes effect when you save it; it decides what answers when no chat model is chosen,
+so if onboarding made this your chat model, choose another in **Settings → Models** too.
 
 ## 6. Two secrets are still stored inline: MCP server `env` values and the webhook token
 

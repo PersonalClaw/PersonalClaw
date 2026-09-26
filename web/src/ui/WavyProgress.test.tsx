@@ -54,7 +54,10 @@ describe('WavyProgress', () => {
   it('the only call site names its determinate bar and leaves the other bare', () => {
     const src = readFileSync(join(process.cwd(), 'src/pages/settings/LocalModelManager.tsx'), 'utf8')
     const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
-    expect(code, 'determinate bars name the model').toMatch(/<WavyProgress width=\{200\} value=\{frac\} label=\{`Downloading \$\{m\.name\}`\}/)
+    // Named by what a person calls the model (`modelLabel(m)` — `display_name` when the id is a file
+    // id, e.g. `SmolLM2-135M-Instruct` for `SmolLM2-135M-Instruct-Q8_0`), the same name the row shows.
+    expect(code, 'determinate bars name the model').toMatch(/<WavyProgress width=\{200\} value=\{frac\} label=\{`Downloading \$\{label\}`\}/)
+    expect(code, 'and that name is the row\'s own').toMatch(/const label = modelLabel\(m\)/)
     expect(code, 'the indeterminate one stays unnamed').toMatch(/<WavyProgress width=\{200\} \/>/)
   })
 

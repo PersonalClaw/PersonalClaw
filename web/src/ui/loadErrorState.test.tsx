@@ -711,10 +711,12 @@ const SWALLOW_BUDGET: Record<string, number> = {
   'lib/api.ts': 5,
   'lib/errText.ts': 1,
 
-  // Fails CLOSED, which is the one safe direction here: the readiness probe's substitute is
-  // `{ needs_model: true, has_model_provider: false }`, so an unreadable probe shows the setup step
-  // rather than telling a user with no provider that they are ready to chat.
-  'app/Onboarding.tsx': 1,
+  // ZERO, and measured there. The readiness read's catch used to substitute
+  // `{ needs_model: true, has_model_provider: false }` and was booked here as failing closed — but
+  // "closed" was still a claim about a home nobody had read: step 3 opened as though nothing were set
+  // up and the recap said "set up later". It now RECORDS the failure (`setReadError`), step 3 says it
+  // could not read the setup state and offers the retry, and the recap says the same.
+  'app/Onboarding.tsx': 0,
   'app/usePlatform.ts': 1,
   'lib/agents.ts': 1,
   // The sixth is the RECORDS veto's blind edge, not a swallow: `setResultBody({ content: "(couldn't

@@ -6,14 +6,16 @@ import { Button } from '../../ui/Button'
 import { LoadError, LoadingStatus } from '../../ui/ListScaffold'
 import { TextLink } from '../../ui/TextLink'
 import { listItemEnter, stagger, spring } from '../../design/motion'
-import { useQuery } from '../../lib/data'
+import { invalidateKeys, useQuery } from '../../lib/data'
 import { catalogApps } from '../../lib/appCatalog'
-import { boundModelLabel } from '../../lib/modelRef'
 import { useAppInstall } from '../../pages/apps/installConsent'
-import { SchemaField } from '../../pages/settings/ModelBackends'
+import { SchemaField, schemaDefaults } from '../../pages/settings/ProviderConfigForm'
 import { SchemaFields } from '../../pages/tools/schema'
 import { BundledModelOffer } from './BundledModelOffer'
-import { api, type AppCatalogEntry, type ChatModelOption, type LocalModelEndpoint, type ModelProviderType, type OnboardingModelCheck, type OnboardingState, type OnboardingStatePatch } from '../../lib/api'
+import { StepActions } from './StepActions'
+import { chatModelSummary } from './chatModelSummary'
+import { checkChatModel, thrownMessage, type ChatModelVerdict } from './checkChatModel'
+import { api, type AppCatalogEntry, type AppSummary, type BundledModelOffer as Offer, type ChatModelOption, type LocalModelEndpoint, type ModelProviderType, type OnboardingState, type OnboardingStatePatch, type ProviderOptionValue } from '../../lib/api'
 
 /** ONBOARDING-UX S1 T1.2r (OU-2) — the essential-apps step: the flow's first act
  *  after the name, and the only place a fresh install can become a working agent
@@ -57,7 +59,11 @@ const LANES: { id: LaneId; icon: LucideIcon; title: string; blurb: string; requi
     blurb: 'Reach your agent from a chat app. Connect it later in Settings.' },
 ]
 
-function capsOf(e: AppCatalogEntry): string[] { return e.providerCapabilities ?? [] }
+/** The two DECLARED fields a lane is decided by. A catalog entry and an installed app both carry
+ *  them (`GET /api/apps` sends `providerCapabilities` too), so one classifier sorts both. */
+type LaneFields = Pick<AppCatalogEntry, 'providerType' | 'providerCapabilities'>
+
+function capsOf(e: LaneFields): string[] { return e.providerCapabilities ?? [] }
 
 /** A busy region that actually ANNOUNCES itself. Two shapes are wrong here and both
  *  ship silently: `aria-label` on a bare `<svg>` is a prohibited attribute the browser
@@ -73,7 +79,7 @@ function Spinner({ what, size = 16 }: { what: string; size?: number }) {
   )
 }
 
-export function laneOf(e: AppCatalogEntry): LaneId | null {
+export function laneOf(e: LaneFields): LaneId | null {
   const caps = capsOf(e)
   if (e.providerType === 'search') return 'search'
   if (e.providerType === 'channel') return 'channel'
@@ -91,11 +97,20 @@ export function laneOf(e: AppCatalogEntry): LaneId | null {
  *
  *  Flattened by the ONE merge (`lib/appCatalog`) — this used to concatenate the four lists
  *  in a THIRD order of its own, so with a name in two lists the onboarding step could offer
- *  a different copy of an app than the Store card did (#2528). */
-export function candidatesByLane(c: Awaited<ReturnType<typeof api.appCatalog>> | undefined): Record<LaneId, AppCatalogEntry[]> {
+ *  a different copy of an app than the Store card did (#2528).
+ *
+ *  `installed` is the server's list of what is already installed, and nothing in it is offered.
+ *  The catalog already leaves installed apps out ("Library exclusion"), but only as of the read
+ *  that built it — and this step's read is a cache that outlives an install. Going Back and
+ *  returning painted the cached catalog, so an app installed a minute earlier was offered again
+ *  and "Install" answered `app 'faster-whisper' already installed (use update)`. */
+export function candidatesByLane(
+  c: Awaited<ReturnType<typeof api.appCatalog>> | undefined,
+  installed: ReadonlySet<string> = new Set(),
+): Record<LaneId, AppCatalogEntry[]> {
   const out: Record<LaneId, AppCatalogEntry[]> = { model: [], search: [], speech: [], channel: [] }
   for (const e of catalogApps(c)) {
-    if (!e?.name) continue
+    if (!e?.name || installed.has(e.name)) continue
     const lane = laneOf(e)
     if (lane) out[lane].push(e)
   }
@@ -103,6 +118,45 @@ export function candidatesByLane(c: Awaited<ReturnType<typeof api.appCatalog>> |
     out[lane].sort((a, b) => (a.displayName || a.name).localeCompare(b.displayName || b.name))
   }
   return out
+}
+
+/** An app that is already installed, as its lane shows it. `on` is whether it is enabled — an
+ *  installed app that is turned off is not what makes a lane ready. */
+export interface InstalledApp { name: string; label: string; description: string; on: boolean }
+
+/** What is already installed, by lane — so a lane can show an installed app AS installed
+ *  instead of losing it (the catalog no longer lists it) or offering it again.
+ *
+ *  Read from the server (`GET /api/apps`, the Store Library's own read), plus the apps this
+ *  session installed that the next read has not caught up with yet. A NATIVE app ships with the
+ *  product rather than being installed from here, so it is not listed: the small offline model is
+ *  one, and its lane offers its download instead. */
+export function installedByLane(
+  apps: AppSummary[] | undefined,
+  justInstalled: Record<string, AppCatalogEntry>,
+): Record<LaneId, InstalledApp[]> {
+  const out: Record<LaneId, InstalledApp[]> = { model: [], search: [], speech: [], channel: [] }
+  const seen = new Set<string>()
+  for (const a of apps ?? []) {
+    if (!a?.name || a.native) continue
+    seen.add(a.name)
+    const lane = laneOf(a)
+    if (lane) out[lane].push({ name: a.name, label: a.displayName || a.name, description: a.description, on: a.enabled })
+  }
+  for (const e of Object.values(justInstalled)) {
+    if (seen.has(e.name)) continue
+    const lane = laneOf(e)
+    if (lane) out[lane].push({ name: e.name, label: e.displayName || e.name, description: e.description, on: true })
+  }
+  for (const lane of Object.keys(out) as LaneId[]) out[lane].sort((a, b) => a.label.localeCompare(b.label))
+  return out
+}
+
+/** Whether the server lists *name* as installed — asked when its Install is clicked, since the list
+ *  the card was drawn from can predate an install made since. A read that fails answers "no": the
+ *  review then opens, as it would have before anything asked, and gives the server's own answer. */
+async function isInstalledOnServer(name: string): Promise<boolean> {
+  try { return (await api.apps()).some((a) => a.name === name) } catch { return false }
 }
 
 /** How many cards a lane shows before "Show all" — a first run should offer a choice,
@@ -147,15 +201,30 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
   // handed to both — never two independent guesses that could disagree.
   const { data: providerTypes, error: providerTypesError, refresh: refreshProviderTypes } = useQuery(
     'onboarding:provider-types', () => api.modelProviderTypes())
+  // 🔴 WHAT IS INSTALLED IS THE SERVER'S ANSWER, NOT THIS COMPONENT'S MEMORY. It was a
+  // `useState({})` filled only by an install made in THIS mount, so going Back to the step or
+  // reloading forgot every install: the cached catalog offered faster-whisper again, and its
+  // Install answered `app 'faster-whisper' already installed (use update)`. It is `GET /api/apps`
+  // under the Store Library's own key, so this step and the Library cannot disagree about it.
+  const { data: installedApps, error: installedError, refresh: refreshInstalled } = useQuery<AppSummary[]>(
+    'apps', () => api.apps(), { persist: true })
+  /** Installs this session made — or was told had already happened — that the next `apps` read
+   *  has not caught up with yet. The catalog entry, so the app keeps its lane until then. */
+  const [justInstalled, setJustInstalled] = useState<Record<string, AppCatalogEntry>>({})
+  const installedNames = useMemo(
+    () => new Set([...(installedApps ?? []).map((a) => a.name), ...Object.keys(justInstalled)]),
+    [installedApps, justInstalled])
 
-  const lanes = useMemo(() => candidatesByLane(catalog), [catalog])
+  const lanes = useMemo(() => candidatesByLane(catalog, installedNames), [catalog, installedNames])
+  const installedLanes = useMemo(() => installedByLane(installedApps, justInstalled), [installedApps, justInstalled])
   // Which registered types have no catalog card to reach them from (see
   // `typesMissingFromCatalog`'s own doc) — computed against the MODEL lane's own catalog
   // list specifically, since that's the one list a "configure it manually" card could
-  // duplicate.
+  // duplicate — and which of those the provider form can actually configure (see
+  // `configurableAsInstance`).
   const missingProviderTypes = useMemo(
-    () => typesMissingFromCatalog(providerTypes, lanes.model), [providerTypes, lanes.model])
-  const [installed, setInstalled] = useState<Record<string, true>>({})
+    () => typesMissingFromCatalog(providerTypes, lanes.model).filter(configurableAsInstance),
+    [providerTypes, lanes.model])
   const [expanded, setExpanded] = useState<Record<string, true>>({})  // lanes showing all cards
   const [modelApp, setModelApp] = useState<string>('')
   // The model lane starts by VERIFYING when the coarse readiness probe claims chat can
@@ -180,6 +249,22 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
    *  contents of `active_models.json`), so the label is read from there on every pass; there
    *  is nothing left to lose across a reload and nothing to drift out of step with the file. */
   const [chatModel, setChatModel] = useState('')
+  /** Whether what answers chat is the small zero-config model — the VERIFICATION's own `floor`,
+   *  not the readiness prop, which the flow read before anything was downloaded. */
+  const [floor, setFloor] = useState(false)
+  /** The model this session downloaded (its display name), so the lane can SAY the download
+   *  finished instead of the offer card simply vanishing at 100%. */
+  const [downloaded, setDownloaded] = useState('')
+  /** The download finished but binding it as the chat model was refused — said, not swallowed. */
+  const [bindError, setBindError] = useState('')
+  /** The verification ANSWERED, and the answer is that chat cannot use what is set up. Kept so
+   *  Continue's reason says so instead of "still checking" beside a finished check. */
+  const [verifyFailed, setVerifyFailed] = useState(false)
+  /** Bumped whenever something new has to be checked, and the key the check mounts under. The
+   *  lane can already BE in `verify` when that happens — a reload opens it there, onto a
+   *  provider that does not answer, and the small model is then downloaded from the offer above
+   *  — so moving it to `verify` changes nothing, and the verdict on screen would be the old one. */
+  const [verifyRun, setVerifyRun] = useState(0)
   /** What `ConfigureProvider` learned, for the bind step. `provider` is the entry name it
    *  created — the provider KEY (`t.type`, e.g. `ollama`), never the app name
    *  (`ollama-models`), because that is the token a test and a `provider:model` ref speak.
@@ -194,7 +279,14 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
   const pendingRef = useRef<AppCatalogEntry | null>(null)
 
   const recordInstall = useCallback((entry: AppCatalogEntry, lane: LaneId) => {
-    setInstalled((m) => ({ ...m, [entry.name]: true }))
+    setJustInstalled((m) => ({ ...m, [entry.name]: entry }))
+    // Every cache answering "what is installed" or "what can be installed" is stale now: this
+    // step's catalog, the Store's catalog, and the Library's list (`apps`, which the shell's nav
+    // reads too). Invalidated rather than merely re-read here, so a Store opened after this step
+    // does not paint a cached catalog that still offers what this step just installed.
+    invalidateKeys('apps')
+    invalidateKeys('app-catalog')
+    invalidateKeys('onboarding:essentials-catalog')
     // Each lane records ONLY its own field — the backend merges at both levels, so no
     // lane has to read back and echo the whole document to avoid clobbering a sibling.
     if (lane === 'model') { setModelApp(entry.name); setPhase('configure'); onProgress({ essentials: { model: entry.name } }) }
@@ -215,10 +307,18 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
 
   // The ONLY install trigger in this component: a click on a card's own Install button, which
   // opens the review. Nothing here runs from an effect or a render.
-  const install = useCallback((entry: AppCatalogEntry) => {
+  //
+  // An app the server lists as installed is never offered (`candidatesByLane`), but that list can
+  // be older than an install made since — in the Store, or another tab — and the review would then
+  // open on `already installed (use update)`. So the click asks the server first, and an app it
+  // already has is shown as installed: to this step that install is done, not an error. Decided by
+  // what the server lists, not by reading a refusal's prose, which is a sentence and not a contract.
+  const install = useCallback(async (entry: AppCatalogEntry) => {
     pendingRef.current = entry
+    const lane = laneOf(entry)
+    if (lane && await isInstalledOnServer(entry.name)) { recordInstall(entry, lane); return }
     void consent.begin({ source: entry.pointer || entry.source, label: entry.displayName || entry.name })
-  }, [consent])
+  }, [consent, recordInstall])
 
   // OU-13 — a local/LAN Ollama bind needs no API key and no model pick (the endpoint's own
   // chat model is bound for you), so it skips the 'configure'/'bind' phases. It still goes
@@ -242,6 +342,21 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
     onProgress({ essentials: { model: app } })
   }, [onProgress])
 
+  // OU-14 — the small model finished downloading in THIS session, and the shared download machine
+  // has made it the chat model if nothing else was (`useBundledModelDownload` — the same rule the
+  // chat screen's download follows). Two things the lane used to leave to a reload, done here:
+  //
+  //  1. Move to `verify`, the lane's one proof, so Continue unlocks on what chat really resolves
+  //     rather than staying disabled beside a server that already reports the model ready.
+  //  2. Remember what was downloaded, and a refused binding, so both are SAID.
+  const handleBundledReady = useCallback((offer: Offer, refused: string) => {
+    setDownloaded(offer.label); setBindError(refused)
+    setModelApp(offer.provider)
+    onProgress({ essentials: { model: offer.provider } })
+    setVerifyRun((n) => n + 1)
+    setPhase('verify')
+  }, [onProgress])
+
   const modelReady = phase === 'done'
 
   /** Sources the build could not read this round (`unavailableSources`, #408). A 200 that
@@ -261,25 +376,63 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
   const unreadable = catalog?.unavailableSources ?? []
   const noGit = unreadable.some((u) => u.reason === 'no-git')
 
+  /* Gated on the VERIFIED lane, not on a written binding: Continue is the flow's claim that the
+   * required rail is satisfied, so it may not turn on before the backend has built what chat
+   * builds AND the provider that answers has answered. `verify` gets its own reasons — "still
+   * checking", "checked, and it can't" and "nothing set up" are three different waits, and one
+   * sentence for them would tell a user who just bound a model to go set one up, or one whose
+   * provider is down that it is still being checked.
+   *
+   * "Set up later" sits beside it until the lane is ready: guidance never gates, the required lane
+   * is required to CONSIDER, not a wall, and OU-4's full-skip path lands in a working dashboard
+   * through here. Both render in the flow's navigation bar (`StepActions`), where they are on
+   * screen however far down the lanes run — and they are ONE element in every branch below, at
+   * the same place in the tree, so the catalog landing does not remount the button a keyboard user
+   * may be standing on. */
+  const actions = (
+    <StepActions
+      primary={{
+        label: 'Continue', disabled: !modelReady,
+        disabledReason: phase === 'verify' && verifyFailed
+          ? "Chat can't use what is set up yet — see above"
+          : phase === 'verify'
+            ? 'Still checking that a chat model really resolves'
+            : "Set up a model provider first — the agent can't think without one",
+        // OU-14: "a configured provider" is the one sentence about the downloaded 135M floor that
+        // is not true, bound or not. This is the summary the done-screen recap repeats, and it is
+        // built by the SAME function the re-entered flow uses (#3528).
+        onClick: () => onDone(chatModelSummary(chatModel, floor)),
+      }}
+      secondary={modelReady ? undefined : { label: 'Set up later', onClick: onSkip }} />
+  )
+
   // A dead catalog fetch is NOT "no apps available" — say so, and offer the retry.
   // `data === undefined && error` is the one condition that distinguishes them.
   if (catalog === undefined && catalogError) {
     return (
-      <div className="flex flex-col gap-m">
-        <LoadError what="app catalog" error={catalogError} onRetry={refresh} />
-        <p className="text-on-surface-low text-[0.8125rem]">
-          Apps are listed from the first-party source — the workspace apps directory in a dev
-          tree, otherwise the published apps repository. You can set this up later in the Store.
-        </p>
-        <TextLink onClick={onSkip}>Set up later</TextLink>
-      </div>
+      <>
+        <div className="flex flex-col gap-m">
+          <LoadError what="app catalog" error={catalogError} onRetry={refresh} />
+          <p className="text-on-surface-low text-[0.8125rem]">
+            Apps are listed from the first-party source — the workspace apps directory in a dev
+            tree, otherwise the published apps repository. You can set this up later in the Store.
+          </p>
+        </div>
+        {actions}
+      </>
     )
   }
   if (catalog === undefined) {
-    return <Spinner what="apps" size={18} />
+    return (
+      <>
+        <Spinner what="apps" size={18} />
+        {actions}
+      </>
+    )
   }
 
   return (
+    <>
     <div className="flex flex-col gap-l">
       {/* Stated ONCE, above the lanes: one unreadable source empties all four, so repeating
           the cause per lane would print one machine-level fact four times. `role="status"`
@@ -304,11 +457,24 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
           <div><TextLink onClick={refresh}>Try reading the app sources again</TextLink></div>
         </div>
       )}
+      {/* Without this read an installed app cannot be told from an installable one, so say that
+          rather than let a lane look complete: the catalog still leaves out what was installed
+          when IT was read, but not anything installed since. */}
+      {installedApps === undefined && installedError != null && (
+        <p role="status" data-testid="onboarding-installed-unreadable" data-type="body-s" className="text-on-surface-var">
+          Couldn&rsquo;t check which apps are already installed ({thrownMessage(installedError) || 'the request failed'}),
+          so one you already have may be offered again.{' '}
+          <TextLink onClick={refreshInstalled}>Check again</TextLink>
+        </p>
+      )}
       {LANES.map((lane) => {
         const items = lanes[lane.id]
         const isModel = lane.id === 'model'
+        // The model lane's installed providers are listed by `InstalledProviderTypes` below, which
+        // is where their Configure is — so only the other three lanes list theirs here.
+        const have = isModel ? [] : installedLanes[lane.id]
         const shown = expanded[lane.id] ? items : items.slice(0, LANE_PREVIEW)
-        const laneDone = isModel ? modelReady : items.some((e) => installed[e.name])
+        const laneDone = isModel ? modelReady : have.some((a) => a.on)
         return (
           <section key={lane.id} role="group" className="flex flex-col gap-s" aria-label={lane.title}>
             <div className="flex items-baseline gap-2">
@@ -322,6 +488,16 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
               )}
             </div>
             <p className="text-on-surface-low text-[0.8125rem]">{lane.blurb}</p>
+
+            {/* OU-14 — the no-account option, FIRST in the lane: every card below needs an account
+                or a server, and this needs neither. It used to sit behind "Configure" on one of
+                those cards. It is offered in EVERY phase while the model is not on disk —
+                picking, filling in a provider's form, and after a check that found the provider
+                is not answering — because downloading it is always a valid choice. It renders
+                nothing when there is nothing to download, and it steps aside once this
+                session's download has finished and the lane has taken it over. Kept in one slot
+                across phases, so a running download keeps its bar when the phase changes. */}
+            {isModel && !downloaded && <BundledModelOffer onReady={handleBundledReady} />}
 
             {/* OU-13 — the zero-key on-ramp sits ABOVE the catalog while the model lane
                 is still picking. Localhost auto-detects (a loopback probe, not a scan);
@@ -352,13 +528,15 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
                 app is chosen — key entry, Test, then the binding choice. */}
             {isModel && phase !== 'pick' ? (
               <ModelSubFlow app={modelApp} phase={phase} chatModel={chatModel}
-                configured={configured}
-                isFloor={!!readiness?.chat_is_bundled_floor}
+                configured={configured} verifyRun={verifyRun}
+                floor={floor} downloaded={downloaded} bindError={bindError}
                 onBound={() => setPhase('verify')}
-                onVerified={(model) => { setChatModel(model); setPhase('done') }}
+                onVerified={(model, isFloor) => { setChatModel(model); setFloor(isFloor); setPhase('done') }}
+                onVerifyFailed={setVerifyFailed}
                 onReconfigure={() => setPhase('configure')}
+                onPickAnother={() => setPhase('pick')}
                 onConfigured={(c) => { setConfigured(c); setPhase('bind') }} />
-            ) : items.length === 0 && unreadable.length > 0 ? (
+            ) : items.length === 0 && have.length === 0 && unreadable.length > 0 ? (
               /* Empty because the listing FAILED. The cause and the retry are stated once
                  above, so this says only what is true of this lane and claims nothing
                  about what exists.
@@ -373,7 +551,7 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
               <p data-type="body-s" className="text-on-surface-low">
                 Nothing to list — the app sources above could not be read.
               </p>
-            ) : items.length === 0 ? (
+            ) : items.length === 0 && have.length === 0 ? (
               <p className="text-on-surface-low text-[0.8125rem]">
                 No {lane.title.toLowerCase()} app is available from the first-party source
                 (the workspace apps directory in a dev tree, otherwise the published apps
@@ -382,9 +560,11 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
             ) : (
               <motion.div className="flex flex-col gap-1.5" initial="initial" animate="animate"
                 variants={{ animate: { transition: stagger(0.04) } }}>
+                {/* What is already installed comes first and says so; the catalog below it never
+                    lists it again. */}
+                {have.map((a) => <InstalledAppCard key={a.name} app={a} />)}
                 {shown.map((e) => (
-                  <AppCard key={e.name} entry={e} installed={!!installed[e.name]}
-                    onInstall={() => install(e)} />
+                  <AppCard key={e.name} entry={e} onInstall={() => install(e)} />
                 ))}
                 {items.length > shown.length && (
                   <TextLink onClick={() => setExpanded((m) => ({ ...m, [lane.id]: true }))}>
@@ -397,40 +577,43 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
         )
       })}
 
-      <div className="flex items-center gap-m">
-        {/* Gated on the VERIFIED lane, not on a written binding: Continue is the flow's claim
-            that the required rail is satisfied, so it may not turn on before the backend has
-            built what chat builds. `phase === 'verify'` gets its own reason — "still checking"
-            and "nothing set up" are different waits, and one sentence for both would tell a
-            user who just bound a model to go set one up. */}
-        <Button variant="primary" size="md" disabled={!modelReady}
-          disabledReason={phase === 'verify'
-            ? 'Still checking that a chat model really resolves'
-            : "Set up a model provider first — the agent can't think without one"}
-          onClick={() => onDone(chatModel || (readiness?.chat_is_bundled_floor
-            // OU-14: the same no-binding verdict has two causes, and "a configured provider" is
-            // the one sentence about the downloaded 135M floor that is not true. This is the
-            // summary the done-screen recap repeats, so it has to name the floor here too.
-            ? 'Ready — using the small model PersonalClaw downloaded'
-            : 'Ready — using a configured provider'))}>
-          Continue
-        </Button>
-        {/* Guidance never gates: the required lane is required to CONSIDER, not a wall.
-            OU-4's full-skip path lands in a working dashboard through here. */}
-        <TextLink onClick={onSkip}>Set up later</TextLink>
-      </div>
-
       {/* The Store's own consent dialog — same disclosure, same scan, same explicit confirm. */}
       {consent.dialog}
     </div>
+    {actions}
+    </>
+  )
+}
+
+/** An app that is already installed: its name, what it is, and that it is installed — never an
+ *  Install button, which the server would refuse (`already installed (use update)`). Its settings
+ *  are Settings' to change, as its lane's own line says; a model provider's are configured right
+ *  here, from "Already installed" in the model lane. */
+function InstalledAppCard({ app }: { app: InstalledApp }) {
+  return (
+    <motion.div variants={listItemEnter} layout transition={spring.spatialFast}
+      data-testid="onboarding-installed-app" className="flex items-center gap-s rounded-lg bg-surface-high p-m">
+      <div className="min-w-0 flex-1">
+        <div data-type="body-s" className="truncate text-on-surface">{app.label}</div>
+        <div data-type="caption" className="truncate text-on-surface-low">{app.description || app.name}</div>
+      </div>
+      {app.on ? (
+        <span data-type="caption" className="inline-flex shrink-0 items-center gap-xs" style={{ color: 'var(--color-success)' }}>
+          <Check size={13} aria-hidden="true" /> Installed
+        </span>
+      ) : (
+        // Installed but disabled is not ready, so it does not wear the green check.
+        <span data-type="caption" className="shrink-0 text-on-surface-low">Installed, turned off in the Store</span>
+      )}
+    </motion.div>
   )
 }
 
 /** One catalog card: the app's name and what it is for, and an Install that opens the
  *  Store's consent dialog — the review of everything it gets happens there, before anything
- *  is installed. */
-function AppCard({ entry, installed, onInstall }: {
-  entry: AppCatalogEntry; installed: boolean; onInstall: () => void
+ *  is installed. An installed app never gets one of these — it is an `InstalledAppCard`. */
+function AppCard({ entry, onInstall }: {
+  entry: AppCatalogEntry; onInstall: () => void
 }) {
   const label = entry.displayName || entry.name
   return (
@@ -441,15 +624,9 @@ function AppCard({ entry, installed, onInstall }: {
           <div className="truncate text-on-surface text-[0.8125rem]">{label}</div>
           <div className="truncate text-on-surface-low text-[0.75rem]">{entry.description || entry.name}</div>
         </div>
-        {installed ? (
-          <span className="inline-flex shrink-0 items-center gap-1 text-[0.75rem]" style={{ color: 'var(--color-success)' }}>
-            <Check size={13} aria-hidden="true" /> Installed
-          </span>
-        ) : (
-          <Button variant="ghost" size="sm" ariaLabel={`Install ${label}`} onClick={onInstall}>
-            <Download size={14} aria-hidden="true" /> Install
-          </Button>
-        )}
+        <Button variant="ghost" size="sm" ariaLabel={`Install ${label}`} onClick={onInstall}>
+          <Download size={14} aria-hidden="true" /> Install
+        </Button>
       </div>
     </motion.div>
   )
@@ -459,35 +636,60 @@ function AppCard({ entry, installed, onInstall }: {
  *  own schema-declared fields (the key), test the connection, bind a chat model, then
  *  VERIFY that chat resolves. Four existing endpoints plus the verification.
  *
- *  `isFloor` (OU-14) is orthogonal to all of that: nothing to configure, nothing to verify —
- *  it only decides what the DONE copy says when the lane is satisfied without a binding. */
-function ModelSubFlow({ app, phase, chatModel, configured, isFloor, onConfigured, onBound, onVerified, onReconfigure }: {
+ *  `floor` (OU-14) is orthogonal to all of that: it is the verification's own report that what
+ *  answers is the small bundled model, and it only decides what the DONE copy says.
+ *  `downloaded` is the name of the model this session downloaded, so the lane says the
+ *  download finished; `bindError` is a refused binding of it, said rather than swallowed. */
+function ModelSubFlow({ app, phase, chatModel, configured, verifyRun, floor, downloaded, bindError, onConfigured, onBound, onVerified, onVerifyFailed, onReconfigure, onPickAnother }: {
   app: string; phase: ModelPhase
   /** The verified bound model, or `''` when resolution has no explicit binding to name. */
   chatModel: string
-  isFloor: boolean
+  /** A fresh check per value: the check remounts under it, so a new reason to check runs one
+   *  even when the lane is already verifying. */
+  verifyRun: number
+  floor: boolean
+  downloaded: string
+  bindError: string
   configured: { provider: string; unprobed: string } | null
   onConfigured: (c: { provider: string; unprobed: string }) => void
   onBound: () => void
-  onVerified: (model: string) => void
+  onVerified: (model: string, floor: boolean) => void
+  /** The verification found chat cannot use what is set up (`true`), or a new check began. */
+  onVerifyFailed: (failed: boolean) => void
   onReconfigure: () => void
+  /** Back to the lane's provider list. */
+  onPickAnother: () => void
 }) {
+  const refused = bindError && (
+    <p data-type="caption" className="text-on-surface-var" role="alert">
+      It could not be set as your chat model ({bindError}). It still answers while nothing else is
+      chosen; you can choose it in Settings → Models.
+    </p>
+  )
   if (phase === 'done') {
-    // OU-14: with nothing bound, the lane is satisfied by the BUNDLED floor model — so say
-    // which, and offer the upgrade. A bare "you're ready" here would be the first thing a new
-    // user reads about their model, and it would be the one place the tiny default is
-    // presented as a finished setup. `isFloor` is false the moment anything real is bound,
-    // which is also the moment the verdict's `bound` refs name it as `chatModel`, so the two
-    // branches never overlap.
-    if (isFloor && !chatModel) {
+    // OU-14: when what answers is the BUNDLED floor model — bound or not — say which, and that
+    // it is tiny. A bare "you're ready" here would be the first thing a new user reads about
+    // their model, and it would be the one place the tiny default is presented as a finished
+    // setup. `floor` comes from the verification itself, so it is false the moment anything
+    // real is what resolves.
+    if (floor) {
       return (
-        <p data-type="body-s" className="inline-flex flex-wrap items-center gap-1.5 text-on-surface-var">
-          <Check size={15} aria-hidden="true" style={{ color: 'var(--color-success)' }} />
-          <span>
-            Ready — using the small model PersonalClaw downloaded. No key needed, but it&rsquo;s
-            tiny; add a provider below or later in Settings for real answers.
-          </span>
-        </p>
+        <div className="flex flex-col gap-xs" data-testid="onboarding-floor-ready">
+          <p data-type="body-s" className="inline-flex flex-wrap items-center gap-1.5 text-on-surface">
+            <Check size={15} aria-hidden="true" style={{ color: 'var(--color-success)' }} />
+            <span>
+              {downloaded
+                ? `Downloaded ${downloaded}. It answers your chats now.`
+                : chatModel ? `Ready — chatting with ${chatModel}.` : 'Ready.'}
+            </span>
+          </p>
+          <p data-type="caption" className="text-on-surface-var">
+            It&rsquo;s the small model PersonalClaw downloaded: it runs on this machine with no key
+            and no network, but it&rsquo;s tiny &mdash; expect short answers and no tools. Add a real
+            provider in Settings → Providers whenever you like.
+          </p>
+          {refused}
+        </div>
       )
     }
     return (
@@ -497,25 +699,36 @@ function ModelSubFlow({ app, phase, chatModel, configured, isFloor, onConfigured
     )
   }
   if (phase === 'verify') {
-    return <VerifyChatModel onVerified={onVerified}
-      onReconfigure={configured ? onReconfigure : undefined} />
+    return (
+      <div className="flex flex-col gap-xs">
+        {downloaded && (
+          <p data-type="body-s" className="inline-flex items-center gap-1.5 text-on-surface">
+            <Check size={15} aria-hidden="true" style={{ color: 'var(--color-success)' }} />
+            Downloaded {downloaded}.
+          </p>
+        )}
+        {refused}
+        <VerifyChatModel key={verifyRun} onVerified={onVerified} onFailedChange={onVerifyFailed}
+          onReconfigure={configured ? onReconfigure : undefined} onPickAnother={onPickAnother} />
+      </div>
+    )
   }
   if (phase === 'bind') return <BindModel configured={configured} onBound={onBound} />
-  return (
-    <>
-      {/* OU-14 — the one-click, no-key way past the model wall, above the provider catalogue
-          because it is the cheapest thing a newcomer can do and the catalogue below all needs
-          an account. Renders nothing when there is no download on offer (already downloaded,
-          or a provider is bound), so a home that does not need it sees the old lane exactly. */}
-      <BundledModelOffer />
-      <ConfigureProvider app={app} onConfigured={onConfigured} />
-    </>
-  )
+  return <ConfigureProvider app={app} onConfigured={onConfigured} />
 }
 
 /** The lane's proof. Builds what chat builds (`GET /api/onboarding/model-check`) and reports
  *  the verdict; only `ok` advances to `done`, so nothing downstream — the green tick, the
  *  Continue button, the done-screen recap — can be reached by a binding that does not work.
+ *
+ *  **A build is not a call, so `ok` buys one more question.** A provider pointed at an address
+ *  nothing listens on builds fine. So before `done`, the entry the verdict names (`provider`) is
+ *  asked whether it ANSWERS — `POST /api/model-providers/{name}/test`, the probe Settings uses —
+ *  on every path here, including a reload that opens the step on `verify`. That reload is where
+ *  it used to go wrong: an Ollama entry saved at the default address with nothing running there
+ *  read "A chat model is configured — you're ready", and every background run then failed. The
+ *  in-process floor model has no address to test, and a type with no connectivity probe
+ *  (`no_probe`) has nothing more to learn here, so both pass on the build alone.
  *
  *  **Every failing cause is the BACKEND's own sentence.** The bridge derives a distinct
  *  `why`/`fix` per cause (a ref naming a provider `config.json` no longer has; an entry
@@ -530,62 +743,91 @@ function ModelSubFlow({ app, phase, chatModel, configured, isFloor, onConfigured
  *  🪤 NOT `useQuery`. That hook paints a cached value first and revalidates behind it, so a
  *  verification would flash the PREVIOUS verdict — a stale "ready" over a broken bind is the
  *  fabrication this whole component exists to prevent. A verdict is only ever this call's. */
-function VerifyChatModel({ onVerified, onReconfigure }: {
-  /** Reports the bound model the verdict names, or `''` when it names none. */
-  onVerified: (model: string) => void
+function VerifyChatModel({ onVerified, onFailedChange, onReconfigure, onPickAnother }: {
+  /** Reports the bound model the verdict names (or `''` when it names none) and whether what
+   *  answers is the small bundled floor model. */
+  onVerified: (model: string, floor: boolean) => void
+  /** `true` when this check found chat CANNOT use what is set up (the build refused, or the
+   *  entry that would answer did not); `false` when a check starts. Not called for a check
+   *  that could not run, which is "we do not know", not a verdict. */
+  onFailedChange: (failed: boolean) => void
   /** Back to the provider form, offered only when this flow is what configured it — there
    *  is no form to return to for a home that arrived already configured. */
   onReconfigure?: () => void
+  /** Back to the lane's list of providers, so a provider that does not answer is not the only
+   *  thing a reloaded step can offer. */
+  onPickAnother: () => void
 }) {
-  const [result, setResult] = useState<OnboardingModelCheck | null>(null)
-  /** The check itself could not run (the gateway did not answer). Distinct from a `!ok`
-   *  verdict: one says "chat will not work", the other says "we do not know". Reporting the
-   *  second as the first would invent a cause. */
-  const [unreachable, setUnreachable] = useState('')
+  const [verdict, setVerdict] = useState<ChatModelVerdict | null>(null)
   const [attempt, setAttempt] = useState(0)
 
-  // The verdict handler, held in a ref so the fetch effect depends on the ATTEMPT alone.
-  // `onVerified` is an inline arrow in the parent, so a new identity every render: listing it
-  // as a dependency would re-run this effect (and re-fire the request) on every repaint — the
+  // The verdict handlers, held in refs so the fetch effect depends on the ATTEMPT alone. They
+  // are inline arrows in the parent, so a new identity every render: listing them as
+  // dependencies would re-run this effect (and re-fire the requests) on every repaint — the
   // unstable-callback loop `lib/data/useQuery` documents having measured.
   const verifiedRef = useRef(onVerified)
   verifiedRef.current = onVerified
+  const failedRef = useRef(onFailedChange)
+  failedRef.current = onFailedChange
 
   useEffect(() => {
     let alive = true
-    setResult(null); setUnreachable('')
-    api.onboardingModelCheck()
-      .then((r) => {
-        if (!alive) return
-        setResult(r)
-        // 🔴 THE MODEL IS READ OFF THE VERDICT, not off whichever control did the binding.
-        // `bound` is `active_model_refs('chat')` — the contents of `active_models.json` — so
-        // this names the same model on a first pass and on a re-entered one, where there is no
-        // component state left to have captured a label (#3528). An empty answer means nothing
-        // is explicitly bound, which is `source: 'fallback'`; the parent then names the
-        // mechanism rather than implying a choice nobody made. (`source: 'fallback'` is also
-        // where a zero-config bundled default lands — OU-14 decorates that case from
-        // `chat_is_bundled_floor`, off this same `ok` verdict.)
-        if (r.ok) verifiedRef.current(boundModelLabel(r.bound))
-      })
-      .catch((e) => { if (alive) setUnreachable(thrownMessage(e) || 'The check could not run.') })
+    setVerdict(null)
+    failedRef.current(false)
+    void checkChatModel().then((v) => {
+      if (!alive) return
+      setVerdict(v)
+      // `floor` (OU-14) says whether what answers is the small bundled model — bound or not —
+      // read off this verdict rather than off the readiness read the flow made before anything
+      // was downloaded.
+      if (v.kind === 'ok') verifiedRef.current(v.model, v.floor)
+      else if (v.kind !== 'unknown') failedRef.current(true)
+    })
     return () => { alive = false }
   }, [attempt])
 
-  if (unreachable) {
+  const again = <Button variant="secondary" size="sm" onClick={() => setAttempt((n) => n + 1)}>Check again</Button>
+  // A way out of a verdict that cannot be fixed from here, on every failing branch: the form
+  // when this flow is what configured the provider, and always the list of other providers —
+  // a reloaded step opens on `verify` with no form behind it, and must not be a dead end.
+  const exits = (
+    <>
+      {onReconfigure && <Button variant="ghost" size="sm" onClick={onReconfigure}>Change its settings</Button>}
+      <Button variant="ghost" size="sm" onClick={onPickAnother}>Pick a different provider</Button>
+    </>
+  )
+
+  // `ok` has already told the parent, which moves the lane to `done` and unmounts this — so the
+  // passing branch renders the same waiting state rather than a second "ready" claim in a frame
+  // that is about to be replaced.
+  if (verdict === null || verdict.kind === 'ok') return <Spinner what="whether a chat model resolves" />
+  if (verdict.kind === 'unknown') {
+    // Not a verdict: it claims neither that chat is broken nor that it is ready.
     return (
       <div className="flex flex-col gap-s">
         <p data-type="body-s" className="text-on-surface-var">
-          Couldn&rsquo;t check whether a chat model resolves: {unreachable}
+          Couldn&rsquo;t check whether a chat model resolves: {verdict.message}
         </p>
-        <div><Button variant="secondary" size="sm" onClick={() => setAttempt((n) => n + 1)}>Check again</Button></div>
+        <div>{again}</div>
       </div>
     )
   }
-  // `ok` has already told the parent, which moves the lane to `done` and unmounts this — so
-  // the passing branch renders the same waiting state rather than a second "ready" claim in a
-  // frame that is about to be replaced.
-  if (result === null || result.ok) return <Spinner what="whether a chat model resolves" />
+  if (verdict.kind === 'silent') {
+    return (
+      <div className="flex flex-col gap-s">
+        <p data-type="body-s" className="text-danger" role="alert">
+          Chat would use {verdict.provider}, but it isn&rsquo;t answering.
+        </p>
+        {/* The connection test's own words: it is the only party that knows whether this is a
+            refused connection, a timeout or a rejected key. */}
+        <p data-type="body-s" className="text-on-surface-var">{verdict.message}</p>
+        <p data-type="body-s" className="text-on-surface">
+          Start it or correct its settings, then check again &mdash; or pick a different provider.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">{again}{exits}</div>
+      </div>
+    )
+  }
   return (
     <div className="flex flex-col gap-s">
       <p data-type="body-s" className="text-danger" role="alert">
@@ -593,14 +835,9 @@ function VerifyChatModel({ onVerified, onReconfigure }: {
       </p>
       {/* WHY then FIX, both the backend's own words. The `why` is what is wrong and the `fix`
           is the one act that resolves it; merging them loses the half a user acts on. */}
-      <p data-type="body-s" className="text-on-surface-var">{result.why}</p>
-      <p data-type="body-s" className="text-on-surface">{result.fix}</p>
-      <div className="flex items-center gap-2">
-        <Button variant="secondary" size="sm" onClick={() => setAttempt((n) => n + 1)}>Check again</Button>
-        {onReconfigure && (
-          <Button variant="ghost" size="sm" onClick={onReconfigure}>Change its settings</Button>
-        )}
-      </div>
+      <p data-type="body-s" className="text-on-surface-var">{verdict.check.why}</p>
+      <p data-type="body-s" className="text-on-surface">{verdict.check.fix}</p>
+      <div className="flex flex-wrap items-center gap-2">{again}{exits}</div>
     </div>
   )
 }
@@ -751,6 +988,21 @@ export function typesMissingFromCatalog(
   return types.filter((t) => !catalogued.has(t.app))
 }
 
+/** Whether `ConfigureProvider` can set this type up at all: it CREATES AN INSTANCE (a
+ *  `config.json` provider row named after the type), which only means something for a type
+ *  that takes instances — every account- or server-backed provider app declares
+ *  `multiInstance: true`.
+ *
+ *  🔴 A single-instance type registers its own entry and keeps its settings in the app's own
+ *  store, so "configuring" one here wrote a row the app never reads. That is what the bundled
+ *  offline model's "Configure" card did: its "Save and test" created a `bundled-chat` row with no
+ *  model on disk, then reported "Nothing came back… pick a different provider", and a reload
+ *  read the row back as "a chat model is configured — you're ready". Its route in is the
+ *  download offer at the top of the lane; its settings live in Settings → Providers. */
+export function configurableAsInstance(t: ModelProviderType): boolean {
+  return t.multiInstance
+}
+
 /** #3529 — the fallback the on-ramp and the catalog cannot cover between them: a
  *  provider type whose app is already installed has no "Install" card (the catalog
  *  excludes what's already installed), so without this the ONLY way into its
@@ -814,7 +1066,11 @@ function ConfigureProvider({ app, onConfigured }: {
 }) {
   const { data: types, error: typesError, refresh } = useQuery(
     'onboarding:provider-types', () => api.modelProviderTypes())
-  const [values, setValues] = useState<Record<string, string>>({})
+  // TYPED, as the settingsSchema declares each field — a boolean is `true`, a number is `4096`.
+  // This used to be `Record<string, string>` seeded with `String(default)`, so a switch rendered
+  // as a text box holding "true" and every option saved as a string, which a provider reading
+  // `isinstance(v, int)` then silently ignored.
+  const [values, setValues] = useState<Record<string, unknown>>({})
   // Which fields the user has actually typed into, distinct from a field merely sitting
   // at its (usually empty) schema default. `submit()` needs the distinction: a SENSITIVE
   // field the user deliberately blanked must clear a stored credential (#3554), but a
@@ -831,11 +1087,9 @@ function ConfigureProvider({ app, onConfigured }: {
   const props = t?.settingsSchema?.properties || {}
   const required = t?.settingsSchema?.required || []
   // Seed the schema defaults once the type resolves, without an effect: the first
-  // render that knows the type also knows its defaults.
+  // render that knows the type also knows its defaults — in their own types.
   if (t && seeded !== t.type) {
-    const seed: Record<string, string> = {}
-    for (const [k, f] of Object.entries(t.settingsSchema?.properties || {})) seed[k] = String(f.default ?? '')
-    setValues(seed); setTouched({}); setSeeded(t.type)
+    setValues(schemaDefaults(t.settingsSchema)); setTouched({}); setSeeded(t.type)
   }
 
   if (types === undefined && typesError) {
@@ -861,15 +1115,18 @@ function ConfigureProvider({ app, onConfigured }: {
 
   const submit = async () => {
     for (const r of required) {
-      if (!String(values[r] ?? props[r]?.default ?? '').trim()) {
+      if (isBlankOption(values[r] ?? props[r]?.default)) {
         setError(`${props[r]?.['x-meta']?.label || r} is required`); return
       }
     }
     setBusy(true); setError('')
-    const options: Record<string, string | null> = {}
+    const options: Record<string, ProviderOptionValue> = {}
     for (const [k, f] of Object.entries(props)) {
-      const v = (values[k] ?? String(f.default ?? '')).trim()
-      if (v) { options[k] = v; continue }
+      const raw = values[k] ?? f.default
+      // A string is trimmed; every other type is sent as the form holds it — `false` and `0`
+      // are settings, not blanks.
+      const v = typeof raw === 'string' ? raw.trim() : raw
+      if (!isBlankOption(v)) { options[k] = v as ProviderOptionValue; continue }
       // An emptied SENSITIVE field the user actually touched is a deliberate "clear the
       // stored credential" (#3554: the field's own help text promises "leave empty to
       // fall back to the environment variable" — true on the first save and false on
@@ -930,7 +1187,7 @@ function ConfigureProvider({ app, onConfigured }: {
           values={values}
           advancedFieldClassName="flex flex-col gap-s"
           renderField={(k, field) => (
-            <SchemaField name={k} field={field} value={values[k] ?? ''}
+            <SchemaField fieldKey={k} prop={field} value={values[k]}
               onChange={(v) => { setValues((m) => ({ ...m, [k]: v })); setTouched((m) => ({ ...m, [k]: true })) }} />
           )}
         />
@@ -1057,11 +1314,8 @@ function NoModelsDiscovered({ configured, onRetry }: {
   )
 }
 
-/** A THROWN api-client error's text, unwrapping the JSON error body the client
- *  stringifies into `Error.message`. Distinct from `lib/errText`, which turns a failed
- *  `Response` into user-facing copy — this one reads an already-rejected promise.
- *  Never includes a submitted credential: only the server's own message. */
-function thrownMessage(e: unknown): string {
-  const raw = e instanceof Error ? e.message : String(e ?? '')
-  try { const p = JSON.parse(raw); return String(p?.error ?? raw) } catch { return raw }
+/** An option that carries no value: absent, `null`, or an empty/whitespace string. `false` and
+ *  `0` are NOT blank — a switch turned off and a zero are settings a user made. */
+function isBlankOption(v: unknown): boolean {
+  return v === undefined || v === null || (typeof v === 'string' && !v.trim())
 }

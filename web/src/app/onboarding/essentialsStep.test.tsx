@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react'
 import type { AppCatalogEntry, AppInstallResult } from '../../lib/api'
 
@@ -46,11 +46,17 @@ const onboarding = vi.fn()
 const modelDownloads = vi.fn()
 const startModelDownload = vi.fn()
 const cancelModelDownload = vi.fn()
+// What is INSTALLED — the Store Library's read (`GET /api/apps`). Nothing, by default.
+const apps = vi.fn()
 
-vi.mock('../../lib/api', () => ({
+vi.mock('../../lib/api', async (orig) => ({
+  // The REAL module under the `api` stub, so a helper the lane imports from it
+  // (`isLiveDownload`, which the download state machine reads) is the real one.
+  ...(await orig<typeof import('../../lib/api')>()),
   api: {
     installApp: (...a: unknown[]) => installApp(...a),
     previewApp: (...a: unknown[]) => previewApp(...a),
+    apps: () => apps(),
     appCatalog: () => appCatalog(),
     modelProviderTypes: () => modelProviderTypes(),
     createModelProvider: (...a: unknown[]) => createModelProvider(...a),
@@ -172,9 +178,10 @@ beforeEach(() => {
   vi.clearAllMocks()
   // A COLD cache per test: `useQuery` memoizes module-globally, and a warm entry
   // would hide both the loading and the load-FAILURE branch on every test after the first.
-  for (const k of ['onboarding:essentials-catalog', 'onboarding:provider-types', 'onboarding:chat-models', 'onboarding:local-model']) invalidateKeys(k)
+  for (const k of ['onboarding:essentials-catalog', 'onboarding:provider-types', 'onboarding:chat-models', 'onboarding:local-model', 'apps']) invalidateKeys(k)
   try { sessionStorage.clear() } catch { /* jsdom always has it */ }
   appCatalog.mockResolvedValue(CATALOG)
+  apps.mockResolvedValue([])
   // OU-13 default: no local Ollama anywhere. Every existing test therefore renders the
   // model lane exactly as before the on-ramp — no bind card, no scan fired.
   detectLocalModel.mockResolvedValue({ detected: false })
@@ -329,6 +336,101 @@ describe('per-app install consent is preserved', () => {
   })
 })
 
+// ── what is installed is the server's answer ─────────────────────────────────
+//
+// The owner, on a live install: faster-whisper and piper-tts showed "Install" again on this step,
+// and clicking it answered `app 'faster-whisper' already installed (use update)`. "Installed" was
+// component state filled only by an install made in THIS mount, so going Back or reloading forgot
+// it — and the step's cached catalog outlived the install, so it still listed the app.
+
+/** An installed app as `GET /api/apps` lists it. */
+function installedApp(over: { name: string; displayName: string; providerCapabilities?: string[]; enabled?: boolean; native?: boolean }) {
+  return {
+    description: 'desc', version: '1.0.0', origin: 'local', icon: '', hasBackend: false, hasUI: false, uiPages: [],
+    isProvider: true, providerType: 'model', providerCapabilities: [], hasConfig: false, permissions: {}, tags: [],
+    backendRunning: false, backendPort: null, enabled: true, ...over,
+  }
+}
+const WHISPER_INSTALLED = installedApp({ name: 'faster-whisper', displayName: 'Faster Whisper', providerCapabilities: ['stt'] })
+const speechLane = () => screen.getByRole('group', { name: 'Speech' })
+
+describe('an installed app shows as installed and is never offered again', () => {
+  it('install, go Back, return: it is still installed, and there is no second Install', async () => {
+    // The catalog keeps listing Faster Whisper throughout, as the cached read did on the owner's
+    // install; the server's Library has it once the install lands.
+    const first = renderStep()
+    const dialog = await reviewCard('whisper')
+    apps.mockResolvedValue([WHISPER_INSTALLED])
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Install$/ }))
+    await waitFor(() => expect(installApp).toHaveBeenCalledTimes(1))
+    first.unmount()
+
+    renderStep()
+    await screen.findByText('OpenAI')
+    await waitFor(() => expect(within(speechLane()).getByText('Installed')).toBeTruthy())
+    expect(within(speechLane()).getByText('Faster Whisper')).toBeTruthy()
+    // Piper is still on offer; Faster Whisper is not.
+    expect(within(speechLane()).getAllByRole('button', { name: /^Install / }).map((b) => b.getAttribute('aria-label')))
+      .toEqual(['Install Piper TTS'])
+  })
+
+  it('a reload shows it installed, though the catalog (rightly) no longer lists it', async () => {
+    // What the server really answers after a reload. The lane used to lose the app entirely:
+    // no card, no "Ready", nothing to say it was there.
+    apps.mockResolvedValue([WHISPER_INSTALLED])
+    appCatalog.mockResolvedValue({ ...CATALOG, localApps: CATALOG.localApps.filter((e) => e.name !== 'faster-whisper') })
+    renderStep()
+    await screen.findByText('OpenAI')
+    await waitFor(() => expect(within(speechLane()).getByText('Faster Whisper')).toBeTruthy())
+    expect(within(speechLane()).getByText('Installed')).toBeTruthy()
+    // The lane is ready on what IS installed, not only on what this visit installed.
+    expect(within(speechLane()).getByText('Ready')).toBeTruthy()
+  })
+
+  it('Install on an app installed since the list was read shows it installed, not an error', async () => {
+    // The Library read predates an install made elsewhere — the Store, another tab — so the card
+    // was offered, and its review would open on `already installed (use update)`. The click asks
+    // the server first: an app it already has is an installed app, not a failure to report.
+    const { onProgress } = renderStep()
+    await screen.findByRole('button', { name: 'Install Faster Whisper' })
+    apps.mockResolvedValue([WHISPER_INSTALLED])
+    fireEvent.click(screen.getByRole('button', { name: 'Install Faster Whisper' }))
+    await waitFor(() => expect(within(speechLane()).getByText('Installed')).toBeTruthy())
+    expect(screen.queryByRole('button', { name: 'Install Faster Whisper' })).toBeNull()
+    expect(previewApp, 'no review opens for an app that is already installed').not.toHaveBeenCalled()
+    expect(installApp).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByText(/already installed/)).toBeNull()
+    expect(onProgress).toHaveBeenCalledWith({ essentials: { speech: true } })
+  })
+
+  it('an app the server does not have opens its review, and a refused install still says why', async () => {
+    // The control: only an app the server lists is treated as installed.
+    installApp.mockResolvedValue({ ok: false, name: 'faster-whisper', error: 'the source could not be fetched', needs_consent: false, scan: null })
+    const { onProgress } = renderStep()
+    await installCard('whisper')
+    await waitFor(() => expect(screen.getByRole('dialog').textContent).toMatch(/the source could not be fetched/i))
+    expect(previewApp).toHaveBeenCalledWith('/apps/faster-whisper', undefined)
+    expect(within(speechLane()).queryByText('Installed')).toBeNull()
+    expect(onProgress).not.toHaveBeenCalled()
+  })
+
+  it('an installed app that is turned off is listed, but does not make its lane ready', async () => {
+    apps.mockResolvedValue([{ ...WHISPER_INSTALLED, enabled: false }])
+    renderStep()
+    await waitFor(() => expect(within(speechLane()).getByText('Installed, turned off in the Store')).toBeTruthy())
+    expect(within(speechLane()).queryByText('Ready')).toBeNull()
+  })
+
+  it('says so when it could not check what is installed', async () => {
+    apps.mockRejectedValue(new Error('gateway unavailable'))
+    renderStep()
+    const notice = await screen.findByTestId('onboarding-installed-unreadable')
+    expect(notice.textContent).toMatch(/gateway unavailable/)
+    expect(within(notice).getByRole('button', { name: 'Check again' })).toBeTruthy()
+  })
+})
+
 // ── the model rail: install → key → Test → bind, in-flow ─────────────────────
 
 describe('the model lane completes entirely in-flow', () => {
@@ -395,7 +497,7 @@ describe('the model lane completes entirely in-flow', () => {
     // requirement exists to prevent. The verdict must describe the home the readiness does:
     // the floor is never a binding, so it resolves through the FALLBACK with no refs. The
     // file's default verdict is a binding, which on a floor home would be impossible (#3528).
-    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'fallback', bound: [] })
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'fallback', bound: [], floor: true })
     renderStep({ readiness: {
       needs_model: false, has_model_provider: true, has_chat_binding: false,
       chat_model_refs: [], chat_is_bundled_floor: true,
@@ -1057,8 +1159,8 @@ describe('the model lane reads ready only after a build check', () => {
     // asked about. "Ready — using a configured provider" is the one sentence about the second
     // that is not true, and this is the surface whose words the done-screen recap repeats — so
     // getting it wrong here mislabels the model on the last screen of onboarding too.
-    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'fallback', bound: [] })
-    const { onDone } = renderStep({ readiness: { ...READY, chat_is_bundled_floor: true } })
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'fallback', bound: [], floor: true })
+    const { onDone } = renderStep({ readiness: READY })
     await waitFor(() => expect(screen.getByRole('button', { name: /Continue/ }).getAttribute('aria-disabled')).not.toBe('true'))
     fireEvent.click(screen.getByRole('button', { name: /Continue/ }))
     expect(onDone).toHaveBeenCalledWith('Ready — using the small model PersonalClaw downloaded')
@@ -1075,6 +1177,75 @@ describe('the model lane reads ready only after a build check', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /Continue/ }).getAttribute('aria-disabled')).not.toBe('true'))
     fireEvent.click(screen.getByRole('button', { name: /Continue/ }))
     expect(onDone).toHaveBeenCalledWith('gpt-5')
+  })
+})
+
+// ── a build is not a call: the provider that answers is asked whether it does ─────────────────
+//
+// Measured on a real image: in this step, save Ollama at the default `http://localhost:11434`
+// with nothing listening (the form's Save and test shows the red connection error), then reload.
+// The flow re-enters on `verify`, whose build check PASSES — building an Ollama client makes no
+// call — and the step said "A chat model is configured — you're ready." Every background run
+// then failed. The verdict now names the entry that answers, and the lane asks it.
+
+describe('the model lane asks the answering provider whether it answers', () => {
+  const REENTERED = { needs_model: false, has_model_provider: true, has_chat_binding: false }
+  const FALLBACK_OLLAMA = { ok: true, source: 'fallback', bound: [], floor: false, provider: 'ollama' }
+  const REFUSED = { ok: false, status: 'error', message: 'Cannot connect to host localhost:11434 ssl:default [Connect call failed]' }
+
+  it('known-false: a reloaded step whose provider is not answering is NOT ready', async () => {
+    onboardingModelCheck.mockResolvedValue(FALLBACK_OLLAMA)
+    testModelProvider.mockResolvedValue(REFUSED)
+    const { onDone } = renderStep({ readiness: REENTERED })
+    expect(await screen.findByText('Chat would use ollama, but it isn’t answering.')).toBeTruthy()
+    // The connection test's own words, not a house sentence.
+    expect(screen.getByText(REFUSED.message)).toBeTruthy()
+    expect(testModelProvider).toHaveBeenCalledWith('ollama')
+    expect(screen.queryByText(/A chat model is configured/)).toBeNull()
+    // Continue is refused, and its reason says the check ANSWERED — not "still checking".
+    const cont = screen.getByRole('button', { name: /Continue/ })
+    expect(cont.getAttribute('aria-disabled')).toBe('true')
+    expect(cont.getAttribute('title') || '').toMatch(/can't use what is set up/i)
+    fireEvent.click(cont)
+    expect(onDone).not.toHaveBeenCalled()
+  })
+
+  it('offers the provider list from a reloaded step, where there is no form to go back to', async () => {
+    onboardingModelCheck.mockResolvedValue(FALLBACK_OLLAMA)
+    testModelProvider.mockResolvedValue(REFUSED)
+    renderStep({ readiness: REENTERED })
+    fireEvent.click(await screen.findByRole('button', { name: 'Pick a different provider' }))
+    // The lane is picking again: the catalog's cards are back.
+    expect((await screen.findAllByRole('button', { name: /^Install / })).length).toBeGreaterThan(0)
+  })
+
+  it('reads ready once the provider answers, on the next check', async () => {
+    onboardingModelCheck.mockResolvedValue(FALLBACK_OLLAMA)
+    testModelProvider.mockResolvedValueOnce(REFUSED)
+    testModelProvider.mockResolvedValue({ ok: true, status: 'connected', message: 'Connected — 3 model(s) available' })
+    const { onDone } = renderStep({ readiness: REENTERED })
+    fireEvent.click(await screen.findByRole('button', { name: /Check again/ }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Continue/ }).getAttribute('aria-disabled')).not.toBe('true'))
+    fireEvent.click(screen.getByRole('button', { name: /Continue/ }))
+    expect(onDone).toHaveBeenCalledWith('Ready — using a configured provider')
+  })
+
+  it('does not test the small floor model, which runs in-process and has no address', async () => {
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'fallback', bound: [], floor: true, provider: 'bundled-chat' })
+    const { onDone } = renderStep({ readiness: REENTERED })
+    await waitFor(() => expect(screen.getByRole('button', { name: /Continue/ }).getAttribute('aria-disabled')).not.toBe('true'))
+    expect(testModelProvider).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: /Continue/ }))
+    expect(onDone).toHaveBeenCalledWith('Ready — using the small model PersonalClaw downloaded')
+  })
+
+  it('a connection test that could not RUN is "we do not know", not "it is broken"', async () => {
+    onboardingModelCheck.mockResolvedValue(FALLBACK_OLLAMA)
+    testModelProvider.mockRejectedValue(new Error(JSON.stringify({ error: 'gateway unreachable' })))
+    renderStep({ readiness: REENTERED })
+    expect(await screen.findByText(/Couldn.t check whether a chat model resolves: ollama's connection test could not run: gateway unreachable/)).toBeTruthy()
+    expect(screen.queryByText(/isn.t answering/)).toBeNull()
+    expect(screen.queryByText(/A chat model is configured/)).toBeNull()
   })
 })
 
@@ -1170,5 +1341,242 @@ describe('an untested connection is not reported as a passed test', () => {
     expect(body.name).toBe('openai')
     expect(body.name).not.toBe('openai-models')
     expect(testModelProvider).toHaveBeenCalledWith('openai')
+  })
+})
+
+// ── OU-14, the owner's report: step 3 offers the small model, notices the download, binds it ─
+//
+// "why does onboarding page's Essential apps Step 3 doesn't allow user to continue without
+// configuring any model?" — measured on the real image: the download was offered only behind
+// "Configure" on "Bundled offline model"; when it finished the card vanished with no success,
+// Continue stayed disabled while `/api/onboarding` already reported the model ready, the only
+// button left was that form's "Save and test", which answered "Nothing came back… pick a
+// different provider", and nothing was bound as the chat model. These drive the whole lane
+// through the TRANSITION — idle, running, done — on a fake EventSource, because every one of
+// those defects lived between two states and no final render shows it.
+
+describe('the small model at step 3 (OU-14)', () => {
+  const OFFER = {
+    provider: 'bundled-chat', model: 'SmolLM2-135M-Instruct-Q8_0', label: 'SmolLM2-135M-Instruct',
+    bytes: 144811072, licence: 'Apache-2.0', description: 'a small chat model',
+  }
+  const REF = 'bundled-chat:SmolLM2-135M-Instruct-Q8_0'
+  // The bundled app's type as `/api/model-provider-types` really lists it: installed, never in
+  // the catalog, and single-instance — its settings are the app's, not a config.json row's.
+  const BUNDLED_TYPE = {
+    type: 'bundled-chat', label: 'Bundled offline model', app: 'bundled-chat', capabilities: ['chat'],
+    multiInstance: false,
+    settingsSchema: { properties: { offer_as_fallback: { type: 'boolean', default: true } } },
+  }
+  const running = (extra: Record<string, unknown> = {}) => ({
+    id: 'dl-1', provider: OFFER.provider, model: OFFER.model, kind: 'weights', state: 'running',
+    downloaded_bytes: 0, total_bytes: OFFER.bytes, progress: 0, speed_bps: 0, eta_s: 0,
+    error: '', reason: '', ...extra,
+  })
+
+  class FakeEventSource {
+    static all: FakeEventSource[] = []
+    listeners: Record<string, ((e: MessageEvent) => void)[]> = {}
+    onerror: (() => void) | null = null
+    constructor(public url: string) { FakeEventSource.all.push(this) }
+    addEventListener(ev: string, fn: (e: MessageEvent) => void) { (this.listeners[ev] ||= []).push(fn) }
+    close() { /* a closed stream simply stops being read */ }
+    emit(ev: string, data: unknown) {
+      for (const fn of this.listeners[ev] ?? []) fn({ data: JSON.stringify(data) } as MessageEvent)
+    }
+  }
+
+  const continueDisabled = () =>
+    screen.getByRole('button', { name: /^Continue$/ }).getAttribute('aria-disabled') === 'true'
+
+  beforeEach(() => {
+    FakeEventSource.all = []
+    vi.stubGlobal('EventSource', FakeEventSource)
+    onboarding.mockResolvedValue({ ...FRESH, chat_model_refs: [], chat_download_offer: OFFER })
+    modelProviderTypes.mockResolvedValue([OLLAMA_TYPE, BUNDLED_TYPE])
+    startModelDownload.mockResolvedValue(running({ state: 'queued' }))
+  })
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('offers it FIRST in the lane, with no Configure click, and no Configure card for it', async () => {
+    renderStep()
+    const offer = await screen.findByTestId('onboarding-model-offer')
+    expect(screen.getByRole('button', { name: 'Download SmolLM2-135M-Instruct (138 MiB)' })).toBeTruthy()
+    // First-class: above the local-model on-ramp and the account-backed catalogue.
+    const onRamp = await screen.findByText('Run a local model — no API key')
+    expect(offer.compareDocumentPosition(onRamp) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // The single-instance bundled type is not "configured" here — that path wrote a row with no
+    // model behind it — while a real instance type still is.
+    await screen.findByRole('button', { name: 'Configure Ollama' })
+    expect(screen.queryByRole('button', { name: /Configure Bundled offline model/ })).toBeNull()
+  })
+
+  it('notices the finished download: says so, binds it, verifies it, and unlocks Continue', async () => {
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'binding', bound: [REF], floor: true })
+    const { onDone, onProgress } = renderStep()
+
+    // idle: the offer, Continue locked.
+    fireEvent.click(await screen.findByRole('button', { name: /Download SmolLM2/ }))
+    expect(continueDisabled()).toBe(true)
+    await waitFor(() => expect(FakeEventSource.all).toHaveLength(1))
+    const stream = FakeEventSource.all[0]
+
+    // running: bytes and a real bar; still locked, and nothing bound yet.
+    act(() => stream.emit('progress', running({ downloaded_bytes: 72405536, progress: 0.5 })))
+    expect(await screen.findByRole('progressbar')).toHaveAttribute('aria-valuenow', '50')
+    expect(continueDisabled()).toBe(true)
+    expect(setActiveModel).not.toHaveBeenCalled()
+
+    // done: the server now reports the model ready and offers nothing.
+    onboarding.mockResolvedValue({
+      needs_model: false, has_model_provider: true, has_chat_binding: false,
+      chat_model_refs: [], chat_is_bundled_floor: true, chat_download_offer: null,
+    })
+    act(() => stream.emit('done', running({ state: 'done', downloaded_bytes: OFFER.bytes, progress: 1 })))
+
+    // It became the chat model — that is what the user asked for — and the lane checked it.
+    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', [REF]))
+    await waitFor(() => expect(onboardingModelCheck).toHaveBeenCalled())
+    expect(await screen.findByText('Downloaded SmolLM2-135M-Instruct. It answers your chats now.')).toBeTruthy()
+    expect(screen.getByText(/small model PersonalClaw downloaded/)).toBeTruthy()
+    expect(onProgress).toHaveBeenCalledWith({ essentials: { model: 'bundled-chat' } })
+    // No dead end on the way: no "Save and test", no "Nothing came back".
+    expect(screen.queryByRole('button', { name: /Save and test/ })).toBeNull()
+    expect(screen.queryByText(/Nothing came back/)).toBeNull()
+
+    await waitFor(() => expect(continueDisabled()).toBe(false))
+    fireEvent.click(screen.getByRole('button', { name: /^Continue$/ }))
+    expect(onDone).toHaveBeenCalledWith('SmolLM2-135M-Instruct-Q8_0 — the small model PersonalClaw downloaded')
+  })
+
+  it('a binding that already exists is the user\'s: the download does not overwrite it', async () => {
+    // A chat ref written before the weight arrived (Settings → Models) — read LIVE at the moment
+    // the download finishes, not off the readiness the flow fetched before it.
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'binding', bound: [REF], floor: true })
+    renderStep()
+    fireEvent.click(await screen.findByRole('button', { name: /Download SmolLM2/ }))
+    await waitFor(() => expect(FakeEventSource.all).toHaveLength(1))
+    onboarding.mockResolvedValue({
+      needs_model: false, has_model_provider: true, has_chat_binding: true,
+      chat_model_refs: [REF], chat_is_bundled_floor: true, chat_download_offer: null,
+    })
+    act(() => FakeEventSource.all[0].emit('done', running({ state: 'done', progress: 1 })))
+    await waitFor(() => expect(onboardingModelCheck).toHaveBeenCalled())
+    expect(setActiveModel).not.toHaveBeenCalled()
+  })
+
+  it('a refused binding is said, and the lane still proves what chat resolves to', async () => {
+    setActiveModel.mockRejectedValue(new Error(JSON.stringify({ error: 'the store is read-only' })))
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'fallback', bound: [], floor: true })
+    renderStep()
+    fireEvent.click(await screen.findByRole('button', { name: /Download SmolLM2/ }))
+    await waitFor(() => expect(FakeEventSource.all).toHaveLength(1))
+    onboarding.mockResolvedValue({ ...FRESH, needs_model: false, chat_model_refs: [], chat_download_offer: null })
+    act(() => FakeEventSource.all[0].emit('done', running({ state: 'done', progress: 1 })))
+    expect(await screen.findByText(/It could not be set as your chat model \(the store is read-only\)/)).toBeTruthy()
+    await waitFor(() => expect(continueDisabled()).toBe(false))
+  })
+
+  it('a reload mid-download shows the progress again, with nothing clicked', async () => {
+    // The owner's report: a reload inside onboarding lost the bar (the chat screen resumed it).
+    // The running job the server lists is the whole input — the lane mounts on it.
+    modelDownloads.mockResolvedValue([running({ downloaded_bytes: 36202768, progress: 0.25, eta_s: 42 })])
+    renderStep()
+    expect(await screen.findByText(/Downloading SmolLM2-135M-Instruct — 35 MiB of 138 MiB, about 42s left/)).toBeTruthy()
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '25')
+    expect(startModelDownload).not.toHaveBeenCalled()
+  })
+
+  it('is still offered beside a provider that is not answering, and after "Pick a different provider"', async () => {
+    // A provider saved at an address nothing listens on reads as set up to the no-network
+    // readiness probe (`needs_model: false`), so the server offers the download regardless of
+    // it, and the lane shows it in every phase: the home whose provider is down is the one that
+    // most needs the no-account way out.
+    const READS_SET_UP = { needs_model: false, has_model_provider: true, has_chat_binding: false }
+    onboarding.mockResolvedValue({ ...READS_SET_UP, chat_model_refs: [], chat_download_offer: OFFER })
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'fallback', bound: [], floor: false, provider: 'ollama' })
+    testModelProvider.mockResolvedValue({ ok: false, status: 'error', message: 'Cannot connect to host localhost:11434' })
+    renderStep({ readiness: READS_SET_UP })
+    expect(await screen.findByText('Chat would use ollama, but it isn’t answering.')).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'Download SmolLM2-135M-Instruct (138 MiB)' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Pick a different provider' }))
+    expect(await screen.findByTestId('onboarding-model-offer')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Download SmolLM2-135M-Instruct (138 MiB)' })).toBeTruthy()
+  })
+
+  it('a download that finishes while the lane is already checking a dead provider checks again', async () => {
+    // Driven in a browser: the step reloaded onto a provider that was not answering, the small
+    // model was downloaded from the offer above it, and it was bound — but the lane was already
+    // in `verify`, so moving it there changed nothing and the stale "isn't answering" stayed,
+    // Continue locked, beside a server that already answered ready.
+    const READS_SET_UP = { needs_model: false, has_model_provider: true, has_chat_binding: false }
+    onboarding.mockResolvedValue({ ...READS_SET_UP, chat_model_refs: [], chat_download_offer: OFFER })
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'fallback', bound: [], floor: false, provider: 'ollama' })
+    testModelProvider.mockResolvedValue({ ok: false, status: 'error', message: 'Cannot connect to host localhost:11434' })
+    renderStep({ readiness: READS_SET_UP })
+    expect(await screen.findByText('Chat would use ollama, but it isn’t answering.')).toBeTruthy()
+
+    fireEvent.click(await screen.findByRole('button', { name: /Download SmolLM2/ }))
+    await waitFor(() => expect(FakeEventSource.all).toHaveLength(1))
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'binding', bound: [REF], floor: true, provider: 'bundled-chat' })
+    act(() => FakeEventSource.all[0].emit('done', running({ state: 'done', downloaded_bytes: OFFER.bytes, progress: 1 })))
+
+    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', [REF]))
+    expect(await screen.findByText('Downloaded SmolLM2-135M-Instruct. It answers your chats now.')).toBeTruthy()
+    expect(screen.queryByText(/isn.t answering/)).toBeNull()
+    await waitFor(() => expect(continueDisabled()).toBe(false))
+  })
+
+  it('a running download keeps its bar when a provider form is opened', async () => {
+    // One slot across phases: opening Ollama's form mid-download used to unmount the offer and
+    // take the bar with it.
+    renderStep()
+    fireEvent.click(await screen.findByRole('button', { name: /Download SmolLM2/ }))
+    await waitFor(() => expect(FakeEventSource.all).toHaveLength(1))
+    act(() => FakeEventSource.all[0].emit('progress', running({ downloaded_bytes: 72405536, progress: 0.5 })))
+    expect(await screen.findByRole('progressbar')).toHaveAttribute('aria-valuenow', '50')
+    fireEvent.click(await screen.findByRole('button', { name: 'Configure Ollama' }))
+    expect(await screen.findByRole('button', { name: /Save and test/ })).toBeTruthy()
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50')
+  })
+})
+
+// ── the provider form draws and saves settings by their DECLARED type ─────────────────────
+//
+// A true/false setting rendered as a text box holding "true", and every option saved as a string
+// (`"context_tokens": "4096"`) — which a provider factory checking `isinstance(v, int)` then
+// silently dropped. One typed renderer, shared with Settings, and typed values on the wire.
+
+describe('the provider settings form is typed (#5 of the OU-14 report)', () => {
+  const TYPED = {
+    ...OLLAMA_TYPE,
+    settingsSchema: {
+      properties: {
+        endpoint: { type: 'string', default: 'http://localhost:11434', 'x-meta': { label: 'Ollama Endpoint' } },
+        context_window: { type: 'integer', minimum: 1, default: 4096, 'x-meta': { label: 'Served context window' } },
+        keep_warm: { type: 'boolean', default: true, 'x-meta': { label: 'Keep the model loaded' } },
+      },
+      required: ['endpoint'],
+    },
+  }
+
+  it('renders a boolean as a switch and an integer as a bounded number, and saves them typed', async () => {
+    modelProviderTypes.mockResolvedValue([TYPED])
+    renderStep()
+    fireEvent.click(await screen.findByRole('button', { name: 'Configure Ollama' }))
+    const toggle = await screen.findByRole('switch', { name: 'Keep the model loaded' })
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    const size = screen.getByRole('spinbutton', { name: 'Served context window' }) as HTMLInputElement
+    expect(size.value).toBe('4096')
+    expect(size.min).toBe('1')
+    expect(screen.queryByDisplayValue('true'), 'a switch is not a text box holding "true"').toBeNull()
+
+    fireEvent.click(toggle)
+    fireEvent.change(size, { target: { value: '8192' } })
+    fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
+    await waitFor(() => expect(createModelProvider).toHaveBeenCalled())
+    expect(createModelProvider.mock.calls[0][0].options).toEqual({
+      endpoint: 'http://localhost:11434', context_window: 8192, keep_warm: false,
+    })
   })
 })

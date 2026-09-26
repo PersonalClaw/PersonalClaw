@@ -33,7 +33,18 @@ dependency and no vendor string from this app.
 lives and dies with the app, so there is no orphan provider row to strand if the bundle is
 removed, and no credential is involved anywhere. ``floor=True`` is what makes the resolver
 sort this entry LAST, so the moment a user binds any real provider the floor stops being
-chosen — the model axis' version of the search registry's ``keyless`` floor.
+chosen — the model axis' version of the search registry's ``keyless`` floor. The entry is
+also BINDABLE (``bundled-chat:<model>``), which is how onboarding makes it the chat model when
+a user downloads it there.
+
+**Whether it can serve is the type's own answer, asked live.** The type registers a readiness
+probe (:func:`_readiness`) beside its factory, and core consults it before choosing or
+building any entry of this type: no weight on disk means "not downloaded yet", and — for the
+implicit nothing-is-bound path only — ``offer_as_fallback: false`` means "not offered". A build
+alone could not say either: this provider constructs perfectly well with no weight and fails on
+its first turn, which is how a home with no model used to be told it was ready. Because the
+probe reads the disk and the app's settings on every call, the switch takes effect the moment
+it is saved rather than at the next restart.
 
 **Honesty is part of the contract.** A 135M model is not a good assistant; it is a working
 first turn. Shipping it silently would let a user conclude the *product* is poor. So the
@@ -71,6 +82,7 @@ from personalclaw.sdk.local_model import (
     BundleDeclarationError,
     LocalModel,
     LocalModelProvider,
+    admit_transfer,
     licence_decision,
     parse_declaration,
     verify_download,
@@ -906,6 +918,24 @@ def model_name() -> str:
     return Path(declaration.artifact).stem
 
 
+def display_model_name() -> str:
+    """What a person calls this model: ``SmolLM2-135M-Instruct``, not the file it lands as.
+
+    Read off the sign-off record's ``model_id`` (``unsloth/SmolLM2-135M-Instruct-GGUF``) — the
+    repository name without its owner and without the ``-GGUF`` packaging suffix a GGUF
+    conversion's repository conventionally carries — so the name a surface shows moves with the
+    record and is never a second copy of which model is signed off. :func:`model_name` stays the
+    id the download, the delete and a binding use (``SmolLM2-135M-Instruct-Q8_0``).
+    """
+    declaration = _declaration()
+    if declaration is None:
+        return model_name()
+    repo = declaration.model_id.strip().rsplit("/", 1)[-1]
+    if repo.lower().endswith("-gguf"):
+        repo = repo[: -len("-gguf")]
+    return repo or model_name()
+
+
 # ── the download ──────────────────────────────────────────────────────────────────────────
 
 #: Read size. Big enough that a 138 MiB transfer is ~35 reads of real work per second rather
@@ -943,7 +973,9 @@ async def download_weight(*, progress: Any = None) -> Path:
 
     Every requirement of a large first-run download is here rather than in a caller:
 
-    * **Bounded** — an https-only URL, a per-read socket timeout and a total deadline.
+    * **Bounded** — an https-only URL, a per-read socket timeout, a total deadline, and the
+      record's size ceiling enforced WHILE the bytes arrive (the announced length before the
+      first write, the running count after every read), not after the whole file has landed.
     * **Cancellable for real** — the transfer is a loop of ``await asyncio.to_thread(read)``,
       so cancelling the task lands between chunks (within one 4 MiB read) and the ``finally``
       unlinks the partial file. A download run as one blocking call could not be interrupted at
@@ -1036,6 +1068,11 @@ async def _transfer(declaration: BundleDeclaration, target: Path, progress: Any)
             declared_total = response.headers.get("Content-Length")
             if declared_total and declared_total.isdigit():
                 total = int(declared_total)
+                # The ceiling, BEFORE a byte lands: a source announcing more than the signed-off
+                # file may be is refused on its word rather than after it has filled the disk.
+                refused = admit_transfer(declaration, total, announced=True)
+                if refused is not None:
+                    raise DownloadFailed(refused.outcome, refused.detail)
             while True:
                 if time.monotonic() > deadline:
                     raise DownloadFailed(
@@ -1048,6 +1085,12 @@ async def _transfer(declaration: BundleDeclaration, target: Path, progress: Any)
                 chunk = await asyncio.to_thread(response.read, _CHUNK_BYTES)
                 if not chunk:
                     break
+                # …and after every read, because a Content-Length can be absent or lie. The
+                # chunk that crosses the line is never written, so the partial on disk never
+                # exceeds the ceiling, and the ``finally`` below removes it.
+                refused = admit_transfer(declaration, received + len(chunk), announced=False)
+                if refused is not None:
+                    raise DownloadFailed(refused.outcome, refused.detail)
                 sink.write(chunk)
                 received += len(chunk)
                 if progress is not None:
@@ -1130,7 +1173,8 @@ def load_bundled_model(path: Path | None = None) -> LlamaCpuModel:
             # act on.
             raise BundleUnavailable(
                 f"the default chat model is not downloaded yet ({resolved or weight_path()}). It "
-                "is a one-time download; start it from the chat screen or Settings → Providers."
+                "is a one-time download; start it from the chat screen, onboarding's model step, "
+                "or Settings → Providers → Bundled offline model."
             )
         logger.info("bundled-chat: loading %s", resolved.name)
         model = LlamaCpuModel(GgufModel(resolved))
@@ -1508,6 +1552,7 @@ class BundledChatProvider(ModelProvider, LocalModelProvider):
                 non_commercial=False,
                 context_tokens=window,
                 output_tokens=self._reply_reserve(window),
+                display_name=display_model_name(),
             )
         ]
 
@@ -1596,14 +1641,20 @@ def _factory(
     session_key: str | None = None,
     **kwargs: object,
 ) -> ModelProvider:
-    """Registry contract: build a provider from its entry's options bag.
+    """Registry contract: build a provider from the app's settings AS SAVED NOW.
 
-    A per-call ``temperature`` build kwarg (best-of-N's ladder) wins over the configured one — the
-    caller asking for THIS temperature is more specific than the default. Every build kwarg used
-    to be discarded here, so best-of-N on the bundled floor sampled N greedy copies of one answer.
+    The settings are read at BUILD time rather than captured when the entry was registered.
+    The entry is registered once per process (and again when the weight lands), so options
+    captured then made every change in the settings form — the reply length, the prompt
+    budget, the sampling knobs — wait for a gateway restart. An entry's own options (a
+    user-created ``config.json`` row of this type) still win over the app's settings.
+
+    A per-call ``temperature`` build kwarg (best-of-N's ladder) wins over both — the caller
+    asking for THIS temperature is more specific than the default. Every build kwarg used to
+    be discarded here, so best-of-N on the bundled floor sampled N greedy copies of one answer.
     """
     del session_key  # stateless, credential-free
-    options = dict(entry.options or {})
+    options = {**ProviderSettings.load(APP_NAME), **dict(entry.options or {})}
     temperature = kwargs.get("temperature")
     if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
         options["temperature"] = float(temperature)
@@ -1631,23 +1682,23 @@ def availability() -> tuple[bool, str]:
 def floor_entry() -> ProviderEntry | None:
     """The in-memory zero-config floor entry, or ``None`` when there is nothing to run.
 
-    ``None`` is the load-bearing half, and it is now the state of every fresh install until the
-    download finishes. An entry registered with no weight behind it would make
-    ``can_resolve_use_case("chat")`` report True, retire OU-12's calm setup state, and then fail
-    the turn — trading an honest wall for a broken promise.
+    ``None`` is the load-bearing half, and it is the state of every fresh install until the
+    download finishes: an entry with no weight behind it is a provider that builds and then
+    fails its first turn. (:func:`_readiness` answers the same question for any entry of this
+    type, so a ``config.json`` row created by hand cannot smuggle that state back in.)
+
+    The entry exists whenever the weight does — whatever ``offer_as_fallback`` says — because
+    the switch decides whether the model answers when NOTHING is bound, not whether it can be
+    bound at all. It carries no options: the settings are read at build (see :func:`_factory`).
     """
     path = installed_weight()
     if path is None:
-        return None
-    options: dict[str, Any] = dict(ProviderSettings.load(APP_NAME))
-    if not _as_bool(options.get("offer_as_fallback", True)):
-        logger.info("bundled-chat: offer_as_fallback is off; not registering the chat floor")
         return None
     return ProviderEntry(
         name=APP_NAME,
         type=PROVIDER_TYPE,
         model=path.stem,
-        options=options,
+        options={},
         credential=None,
         declared_capabilities=frozenset({Capability.CHAT}),
         floor=True,
@@ -1660,17 +1711,53 @@ def _as_bool(value: Any) -> bool:
     return bool(value)
 
 
+def _readiness(entry: ProviderEntry, *, implicit: bool) -> tuple[str, str] | None:
+    """Core's readiness contract for this type: ``(why, fix)`` when an entry cannot serve.
+
+    Two answers, both read LIVE — the disk and the saved settings, on every call — so neither
+    waits for a restart:
+
+    * **No weight on disk** — the model is not downloaded (or a partial transfer is all there
+      is). A provider of this type BUILDS in that state and fails its first turn, which is why
+      the answer has to come from here rather than from a build.
+    * **Nothing is bound and ``offer_as_fallback`` is off** — the user switched off "Answer when
+      nothing else is bound", so the implicit fallback must pass this model by. A binding to it
+      (``implicit=False``) is still served: choosing the model is the user saying it should
+      answer.
+
+    The words are the ones a user sees on the model check and in chat's setup state, so they
+    name the model, its size and where the download is.
+    """
+    if installed_weight() is None:
+        declaration = _declaration()
+        size = f"{round(declaration.size_bytes / (1024 * 1024))} MiB " if declaration else ""
+        return (
+            f"{display_model_name()}, the small offline model, is not downloaded yet — it is a "
+            f"one-time {size}download",
+            "download it from onboarding's model step, the chat screen, or Settings → Providers "
+            "→ Bundled offline model — or bind chat to another model in Settings → Models",
+        )
+    if implicit and not _as_bool(ProviderSettings.load(APP_NAME).get("offer_as_fallback", True)):
+        return (
+            f"{display_model_name()} is downloaded, but “Answer when nothing else is bound” is "
+            "switched off, so it only answers when chat is bound to it",
+            "bind chat to it in Settings → Models, or switch that setting back on in Settings → "
+            "Providers → Bundled offline model",
+        )
+    return None
+
+
 def register() -> bool:
     """Register the type, and the floor entry when a weight is actually installed.
 
     Returns whether a floor entry was registered, which is what the tests assert on: the type
     registering is unconditional (so Settings can describe the provider and its download card
     can exist), the ENTRY is conditional (so resolution only succeeds when a turn can really be
-    served).
+    served). The type carries :func:`_readiness`, which is what every resolution asks first.
     """
     registry = get_default_registry()
     try:
-        registry.register_type(BUNDLED_CHAT_CAPABILITY, _factory)
+        registry.register_type(BUNDLED_CHAT_CAPABILITY, _factory, readiness=_readiness)
     except ProviderResolutionError:
         logger.debug("bundled-chat: provider type already registered")
     entry = floor_entry()
@@ -1688,11 +1775,16 @@ def refresh_registration() -> bool:
     is not a first-run experience. Called by :meth:`BundledChatProvider.download_model` and
     :meth:`BundledChatProvider.delete_model`, which are the only two events that change the
     answer.
+
+    The app's entry REPLACES whatever holds its name. ``register_entry`` is first-wins, so a
+    ``config.json`` row named ``bundled-chat`` (the settings form used to create one) would
+    otherwise keep the name after the download, and chat would resolve to that row — not a
+    floor, so the chat screen would stop saying the small model is the one answering.
     """
     registry = get_default_registry()
     entry = floor_entry()
+    registry.unregister_entry(APP_NAME)
     if entry is None:
-        registry.unregister_entry(APP_NAME)
         reset_loaded_model()
         return False
     registry.register_entry(entry)

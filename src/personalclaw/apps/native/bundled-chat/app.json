@@ -2,7 +2,7 @@
   "name": "bundled-chat",
   "version": "0.1.0",
   "displayName": "Bundled offline model",
-  "description": "The small Apache-2.0 chat model that ships with PersonalClaw so a fresh install can hold a conversation before any provider is bound. Runs on your machine with no account, no API key and no network. It is deliberately tiny, so it is only ever the floor: bind a real model in Settings → Models and this stops being used.",
+  "description": "A small Apache-2.0 chat model, SmolLM2-135M-Instruct, that PersonalClaw downloads when you ask — 138 MiB, once — so a fresh install can hold a conversation before any provider is bound. After that one download it runs on your machine with no account, no API key and no network. It is deliberately tiny, with no tools, so it is only ever the floor: bind a real model in Settings → Models and this stops being used.",
   "icon": "HardDriveDownload",
   "author": "PersonalClaw",
   "tags": [
@@ -28,7 +28,7 @@
           "default": true,
           "x-meta": {
             "label": "Answer when nothing else is bound",
-            "help": "On by default: with no provider configured, this model answers chat so a fresh install is not a dead end. Turn it off to go back to the calm “set up a model” state instead."
+            "help": "On by default: when no chat model is chosen, this model answers so a fresh install is not a dead end. Turn it off and chat goes back to the calm “set up a model” state — takes effect as soon as you save. Choosing this model as the chat model in Settings → Models (onboarding does that when you download it there) keeps it answering either way."
           }
         },
         "max_output_tokens": {
