@@ -1247,10 +1247,20 @@ def rebuild_agent_config(*, clean: bool = False) -> Path:
             resolved = cmd
         else:
             # A server's PATH is an env value like any other, so it may be a credential-store
-            # reference: resolved for the lookup, never written back.
-            from personalclaw.config.secret_refs import resolve_mcp_values
+            # reference: resolved for the lookup, never written back — PATH alone, the one
+            # value the lookup needs, and only against the server's own owner.
+            from personalclaw.config.secret_refs import (
+                ForeignSecretReference,
+                resolve_mcp_values,
+            )
 
-            env_path = resolve_mcp_values(spec.get("env")).get("PATH", "")
+            env = spec.get("env")
+            path_only = {"PATH": env["PATH"]} if isinstance(env, dict) and "PATH" in env else {}
+            try:
+                env_path = resolve_mcp_values(name, "env", path_only).get("PATH", "")
+            except ForeignSecretReference as exc:
+                logger.warning("Dropping MCP server %r: %s", name, exc)
+                continue
             search_path = (env_path + os.pathsep if env_path else "") + os.environ.get("PATH", "")
             resolved = shutil.which(cmd, path=search_path)
         if resolved:

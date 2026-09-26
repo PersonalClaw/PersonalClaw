@@ -516,7 +516,7 @@ async def api_app_local_sources_remove(request: web.Request) -> web.Response:
 
 async def api_app_get(request: web.Request) -> web.Response:
     """GET /api/apps/{name} — full manifest + status + saved config."""
-    from personalclaw.apps.app_config import read_config
+    from personalclaw.apps.app_config import read_stored
     from personalclaw.apps.app_manager import _manifest_of
     from personalclaw.apps.manager import _read_installed
     from personalclaw.apps.secret_fields import mask_secrets
@@ -538,10 +538,11 @@ async def api_app_get(request: web.Request) -> web.Response:
     # policy, one owner; a route that carries a config is not exempt for being a detail view.
     # An app configured per instance has NO app-level config: a file left from before that
     # was true is neither served nor masked by a schema that no longer describes it.
+    # The STORED form: a reference is masked whatever its field is called, and no value is read.
     masked: dict[str, Any] = {}
     secret_set: list[str] = []
     if manifest is None or not _configured_per_instance(manifest):
-        masked, secret_set = mask_secrets(read_config(name), schema)
+        masked, secret_set = mask_secrets(read_stored(name), schema)
     return web.json_response(
         {
             "name": name,
@@ -900,7 +901,7 @@ def _configured_per_instance(manifest) -> str | None:
 
 
 async def api_app_config_get(request: web.Request) -> web.Response:
-    from personalclaw.apps.app_config import read_config
+    from personalclaw.apps.app_config import read_stored
     from personalclaw.apps.app_manager import _manifest_of
     from personalclaw.apps.secret_fields import mask_secrets
 
@@ -916,8 +917,10 @@ async def api_app_config_get(request: web.Request) -> web.Response:
         return web.json_response({"error": refusal}, status=409)
     schema = _effective_config_schema(manifest)
     # Write-only sensitive fields: mask the stored secret, never send it in the clear
-    # (#43). ``_secret_set`` tells the UI which sensitive fields are already set.
-    masked, secret_set = mask_secrets(read_config(name), schema)
+    # (#43). ``_secret_set`` tells the UI which sensitive fields are already set. Served from
+    # the STORED form, so this route never reads a credential: each reference is masked,
+    # whether or not the schema declared its field sensitive.
+    masked, secret_set = mask_secrets(read_stored(name), schema)
     return web.json_response(
         {
             "name": name,
@@ -929,7 +932,7 @@ async def api_app_config_get(request: web.Request) -> web.Response:
 
 
 async def api_app_config_put(request: web.Request) -> web.Response:
-    from personalclaw.apps.app_config import AppConfigError, read_config, write_config
+    from personalclaw.apps.app_config import AppConfigError, read_stored, write_config
     from personalclaw.apps.app_manager import _manifest_of
     from personalclaw.apps.secret_fields import mask_secrets, preserve_unchanged_secrets
 
@@ -949,10 +952,12 @@ async def api_app_config_put(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     schema = _effective_config_schema(manifest)
     # A sensitive field carrying the mask sentinel (or empty when it was already set)
-    # means "keep the stored secret" — don't overwrite it with the placeholder (#43).
-    values = preserve_unchanged_secrets(values, read_config(name), schema)
+    # means "keep the stored secret" — don't overwrite it with the placeholder (#43). What is
+    # folded back is the stored REFERENCE, which the write keeps as it is; a reference that
+    # names another owner's credential is refused there, with what to do instead.
+    values = preserve_unchanged_secrets(values, read_stored(name), schema)
     try:
-        saved = write_config(name, values, schema)
+        write_config(name, values, schema)
     except AppConfigError as exc:
         _sel_log("apps.config", "error", name, request, error=str(exc))
         return web.json_response({"error": str(exc)}, status=400)
@@ -962,8 +967,9 @@ async def api_app_config_put(request: web.Request) -> web.Response:
     from personalclaw.providers.routes import apply_saved_settings
 
     await apply_saved_settings(name)
-    # Never echo the freshly-saved secret back either — mask on the response too.
-    masked, secret_set = mask_secrets(saved, schema)
+    # Never echo the freshly-saved secret back either: the response is what reached the disk,
+    # masked — a credential-named field the schema did not declare included.
+    masked, secret_set = mask_secrets(read_stored(name), schema)
     return web.json_response(
         {"ok": True, "name": name, "config": masked, "_secret_set": secret_set}
     )

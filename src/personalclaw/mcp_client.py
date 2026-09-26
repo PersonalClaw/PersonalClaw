@@ -617,11 +617,15 @@ def _personalclaw_mcp_specs() -> dict[str, dict[str, Any]]:
     load rather than inside the spawn keeps rotation working: the registry keys a connection by
     its spec's content hash, so a token changed behind an unchanged reference must change the
     spec it is compared by, or the live connection would keep the old one.
+
+    A server whose spec names a credential its owner does not hold is left out — never spawned,
+    and no value read for it. The refusal is logged and in the security log, and the server's
+    probe (the Tools page) reports it as that server's error.
     """
     import json
 
     from personalclaw.config.loader import config_dir
-    from personalclaw.config.secret_refs import resolve_mcp_spec
+    from personalclaw.config.secret_refs import ForeignSecretReference, resolve_mcp_spec
 
     # `config_dir()`, not `Path.home()`: this is the store the NATIVE agent loop spawns
     # from, so a `Path.home()` hardcode made a dev session with PERSONALCLAW_HOME set read
@@ -636,11 +640,15 @@ def _personalclaw_mcp_specs() -> dict[str, dict[str, Any]]:
         logger.warning("Failed to read %s: %s", path, exc)
         return {}
     servers = data.get("mcpServers", {}) if isinstance(data, dict) else {}
-    return (
-        {k: resolve_mcp_spec(v) for k, v in servers.items() if isinstance(v, dict)}
-        if isinstance(servers, dict)
-        else {}
-    )
+    specs: dict[str, dict[str, Any]] = {}
+    for name, spec in servers.items() if isinstance(servers, dict) else ():
+        if not isinstance(spec, dict):
+            continue
+        try:
+            specs[name] = resolve_mcp_spec(name, spec)
+        except ForeignSecretReference as exc:
+            logger.warning("MCP server %r not started: %s", name, exc)
+    return specs
 
 
 def get_mcp_client_registry() -> McpClientRegistry | None:

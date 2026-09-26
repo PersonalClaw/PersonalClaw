@@ -277,7 +277,7 @@ class ToolTypeHandler(_TypeHandler):
         # and return the LIST (register/deregister below normalize a list). Without
         # this, instances added via "Add instance" never become live tool providers.
         if ext.provider_config.multiInstance:
-            from personalclaw.providers.instances import list_instances
+            from personalclaw.providers.instances import list_instances, resolved_config
 
             enabled = [i for i in list_instances(ext.name) if i.enabled]
             if not enabled:
@@ -286,7 +286,9 @@ class ToolTypeHandler(_TypeHandler):
             providers: list[Any] = []
             for inst in enabled:
                 try:
-                    provider = factory(inst.config)
+                    # Resolved per instance, inside the guard: one whose settings name another
+                    # owner's credential is refused, and costs only itself.
+                    provider = factory(resolved_config(inst))
                     if not hasattr(provider, "name"):
                         provider.name = f"{ext.name}:{inst.id}"
                     if not hasattr(provider, "instance_id"):

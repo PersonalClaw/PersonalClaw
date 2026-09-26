@@ -26,7 +26,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer, make_mocked_request
 
 from personalclaw.config import loader as config_loader
-from personalclaw.config.credentials import credential_names, get_credential, save_credential
+from personalclaw.config.credentials import credential_names, get_credential
 from personalclaw.config.secret_refs import make_ref, migrate_plaintext_secrets, ref_key
 from personalclaw.mcp_client import McpClientRegistry, _personalclaw_mcp_specs, mcp_sdk_available
 
@@ -112,6 +112,15 @@ def _mcp_keys(server: str) -> list[str]:
     return [k for k in credential_names() if k.startswith(_prefix(server))]
 
 
+def _stored_ref(server: str, part: str, name: str, value: str) -> str:
+    """The reference the product writes for ``server``'s ``part`` value ``name``: the value is
+    stored under a key the SERVER owns, exactly as an edit through the MCP form stores it. A
+    server resolves only its own keys (and core's), so a hand-built key would be refused."""
+    from personalclaw.config.secret_refs import store_mcp_spec
+
+    return store_mcp_spec(server, {part: {name: value}}, strict=True)[part][name]
+
+
 async def _read_env(reg: McpClientRegistry, server: str, var: str) -> str:
     """Reload ``reg`` from mcp.json exactly as the native loop does, and ask ``server`` for
     ``var`` through its live connection."""
@@ -188,7 +197,7 @@ def test_removing_a_server_deletes_its_stored_secrets(home):
 
 @needs_sdk
 def test_the_spawned_server_receives_the_value_behind_the_reference(home, echo_server):
-    save_credential("PCSECRET_MCP_FIXTURE__ENV__GITHUB_TOKEN", TOKEN)
+    ref = _stored_ref("echo", "env", "GITHUB_TOKEN", TOKEN)
     (home / "mcp.json").write_text(
         json.dumps(
             {
@@ -197,7 +206,7 @@ def test_the_spawned_server_receives_the_value_behind_the_reference(home, echo_s
                         "command": sys.executable,
                         "args": [echo_server],
                         "env": {
-                            "GITHUB_TOKEN": make_ref("PCSECRET_MCP_FIXTURE__ENV__GITHUB_TOKEN"),
+                            "GITHUB_TOKEN": ref,
                             "PERSONALCLAW_HOME": str(home),
                         },
                     }
@@ -241,13 +250,12 @@ def test_a_server_added_through_the_api_starts_with_its_token(home, echo_server)
 def test_the_discovery_probe_spawns_with_the_resolved_value(home, echo_server):
     from personalclaw.mcp_discovery import McpServerInfo, probe_server
 
-    save_credential("PCSECRET_MCP_FIXTURE__ENV__GITHUB_TOKEN", TOKEN)
     server = McpServerInfo(
         name="echo",
         command=sys.executable,
         args=[echo_server],
         env={
-            "GITHUB_TOKEN": make_ref("PCSECRET_MCP_FIXTURE__ENV__GITHUB_TOKEN"),
+            "GITHUB_TOKEN": _stored_ref("echo", "env", "GITHUB_TOKEN", TOKEN),
             "PERSONALCLAW_HOME": str(home),
         },
     )
@@ -269,7 +277,7 @@ def test_the_remote_probe_sends_the_resolved_header(home):
             return web.json_response({"jsonrpc": "2.0", "id": 1, "result": {}})
         return web.json_response({"jsonrpc": "2.0", "id": 2, "result": {"tools": []}})
 
-    save_credential("PCSECRET_MCP_FIXTURE__HDR__AUTHORIZATION", HEADER_TOKEN)
+    ref = _stored_ref("remote", "headers", "Authorization", HEADER_TOKEN)
 
     async def run() -> str:
         app = web.Application()
@@ -280,7 +288,7 @@ def test_the_remote_probe_sends_the_resolved_header(home):
             info = McpServerInfo(
                 name="remote",
                 url=str(server.make_url("/mcp")),
-                headers={"Authorization": make_ref("PCSECRET_MCP_FIXTURE__HDR__AUTHORIZATION")},
+                headers={"Authorization": ref},
             )
             return (await probe_server(info)).status
         finally:

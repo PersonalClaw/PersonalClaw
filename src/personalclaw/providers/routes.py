@@ -14,10 +14,11 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.apps.secret_fields import mask_secrets, preserve_unchanged_secrets
+from personalclaw.config.secret_refs import ForeignSecretReference
 from personalclaw.http_errors import json_error
 from personalclaw.providers.availability import AVAILABLE, Availability, get_availability_board
 from personalclaw.providers.registry import get_provider_registry
-from personalclaw.providers.settings import ProviderSettings
+from personalclaw.providers.settings import ProviderSettings, load_stored
 
 logger = logging.getLogger(__name__)
 
@@ -186,9 +187,11 @@ async def handle_get_config(request: web.Request) -> web.Response:
     # one, a configured app's credentials (e.g. slack-channel's Bot + App tokens) were
     # shipped to the browser on every panel open, held in the form's state, and revealable
     # on screen through its show/hide toggle. One policy now, in ``apps.secret_fields``.
-    config, secret_set = mask_secrets(
-        ProviderSettings.load(name), ext.provider_config.settingsSchema
-    )
+    #
+    # The STORED form, not the values: a reference is masked whatever its field is called, so
+    # nothing here ever reads a credential — including one the file names that belongs to
+    # another owner, which ``load`` would refuse.
+    config, secret_set = mask_secrets(load_stored(name), ext.provider_config.settingsSchema)
     return web.json_response({"name": name, "config": config, "_secret_set": secret_set})
 
 
@@ -215,20 +218,24 @@ async def handle_patch_config(request: web.Request) -> web.Response:
     # sensitive field arriving as the mask (or empty over a stored value) means "keep it".
     # Without this, masking the GET would erase a working token the first time the operator
     # saved an unrelated field on the same form.
-    body = preserve_unchanged_secrets(body, ProviderSettings.load(name), schema)
+    body = preserve_unchanged_secrets(body, load_stored(name), schema)
     errors = ProviderSettings.validate(body, schema)
     if errors:
         return web.json_response({"error": "Validation failed", "details": errors}, status=422)
 
     try:
-        updated = ProviderSettings.update(name, body)
-    except ValueError as exc:  # a secret the credential store cannot hold (multi-line)
+        ProviderSettings.update(name, body)
+    except ForeignSecretReference as exc:  # names another owner's key: says what to do instead
+        return web.json_response({"error": str(exc)}, status=400)
+    except ValueError as exc:  # a value no credential can hold (a NUL character)
         return web.json_response({"error": "Validation failed", "details": [str(exc)]}, status=422)
 
     await apply_saved_settings(name)
     # Mask on the way out too: echoing the freshly-saved token back would undo the GET fix
-    # for the one response most likely to be read from a log or a devtools panel.
-    masked, secret_set = mask_secrets(updated, schema)
+    # for the one response most likely to be read from a log or a devtools panel. What was
+    # saved is read back as stored, so a credential-named field the schema did not declare
+    # is masked as a reference, not echoed as the value typed.
+    masked, secret_set = mask_secrets(load_stored(name), schema)
     return web.json_response({"name": name, "config": masked, "_secret_set": secret_set})
 
 
@@ -245,13 +252,21 @@ async def apply_saved_settings(name: str) -> None:
     ONE definition for both settings routes: ``PATCH /api/providers/{name}/config`` did this,
     and ``PUT /api/apps/{name}/config`` — the Apps page's Configure → Save, writing the same
     file — did none of it, so a token saved there read "No bot token configured" until restart.
+
+    A provider whose enable FAILED is retried too, exactly as its Settings → Providers switch
+    would retry it: its settings are what failed it (one naming a credential another owner
+    holds, say), and a fix that waits for a restart reads as a fix that did not work. A provider
+    the owner switched off carries no error, and an app that is disabled is not retried.
     """
+    from personalclaw.apps.permissions import app_lifecycle_denial
     from personalclaw.channel_transports import hand_over_inbound
 
     registry = get_provider_registry()
     ext = registry.get(name)
     if ext is not None and ext.enabled:
         await hand_over_inbound(registry.rebuild(name))
+    elif ext is not None and ext.error and not app_lifecycle_denial(name):
+        registry.enable(name)
     try:
         from personalclaw.dashboard.handlers.providers import _refresh_media_registries
 

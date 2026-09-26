@@ -31,8 +31,11 @@ overwrite a real credential with bullets.
 
 Masking is about not *handing out* secrets. Keeping them off disk is a separate mechanism:
 a settings file holds a ``{{secret:…}}`` reference and the value lives in the credential
-store (:mod:`personalclaw.config.secret_refs`), so what these functions mask on the way out
-is the value the readers resolved, never the file's bytes.
+store (:mod:`personalclaw.config.secret_refs`). The routes that show settings mask the STORED
+form — the references — so no route that shows settings ever reads a credential. A field that
+holds a reference is therefore masked (and restored on the way back) whatever the schema says
+about it: a reference is a stored secret by construction, and a credential-named field the
+schema forgot to declare is exactly the one that would otherwise be shown resolved.
 
 **A THIRD read path has no schema to consult.** ``personalclaw config get`` prints
 ``config.json``, whose credential-bearing blocks are exactly the ones core does not model —
@@ -72,18 +75,27 @@ def sensitive_field_names(schema: dict[str, Any]) -> set[str]:
     }
 
 
+def _holds_reference(value: Any) -> bool:
+    from personalclaw.config.secret_refs import ref_key
+
+    return ref_key(value) is not None
+
+
 def mask_secrets(
     config: dict[str, Any], schema: dict[str, Any]
 ) -> tuple[dict[str, Any], list[str]]:
     """Return ``(masked_config, names_that_are_set)``.
 
-    Every sensitive field holding a non-empty value is replaced by :data:`SECRET_MASK`;
-    the second element names those fields so a UI can say "saved" without being told what
-    was saved. An unset sensitive field is left as-is (empty), because "not configured" is
-    not a secret and the operator needs to see the difference.
+    Every sensitive field holding a non-empty value — and every field holding a
+    ``{{secret:…}}`` reference — is replaced by :data:`SECRET_MASK`; the second element names
+    those fields so a UI can say "saved" without being told what was saved. An unset sensitive
+    field is left as-is (empty), because "not configured" is not a secret and the operator
+    needs to see the difference.
     """
-    sensitive = sensitive_field_names(schema)
     masked = dict(config or {})
+    sensitive = sensitive_field_names(schema) | {
+        k for k, v in masked.items() if _holds_reference(v)
+    }
     were_set: list[str] = []
     for key in sensitive:
         if str(masked.get(key, "") or ""):
@@ -117,15 +129,17 @@ def preserve_unchanged_secrets(
 ) -> dict[str, Any]:
     """Fold stored secrets back into *incoming* for fields the client did not change.
 
-    Mutates and returns *incoming* (the callers already own that dict). A sensitive field
-    is restored from *existing* when it arrives as :data:`SECRET_MASK`, or as an empty
+    Mutates and returns *incoming* (the callers already own that dict). A sensitive field —
+    or one whose *existing* value is a ``{{secret:…}}`` reference, which :func:`mask_secrets`
+    masked — is restored from *existing* when it arrives as :data:`SECRET_MASK`, or as an empty
     string while a value is stored — the two shapes a round-tripped masked form produces.
     A sensitive field the client omits entirely is left omitted, so a caller can still
     clear a credential by sending an explicit empty value for a field that has none.
     """
     if not isinstance(incoming, dict):
         return incoming
-    for key in sensitive_field_names(schema):
+    held = {k for k, v in (existing or {}).items() if _holds_reference(v)}
+    for key in sensitive_field_names(schema) | held:
         if key not in incoming:
             continue
         arrived = str(incoming.get(key, "") or "")

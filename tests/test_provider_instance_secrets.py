@@ -128,13 +128,13 @@ _BASE = "/api/providers/fake-tools/instances"
 def _stored(tmp_path: Path, instance_id: str) -> dict:
     """The instance's config as its provider reads it: the record on disk holds a reference for
     each secret, resolved here from the same home's credential store (``config.secret_refs``)."""
-    from personalclaw.config.secret_refs import resolve
+    from personalclaw.config.secret_refs import instance_owner, resolve
 
     path = tmp_path / "extensions" / "fake-tools" / "instances" / f"{instance_id}.json"
     raw = path.read_text(encoding="utf-8")
     assert _SECRET not in raw, "an instance's key reached its record on disk"
     with patch("personalclaw.config.loader.config_dir", return_value=tmp_path):
-        return resolve(json.loads(raw)["config"])
+        return resolve(json.loads(raw)["config"], owner=instance_owner("fake-tools", instance_id))
 
 
 async def _create(client, **config) -> tuple[str, str]:
@@ -319,6 +319,45 @@ async def test_a_refused_write_does_not_quote_the_submitted_value_back(tmp_path)
         assert r.status == 422, raw
         assert _SECRET not in raw, "a validation refusal quoted the submitted secret back"
         assert "12345" not in raw, "a validation refusal quoted the submitted value back"
+
+
+@pytest.mark.asyncio
+async def test_an_instance_naming_another_owners_key_is_refused(tmp_path, monkeypatch):
+    """An instance resolves only its own app's credentials, so creating or editing one to
+    reference a key another owner holds is a 400 saying what to do instead, and the stored
+    record is untouched. On main both were accepted, and the instance was handed the value."""
+    from personalclaw.config.credentials import save_credential
+    from personalclaw.config.secret_refs import make_ref
+
+    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
+    vault = "ghp-vault-value-never-an-instances"
+    async with _client(tmp_path) as client:
+        with patch("personalclaw.config.loader.config_dir", return_value=tmp_path):
+            save_credential("VAULT_FIXTURE_KEY", vault)
+        foreign = {"api_key": make_ref("VAULT_FIXTURE_KEY"), "default_model": "gpt-4o"}
+
+        created = await client.post(_BASE, json={"display_name": "Borrow", "config": foreign})
+        raw = await created.text()
+        assert created.status == 400, raw
+        error = json.loads(raw)["error"]
+        assert error["code"] == "secret_owned_elsewhere"
+        assert "{{secret:VAULT_FIXTURE_KEY}}" in error["message"]
+        assert "belongs to a different owner" in error["message"]
+        assert "type the key itself — not a reference — into api_key on this instance" in (
+            error["message"]
+        )
+        assert vault not in raw
+
+        instance_id, _ = await _create(client, api_key=_SECRET, default_model="gpt-4o")
+        record = tmp_path / "extensions" / "fake-tools" / "instances" / f"{instance_id}.json"
+        before = record.read_text(encoding="utf-8")
+        updated = await client.put(f"{_BASE}/{instance_id}", json={"config": foreign})
+        raw = await updated.text()
+        assert updated.status == 400, raw
+        assert json.loads(raw)["error"]["code"] == "secret_owned_elsewhere"
+        assert vault not in raw
+        assert record.read_text(encoding="utf-8") == before, "a refused edit rewrote the record"
+        assert _stored(tmp_path, instance_id)["api_key"] == _SECRET
 
 
 # ── the derived rail: which routes carry a config, and do they all mask? ───────
@@ -803,7 +842,7 @@ def test_the_store_derivation_still_discriminates():
     assert {"list_instances", "get_instance", "create_instance", "update_instance"} <= instances[
         "functions"
     ]
-    assert {"read_config", "write_config"} <= app_config["functions"]
+    assert {"read_stored", "write_config"} <= app_config["functions"]
 
     # The negative, which is what makes the rule a rule and not a name filter: these return a
     # bool / None / list[str] / Path, so they cannot carry a secret to the wire. A census that

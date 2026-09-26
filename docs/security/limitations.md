@@ -373,7 +373,9 @@ A provider's API key, every app setting its manifest declares `x-meta.sensitive`
 in an MCP server's `env` and `headers`, and the webhook token (`hooks.webhook_token`, which
 `POST /api/hooks/agent` checks) are kept in the credential store: the OS keychain, or
 `~/.personalclaw/.env` at mode 0600. The file that configures them holds a `{{secret:…}}`
-reference, resolved where the value is used (`src/personalclaw/config/secret_refs.py`). An MCP
+reference, resolved where the value is used (`src/personalclaw/config/secret_refs.py`), and only
+against the credentials of that file's owner: an app cannot name another app's key, a provider's,
+or a Secrets-panel credential in its settings and receive it. An MCP
 server variable you mark plain (the Add form's **Plain values**) stays readable in `mcp.json`
 and travels with an export. One named like a token, secret, password or API key is stored
 whatever you mark. Snapshots and exports carry the references and never the store, so

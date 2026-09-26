@@ -259,6 +259,12 @@ Data leaving the running system:
   included, inherits another record's value: `AppConfig.load_credentials` and the CLI's `.env`
   loader (`cli.main`) both skip `PCSECRET_` keys. `GET /api/mcp/importable` sends another tool's
   variable and header names, never their values.
+- **A reference resolves only against its own owner** (`SecretOwner.holds`): an app's settings,
+  its instances and its `{app}:{server}` MCP servers resolve only that app's keys; core's
+  settings resolve every key no app holds, the Secrets-panel vault included. A settings file is
+  text an app can write, so a reference naming another owner's key is refused where it is used
+  (`ForeignSecretReference`, and a `denied` security-log row naming the app and the key) and
+  where it is saved (400). There is no grant: an app that needs a key has it stored under itself.
 - **Private home** (`atomic_write.py`): a file the atomic writers put under the home —
   `atomic_write`, and `agent._atomic_json_write` for `mcp.json` and the agent config — is 0600
   in a 0700 directory, and a wider mode is refused. `config.json`, an app's `data/config.json`,

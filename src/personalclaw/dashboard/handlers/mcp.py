@@ -842,13 +842,14 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
     DELETE removes the server from ``mcp.json`` and the agent config and deletes the values it
     owns in the credential store (``secret_refs.remove_mcp_servers``, the one delete).
     """
-    from personalclaw.config.credentials import get_credential
     from personalclaw.config.secret_refs import (
         MCP_DEFINITION_KEYS,
         MCP_PLAIN_ENV,
+        ForeignSecretReference,
         mcp_env_view,
         ref_key,
         remove_mcp_servers,
+        resolve_mcp_values,
         store_mcp_spec,
     )
 
@@ -998,10 +999,14 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         new_env: dict[str, Any] = {}
         for var in keep:
             value = current[var]
-            key = ref_key(value)
-            if var in marked_plain and key is not None:
-                # Marked plain now: the value leaves the store and is kept in the file.
-                value = get_credential(key)
+            if var in marked_plain and ref_key(value) is not None:
+                # Marked plain now: the value leaves the store and is kept in the file — read as
+                # any start of the server reads it, against its own owner, so a reference to
+                # another owner's key cannot be turned into that key in plaintext here.
+                try:
+                    value = resolve_mcp_values(name, "env", {var: value}).get(var, "")
+                except ForeignSecretReference as exc:
+                    return json_error("secret_owned_elsewhere", message=str(exc), status=400)
             new_env[var] = value
         new_env.update(env)  # a value typed now replaces a kept one
 
@@ -1019,6 +1024,8 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         try:
             # STRICT: a value typed now that the store cannot hold is refused, not left inline.
             entry = store_mcp_spec(name, entry, strict=True)
+        except ForeignSecretReference as exc:
+            return json_error("secret_owned_elsewhere", message=str(exc), status=400)
         except ValueError as exc:
             return json_error("invalid_env", message=str(exc), status=400)
         servers[name] = entry
@@ -1219,6 +1226,9 @@ def _set_scope_entry(path: Path, name: str, *, enabled: bool, spec: dict | None 
     or parsed. This used to load ``{}`` and write it back with one server in it, which replaced
     the file — and one of the two files this function is called with is ``~/.claude.json``,
     which PersonalClaw does not own. See ``ConfigUnreadable``.
+
+    Returns ``"refused"`` and writes nothing when copying the server into another tool's file
+    would resolve a credential its owner does not hold (``secret_refs.ForeignSecretReference``).
     """
     try:
         data = _load_json_for_update(path)
@@ -1247,10 +1257,15 @@ def _set_scope_entry(path: Path, name: str, *, enabled: bool, spec: dict | None 
         if not _is_personalclaw_document(path):
             # Putting a server into another tool's scope is the user choosing to hand it over,
             # and that tool reads only its own file, so the values go with it — resolved from
-            # the credential store, in the one form it understands.
-            from personalclaw.config.secret_refs import foreign_mcp_spec
+            # the credential store, in the one form it understands, against the server's own
+            # owner: one naming another owner's credential is not copied at all.
+            from personalclaw.config.secret_refs import ForeignSecretReference, foreign_mcp_spec
 
-            entry = foreign_mcp_spec(entry, with_secrets=True)
+            try:
+                entry = foreign_mcp_spec(name, entry, with_secrets=True)
+            except ForeignSecretReference as exc:
+                logger.warning("mcp: not copying %r into %s — %s", name, path, exc)
+                return "refused"
         servers[name] = entry
         _atomic_write(path, data)
         return "added"
